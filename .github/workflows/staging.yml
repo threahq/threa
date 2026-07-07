@@ -68,6 +68,12 @@ jobs:
 
       - name: Install PostgreSQL 18 client
         run: |
+          # The Azure-hosted runner ships Microsoft apt repos (azure-cli, prod)
+          # whose signature check intermittently fails ("NOSPLIT"), aborting
+          # apt-get update with exit 100 — a recurring, unrelated cause of staging
+          # deploy failures. We only need the pgdg repo here, so drop the MS
+          # sources before touching apt.
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* || true
           sudo apt-get install -y curl ca-certificates
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
@@ -192,6 +198,12 @@ jobs:
 
       - name: Install PostgreSQL 18 client
         run: |
+          # The Azure-hosted runner ships Microsoft apt repos (azure-cli, prod)
+          # whose signature check intermittently fails ("NOSPLIT"), aborting
+          # apt-get update with exit 100 — a recurring, unrelated cause of staging
+          # deploy failures. We only need the pgdg repo here, so drop the MS
+          # sources before touching apt.
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* || true
           sudo apt-get install -y curl ca-certificates
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc

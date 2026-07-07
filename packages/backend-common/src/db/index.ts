@@ -70,7 +70,7 @@ export function createDatabasePool(connectionString: string, config?: Partial<Po
 export interface DatabasePools {
   /** Main pool for services, workers, and general queries (30 max) */
   main: Pool
-  /** Dedicated pool for LISTEN connections held by outbox listeners (12 max) */
+  /** Pool for the held LISTEN connections (outbox dispatcher + enclave nudge, ~2 in steady state; 12 max) */
   listen: Pool
   /**
    * Dedicated pool for real-time delivery outbox handlers (broadcast + push).
@@ -93,7 +93,8 @@ export interface DatabasePools {
  *
  * Pool sizing rationale:
  * - main (30): Handles concurrent HTTP requests, workers, and queue jobs
- * - listen (12): Currently 9 OutboxListeners + 3 headroom for reconnects
+ * - listen (12): ~2 held LISTEN connections (OutboxDispatcher's single fan-out
+ *   LISTEN + EnclaveClaimNudge when configured) plus generous reconnect headroom
  * - realtime (8): Broadcast handler (fetchAfterId + cursor lock) + push handler
  *   (fetchAfterId + cursor lock + sequential delivery) + socket.io postgres
  *   adapter (1 persistent LISTEN + pg_notify publishes). Adapter holds 1 slot
@@ -101,15 +102,22 @@ export interface DatabasePools {
  *   leaves ample headroom for broadcast and pg_notify fan-out.
  */
 export function createDatabasePools(connectionString: string): DatabasePools {
-  const main = createDatabasePool(connectionString, { max: Number(process.env.DATABASE_POOL_MAX) || 30 })
+  const mainMax = Number(process.env.DATABASE_POOL_MAX) || 30
+  // Steady state this pool holds ~2 LISTEN connections: the OutboxDispatcher's
+  // single fan-out LISTEN (it dispatches to every registered handler over one
+  // connection — each handler does its work on its own transactional pool
+  // (main or realtime) when woken, none holds a LISTEN connection of its own)
+  // plus EnclaveClaimNudge's LISTEN when enclave is configured. Default 12 is
+  // mostly reconnect headroom. Env-configurable via DATABASE_LISTEN_POOL_MAX so
+  // shared-DB deploys (PR previews on the same Postgres as main staging) can
+  // shrink to ~4 without starving.
+  const listenMax = Number(process.env.DATABASE_LISTEN_POOL_MAX) || 12
+  const realtimeMax = Number(process.env.DATABASE_REALTIME_POOL_MAX) || 8
 
-  // Default 12 = 9 outbox listeners + 3 headroom for reconnection overlap.
-  // Env-configurable via DATABASE_LISTEN_POOL_MAX so shared-DB environments
-  // (PR-preview deploys hitting the same Postgres as main staging) can shrink
-  // per-instance footprint. Values below 9 will starve outbox listeners — pick
-  // a value that matches the listener count in use.
+  const main = createDatabasePool(connectionString, { max: mainMax })
+
   const listen = createDatabasePool(connectionString, {
-    max: Number(process.env.DATABASE_LISTEN_POOL_MAX) || 12,
+    max: listenMax,
     // LISTEN connections are held indefinitely - longer idle timeout
     idleTimeoutMillis: 60000,
   })
@@ -125,9 +133,12 @@ export function createDatabasePools(connectionString: string): DatabasePools {
   // adapter's persistent LISTEN holds 1 slot permanently, leaving ~7 for
   // transactional work. A saturated main pool cannot delay message delivery
   // because this pool is fully isolated.
-  const realtime = createDatabasePool(connectionString, {
-    max: Number(process.env.DATABASE_REALTIME_POOL_MAX) || 8,
-  })
+  const realtime = createDatabasePool(connectionString, { max: realtimeMax })
+
+  // Effective per-instance connection ceiling — the number that matters when
+  // many PR-preview backends share one Postgres (shrunk via the DATABASE_*_POOL_MAX
+  // env vars in that case).
+  logger.info({ mainMax, listenMax, realtimeMax }, "Database pools created")
 
   return { main, listen, realtime }
 }
