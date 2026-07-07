@@ -302,10 +302,24 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
 
   const restore = useCallback(
     (attachments: Array<{ id: string; filename: string; mimeType: string; sizeBytes: number }>) => {
-      for (const a of pendingAttachmentsRef.current) revokePreviewUrl(a.previewUrl)
+      // Carry over the local object URL for any attachment already in memory: a
+      // draft re-hydrate (the debounced save that lands mid-session, or a
+      // stash/restore pointer move) round-trips through this path, and without
+      // the carry-over the fresh-upload preview would collapse to an icon the
+      // instant the draft persisted. Preview persistence across an actual reload
+      // is the reader's job (server thumbnail / E2E decrypt) — there are no local
+      // bytes to carry then.
+      const priorPreviewById = new Map(
+        pendingAttachmentsRef.current.filter((a) => a.previewUrl).map((a) => [a.id, a.previewUrl])
+      )
+      const restoredIds = new Set(attachments.map((a) => a.id))
+      for (const a of pendingAttachmentsRef.current) {
+        if (a.previewUrl && !restoredIds.has(a.id)) revokePreviewUrl(a.previewUrl)
+      }
       const restoredAttachments = attachments.map((a) => ({
         ...a,
         status: "uploaded" as const,
+        previewUrl: priorPreviewById.get(a.id),
       }))
       pendingAttachmentsRef.current = restoredAttachments
       setPendingAttachments(restoredAttachments)

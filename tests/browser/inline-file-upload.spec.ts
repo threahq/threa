@@ -72,7 +72,7 @@ test.describe("Inline File Uploads", () => {
     await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
 
     // Verify attachment chip shows the renamed filename (pasted-image-1.png)
-    await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 5000 })
   })
 
   test("should insert [filename] reference when pasting a non-image file", async ({ page }) => {
@@ -135,7 +135,7 @@ test.describe("Inline File Uploads", () => {
 
     // Wait for first upload and verify filename
     await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
-    await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 5000 })
 
     // Paste second image
     await page.evaluate(async (imageData) => {
@@ -160,7 +160,7 @@ test.describe("Inline File Uploads", () => {
 
     // Should have two references with sequential naming
     await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(2, { timeout: 10000 })
-    await expect(page.getByRole("button", { name: "Preview pasted-image-2.png" })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText("pasted-image-2.png")).toBeVisible({ timeout: 5000 })
   })
 
   test("should open lightbox when clicking image link in sent message", async ({ page }) => {
@@ -191,7 +191,7 @@ test.describe("Inline File Uploads", () => {
 
     // Wait for upload to complete (reference visible AND filename chip appears)
     await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
-    await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 5000 })
 
     // Type some text and send the message
     await editor.type("Check out this image: ")
@@ -247,7 +247,7 @@ test.describe("Inline File Uploads", () => {
 
     // Wait for upload to complete (reference visible AND filename chip appears)
     await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
-    await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 5000 })
 
     // Type some text and send the message
     await editor.type("Hover test: ")

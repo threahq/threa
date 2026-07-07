@@ -16,16 +16,18 @@ function imageAttachment(overrides: Partial<PendingAttachment> = {}): PendingAtt
 }
 
 describe("PendingAttachments", () => {
-  it("renders an image upload as a preview thumbnail", () => {
-    render(<PendingAttachments attachments={[imageAttachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
+  it("renders an image upload as a chip with a preview thumbnail", () => {
+    const { container } = render(
+      <PendingAttachments attachments={[imageAttachment()]} onRemove={vi.fn()} workspaceId="ws_1" />
+    )
 
-    const preview = screen.getByRole("button", { name: "Preview screenshot.png" })
-    expect(preview).toBeInTheDocument()
-    // Both the tile and the hover-card render the object URL.
-    expect(screen.getAllByAltText("screenshot.png")[0]).toHaveAttribute("src", "blob:preview-1")
+    // Filename stays visible as chip text; the leading slot shows the thumbnail.
+    expect(screen.getByText("screenshot.png")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Preview screenshot.png" })).toBeInTheDocument()
+    expect(container.querySelector('img[src="blob:preview-1"]')).toBeTruthy()
   })
 
-  it("falls back to a labeled pill for non-image files", () => {
+  it("falls back to a plain chip (no preview) for non-image files", () => {
     const file: PendingAttachment = {
       id: "attach_doc",
       filename: "notes.txt",
@@ -39,7 +41,7 @@ describe("PendingAttachments", () => {
     expect(screen.queryByRole("button", { name: /^Preview / })).not.toBeInTheDocument()
   })
 
-  it("opens the lightbox when the thumbnail is clicked", () => {
+  it("opens the lightbox when the image chip is activated", () => {
     render(<PendingAttachments attachments={[imageAttachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
@@ -56,7 +58,7 @@ describe("PendingAttachments", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 
-  it("previews an image that is still uploading (no remove control yet)", () => {
+  it("shows the preview while an image is still uploading (no remove control yet)", () => {
     render(
       <PendingAttachments
         attachments={[imageAttachment({ status: "uploading" })]}

@@ -261,7 +261,7 @@ test.describe("Drafts Page", () => {
 
     // Wait for upload — the composer renders pending images as preview thumbnails
     // (filename in the accessible name, not visible text).
-    await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 10000 })
 
     // Wait for draft to be saved. The first debounce fires during upload (saving
     // attachments: []), so waitForDraftSaved returns immediately (link already highlighted).

@@ -1,12 +1,13 @@
-import { useMemo, useState, type ReactNode } from "react"
-import { Loader2, FileText, Image as ImageIcon, File as FileIcon, AlertCircle, X } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { Loader2, FileText, Image as ImageIcon, File as FileIcon, AlertCircle } from "lucide-react"
 import { AttachmentPill, type AttachmentPillStatus } from "@/components/composer/attachment-pill"
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { pendingGalleryId } from "@/components/gallery/pending-gallery-id"
+import { useDecryptedAttachment } from "@/hooks/use-decrypted-attachment"
+import { getAttachmentRef, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
+import { attachmentContentUrl } from "@/api"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import { formatFileSize } from "@/lib/file-size"
-import { cn } from "@/lib/utils"
 
 function getFileIcon(mimeType: string): typeof FileIcon {
   if (mimeType.startsWith("image/")) return ImageIcon
@@ -20,111 +21,113 @@ const STATUS_MAP: Record<PendingAttachment["status"], AttachmentPillStatus> = {
   error: "error",
 }
 
-/** An image attachment with local bytes we can preview inline. */
-function hasImagePreview(a: PendingAttachment): a is PendingAttachment & { previewUrl: string } {
-  return a.mimeType.startsWith("image/") && !!a.previewUrl
+function isImageAttachment(a: PendingAttachment): boolean {
+  return a.mimeType.startsWith("image/")
 }
 
-/**
- * Composer image preview: a small tile showing the actual image so users can
- * see what they attached before sending. Hovering enlarges it (desktop);
- * clicking/tapping opens the shared media lightbox. The preview is available
- * immediately — even while the upload is still in flight — because it reads the
- * local object URL, not the server copy.
- */
-function PendingImageThumbnail({
-  attachment,
-  onRemove,
-  onOpen,
-}: {
-  attachment: PendingAttachment & { previewUrl: string }
+/** Stable identity across the temp→server id flip: the object URL never changes. */
+function attachmentKey(a: PendingAttachment): string {
+  return a.previewUrl ?? a.id
+}
+
+// The preview source for an image without a decrypt step: local bytes win;
+// otherwise the deterministic non-E2E content URL (thumbnail variant for the
+// chip, full for the lightbox). Returns null for non-images and for E2E images
+// (a ref is present → resolved via decrypt in E2eImageChip instead). Restore
+// fires only after a draft decrypts, so a present ref means "E2E, unlocked";
+// its absence here means non-E2E, where the content URL is a real image.
+function staticImageSrc(a: PendingAttachment, workspaceId: string): { thumb: string; full: string } | null {
+  if (a.previewUrl) return { thumb: a.previewUrl, full: a.previewUrl }
+  if (!isImageAttachment(a) || getAttachmentRef(a.id)) return null
+  return {
+    thumb: attachmentContentUrl(workspaceId, a.id, { variant: "thumbnail" }),
+    full: attachmentContentUrl(workspaceId, a.id),
+  }
+}
+
+interface ChipViewProps {
+  attachment: PendingAttachment
+  /** Leading-slot preview image; falls back to the type icon when absent/failed. */
+  thumbnailSrc?: string
+  /** Full-resolution URL for the lightbox, or null when not previewable. */
+  fullSrc: string | null
+  /** True while an E2E image's bytes are still decrypting. */
+  decrypting?: boolean
   onRemove: (id: string) => void
-  onOpen: () => void
-}) {
+  onOpen: (key: string) => void
+  onResolveSrc: (key: string, src: string | null) => void
+}
+
+function ChipView({ attachment, thumbnailSrc, fullSrc, decrypting, onRemove, onOpen, onResolveSrc }: ChipViewProps) {
+  const key = attachmentKey(attachment)
+
+  // Publish the full-res URL so the parent can build the lightbox item list.
+  useEffect(() => {
+    onResolveSrc(key, fullSrc)
+  }, [key, fullSrc, onResolveSrc])
+  useEffect(() => () => onResolveSrc(key, null), [key, onResolveSrc])
+
+  const status = STATUS_MAP[attachment.status]
   const isUploading = attachment.status === "uploading"
   const isError = attachment.status === "error"
-  // Mirror the pill's generic-error fallback so an image that fails upload
-  // surfaces the same explanation the pill would, rather than a bare icon.
+
   const isGenericError =
     isError &&
     (attachment.error === "Internal server error" || attachment.error === "Upload failed" || !attachment.error)
-  let errorText: string | undefined
-  if (isError) {
-    errorText = isGenericError ? "We couldn't upload this file. Please remove it and try again." : attachment.error
-  }
+  let tooltip: string | undefined
+  if (isGenericError) tooltip = "We couldn't upload this file. Please remove it and try again."
+  else if (isError) tooltip = attachment.error
 
-  const tile = (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-label={isError ? `${attachment.filename} — upload failed` : `Preview ${attachment.filename}`}
-      title={errorText}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        // Only the tile itself opens the lightbox — a keydown bubbling up from
-        // the nested remove button must not preventDefault its own activation.
-        if (e.target !== e.currentTarget) return
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault()
-          onOpen()
-        }
-      }}
-      className={cn(
-        "relative h-12 w-12 shrink-0 cursor-pointer overflow-hidden rounded-md border bg-muted/30 transition-colors",
-        "hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-        isError && "border-destructive"
-      )}
-    >
-      <img
-        src={attachment.previewUrl}
-        alt={attachment.filename}
-        draggable={false}
-        className={cn("h-full w-full object-cover", (isUploading || isError) && "opacity-40")}
-      />
-      {isUploading && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Loader2 className="h-4 w-4 animate-spin text-foreground/70" />
-        </div>
-      )}
-      {isError && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <AlertCircle className="h-4 w-4 text-destructive" />
-        </div>
-      )}
-      {!isUploading && (
-        // Always visible (not hover-revealed): touch has no hover, and the
-        // lightbox has no remove control, so a hidden × would strand a phone
-        // user with no way to drop a mis-picked image. Matches the pill.
-        <button
-          type="button"
-          aria-label={`Remove ${attachment.filename}`}
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onRemove(attachment.id)
-          }}
-          className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-1 text-foreground/70 opacity-80 transition-opacity hover:text-foreground hover:opacity-100 focus-visible:opacity-100"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      )}
-    </div>
-  )
+  let Icon = getFileIcon(attachment.mimeType)
+  if (isUploading || decrypting) Icon = Loader2
+  else if (isError) Icon = AlertCircle
+
+  const canPreview = !!fullSrc && !isError
 
   return (
-    <HoverCard openDelay={200} closeDelay={100}>
-      <HoverCardTrigger asChild>{tile}</HoverCardTrigger>
-      <HoverCardContent side="top" className="w-auto max-w-xs p-1">
-        <img
-          src={attachment.previewUrl}
-          alt={attachment.filename}
-          draggable={false}
-          className="max-h-64 max-w-full rounded object-contain"
-        />
-        {errorText && <p className="px-1 pt-1 pb-0.5 text-xs text-destructive">{errorText}</p>}
-      </HoverCardContent>
-    </HoverCard>
+    <AttachmentPill
+      icon={Icon}
+      thumbnailSrc={thumbnailSrc}
+      label={attachment.filename}
+      secondary={isError ? "Failed" : formatFileSize(attachment.sizeBytes)}
+      status={status}
+      tooltip={tooltip}
+      onRemove={isUploading ? undefined : () => onRemove(attachment.id)}
+      removeLabel={`Remove ${attachment.filename}`}
+      onActivate={canPreview ? () => onOpen(key) : undefined}
+      activateLabel={`Preview ${attachment.filename}`}
+      labelMaxWidth="max-w-[120px]"
+    />
   )
+}
+
+/** Chip whose preview needs no decrypt: local object URL, non-E2E thumbnail, or icon. */
+function StaticChip(props: {
+  attachment: PendingAttachment
+  workspaceId: string
+  onRemove: (id: string) => void
+  onOpen: (key: string) => void
+  onResolveSrc: (key: string, src: string | null) => void
+}) {
+  const src = staticImageSrc(props.attachment, props.workspaceId)
+  return <ChipView {...props} thumbnailSrc={src?.thumb} fullSrc={src?.full ?? null} />
+}
+
+/** Chip for an E2E image: decrypts the bytes in memory (no server thumbnail exists). */
+function E2eImageChip({
+  attachmentRef,
+  ...props
+}: {
+  attachment: PendingAttachment
+  attachmentRef: AttachmentRef
+  workspaceId: string
+  onRemove: (id: string) => void
+  onOpen: (key: string) => void
+  onResolveSrc: (key: string, src: string | null) => void
+}) {
+  const decrypted = useDecryptedAttachment(props.workspaceId, attachmentRef)
+  const url = decrypted.status === "ready" ? decrypted.url : null
+  return <ChipView {...props} thumbnailSrc={url ?? undefined} fullSrc={url} decrypting={decrypted.status === "pending"} />
 }
 
 interface PendingAttachmentsProps {
@@ -137,84 +140,72 @@ interface PendingAttachmentsProps {
    * to this message," not two stacked rows.
    */
   beforePills?: ReactNode
-  /** Enables the lightbox download affordance; download is gated for previews regardless. */
+  /** Anchors the lightbox; download stays gated for previews regardless. */
   workspaceId?: string
 }
 
 /**
- * Composer attachment row: image uploads render as preview thumbnails
- * (hover to enlarge, click/tap to open the lightbox), everything else as a
- * labeled `<AttachmentPill>` — alongside any caller-provided `beforePills`
- * (typically context-ref chips) inside a single `flex flex-wrap` container.
- *
- * Renders nothing when both lists are empty.
+ * Composer attachment row: every attachment renders as one uniform chip
+ * (filename + size + remove ×). Image chips show a preview thumbnail in the
+ * leading slot — from local bytes, the non-E2E server thumbnail, or an in-memory
+ * E2E decrypt — and tap/click to open the shared lightbox; other types keep
+ * their type icon. Renders nothing when both lists are empty.
  */
 export function PendingAttachments({ attachments, onRemove, beforePills, workspaceId }: PendingAttachmentsProps) {
-  // Track the open preview by object URL, not attachment id: the id flips from a
-  // temp id to the server id when an upload completes, but the object URL is
-  // stable, so an open lightbox survives its own upload finishing.
-  const [openPreviewUrl, setOpenPreviewUrl] = useState<string | null>(null)
+  const ws = workspaceId ?? ""
+  // Open lightbox tracked by the stable attachment key, not the id (which flips
+  // temp→server on upload completion), so an open preview survives its upload.
+  const [openKey, setOpenKey] = useState<string | null>(null)
+  // Full-res URL per image chip, published by each chip (a chip owns the E2E
+  // decrypt / object-URL lifecycle), so the lightbox item list has every source.
+  const [srcByKey, setSrcByKey] = useState<Map<string, string>>(new Map())
 
-  const imageAttachments = useMemo(() => attachments.filter(hasImagePreview), [attachments])
+  const onResolveSrc = useCallback((key: string, src: string | null) => {
+    setSrcByKey((prev) => {
+      if ((prev.get(key) ?? null) === src) return prev
+      const next = new Map(prev)
+      if (src) next.set(key, src)
+      else next.delete(key)
+      return next
+    })
+  }, [])
+
+  const imageAttachments = useMemo(() => attachments.filter(isImageAttachment), [attachments])
 
   const galleryItems = useMemo<GalleryItem[]>(
     () =>
-      imageAttachments.map((a) => ({
-        type: "image" as const,
-        url: a.previewUrl,
-        thumbnailUrl: a.previewUrl,
-        filename: a.filename,
-        attachmentId: pendingGalleryId(a.previewUrl),
-      })),
-    [imageAttachments]
+      imageAttachments
+        .map((a): GalleryItem | null => {
+          const key = attachmentKey(a)
+          const url = srcByKey.get(key)
+          if (!url) return null
+          return {
+            type: "image",
+            url,
+            thumbnailUrl: url,
+            filename: a.filename,
+            attachmentId: pendingGalleryId(key),
+          }
+        })
+        .filter((item): item is GalleryItem => item !== null),
+    [imageAttachments, srcByKey]
   )
 
   if (attachments.length === 0 && !beforePills) return null
 
-  const galleryIndex = openPreviewUrl ? imageAttachments.findIndex((a) => a.previewUrl === openPreviewUrl) : -1
+  const galleryIndex = openKey ? galleryItems.findIndex((g) => g.attachmentId === pendingGalleryId(openKey)) : -1
 
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 mb-3 max-h-[120px] overflow-y-auto">
         {beforePills}
         {attachments.map((attachment) => {
-          if (hasImagePreview(attachment)) {
-            return (
-              <PendingImageThumbnail
-                key={attachment.previewUrl}
-                attachment={attachment}
-                onRemove={onRemove}
-                onOpen={() => setOpenPreviewUrl(attachment.previewUrl)}
-              />
-            )
-          }
-
-          const status = STATUS_MAP[attachment.status]
-          const isUploading = attachment.status === "uploading"
-          const isError = attachment.status === "error"
-          let Icon = getFileIcon(attachment.mimeType)
-          if (isUploading) Icon = Loader2
-          else if (isError) Icon = AlertCircle
-
-          const isGenericError =
-            isError &&
-            (attachment.error === "Internal server error" || attachment.error === "Upload failed" || !attachment.error)
-          let tooltip: string | undefined
-          if (isGenericError) tooltip = "We couldn't upload this file. Please remove it and try again."
-          else if (isError) tooltip = attachment.error
-
-          return (
-            <AttachmentPill
-              key={attachment.id}
-              icon={Icon}
-              label={attachment.filename}
-              secondary={isError ? "Failed" : formatFileSize(attachment.sizeBytes)}
-              status={status}
-              tooltip={tooltip}
-              onRemove={isUploading ? undefined : () => onRemove(attachment.id)}
-              removeLabel={`Remove ${attachment.filename}`}
-              labelMaxWidth="max-w-[120px]"
-            />
+          const ref = !attachment.previewUrl && isImageAttachment(attachment) ? getAttachmentRef(attachment.id) : undefined
+          const shared = { attachment, workspaceId: ws, onRemove, onOpen: setOpenKey, onResolveSrc }
+          return ref ? (
+            <E2eImageChip key={attachmentKey(attachment)} attachmentRef={ref} {...shared} />
+          ) : (
+            <StaticChip key={attachmentKey(attachment)} {...shared} />
           )
         })}
       </div>
@@ -222,10 +213,10 @@ export function PendingAttachments({ attachments, onRemove, beforePills, workspa
       {galleryItems.length > 0 && (
         <MediaGallery
           isOpen={galleryIndex !== -1}
-          onClose={() => setOpenPreviewUrl(null)}
+          onClose={() => setOpenKey(null)}
           items={galleryItems}
           initialIndex={Math.max(0, galleryIndex)}
-          workspaceId={workspaceId ?? ""}
+          workspaceId={ws}
         />
       )}
     </>
