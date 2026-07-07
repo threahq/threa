@@ -195,14 +195,15 @@ function buildStatusConfig(
     case "retrying": {
       // Non-terminal: a turn attempt failed and the queue is retrying the same
       // session. Amber (not the red terminal-fail) and a spinner, so it reads as
-      // "in progress, hang on" rather than "done, broken". Step count is max(live,
-      // snapshot): the interrupted payload's snapshot (steps reached before the
-      // failure) is the floor, and once the retry resumes and its progress ticks
-      // climb past it the count moves again — so a long retry shows liveness (a
-      // live substep too, below) instead of a frozen "N steps" that reads as a hang.
-      // The live rail reports 0 during backoff (the synthetic started-event entry),
-      // so max keeps the count from dropping back to 0 there.
-      const steps = Math.max(liveCounts?.stepCount ?? 0, interruptedPayload?.stepCount ?? 0)
+      // "in progress, hang on" rather than "done, broken". A retry restarts its
+      // step counter from 1 (SessionTrace is fresh per attempt), so once it's
+      // actively progressing (live > 0) we follow the live count — it moves every
+      // step and never reads as a hang, even for a retry that re-walks many steps.
+      // During backoff the live rail reports 0 (the synthetic started-event entry),
+      // so we fall back to the interrupted payload's snapshot (steps reached before
+      // the failure) rather than showing 0.
+      const liveSteps = liveCounts?.stepCount ?? 0
+      const steps = liveSteps > 0 ? liveSteps : (interruptedPayload?.stepCount ?? 0)
       const parts: string[] = []
       if (rerunReasonLabel) {
         parts.push(rerunReasonLabel)
