@@ -28,6 +28,7 @@ import {
 } from "@/hooks/use-conversations"
 import { useBoardHiddenConversations, useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
 import { useBoardRailsReady } from "@/hooks/use-board-card-messages"
+import { useBoardRevealLatch } from "@/hooks/use-board-reveal-latch"
 import { useConversationGraphReady } from "@/hooks/use-conversation-graph"
 import { SKELETON_DELAY_MS } from "@/contexts/coordinated-loading-context"
 import { BoardCard } from "@/components/board/board-card"
@@ -368,7 +369,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   }, [posts])
   const railsReady = useBoardRailsReady(prewarmStreamIds)
   const graphReady = useConversationGraphReady(workspaceId)
-  const revealReady = railsReady && graphReady
+  // Latch the reveal so a newly added conversation's cold rail can't un-paint the
+  // whole feed (see `useBoardRevealLatch`); the gate only holds the first paint.
+  const revealReady = useBoardRevealLatch(railsReady && graphReady, workspaceId)
   const holding = posts.length > 0 && !revealReady
   const loading = isLoading || viewLoading || seedPending || holding
   const [skeletonVisible, setSkeletonVisible] = useState(false)
