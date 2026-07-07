@@ -10,6 +10,42 @@ function escapeXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
+/** Author name already resolved; the pure renderer never touches the database. */
+export interface RenderableMessage {
+  id: string
+  authorType: string
+  authorId: string
+  authorName: string
+  contentMarkdown: string
+  createdAt: Date
+}
+
+export interface RenderMessageOptions {
+  /** Emit an `id` attribute so a model asked to cite sources has real ids. */
+  includeIds?: boolean
+  /** Anchor date for a relative `age` attribute (e.g. `age="2 days ago"`). */
+  relativeTo?: Date
+}
+
+/**
+ * The single source of truth for the `<messages>` prompt wire format. Both the
+ * production `MessageFormatter` (after it resolves author names from the DB) and
+ * the eval fixtures (which supply names directly) render through here, so the
+ * prompt the model sees in evals can't drift from production (INV-35/37, INV-45).
+ */
+export function renderMessagesXml(messages: RenderableMessage[], options?: RenderMessageOptions): string {
+  if (messages.length === 0) return "<messages></messages>"
+  return `<messages>\n${messages.map((m) => renderMessageXml(m, options)).join("\n")}\n</messages>`
+}
+
+function renderMessageXml(m: RenderableMessage, options?: RenderMessageOptions): string {
+  const idAttr = options?.includeIds ? `id="${escapeXmlAttr(m.id)}" ` : ""
+  const ageAttr = options?.relativeTo
+    ? ` age="${escapeXmlAttr(formatRelativeDate(m.createdAt, options.relativeTo))}"`
+    : ""
+  return `<message ${idAttr}authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXmlAttr(m.authorName)}" createdAt="${m.createdAt.toISOString()}"${ageAttr}>${escapeXml(m.contentMarkdown)}</message>`
+}
+
 /**
  * Formats messages for use in AI prompts with author names resolved from the database.
  *
@@ -46,17 +82,23 @@ export class MessageFormatter {
     client: Querier,
     workspaceId: string,
     messages: Message[],
-    options?: { includeIds?: boolean; relativeTo?: Date }
+    options?: RenderMessageOptions
   ): Promise<string> {
     if (messages.length === 0) return "<messages></messages>"
 
     const nameById = await this.resolveAuthorNames(client, workspaceId, messages)
 
-    const formatted = messages.map((m) =>
-      this.formatSingleMessage(m, nameById, options?.includeIds ?? false, options?.relativeTo)
+    return renderMessagesXml(
+      messages.map((m) => ({
+        id: m.id,
+        authorType: m.authorType,
+        authorId: m.authorId,
+        authorName: nameById.get(m.authorId) ?? "Unknown",
+        contentMarkdown: m.contentMarkdown,
+        createdAt: m.createdAt,
+      })),
+      options
     )
-
-    return `<messages>\n${formatted.join("\n")}\n</messages>`
   }
 
   /** Batch-resolves author names in at most 2 queries (users + personas). */
@@ -88,20 +130,6 @@ export class MessageFormatter {
     return nameById
   }
 
-  private formatSingleMessage(
-    m: Message,
-    nameById: Map<string, string>,
-    includeIds: boolean,
-    relativeTo?: Date
-  ): string {
-    const authorName = nameById.get(m.authorId) ?? "Unknown"
-    const idAttr = includeIds ? `id="${m.id}" ` : ""
-    // Keep this attribute shape in sync with the eval fixture renderer
-    // (apps/backend/evals/fixtures/memo.ts formatEvalMessages) so evals exercise
-    // the same prompt the classifier/memorizer see in production (INV-45).
-    const ageAttr = relativeTo ? ` age="${escapeXmlAttr(formatRelativeDate(m.createdAt, relativeTo))}"` : ""
-    return `<message ${idAttr}authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXmlAttr(authorName)}" createdAt="${m.createdAt.toISOString()}"${ageAttr}>${escapeXml(m.contentMarkdown)}</message>`
-  }
 
   /**
    * Format messages in a simple inline format for prompts.
