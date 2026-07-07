@@ -4,9 +4,46 @@ import type { AttachmentWithExtraction } from "../../features/attachments"
 import { UserRepository } from "../../features/workspaces"
 import { PersonaRepository } from "../../features/agents"
 import { escapeXmlAttr } from "../xml"
+import { formatRelativeDate } from "../temporal"
 
 function escapeXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+/** Author name already resolved; the pure renderer never touches the database. */
+export interface RenderableMessage {
+  id: string
+  authorType: string
+  authorId: string
+  authorName: string
+  contentMarkdown: string
+  createdAt: Date
+}
+
+export interface RenderMessageOptions {
+  /** Emit an `id` attribute so a model asked to cite sources has real ids. */
+  includeIds?: boolean
+  /** Anchor date for a relative `age` attribute (e.g. `age="2 days ago"`). */
+  relativeTo?: Date
+}
+
+/**
+ * The single source of truth for the `<messages>` prompt wire format. Both the
+ * production `MessageFormatter` (after it resolves author names from the DB) and
+ * the eval fixtures (which supply names directly) render through here, so the
+ * prompt the model sees in evals can't drift from production (INV-35/37, INV-45).
+ */
+export function renderMessagesXml(messages: RenderableMessage[], options?: RenderMessageOptions): string {
+  if (messages.length === 0) return "<messages></messages>"
+  return `<messages>\n${messages.map((m) => renderMessageXml(m, options)).join("\n")}\n</messages>`
+}
+
+function renderMessageXml(m: RenderableMessage, options?: RenderMessageOptions): string {
+  const idAttr = options?.includeIds ? `id="${escapeXmlAttr(m.id)}" ` : ""
+  const ageAttr = options?.relativeTo
+    ? ` age="${escapeXmlAttr(formatRelativeDate(m.createdAt, options.relativeTo))}"`
+    : ""
+  return `<message ${idAttr}authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXmlAttr(m.authorName)}" createdAt="${m.createdAt.toISOString()}"${ageAttr}>${escapeXml(m.contentMarkdown)}</message>`
 }
 
 /**
@@ -24,6 +61,11 @@ export class MessageFormatter {
    *   a model asked to cite source messages (memorizer, suggestion collector) has
    *   real ids to return. Off by default — callers that don't cite stay unchanged.
    *
+   * @param options.relativeTo - Anchor date for a human-readable `age` attribute
+   *   (e.g. `age="2 days ago"`). Absolute `createdAt` requires the model to reason
+   *   about elapsed time; a relative age lets it judge durability directly (is the
+   *   captured state still live, or a stale one-off?). Off by default.
+   *
    * @example
    * const formatted = await messageFormatter.formatMessages(client, workspaceId, messages)
    * // <messages>
@@ -32,23 +74,31 @@ export class MessageFormatter {
    * // </messages>
    *
    * @example
-   * // With ids (memorizer / suggestion collector)
-   * const formatted = await messageFormatter.formatMessages(client, ws, messages, { includeIds: true })
-   * // <message id="msg_123" authorType="user" authorId="user_123" authorName="Alice" createdAt="...">Hello!</message>
+   * // With ids + relative age (memorizer / classifier)
+   * const formatted = await messageFormatter.formatMessages(client, ws, messages, { includeIds: true, relativeTo: new Date() })
+   * // <message id="msg_123" authorType="user" authorId="user_123" authorName="Alice" createdAt="..." age="2 days ago">Hello!</message>
    */
   async formatMessages(
     client: Querier,
     workspaceId: string,
     messages: Message[],
-    options?: { includeIds?: boolean }
+    options?: RenderMessageOptions
   ): Promise<string> {
     if (messages.length === 0) return "<messages></messages>"
 
     const nameById = await this.resolveAuthorNames(client, workspaceId, messages)
 
-    const formatted = messages.map((m) => this.formatSingleMessage(m, nameById, options?.includeIds ?? false))
-
-    return `<messages>\n${formatted.join("\n")}\n</messages>`
+    return renderMessagesXml(
+      messages.map((m) => ({
+        id: m.id,
+        authorType: m.authorType,
+        authorId: m.authorId,
+        authorName: nameById.get(m.authorId) ?? "Unknown",
+        contentMarkdown: m.contentMarkdown,
+        createdAt: m.createdAt,
+      })),
+      options
+    )
   }
 
   /** Batch-resolves author names in at most 2 queries (users + personas). */
@@ -80,11 +130,6 @@ export class MessageFormatter {
     return nameById
   }
 
-  private formatSingleMessage(m: Message, nameById: Map<string, string>, includeIds: boolean): string {
-    const authorName = nameById.get(m.authorId) ?? "Unknown"
-    const idAttr = includeIds ? `id="${m.id}" ` : ""
-    return `<message ${idAttr}authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXmlAttr(authorName)}" createdAt="${m.createdAt.toISOString()}">${escapeXml(m.contentMarkdown)}</message>`
-  }
 
   /**
    * Format messages in a simple inline format for prompts.

@@ -172,12 +172,17 @@ export class MemoService implements MemoServiceLike {
       // includeIds: the memorizer and suggestion collector must cite source
       // message ids; without ids in the prompt the model can't reference them and
       // every memo falls back to the whole conversation (mis-attribution).
+      // Anchor relative ages to one "now" for the whole batch so the classifier
+      // and memorizer can weigh durability (live vs. stale content) without
+      // reasoning over absolute timestamps.
+      const now = new Date()
       const formattedConversations = new Map<string, string>()
       for (const [convId, msgs] of conversationMessages) {
         const messagesArray = Array.from(msgs.values()).filter((m): m is Message => m !== null)
         if (messagesArray.length > 0) {
           const formatted = await this.messageFormatter.formatMessages(client, workspaceId, messagesArray, {
             includeIds: true,
+            relativeTo: now,
           })
           formattedConversations.set(convId, formatted)
         }

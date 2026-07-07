@@ -8,24 +8,28 @@ import { ulid } from "ulid"
 import type { Memo } from "../../src/features/memos"
 import type { Conversation } from "../../src/features/conversations"
 import { MemoStatuses, MemoTypes, ConversationStatuses } from "@threa/types"
+import { renderMessagesXml } from "../../src/lib/ai/message-formatter"
 import type { EvalClassifierMessage } from "../suites/memo-classifier/types"
 
-function escapeXml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
-}
-
 /**
- * Render messages exactly as MessageFormatter.formatMessages does in
- * production (the classifier counts messages by splitting on "<message"), but
- * from eval fixtures instead of DB rows.
+ * Render eval-fixture messages through the SAME production renderer the memo
+ * pipeline uses (`{ includeIds: true, relativeTo: now }`), so evals can't test a
+ * prompt that has drifted from production (INV-45). The fixtures already carry
+ * resolved author names, so no DB `Querier` is needed — only production's
+ * DB-bound name resolution is skipped, never the wire-format rendering itself.
  */
 export function formatEvalMessages(messages: EvalClassifierMessage[], now: Date): string {
-  const rendered = messages.map((m, i) => {
-    const id = m.id ?? `msg_${ulid()}`
-    const createdAt = new Date(now.getTime() - (m.minutesAgo ?? (messages.length - i) * 2) * 60_000)
-    return `<message id="${id}" authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXml(m.authorName)}" createdAt="${createdAt.toISOString()}">${escapeXml(m.contentMarkdown)}</message>`
-  })
-  return `<messages>\n${rendered.join("\n")}\n</messages>`
+  return renderMessagesXml(
+    messages.map((m, i) => ({
+      id: m.id ?? `msg_${ulid()}`,
+      authorType: m.authorType,
+      authorId: m.authorId,
+      authorName: m.authorName,
+      contentMarkdown: m.contentMarkdown,
+      createdAt: new Date(now.getTime() - (m.minutesAgo ?? (messages.length - i) * 2) * 60_000),
+    })),
+    { includeIds: true, relativeTo: now }
+  )
 }
 
 export function toConversation(input: { topicSummary: string | null; participantIds: string[] }): Conversation {

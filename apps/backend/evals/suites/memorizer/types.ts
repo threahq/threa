@@ -10,7 +10,7 @@ export interface MemorizerInput {
   memoryContext?: string[]
   /** Existing memos for this conversation — presence selects the revision path. */
   existingMemos?: EvalExistingMemo[]
-  category?: "extraction" | "revision" | "selectivity"
+  category?: "extraction" | "revision" | "selectivity" | "transient"
 }
 
 export interface MemorizerOutputMemo {

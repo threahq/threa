@@ -250,6 +250,34 @@ describe("MessageFormatter", () => {
     expect(result).toContain('<message id="msg_1" authorType="user"')
   })
 
+  test("omits the age attribute by default", async () => {
+    const messages = [createMessage({ id: "msg_1", authorId: "usr_123", authorType: "user", contentMarkdown: "Hi" })]
+    mockFindUsersByIds.mockResolvedValue([{ id: "usr_123", name: "Alice" }])
+
+    const result = await formatter.formatMessages(mockClient, "ws_test", messages)
+
+    expect(result).not.toContain("age=")
+  })
+
+  test("renders a relative age when relativeTo is set (durability anchoring for the memo pipeline)", async () => {
+    const messages = [
+      createMessage({
+        id: "msg_1",
+        authorId: "usr_123",
+        authorType: "user",
+        contentMarkdown: "Hi",
+        createdAt: new Date("2024-01-01T10:00:00Z"),
+      }),
+    ]
+    mockFindUsersByIds.mockResolvedValue([{ id: "usr_123", name: "Alice" }])
+
+    const result = await formatter.formatMessages(mockClient, "ws_test", messages, {
+      relativeTo: new Date("2024-01-03T10:00:00Z"),
+    })
+
+    expect(result).toContain('age="2 days ago"')
+  })
+
   describe("formatMessagesInline", () => {
     test("should return empty string for empty message list", async () => {
       const result = await formatter.formatMessagesInline(mockClient, "ws_test", [])
