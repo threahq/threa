@@ -14,6 +14,9 @@ import {
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
   DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
+  MESSAGE_COLLAPSE_THRESHOLD_MIN,
+  MESSAGE_COLLAPSE_THRESHOLD_MAX,
+  DEFAULT_MESSAGE_COLLAPSE_THRESHOLD,
   BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
   BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
   DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
@@ -58,6 +61,7 @@ export function AppearanceSettings() {
   const labelRemoveOnMove = preferences?.labelRemoveOnMove ?? "ask"
   const codeBlockThreshold = preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
   const blockquoteThreshold = preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
+  const messageThreshold = preferences?.messageCollapseThreshold ?? DEFAULT_MESSAGE_COLLAPSE_THRESHOLD
   const boardCardThreshold = preferences?.boardCardCollapseThreshold ?? DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD
 
   // Local input state so users can type freely without each keystroke
@@ -71,6 +75,11 @@ export function AppearanceSettings() {
   useEffect(() => {
     setBlockquoteThresholdDraft(String(blockquoteThreshold))
   }, [blockquoteThreshold])
+
+  const [messageThresholdDraft, setMessageThresholdDraft] = useState<string>(String(messageThreshold))
+  useEffect(() => {
+    setMessageThresholdDraft(String(messageThreshold))
+  }, [messageThreshold])
 
   const [boardCardThresholdDraft, setBoardCardThresholdDraft] = useState<string>(String(boardCardThreshold))
   useEffect(() => {
@@ -103,6 +112,20 @@ export function AppearanceSettings() {
       return
     }
     void updatePreference("blockquoteCollapseThreshold", clamped)
+  }
+
+  const commitMessageThreshold = () => {
+    const parsed = Number.parseInt(messageThresholdDraft, 10)
+    if (!Number.isFinite(parsed)) {
+      setMessageThresholdDraft(String(messageThreshold))
+      return
+    }
+    const clamped = Math.min(MESSAGE_COLLAPSE_THRESHOLD_MAX, Math.max(MESSAGE_COLLAPSE_THRESHOLD_MIN, parsed))
+    if (clamped === messageThreshold) {
+      setMessageThresholdDraft(String(clamped))
+      return
+    }
+    void updatePreference("messageCollapseThreshold", clamped)
   }
 
   const commitBoardCardThreshold = () => {
@@ -242,6 +265,45 @@ export function AppearanceSettings() {
               if (event.key === "Enter") {
                 event.preventDefault()
                 commitBlockquoteThreshold()
+              }
+            }}
+            className="w-24"
+          />
+        </div>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Long Messages</h3>
+          <p className="text-sm text-muted-foreground">
+            Collapse long messages by default, in the timeline and on board cards, to keep the feed scannable
+          </p>
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label htmlFor="message-collapse-threshold" className="cursor-pointer">
+              Collapse threshold
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Messages with more than this many lines start collapsed. You can always click to expand or collapse an
+              individual message. Set to 0 to collapse every message by default.
+            </p>
+          </div>
+          <Input
+            id="message-collapse-threshold"
+            type="number"
+            inputMode="numeric"
+            min={MESSAGE_COLLAPSE_THRESHOLD_MIN}
+            max={MESSAGE_COLLAPSE_THRESHOLD_MAX}
+            value={messageThresholdDraft}
+            onChange={(event) => setMessageThresholdDraft(event.target.value)}
+            onBlur={commitMessageThreshold}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                commitMessageThreshold()
               }
             }}
             className="w-24"

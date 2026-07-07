@@ -19,6 +19,8 @@ import {
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
+  MESSAGE_COLLAPSE_THRESHOLD_MIN,
+  MESSAGE_COLLAPSE_THRESHOLD_MAX,
   BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
   BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
 } from "@threa/types"
@@ -49,6 +51,12 @@ const updatePreferencesSchema = z.object({
     .int()
     .min(BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN)
     .max(BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX)
+    .optional(),
+  messageCollapseThreshold: z
+    .number()
+    .int()
+    .min(MESSAGE_COLLAPSE_THRESHOLD_MIN)
+    .max(MESSAGE_COLLAPSE_THRESHOLD_MAX)
     .optional(),
   boardCardCollapseThreshold: z
     .number()

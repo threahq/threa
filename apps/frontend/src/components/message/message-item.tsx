@@ -13,6 +13,8 @@ import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
+import { CollapsibleBody, useMessageCollapseThreshold } from "@/lib/markdown/collapsible-body"
+import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import { LinkPreviewProvider } from "@/lib/markdown/link-preview-context"
 import { AttachmentList } from "@/components/timeline/attachment-list"
 import { LinkPreviewList } from "@/components/timeline/link-preview-list"
@@ -169,6 +171,7 @@ export function MessageItem({
   onNewSubtopic,
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
+  const messageCollapseThreshold = useMessageCollapseThreshold()
   const { openUserProfile } = useUserProfile()
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -526,7 +529,11 @@ export function MessageItem({
 
   const richBody = (
     <>
-      <MarkdownContent content={message.contentMarkdown} messageId={message.id} className="text-sm leading-relaxed" />
+      <MarkdownBlockProvider messageId={message.id}>
+        <CollapsibleBody kind="message" content={message.contentMarkdown} threshold={messageCollapseThreshold}>
+          <MarkdownContent content={message.contentMarkdown} className="text-sm leading-relaxed" />
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
       {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
       {linkPreviews.length > 0 && (
         <LinkPreviewList
