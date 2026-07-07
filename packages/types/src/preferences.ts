@@ -117,6 +117,16 @@ export const DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD = 6
 // user preference (no slider), so a single default rather than a stored value.
 export const DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD = 8
 
+// Message collapse threshold - rendered line count above which an individual
+// message body starts collapsed behind a Show more/less toggle, both in the
+// stream timeline and on board cards. Same line-count semantics as the
+// code/quote thresholds, measured in rendered text lines of the message body.
+// Generous by default so only a genuine wall of text folds; a per-message
+// toggle always overrides it. 0 folds every message.
+export const MESSAGE_COLLAPSE_THRESHOLD_MIN = 0
+export const MESSAGE_COLLAPSE_THRESHOLD_MAX = 500
+export const DEFAULT_MESSAGE_COLLAPSE_THRESHOLD = 16
+
 // Board-card collapse threshold - rendered card height (CSS px) above which a
 // board card starts collapsed to just its header (locator + topic), so a tall
 // conversation folds away and compact ones stay open. Measured by the card
@@ -254,6 +264,12 @@ export interface UserPreferences {
   codeBlockCollapseThreshold: number
   blockquoteCollapseThreshold: number
   /**
+   * Rendered line count above which an individual message body starts collapsed
+   * (timeline + board cards). A per-message toggle overrides it; this only sets
+   * the initial state.
+   */
+  messageCollapseThreshold: number
+  /**
    * Rendered card height (px) above which a board card starts collapsed to its
    * header. A per-card toggle overrides it; this only sets the initial state.
    */
@@ -320,6 +336,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   scratchpadCustomPrompt: null,
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
+  messageCollapseThreshold: DEFAULT_MESSAGE_COLLAPSE_THRESHOLD,
   boardCardCollapseThreshold: DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
   voiceTranscriptionModel: null,
   voicePolishLevel: "opinionated",
@@ -349,6 +366,7 @@ export interface UpdateUserPreferencesInput {
   scratchpadCustomPrompt?: string | null
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number
+  messageCollapseThreshold?: number
   boardCardCollapseThreshold?: number
   voiceTranscriptionModel?: string | null
   voicePolishLevel?: VoicePolishLevel

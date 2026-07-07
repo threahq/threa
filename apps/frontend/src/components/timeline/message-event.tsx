@@ -51,6 +51,8 @@ import { LinkPreviewList } from "./link-preview-list"
 import { MemoPreviewList } from "./memo-preview-list"
 import { GiphyPreviewList } from "./giphy-preview-list"
 import { LinkPreviewProvider, useLinkPreviewContext } from "@/lib/markdown/link-preview-context"
+import { CollapsibleBody, useMessageCollapseThreshold } from "@/lib/markdown/collapsible-body"
+import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import { MessageContextMenu } from "./message-context-menu"
 import { SaveMessageButton } from "./save-message-button"
 import { ReminderPickerSheet } from "./reminder-picker-sheet"
@@ -555,15 +557,16 @@ function MessageLayout({
   // behave normally and the AttachmentList isn't part of `contentMarkdown`
   // anyway.
   const copyRef = useMessageMarkdownCopy(payload.contentMarkdown)
+  const messageCollapseThreshold = useMessageCollapseThreshold()
   const messageBody = children ?? (
     <LinkPreviewProvider>
       <AttachmentProvider workspaceId={workspaceId} attachments={payload.attachments ?? []}>
         <div ref={copyRef}>
-          <MarkdownContent
-            content={payload.contentMarkdown}
-            messageId={payload.messageId}
-            className="text-sm leading-relaxed"
-          />
+          <MarkdownBlockProvider messageId={payload.messageId}>
+            <CollapsibleBody kind="message" content={payload.contentMarkdown} threshold={messageCollapseThreshold}>
+              <MarkdownContent content={payload.contentMarkdown} className="text-sm leading-relaxed" />
+            </CollapsibleBody>
+          </MarkdownBlockProvider>
         </div>
         {attachmentRefs && attachmentRefs.length > 0 ? (
           // E2E attachments: the server rows are opaque placeholders (no

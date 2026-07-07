@@ -526,7 +526,7 @@ export interface CachedMarkdownBlockCollapse {
   messageId: string
   /** Block kind — lets us clear collapse state scoped to a block type. Mirrors
    * `MarkdownBlockKind` (kept as a literal here to keep the db layer dependency-free). */
-  kind: "code" | "blockquote" | "quote-reply" | "description" | "board-card"
+  kind: "code" | "blockquote" | "quote-reply" | "description" | "message" | "board-card"
   collapsed: boolean
   updatedAt: number
 }

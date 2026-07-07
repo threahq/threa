@@ -1,5 +1,3 @@
-import { useRef } from "react"
-import { ChevronDown, ChevronRight } from "lucide-react"
 import {
   DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD,
   type AuthorType,
@@ -11,9 +9,8 @@ import { useActors } from "@/hooks"
 import { useUserProfile } from "@/components/user-profile"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { triggerStyles, chipBase } from "@/lib/markdown/mention-renderer"
-import { useBlockCollapse } from "@/lib/markdown/use-block-collapse"
-import { useMeasuredLineCount } from "@/lib/markdown/use-measured-line-count"
-import { InsideCollapsibleBlockProvider, MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
+import { CollapsibleBody } from "@/lib/markdown/collapsible-body"
+import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 
 interface DescriptionSetEventProps {
   event: StreamEvent
@@ -64,56 +61,15 @@ function DescriptionActor({
 
 /**
  * Renders the description body with the normal message-markdown pipeline and
- * folds the whole block behind a Show more/less toggle past a line threshold —
- * the same measure-then-clamp mechanism code/quote blocks use (and persisted per
- * event via the shared block-collapse cache, so it survives the timeline
- * remounting rows under virtualization). Mounted inside a MarkdownBlockProvider
+ * folds the whole block behind a Show more/less toggle past a line threshold,
+ * via the shared {@link CollapsibleBody}. Mounted inside a MarkdownBlockProvider
  * keyed by the event id so any embedded code/quote blocks fold too.
  */
 function DescriptionBody({ markdown }: { markdown: string }) {
-  const bodyRef = useRef<HTMLDivElement | null>(null)
-  const { lineCount, lineHeightPx } = useMeasuredLineCount(bodyRef, [markdown])
-  const collapsible = lineCount !== null && lineCount > DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD + 0.5
-  const { collapsed, canToggle, toggle } = useBlockCollapse({ kind: "description", content: markdown, collapsible })
-
-  const collapsedMaxHeight =
-    collapsed && lineHeightPx !== null ? (DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD + 0.5) * lineHeightPx : undefined
-  const bodyExpandable = collapsed && canToggle
-
   return (
-    <div className="relative">
-      <InsideCollapsibleBlockProvider active={canToggle}>
-        <div
-          ref={bodyRef}
-          className={cn(collapsed && "overflow-hidden", bodyExpandable && "cursor-pointer")}
-          style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
-          onClick={bodyExpandable ? toggle : undefined}
-        >
-          <MarkdownContent content={markdown} className="text-sm leading-relaxed" />
-        </div>
-      </InsideCollapsibleBlockProvider>
-      {collapsed && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent to-background"
-        />
-      )}
-      {canToggle && (
-        <button
-          type="button"
-          onClick={toggle}
-          aria-expanded={!collapsed}
-          className="mt-1 flex cursor-pointer items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
-        >
-          {collapsed ? (
-            <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-          ) : (
-            <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
-          )}
-          {collapsed ? "Show more" : "Show less"}
-        </button>
-      )}
-    </div>
+    <CollapsibleBody kind="description" content={markdown} threshold={DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD}>
+      <MarkdownContent content={markdown} className="text-sm leading-relaxed" />
+    </CollapsibleBody>
   )
 }
 

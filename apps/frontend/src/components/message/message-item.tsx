@@ -13,6 +13,8 @@ import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
+import { CollapsibleBody, useMessageCollapseThreshold } from "@/lib/markdown/collapsible-body"
+import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import { LinkPreviewProvider } from "@/lib/markdown/link-preview-context"
 import { AttachmentList } from "@/components/timeline/attachment-list"
 import { LinkPreviewList } from "@/components/timeline/link-preview-list"
@@ -129,6 +131,11 @@ interface MessageItemProps {
    * content slides off it. Omitted where swipe isn't wired (the label page has no
    * quote provider, so the gesture is disabled). */
   surfaceClassName?: string
+  /** Tailwind `to-*` color the long-message collapse fade fades to — match the
+   * surface's own background (`to-card` on a board card; the default `to-background`
+   * in the conversation panel / label page), or the fold-edge gradient shows a band
+   * of the wrong color. */
+  bodyFadeClassName?: string
   /** Negative horizontal margin that breaks the row OUT of its surface's padding so
    * the actor accent (`rowAccent`) fills to the surface edges — the stream-view
    * look — instead of a padded-in block. Pair it with matching horizontal padding
@@ -165,10 +172,12 @@ export function MessageItem({
   conversationRootStreamId,
   isHighlighted,
   surfaceClassName,
+  bodyFadeClassName,
   rowInsetClassName,
   onNewSubtopic,
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
+  const messageCollapseThreshold = useMessageCollapseThreshold()
   const { openUserProfile } = useUserProfile()
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -526,7 +535,16 @@ export function MessageItem({
 
   const richBody = (
     <>
-      <MarkdownContent content={message.contentMarkdown} messageId={message.id} className="text-sm leading-relaxed" />
+      <MarkdownBlockProvider messageId={message.id}>
+        <CollapsibleBody
+          kind="message"
+          content={message.contentMarkdown}
+          threshold={messageCollapseThreshold}
+          fadeToClassName={bodyFadeClassName}
+        >
+          <MarkdownContent content={message.contentMarkdown} className="text-sm leading-relaxed" />
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
       {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
       {linkPreviews.length > 0 && (
         <LinkPreviewList
