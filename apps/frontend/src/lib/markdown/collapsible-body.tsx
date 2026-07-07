@@ -51,32 +51,37 @@ export function CollapsibleBody({
   const collapsedMaxHeight = collapsed && lineHeightPx !== null ? (threshold + 0.5) * lineHeightPx : undefined
 
   return (
-    <div className="relative">
+    <div>
+      {/* The fade is anchored to the body's own bottom (this inner relative wrapper),
+          NOT the outer container — the Show more/less button is a sibling BELOW the
+          wrapper, so the gradient never washes over it and the toggle stays legible. */}
       <InsideCollapsibleBlockProvider active={canToggle}>
-        {/* Expansion lives only on the explicit Show more/less button below — the
-            body itself is NOT click-to-toggle. A message body carries clickable
-            mentions/links (their onClick would double-fire with the fold) and, on
-            touch, receives the row's long-press → a synthetic post-press click
-            would toggle the fold. The button is always rendered when foldable, so
-            nothing is stranded. (CodeBlock keeps body-tap because code has neither
-            hazard and defers long-press via data-native-context.) */}
-        <div
-          ref={bodyRef}
-          className={cn(collapsed && "overflow-hidden")}
-          style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
-        >
-          {children}
+        <div className="relative">
+          {/* Expansion lives only on the explicit Show more/less button below — the
+              body itself is NOT click-to-toggle. A message body carries clickable
+              mentions/links (their onClick would double-fire with the fold) and, on
+              touch, receives the row's long-press → a synthetic post-press click
+              would toggle the fold. The button is always rendered when foldable, so
+              nothing is stranded. (CodeBlock keeps body-tap because code has neither
+              hazard and defers long-press via data-native-context.) */}
+          <div
+            ref={bodyRef}
+            className={cn(collapsed && "overflow-hidden")}
+            style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
+          >
+            {children}
+          </div>
+          {collapsed && (
+            <div
+              aria-hidden="true"
+              className={cn(
+                "pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent",
+                fadeToClassName
+              )}
+            />
+          )}
         </div>
       </InsideCollapsibleBlockProvider>
-      {collapsed && (
-        <div
-          aria-hidden="true"
-          className={cn(
-            "pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent",
-            fadeToClassName
-          )}
-        />
-      )}
       {canToggle && (
         <button
           type="button"
