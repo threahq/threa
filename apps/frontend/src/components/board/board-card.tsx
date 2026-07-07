@@ -415,7 +415,6 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
         // Break the row out of the card's p-3/p-4 padding and pad the content back in,
         // so an actor accent fills to the card edges (stream-view look) with rows aligned.
         surfaceClassName="bg-card px-3 sm:px-4"
-        bodyFadeClassName="to-card"
         rowInsetClassName="-mx-3 sm:-mx-4"
         onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
       />
@@ -440,7 +439,6 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
           conversationId={branch.conversationId}
           conversationRootStreamId={branch.threadStreamId}
           surfaceClassName="bg-card"
-          bodyFadeClassName="to-card"
           onNewSubtopic={
             canBranch
               ? () => inlineComposer.openNewSubtopic(message.streamId ?? branch.threadStreamId, message.id)

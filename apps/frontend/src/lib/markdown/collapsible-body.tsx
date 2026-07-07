@@ -16,13 +16,16 @@ interface CollapsibleBodyProps {
   threshold: number
   /** The rendered body (a `MarkdownContent`) measured and clamped by line count. */
   children: ReactNode
-  /**
-   * Tailwind `to-*` color the collapsed fade fades to — match the surface the
-   * body sits on (`to-background` in the timeline, `to-card` on a board card),
-   * or the gradient shows a band of the wrong color at the fold edge.
-   */
-  fadeToClassName?: string
 }
+
+// The collapsed body fades out its own bottom edge via a mask (the content goes
+// transparent), NOT a colored overlay gradient. A colored gradient has to match
+// the surface it sits on — and a timeline message sits on the actor accent tint,
+// a board card on `bg-card`, etc. — so any fixed target color shows a
+// wrong-colored band on some surface. Masking the content is surface-agnostic:
+// whatever is behind shows through, so it's correct everywhere. ~1.5rem of fade
+// at the very bottom, matching the half-line the clamp leaves as the "more" hint.
+const COLLAPSED_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 1.5rem), transparent)"
 
 /**
  * Folds a whole markdown body behind a Show more/less toggle past a rendered
@@ -33,13 +36,7 @@ interface CollapsibleBodyProps {
  * body is an active fold it marks its subtree inside-a-collapsible so nested
  * code/quote blocks skip their own chrome and the whole body folds as one unit.
  */
-export function CollapsibleBody({
-  kind,
-  content,
-  threshold,
-  children,
-  fadeToClassName = "to-background",
-}: CollapsibleBodyProps) {
+export function CollapsibleBody({ kind, content, threshold, children }: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const { lineCount, lineHeightPx } = useMeasuredLineCount(bodyRef, [content])
   // The extra half line keeps a barely-over body from sprouting a toggle that
@@ -52,34 +49,24 @@ export function CollapsibleBody({
 
   return (
     <div>
-      {/* The fade is anchored to the body's own bottom (this inner relative wrapper),
-          NOT the outer container — the Show more/less button is a sibling BELOW the
-          wrapper, so the gradient never washes over it and the toggle stays legible. */}
       <InsideCollapsibleBlockProvider active={canToggle}>
-        <div className="relative">
-          {/* Expansion lives only on the explicit Show more/less button below — the
-              body itself is NOT click-to-toggle. A message body carries clickable
-              mentions/links (their onClick would double-fire with the fold) and, on
-              touch, receives the row's long-press → a synthetic post-press click
-              would toggle the fold. The button is always rendered when foldable, so
-              nothing is stranded. (CodeBlock keeps body-tap because code has neither
-              hazard and defers long-press via data-native-context.) */}
-          <div
-            ref={bodyRef}
-            className={cn(collapsed && "overflow-hidden")}
-            style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
-          >
-            {children}
-          </div>
-          {collapsed && (
-            <div
-              aria-hidden="true"
-              className={cn(
-                "pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent",
-                fadeToClassName
-              )}
-            />
-          )}
+        {/* Expansion lives only on the explicit Show more/less button below — the
+            body itself is NOT click-to-toggle. A message body carries clickable
+            mentions/links (their onClick would double-fire with the fold) and, on
+            touch, receives the row's long-press → a synthetic post-press click
+            would toggle the fold. The button is always rendered when foldable, so
+            nothing is stranded. (CodeBlock keeps body-tap because code has neither
+            hazard and defers long-press via data-native-context.) */}
+        <div
+          ref={bodyRef}
+          className={cn(collapsed && "overflow-hidden")}
+          style={
+            collapsed
+              ? { maxHeight: collapsedMaxHeight, maskImage: COLLAPSED_FADE_MASK, WebkitMaskImage: COLLAPSED_FADE_MASK }
+              : undefined
+          }
+        >
+          {children}
         </div>
       </InsideCollapsibleBlockProvider>
       {canToggle && (

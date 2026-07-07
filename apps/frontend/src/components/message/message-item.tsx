@@ -131,11 +131,6 @@ interface MessageItemProps {
    * content slides off it. Omitted where swipe isn't wired (the label page has no
    * quote provider, so the gesture is disabled). */
   surfaceClassName?: string
-  /** Tailwind `to-*` color the long-message collapse fade fades to — match the
-   * surface's own background (`to-card` on a board card; the default `to-background`
-   * in the conversation panel / label page), or the fold-edge gradient shows a band
-   * of the wrong color. */
-  bodyFadeClassName?: string
   /** Negative horizontal margin that breaks the row OUT of its surface's padding so
    * the actor accent (`rowAccent`) fills to the surface edges — the stream-view
    * look — instead of a padded-in block. Pair it with matching horizontal padding
@@ -172,7 +167,6 @@ export function MessageItem({
   conversationRootStreamId,
   isHighlighted,
   surfaceClassName,
-  bodyFadeClassName,
   rowInsetClassName,
   onNewSubtopic,
 }: MessageItemProps) {
@@ -536,12 +530,7 @@ export function MessageItem({
   const richBody = (
     <>
       <MarkdownBlockProvider messageId={message.id}>
-        <CollapsibleBody
-          kind="message"
-          content={message.contentMarkdown}
-          threshold={messageCollapseThreshold}
-          fadeToClassName={bodyFadeClassName}
-        >
+        <CollapsibleBody kind="message" content={message.contentMarkdown} threshold={messageCollapseThreshold}>
           <MarkdownContent content={message.contentMarkdown} className="text-sm leading-relaxed" />
         </CollapsibleBody>
       </MarkdownBlockProvider>

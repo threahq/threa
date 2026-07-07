@@ -375,7 +375,6 @@ function MessagesSection({
             authorName={getActorName(message.authorId, message.authorType)}
             currentUserId={currentUserId}
             streamLabel={resolveMessageStream(message.streamId)}
-            bodyFadeClassName="to-card"
           />
         </div>
       ))}
