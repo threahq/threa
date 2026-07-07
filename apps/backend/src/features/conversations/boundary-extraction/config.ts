@@ -104,6 +104,71 @@ When you set newConversationTopic, write a short title of 2-5 words that names t
 
 Respond with ONLY the JSON object. No explanation, no markdown code blocks.`
 
+// --- On-demand conversation split (agent-proposed) -------------------------
+// Re-cluster the messages of ONE existing conversation into ≥1 topic group, in
+// a single batch call. Reuses the boundary model/temperature above (the tuned
+// clustering model) but a batch-shaped prompt: the incremental extractor sees
+// one new message against candidates, this sees a whole conversation at once.
+// The result is a PROPOSAL — the user confirms before anything is written.
+
+export const CONVERSATION_SPLIT_SYSTEM_PROMPT = `You are a conversation boundary analyst. You are given the full message history of ONE conversation that may have drifted across several distinct topics, and you regroup its messages into the smaller conversations they should have been. You output ONLY valid JSON matching the required schema. No explanations, no markdown, no prose - just the JSON object.`
+
+export const CONVERSATION_SPLIT_PROMPT = `Below is the complete message history of a single conversation, in chronological order. It may have grown to cover several distinct topics that each deserve their own conversation. Partition the messages into the smallest number of coherent topic groups that each stand on their own.
+
+## Conversation
+Current title: {{TITLE}}
+{{SUMMARY}}
+
+## Messages
+{{MESSAGES}}
+
+## How to group
+- **One group per distinct topic.** A group is a set of messages that advance the SAME question or aspect — a back-and-forth exchange, both participants' turns included. Keep an exchange whole: never split one live exchange so one side's turns land in a different group than the other's.
+- **A shared name is not a shared topic.** A person, product, model, project, or place named across messages is a SUBJECT, not a topic. "Fable is cheaper now", "does Fable handle Swedish?", and "Fable is down again" are three groups that merely share the word "Fable". Group by the specific question being advanced, not by the recurring name.
+- **Session gaps are evidence.** Messages carry an age. A gap of hours, an afternoon, overnight, or a weekend between turns usually marks a new topic even between the same people — prefer a new group across a large gap unless the later message explicitly resumes the earlier one's specific subject.
+- **Do not over-split.** A brief reaction, agreement, or follow-up ("samma här", "haha", "100%", "sounds good") belongs in the exchange it answers, not its own group. Only cut where the subject genuinely changes.
+- **Do not force a split.** If the whole conversation really is one topic, return a SINGLE group containing every message. Returning one group means "no split needed" and is a valid, common answer.
+- **Every message goes in exactly one group.** Assign each message id to one and only one group; do not drop any and do not repeat any.
+
+## Naming each group
+Write a 2-5 word title naming the topic itself. Never exceed 5 words.
+- Lead with the subject. No framing ("Discussion about", "Chat about", "Thoughts on") and no tone labels ("Casual chat", "Quick question").
+- Never a vague catch-all ("General chat", "Reaction", "Misc", "Off-topic") — name the concrete subject the messages are about.
+- Name the specific aspect, not a bare recurring name: "Fable-priser", "Fable på svenska", never "Fable" alone.
+- Do NOT state the language ("in Swedish"). Write the title in the conversation's own dominant language, keeping names, products, and technical terms exactly as they appear.
+
+## Output Requirements
+- groups: Array of {title, summary, messageIds}. At least one group. Order groups from the most central/largest topic to the most peripheral.
+  - title: 2-5 word topic title (see above).
+  - summary: one sentence stating what the group is about, in the conversation's own language.
+  - messageIds: the ids of the messages in this group, taken verbatim from the Messages list.
+- confidence: 0.0 to 1.0 confidence in this grouping overall.
+- reasoning: one brief sentence on why you split (or didn't).
+
+Respond with ONLY the JSON object. No explanation, no markdown code blocks.`
+
+export const conversationSplitResponseSchema = z.object({
+  groups: z
+    .array(
+      z
+        .object({
+          title: z.string().describe("2-5 word topic title in the conversation's own language, proper nouns verbatim"),
+          summary: z.string().nullable().describe("One-sentence summary of what this group is about, or null"),
+          messageIds: z
+            .array(z.string())
+            .min(1)
+            .describe("Ids of the messages in this group, verbatim from the prompt"),
+        })
+        .strict()
+    )
+    .min(1)
+    .describe("≥1 topic group; a single group means no split is needed. Order most-central topic first"),
+  confidence: z.number().min(0).max(1).describe("Overall confidence in this grouping (0.0 to 1.0)"),
+  reasoning: z.string().nullable().describe("One-sentence rationale for the split (or for leaving it whole)"),
+})
+
+export type ConversationSplitResponse = z.infer<typeof conversationSplitResponseSchema>
+
 export const messageAssignmentSchema = z
   .object({
     conversationId: z.string().nullable().describe("Existing conversation ID, or null to create a new one"),

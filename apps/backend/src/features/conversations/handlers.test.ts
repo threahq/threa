@@ -63,6 +63,11 @@ describe("Conversation Handlers", () => {
       updateConversation: mockUpdateConversation,
       splitThreadIntoConversation: mockSplitThread,
     } as never,
+    boundaryExtractionService: {
+      proposeSplit: mock(() =>
+        Promise.resolve({ conversationId: "conv_1", groups: [], confidence: 1, reasoning: null })
+      ),
+    } as never,
     boardExclusionService: {
       hideConversation: mockHideConversation,
       unhideConversation: mockUnhideConversation,

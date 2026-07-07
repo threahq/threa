@@ -638,6 +638,14 @@ export async function startServer(): Promise<ServerInstance> {
   // so both transports persist through the identical path (INV-13).
   const botRuntimeWriteOps = createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
 
+  // Constructed here (not at the worker registration below) so the HTTP routes can
+  // reach it for the on-demand conversation-split endpoints; the boundary-extract
+  // worker reuses the same instance (INV-13).
+  const boundaryExtractor = config.useStubBoundaryExtraction
+    ? new StubBoundaryExtractor()
+    : new LLMBoundaryExtractor(ai, configResolver)
+  const boundaryExtractionService = new BoundaryExtractionService(pool, boundaryExtractor)
+
   registerRoutes(app, {
     pool,
     io,
@@ -650,6 +658,7 @@ export async function startServer(): Promise<ServerInstance> {
     searchService,
     memoExplorerService,
     conversationService,
+    boundaryExtractionService,
     userPreferencesService,
     workspaceSettingsService,
     featureFlagService,
@@ -905,10 +914,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  const boundaryExtractor = config.useStubBoundaryExtraction
-    ? new StubBoundaryExtractor()
-    : new LLMBoundaryExtractor(ai, configResolver)
-  const boundaryExtractionService = new BoundaryExtractionService(pool, boundaryExtractor)
   const boundaryExtractionWorker = createBoundaryExtractionWorker({ service: boundaryExtractionService })
   jobQueue.registerHandler(JobQueues.BOUNDARY_EXTRACT, boundaryExtractionWorker, {
     tier: QueueTiers.LIGHT,

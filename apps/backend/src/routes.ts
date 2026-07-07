@@ -21,7 +21,7 @@ import { createAttachmentHandlers } from "./features/attachments"
 import { createSearchHandlers } from "./features/search"
 import { createMemoHandlers } from "./features/memos"
 import { createEmojiHandlers } from "./features/emoji"
-import { createConversationHandlers, BoardExclusionService } from "./features/conversations"
+import { createConversationHandlers, BoardExclusionService, BoundaryExtractionService } from "./features/conversations"
 import { CommandAvailabilityService, createCommandHandlers } from "./features/commands"
 import { createUserPreferencesHandlers } from "./features/user-preferences"
 import { createWorkspaceSettingsHandlers } from "./features/workspace-settings"
@@ -113,6 +113,7 @@ interface Dependencies {
   searchService: SearchService
   memoExplorerService: MemoExplorerService
   conversationService: ConversationService
+  boundaryExtractionService: BoundaryExtractionService
   userPreferencesService: UserPreferencesService
   workspaceSettingsService: WorkspaceSettingsService
   featureFlagService: FeatureFlagService
@@ -173,6 +174,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     searchService,
     memoExplorerService,
     conversationService,
+    boundaryExtractionService,
     userPreferencesService,
     workspaceSettingsService,
     featureFlagService,
@@ -279,6 +281,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const boardExclusionService = new BoardExclusionService(pool)
   const conversation = createConversationHandlers({
     conversationService,
+    boundaryExtractionService,
     boardExclusionService,
     streamService,
     featureFlagService,
@@ -536,6 +539,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     conversation.splitThread
   )
   app.post("/api/workspaces/:workspaceId/conversations/reassign-messages", ...authed, conversation.reassignMessages)
+  app.post(
+    "/api/workspaces/:workspaceId/conversations/:conversationId/split-proposal",
+    ...authed,
+    conversation.proposeSplit
+  )
+  app.post("/api/workspaces/:workspaceId/conversations/:conversationId/split", ...authed, conversation.applySplit)
   app.post("/api/workspaces/:workspaceId/conversations/:conversationId/read", ...authed, conversation.markRead)
   app.post("/api/workspaces/:workspaceId/conversations/:conversationId/unread", ...authed, conversation.markUnread)
 

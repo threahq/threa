@@ -158,6 +158,47 @@ export interface ExtractionContext {
   workspaceId: string
 }
 
+/**
+ * One proposed topic group from an on-demand conversation split. `messageIds` is
+ * a subset of the source conversation's messages; across a proposal the groups
+ * partition the conversation (every message in exactly one group). `title`/`summary`
+ * are model-generated and shown to the user for confirmation before any write.
+ */
+export interface SplitGroup {
+  title: string
+  summary?: string
+  messageIds: string[]
+}
+
+/** Input for a batch split: the full message set of one existing conversation. */
+export interface SplitContext {
+  conversationId: string
+  topicSummary: string | null
+  summary: string | null
+  /** The conversation's messages, in chronological (timeline) order. */
+  messages: Message[]
+  streamType: string
+  /** Workspace ID for cost attribution (INV-19). */
+  workspaceId: string
+}
+
+/**
+ * A proposed split of one conversation. `groups` is ordered most-central-topic
+ * first and always partitions the input messages; a single group means the model
+ * judged the conversation focused enough to leave whole (no split).
+ */
+export interface SplitProposal {
+  groups: SplitGroup[]
+  confidence: number
+  reasoning: string | null
+}
+
 export interface BoundaryExtractor {
   extract(context: ExtractionContext): Promise<ExtractionResult>
+  /**
+   * Re-cluster an existing conversation's messages into ≥1 topic group. Read-only
+   * (returns a proposal; the caller applies it after user confirmation). Reuses the
+   * boundary clustering model — see {@link BoundaryExtractor.extract}.
+   */
+  splitConversation(context: SplitContext): Promise<SplitProposal>
 }

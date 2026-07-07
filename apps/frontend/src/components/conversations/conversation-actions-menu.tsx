@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { CircleCheck, Eye, EyeOff, EllipsisVertical, Pencil, RotateCcw } from "lucide-react"
+import { CircleCheck, Eye, EyeOff, EllipsisVertical, Pencil, RotateCcw, Sparkles } from "lucide-react"
 import { ConversationStatuses, MAX_CONVERSATION_TOPIC_LENGTH } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -20,10 +20,14 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
 import { useUpdateConversation, useHideConversation, useUnhideConversation } from "@/hooks/use-conversations"
+import { ConversationSplitDialog } from "./conversation-split-dialog"
 
 interface ConversationActionsMenuProps {
   workspaceId: string
   conversationId: string
+  /** The conversation's stream — the anchor for the AI-split mint. Omit to hide
+   *  the "Split with AI" item (surfaces without a resolved stream id). */
+  streamId?: string
   /** Current topic — prefilled into the rename dialog; null renders as empty. */
   topicSummary: string | null
   /** Current status — selects the resolve vs. reopen item. */
@@ -45,12 +49,14 @@ interface ConversationActionsMenuProps {
 export function ConversationActionsMenu({
   workspaceId,
   conversationId,
+  streamId,
   topicSummary,
   status,
   isHidden = false,
   triggerClassName,
 }: ConversationActionsMenuProps) {
   const [renameOpen, setRenameOpen] = useState(false)
+  const [splitOpen, setSplitOpen] = useState(false)
   const update = useUpdateConversation(workspaceId)
   const hide = useHideConversation(workspaceId)
   const unhide = useUnhideConversation(workspaceId)
@@ -92,6 +98,18 @@ export function ConversationActionsMenu({
             {resolved ? <RotateCcw className="h-4 w-4" /> : <CircleCheck className="h-4 w-4" />}
             {resolved ? "Reopen" : "Mark resolved"}
           </DropdownMenuItem>
+          {streamId && (
+            <DropdownMenuItem
+              onSelect={(event) => {
+                // Defer past the menu close so focus returns to the trigger first.
+                event.preventDefault()
+                setSplitOpen(true)
+              }}
+            >
+              <Sparkles className="h-4 w-4" />
+              Split with AI…
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => (isHidden ? unhide.mutate(conversationId) : hide.mutate(conversationId))}>
             {isHidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
@@ -105,6 +123,15 @@ export function ConversationActionsMenu({
         initialTopic={topicSummary ?? ""}
         onSave={(next) => update.mutate({ conversationId, topicSummary: next })}
       />
+      {streamId && (
+        <ConversationSplitDialog
+          workspaceId={workspaceId}
+          streamId={streamId}
+          conversationId={splitOpen ? conversationId : null}
+          open={splitOpen}
+          onOpenChange={setSplitOpen}
+        />
+      )}
     </>
   )
 }

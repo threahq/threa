@@ -22,6 +22,9 @@ export type {
   MessageAssignment,
   Reassignment,
   ReplyTarget,
+  SplitContext,
+  SplitProposal,
+  SplitGroup,
 } from "./boundary-extraction/types"
 export {
   BOUNDARY_EXTRACTION_MODEL_ID,
@@ -29,8 +32,11 @@ export {
   BOUNDARY_EXTRACTION_SYSTEM_PROMPT,
   BOUNDARY_EXTRACTION_PROMPT,
   extractionResponseSchema,
+  CONVERSATION_SPLIT_SYSTEM_PROMPT,
+  CONVERSATION_SPLIT_PROMPT,
+  conversationSplitResponseSchema,
 } from "./boundary-extraction/config"
-export type { ExtractionResponse } from "./boundary-extraction/config"
+export type { ExtractionResponse, ConversationSplitResponse } from "./boundary-extraction/config"
 
 export { BoundaryExtractionHandler } from "./boundary-extraction-outbox-handler"
 export type { BoundaryExtractionHandlerConfig } from "./boundary-extraction-outbox-handler"

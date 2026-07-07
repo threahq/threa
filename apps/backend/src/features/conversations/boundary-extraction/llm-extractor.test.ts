@@ -752,6 +752,97 @@ describe("LLMBoundaryExtractor", () => {
   })
 })
 
+describe("LLMBoundaryExtractor.splitConversation", () => {
+  let extractor: LLMBoundaryExtractor
+
+  beforeEach(() => {
+    mockGenerateObject.mockReset()
+    extractor = new LLMBoundaryExtractor(mockAI as AI, mockConfigResolver)
+  })
+
+  function splitContext(ids: string[]) {
+    return {
+      conversationId: "conv_split",
+      topicSummary: "Fable",
+      summary: null,
+      messages: ids.map((id, i) =>
+        createMockMessage({ id, contentMarkdown: `msg ${id}`, createdAt: new Date(1_700_000_000_000 + i * 60_000) })
+      ),
+      streamType: "channel",
+      workspaceId: "wsp_test123",
+    }
+  }
+
+  test("returns a single group without an AI call for a short conversation", async () => {
+    const result = await extractor.splitConversation(splitContext(["m1", "m2", "m3"]))
+    expect(mockGenerateObject).not.toHaveBeenCalled()
+    expect(result.groups).toHaveLength(1)
+    expect(result.groups[0].messageIds).toEqual(["m1", "m2", "m3"])
+  })
+
+  test("partitions the model's groups and orders them largest-first", async () => {
+    mockGenerateObject.mockResolvedValueOnce({
+      value: {
+        groups: [
+          { title: "Small", summary: null, messageIds: ["m1"] },
+          { title: "Big", summary: "the bulk", messageIds: ["m2", "m3", "m4"] },
+        ],
+        confidence: 0.8,
+        reasoning: "two topics",
+      },
+      response: { usage: {} },
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    })
+
+    const result = await extractor.splitConversation(splitContext(["m1", "m2", "m3", "m4"]))
+
+    expect(result.groups.map((g) => g.title)).toEqual(["Big", "Small"])
+    expect(result.groups[0].messageIds).toEqual(["m2", "m3", "m4"])
+    expect(result.groups[1].messageIds).toEqual(["m1"])
+  })
+
+  test("drops unknown ids, dedupes across groups, and sweeps unassigned into the largest group", async () => {
+    mockGenerateObject.mockResolvedValueOnce({
+      value: {
+        groups: [
+          { title: "A", summary: null, messageIds: ["m1", "m2", "ghost"] },
+          // m2 repeated (first group wins); m5 unknown; m3 legitimately in B.
+          { title: "B", summary: null, messageIds: ["m2", "m3", "m5"] },
+        ],
+        confidence: 0.7,
+        reasoning: null,
+      },
+      response: { usage: {} },
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    })
+
+    // m4 is never mentioned by the model → swept into the largest group.
+    const result = await extractor.splitConversation(splitContext(["m1", "m2", "m3", "m4"]))
+
+    const allAssigned = result.groups.flatMap((g) => g.messageIds).sort()
+    expect(allAssigned).toEqual(["m1", "m2", "m3", "m4"])
+    // No id appears twice; no unknown id survives.
+    expect(new Set(allAssigned).size).toBe(4)
+    // Largest group ("A": m1,m2 + swept m4) leads.
+    expect(result.groups[0].messageIds).toContain("m4")
+  })
+
+  test("degrades to a single group when the response is unparseable", async () => {
+    mockGenerateObject.mockRejectedValueOnce(
+      new NoObjectGeneratedError({
+        message: "bad",
+        text: "not json",
+        response: {} as never,
+        usage: {} as never,
+        finishReason: "stop",
+      })
+    )
+    const result = await extractor.splitConversation(splitContext(["m1", "m2", "m3", "m4"]))
+    expect(result.groups).toHaveLength(1)
+    expect(result.groups[0].messageIds).toEqual(["m1", "m2", "m3", "m4"])
+  })
+})
+
 describe("formatRelativeAge", () => {
   const reference = new Date("2026-07-01T12:00:00Z")
 

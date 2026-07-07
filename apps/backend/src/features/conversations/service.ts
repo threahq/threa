@@ -13,6 +13,7 @@ import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { conversationFeedbackId, conversationId as generateConversationId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
+import { logger } from "../../lib/logger"
 import {
   ConversationStatuses,
   StreamTypes,
@@ -153,6 +154,35 @@ export interface ReassignMessagesResult {
   conversation: ConversationWithStaleness
   /** Every source conversation that lost members, with final membership. */
   sourceConversations: ConversationWithStaleness[]
+}
+
+/** One confirmed topic group from an AI split proposal (see {@link ConversationService.applySplit}). */
+export interface ApplySplitGroup {
+  /** Model-proposed (user-confirmable) title for the group. */
+  title: string
+  summary?: string
+  /** Messages assigned to this group — a subset of the source conversation. */
+  messageIds: string[]
+}
+
+export interface ApplySplitParams {
+  workspaceId: string
+  /** The stream the source conversation and every message live in. */
+  streamId: string
+  /** The conversation being split. */
+  conversationId: string
+  /** ≥2 groups partitioning the split messages; `groups[0]` is kept in the source
+   *  conversation (re-titled), the rest are minted as new conversations. */
+  groups: ApplySplitGroup[]
+  /** The splitting user — recorded with each moved message's feedback row. */
+  actorUserId: string
+}
+
+export interface ApplySplitResult {
+  /** The source conversation, re-titled to the kept group, with final membership. */
+  conversation: ConversationWithStaleness
+  /** The freshly minted conversations, one per moved group, in group order. */
+  newConversations: ConversationWithStaleness[]
 }
 
 /**
@@ -1032,6 +1062,204 @@ export class ConversationService {
         .map(addStalenessFields)
 
       return { conversation: addStalenessFields(finalDestination), sourceConversations }
+    })
+  }
+
+  /**
+   * Apply a user-confirmed AI split proposal: partition ONE conversation's
+   * messages into the confirmed groups. `groups[0]` stays in the source
+   * conversation (re-titled to its group); every later group is minted as a new
+   * titled conversation and its messages moved in. Membership-only, like
+   * {@link reassignMessagesToConversation} — no message events move, so broadcast
+   * sequences and INV-61 contiguity are untouched.
+   *
+   * Concurrency (INV-20): the source conversation is locked BEFORE the message
+   * rows (conversation-first, matching {@link reassignMessagesToConversation} and
+   * {@link splitThreadIntoConversation}); the destinations are fresh mints with no
+   * pre-existing row to contend for, so the single source lock is the whole
+   * conversation lock set and the order is trivially deadlock-free. Membership is
+   * re-read authoritatively once the rows are pinned: a message that raced OUT of
+   * the source between propose and apply is simply skipped, never yanked from
+   * wherever it now lives. All member/feedback writes and outbox events commit in
+   * one transaction (INV-6/7), delivered via the outbox (INV-4).
+   */
+  async applySplit(params: ApplySplitParams): Promise<ApplySplitResult> {
+    const { workspaceId, streamId, conversationId, groups, actorUserId } = params
+
+    return withTransaction(this.pool, async (client) => {
+      const source = await ConversationRepository.findByIdForUpdate(client, workspaceId, conversationId)
+      if (!source) {
+        throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+      }
+      if (source.streamId !== streamId) {
+        throw new HttpError("Conversation is not in this stream", {
+          status: 400,
+          code: "CONVERSATION_NOT_IN_STREAM",
+        })
+      }
+
+      const allIds = [...new Set(groups.flatMap((g) => g.messageIds))]
+      const lockedMessages = await MessageRepository.findByIdsForUpdate(client, allIds)
+      if (lockedMessages.length !== allIds.length) {
+        throw new HttpError("Some selected messages were not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+      }
+      const messageById = new Map(lockedMessages.map((m) => [m.id, m]))
+      for (const message of lockedMessages) {
+        if (message.streamId !== streamId) {
+          throw new HttpError("All selected messages must belong to the same stream", {
+            status: 400,
+            code: "MESSAGE_NOT_IN_STREAM",
+          })
+        }
+      }
+
+      // Authoritative membership now the rows are pinned: only messages still
+      // primary in the source are moved; movers that raced out are skipped.
+      const primaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, allIds)
+      const inSource = new Set(allIds.filter((id) => primaries.get(id)?.id === source.id))
+
+      // groups[0] stays in the source; later groups mint. Filter each moved group
+      // to messages still in the source and drop groups left empty.
+      const [keepGroup, ...restGroups] = groups
+      const moveGroups = restGroups
+        .map((g) => ({ ...g, messageIds: g.messageIds.filter((id) => inSource.has(id)) }))
+        .filter((g) => g.messageIds.length > 0)
+
+      if (moveGroups.length === 0) {
+        // Every message that would have moved raced out from under us (or the
+        // split collapsed to one group). Nothing to do — surface a conflict rather
+        // than silently re-titling the source to a stale proposal.
+        throw new HttpError("The selected messages are no longer available to split", {
+          status: 409,
+          code: "NO_MESSAGES_TO_MOVE",
+        })
+      }
+
+      const movingIds = moveGroups.flatMap((g) => g.messageIds)
+      const movingSet = new Set(movingIds)
+      const remainingSourceIds = source.messageIds.filter((id) => !movingSet.has(id))
+
+      // Authors for the participant recompute: everything staying in the source
+      // plus every moved message (each mint SETs its own participant list).
+      const authorLookupIds = new Set<string>([...source.messageIds, ...movingIds])
+      const memberMessages = await MessageRepository.findByIds(client, [...authorLookupIds])
+
+      // Strip movers from the source, recompute its remaining participants, and
+      // re-title it to the kept group; resolve it if the split emptied it.
+      await ConversationRepository.removePrimaryMessages(
+        client,
+        workspaceId,
+        source.id,
+        movingIds,
+        distinctAuthors(remainingSourceIds, memberMessages)
+      )
+      await ConversationRepository.update(client, workspaceId, source.id, {
+        topicSummary: keepGroup.title,
+        summary: keepGroup.summary,
+      })
+      await ConversationRepository.resolveIfEmpty(client, workspaceId, source.id)
+
+      // Mint one titled conversation per moved group, tracking where each id lands
+      // for the feedback rows.
+      const movedTo = new Map<string, string>()
+      const mintedIds: string[] = []
+      for (const g of moveGroups) {
+        const minted = await ConversationRepository.insert(client, {
+          id: generateConversationId(),
+          streamId,
+          workspaceId,
+          topicSummary: g.title,
+          summary: g.summary,
+          confidence: 1,
+          status: ConversationStatuses.ACTIVE,
+        })
+        await ConversationRepository.addPrimaryMessages(
+          client,
+          workspaceId,
+          minted.id,
+          g.messageIds,
+          distinctAuthors(g.messageIds, memberMessages)
+        )
+        mintedIds.push(minted.id)
+        for (const id of g.messageIds) movedTo.set(id, minted.id)
+      }
+
+      // One feedback row per moved message (parity with the other correction paths).
+      await ConversationFeedbackRepository.insertMany(
+        client,
+        movingIds.map((id) => ({
+          id: conversationFeedbackId(),
+          workspaceId,
+          streamId: messageById.get(id)!.streamId,
+          messageId: id,
+          fromConversationId: source.id,
+          toConversationId: movedTo.get(id)!,
+          userId: actorUserId,
+        }))
+      )
+
+      const touchedIds = [source.id, ...mintedIds]
+      await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
+
+      // Re-read every touched row post-write so the events carry final membership.
+      const finalById = new Map(
+        (await ConversationRepository.findByIds(client, workspaceId, touchedIds)).map((c) => [c.id, c])
+      )
+      const finalSource = finalById.get(source.id)
+      if (!finalSource) {
+        throw new Error(`Conversation ${source.id} disappeared during split`)
+      }
+
+      // Everything shares one stream (guarded above), so one delivery resolution
+      // covers every event (INV-62), as in {@link reassignMessagesToConversation}.
+      const stream = await StreamRepository.findById(client, streamId)
+      const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
+
+      for (const mintedId of mintedIds) {
+        const minted = finalById.get(mintedId)
+        if (!minted) continue
+        await OutboxRepository.insert(client, "conversation:created", {
+          workspaceId,
+          streamId: minted.streamId,
+          conversationId: minted.id,
+          conversation: addStalenessFields(minted),
+          parentStreamId,
+          streamVisibility,
+        })
+      }
+
+      await OutboxRepository.insert(client, "conversation:updated", {
+        workspaceId,
+        streamId: finalSource.streamId,
+        conversationId: finalSource.id,
+        conversation: addStalenessFields(finalSource),
+        parentStreamId,
+        streamVisibility,
+      })
+
+      // Per-message move events route to each message's own stream (for the
+      // timeline membership map + extraction feedback), mirroring the other paths.
+      for (const id of movingIds) {
+        await OutboxRepository.insert(client, "conversation:message_reassigned", {
+          workspaceId,
+          streamId: messageById.get(id)!.streamId,
+          messageId: id,
+          fromConversationId: source.id,
+          toConversationId: movedTo.get(id)!,
+          reason: "user_correction",
+        })
+      }
+
+      const newConversations = mintedIds
+        .map((id) => finalById.get(id))
+        .filter((c): c is Conversation => c !== undefined)
+        .map(addStalenessFields)
+
+      logger.info(
+        { conversationId: source.id, movedGroups: moveGroups.length, movedMessages: movingIds.length },
+        "Conversation split applied"
+      )
+      return { conversation: addStalenessFields(finalSource), newConversations }
     })
   }
 

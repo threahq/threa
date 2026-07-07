@@ -528,6 +528,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
               <ConversationActionsMenu
                 workspaceId={workspaceId}
                 conversationId={conversation.id}
+                streamId={conversation.streamId}
                 topicSummary={conversation.topicSummary}
                 status={conversation.status}
                 triggerClassName="shrink-0"

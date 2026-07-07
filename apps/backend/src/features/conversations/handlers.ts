@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { ConversationService } from "./service"
+import type { BoundaryExtractionService } from "./boundary-extraction-service"
 import type { BoardExclusionService } from "./board-exclusion-service"
 import type { StreamService } from "../streams"
 import type { FeatureFlagService } from "../feature-flags"
@@ -100,6 +101,39 @@ const reassignMessagesSchema = z.object({
   targetConversationId: z.string().min(1).nullish(),
 })
 
+const proposeSplitParamsSchema = z.object({
+  conversationId: z.string().min(1),
+})
+
+// Apply a user-confirmed AI split: ≥2 groups partitioning the conversation's
+// messages. `groups[0]` is kept in the source (re-titled); the rest are minted.
+// Every message id appears in exactly one group; total capped like the move flow.
+const applySplitParamsSchema = z.object({
+  conversationId: z.string().min(1),
+})
+const applySplitSchema = z
+  .object({
+    groups: z
+      .array(
+        z.object({
+          title: z.string().trim().min(1).max(MAX_CONVERSATION_TOPIC_LENGTH),
+          summary: z.string().trim().min(1).optional(),
+          messageIds: z.array(z.string().min(1)).min(1),
+        })
+      )
+      .min(2)
+      .max(50),
+  })
+  .superRefine((body, ctx) => {
+    const all = body.groups.flatMap((g) => g.messageIds)
+    if (all.length > 500) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "groups name at most 500 messages in total" })
+    }
+    if (new Set(all).size !== all.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "each message may appear in only one group" })
+    }
+  })
+
 const markReadSchema = z.object({
   throughMessageId: z.string().min(1),
 })
@@ -128,6 +162,7 @@ const muteStreamParamsSchema = z.object({ streamId: z.string().min(1) })
 
 interface Dependencies {
   conversationService: ConversationService
+  boundaryExtractionService: BoundaryExtractionService
   boardExclusionService: BoardExclusionService
   streamService: StreamService
   featureFlagService: FeatureFlagService
@@ -135,6 +170,7 @@ interface Dependencies {
 
 export function createConversationHandlers({
   conversationService,
+  boundaryExtractionService,
   boardExclusionService,
   streamService,
   featureFlagService,
@@ -328,6 +364,62 @@ export function createConversationHandlers({
         streamId,
         messageIds,
         target,
+        actorUserId: userId,
+      })
+      res.json(result)
+    },
+
+    /**
+     * Ask the clustering model how a conversation should be split into smaller
+     * topics. Read-only — returns a proposal the client renders for confirmation;
+     * nothing is written until {@link applySplit}. A single-group proposal means
+     * "no split suggested". Access gates on the conversation's root stream (INV-62).
+     */
+    async proposeSplit(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const { conversationId } = validateRequest(proposeSplitParamsSchema, req.params)
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+
+      // validateStreamAccess handles public visibility + thread root membership
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const proposal = await boundaryExtractionService.proposeSplit(conversationId, workspaceId)
+      res.json(proposal)
+    },
+
+    /**
+     * Apply a user-confirmed split proposal: keep the first group in the source
+     * conversation (re-titled) and mint the rest as new titled conversations. The
+     * source stream is derived from the conversation itself (the mint anchor), so
+     * the body carries only the confirmed groups. Access gates on the conversation's
+     * root stream (INV-62), like {@link reassignMessage}.
+     */
+    async applySplit(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const { conversationId } = validateRequest(applySplitParamsSchema, req.params)
+      const { groups } = validateRequest(applySplitSchema, req.body)
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+
+      // validateStreamAccess handles public visibility + thread root membership
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const result = await conversationService.applySplit({
+        workspaceId,
+        streamId: conversation.streamId,
+        conversationId,
+        groups,
         actorUserId: userId,
       })
       res.json(result)

@@ -1,4 +1,4 @@
-import type { BoundaryExtractor, ExtractionContext, ExtractionResult } from "./types"
+import type { BoundaryExtractor, ExtractionContext, ExtractionResult, SplitContext, SplitProposal } from "./types"
 import { logger } from "../../../lib/logger"
 import { StreamTypes } from "@threa/types"
 
@@ -37,6 +37,32 @@ export class StubBoundaryExtractor implements BoundaryExtractor {
       assignments: [{ conversationId: null, isPrimary: true }],
       newConversationTopic: this.extractTopic(context.newMessage.contentMarkdown),
       confidence: 1.0,
+    }
+  }
+
+  /**
+   * Deterministic stand-in for the batch split: halve a conversation of ≥4
+   * messages into two groups, otherwise leave it whole (one group). No language
+   * judgement — just enough structure for the propose/apply flow to be tested.
+   */
+  async splitConversation(context: SplitContext): Promise<SplitProposal> {
+    logger.debug({ conversationId: context.conversationId }, "Using stub boundary extractor for split")
+    const ids = context.messages.map((m) => m.id)
+    if (ids.length < 4) {
+      return {
+        groups: [{ title: context.topicSummary ?? "Conversation", messageIds: ids }],
+        confidence: 1.0,
+        reasoning: "Too short to split (stub).",
+      }
+    }
+    const mid = Math.ceil(ids.length / 2)
+    return {
+      groups: [
+        { title: context.topicSummary ?? "First topic", messageIds: ids.slice(0, mid) },
+        { title: "Second topic", messageIds: ids.slice(mid) },
+      ],
+      confidence: 1.0,
+      reasoning: "Stub even split.",
     }
   }
 
