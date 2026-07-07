@@ -98,6 +98,13 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: bun run --bun playwright install chromium
 
+      - name: Drop flaky Microsoft apt repos
+        # The Azure-hosted runner ships Microsoft apt repos (azure-cli, prod)
+        # whose signature check intermittently fails ("NOSPLIT"), which aborts
+        # the apt-get run inside `playwright install-deps` with exit 100. They're
+        # unrelated to the browser deps, so remove them before installing.
+        run: sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* || true
+
       - name: Install Playwright system dependencies
         run: bun run --bun playwright install-deps chromium
 
