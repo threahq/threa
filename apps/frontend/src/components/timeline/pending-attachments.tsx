@@ -43,22 +43,34 @@ function PendingImageThumbnail({
 }) {
   const isUploading = attachment.status === "uploading"
   const isError = attachment.status === "error"
+  // Mirror the pill's generic-error fallback so an image that fails upload
+  // surfaces the same explanation the pill would, rather than a bare icon.
+  const isGenericError =
+    isError &&
+    (attachment.error === "Internal server error" || attachment.error === "Upload failed" || !attachment.error)
+  let errorText: string | undefined
+  if (isError) {
+    errorText = isGenericError ? "We couldn't upload this file. Please remove it and try again." : attachment.error
+  }
 
   const tile = (
     <div
       role="button"
       tabIndex={0}
-      aria-label={`Preview ${attachment.filename}`}
-      title={isError ? attachment.error : undefined}
+      aria-label={isError ? `${attachment.filename} — upload failed` : `Preview ${attachment.filename}`}
+      title={errorText}
       onClick={onOpen}
       onKeyDown={(e) => {
+        // Only the tile itself opens the lightbox — a keydown bubbling up from
+        // the nested remove button must not preventDefault its own activation.
+        if (e.target !== e.currentTarget) return
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault()
           onOpen()
         }
       }}
       className={cn(
-        "group/thumb relative h-12 w-12 shrink-0 cursor-pointer overflow-hidden rounded-md border bg-muted/30 transition-colors",
+        "relative h-12 w-12 shrink-0 cursor-pointer overflow-hidden rounded-md border bg-muted/30 transition-colors",
         "hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
         isError && "border-destructive"
       )}
@@ -80,6 +92,9 @@ function PendingImageThumbnail({
         </div>
       )}
       {!isUploading && (
+        // Always visible (not hover-revealed): touch has no hover, and the
+        // lightbox has no remove control, so a hidden × would strand a phone
+        // user with no way to drop a mis-picked image. Matches the pill.
         <button
           type="button"
           aria-label={`Remove ${attachment.filename}`}
@@ -88,7 +103,7 @@ function PendingImageThumbnail({
             e.stopPropagation()
             onRemove(attachment.id)
           }}
-          className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-0.5 text-foreground/70 opacity-0 transition-opacity hover:text-foreground group-hover/thumb:opacity-100 focus-visible:opacity-100"
+          className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-1 text-foreground/70 opacity-80 transition-opacity hover:text-foreground hover:opacity-100 focus-visible:opacity-100"
         >
           <X className="h-3 w-3" />
         </button>
@@ -106,6 +121,7 @@ function PendingImageThumbnail({
           draggable={false}
           className="max-h-64 max-w-full rounded object-contain"
         />
+        {errorText && <p className="px-1 pt-1 pb-0.5 text-xs text-destructive">{errorText}</p>}
       </HoverCardContent>
     </HoverCard>
   )
@@ -165,7 +181,7 @@ export function PendingAttachments({ attachments, onRemove, beforePills, workspa
           if (hasImagePreview(attachment)) {
             return (
               <PendingImageThumbnail
-                key={attachment.id}
+                key={attachment.previewUrl}
                 attachment={attachment}
                 onRemove={onRemove}
                 onOpen={() => setOpenPreviewUrl(attachment.previewUrl)}
