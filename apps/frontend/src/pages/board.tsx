@@ -643,11 +643,11 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}
       </span>
       {/* The "N new" pill: a non-scrolling row ABOVE the scroller, not an overlay
-          inside it. It never overlaps the composer (which lives inside the
-          scroller) and never clips — an overlay anchored to the composer's height
-          would slide off-screen once the composer expands (mobile full-screen
-          compose). Appearing shifts the feed down once, matching the pre-virtua
-          board. Clicking scrolls to the top and commits the buffered order. */}
+          inside it — so it never overlaps the composer and never clips (an overlay
+          anchored to the composer's height slides off-screen once the composer
+          expands to mobile full-screen). Trade-off: appearing (newCount 0→1)
+          shrinks the scroller, nudging the composer + feed down once until it's
+          dismissed. Clicking scrolls to the top and commits the buffered order. */}
       {newCount > 0 && (
         <div className="flex shrink-0 justify-center px-2 pb-1 pt-2">
           <Button
