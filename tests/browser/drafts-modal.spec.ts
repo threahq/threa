@@ -259,8 +259,8 @@ test.describe("Drafts Page", () => {
       editor.dispatchEvent(pasteEvent)
     }, Array.from(imageBuffer))
 
-    // Wait for upload — the composer renders pending images as preview thumbnails
-    // (filename in the accessible name, not visible text).
+    // Wait for upload — the pending image renders as a chip whose visible label
+    // is the filename.
     await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 10000 })
 
     // Wait for draft to be saved. The first debounce fires during upload (saving

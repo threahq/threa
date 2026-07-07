@@ -88,6 +88,7 @@ function ChipView({ attachment, thumbnailSrc, fullSrc, decrypting, onRemove, onO
     <AttachmentPill
       icon={Icon}
       thumbnailSrc={thumbnailSrc}
+      spinning={isUploading || decrypting}
       label={attachment.filename}
       secondary={isError ? "Failed" : formatFileSize(attachment.sizeBytes)}
       status={status}

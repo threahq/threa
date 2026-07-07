@@ -25,6 +25,12 @@ export interface AttachmentPillProps {
    * the E2E-locked case, where the deterministic content URL serves ciphertext.
    */
   thumbnailSrc?: string
+  /**
+   * Spin the leading icon. Defaults to the `pending` status; pass explicitly for
+   * a loading state the status enum doesn't capture (an E2E image decrypting
+   * while its status is already `uploaded`).
+   */
+  spinning?: boolean
   /** When provided renders a small × button at the trailing edge. */
   onRemove?: () => void
   /**
@@ -60,6 +66,9 @@ const SECONDARY_TONE: Record<AttachmentPillStatus, string> = {
   error: "text-destructive/80",
 }
 
+// Fixed 20px slot so swapping the thumbnail (20px) for the icon (14px) — on an
+// onError fallback or an E2E decrypt landing — never changes the chip's width
+// and shifts its neighbours in the flex row (INV-21).
 function PillLeading({
   icon: Icon,
   thumbnailSrc,
@@ -70,18 +79,21 @@ function PillLeading({
   spin: boolean
 }) {
   const [failed, setFailed] = useState(false)
-  if (thumbnailSrc && !failed) {
-    return (
-      <img
-        src={thumbnailSrc}
-        alt=""
-        draggable={false}
-        onError={() => setFailed(true)}
-        className="h-5 w-5 shrink-0 rounded object-cover"
-      />
-    )
-  }
-  return <Icon className={cn("h-3.5 w-3.5 shrink-0", spin && "animate-spin")} />
+  return (
+    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+      {thumbnailSrc && !failed ? (
+        <img
+          src={thumbnailSrc}
+          alt=""
+          draggable={false}
+          onError={() => setFailed(true)}
+          className="h-5 w-5 rounded object-cover"
+        />
+      ) : (
+        <Icon className={cn("h-3.5 w-3.5", spin && "animate-spin")} />
+      )}
+    </span>
+  )
 }
 
 /**
@@ -97,6 +109,7 @@ export function AttachmentPill({
   status = "default",
   tooltip,
   thumbnailSrc,
+  spinning,
   onRemove,
   onActivate,
   href,
@@ -113,7 +126,7 @@ export function AttachmentPill({
 
   const inner = (
     <>
-      <PillLeading icon={icon} thumbnailSrc={thumbnailSrc} spin={status === "pending" && !thumbnailSrc} />
+      <PillLeading icon={icon} thumbnailSrc={thumbnailSrc} spin={spinning ?? status === "pending"} />
       <span className={cn("truncate", labelMaxWidth)}>{label}</span>
       {secondary != null && <span className={SECONDARY_TONE[status]}>{secondary}</span>}
       {onRemove && (
@@ -125,7 +138,10 @@ export function AttachmentPill({
             onRemove()
           }}
           className={cn(
-            "ml-0.5 rounded-full p-0.5 opacity-60 hover:opacity-100 transition-opacity",
+            // p-1 (not p-0.5) enlarges the touch target: the chip itself is now
+            // tappable (opens the preview), so a near-miss on the × shouldn't
+            // land on the chip and open the lightbox instead of removing.
+            "ml-0.5 rounded-full p-1 opacity-60 hover:opacity-100 transition-opacity",
             STATUS_REMOVE_HOVER[status]
           )}
           aria-label={removeLabel ?? "Remove"}
