@@ -639,7 +639,26 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}
       </span>
-      <div className="relative flex-1 overflow-hidden">
+      {/* The "N new" pill: a non-scrolling row ABOVE the scroller, not an overlay
+          inside it. It never overlaps the composer (which lives inside the
+          scroller) and never clips — an overlay anchored to the composer's height
+          would slide off-screen once the composer expands (mobile full-screen
+          compose). Appearing shifts the feed down once, matching the pre-virtua
+          board. Clicking scrolls to the top and commits the buffered order. */}
+      {newCount > 0 && (
+        <div className="flex shrink-0 justify-center px-2 pb-1 pt-2">
+          <Button
+            size="sm"
+            onClick={revealNew}
+            aria-label={`Show ${newCount} new ${newCount === 1 ? "post" : "posts"}`}
+            className="min-h-11 gap-1.5 rounded-full px-4 shadow-md"
+          >
+            <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+            {newCount} new
+          </Button>
+        </div>
+      )}
+      <div className="flex-1 overflow-hidden">
         {/* Owned scroller (a plain overflow div, like the timeline): virtua drives
             it via `scrollRef`, so scroll decisions read native metrics with no
             library tug-of-war. `overflowAnchor: none` keeps the browser's own
@@ -668,26 +687,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
             )}
           </main>
         </div>
-        {/* The "N new" pill floats over the scroller — outside it, so it can't be
-            swallowed as a virtualized row — and stays reachable while cards
-            accumulate behind it. Anchored just BELOW the composer (`top` = its
-            measured height) so it never overlaps the compose box at rest; the
-            composer scrolls under it once the viewer scrolls down. Clicking scrolls
-            to the top and commits (revealNew). Transparent row; only the button
-            takes taps. */}
-        {newCount > 0 && (
-          <div className="pointer-events-none absolute inset-x-0 z-10 flex justify-center" style={{ top: startMargin }}>
-            <Button
-              size="sm"
-              onClick={revealNew}
-              aria-label={`Show ${newCount} new ${newCount === 1 ? "post" : "posts"}`}
-              className="pointer-events-auto min-h-11 gap-1.5 rounded-full px-4 shadow-md"
-            >
-              <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
-              {newCount} new
-            </Button>
-          </div>
-        )}
       </div>
     </div>
   )
