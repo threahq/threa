@@ -780,6 +780,49 @@ describe("LLMBoundaryExtractor.splitConversation", () => {
     expect(result.groups[0].messageIds).toEqual(["m1", "m2", "m3"])
   })
 
+  test("handles an empty conversation without dereferencing a missing message", async () => {
+    // A resolved/emptied thread-split shell: no messages, no topic. Must not throw.
+    const result = await extractor.splitConversation({
+      conversationId: "conv_empty",
+      topicSummary: null,
+      summary: null,
+      messages: [],
+      streamType: "channel",
+      workspaceId: "wsp_test123",
+    })
+    expect(mockGenerateObject).not.toHaveBeenCalled()
+    expect(result.groups).toHaveLength(1)
+    expect(result.groups[0].messageIds).toEqual([])
+    expect(result.groups[0].title).toBe("Conversation")
+  })
+
+  test("bounds the prompt to the most recent messages for an oversized conversation", async () => {
+    const ids = Array.from({ length: 320 }, (_, i) => `m${i}`)
+    mockGenerateObject.mockResolvedValueOnce({
+      value: {
+        groups: [{ title: "Only topic", summary: null, messageIds: ["m319"] }],
+        confidence: 0.5,
+        reasoning: null,
+      },
+      response: { usage: {} },
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    })
+
+    const result = await extractor.splitConversation(splitContext(ids))
+
+    // The prompt (2nd message = the user turn) names only the last 300 ids —
+    // m19..m319, never m0.
+    const call = mockGenerateObject.mock.calls[0] as unknown as [{ messages: { content: string }[] }]
+    const userPrompt = call[0].messages[1].content
+    expect(userPrompt).toContain("[m319]")
+    expect(userPrompt).not.toContain("[m0]")
+    // Validation is scoped to that window, so the swept partition never references
+    // the dropped older ids.
+    const allIds = result.groups.flatMap((g) => g.messageIds)
+    expect(allIds).not.toContain("m0")
+    expect(allIds.length).toBe(300)
+  })
+
   test("partitions the model's groups and orders them largest-first", async () => {
     mockGenerateObject.mockResolvedValueOnce({
       value: {

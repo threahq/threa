@@ -154,7 +154,12 @@ export function ConversationOverlayPanel({
                       onClick={() => setSplitConversationId(conversation.id)}
                       title="Split with AI"
                       aria-label="Split this conversation with AI"
-                      className="ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
+                      className={cn(
+                        "ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100",
+                        // Touch has no hover to reveal it — keep it visible; on
+                        // desktop it stays a quiet hover/focus affordance.
+                        isMobile ? "opacity-100" : "opacity-0 group-hover/row:opacity-100"
+                      )}
                     >
                       <Sparkles className="h-3.5 w-3.5" aria-hidden />
                     </button>

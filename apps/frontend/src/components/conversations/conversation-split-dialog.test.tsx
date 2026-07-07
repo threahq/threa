@@ -48,10 +48,10 @@ describe("ConversationSplitDialog", () => {
     const proposeSplit = vi.fn().mockResolvedValue(proposal())
     const { onOpenChange } = renderDialog({ proposeSplit, applySplit })
 
-    // Both proposed groups shown, first marked as staying, second as new.
+    // Both proposed groups shown, first kept in this conversation, second new.
     expect(await screen.findByText("Fable pricing")).toBeInTheDocument()
     expect(screen.getByText("Fable på svenska")).toBeInTheDocument()
-    expect(screen.getByText("Stays here")).toBeInTheDocument()
+    expect(screen.getByText("This conversation")).toBeInTheDocument()
     expect(screen.getByText("New conversation")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /Split into 2 conversations/ }))

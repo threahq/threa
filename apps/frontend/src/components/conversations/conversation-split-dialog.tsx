@@ -53,6 +53,15 @@ export function ConversationSplitDialog({
   const proposal = propose.data
   const canSplit = !!proposal && proposal.groups.length >= 2
 
+  // Don't let Escape / backdrop / the close button dismiss the dialog while the
+  // split is being written — success is silent (INV-63), so a mid-apply dismissal
+  // would leave the user with no correlation between their action and the board
+  // rearranging. The confirm's own onSuccess closes it directly once settled.
+  const handleOpenChange = (next: boolean) => {
+    if (!next && apply.isPending) return
+    onOpenChange(next)
+  }
+
   const onConfirm = () => {
     if (!proposal || !conversationId || !canSplit) return
     apply.mutate(
@@ -92,27 +101,34 @@ export function ConversationSplitDialog({
     body = <p className="py-8 text-sm text-muted-foreground">This conversation looks focused — no split suggested.</p>
   } else {
     body = (
-      <ul className="flex flex-col gap-2 py-1">
-        {proposal!.groups.map((group, index) => (
-          <li key={index} className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{group.title}</span>
-              <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
-                {index === 0 ? "Stays here" : "New conversation"}
-              </span>
-            </div>
-            {group.summary ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{group.summary}</p> : null}
-            <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
-              {group.messageIds.length} {group.messageIds.length === 1 ? "message" : "messages"}
-            </p>
-          </li>
-        ))}
-      </ul>
+      <div className="flex flex-col gap-2 py-1">
+        <p className="text-xs text-muted-foreground">
+          The first group stays in this conversation — it takes on that title. The rest become new conversations.
+        </p>
+        <ul className="flex flex-col gap-2">
+          {proposal!.groups.map((group, index) => (
+            <li key={index} className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{group.title}</span>
+                <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
+                  {index === 0 ? "This conversation" : "New conversation"}
+                </span>
+              </div>
+              {group.summary ? (
+                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{group.summary}</p>
+              ) : null}
+              <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
+                {group.messageIds.length} {group.messageIds.length === 1 ? "message" : "messages"}
+              </p>
+            </li>
+          ))}
+        </ul>
+      </div>
     )
   }
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
+    <ResponsiveDialog open={open} onOpenChange={handleOpenChange} disableSnapPoints>
       <ResponsiveDialogContent className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-lg" desktopClassName="pt-6">
         <ResponsiveDialogHeader className="px-4 pb-3 sm:px-6">
           <ResponsiveDialogTitle className="flex items-center gap-2">
@@ -127,7 +143,7 @@ export function ConversationSplitDialog({
         <ResponsiveDialogBody className="min-h-24 py-2">{body}</ResponsiveDialogBody>
 
         <ResponsiveDialogFooter className="gap-2 px-4 pb-4 pt-3 sm:px-6">
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={apply.isPending}>
+          <Button variant="ghost" onClick={() => handleOpenChange(false)} disabled={apply.isPending}>
             {canSplit ? "Cancel" : "Close"}
           </Button>
           {canSplit ? (

@@ -32,6 +32,17 @@ import {
 /** Below this, a conversation is too short to split meaningfully — skip the AI call. */
 const MIN_MESSAGES_TO_SPLIT = 4
 
+/**
+ * Upper bound on the messages fed into one split prompt. A drifted conversation
+ * can in principle be large; without a cap the prompt is unbounded and can
+ * exceed what `applySplit` will accept on confirm (its 500-message ceiling),
+ * wasting the call. We consider the most recent window — older messages beyond
+ * it stay in the source conversation (the apply path only moves messages that
+ * land in a proposed group). Kept under the apply ceiling so a proposal always
+ * fits.
+ */
+const MAX_SPLIT_MESSAGES = 300
+
 function indent(text: string, prefix: string): string {
   return text
     .split("\n")
@@ -124,20 +135,33 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
   }
 
   async splitConversation(context: SplitContext): Promise<SplitProposal> {
-    const orderedIds = context.messages.map((m) => m.id)
-
-    // Too short to split — return the whole thing as one group without an AI
-    // call. `groups.length === 1` is the caller's "no split needed" signal.
+    // Too short (or empty) to split — return the whole thing as one group without
+    // an AI call. `groups.length === 1` is the caller's "no split needed" signal.
+    // An empty conversation (a resolved/emptied thread-split shell) lands here too.
     if (context.messages.length < MIN_MESSAGES_TO_SPLIT) {
       return {
-        groups: [{ title: context.topicSummary ?? this.truncateAsTopic(context.messages[0]), messageIds: orderedIds }],
+        groups: [{ title: this.splitFallbackTitle(context), messageIds: context.messages.map((m) => m.id) }],
         confidence: 1.0,
         reasoning: "Conversation is too short to split.",
       }
     }
 
+    // Bound the prompt: consider only the most recent MAX_SPLIT_MESSAGES. Anything
+    // older stays in the source (apply only moves messages that land in a group),
+    // and the proposal always fits applySplit's ceiling.
+    const scoped =
+      context.messages.length > MAX_SPLIT_MESSAGES
+        ? { ...context, messages: context.messages.slice(-MAX_SPLIT_MESSAGES) }
+        : context
+    if (scoped !== context) {
+      logger.info(
+        { conversationId: context.conversationId, total: context.messages.length, considered: MAX_SPLIT_MESSAGES },
+        "Conversation exceeds the split window — splitting the most recent messages only"
+      )
+    }
+
     const config = await this.configResolver.resolve(COMPONENT_PATHS.BOUNDARY_EXTRACTION)
-    const prompt = this.buildSplitPrompt(context)
+    const prompt = this.buildSplitPrompt(scoped)
 
     try {
       const { value } = await this.ai.generateObject({
@@ -150,12 +174,12 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
         temperature: config.temperature,
         telemetry: {
           functionId: "conversation-split",
-          metadata: { streamType: context.streamType, messageCount: context.messages.length },
+          metadata: { streamType: scoped.streamType, messageCount: scoped.messages.length },
         },
-        context: { workspaceId: context.workspaceId, origin: "user" },
+        context: { workspaceId: scoped.workspaceId, origin: "user" },
       })
 
-      return this.validateSplit(value, context)
+      return this.validateSplit(value, scoped)
     } catch (error) {
       // Same narrow handling as extract(): an unparseable object degrades to "no
       // split" (INV-11 — not a silent fallback: logged, and only this error type;
@@ -166,15 +190,21 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
           "LLM returned unparseable split response, proposing no split"
         )
         return {
-          groups: [
-            { title: context.topicSummary ?? this.truncateAsTopic(context.messages[0]), messageIds: orderedIds },
-          ],
+          groups: [{ title: this.splitFallbackTitle(scoped), messageIds: scoped.messages.map((m) => m.id) }],
           confidence: 0.0,
           reasoning: null,
         }
       }
       throw error
     }
+  }
+
+  /** Empty-safe title for a no-split proposal: the stored topic, else the first
+   *  message's opening, else a neutral label (an emptied conversation has neither). */
+  private splitFallbackTitle(context: SplitContext): string {
+    if (context.topicSummary) return context.topicSummary
+    const first = context.messages[0]
+    return first ? this.truncateAsTopic(first) : "Conversation"
   }
 
   private buildSplitPrompt(context: SplitContext): string {
@@ -215,9 +245,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
     // Nothing survived (all ids unknown) — treat as no split.
     if (groups.length === 0) {
       return {
-        groups: [
-          { title: context.topicSummary ?? this.truncateAsTopic(context.messages[0]), messageIds: [...validIds] },
-        ],
+        groups: [{ title: this.splitFallbackTitle(context), messageIds: [...validIds] }],
         confidence: parsed.confidence,
         reasoning: parsed.reasoning,
       }
