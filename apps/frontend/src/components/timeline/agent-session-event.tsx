@@ -32,6 +32,13 @@ interface AgentSessionEventProps {
   liveSubstep?: string | null
   /** Click handler for the Stop button, rendered while the session is running. */
   onStopSession?: (sessionId: string) => void
+  /**
+   * Redirect override for surfaces whose composer isn't in the DOM to walk to
+   * (the board card, whose reply composer is collapsed until opened): open and
+   * focus that composer. When absent, Redirect walks to the nearest
+   * `[data-editor-zone]` editor instead (timeline, thread panel).
+   */
+  onRedirect?: () => void
 }
 
 type SessionStatus = "running" | "retrying" | "completed" | "failed" | "deleted"
@@ -287,6 +294,7 @@ export function AgentSessionEvent({
   liveCounts,
   liveSubstep,
   onStopSession,
+  onRedirect,
 }: AgentSessionEventProps) {
   const { getTraceUrl } = useTrace()
   const { status, sessionId, startedPayload, completedPayload, failedPayload, interruptedPayload, deletedPayload } =
@@ -315,15 +323,19 @@ export function AgentSessionEvent({
 
   // Redirect needs no backend call: the runtime already folds mid-run messages
   // into the running session (NewMessageAwareness → reconsidering). The button
-  // just pulls the cursor into this surface's composer and hints at what
-  // typing will do.
+  // just pulls the cursor into a composer and hints at what typing will do.
   const handleRedirect = (e: React.MouseEvent<HTMLButtonElement>) => {
-    // No composer on this surface (non-member public channel, archived or
-    // locked stream) — bail before the hint, or it promises a fold-in that
-    // can't happen.
-    const editor = findVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
-    if (!editor) return
-    focusAtEnd(editor)
+    if (onRedirect) {
+      // The surface owns opening + focusing its composer (board card).
+      onRedirect()
+    } else {
+      // No composer on this surface (non-member public channel, archived or
+      // locked stream) — bail before the hint, or it promises a fold-in that
+      // can't happen.
+      const editor = findVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
+      if (!editor) return
+      focusAtEnd(editor)
+    }
     if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
     setRedirectHintVisible(true)
     redirectHintTimer.current = window.setTimeout(() => setRedirectHintVisible(false), REDIRECT_HINT_MS)

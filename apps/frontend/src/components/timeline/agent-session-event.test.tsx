@@ -261,6 +261,21 @@ describe("AgentSessionEvent", () => {
       expect(screen.getByText("Ariadne will fold your message into the current work")).toBeInTheDocument()
     })
 
+    it("Redirect calls onRedirect (board card) instead of walking the DOM, and shows the hint", () => {
+      const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
+      const onRedirect = vi.fn()
+
+      // No [data-editor-zone] in the tree — the board card has none; the surface
+      // owns opening + focusing its own composer via onRedirect.
+      renderEvent(<AgentSessionEvent events={runningEvents} onStopSession={vi.fn()} onRedirect={onRedirect} />)
+
+      fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
+
+      expect(onRedirect).toHaveBeenCalledTimes(1)
+      expect(focusAtEnd).not.toHaveBeenCalled()
+      expect(screen.getByText("Ariadne will fold your message into the current work")).toBeInTheDocument()
+    })
+
     it("Redirect shows no hint when the surface has no composer", () => {
       const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
 

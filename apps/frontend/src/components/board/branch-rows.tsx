@@ -231,6 +231,8 @@ interface BranchedBoardRowsProps {
   renderBranchTail?: (branch: BranchConversationView) => ReactNode
   /** The inline "new sub-topic" composer slot rendered under a message row. */
   renderAfterMessage?: (messageId: string) => ReactNode
+  /** Open + focus the surface's reply composer for a running session's Redirect. */
+  onRedirectSession?: () => void
 }
 
 function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNode {
@@ -242,6 +244,7 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
     renderBranchTail,
     renderAfterMessage,
     onSplitThread,
+    onRedirectSession,
   } = props
   switch (row.kind) {
     case "message":
@@ -252,7 +255,14 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
         </Fragment>
       )
     case "event":
-      return <BoardEventRowItem key={row.key} row={row.row} workspaceId={workspaceId} />
+      return (
+        <BoardEventRowItem
+          key={row.key}
+          row={row.row}
+          workspaceId={workspaceId}
+          onRedirectSession={onRedirectSession}
+        />
+      )
     case "seam":
       return (
         <ThreadSeamRow

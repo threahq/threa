@@ -1,4 +1,5 @@
 import type { StreamEvent } from "@threa/types"
+import { useAbortSession } from "@/hooks"
 import { isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { AgentSessionEvent } from "@/components/timeline/agent-session-event"
 import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
@@ -309,12 +310,25 @@ export function buildBranchedBoardRows(
  * and action wiring), so this only handles the event kinds. A `CachedEvent` is a
  * structural superset of `StreamEvent`, so the rail rows pass straight through.
  */
-export function BoardEventRowItem({ row, workspaceId }: { row: BoardEventRow; workspaceId: string }) {
+export function BoardEventRowItem({
+  row,
+  workspaceId,
+  onRedirectSession,
+}: {
+  row: BoardEventRow
+  workspaceId: string
+  /** Open + focus the card's reply composer for a running session's Redirect. */
+  onRedirectSession?: () => void
+}) {
   switch (row.kind) {
     case "session":
       return (
         <div className="px-3 sm:px-4">
-          <BoardAgentSessionRow events={row.events as StreamEvent[]} workspaceId={workspaceId} />
+          <BoardAgentSessionRow
+            events={row.events as StreamEvent[]}
+            workspaceId={workspaceId}
+            onRedirectSession={onRedirectSession}
+          />
         </div>
       )
     case "memo":
@@ -347,14 +361,31 @@ const SESSION_TERMINAL_EVENT_TYPES = new Set<string>([
  * the many past-trace rows a board carries, and confines a progress-tick re-render
  * to this leaf instead of the whole card.
  */
-function BoardAgentSessionRow({ events, workspaceId }: { events: StreamEvent[]; workspaceId: string }) {
+function BoardAgentSessionRow({
+  events,
+  workspaceId,
+  onRedirectSession,
+}: {
+  events: StreamEvent[]
+  workspaceId: string
+  onRedirectSession?: () => void
+}) {
   const running = !events.some((event) => SESSION_TERMINAL_EVENT_TYPES.has(event.eventType))
   if (!running) return <AgentSessionEvent events={events} />
-  return <BoardRunningSessionRow events={events} workspaceId={workspaceId} />
+  return <BoardRunningSessionRow events={events} workspaceId={workspaceId} onRedirectSession={onRedirectSession} />
 }
 
-function BoardRunningSessionRow({ events, workspaceId }: { events: StreamEvent[]; workspaceId: string }) {
+function BoardRunningSessionRow({
+  events,
+  workspaceId,
+  onRedirectSession,
+}: {
+  events: StreamEvent[]
+  workspaceId: string
+  onRedirectSession?: () => void
+}) {
   const socket = useSocket()
+  const abortSession = useAbortSession(socket)
   const userId = useWorkspaceUserId(workspaceId)
   const activity = useAgentActivity(events, socket, workspaceId, userId)
   const sessionId = events.reduce<string | null>((found, event) => found ?? getSessionId(event), null)
@@ -375,6 +406,8 @@ function BoardRunningSessionRow({ events, workspaceId }: { events: StreamEvent[]
       events={events}
       liveCounts={live ? { stepCount: live.stepCount, messageCount: live.messageCount } : undefined}
       liveSubstep={live?.substep ?? null}
+      onStopSession={(sessionId) => abortSession({ sessionId, workspaceId })}
+      onRedirect={onRedirectSession}
     />
   )
 }
