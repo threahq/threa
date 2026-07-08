@@ -118,12 +118,17 @@ export const DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD = 6
 // user preference (no slider), so a single default rather than a stored value.
 export const DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD = 8
 
-// Message collapse threshold - rendered line count above which an individual
-// message body starts collapsed behind a Show more/less toggle, both in the
-// stream timeline and on board cards. Same line-count semantics as the
-// code/quote thresholds, measured in rendered text lines of the message body.
-// Generous by default so only a genuine wall of text folds; a per-message
-// toggle always overrides it. 0 folds every message.
+// Message body collapse is opt-in. When enabled, messages taller than
+// MESSAGE_COLLAPSE_AT_HEIGHT collapse to MESSAGE_COLLAPSE_TO_HEIGHT; a
+// per-message toggle always overrides the automatic initial state.
+export const MESSAGE_COLLAPSE_AT_HEIGHT_MIN = 120
+export const MESSAGE_COLLAPSE_AT_HEIGHT_MAX = 4000
+export const DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT = 420
+export const MESSAGE_COLLAPSE_TO_HEIGHT_MIN = 80
+export const MESSAGE_COLLAPSE_TO_HEIGHT_MAX = 2000
+export const DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT = 240
+// Legacy line-count threshold kept on the wire so older stored overrides and
+// clients don't fail while the UI uses the height-based settings above.
 export const MESSAGE_COLLAPSE_THRESHOLD_MIN = 0
 export const MESSAGE_COLLAPSE_THRESHOLD_MAX = 500
 export const DEFAULT_MESSAGE_COLLAPSE_THRESHOLD = 16
@@ -264,11 +269,13 @@ export interface UserPreferences {
   scratchpadCustomPrompt: string | null
   codeBlockCollapseThreshold: number
   blockquoteCollapseThreshold: number
-  /**
-   * Rendered line count above which an individual message body starts collapsed
-   * (timeline + board cards). A per-message toggle overrides it; this only sets
-   * the initial state.
-   */
+  /** Whether long message bodies start collapsed automatically. */
+  messageCollapseEnabled: boolean
+  /** Rendered message-body height (px) above which the fold control appears. */
+  messageCollapseAtHeight: number
+  /** Max visible message-body height (px) while collapsed. */
+  messageCollapseToHeight: number
+  /** Legacy line-count setting retained for older clients. */
   messageCollapseThreshold: number
   /**
    * Rendered card height (px) above which a board card starts collapsed to its
@@ -343,6 +350,9 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   scratchpadCustomPrompt: null,
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
+  messageCollapseEnabled: false,
+  messageCollapseAtHeight: DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
+  messageCollapseToHeight: DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
   messageCollapseThreshold: DEFAULT_MESSAGE_COLLAPSE_THRESHOLD,
   boardCardCollapseThreshold: DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
   boardDefaultLens: DEFAULT_BOARD_LENS,
@@ -374,6 +384,9 @@ export interface UpdateUserPreferencesInput {
   scratchpadCustomPrompt?: string | null
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number
+  messageCollapseEnabled?: boolean
+  messageCollapseAtHeight?: number
+  messageCollapseToHeight?: number
   messageCollapseThreshold?: number
   boardCardCollapseThreshold?: number
   boardDefaultLens?: BoardLens

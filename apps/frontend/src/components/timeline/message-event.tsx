@@ -52,7 +52,7 @@ import { LinkPreviewList } from "./link-preview-list"
 import { MemoPreviewList } from "./memo-preview-list"
 import { GiphyPreviewList } from "./giphy-preview-list"
 import { LinkPreviewProvider, useLinkPreviewContext } from "@/lib/markdown/link-preview-context"
-import { CollapsibleBody, useMessageCollapseThreshold } from "@/lib/markdown/collapsible-body"
+import { CollapsibleBody, useMessageCollapseSettings } from "@/lib/markdown/collapsible-body"
 import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import { MessageContextMenu } from "./message-context-menu"
 import { SaveMessageButton } from "./save-message-button"
@@ -558,13 +558,19 @@ function MessageLayout({
   // behave normally and the AttachmentList isn't part of `contentMarkdown`
   // anyway.
   const copyRef = useMessageMarkdownCopy(payload.contentMarkdown)
-  const messageCollapseThreshold = useMessageCollapseThreshold()
+  const messageCollapse = useMessageCollapseSettings()
   const messageBody = children ?? (
     <LinkPreviewProvider>
       <AttachmentProvider workspaceId={workspaceId} attachments={payload.attachments ?? []}>
         <div ref={copyRef}>
           <MarkdownBlockProvider messageId={payload.messageId}>
-            <CollapsibleBody kind="message" content={payload.contentMarkdown} threshold={messageCollapseThreshold}>
+            <CollapsibleBody
+              kind="message"
+              content={payload.contentMarkdown}
+              collapseAtHeight={messageCollapse.collapseAtHeight}
+              collapseToHeight={messageCollapse.collapseToHeight}
+              defaultCollapsed={messageCollapse.enabled}
+            >
               <MarkdownContent content={payload.contentMarkdown} className="text-sm leading-relaxed" />
             </CollapsibleBody>
           </MarkdownBlockProvider>

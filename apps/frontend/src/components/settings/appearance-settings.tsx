@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
@@ -15,9 +16,12 @@ import {
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
   DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
-  MESSAGE_COLLAPSE_THRESHOLD_MIN,
-  MESSAGE_COLLAPSE_THRESHOLD_MAX,
-  DEFAULT_MESSAGE_COLLAPSE_THRESHOLD,
+  MESSAGE_COLLAPSE_AT_HEIGHT_MIN,
+  MESSAGE_COLLAPSE_AT_HEIGHT_MAX,
+  DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
+  MESSAGE_COLLAPSE_TO_HEIGHT_MIN,
+  MESSAGE_COLLAPSE_TO_HEIGHT_MAX,
+  DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
   BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
   BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
   DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
@@ -65,7 +69,9 @@ export function AppearanceSettings() {
   const labelRemoveOnMove = preferences?.labelRemoveOnMove ?? "ask"
   const codeBlockThreshold = preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
   const blockquoteThreshold = preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
-  const messageThreshold = preferences?.messageCollapseThreshold ?? DEFAULT_MESSAGE_COLLAPSE_THRESHOLD
+  const messageCollapseEnabled = preferences?.messageCollapseEnabled ?? false
+  const messageCollapseAtHeight = preferences?.messageCollapseAtHeight ?? DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT
+  const messageCollapseToHeight = preferences?.messageCollapseToHeight ?? DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT
   const boardCardThreshold = preferences?.boardCardCollapseThreshold ?? DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD
   const boardDefaultLens = preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
 
@@ -81,10 +87,15 @@ export function AppearanceSettings() {
     setBlockquoteThresholdDraft(String(blockquoteThreshold))
   }, [blockquoteThreshold])
 
-  const [messageThresholdDraft, setMessageThresholdDraft] = useState<string>(String(messageThreshold))
+  const [messageCollapseAtDraft, setMessageCollapseAtDraft] = useState<string>(String(messageCollapseAtHeight))
   useEffect(() => {
-    setMessageThresholdDraft(String(messageThreshold))
-  }, [messageThreshold])
+    setMessageCollapseAtDraft(String(messageCollapseAtHeight))
+  }, [messageCollapseAtHeight])
+
+  const [messageCollapseToDraft, setMessageCollapseToDraft] = useState<string>(String(messageCollapseToHeight))
+  useEffect(() => {
+    setMessageCollapseToDraft(String(messageCollapseToHeight))
+  }, [messageCollapseToHeight])
 
   const [boardCardThresholdDraft, setBoardCardThresholdDraft] = useState<string>(String(boardCardThreshold))
   useEffect(() => {
@@ -119,18 +130,32 @@ export function AppearanceSettings() {
     void updatePreference("blockquoteCollapseThreshold", clamped)
   }
 
-  const commitMessageThreshold = () => {
-    const parsed = Number.parseInt(messageThresholdDraft, 10)
+  const commitMessageCollapseAtHeight = () => {
+    const parsed = Number.parseInt(messageCollapseAtDraft, 10)
     if (!Number.isFinite(parsed)) {
-      setMessageThresholdDraft(String(messageThreshold))
+      setMessageCollapseAtDraft(String(messageCollapseAtHeight))
       return
     }
-    const clamped = Math.min(MESSAGE_COLLAPSE_THRESHOLD_MAX, Math.max(MESSAGE_COLLAPSE_THRESHOLD_MIN, parsed))
-    if (clamped === messageThreshold) {
-      setMessageThresholdDraft(String(clamped))
+    const clamped = Math.min(MESSAGE_COLLAPSE_AT_HEIGHT_MAX, Math.max(MESSAGE_COLLAPSE_AT_HEIGHT_MIN, parsed))
+    if (clamped === messageCollapseAtHeight) {
+      setMessageCollapseAtDraft(String(clamped))
       return
     }
-    void updatePreference("messageCollapseThreshold", clamped)
+    void updatePreference("messageCollapseAtHeight", clamped)
+  }
+
+  const commitMessageCollapseToHeight = () => {
+    const parsed = Number.parseInt(messageCollapseToDraft, 10)
+    if (!Number.isFinite(parsed)) {
+      setMessageCollapseToDraft(String(messageCollapseToHeight))
+      return
+    }
+    const clamped = Math.min(MESSAGE_COLLAPSE_TO_HEIGHT_MAX, Math.max(MESSAGE_COLLAPSE_TO_HEIGHT_MIN, parsed))
+    if (clamped === messageCollapseToHeight) {
+      setMessageCollapseToDraft(String(clamped))
+      return
+    }
+    void updatePreference("messageCollapseToHeight", clamped)
   }
 
   const commitBoardCardThreshold = () => {
@@ -283,32 +308,75 @@ export function AppearanceSettings() {
         <div>
           <h3 className="text-sm font-medium">Long Messages</h3>
           <p className="text-sm text-muted-foreground">
-            Collapse long messages by default, in the timeline and on board cards, to keep the feed scannable
+            Message bodies stay open by default unless you turn on automatic collapsing. Manual Show more/less choices
+            are remembered per message.
           </p>
         </div>
         <div className="flex items-start gap-4">
           <div className="grid gap-1 flex-1">
-            <Label htmlFor="message-collapse-threshold" className="cursor-pointer">
-              Collapse threshold
+            <Label htmlFor="message-collapse-enabled" className="cursor-pointer">
+              Collapse long messages automatically
             </Label>
             <p className="text-sm text-muted-foreground">
-              Messages with more than this many lines start collapsed. You can always click to expand or collapse an
-              individual message. Set to 0 to collapse every message by default.
+              When off, long messages stay open but can still be collapsed manually.
+            </p>
+          </div>
+          <Switch
+            id="message-collapse-enabled"
+            checked={messageCollapseEnabled}
+            onCheckedChange={(checked) => updatePreference("messageCollapseEnabled", checked)}
+          />
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label htmlFor="message-collapse-at-height" className="cursor-pointer">
+              Collapse at height (px)
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Messages taller than this show the Show more/less control. This also decides when automatic collapsing
+              applies.
             </p>
           </div>
           <Input
-            id="message-collapse-threshold"
+            id="message-collapse-at-height"
             type="number"
             inputMode="numeric"
-            min={MESSAGE_COLLAPSE_THRESHOLD_MIN}
-            max={MESSAGE_COLLAPSE_THRESHOLD_MAX}
-            value={messageThresholdDraft}
-            onChange={(event) => setMessageThresholdDraft(event.target.value)}
-            onBlur={commitMessageThreshold}
+            min={MESSAGE_COLLAPSE_AT_HEIGHT_MIN}
+            max={MESSAGE_COLLAPSE_AT_HEIGHT_MAX}
+            value={messageCollapseAtDraft}
+            onChange={(event) => setMessageCollapseAtDraft(event.target.value)}
+            onBlur={commitMessageCollapseAtHeight}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault()
-                commitMessageThreshold()
+                commitMessageCollapseAtHeight()
+              }
+            }}
+            className="w-24"
+          />
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label htmlFor="message-collapse-to-height" className="cursor-pointer">
+              Collapse to height (px)
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Collapsed messages keep this much visible instead of disappearing to a single line.
+            </p>
+          </div>
+          <Input
+            id="message-collapse-to-height"
+            type="number"
+            inputMode="numeric"
+            min={MESSAGE_COLLAPSE_TO_HEIGHT_MIN}
+            max={MESSAGE_COLLAPSE_TO_HEIGHT_MAX}
+            value={messageCollapseToDraft}
+            onChange={(event) => setMessageCollapseToDraft(event.target.value)}
+            onBlur={commitMessageCollapseToHeight}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                commitMessageCollapseToHeight()
               }
             }}
             className="w-24"
