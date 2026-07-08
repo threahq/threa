@@ -55,7 +55,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 5.3  | Delegation public API (claim/status/complete)         | ☐      |       |
 | 5.4  | claude-code-remote delegation support                 | ☐      |       |
 | 5.5  | `@threa/mcp` server                                   | ☐      |       |
-| 6.1  | Memo edit/archive endpoints + explorer UI             | ☑      | #TBD  |
+| 6.1  | Memo edit/archive endpoints + explorer UI             | ☑      | #1246 |
 | 6.2  | `save_memo` tool                                      | ☐      |       |
 | 6.3  | Reflective capture at session completion              | ☐      |       |
 | 6.4  | `memoScope` (user/stream/workspace)                   | ☐      |       |
