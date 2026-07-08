@@ -1,27 +1,9 @@
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
-import {
-  Archive,
-  Ban,
-  Bell,
-  BellOff,
-  BookMarked,
-  Check,
-  ChevronDown,
-  CircleDashed,
-  Hash,
-  Layers,
-  LayoutGrid,
-  Tag,
-  User,
-  X,
-  Zap,
-} from "lucide-react"
-import type { LucideIcon } from "lucide-react"
+import { Archive, Ban, Bell, BellOff, Check, ChevronDown, Hash, Layers, Tag, X } from "lucide-react"
 import {
   BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
-  DEFAULT_BOARD_LENS,
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
   type BoardLens,
@@ -44,42 +26,8 @@ import type { CachedLabel } from "@/hooks/use-labels"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
 import { BoardSavedViews } from "@/components/board/board-saved-views"
 import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
+import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import { cn } from "@/lib/utils"
-
-export interface BoardLensDef {
-  value: BoardLens
-  label: string
-  /** One-line answer to "what does this show?" — rendered under the label in the picker. */
-  description: string
-  icon: LucideIcon
-}
-
-/**
- * Display metadata per lens. The board page reuses labels for empty-state copy;
- * order of rendering follows `BOARD_LENSES`.
- */
-export const BOARD_LENS_DEFS: Record<BoardLens, BoardLensDef> = {
-  all: { value: "all", label: "All", description: "Everything, newest activity first", icon: LayoutGrid },
-  active: { value: "active", label: "Active", description: "Still in motion — not stalled or resolved", icon: Zap },
-  "needs-resolution": {
-    value: "needs-resolution",
-    label: "Needs resolution",
-    description: "Stalled or gone quiet while unresolved",
-    icon: CircleDashed,
-  },
-  decisions: {
-    value: "decisions",
-    label: "Decisions",
-    description: "Settled — captured as a memo",
-    icon: BookMarked,
-  },
-  mine: {
-    value: "mine",
-    label: "Mine",
-    description: "Conversations you're in or mentioned in",
-    icon: User,
-  },
-}
 
 /** Stream types offered in the pickers: the board's root-stream grains (shared
  *  with the backend validator). */
@@ -191,8 +139,11 @@ export function BoardFilterBar({
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
   const labelById = useMemo(() => new Map(myLabels.map((l) => [l.id, l])), [myLabels])
 
+  // The viewer's home lens is their baseline, so being on it (with no scope
+  // narrowing) is NOT "filtered" — otherwise a non-All home shows a permanent
+  // "Clear filters" affordance on its own untouched landing view.
   const isFiltered =
-    lens !== DEFAULT_BOARD_LENS ||
+    lens !== homeLens ||
     scopeStreamIds.length > 0 ||
     excludeStreamIds.length > 0 ||
     scopeStreamTypes.length > 0 ||
@@ -352,7 +303,7 @@ export function BoardFilterBar({
       ))}
       {isFiltered && (
         <Link
-          to={lensHref(workspaceId, DEFAULT_BOARD_LENS, clearedSearch, homeLens)}
+          to={lensHref(workspaceId, homeLens, clearedSearch, homeLens)}
           className="shrink-0 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           Clear filters
@@ -549,7 +500,7 @@ function BoardLensMenu({
 
   const trigger = (
     <Button
-      variant={lens === DEFAULT_BOARD_LENS ? "outline" : "secondary"}
+      variant={lens === homeLens ? "outline" : "secondary"}
       size="sm"
       className="h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs font-normal"
       aria-label={`Board lens: ${current.label}`}

@@ -63,6 +63,12 @@ import {
 
 const VALID_LENSES = new Set<string>(BOARD_LENSES)
 
+/** Lenses that always contain the viewer's own fresh post: `all` (everything)
+ *  and `mine` (a self-authored conversation is `isMine`). The status/memo lenses
+ *  gate on classification a brand-new post may not have yet, so posting from
+ *  those routes back to All so the author's card always surfaces. */
+const SELF_POST_VISIBLE_LENSES = new Set<BoardLens>(["all", "mine"])
+
 /** How many leading cards' rails the reveal gate pre-warms before first paint.
  *  Covers the viewport with margin; cards past it mount against already-warm or
  *  fast-resolving rails below the fold, where late resolution can't shift
@@ -465,11 +471,14 @@ function BoardPageInner({
     scopeLabelIds.length > 0 ||
     excludeLabelIds.length > 0
   const handlePosted = () => {
-    // The viewer's own post must ALWAYS surface — but a filtered view might not
-    // match it (a fresh post is no Decision). Posting from a filtered board
-    // returns to the All home first; the reveal arm survives the view reset, so
-    // the authored card shows up top instead of hiding behind a filter.
-    if (lens !== DEFAULT_BOARD_LENS || hasFilterParams) {
+    // The viewer's own post must ALWAYS surface. It already shows where the
+    // current view can contain it — an unfiltered `all`/`mine` lens — so stay
+    // put there (a `mine` home shouldn't bounce the author off their own home).
+    // Any other view (a status/memo lens, or an active scope filter) might not
+    // match the fresh post, so return to the All baseline; the reveal arm
+    // survives the view reset and floats the authored card to the top.
+    const currentViewSurfacesOwnPost = SELF_POST_VISIBLE_LENSES.has(lens) && !hasFilterParams
+    if (!currentViewSurfacesOwnPost) {
       navigate(boardHome)
     }
     revealNext()

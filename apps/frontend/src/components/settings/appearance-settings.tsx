@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
+import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import {
   THEME_OPTIONS,
   MESSAGE_DISPLAY_OPTIONS,
@@ -54,22 +55,6 @@ const LABEL_REMOVE_DESCRIPTIONS: Record<LabelRemoveOnMove, string> = {
   ask: "Prompt when you drag a labeled stream into a custom section or another label",
   always: "Drop the label it was sitting under whenever you move it elsewhere",
   never: "Leave labels alone — a moved stream keeps every label it had",
-}
-
-const BOARD_LENS_LABELS: Record<BoardLens, string> = {
-  all: "All",
-  active: "Active",
-  "needs-resolution": "Needs resolution",
-  decisions: "Decisions",
-  mine: "Mine",
-}
-
-const BOARD_LENS_DESCRIPTIONS: Record<BoardLens, string> = {
-  all: "Everything, newest activity first",
-  active: "Still in motion — not stalled or resolved",
-  "needs-resolution": "Stalled or gone quiet while unresolved",
-  decisions: "Settled — captured as a memo",
-  mine: "Conversations you're in or mentioned in",
 }
 
 export function AppearanceSettings() {
@@ -390,9 +375,9 @@ export function AppearanceSettings() {
               <RadioGroupItem value={option} id={`board-lens-${option}`} className="mt-1" />
               <div className="grid gap-1">
                 <Label htmlFor={`board-lens-${option}`} className="cursor-pointer">
-                  {BOARD_LENS_LABELS[option]}
+                  {BOARD_LENS_DEFS[option].label}
                 </Label>
-                <p className="text-sm text-muted-foreground">{BOARD_LENS_DESCRIPTIONS[option]}</p>
+                <p className="text-sm text-muted-foreground">{BOARD_LENS_DEFS[option].description}</p>
               </div>
             </div>
           ))}

@@ -107,10 +107,10 @@ export function BoardSavedViews({
   // `null` closed; `{ id: null }` = save-current; `{ id }` = rename that view.
   const [editing, setEditing] = useState<{ id: string | null; name: string } | null>(null)
 
-  // Only offer "save current view" when there's actually a filter to bookmark —
-  // the plain All home is nothing worth saving.
+  // Only offer "save current view" when there's actually a narrowing to bookmark
+  // — the viewer's plain home lens is nothing worth saving.
   const isFiltered =
-    lens !== DEFAULT_BOARD_LENS ||
+    lens !== homeLens ||
     scopeStreamIds.length > 0 ||
     scopeStreamTypes.length > 0 ||
     scopeLabelIds.length > 0 ||

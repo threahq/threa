@@ -1,0 +1,39 @@
+import type { LucideIcon } from "lucide-react"
+import { BookMarked, CircleDashed, LayoutGrid, User, Zap } from "lucide-react"
+import { type BoardLens } from "@threa/types"
+
+export interface BoardLensDef {
+  value: BoardLens
+  label: string
+  /** One-line answer to "what does this show?" — rendered under the label in the picker. */
+  description: string
+  icon: LucideIcon
+}
+
+/**
+ * Display metadata per lens (label, one-line description, glyph). The single
+ * source for lens copy (INV-33) — the board lens picker and the settings
+ * "Board home" control both read from here. Order follows `BOARD_LENSES`.
+ */
+export const BOARD_LENS_DEFS: Record<BoardLens, BoardLensDef> = {
+  all: { value: "all", label: "All", description: "Everything, newest activity first", icon: LayoutGrid },
+  active: { value: "active", label: "Active", description: "Still in motion — not stalled or resolved", icon: Zap },
+  "needs-resolution": {
+    value: "needs-resolution",
+    label: "Needs resolution",
+    description: "Stalled or gone quiet while unresolved",
+    icon: CircleDashed,
+  },
+  decisions: {
+    value: "decisions",
+    label: "Decisions",
+    description: "Settled — captured as a memo",
+    icon: BookMarked,
+  },
+  mine: {
+    value: "mine",
+    label: "Mine",
+    description: "Conversations you're in or mentioned in",
+    icon: User,
+  },
+}

@@ -180,9 +180,13 @@ right, so split the dials in two:
 > `boardDefaultLens` preference — **All** for everyone who hasn't changed it. It
 > only moves the landing: every lens keeps its own URL (the home lens is the
 > segment-less one, so **All** takes `/board/all` for a viewer who homes
-> elsewhere), and **All** stays the surfacing baseline a fresh post returns to
-> (a brand-new post is no Decision and needn't be Active, so only the widest lens
-> guarantees the author sees their own card).
+> elsewhere), and the home lens is the viewer's baseline for filtered-state chrome
+> (no "Clear filters" on the plain home; "Clear filters" returns to it). The
+> surfacing rule ("your own action always surfaces") still routes a fresh post to
+> **All** — the only lens that always contains it — _unless_ the current view
+> already does: an unfiltered `all` or `mine` (a self-authored post is `isMine`).
+> A status/memo lens (`active`/`needs-resolution`/`decisions`) can't be trusted to
+> match a brand-new post, so posting from one still returns to All.
 
 - **All** (default) — everything, `lastActivityAt` desc. The resurfacing wall.
 - **Active** — `status = active`: still in motion, not stalled or resolved.

@@ -234,6 +234,30 @@ describe("BoardPage", () => {
     expect(screen.queryByText("Someone else's topic.")).toBeNull()
   })
 
+  it("shows no 'Clear filters' on the plain home lens (home is the baseline)", async () => {
+    // With a Mine home, the plain `/board` (lens=mine, no scope filters) is the
+    // viewer's untouched baseline — no filtered-state affordance.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "mine" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
+    mountBoard([mine], { entry: `/w/${WORKSPACE_ID}/board` })
+    await screen.findByText("My own topic.")
+    expect(screen.queryByText("Clear filters")).toBeNull()
+  })
+
+  it("shows 'Clear filters' once the lens is narrowed off the home lens", async () => {
+    // Home is Mine; `/board/all` is a different lens, i.e. a narrowing away from
+    // the baseline, so the clear-to-home affordance reappears.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "mine" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
+    mountBoard([mine], { entry: `/w/${WORKSPACE_ID}/board/all` })
+    await screen.findByText("My own topic.")
+    expect(screen.getByText("Clear filters")).toBeTruthy()
+  })
+
   it("offers an inline reply affordance on each post", async () => {
     mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
     await screen.findByText("Rotate the tokens before Friday.")
