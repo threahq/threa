@@ -7,6 +7,7 @@ import type { WorkspaceSettingsService } from "../workspace-settings"
 import type { FeatureFlagService } from "../feature-flags"
 import type { PlatformAdminService } from "../platform-admin"
 import type { SidebarConfigService } from "../sidebar-config"
+import type { BoardViewService } from "../board-views"
 import type { InvitationService } from "../invitations"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import type { ActivityService } from "../activity"
@@ -62,6 +63,7 @@ interface Dependencies {
   featureFlagService: FeatureFlagService
   platformAdminService: PlatformAdminService
   sidebarConfigService: SidebarConfigService
+  boardViewService: BoardViewService
   invitationService: InvitationService
   workspaceIntegrationService: WorkspaceIntegrationService
   activityService?: ActivityService
@@ -81,6 +83,7 @@ export function createWorkspaceHandlers({
   featureFlagService,
   platformAdminService,
   sidebarConfigService,
+  boardViewService,
   invitationService,
   workspaceIntegrationService,
   activityService,
@@ -162,6 +165,7 @@ export function createWorkspaceHandlers({
         featureFlags,
         viewerIsPlatformAdmin,
         sidebarConfig,
+        boardViews,
         dmPeers,
         labels,
         labelAssignments,
@@ -178,6 +182,7 @@ export function createWorkspaceHandlers({
         featureFlagService.getFlags(workspaceId, userId),
         platformAdminService.hasAccess(workspaceId, req.user!.workosUserId),
         sidebarConfigService.getConfig(workspaceId, userId),
+        boardViewService.list(workspaceId, userId),
         streamService.listDmPeers(workspaceId, userId),
         labelService.listForActor(workspaceId, userId),
         labelAssignmentService.listForViewer(workspaceId, { type: LabelActorTypes.USER, id: userId }),
@@ -296,6 +301,7 @@ export function createWorkspaceHandlers({
           workspaceSettings,
           featureFlags,
           sidebarConfig,
+          boardViews,
           labels,
           labelAssignments,
           invitations,

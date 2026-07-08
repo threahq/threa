@@ -17,6 +17,7 @@ export {
   type StreamService,
   type MessageService,
   type ConversationService,
+  type BoardViewService,
   type ActivityService,
   type SavedService,
   type SavedSuggestionsService,

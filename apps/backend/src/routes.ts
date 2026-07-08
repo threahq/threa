@@ -238,6 +238,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const authHandlers = createAuthHandlers()
   const avatarUpload = createAvatarUploadMiddleware()
   const commandAvailabilityService = new CommandAvailabilityService({ pool, commandRegistry })
+  const boardViewService = new BoardViewService(pool)
   const workspace = createWorkspaceHandlers({
     workspaceService,
     streamService,
@@ -246,6 +247,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     featureFlagService,
     platformAdminService,
     sidebarConfigService,
+    boardViewService,
     invitationService,
     workspaceIntegrationService,
     activityService,
@@ -290,7 +292,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
   const workspaceSettings = createWorkspaceSettingsHandlers({ workspaceSettingsService })
   const sidebarConfig = createSidebarConfigHandlers({ sidebarConfigService })
-  const boardView = createBoardViewHandlers({ boardViewService: new BoardViewService(pool), featureFlagService })
+  const boardView = createBoardViewHandlers({ boardViewService, featureFlagService })
   const userE2eKeys = createUserE2eKeysHandlers({ userE2eKeysService })
   const aiUsage = createAIUsageHandlers({ pool })
   const debug = createDebugHandlers({ pool, poolMonitor })

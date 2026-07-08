@@ -35,6 +35,7 @@ import type {
   WorkspaceInvitation,
   Persona,
   Bot,
+  BoardView,
 } from "./domain"
 import type { UserPreferences } from "./preferences"
 import type { WorkspaceSettings } from "./workspace-settings"
@@ -1405,6 +1406,13 @@ export interface WorkspaceBootstrap {
   userPreferences: UserPreferences
   /** Viewer's persisted sidebar layout for this workspace (defaults to the Smart preset). */
   sidebarConfig: SidebarConfig
+  /**
+   * Viewer's saved board lenses, so the lens picker paints populated instead of
+   * fetching on board mount (board-view-design.md § "Lenses"). Seeds the
+   * `board-views` React-Query cache. Optional: snapshots cached before the field
+   * shipped lack it (absent → the board falls back to its own fetch).
+   */
+  boardViews?: BoardView[]
   /** The viewer's own labels (every label is private to its creator). */
   labels: Label[]
   /**
