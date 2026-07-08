@@ -260,6 +260,12 @@ export function useCreateBoardPost(workspaceId: string) {
             streamId: draftId,
             streamCreation: { type: StreamTypes.SCRATCHPAD, companionMode: target.companionMode },
             draftId,
+            // Declare the fresh conversation so the promote-on-send backend mints
+            // it synchronously (and returns its id) instead of leaving it to the
+            // async extractor — the queue drain seeds the board card off that id
+            // the moment the scratchpad materializes. `intent: "new"` because an
+            // authored post is always a new topic boundary.
+            conversation: { intent: "new" },
           }
         )
         return

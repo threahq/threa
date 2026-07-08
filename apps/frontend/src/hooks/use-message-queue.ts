@@ -7,11 +7,12 @@ import { parseMarkdown } from "@threa/prosemirror"
 import { emitDraftPromoted } from "@/lib/draft-promotions"
 import { setParentThreadId } from "@/sync/stream-sync"
 import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
+import { putOptimisticBoardPost } from "@/stores/board-store"
 import { rescopeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
 import { StreamTypes, ShareErrorCodes, draftStreamScope } from "@threa/types"
 import type { PendingMessage } from "@/db"
-import type { CreateStreamInput, Stream, StreamWithPreview } from "@threa/types"
+import type { BoardScopeStreamType, CreateStreamInput, Stream, StreamWithPreview } from "@threa/types"
 import { ApiError } from "@/api/client"
 import { surfacePrivacyBlockToast } from "@/lib/share-privacy-toast"
 
@@ -236,7 +237,7 @@ export function useMessageQueue(): void {
           })
         } else {
           const contentJson = next.contentJson ?? parseMarkdown(next.content)
-          await messageService.create(next.workspaceId, next.streamId, {
+          const { message, conversationId } = await messageService.create(next.workspaceId, next.streamId, {
             streamId: next.streamId,
             contentJson,
             attachmentIds: next.attachmentIds,
@@ -247,6 +248,29 @@ export function useMessageQueue(): void {
             // the async extractor; omitted on ordinary sends.
             conversation: next.conversation,
           })
+
+          // A board post to a NEW scratchpad minted a fresh conversation on send
+          // (`intent: "new"`). Seed its board card from the response — keyed by the
+          // real conversation + (post-promotion) stream ids — so it appears the
+          // moment the scratchpad materializes rather than after the async
+          // `conversation:created` echo + board-head refetch. Reconciled in place by
+          // both (same id, `_status` cleared). `existing`/`threadFromMessage` replies
+          // also return an id, but their card already exists so the write no-ops.
+          if (conversationId && next.conversation?.intent === "new") {
+            const stream = await db.streams.get(next.streamId)
+            if (stream) {
+              await putOptimisticBoardPost(next.workspaceId, {
+                conversationId,
+                messageId: message.id,
+                streamId: next.streamId,
+                authorId: message.authorId,
+                contentMarkdown: message.contentMarkdown,
+                rootStreamId: stream.rootStreamId ?? stream.id,
+                rootStreamType: stream.type as BoardScopeStreamType,
+                createdAt: message.createdAt,
+              })
+            }
+          }
         }
 
         await db.pendingMessages.delete(next.clientId)
