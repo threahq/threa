@@ -105,6 +105,9 @@ interface BoardSavedViewsProps {
   lens: BoardLens
   /** The viewer's home lens — the segment-less one when addressing a saved view. */
   homeLens: BoardLens
+  /** The saved view whose lens + filters match the live board, or `null`. Owned by
+   *  the lens menu so the lens list and this list never both mark a row. */
+  activeViewId: string | null
   scopeStreamIds: string[]
   scopeStreamTypes: BoardScopeStreamType[]
   scopeLabelIds: string[]
@@ -126,6 +129,7 @@ export function BoardSavedViews({
   workspaceId,
   lens,
   homeLens,
+  activeViewId,
   scopeStreamIds,
   scopeStreamTypes,
   scopeLabelIds,
@@ -153,16 +157,6 @@ export function BoardSavedViews({
     excludeStreamTypes.length > 0 ||
     excludeLabelIds.length > 0
 
-  const selection: BoardViewSelection = {
-    lens,
-    scopeStreamIds,
-    scopeStreamTypes,
-    scopeLabelIds,
-    excludeStreamIds,
-    excludeStreamTypes,
-    excludeLabelIds,
-  }
-
   const submit = (name: string) => {
     if (editing?.id) update.mutate({ id: editing.id, input: { name } })
     else
@@ -187,12 +181,12 @@ export function BoardSavedViews({
             Saved views
           </p>
           {views?.map((view) => {
-            const active = isViewActive(view, selection)
+            const active = view.id === activeViewId
             return (
               <div
                 key={view.id}
                 className={cn(
-                  "group mx-1 flex items-center rounded-item pr-1 transition-colors hover:bg-muted",
+                  "group mx-1 flex items-start gap-1 rounded-item px-2.5 py-2 transition-colors hover:bg-muted",
                   active && "bg-muted/60"
                 )}
               >
@@ -200,31 +194,38 @@ export function BoardSavedViews({
                   to={savedViewHref(workspaceId, view, homeLens)}
                   onClick={onNavigate}
                   aria-current={active ? "true" : undefined}
-                  className="flex min-w-0 flex-1 items-start gap-2.5 px-2.5 py-2"
+                  className="flex min-w-0 flex-1 items-start gap-2.5"
                 >
                   <Bookmark className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{view.name}</span>
                     <span className="block truncate text-xs text-muted-foreground">{summarize(view)}</span>
                   </span>
-                  {active && <Check className="mt-0.5 h-4 w-4 shrink-0" />}
                 </Link>
-                <button
-                  type="button"
-                  onClick={() => setEditing({ id: view.id, name: view.name })}
-                  aria-label={`Rename ${view.name}`}
-                  className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => remove.mutate(view.id)}
-                  aria-label={`Delete ${view.name}`}
-                  className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-destructive focus:opacity-100 group-hover:opacity-100"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {/* Right slot: the active check sits at the row's right edge (same
+                    column as the lens list's check) and fades to the rename/delete
+                    actions on hover/focus — one indicator, never both. */}
+                <div className="relative flex shrink-0 items-start">
+                  <button
+                    type="button"
+                    onClick={() => setEditing({ id: view.id, name: view.name })}
+                    aria-label={`Rename ${view.name}`}
+                    className="rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove.mutate(view.id)}
+                    aria-label={`Delete ${view.name}`}
+                    className="rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                  {active && (
+                    <Check className="pointer-events-none absolute right-0 top-1 h-4 w-4 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0" />
+                  )}
+                </div>
               </div>
             )
           })}

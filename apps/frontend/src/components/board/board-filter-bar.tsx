@@ -24,7 +24,8 @@ import {
 } from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks/use-labels"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
-import { BoardSavedViews } from "@/components/board/board-saved-views"
+import { BoardSavedViews, isViewActive, type BoardViewSelection } from "@/components/board/board-saved-views"
+import { useBoardViews } from "@/hooks/use-board-views"
 import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import { cn } from "@/lib/utils"
@@ -455,13 +456,28 @@ function BoardLensMenu({
   const current = BOARD_LENS_DEFS[lens]
   const CurrentIcon = current.icon
 
+  // A saved view IS the selection when the live lens + every filter axis match
+  // it, so it — not its base lens — is what reads as active. Resolved once here
+  // so the lens list and the saved-view list can't both mark a row.
+  const { data: views } = useBoardViews(workspaceId)
+  const selection: BoardViewSelection = {
+    lens,
+    scopeStreamIds,
+    scopeStreamTypes,
+    scopeLabelIds,
+    excludeStreamIds,
+    excludeStreamTypes,
+    excludeLabelIds,
+  }
+  const activeViewId = views?.find((view) => isViewActive(view, selection))?.id ?? null
+
   const content = (
     <>
       <nav aria-label="Board lens" className="py-1">
         {BOARD_LENSES.map((value) => {
           const def = BOARD_LENS_DEFS[value]
           const Icon = def.icon
-          const selected = value === lens
+          const selected = value === lens && activeViewId === null
           return (
             <Link
               key={value}
@@ -487,6 +503,7 @@ function BoardLensMenu({
         workspaceId={workspaceId}
         lens={lens}
         homeLens={homeLens}
+        activeViewId={activeViewId}
         scopeStreamIds={scopeStreamIds}
         excludeStreamIds={excludeStreamIds}
         scopeStreamTypes={scopeStreamTypes}

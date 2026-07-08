@@ -31,6 +31,7 @@ function mount(boardViews: Record<string, unknown>, props: Partial<Parameters<ty
             workspaceId="ws_1"
             lens="mine"
             homeLens="all"
+            activeViewId={null}
             scopeStreamIds={["stream_1"]}
             scopeStreamTypes={[]}
             scopeLabelIds={[]}
