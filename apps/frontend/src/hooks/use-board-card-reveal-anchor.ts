@@ -9,6 +9,16 @@ const REVEAL_SETTLE_MS = 400
 /** Hard cap so a stalled backfill can't leave the window armed forever. */
 const REVEAL_MAX_MS = 2500
 
+/** A keydown counts as "the reader scrolled" only when it can move the scroller —
+ *  not when it's typing. The board composer renders inside the SAME scroller, so
+ *  its keystrokes bubble to the keydown listener; without this gate a space typed
+ *  into the composer mid-backfill would close the window and drop the correction. */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  return el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT"
+}
+
 interface Options {
   cardRef: RefObject<HTMLDivElement | null>
   /** The board's owned scroll viewport. Absent off the board page (tests, jsdom). */
@@ -76,15 +86,20 @@ export function useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef }: Opti
     if (maxTimerRef.current) clearTimeout(maxTimerRef.current)
     maxTimerRef.current = window.setTimeout(close, REVEAL_MAX_MS)
     // A deliberate scroll means the reader took over — stop holding immediately.
+    // keydown is gated to non-editable targets so typing in the in-scroller
+    // composer (whose keystrokes bubble here) doesn't disarm the hold.
     detachGestureRef.current?.()
     const onGesture = () => close()
+    const onKeyGesture = (e: KeyboardEvent) => {
+      if (!isEditableTarget(e.target)) close()
+    }
     scroller.addEventListener("wheel", onGesture, { passive: true })
     scroller.addEventListener("touchmove", onGesture, { passive: true })
-    scroller.addEventListener("keydown", onGesture)
+    scroller.addEventListener("keydown", onKeyGesture)
     detachGestureRef.current = () => {
       scroller.removeEventListener("wheel", onGesture)
       scroller.removeEventListener("touchmove", onGesture)
-      scroller.removeEventListener("keydown", onGesture)
+      scroller.removeEventListener("keydown", onKeyGesture)
     }
   }, [measure, scrollerRef, listRef, close])
 

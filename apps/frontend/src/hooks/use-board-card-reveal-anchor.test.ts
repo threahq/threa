@@ -76,4 +76,26 @@ describe("useBoardCardRevealAnchor", () => {
     roCallback?.()
     expect(scrollBy).not.toHaveBeenCalled()
   })
+
+  it("keeps holding when a keystroke bubbles from the in-scroller composer", () => {
+    const { card, scroller, scrollBy, beginReveal } = setup()
+    const editor = document.createElement("textarea")
+    scroller.appendChild(editor)
+    beginReveal()
+    // A key typed into the composer bubbles to the scroller's keydown listener;
+    // it must NOT disarm the hold, or the backfill correction is dropped.
+    editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true }))
+    setRect(card, 100, 632)
+    roCallback?.()
+    expect(scrollBy).toHaveBeenCalledWith(332)
+  })
+
+  it("stops holding on a keydown that is not typing (keyboard scroll)", () => {
+    const { card, scroller, scrollBy, beginReveal } = setup()
+    beginReveal()
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true }))
+    setRect(card, 100, 632)
+    roCallback?.()
+    expect(scrollBy).not.toHaveBeenCalled()
+  })
 })

@@ -1,8 +1,9 @@
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { CalendarDays, ChevronDown, ChevronLeft } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { formatDayDivider, getPastDatePresets } from "@/lib/dates"
+import { useForwardScroll } from "@/hooks/use-forward-scroll"
 import { cn } from "@/lib/utils"
 
 interface StreamDateHeaderProps {
@@ -30,11 +31,9 @@ interface StreamDateHeaderProps {
 export function StreamDateHeader({ dayStartMs, visible, onJumpToDate, scrollerRef }: StreamDateHeaderProps) {
   const [open, setOpen] = useState(false)
   const [showCalendar, setShowCalendar] = useState(false)
-  // Touch-drag start Y for forwarding a touch scroll begun on the pill to the
-  // scroller (the touch equivalent of onWheel — a touch starting on the
-  // pointer-events-auto button would otherwise be trapped and not scroll the
-  // timeline on mobile). A tap doesn't move, so it never scrolls.
-  const touchStartY = useRef<number | null>(null)
+  // Forward a wheel/touch scroll begun on the pill to the timeline scroller —
+  // gated off while the jump popover is open so it scrolls its own list.
+  const forwardScroll = useForwardScroll(scrollerRef, !open)
 
   if (dayStartMs == null) return null
   const label = formatDayDivider(new Date(dayStartMs))
@@ -66,24 +65,10 @@ export function StreamDateHeader({ dayStartMs, visible, onJumpToDate, scrollerRe
             // Drop out of the tab order while faded out — otherwise keyboard
             // focus lands on an invisible control with a focus ring.
             tabIndex={visible ? undefined : -1}
-            // Forward wheel to the scroller (see scrollerRef doc): without this,
-            // wheeling over the pill leaves the timeline stuck. Skipped while the
-            // jump menu is open so the popover handles its own scroll.
-            onWheel={(e) => {
-              if (!open) scrollerRef?.current?.scrollBy({ top: e.deltaY })
-            }}
-            onTouchStart={(e) => {
-              touchStartY.current = open ? null : (e.touches[0]?.clientY ?? null)
-            }}
-            onTouchMove={(e) => {
-              if (touchStartY.current == null) return
-              const y = e.touches[0]?.clientY ?? touchStartY.current
-              scrollerRef?.current?.scrollBy({ top: touchStartY.current - y })
-              touchStartY.current = y
-            }}
-            onTouchEnd={() => {
-              touchStartY.current = null
-            }}
+            // Forward wheel/touch to the scroller (see scrollerRef doc): without
+            // this, a gesture over the pill leaves the timeline stuck. Gated off
+            // while the jump menu is open so the popover handles its own scroll.
+            {...forwardScroll}
             className={cn(
               // A faded-out pill must not capture clicks or wheel — drop pointer
               // events so they reach the scroller beneath it.
