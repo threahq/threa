@@ -254,8 +254,21 @@ export async function startServer(): Promise<ServerInstance> {
   const configuredWarm = process.env.DATABASE_WARM_POOL_COUNT
   const warmCount = Math.min(configuredWarm ? Number(configuredWarm) : 15, Number(process.env.DATABASE_POOL_MAX) || 30)
   logger.info({ warmCount }, "Pre-warming connection pool...")
-  await warmPool(pools.main, warmCount)
-  logger.info("Connection pool pre-warmed")
+  // Best-effort: pre-warming is a cold-start optimization, never a boot gate. On
+  // a shared-DB PR deploy the server can be at its connection cap, and warmPool
+  // holds `warmCount` connections at once — the first demand for multiple slots,
+  // so it's where a saturated server first bites. Letting it throw here escapes
+  // the top-level `await startServer()` as an unhandledRejection and the process
+  // exits before it ever binds a port; the supervisor restarts it and every
+  // restart re-storms connect(), so the pool never drains and the backend
+  // crash-loops without serving. Boot regardless; the pool fills lazily and a
+  // healthy, listening instance lets the storm subside.
+  try {
+    await warmPool(pools.main, warmCount)
+    logger.info("Connection pool pre-warmed")
+  } catch (err) {
+    logger.warn({ err, warmCount }, "Connection pool pre-warm failed — continuing; pool will fill on demand")
+  }
 
   const workosOrgService = config.useStubAuth ? new StubWorkosOrgService() : new WorkosOrgServiceImpl(config.workos)
   const storage = createS3Storage(config.s3)
