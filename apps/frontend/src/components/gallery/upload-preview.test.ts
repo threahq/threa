@@ -52,6 +52,11 @@ describe("uploadGalleryType", () => {
   it("treats a .ts file as text, not an mp2t video", () => {
     expect(uploadGalleryType({ mimeType: "video/mp2t", filename: "module.ts" })).toBe("text")
   })
+
+  it("normalizes mixed-case and parameterized image mimes (server-restored records)", () => {
+    expect(uploadGalleryType({ mimeType: "Image/PNG", filename: "shot.png" })).toBe("image")
+    expect(uploadGalleryType({ mimeType: "image/png; charset=binary", filename: "shot.png" })).toBe("image")
+  })
 })
 
 describe("buildPendingGalleryItem", () => {

@@ -9,7 +9,7 @@ interface AttachmentTypeShape {
 }
 
 export function isImageAttachment(a: AttachmentTypeShape): boolean {
-  return a.mimeType.startsWith("image/")
+  return a.mimeType.split(";")[0].trim().toLowerCase().startsWith("image/")
 }
 
 // Video extensions we can play from raw bytes in a <video> element. Excludes the
