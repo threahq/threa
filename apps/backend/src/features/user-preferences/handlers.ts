@@ -23,6 +23,7 @@ import {
   MESSAGE_COLLAPSE_THRESHOLD_MAX,
   BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
   BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
+  BOARD_LENSES,
 } from "@threa/types"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"
@@ -64,6 +65,7 @@ const updatePreferencesSchema = z.object({
     .min(BOARD_CARD_COLLAPSE_THRESHOLD_MIN)
     .max(BOARD_CARD_COLLAPSE_THRESHOLD_MAX)
     .optional(),
+  boardDefaultLens: z.enum(BOARD_LENSES).optional(),
   // Model id like "elevenlabs:scribe-v2-realtime". Validated against the model
   // registry server-side when a session opens; this layer only bounds length.
   voiceTranscriptionModel: z.string().max(100).nullable().optional(),

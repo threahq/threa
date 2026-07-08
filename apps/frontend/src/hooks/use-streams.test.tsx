@@ -83,6 +83,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       blockquoteCollapseThreshold: 6,
       messageCollapseThreshold: 16,
       boardCardCollapseThreshold: 600,
+      boardDefaultLens: "all",
       voiceTranscriptionModel: null,
       voicePolishLevel: "opinionated",
       voiceSteeringWords: [],

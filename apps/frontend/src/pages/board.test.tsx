@@ -187,6 +187,11 @@ beforeEach(() => {
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { timezone: "UTC", locale: "en-US" },
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+  // BoardPage resolves the home lens (bare `/board`) from the preferences
+  // context; default to All so existing cases keep their unsegmented meaning.
+  vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
+    preferences: { boardDefaultLens: "all" },
+  } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
 })
 
 afterEach(() => vi.restoreAllMocks())
@@ -212,6 +217,45 @@ describe("BoardPage", () => {
 
     expect(await screen.findByText("My own topic.")).toBeTruthy()
     expect(screen.queryByText("Someone else's topic.")).toBeNull()
+  })
+
+  it("lands the bare `/board` on the viewer's home-lens preference", async () => {
+    // boardDefaultLens picks which lens bare `/board` resolves to; here Mine, so
+    // the unsegmented URL filters down to the viewer's own conversations without
+    // a `/board/mine` segment.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "mine" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
+    const notMine = { ...makePost({ id: "conv_other" }, { contentMarkdown: "Someone else's topic." }), isMine: false }
+    mountBoard([mine, notMine], { entry: `/w/${WORKSPACE_ID}/board` })
+
+    expect(await screen.findByText("My own topic.")).toBeTruthy()
+    expect(screen.queryByText("Someone else's topic.")).toBeNull()
+  })
+
+  it("shows no 'Clear filters' on the plain home lens (home is the baseline)", async () => {
+    // With a Mine home, the plain `/board` (lens=mine, no scope filters) is the
+    // viewer's untouched baseline — no filtered-state affordance.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "mine" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
+    mountBoard([mine], { entry: `/w/${WORKSPACE_ID}/board` })
+    await screen.findByText("My own topic.")
+    expect(screen.queryByText("Clear filters")).toBeNull()
+  })
+
+  it("shows 'Clear filters' once the lens is narrowed off the home lens", async () => {
+    // Home is Mine; `/board/all` is a different lens, i.e. a narrowing away from
+    // the baseline, so the clear-to-home affordance reappears.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "mine" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
+    mountBoard([mine], { entry: `/w/${WORKSPACE_ID}/board/all` })
+    await screen.findByText("My own topic.")
+    expect(screen.getByText("Clear filters")).toBeTruthy()
   })
 
   it("offers an inline reply affordance on each post", async () => {

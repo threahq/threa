@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
+import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import {
   THEME_OPTIONS,
   MESSAGE_DISPLAY_OPTIONS,
@@ -20,9 +21,12 @@ import {
   BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
   BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
   DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
+  BOARD_LENSES,
+  DEFAULT_BOARD_LENS,
   type Theme,
   type MessageDisplay,
   type LabelRemoveOnMove,
+  type BoardLens,
 } from "@threa/types"
 
 const THEME_LABELS: Record<Theme, string> = {
@@ -63,6 +67,7 @@ export function AppearanceSettings() {
   const blockquoteThreshold = preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
   const messageThreshold = preferences?.messageCollapseThreshold ?? DEFAULT_MESSAGE_COLLAPSE_THRESHOLD
   const boardCardThreshold = preferences?.boardCardCollapseThreshold ?? DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD
+  const boardDefaultLens = preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
 
   // Local input state so users can type freely without each keystroke
   // hitting the preferences mutation. We commit on blur / Enter only.
@@ -349,6 +354,34 @@ export function AppearanceSettings() {
             className="w-24"
           />
         </div>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Board home</h3>
+          <p className="text-sm text-muted-foreground">
+            The lens the board opens on. Every lens still has its own view — this only picks where you land
+          </p>
+        </div>
+        <RadioGroup
+          value={boardDefaultLens}
+          onValueChange={(value) => updatePreference("boardDefaultLens", value as BoardLens)}
+          className="space-y-3"
+        >
+          {BOARD_LENSES.map((option) => (
+            <div key={option} className="flex items-start space-x-3">
+              <RadioGroupItem value={option} id={`board-lens-${option}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`board-lens-${option}`} className="cursor-pointer">
+                  {BOARD_LENS_DEFS[option].label}
+                </Label>
+                <p className="text-sm text-muted-foreground">{BOARD_LENS_DEFS[option].description}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
       </section>
 
       <Separator />

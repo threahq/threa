@@ -75,6 +75,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "blockquoteCollapseThreshold",
     "messageCollapseThreshold",
     "boardCardCollapseThreshold",
+    "boardDefaultLens",
     "voiceTranscriptionModel",
     "voicePolishLevel",
     "voiceSteeringWords",

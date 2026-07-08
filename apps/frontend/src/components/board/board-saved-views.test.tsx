@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardView } from "@threa/types"
 import { ServicesProvider } from "@/contexts"
-import { BoardSavedViews, savedViewHref } from "./board-saved-views"
+import { BoardSavedViews, savedViewHref, isViewActive, type BoardViewSelection } from "./board-saved-views"
 
 const view = (over: Partial<BoardView> = {}): BoardView => ({
   id: "boardview_1",
@@ -30,6 +30,8 @@ function mount(boardViews: Record<string, unknown>, props: Partial<Parameters<ty
           <BoardSavedViews
             workspaceId="ws_1"
             lens="mine"
+            homeLens="all"
+            activeViewId={null}
             scopeStreamIds={["stream_1"]}
             scopeStreamTypes={[]}
             scopeLabelIds={[]}
@@ -47,18 +49,52 @@ function mount(boardViews: Record<string, unknown>, props: Partial<Parameters<ty
 
 afterEach(() => vi.restoreAllMocks())
 
+describe("isViewActive", () => {
+  const selection = (over: Partial<BoardViewSelection> = {}): BoardViewSelection => ({
+    lens: "mine",
+    scopeStreamIds: ["stream_1"],
+    scopeStreamTypes: [],
+    scopeLabelIds: [],
+    excludeStreamIds: [],
+    excludeStreamTypes: [],
+    excludeLabelIds: [],
+    ...over,
+  })
+
+  it("matches when the lens and every filter axis agree, order-independent", () => {
+    expect(isViewActive(view({ scopeStreamIds: ["a", "b"] }), selection({ scopeStreamIds: ["b", "a"] }))).toBe(true)
+  })
+
+  it("is inactive when the lens differs", () => {
+    expect(isViewActive(view(), selection({ lens: "all" }))).toBe(false)
+  })
+
+  it("is inactive when a filter axis differs", () => {
+    expect(isViewActive(view(), selection({ scopeStreamIds: ["stream_2"] }))).toBe(false)
+    expect(isViewActive(view(), selection({ excludeStreamTypes: ["system"] }))).toBe(false)
+  })
+})
+
 describe("savedViewHref", () => {
   it("expands a saved view into its canonical board URL", () => {
-    const href = savedViewHref("ws_1", view({ scopeStreamIds: ["s1", "s2"], scopeStreamTypes: ["channel"] }))
+    const href = savedViewHref("ws_1", view({ scopeStreamIds: ["s1", "s2"], scopeStreamTypes: ["channel"] }), "all")
     const url = new URL(href, "http://x")
     expect(url.pathname).toBe("/w/ws_1/board/mine")
     expect(url.searchParams.get("in")).toBe("s1,s2")
     expect(url.searchParams.get("is")).toBe("channel")
   })
 
-  it("uses the bare board path for the All lens with no scope", () => {
-    expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }))).toBe(
+  it("uses the bare board path for the home lens with no scope", () => {
+    expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }), "all")).toBe(
       "/w/ws_1/board"
+    )
+  })
+
+  it("segments the All lens when the viewer's home lens is something else", () => {
+    // Home is Active, so bare `/board` is Active; a saved All view must address
+    // its own `/board/all` segment to reproduce, not collapse to the home.
+    expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }), "active")).toBe(
+      "/w/ws_1/board/all"
     )
   })
 
@@ -72,7 +108,8 @@ describe("savedViewHref", () => {
         excludeStreamIds: ["s9"],
         excludeStreamTypes: ["system"],
         excludeLabelIds: ["label_b"],
-      })
+      }),
+      "all"
     )
     const url = new URL(href, "http://x")
     expect(url.pathname).toBe("/w/ws_1/board")

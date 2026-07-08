@@ -176,6 +176,18 @@ right, so split the dials in two:
 
 **Structural lenses (same signal for everyone):**
 
+> **Per-user home lens (shipped):** which lens the bare `/board` opens on is the
+> `boardDefaultLens` preference — **All** for everyone who hasn't changed it. It
+> only moves the landing: every lens keeps its own URL (the home lens is the
+> segment-less one, so **All** takes `/board/all` for a viewer who homes
+> elsewhere), and the home lens is the viewer's baseline for filtered-state chrome
+> (no "Clear filters" on the plain home; "Clear filters" returns to it). The
+> surfacing rule ("your own action always surfaces") still routes a fresh post to
+> **All** — the only lens that always contains it — _unless_ the current view
+> already does: an unfiltered `all` or `mine` (a self-authored post is `isMine`).
+> A status/memo lens (`active`/`needs-resolution`/`decisions`) can't be trusted to
+> match a brand-new post, so posting from one still returns to All.
+
 - **All** (default) — everything, `lastActivityAt` desc. The resurfacing wall.
 - **Active** — `status = active`: still in motion, not stalled or resolved.
 - **Needs resolution** — `status = stalled`, or high `temporalStaleness` with
