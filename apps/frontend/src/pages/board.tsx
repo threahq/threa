@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { AlertCircle, ArrowLeft, ArrowUp, LayoutGrid } from "lucide-react"
+import type { VirtualizerHandle } from "virtua"
+import { AlertCircle, ArrowLeft, LayoutGrid } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -33,6 +34,7 @@ import { useConversationGraphReady } from "@/hooks/use-conversation-graph"
 import { SKELETON_DELAY_MS } from "@/contexts/coordinated-loading-context"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
+import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardComposer } from "@/components/board/board-composer"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
 import {
@@ -396,6 +398,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // virtua then maintains scroll position across item measurement and above-fold
   // reflow, which is what the hand-rolled `useBoardScrollAnchor` used to do.
   const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<VirtualizerHandle | null>(null)
   const registerScroller = useCallback((node: HTMLDivElement | null) => {
     scrollerRef.current = node
   }, [])
@@ -545,7 +548,14 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         const { contextLabel, streamType } = labelsFor(row.post.conversation)
         return (
           <div key={row.key} className="pb-3">
-            <BoardCard workspaceId={workspaceId} post={row.post} contextLabel={contextLabel} streamType={streamType} />
+            <BoardCard
+              workspaceId={workspaceId}
+              post={row.post}
+              contextLabel={contextLabel}
+              streamType={streamType}
+              scrollerRef={scrollerRef}
+              listRef={listRef}
+            />
           </div>
         )
       }),
@@ -642,26 +652,12 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}
       </span>
-      {/* The "N new" pill: a non-scrolling row ABOVE the scroller, not an overlay
-          inside it — so it never overlaps the composer and never clips (an overlay
-          anchored to the composer's height slides off-screen once the composer
-          expands to mobile full-screen). Trade-off: appearing (newCount 0→1)
-          shrinks the scroller, nudging the composer + feed down once until it's
-          dismissed. Clicking scrolls to the top and commits the buffered order. */}
-      {newCount > 0 && (
-        <div className="flex shrink-0 justify-center px-2 pb-1 pt-2">
-          <Button
-            size="sm"
-            onClick={revealNew}
-            aria-label={`Show ${newCount} new ${newCount === 1 ? "post" : "posts"}`}
-            className="min-h-11 gap-1.5 rounded-full px-4 shadow-md"
-          >
-            <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
-            {newCount} new
-          </Button>
-        </div>
-      )}
-      <div className="flex-1 overflow-hidden">
+      {/* The "N new" pill floats over the top of the feed (see BoardNewPostsPill),
+          so buffered posts never shove the composer/feed down the way the old
+          in-flow banner did. Anchored to the viewport top (fixed `top-2`), not the
+          composer's height, so a mobile-expanded composer can't clip it. */}
+      <div className="relative flex-1 overflow-hidden">
+        {newCount > 0 && <BoardNewPostsPill count={newCount} onReveal={revealNew} scrollerRef={scrollerRef} />}
         {/* Owned scroller (a plain overflow div, like the timeline): virtua drives
             it via `scrollRef`, so scroll decisions read native metrics with no
             library tug-of-war. `overflowAnchor: none` keeps the browser's own
@@ -682,7 +678,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
               <BoardComposer workspaceId={workspaceId} onPosted={handlePosted} />
             </div>
             {showFeed ? (
-              <BoardFeedList scrollRef={scrollerRef} startMargin={startMargin}>
+              <BoardFeedList scrollRef={scrollerRef} listRef={listRef} startMargin={startMargin}>
                 {renderedRows}
               </BoardFeedList>
             ) : (
