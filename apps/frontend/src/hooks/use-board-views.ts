@@ -19,7 +19,12 @@ export const boardViewKeys = {
  * saved lenses so the picker paints populated instead of flashing empty for the
  * on-mount fetch. `initialData` only primes an empty cache entry, so a save/
  * update/delete invalidation still refetches; an older bootstrap snapshot lacking
- * the field falls through to the fetch.
+ * the field falls through to the fetch. `initialDataUpdatedAt` inherits the
+ * bootstrap's actual fetch time (not the seeded query's mount time), so the 60s
+ * `staleTime` counts from when the data was really fetched — otherwise a board
+ * opened long after login would read fresh-at-mount and `refetchOnReconnect`
+ * (which only fires when stale) couldn't close the multi-device gap (INV-53).
+ * Mirrors `useStreamContextBag`.
  */
 export function useBoardViews(workspaceId: string) {
   const boardViews = useBoardViewService()
@@ -28,6 +33,7 @@ export function useBoardViews(workspaceId: string) {
     queryKey: boardViewKeys.list(workspaceId),
     queryFn: () => boardViews.list(workspaceId),
     initialData: () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.boardViews,
+    initialDataUpdatedAt: () => queryClient.getQueryState(workspaceKeys.bootstrap(workspaceId))?.dataUpdatedAt,
     staleTime: 60_000,
     refetchOnReconnect: true,
   })

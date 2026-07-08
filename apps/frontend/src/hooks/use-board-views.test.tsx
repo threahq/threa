@@ -54,6 +54,10 @@ describe("useBoardViews", () => {
 
     expect(result.current.data).toEqual(seeded)
     expect(mockList).not.toHaveBeenCalled()
+    // The seed inherits the bootstrap's fetch time, not the query's mount time,
+    // so the staleTime window counts from the real fetch (guards INV-53).
+    const bootstrapUpdatedAt = queryClient.getQueryState(workspaceKeys.bootstrap("ws_1"))?.dataUpdatedAt
+    expect(result.current.dataUpdatedAt).toBe(bootstrapUpdatedAt)
   })
 
   it("falls through to the fetch when the bootstrap snapshot lacks the field", async () => {
