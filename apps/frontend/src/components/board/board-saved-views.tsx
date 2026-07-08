@@ -28,6 +28,9 @@ import {
   BOARD_EXCLUDE_TYPE_PARAM,
   BOARD_EXCLUDE_LABEL_PARAM,
 } from "@/components/board/board-filter-params"
+import { isBoardFiltered, type BoardViewSelection } from "@/lib/board/filter-state"
+
+export type { BoardViewSelection }
 
 /** Expand a saved view into the canonical board URL it bookmarks (INV-59). The
  *  viewer's home lens is the segment-less one, so a saved All view addresses
@@ -43,18 +46,6 @@ export function savedViewHref(workspaceId: string, view: BoardView, homeLens: Bo
   if (view.excludeLabelIds.length > 0) params.set(BOARD_EXCLUDE_LABEL_PARAM, view.excludeLabelIds.join(","))
   const qs = params.toString()
   return qs ? `${base}?${qs}` : base
-}
-
-/** The board's live view — lens plus every filter axis — matched against a saved
- *  view to mark which one you're currently looking at. */
-export interface BoardViewSelection {
-  lens: BoardLens
-  scopeStreamIds: string[]
-  scopeStreamTypes: BoardScopeStreamType[]
-  scopeLabelIds: string[]
-  excludeStreamIds: string[]
-  excludeStreamTypes: BoardScopeStreamType[]
-  excludeLabelIds: string[]
 }
 
 /** Order-independent membership equality — URL params carry no stable order, so
@@ -148,14 +139,15 @@ export function BoardSavedViews({
 
   // Only offer "save current view" when there's actually a narrowing to bookmark
   // — the viewer's plain home lens is nothing worth saving.
-  const isFiltered =
-    lens !== homeLens ||
-    scopeStreamIds.length > 0 ||
-    scopeStreamTypes.length > 0 ||
-    scopeLabelIds.length > 0 ||
-    excludeStreamIds.length > 0 ||
-    excludeStreamTypes.length > 0 ||
-    excludeLabelIds.length > 0
+  const isFiltered = isBoardFiltered(homeLens, {
+    lens,
+    scopeStreamIds,
+    scopeStreamTypes,
+    scopeLabelIds,
+    excludeStreamIds,
+    excludeStreamTypes,
+    excludeLabelIds,
+  })
 
   const submit = (name: string) => {
     if (editing?.id) update.mutate({ id: editing.id, input: { name } })

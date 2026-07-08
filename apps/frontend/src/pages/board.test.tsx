@@ -258,6 +258,28 @@ describe("BoardPage", () => {
     expect(screen.getByText("Clear filters")).toBeTruthy()
   })
 
+  it("shows the empty state without a 'Show everything' CTA on the plain home lens", async () => {
+    // Empty `/board` with a Mine home is the baseline coming up empty, not a
+    // filtered view — the lens empty copy shows, but the "Show everything" CTA
+    // (which reads as "you've narrowed something") must not.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "mine" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    mountBoard([], { entry: `/w/${WORKSPACE_ID}/board` })
+    expect(await screen.findByText("Nothing here for you yet")).toBeTruthy()
+    expect(screen.queryByText("Show everything")).toBeNull()
+  })
+
+  it("shows 'Show everything' on an empty view narrowed off the home lens", async () => {
+    // Home is Mine; empty `/board/all` is a narrowing away from baseline, so the
+    // empty state offers the one-tap way back home.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "mine" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    mountBoard([], { entry: `/w/${WORKSPACE_ID}/board/all` })
+    expect(await screen.findByText("Show everything")).toBeTruthy()
+  })
+
   it("offers an inline reply affordance on each post", async () => {
     mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
     await screen.findByText("Rotate the tokens before Friday.")

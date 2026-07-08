@@ -37,6 +37,7 @@ import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardComposer } from "@/components/board/board-composer"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
+import { isBoardFiltered } from "@/lib/board/filter-state"
 import {
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
@@ -624,8 +625,19 @@ function BoardPageInner({
     } else {
       // A filtered-empty view is the FILTERS coming up empty, never the board
       // hiding things — so it always offers the one-tap way back to everything.
+      // Filtered is measured against the viewer's home lens, so a non-All home's
+      // own empty landing view shows the empty copy without a "Show everything"
+      // CTA (it's already at baseline).
       const scoped = hasFilterParams
-      const isFiltered = lens !== DEFAULT_BOARD_LENS || scoped
+      const isFiltered = isBoardFiltered(homeLens, {
+        lens,
+        scopeStreamIds,
+        scopeStreamTypes,
+        scopeLabelIds,
+        excludeStreamIds,
+        excludeStreamTypes,
+        excludeLabelIds,
+      })
       const copy = scoped ? SCOPED_EMPTY_COPY : LENS_EMPTY_COPY[lens]
       stateContent = (
         <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
