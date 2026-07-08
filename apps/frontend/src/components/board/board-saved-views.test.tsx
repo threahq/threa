@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardView } from "@threa/types"
 import { ServicesProvider } from "@/contexts"
-import { BoardSavedViews, savedViewHref } from "./board-saved-views"
+import { BoardSavedViews, savedViewHref, isViewActive, type BoardViewSelection } from "./board-saved-views"
 
 const view = (over: Partial<BoardView> = {}): BoardView => ({
   id: "boardview_1",
@@ -47,6 +47,32 @@ function mount(boardViews: Record<string, unknown>, props: Partial<Parameters<ty
 }
 
 afterEach(() => vi.restoreAllMocks())
+
+describe("isViewActive", () => {
+  const selection = (over: Partial<BoardViewSelection> = {}): BoardViewSelection => ({
+    lens: "mine",
+    scopeStreamIds: ["stream_1"],
+    scopeStreamTypes: [],
+    scopeLabelIds: [],
+    excludeStreamIds: [],
+    excludeStreamTypes: [],
+    excludeLabelIds: [],
+    ...over,
+  })
+
+  it("matches when the lens and every filter axis agree, order-independent", () => {
+    expect(isViewActive(view({ scopeStreamIds: ["a", "b"] }), selection({ scopeStreamIds: ["b", "a"] }))).toBe(true)
+  })
+
+  it("is inactive when the lens differs", () => {
+    expect(isViewActive(view(), selection({ lens: "all" }))).toBe(false)
+  })
+
+  it("is inactive when a filter axis differs", () => {
+    expect(isViewActive(view(), selection({ scopeStreamIds: ["stream_2"] }))).toBe(false)
+    expect(isViewActive(view(), selection({ excludeStreamTypes: ["system"] }))).toBe(false)
+  })
+})
 
 describe("savedViewHref", () => {
   it("expands a saved view into its canonical board URL", () => {

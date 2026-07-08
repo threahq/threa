@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import { Bookmark, Pencil, Plus, Trash2 } from "lucide-react"
+import { Bookmark, Check, Pencil, Plus, Trash2 } from "lucide-react"
 import {
   DEFAULT_BOARD_LENS,
   MAX_BOARD_VIEW_NAME_LENGTH,
@@ -18,6 +18,7 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
+import { cn } from "@/lib/utils"
 import { useBoardViews, useSaveBoardView, useUpdateBoardView, useDeleteBoardView } from "@/hooks/use-board-views"
 import {
   BOARD_SCOPE_PARAM,
@@ -42,6 +43,40 @@ export function savedViewHref(workspaceId: string, view: BoardView, homeLens: Bo
   if (view.excludeLabelIds.length > 0) params.set(BOARD_EXCLUDE_LABEL_PARAM, view.excludeLabelIds.join(","))
   const qs = params.toString()
   return qs ? `${base}?${qs}` : base
+}
+
+/** The board's live view — lens plus every filter axis — matched against a saved
+ *  view to mark which one you're currently looking at. */
+export interface BoardViewSelection {
+  lens: BoardLens
+  scopeStreamIds: string[]
+  scopeStreamTypes: BoardScopeStreamType[]
+  scopeLabelIds: string[]
+  excludeStreamIds: string[]
+  excludeStreamTypes: BoardScopeStreamType[]
+  excludeLabelIds: string[]
+}
+
+/** Order-independent membership equality — URL params carry no stable order, so
+ *  `?in=a,b` and `?in=b,a` are the same selection. */
+function sameMembers(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false
+  const set = new Set(a)
+  return b.every((x) => set.has(x))
+}
+
+/** A saved view is active when the live lens and every filter axis match what it
+ *  bookmarked. Archived is not part of a saved view, so it doesn't participate. */
+export function isViewActive(view: BoardView, selection: BoardViewSelection): boolean {
+  return (
+    view.baseLens === selection.lens &&
+    sameMembers(view.scopeStreamIds, selection.scopeStreamIds) &&
+    sameMembers(view.scopeStreamTypes, selection.scopeStreamTypes) &&
+    sameMembers(view.scopeLabelIds, selection.scopeLabelIds) &&
+    sameMembers(view.excludeStreamIds, selection.excludeStreamIds) &&
+    sameMembers(view.excludeStreamTypes, selection.excludeStreamTypes) &&
+    sameMembers(view.excludeLabelIds, selection.excludeLabelIds)
+  )
 }
 
 /** Count phrase: `3 streams`, `1 label`. */
@@ -118,6 +153,16 @@ export function BoardSavedViews({
     excludeStreamTypes.length > 0 ||
     excludeLabelIds.length > 0
 
+  const selection: BoardViewSelection = {
+    lens,
+    scopeStreamIds,
+    scopeStreamTypes,
+    scopeLabelIds,
+    excludeStreamIds,
+    excludeStreamTypes,
+    excludeLabelIds,
+  }
+
   const submit = (name: string) => {
     if (editing?.id) update.mutate({ id: editing.id, input: { name } })
     else
@@ -141,40 +186,48 @@ export function BoardSavedViews({
           <p className="px-3 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Saved views
           </p>
-          {views?.map((view) => (
-            <div
-              key={view.id}
-              className="group mx-1 flex items-center rounded-item pr-1 transition-colors hover:bg-muted"
-            >
-              <Link
-                to={savedViewHref(workspaceId, view, homeLens)}
-                onClick={onNavigate}
-                className="flex min-w-0 flex-1 items-start gap-2.5 px-2.5 py-2"
+          {views?.map((view) => {
+            const active = isViewActive(view, selection)
+            return (
+              <div
+                key={view.id}
+                className={cn(
+                  "group mx-1 flex items-center rounded-item pr-1 transition-colors hover:bg-muted",
+                  active && "bg-muted/60"
+                )}
               >
-                <Bookmark className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{view.name}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{summarize(view)}</span>
-                </span>
-              </Link>
-              <button
-                type="button"
-                onClick={() => setEditing({ id: view.id, name: view.name })}
-                aria-label={`Rename ${view.name}`}
-                className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => remove.mutate(view.id)}
-                aria-label={`Delete ${view.name}`}
-                className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-destructive focus:opacity-100 group-hover:opacity-100"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
+                <Link
+                  to={savedViewHref(workspaceId, view, homeLens)}
+                  onClick={onNavigate}
+                  aria-current={active ? "true" : undefined}
+                  className="flex min-w-0 flex-1 items-start gap-2.5 px-2.5 py-2"
+                >
+                  <Bookmark className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{view.name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{summarize(view)}</span>
+                  </span>
+                  {active && <Check className="mt-0.5 h-4 w-4 shrink-0" />}
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setEditing({ id: view.id, name: view.name })}
+                  aria-label={`Rename ${view.name}`}
+                  className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => remove.mutate(view.id)}
+                  aria-label={`Delete ${view.name}`}
+                  className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-destructive focus:opacity-100 group-hover:opacity-100"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )
+          })}
           {isFiltered && (
             <button
               type="button"
