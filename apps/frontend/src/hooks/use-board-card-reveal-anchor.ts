@@ -14,9 +14,13 @@ const REVEAL_MAX_MS = 2500
  *  its keystrokes bubble to the keydown listener; without this gate a space typed
  *  into the composer mid-backfill would close the window and drop the correction. */
 function isEditableTarget(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null
-  if (!el) return false
-  return el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT"
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
+  )
 }
 
 interface Options {

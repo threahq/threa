@@ -98,4 +98,25 @@ describe("useBoardCardRevealAnchor", () => {
     roCallback?.()
     expect(scrollBy).not.toHaveBeenCalled()
   })
+
+  it("closes the window after the post-resize settle gap", () => {
+    const { card, scrollBy, beginReveal } = setup()
+    beginReveal()
+    setRect(card, 100, 632)
+    roCallback?.() // corrects (arms the settle timer)
+    expect(scrollBy).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(400) // REVEAL_SETTLE_MS elapses → close
+    setRect(card, 100, 700)
+    roCallback?.() // disarmed → no further correction
+    expect(scrollBy).toHaveBeenCalledTimes(1)
+  })
+
+  it("closes the window at the hard cap even if no resize ever settles it", () => {
+    const { card, scrollBy, beginReveal } = setup()
+    beginReveal()
+    vi.advanceTimersByTime(2500) // REVEAL_MAX_MS elapses → close
+    setRect(card, 100, 632)
+    roCallback?.()
+    expect(scrollBy).not.toHaveBeenCalled()
+  })
 })
