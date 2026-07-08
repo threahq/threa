@@ -187,9 +187,12 @@ export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, ren
 export function BranchProvenanceRow({ conversationId, title }: { conversationId: string; title: string }) {
   const { getPanelUrl } = usePanel()
   return (
+    // Leads the card/panel message list; carries its own top gap (like the
+    // sibling ContinueThreadRow) since the rows below self-space via their
+    // internal padding and the container no longer adds a leading margin.
     <Link
       to={getPanelUrl(createConversationPanelId(conversationId))}
-      className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
     >
       <GitBranch className="h-3.5 w-3.5 shrink-0" />
       <span className="truncate">Branched from {title}</span>
