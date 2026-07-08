@@ -576,13 +576,20 @@ export const MemoRepository = {
     `)
   },
 
+  /**
+   * Archive an active memo. Guarded on `status = 'active'` so a `superseded`
+   * memo can't be flipped to `archived` and then restored via `unarchive`
+   * (which only accepts `status = 'archived'`) — that two-step would resurrect
+   * retired-by-supersession content into retrieval. Returns null when the row
+   * is missing or not active.
+   */
   async archive(db: Querier, id: string): Promise<Memo | null> {
     const result = await db.query<MemoRow>(sql`
       UPDATE memos
       SET status = 'archived',
           archived_at = NOW(),
           updated_at = NOW()
-      WHERE id = ${id}
+      WHERE id = ${id} AND status = 'active'
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     if (!result.rows[0]) return null

@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { KNOWLEDGE_TYPES, MEMO_STATUSES, MEMO_TYPES } from "@threa/types"
 import { HttpError } from "../../lib/errors"
-import { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS } from "./config"
+import { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE_MAX_CHARS } from "./config"
 import { resolveUserAccessibleStreamIds, SearchRepository } from "../search"
 import { computeAgentAccessSpec } from "../agents"
 import { StreamRepository } from "../streams"
@@ -28,8 +28,8 @@ const memoUpdateSchema = z
   .object({
     title: z.string().trim().min(1).max(MEMO_TITLE_MAX_CHARS).optional(),
     abstract: z.string().trim().min(1).max(MEMO_ABSTRACT_MAX_CHARS).optional(),
-    keyPoints: z.array(z.string().trim().min(1)).max(20).optional(),
-    tags: z.array(z.string().trim().min(1)).max(20).optional(),
+    keyPoints: z.array(z.string().trim().min(1)).max(MEMO_KEY_POINTS_MAX).optional(),
+    tags: z.array(z.string().trim().min(1)).max(MEMO_TAGS_MAX).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
 

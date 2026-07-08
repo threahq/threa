@@ -207,9 +207,14 @@ export class MemoExplorerService {
   }
 
   /**
-   * Correct a memo's text fields. Re-embeds when the abstract changes so
-   * semantic retrieval reflects the edit — the AI call runs outside the write
-   * transaction (INV-41). Access-gated identically to `getById`.
+   * Correct a memo's text fields. Re-embeds whenever the abstract is part of
+   * the update so the stored embedding always matches the stored abstract — the
+   * embedding is derived from the abstract, and re-embedding on write (rather
+   * than on a diff against a pre-read value) keeps the two consistent even when
+   * a concurrent edit lands between the read and this write (INV-20). Callers
+   * that leave the abstract out (a title/tags-only edit) skip the AI call. The
+   * `embed` runs outside the write transaction (INV-41). Access-gated
+   * identically to `getById`.
    */
   async update(
     workspaceId: string,
@@ -222,10 +227,10 @@ export class MemoExplorerService {
       return null
     }
 
-    const abstractChanged = fields.abstract !== undefined && fields.abstract !== resolved.memo.abstract
-    const embedding = abstractChanged
-      ? await this.embeddingService.embed(fields.abstract!, { workspaceId, functionId: "memo-edit-embedding" })
-      : null
+    const embedding =
+      fields.abstract !== undefined
+        ? await this.embeddingService.embed(fields.abstract, { workspaceId, functionId: "memo-edit-embedding" })
+        : null
 
     const updated = await withTransaction(this.pool, async (client) => {
       const row = await MemoRepository.update(client, memoId, {

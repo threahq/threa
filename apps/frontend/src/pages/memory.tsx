@@ -349,6 +349,11 @@ export function MemoryPage() {
           }
         },
         onArchive: async () => {
+          // Pin the acted memo in the URL first: archiving drops it from the
+          // active list, and without an explicit ?memo= the detail pane would
+          // fall back to results[0] — silently swapping to an unrelated memo
+          // instead of showing the just-archived one flip to its Restore state.
+          syncToUrl({ memo: selectedMemoId })
           try {
             await archiveMemo.mutateAsync(selectedMemoId)
           } catch {
@@ -356,6 +361,7 @@ export function MemoryPage() {
           }
         },
         onUnarchive: async () => {
+          syncToUrl({ memo: selectedMemoId })
           try {
             await unarchiveMemo.mutateAsync(selectedMemoId)
           } catch {

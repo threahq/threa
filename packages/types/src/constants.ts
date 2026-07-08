@@ -470,13 +470,19 @@ export const MemoStatuses = {
 } as const satisfies Record<string, MemoStatus>
 
 /**
- * Caps for user-edited memo text. A memo's abstract is injected into agent
- * retrieval and embedded, so it is a prompt insert, not a document store —
- * bounded to keep edits cheap. Shared by the backend Zod validator and the
- * explorer editor's character counter (INV-33).
+ * Caps for user-edited memo text (the memory explorer's edit form). A memo's
+ * abstract is injected into agent retrieval and embedded, so it is a prompt
+ * insert, not a document store — bounded to keep edits cheap. The char caps are
+ * shared by the backend Zod validator and the editor's character counter
+ * (INV-33); `TITLE` matches the memorizer's generation cap (`memoItemSchema`).
+ * The array ceilings are edit-only and deliberately more generous than the
+ * generation defaults (keyPoints 3 / tags 5), which are prompt guidance for the
+ * model, not hard limits on what a person may curate.
  */
-export const MEMO_TITLE_MAX_CHARS = 200
+export const MEMO_TITLE_MAX_CHARS = 100
 export const MEMO_ABSTRACT_MAX_CHARS = 2000
+export const MEMO_KEY_POINTS_MAX = 20
+export const MEMO_TAGS_MAX = 20
 
 // Pending memo item types
 export const PENDING_ITEM_TYPES = ["message", "conversation"] as const

@@ -74,15 +74,20 @@ describe("MemoDetailContent edit controls (roadmap 6.1)", () => {
     await user.type(titleInput, "Launch decision v2")
     await user.click(screen.getByRole("button", { name: /save/i }))
 
+    // Only the changed field is sent — untouched fields are omitted so they
+    // aren't re-embedded/overwritten.
     await waitFor(() => expect(controls.onSave).toHaveBeenCalledTimes(1))
-    expect(controls.onSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Launch decision v2",
-        abstract: "Approved launch plan",
-        keyPoints: ["ship on Friday"],
-        tags: ["launch"],
-      })
-    )
+    expect(controls.onSave).toHaveBeenCalledWith({ title: "Launch decision v2" })
+  })
+
+  it("keeps Save disabled when nothing changed", async () => {
+    const user = userEvent.setup()
+    const controls = buildControls()
+    renderDetail(<MemoDetailContent data={buildDetail()} workspaceId="ws_1" isLoading={false} edit={controls} />)
+
+    await user.click(screen.getByRole("button", { name: /edit/i }))
+    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled()
+    expect(controls.onSave).not.toHaveBeenCalled()
   })
 
   it("archives an active memo and offers Restore on an archived one", async () => {
@@ -109,6 +114,20 @@ describe("MemoDetailContent edit controls (roadmap 6.1)", () => {
     expect(screen.queryByRole("button", { name: /^archive$/i })).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: /restore/i }))
     expect(controls.onUnarchive).toHaveBeenCalledTimes(1)
+  })
+
+  it("offers neither Archive nor Restore on a superseded memo (can't resurrect it)", () => {
+    const controls = buildControls()
+    renderDetail(
+      <MemoDetailContent
+        data={buildDetail({ status: "superseded" })}
+        workspaceId="ws_1"
+        isLoading={false}
+        edit={controls}
+      />
+    )
+    expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /restore/i })).not.toBeInTheDocument()
   })
 
   it("links a superseded memo to its successor", () => {

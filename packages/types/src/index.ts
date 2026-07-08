@@ -99,6 +99,8 @@ export {
   MemoStatuses,
   MEMO_TITLE_MAX_CHARS,
   MEMO_ABSTRACT_MAX_CHARS,
+  MEMO_KEY_POINTS_MAX,
+  MEMO_TAGS_MAX,
   PENDING_ITEM_TYPES,
   type PendingItemType,
   // Agent tools

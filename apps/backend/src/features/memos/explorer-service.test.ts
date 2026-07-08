@@ -97,7 +97,7 @@ describe("MemoExplorerService.update (roadmap 6.1)", () => {
     })
   })
 
-  it("does not re-embed when the abstract is unchanged", async () => {
+  it("does not re-embed for a title-only edit (abstract absent from the update)", async () => {
     const { service, embed } = buildService()
     stubSourceStreamResolution()
     spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo())
@@ -110,6 +110,23 @@ describe("MemoExplorerService.update (roadmap 6.1)", () => {
 
     expect(embed).not.toHaveBeenCalled()
     expect(embeddingSpy).not.toHaveBeenCalled()
+  })
+
+  it("re-embeds whenever the abstract is in the update, keeping abstract and embedding consistent", async () => {
+    const { service, embed } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo())
+    spyOn(MemoRepository, "update").mockResolvedValue(fakeMemo())
+    const embeddingSpy = spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined)
+    spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: unknown) => unknown) =>
+      fn({} as never)) as typeof dbModule.withTransaction)
+
+    // Same text as the stored abstract — still re-embeds, because the decision
+    // is "is the abstract being written" not a diff against a pre-read value.
+    await service.update(WORKSPACE_ID, MEMO_ID, ACCESS, { abstract: "Original abstract" })
+
+    expect(embed).toHaveBeenCalledTimes(1)
+    expect(embeddingSpy).toHaveBeenCalledTimes(1)
   })
 
   it("returns null when the source stream is not accessible", async () => {
@@ -145,6 +162,18 @@ describe("MemoExplorerService.archive / unarchive (roadmap 6.1)", () => {
     spyOn(MemoRepository, "unarchive").mockResolvedValue(null)
 
     const result = await service.unarchive(WORKSPACE_ID, MEMO_ID, ACCESS)
+
+    expect(result).toBeNull()
+  })
+
+  it("returns null when archive is a no-op (repo guard rejects a non-active memo)", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo({ status: "superseded" }))
+    // The repo's `WHERE status = 'active'` guard makes archiving a superseded memo a no-op.
+    spyOn(MemoRepository, "archive").mockResolvedValue(null)
+
+    const result = await service.archive(WORKSPACE_ID, MEMO_ID, ACCESS)
 
     expect(result).toBeNull()
   })

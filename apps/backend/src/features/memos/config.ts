@@ -7,6 +7,8 @@ import { z } from "zod"
 import {
   KNOWLEDGE_TYPES,
   MEMO_ABSTRACT_MAX_CHARS,
+  MEMO_KEY_POINTS_MAX,
+  MEMO_TAGS_MAX,
   MEMO_TITLE_MAX_CHARS,
   type KnowledgeType,
   type StreamType,
@@ -15,7 +17,7 @@ import { formatDate } from "../../lib/temporal"
 
 // Re-exported so the edit-validation caps sit with the other memo config the
 // handlers import (source of truth is @threa/types — INV-33).
-export { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS }
+export { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE_MAX_CHARS }
 
 // Mini over nano is deliberate: the July 2026 re-test (after -m eval wiring
 // was fixed) showed nano classifying real knowledge as not-worthy in every

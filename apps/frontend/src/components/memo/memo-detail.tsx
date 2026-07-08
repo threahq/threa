@@ -48,6 +48,10 @@ function buildSourceLink(workspaceId: string, streamId: string, messageId?: stri
   return `/w/${workspaceId}/s/${streamId}${search}`
 }
 
+function arraysEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index])
+}
+
 export function KnowledgeTypeBadge({ type, size = "sm" }: { type: string; size?: "sm" | "xs" }) {
   const config = getKnowledgeConfig(type)
   const Icon = config.icon
@@ -99,29 +103,40 @@ function MemoEditForm({
 
   const trimmedTitle = title.trim()
   const trimmedAbstract = abstract.trim()
-  const canSave =
+  const nextKeyPoints = keyPointsText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const nextTags = tagsText
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+
+  // Only send fields the user actually changed: a title/tags-only edit skips
+  // the server-side re-embed, and untouched fields aren't overwritten (so a
+  // concurrent edit to a field this user never touched survives).
+  const changedFields: MemoUpdateRequest = {}
+  if (trimmedTitle !== detail.memo.title) changedFields.title = trimmedTitle
+  if (trimmedAbstract !== detail.memo.abstract) changedFields.abstract = trimmedAbstract
+  if (!arraysEqual(nextKeyPoints, detail.memo.keyPoints)) changedFields.keyPoints = nextKeyPoints
+  if (!arraysEqual(nextTags, detail.memo.tags)) changedFields.tags = nextTags
+
+  const hasChanges = Object.keys(changedFields).length > 0
+  const withinCaps =
     trimmedTitle.length > 0 &&
     trimmedTitle.length <= MEMO_TITLE_MAX_CHARS &&
     trimmedAbstract.length > 0 &&
-    trimmedAbstract.length <= MEMO_ABSTRACT_MAX_CHARS &&
-    !controls.isMutating
+    trimmedAbstract.length <= MEMO_ABSTRACT_MAX_CHARS
+  const canSave = hasChanges && withinCaps && !controls.isMutating
 
   async function handleSave() {
-    if (!canSave) return
-    const fields: MemoUpdateRequest = {
-      title: trimmedTitle,
-      abstract: trimmedAbstract,
-      keyPoints: keyPointsText
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean),
-      tags: tagsText
-        .split(",")
-        .map((tag) => tag.trim())
-        .filter(Boolean),
+    if (!withinCaps || controls.isMutating) return
+    if (!hasChanges) {
+      onDone()
+      return
     }
     try {
-      await controls.onSave(fields)
+      await controls.onSave(changedFields)
       onDone()
     } catch {
       // The page surfaces the error; keep the editor open with the draft intact.
@@ -132,7 +147,12 @@ function MemoEditForm({
     <div className="min-w-0 space-y-4">
       <div className="space-y-1.5">
         <label className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">Title</label>
-        <Input value={title} maxLength={MEMO_TITLE_MAX_CHARS} onChange={(event) => setTitle(event.target.value)} />
+        <Input
+          value={title}
+          maxLength={MEMO_TITLE_MAX_CHARS}
+          autoFocus
+          onChange={(event) => setTitle(event.target.value)}
+        />
       </div>
 
       <div className="space-y-1.5">
@@ -242,6 +262,7 @@ export function MemoDetailContent({
   }
 
   const isArchived = data.memo.status === "archived"
+  const isActive = data.memo.status === "active"
 
   return (
     // [overflow-wrap:anywhere] is inherited by descendants so long unbreakable
@@ -249,23 +270,28 @@ export function MemoDetailContent({
     // ScrollArea / Drawer viewport can be forced wider than the screen on mobile.
     <div className="min-w-0 space-y-8 [overflow-wrap:anywhere]">
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <KnowledgeTypeBadge type={data.memo.knowledgeType} size="sm" />
-          <Badge variant="secondary" className="text-[10px] font-medium">
-            {memoLabel(data.memo.memoType)}
-          </Badge>
-          <MemoStatusBadge status={data.memo.status} />
-          <span className="text-[11px] tabular-nums text-muted-foreground/50">v{data.memo.version}</span>
-          <span className="text-muted-foreground/30">&middot;</span>
-          <RelativeTime date={data.memo.updatedAt} className="text-[11px] text-muted-foreground/50" />
+        {/* Metadata and actions are separate flex groups so the action buttons
+            never wrap into the badge row (they'd orphan right-flush on a phone);
+            justify-between keeps them side-by-side on desktop and stacked on narrow. */}
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <KnowledgeTypeBadge type={data.memo.knowledgeType} size="sm" />
+            <Badge variant="secondary" className="text-[10px] font-medium">
+              {memoLabel(data.memo.memoType)}
+            </Badge>
+            <MemoStatusBadge status={data.memo.status} />
+            <span className="text-[11px] tabular-nums text-muted-foreground/50">v{data.memo.version}</span>
+            <span className="text-muted-foreground/30">&middot;</span>
+            <RelativeTime date={data.memo.updatedAt} className="text-[11px] text-muted-foreground/50" />
+          </div>
 
           {edit && !isEditing && (
-            <div className="ml-auto flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-2">
               <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-xs" onClick={() => setIsEditing(true)}>
                 <Pencil className="h-3 w-3" />
                 Edit
               </Button>
-              {isArchived ? (
+              {isArchived && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -276,7 +302,8 @@ export function MemoDetailContent({
                   <ArchiveRestore className="h-3 w-3" />
                   Restore
                 </Button>
-              ) : (
+              )}
+              {isActive && (
                 <Button
                   size="sm"
                   variant="ghost"
