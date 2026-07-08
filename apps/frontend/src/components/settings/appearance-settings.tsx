@@ -453,8 +453,8 @@ export function AppearanceSettings() {
               Collapse at height (px)
             </Label>
             <p className="text-sm text-muted-foreground">
-              Board cards taller than this show the expand/collapse control. This also decides when automatic collapsing
-              applies.
+              Board cards taller than this start collapsed when automatic collapsing is on. The header chevron still
+              lets you collapse or expand any card manually.
             </p>
           </div>
           <Input
