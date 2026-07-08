@@ -880,7 +880,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
           {currentIndex + 1} / {items.length}
         </span>
       )}
-      {current?.type === "video" ? (
+      {current?.type === "video" && canDownload ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="h-10 w-10 text-white hover:bg-white/20 rounded-full">

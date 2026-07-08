@@ -8,6 +8,35 @@ interface AttachmentTypeShape {
   filename: string
 }
 
+export function isImageAttachment(a: AttachmentTypeShape): boolean {
+  return a.mimeType.split(";")[0].trim().toLowerCase().startsWith("image/")
+}
+
+// Video extensions we can play from raw bytes in a <video> element. Excludes the
+// ambiguous `.ts` — browsers map it to `video/mp2t`, but in this product a `.ts`
+// upload is far more often a TypeScript source file, so we let the text viewer
+// claim it (see the mp2t guard below).
+const VIDEO_EXTENSIONS = /\.(mp4|m4v|mov|webm|mkv|avi|ogv|mpe?g|3gp|wmv|flv)$/i
+
+/**
+ * Video attachments the gallery plays in a `<video>` element. Detection is by
+ * `video/*` mime with an extension fallback for files uploaded as
+ * `application/octet-stream`. Unlike the timeline (which keys off the backend's
+ * `processingStatus`), a freshly-picked file in the composer has no server
+ * processing state yet, so classification is mime/extension-only here.
+ *
+ * `video/mp2t` is deliberately not treated as video: it's the mime browsers hand
+ * to a `.ts` file, which is almost always TypeScript source in this codebase —
+ * letting it fall through to the text viewer beats rendering a text file's bytes
+ * as a broken `<video>`.
+ */
+export function isVideoAttachment(a: AttachmentTypeShape): boolean {
+  const mime = a.mimeType.split(";")[0].trim().toLowerCase()
+  if (mime === "video/mp2t") return false
+  if (mime.startsWith("video/")) return true
+  return VIDEO_EXTENSIONS.test(a.filename)
+}
+
 export function isMarkdownAttachment(a: AttachmentTypeShape): boolean {
   if (a.mimeType.startsWith("text/markdown") || a.mimeType === "text/x-markdown") return true
   return /\.(md|mdx|markdown)$/i.test(a.filename)
