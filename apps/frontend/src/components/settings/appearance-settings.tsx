@@ -137,11 +137,16 @@ export function AppearanceSettings() {
       return
     }
     const clamped = Math.min(MESSAGE_COLLAPSE_AT_HEIGHT_MAX, Math.max(MESSAGE_COLLAPSE_AT_HEIGHT_MIN, parsed))
-    if (clamped === messageCollapseAtHeight) {
+    const nextCollapseToHeight = Math.min(messageCollapseToHeight, clamped)
+    if (clamped === messageCollapseAtHeight && nextCollapseToHeight === messageCollapseToHeight) {
       setMessageCollapseAtDraft(String(clamped))
       return
     }
     void updatePreference("messageCollapseAtHeight", clamped)
+    if (nextCollapseToHeight !== messageCollapseToHeight) {
+      setMessageCollapseToDraft(String(nextCollapseToHeight))
+      void updatePreference("messageCollapseToHeight", nextCollapseToHeight)
+    }
   }
 
   const commitMessageCollapseToHeight = () => {
@@ -150,11 +155,13 @@ export function AppearanceSettings() {
       setMessageCollapseToDraft(String(messageCollapseToHeight))
       return
     }
-    const clamped = Math.min(MESSAGE_COLLAPSE_TO_HEIGHT_MAX, Math.max(MESSAGE_COLLAPSE_TO_HEIGHT_MIN, parsed))
+    const bounded = Math.min(MESSAGE_COLLAPSE_TO_HEIGHT_MAX, Math.max(MESSAGE_COLLAPSE_TO_HEIGHT_MIN, parsed))
+    const clamped = Math.min(bounded, messageCollapseAtHeight)
     if (clamped === messageCollapseToHeight) {
       setMessageCollapseToDraft(String(clamped))
       return
     }
+    setMessageCollapseToDraft(String(clamped))
     void updatePreference("messageCollapseToHeight", clamped)
   }
 
