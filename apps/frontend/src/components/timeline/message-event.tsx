@@ -17,6 +17,7 @@ import { MessageContextBadge } from "@/components/composer"
 import { RelativeTime } from "@/components/relative-time"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
+import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 import { usePendingMessages, usePanel, createDraftPanelId, createConversationPanelId, useTrace } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
@@ -664,14 +665,7 @@ function MessageLayout({
   // accessible name; heads already have a visible author label.
   const rowAriaLabel = renderAsContinuation ? `Message from ${actorName}` : undefined
   const rowDataGroupContinuation = renderAsContinuation ? "true" : undefined
-  // Heads keep a generous top pad to separate groups visually, but a tight
-  // bottom pad so the gap from the head body to the first continuation body
-  // matches the cont-to-cont gap (4px). Without this, heads with a follow-up
-  // continuation got 12px+2px = 14px below them and the first message in a
-  // group felt detached. Group separation is preserved by the next head's
-  // pt-3 (2px + 12px = 14px between groups, consistent regardless of whether
-  // the previous group ended with a head or a continuation).
-  const rowVerticalPadding = renderAsContinuation ? "py-0.5" : "pt-3 pb-0.5"
+  const rowVerticalPadding = renderAsContinuation ? MESSAGE_ROW_CONTINUATION_PADDING : MESSAGE_ROW_HEAD_PADDING
   const isSelected = batch?.selectedMessageIds.has(payload.messageId) ?? false
   const isInvalidTarget = batch?.invalidTargetIds.has(payload.messageId) ?? false
   const isHoveredTarget = batch?.hoveredTargetId === payload.messageId

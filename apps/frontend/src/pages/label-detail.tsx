@@ -364,10 +364,11 @@ function MessagesSection({
   return (
     <div className="divide-y overflow-hidden rounded-xl border bg-card">
       {messages.map((message) => (
-        // Each labeled message is standalone, so zero the item's leading margin
-        // (which spaces stacked messages in a board card) and let the cell
-        // padding own the rhythm. The origin stream rides in the item's header.
-        <div key={message.id} className="px-4 py-3 [&>*]:mt-0">
+        // Each labeled message is standalone, so zero the row's internal
+        // vertical padding (which spaces stacked messages in a board card /
+        // timeline) via `surfaceClassName` and let the cell's own `py-3` own the
+        // rhythm. The origin stream rides in the item's header.
+        <div key={message.id} className="px-4 py-3">
           <MessageItem
             workspaceId={workspaceId}
             streamId={message.streamId}
@@ -375,6 +376,7 @@ function MessagesSection({
             authorName={getActorName(message.authorId, message.authorType)}
             currentUserId={currentUserId}
             streamLabel={resolveMessageStream(message.streamId)}
+            surfaceClassName="py-0"
           />
         </div>
       ))}

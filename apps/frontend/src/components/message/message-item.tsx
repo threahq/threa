@@ -11,6 +11,7 @@ import {
 } from "@threa/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
+import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
 import { CollapsibleBody, useMessageCollapseThreshold } from "@/lib/markdown/collapsible-body"
@@ -635,7 +636,7 @@ export function MessageItem({
         data-author-id={message.authorId}
         data-actor-type={message.authorType}
         className={cn(
-          "relative mt-0.5 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible",
+          "relative scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible",
           rowInsetClassName
         )}
         {...touchHandlers}
@@ -644,6 +645,7 @@ export function MessageItem({
         <div
           className={cn(
             "group reveal-host relative flex gap-3",
+            MESSAGE_ROW_CONTINUATION_PADDING,
             surfaceClassName,
             theme.rowAccent,
             longPress.isPressed && "opacity-70 transition-opacity",
@@ -687,7 +689,7 @@ export function MessageItem({
       data-author-id={message.authorId}
       data-actor-type={message.authorType}
       className={cn(
-        "relative mt-3 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible",
+        "relative scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible",
         rowInsetClassName
       )}
       {...touchHandlers}
@@ -696,6 +698,7 @@ export function MessageItem({
       <div
         className={cn(
           "group reveal-host relative flex items-start gap-3",
+          MESSAGE_ROW_HEAD_PADDING,
           surfaceClassName,
           theme.rowAccent,
           longPress.isPressed && "opacity-70 transition-opacity",

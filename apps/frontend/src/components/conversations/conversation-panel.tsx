@@ -498,7 +498,11 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
         conversationId={conversation.id}
         conversationRootStreamId={conversation.streamId}
         isHighlighted={message.id === highlightMessageId}
-        surfaceClassName="bg-background"
+        // Break the row out of the list's px-4 and re-pad it, so an actor accent
+        // fills to the panel edges (the stream-view look) with content aligned —
+        // matching the board card and timeline.
+        surfaceClassName="bg-background px-4"
+        rowInsetClassName="-mx-4"
         onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
       />
     )
@@ -560,7 +564,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
       <QuoteReplyProvider>
         {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
         <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
-        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [&>*:first-child]:mt-0">
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
           {provenance && (
             <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
           )}
