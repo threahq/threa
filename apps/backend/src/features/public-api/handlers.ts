@@ -352,6 +352,7 @@ function serializeMemoSearchResult(result: MemoExplorerResult): WireMemoSearchRe
 function serializeMemoDetail(detail: MemoExplorerDetail): WireMemoDetail {
   return {
     ...serializeMemoSearchResult(detail),
+    successorMemoId: detail.successorMemoId,
     sourceMessages: detail.sourceMessages.map((message) => ({
       ...message,
       createdAt: message.createdAt.toISOString(),

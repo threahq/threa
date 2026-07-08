@@ -469,6 +469,15 @@ export const MemoStatuses = {
   SUPERSEDED: "superseded",
 } as const satisfies Record<string, MemoStatus>
 
+/**
+ * Caps for user-edited memo text. A memo's abstract is injected into agent
+ * retrieval and embedded, so it is a prompt insert, not a document store —
+ * bounded to keep edits cheap. Shared by the backend Zod validator and the
+ * explorer editor's character counter (INV-33).
+ */
+export const MEMO_TITLE_MAX_CHARS = 200
+export const MEMO_ABSTRACT_MAX_CHARS = 2000
+
 // Pending memo item types
 export const PENDING_ITEM_TYPES = ["message", "conversation"] as const
 export type PendingItemType = (typeof PENDING_ITEM_TYPES)[number]

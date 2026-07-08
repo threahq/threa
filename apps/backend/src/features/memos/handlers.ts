@@ -1,8 +1,9 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { KNOWLEDGE_TYPES, MEMO_TYPES } from "@threa/types"
+import { KNOWLEDGE_TYPES, MEMO_STATUSES, MEMO_TYPES } from "@threa/types"
 import { HttpError } from "../../lib/errors"
+import { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS } from "./config"
 import { resolveUserAccessibleStreamIds, SearchRepository } from "../search"
 import { computeAgentAccessSpec } from "../agents"
 import { StreamRepository } from "../streams"
@@ -16,11 +17,21 @@ const memoSearchSchema = z.object({
   memoType: z.array(z.enum(MEMO_TYPES)).optional(),
   knowledgeType: z.array(z.enum(KNOWLEDGE_TYPES)).optional(),
   tags: z.array(z.string()).optional(),
+  status: z.array(z.enum(MEMO_STATUSES)).optional(),
   before: z.string().datetime().optional(),
   after: z.string().datetime().optional(),
   exact: z.boolean().optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
 })
+
+const memoUpdateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(MEMO_TITLE_MAX_CHARS).optional(),
+    abstract: z.string().trim().min(1).max(MEMO_ABSTRACT_MAX_CHARS).optional(),
+    keyPoints: z.array(z.string().trim().min(1)).max(20).optional(),
+    tags: z.array(z.string().trim().min(1)).max(20).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
 
 /**
  * Resolve which streams a memo search may read from.
@@ -106,6 +117,7 @@ function serializeMemoResult(result: MemoExplorerResult) {
 function serializeMemoDetail(detail: MemoExplorerDetail) {
   return {
     ...serializeMemoResult(detail),
+    successorMemoId: detail.successorMemoId,
     sourceMessages: detail.sourceMessages.map((message) => ({
       ...message,
       createdAt: message.createdAt.toISOString(),
@@ -137,6 +149,7 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         memoType,
         knowledgeType,
         tags,
+        status,
         before,
         after,
         limit,
@@ -155,6 +168,7 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
           memoTypes: memoType,
           knowledgeTypes: knowledgeType,
           tags,
+          statuses: status,
           before: before ? new Date(before) : undefined,
           after: after ? new Date(after) : undefined,
         },
@@ -177,6 +191,62 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         accessibleStreamIds,
       })
 
+      if (!memo) {
+        throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
+      }
+
+      res.json({ memo: serializeMemoDetail(memo) })
+    },
+
+    async update(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const memoId = z.string().min(1).parse(req.params.memoId)
+
+      const parsed = memoUpdateSchema.safeParse(req.body)
+      if (!parsed.success) {
+        throw new HttpError("Invalid memo update", { status: 400, code: "VALIDATION_ERROR" })
+      }
+
+      const accessibleStreamIds = await resolveUserAccessibleStreamIds(pool, workspaceId, userId, {
+        archiveStatus: ["active", "archived"],
+      })
+
+      const memo = await memoExplorerService.update(workspaceId, memoId, { accessibleStreamIds }, parsed.data)
+      if (!memo) {
+        throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
+      }
+
+      res.json({ memo: serializeMemoDetail(memo) })
+    },
+
+    async archive(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const memoId = z.string().min(1).parse(req.params.memoId)
+
+      const accessibleStreamIds = await resolveUserAccessibleStreamIds(pool, workspaceId, userId, {
+        archiveStatus: ["active", "archived"],
+      })
+
+      const memo = await memoExplorerService.archive(workspaceId, memoId, { accessibleStreamIds })
+      if (!memo) {
+        throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
+      }
+
+      res.json({ memo: serializeMemoDetail(memo) })
+    },
+
+    async unarchive(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const memoId = z.string().min(1).parse(req.params.memoId)
+
+      const accessibleStreamIds = await resolveUserAccessibleStreamIds(pool, workspaceId, userId, {
+        archiveStatus: ["active", "archived"],
+      })
+
+      const memo = await memoExplorerService.unarchive(workspaceId, memoId, { accessibleStreamIds })
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }

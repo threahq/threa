@@ -55,7 +55,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 5.3  | Delegation public API (claim/status/complete)         | ☐      |       |
 | 5.4  | claude-code-remote delegation support                 | ☐      |       |
 | 5.5  | `@threa/mcp` server                                   | ☐      |       |
-| 6.1  | Memo edit/archive endpoints + explorer UI             | ☐      |       |
+| 6.1  | Memo edit/archive endpoints + explorer UI             | ☑      | #TBD  |
 | 6.2  | `save_memo` tool                                      | ☐      |       |
 | 6.3  | Reflective capture at session completion              | ☐      |       |
 | 6.4  | `memoScope` (user/stream/workspace)                   | ☐      |       |
@@ -513,6 +513,16 @@ Completes GAM into the two-tier private/shared shape (Collaborative Memory, arXi
 **Tests:** endpoint access gating; edit triggers re-embed job; UI component test.
 
 **Done when:** a wrong memo can be corrected or retired from the explorer, and retrieval reflects it.
+
+**Deviations (shipped):**
+
+- **Edit/archive live on `MemoExplorerService`, not `MemoRepository.update` directly.** New `update` / `archive` / `unarchive` methods reuse a private `resolveAccessibleMemo` gate (identical to `getById`: source-stream accessibility via `loadSourceContext`, workspace check). `update` re-embeds only when the abstract changes — the memo embedding is of its abstract — and the AI `embed` runs before the write transaction (INV-41); the transaction does `MemoRepository.update` + `updateEmbedding` together. All three return the rebuilt `MemoExplorerDetail` so the client refreshes in one round-trip.
+- **`getById` no longer gates on `status = 'active'`.** The explorer must render archived/superseded memos to un-archive/inspect them, so the status filter was dropped from `getById` (access is still gated). This also relaxes the v1 public `GET …/memos/:id` and the `describe_memo` tool, both of which share the handler — access unchanged, only the retired-status exclusion lifted.
+- **Status is a search-filter, defaulted to `["active"]` in the repo.** `MemoSearchFilters.statuses` threads through `fullTextSearch` / `hybridSearch` / `exactSearch` (`m.status = ANY($statuses)`). Because it defaults to `["active"]` when unset, the researcher's retrieval path is byte-unchanged — only the explorer opts into `archived` / `superseded`. `unarchive` is guarded on `status = 'archived'` so a superseded memo can never be resurrected into retrieval.
+- **Superseded → successor link.** `MemoExplorerDetail.successorMemoId` (reverse lookup `findSupersededBy` on `parent_memo_id`, active only) surfaces on the detail so a superseded memo deep-links to the capture that replaced it. Added to the v1 `memoDetailSchema` (openapi regenerated).
+- **Edit caps in `@threa/types`.** `MEMO_TITLE_MAX_CHARS` / `MEMO_ABSTRACT_MAX_CHARS` (re-exported from `memos/config.ts`) back both the backend Zod validator and the editor's char counter (INV-33), mirroring `STREAM_BRIEF_MAX_CHARS`.
+- **UI: opt-in `edit` prop on the shared `MemoDetailContent`.** The memory explorer passes edit controls (edit-in-place form for title/abstract/keyPoints/tags + Archive/Restore); the in-stream `MemoPreviewDialog` omits it and stays read-only (INV-15/18 — `MemoEditForm` and `MemoStatusBadge` are sibling components, not nested). A "Status" filter chip (Active/Archived/Superseded, default Active, kept out of the URL when Active per INV-59 default-view convention) lets the user browse retired memos. No `toast.success` — the form→view swap and list refresh are the confirmation (INV-63); failures `toast.error`.
+- **First-party endpoints only:** `PATCH /memos/:id`, `POST /memos/:id/{archive,unarchive}`. No v1 mutation surface (edit/retire is a person action, not an integration one) — consistent with the explorer being a first-party UI.
 
 ### 6.2 `save_memo` tool
 

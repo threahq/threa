@@ -13,6 +13,8 @@ const mockUseMemoDetail = vi.fn()
 const mockUseWorkspaceStreams = vi.fn()
 const mockUseIsMobile = vi.fn()
 
+const stubMutation = { mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }
+
 function renderPage(initialEntry = "/w/ws_1/memory?memo=memo_1") {
   return render(
     <SidebarProvider>
@@ -73,6 +75,15 @@ describe("MemoryPage", () => {
     )
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => mockUseIsMobile())
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+    vi.spyOn(hooksModule, "useUpdateMemo").mockReturnValue(
+      stubMutation as unknown as ReturnType<typeof hooksModule.useUpdateMemo>
+    )
+    vi.spyOn(hooksModule, "useArchiveMemo").mockReturnValue(
+      stubMutation as unknown as ReturnType<typeof hooksModule.useArchiveMemo>
+    )
+    vi.spyOn(hooksModule, "useUnarchiveMemo").mockReturnValue(
+      stubMutation as unknown as ReturnType<typeof hooksModule.useUnarchiveMemo>
+    )
 
     mockUseWorkspaceStreams.mockReset()
     mockUseMemoSearch.mockReset()

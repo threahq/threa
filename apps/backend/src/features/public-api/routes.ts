@@ -291,6 +291,7 @@ const memoSourceMessageSchema = z.object({
 
 const memoDetailSchema = memoSearchResultSchema.extend({
   sourceMessages: z.array(memoSourceMessageSchema),
+  successorMemoId: z.string().nullable(),
 })
 
 const attachmentExtractionSchema = z.object({
