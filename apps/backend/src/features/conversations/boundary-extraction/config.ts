@@ -89,6 +89,7 @@ Use it whenever the new message gives you evidence the prior placement was wrong
 - newConversationSummary: One sentence stating what the new conversation is about, in the conversation's own language. Required whenever newConversationTopic is set.
 - reassignments: Array of {messageId, toConversationId, reason, confidence}. messageId must be from this prompt. toConversationId=null means "move into the new conversation being created this turn" (only valid if assignments includes a conversationId=null primary).
 - completenessUpdates: Array of {conversationId, score (1-7), status, summary} for conversations whose completeness, status, or content moved on.
+  - score (1-7) measures how settled the conversation is: 1-2 = just opened, no substance yet; 3-5 = active exchange, the question or task still open; 6-7 = reached an explicit conclusion — the problem confirmed solved, the question answered, or a plan agreed. An explicit resolution ("that fixed it", "works now, thanks", "låter som en plan") scores 6 or 7, not 5; pair it with status "resolved".
   - status must be one of: "active", "stalled", "resolved"
   - summary: a refreshed "covers:" summary for the conversation — max ~40 words, plain prose in the conversation's own language, stating what has been discussed and where it landed. Include it whenever the conversation gained content this pass (at minimum for the conversation the new message joined); pass null to keep the stored summary.
 - confidence: 0.0 to 1.0 confidence in this classification overall.
