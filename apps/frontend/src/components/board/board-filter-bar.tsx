@@ -28,6 +28,7 @@ import { BoardSavedViews, isViewActive, type BoardViewSelection } from "@/compon
 import { useBoardViews } from "@/hooks/use-board-views"
 import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
+import { isBoardFiltered } from "@/lib/board/filter-state"
 import { cn } from "@/lib/utils"
 
 /** Stream types offered in the pickers: the board's root-stream grains (shared
@@ -143,14 +144,15 @@ export function BoardFilterBar({
   // The viewer's home lens is their baseline, so being on it (with no scope
   // narrowing) is NOT "filtered" — otherwise a non-All home shows a permanent
   // "Clear filters" affordance on its own untouched landing view.
-  const isFiltered =
-    lens !== homeLens ||
-    scopeStreamIds.length > 0 ||
-    excludeStreamIds.length > 0 ||
-    scopeStreamTypes.length > 0 ||
-    excludeStreamTypes.length > 0 ||
-    scopeLabelIds.length > 0 ||
-    excludeLabelIds.length > 0
+  const isFiltered = isBoardFiltered(homeLens, {
+    lens,
+    scopeStreamIds,
+    scopeStreamTypes,
+    scopeLabelIds,
+    excludeStreamIds,
+    excludeStreamTypes,
+    excludeLabelIds,
+  })
   const clearedSearch = useMemo(() => boardHomeSearch(location.search), [location.search])
 
   const labelFor = (streamId: string) =>
