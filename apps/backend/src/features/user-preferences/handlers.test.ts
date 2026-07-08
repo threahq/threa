@@ -4,6 +4,10 @@ import {
   MESSAGE_COLLAPSE_AT_HEIGHT_MIN,
   MESSAGE_COLLAPSE_TO_HEIGHT_MAX,
   MESSAGE_COLLAPSE_TO_HEIGHT_MIN,
+  BOARD_CARD_COLLAPSE_AT_HEIGHT_MAX,
+  BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN,
+  BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX,
+  BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN,
   VOICE_STEERING_WORDS_MAX,
   VOICE_STEERING_WORD_MAX_LENGTH,
 } from "@threa/types"
@@ -45,6 +49,35 @@ describe("updatePreferencesSchema boardDefaultLens", () => {
 
   it("treats the field as optional", () => {
     expect(updatePreferencesSchema.parse({}).boardDefaultLens).toBeUndefined()
+  })
+})
+
+describe("updatePreferencesSchema board card collapse settings", () => {
+  it("accepts valid board card collapse settings", () => {
+    const parsed = updatePreferencesSchema.parse({
+      boardCardCollapseEnabled: true,
+      boardCardCollapseAtHeight: BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN,
+      boardCardCollapseToHeight: BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN,
+    })
+
+    expect(parsed.boardCardCollapseEnabled).toBe(true)
+    expect(parsed.boardCardCollapseAtHeight).toBe(BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN)
+    expect(parsed.boardCardCollapseToHeight).toBe(BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN)
+  })
+
+  it("rejects board card collapse heights outside the bounds", () => {
+    expect(
+      updatePreferencesSchema.safeParse({ boardCardCollapseAtHeight: BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN - 1 }).success
+    ).toBe(false)
+    expect(
+      updatePreferencesSchema.safeParse({ boardCardCollapseAtHeight: BOARD_CARD_COLLAPSE_AT_HEIGHT_MAX + 1 }).success
+    ).toBe(false)
+    expect(
+      updatePreferencesSchema.safeParse({ boardCardCollapseToHeight: BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN - 1 }).success
+    ).toBe(false)
+    expect(
+      updatePreferencesSchema.safeParse({ boardCardCollapseToHeight: BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX + 1 }).success
+    ).toBe(false)
   })
 })
 

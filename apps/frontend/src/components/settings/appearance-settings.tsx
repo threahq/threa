@@ -22,9 +22,12 @@ import {
   MESSAGE_COLLAPSE_TO_HEIGHT_MIN,
   MESSAGE_COLLAPSE_TO_HEIGHT_MAX,
   DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
-  BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
-  BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
-  DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
+  BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN,
+  BOARD_CARD_COLLAPSE_AT_HEIGHT_MAX,
+  DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT,
+  BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN,
+  BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX,
+  DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
   BOARD_LENSES,
   DEFAULT_BOARD_LENS,
   type Theme,
@@ -72,7 +75,9 @@ export function AppearanceSettings() {
   const messageCollapseEnabled = preferences?.messageCollapseEnabled ?? false
   const messageCollapseAtHeight = preferences?.messageCollapseAtHeight ?? DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT
   const messageCollapseToHeight = preferences?.messageCollapseToHeight ?? DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT
-  const boardCardThreshold = preferences?.boardCardCollapseThreshold ?? DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD
+  const boardCardCollapseEnabled = preferences?.boardCardCollapseEnabled ?? false
+  const boardCardCollapseAtHeight = preferences?.boardCardCollapseAtHeight ?? DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT
+  const boardCardCollapseToHeight = preferences?.boardCardCollapseToHeight ?? DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT
   const boardDefaultLens = preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
 
   // Local input state so users can type freely without each keystroke
@@ -97,10 +102,15 @@ export function AppearanceSettings() {
     setMessageCollapseToDraft(String(messageCollapseToHeight))
   }, [messageCollapseToHeight])
 
-  const [boardCardThresholdDraft, setBoardCardThresholdDraft] = useState<string>(String(boardCardThreshold))
+  const [boardCardCollapseAtDraft, setBoardCardCollapseAtDraft] = useState<string>(String(boardCardCollapseAtHeight))
   useEffect(() => {
-    setBoardCardThresholdDraft(String(boardCardThreshold))
-  }, [boardCardThreshold])
+    setBoardCardCollapseAtDraft(String(boardCardCollapseAtHeight))
+  }, [boardCardCollapseAtHeight])
+
+  const [boardCardCollapseToDraft, setBoardCardCollapseToDraft] = useState<string>(String(boardCardCollapseToHeight))
+  useEffect(() => {
+    setBoardCardCollapseToDraft(String(boardCardCollapseToHeight))
+  }, [boardCardCollapseToHeight])
 
   const commitCodeThreshold = () => {
     const parsed = Number.parseInt(codeThresholdDraft, 10)
@@ -165,18 +175,39 @@ export function AppearanceSettings() {
     void updatePreference("messageCollapseToHeight", clamped)
   }
 
-  const commitBoardCardThreshold = () => {
-    const parsed = Number.parseInt(boardCardThresholdDraft, 10)
+  const commitBoardCardCollapseAtHeight = () => {
+    const parsed = Number.parseInt(boardCardCollapseAtDraft, 10)
     if (!Number.isFinite(parsed)) {
-      setBoardCardThresholdDraft(String(boardCardThreshold))
+      setBoardCardCollapseAtDraft(String(boardCardCollapseAtHeight))
       return
     }
-    const clamped = Math.min(BOARD_CARD_COLLAPSE_THRESHOLD_MAX, Math.max(BOARD_CARD_COLLAPSE_THRESHOLD_MIN, parsed))
-    if (clamped === boardCardThreshold) {
-      setBoardCardThresholdDraft(String(clamped))
+    const clamped = Math.min(BOARD_CARD_COLLAPSE_AT_HEIGHT_MAX, Math.max(BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN, parsed))
+    const nextCollapseToHeight = Math.min(boardCardCollapseToHeight, clamped)
+    if (clamped === boardCardCollapseAtHeight && nextCollapseToHeight === boardCardCollapseToHeight) {
+      setBoardCardCollapseAtDraft(String(clamped))
       return
     }
-    void updatePreference("boardCardCollapseThreshold", clamped)
+    void updatePreference("boardCardCollapseAtHeight", clamped)
+    if (nextCollapseToHeight !== boardCardCollapseToHeight) {
+      setBoardCardCollapseToDraft(String(nextCollapseToHeight))
+      void updatePreference("boardCardCollapseToHeight", nextCollapseToHeight)
+    }
+  }
+
+  const commitBoardCardCollapseToHeight = () => {
+    const parsed = Number.parseInt(boardCardCollapseToDraft, 10)
+    if (!Number.isFinite(parsed)) {
+      setBoardCardCollapseToDraft(String(boardCardCollapseToHeight))
+      return
+    }
+    const bounded = Math.min(BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX, Math.max(BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN, parsed))
+    const clamped = Math.min(bounded, boardCardCollapseAtHeight)
+    if (clamped === boardCardCollapseToHeight) {
+      setBoardCardCollapseToDraft(String(clamped))
+      return
+    }
+    setBoardCardCollapseToDraft(String(clamped))
+    void updatePreference("boardCardCollapseToHeight", clamped)
   }
 
   return (
@@ -397,33 +428,75 @@ export function AppearanceSettings() {
         <div>
           <h3 className="text-sm font-medium">Board Cards</h3>
           <p className="text-sm text-muted-foreground">
-            Collapse tall conversations to their header on the board so compact ones stay open
+            Board cards stay open by default unless you turn on automatic collapsing. Manual card expand/collapse
+            choices are remembered per conversation.
           </p>
         </div>
         <div className="flex items-start gap-4">
           <div className="grid gap-1 flex-1">
-            <Label htmlFor="board-card-collapse-threshold" className="cursor-pointer">
-              Collapse height (px)
+            <Label htmlFor="board-card-collapse-enabled" className="cursor-pointer">
+              Collapse tall board cards automatically
             </Label>
             <p className="text-sm text-muted-foreground">
-              Conversations taller than this many pixels start collapsed on the board — a long message folds as readily
-              as a long back-and-forth. You can always expand or collapse an individual card. Set to 0 to collapse every
-              card by default.
+              When off, board cards stay open but can still be collapsed manually.
+            </p>
+          </div>
+          <Switch
+            id="board-card-collapse-enabled"
+            checked={boardCardCollapseEnabled}
+            onCheckedChange={(checked) => updatePreference("boardCardCollapseEnabled", checked)}
+          />
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label htmlFor="board-card-collapse-at-height" className="cursor-pointer">
+              Collapse at height (px)
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Board cards taller than this start collapsed when automatic collapsing is on. The header chevron still
+              lets you collapse or expand any card manually.
             </p>
           </div>
           <Input
-            id="board-card-collapse-threshold"
+            id="board-card-collapse-at-height"
             type="number"
             inputMode="numeric"
-            min={BOARD_CARD_COLLAPSE_THRESHOLD_MIN}
-            max={BOARD_CARD_COLLAPSE_THRESHOLD_MAX}
-            value={boardCardThresholdDraft}
-            onChange={(event) => setBoardCardThresholdDraft(event.target.value)}
-            onBlur={commitBoardCardThreshold}
+            min={BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN}
+            max={BOARD_CARD_COLLAPSE_AT_HEIGHT_MAX}
+            value={boardCardCollapseAtDraft}
+            onChange={(event) => setBoardCardCollapseAtDraft(event.target.value)}
+            onBlur={commitBoardCardCollapseAtHeight}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault()
-                commitBoardCardThreshold()
+                commitBoardCardCollapseAtHeight()
+              }
+            }}
+            className="w-24"
+          />
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label htmlFor="board-card-collapse-to-height" className="cursor-pointer">
+              Collapse to height (px)
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Collapsed board cards keep this much conversation body visible.
+            </p>
+          </div>
+          <Input
+            id="board-card-collapse-to-height"
+            type="number"
+            inputMode="numeric"
+            min={BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN}
+            max={BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX}
+            value={boardCardCollapseToDraft}
+            onChange={(event) => setBoardCardCollapseToDraft(event.target.value)}
+            onBlur={commitBoardCardCollapseToHeight}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                commitBoardCardCollapseToHeight()
               }
             }}
             className="w-24"
