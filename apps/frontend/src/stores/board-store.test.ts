@@ -180,4 +180,15 @@ describe("putOptimisticBoardPost", () => {
     const row = await db.conversations.get("conv_new")
     expect(row?._status).toBeUndefined()
   })
+
+  it("renders the post's attachments immediately so the thumbnail doesn't pop in on reconcile", async () => {
+    await putOptimisticBoardPost(WORKSPACE_ID, {
+      ...input,
+      attachments: [{ id: "att_1", filename: "shot.png", mimeType: "image/png", sizeBytes: 2048 }],
+    })
+    const row = await db.conversations.get("conv_new")
+    expect(row?.openingMessage?.attachments).toEqual([
+      { id: "att_1", filename: "shot.png", mimeType: "image/png", sizeBytes: 2048 },
+    ])
+  })
 })

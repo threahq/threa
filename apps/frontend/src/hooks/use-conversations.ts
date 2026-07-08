@@ -44,6 +44,9 @@ export interface CreateBoardPostInput {
   target: BoardPostTarget
   contentJson: JSONContent
   attachmentIds?: string[]
+  /** Full attachment summaries (not just ids) so the optimistic card renders
+   *  thumbnails immediately instead of popping them in on refetch. */
+  attachments?: AttachmentSummary[]
 }
 
 /** Shared stable empty list so a disabled/loading query returns one identity. */
@@ -250,11 +253,11 @@ export function useCreateBoardPost(workspaceId: string) {
   const streams = useWorkspaceStreams(workspaceId)
 
   return useMutation({
-    mutationFn: async ({ target, contentJson, attachmentIds }: CreateBoardPostInput) => {
+    mutationFn: async ({ target, contentJson, attachmentIds, attachments }: CreateBoardPostInput) => {
       if (target.type === "newScratchpad") {
         const draftId = await createScratchpad(target.companionMode)
         await queueDraftMessage(
-          { contentJson, attachmentIds },
+          { contentJson, attachmentIds, attachments },
           {
             workspaceId,
             streamId: draftId,
@@ -283,18 +286,25 @@ export function useCreateBoardPost(workspaceId: string) {
       // id the backend minted synchronously — so it's on screen as the composer
       // clears, not after the echo + board-head refetch. Reconciled in place by
       // both (same id, `_status` cleared). A channel/DM is its own effective root.
+      // Best-effort: the message is already committed server-side, so a local IDB
+      // write failure must not fail the send (which would risk a duplicate resend).
       const stream = streams.find((s) => s.id === target.streamId)
       if (conversationId && currentUserId && stream) {
-        await putOptimisticBoardPost(workspaceId, {
-          conversationId,
-          messageId: message.id,
-          streamId: target.streamId,
-          authorId: currentUserId,
-          contentMarkdown: serializeToMarkdown(contentJson),
-          rootStreamId: stream.rootStreamId ?? stream.id,
-          rootStreamType: stream.type as BoardScopeStreamType,
-          createdAt: message.createdAt,
-        })
+        try {
+          await putOptimisticBoardPost(workspaceId, {
+            conversationId,
+            messageId: message.id,
+            streamId: target.streamId,
+            authorId: currentUserId,
+            contentMarkdown: serializeToMarkdown(contentJson),
+            rootStreamId: stream.rootStreamId ?? stream.id,
+            rootStreamType: stream.type as BoardScopeStreamType,
+            createdAt: message.createdAt,
+            attachments,
+          })
+        } catch (err) {
+          console.error("Failed to seed optimistic board post", err)
+        }
       }
     },
     onSuccess: () => {

@@ -1,7 +1,7 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedBoardPost } from "@/db"
-import type { BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threa/types"
+import type { AttachmentSummary, BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threa/types"
 
 /**
  * How many trailing replies a board card previews. Mirrors the backend's
@@ -89,6 +89,9 @@ export interface OptimisticBoardPostInput {
   rootStreamType: BoardScopeStreamType
   /** ISO timestamp used for the opening message and the card's activity sort. */
   createdAt: string
+  /** The post's uploaded attachments, so the card renders them immediately
+   *  instead of popping the thumbnail in when the board-head refetch reconciles. */
+  attachments?: AttachmentSummary[]
 }
 
 /**
@@ -131,9 +134,7 @@ export async function putOptimisticBoardPost(workspaceId: string, input: Optimis
       authorType: "user",
       contentMarkdown: input.contentMarkdown,
       reactions: {},
-      // Attachments (if any) fill in from the echo/refetch a beat later; the
-      // opening body renders immediately.
-      attachments: [],
+      attachments: input.attachments ?? [],
       linkPreviews: [],
       createdAt: input.createdAt,
       editedAt: null,

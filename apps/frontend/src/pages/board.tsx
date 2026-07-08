@@ -356,7 +356,6 @@ function BoardPageInner({
     activityById,
     newCount,
     commit,
-    revealNext,
     isLoading: viewLoading,
     hasRawPosts,
   } = useStableBoardView(workspaceId, filter, exclusions)
@@ -476,13 +475,14 @@ function BoardPageInner({
     // current view can contain it — an unfiltered `all`/`mine` lens — so stay
     // put there (a `mine` home shouldn't bounce the author off their own home).
     // Any other view (a status/memo lens, or an active scope filter) might not
-    // match the fresh post, so return to the All baseline; the reveal arm
-    // survives the view reset and floats the authored card to the top.
+    // match the fresh post, so return to the All baseline; the optimistic card
+    // (written `_status: "pending"`) then reveals itself at top there via
+    // `reconcileStableView`, whether it lands inline or later from the
+    // promote-on-send drain — no reveal arm to carry across the reset.
     const currentViewSurfacesOwnPost = SELF_POST_VISIBLE_LENSES.has(lens) && !hasFilterParams
     if (!currentViewSurfacesOwnPost) {
       navigate(boardHome)
     }
-    revealNext()
   }
 
   // Where the post lives — the stream's own name (channel #slug, DM peer,

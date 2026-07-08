@@ -12,7 +12,13 @@ import { rescopeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
 import { StreamTypes, ShareErrorCodes, draftStreamScope } from "@threa/types"
 import type { PendingMessage } from "@/db"
-import type { BoardScopeStreamType, CreateStreamInput, Stream, StreamWithPreview } from "@threa/types"
+import type {
+  AttachmentSummary,
+  BoardScopeStreamType,
+  CreateStreamInput,
+  Stream,
+  StreamWithPreview,
+} from "@threa/types"
 import { ApiError } from "@/api/client"
 import { surfacePrivacyBlockToast } from "@/lib/share-privacy-toast"
 
@@ -256,19 +262,31 @@ export function useMessageQueue(): void {
           // `conversation:created` echo + board-head refetch. Reconciled in place by
           // both (same id, `_status` cleared). `existing`/`threadFromMessage` replies
           // also return an id, but their card already exists so the write no-ops.
+          // Best-effort: the send already succeeded, so a local IDB failure must not
+          // drop the iteration into the retry/failed path for a delivered message.
           if (conversationId && next.conversation?.intent === "new") {
-            const stream = await db.streams.get(next.streamId)
-            if (stream) {
-              await putOptimisticBoardPost(next.workspaceId, {
-                conversationId,
-                messageId: message.id,
-                streamId: next.streamId,
-                authorId: message.authorId,
-                contentMarkdown: message.contentMarkdown,
-                rootStreamId: stream.rootStreamId ?? stream.id,
-                rootStreamType: stream.type as BoardScopeStreamType,
-                createdAt: message.createdAt,
-              })
+            try {
+              const stream = await db.streams.get(next.streamId)
+              if (stream) {
+                // The optimistic event carries the attachment summaries (the send
+                // response doesn't), so the card renders thumbnails immediately.
+                const optimisticEvent = await db.events.get(next.clientId)
+                const attachments = (optimisticEvent?.payload as { attachments?: AttachmentSummary[] } | undefined)
+                  ?.attachments
+                await putOptimisticBoardPost(next.workspaceId, {
+                  conversationId,
+                  messageId: message.id,
+                  streamId: next.streamId,
+                  authorId: message.authorId,
+                  contentMarkdown: message.contentMarkdown,
+                  rootStreamId: stream.rootStreamId ?? stream.id,
+                  rootStreamType: stream.type as BoardScopeStreamType,
+                  createdAt: message.createdAt,
+                  attachments,
+                })
+              }
+            } catch (err) {
+              console.error("Failed to seed optimistic board post from queue drain", err)
             }
           }
         }

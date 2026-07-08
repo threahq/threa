@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { matchesBoardLens, type BoardLens, type BoardScopeStreamType } from "@threa/types"
 import { useBoardPosts } from "@/stores/board-store"
 import { projectNestedBoardView } from "@/lib/board/nested-board-view"
@@ -8,11 +8,6 @@ import {
   branchParentConversationId,
 } from "@/hooks/use-conversation-graph"
 import type { CachedBoardPost } from "@/db"
-
-/** How long `revealNext` stays armed after the viewer posts. Bounds the auto-
- *  reveal to the window right after their own action, so a stale arm can't later
- *  fire on an unrelated incoming conversation. */
-const REVEAL_ARM_MS = 8000
 
 /** A board post in the stable view — re-exported so UI (which can't import `@/db`
  *  directly, INV-15) shares the exact shape the hook renders from. */
@@ -198,18 +193,25 @@ function sameIds(a: string[], b: string[]): boolean {
 }
 
 /**
- * Fold the live IDB feed into the committed view. Two kinds of "not yet
- * committed" rows are told apart by the committed window's frozen lower bound:
+ * Fold the live IDB feed into the committed view. A "not yet committed" row is
+ * classified against the committed window's frozen lower bound:
  *
  *  - **Below the floor** — older content paged in by "Load more". It lands below
  *    the viewport, so appending it to the frozen order shifts nothing on-screen;
  *    fold it in immediately (no pill).
- *  - **At or above the floor** — a fresh arrival (new conversation, or a card
- *    bumped up past where it was). Revealing it would reorder the view, so it
- *    waits in the buffer and is surfaced as the "N new" pill count instead.
+ *  - **The viewer's own optimistic post** (`_status === "pending"`, only ever set
+ *    by `putOptimisticBoardPost` for the author's own send) — revealed at top
+ *    immediately, regardless of any timer. The authored card must surface as soon
+ *    as it lands, whether that's inline (existing-stream) or after the promote-on-
+ *    send drain (a new scratchpad, arbitrarily later). Revealing ONLY the pending
+ *    card leaves unrelated arrivals still buffered, so posting never reorders the
+ *    cards the viewer was reading (board-view-design.md "don't move shit on me").
+ *  - **Any other at-or-above-floor arrival** — a new conversation from someone
+ *    else, or a card bumped up. Revealing it would reorder the view, so it waits
+ *    in the buffer and is surfaced as the "N new" pill count instead.
  *
- * Returns the same `committed` reference when nothing pages in, so the caller can
- * skip a state write.
+ * Returns the same `committed` reference when nothing pages in or reveals, so the
+ * caller can skip a state write.
  */
 export function reconcileStableView(
   committed: CommittedView,
@@ -227,23 +229,31 @@ export function reconcileStableView(
   for (const ms of committed.activityById.values()) if (ms < floor) floor = ms
 
   const paged: CachedBoardPost[] = []
+  const revealed: CachedBoardPost[] = []
   const buffered: string[] = []
   for (const post of live) {
     if (committedSet.has(postId(post))) continue
-    if (postMs(post) < floor) paged.push(post)
+    if (post._status === "pending") revealed.push(post)
+    else if (postMs(post) < floor) paged.push(post)
     else buffered.push(postId(post))
   }
 
-  if (paged.length === 0) {
+  if (paged.length === 0 && revealed.length === 0) {
     return { committed, buffered }
   }
 
-  // Append paged-in older rows below the frozen window, activity-desc.
+  // The viewer's own pending posts prepend at top (newest); paged-in older rows
+  // append below the frozen window. Both activity-desc; the committed cards
+  // between keep their frozen positions.
+  revealed.sort((a, b) => postMs(b) - postMs(a))
   paged.sort((a, b) => postMs(b) - postMs(a))
   const activityById = new Map(committed.activityById)
-  for (const post of paged) activityById.set(postId(post), postMs(post))
+  for (const post of [...revealed, ...paged]) activityById.set(postId(post), postMs(post))
   return {
-    committed: { order: [...committed.order, ...paged.map(postId)], activityById },
+    committed: {
+      order: [...revealed.map(postId), ...committed.order, ...paged.map(postId)],
+      activityById,
+    },
     buffered,
   }
 }
@@ -257,8 +267,6 @@ export interface StableBoardView {
   newCount: number
   /** Reveal buffered changes: re-snapshot the live order as the committed view. */
   commit: () => void
-  /** Arm a one-shot auto-commit on the next live change (the viewer's own post). */
-  revealNext: () => void
   /** True until the underlying IDB read first resolves. */
   isLoading: boolean
   /**
@@ -365,31 +373,6 @@ export function useStableBoardView(
   // drops it — a removal never shifts the rows below it.
   const retainedRef = useRef<Map<string, CachedBoardPost>>(new Map())
   const liveRef = useRef<CachedBoardPost[]>([])
-  // Mirror of `buffered` for `revealNext` to read synchronously: the viewer's own
-  // post can land in the buffer BEFORE `revealNext` arms (the optimistic IDB write
-  // fires its liveQuery a tick before the send resolves), so arming also flushes
-  // whatever is already buffered — otherwise the just-posted card would strand
-  // behind its own pill.
-  const bufferedRef = useRef<string[]>([])
-  bufferedRef.current = buffered
-  // One-shot: when armed, the next live change with fresh arrivals commits
-  // instead of buffering — so the viewer's own just-posted card is revealed, not
-  // hidden behind its own pill. Auto-disarms after REVEAL_ARM_MS so a post that
-  // never lands a visible conversation can't leave it armed to fire on an
-  // unrelated arrival minutes later. Deliberately survives the view reset below:
-  // posting from a filtered view navigates back to the All home (the post might
-  // not match the filter), and the arm must still be live there to surface the
-  // authored card when it arrives after the fresh view's wholesale commit.
-  const revealNextRef = useRef(false)
-  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const disarmReveal = useCallback(() => {
-    revealNextRef.current = false
-    if (revealTimerRef.current) {
-      clearTimeout(revealTimerRef.current)
-      revealTimerRef.current = null
-    }
-  }, [])
-  useEffect(() => disarmReveal, [disarmReveal])
 
   // Reset the view when the workspace OR the filter (lens/scope/types) changes
   // in place (the board route keeps the same component instance across
@@ -430,16 +413,11 @@ export function useStableBoardView(
   if (live) {
     liveRef.current = live
     for (const post of live) retainedRef.current.set(postId(post), post)
+    // `reconcileStableView` reveals the viewer's own pending post (at top) and
+    // paged-in older rows; everything else stays buffered behind the pill.
     const next = reconcileStableView(committedInput, live)
     if (next.committed !== committedInput) setCommitted(next.committed)
-    if (revealNextRef.current && next.buffered.length > 0) {
-      disarmReveal()
-      const snap = snapshot(live)
-      if (!sameIds(snap.order, committedInput.order)) setCommitted(snap)
-      if (bufferedInput.length > 0) setBuffered([])
-    } else if (!sameIds(bufferedInput, next.buffered)) {
-      setBuffered(next.buffered)
-    }
+    if (!sameIds(bufferedInput, next.buffered)) setBuffered(next.buffered)
   }
 
   const commit = useCallback(() => {
@@ -449,18 +427,6 @@ export function useStableBoardView(
     const keep = new Set(snap.order)
     for (const id of [...retainedRef.current.keys()]) if (!keep.has(id)) retainedRef.current.delete(id)
   }, [])
-
-  const revealNext = useCallback(() => {
-    // Flush anything already buffered (the post may have landed before this armed)…
-    if (bufferedRef.current.length > 0) commit()
-    // …and arm for an arrival still in flight (the send hasn't echoed yet).
-    revealNextRef.current = true
-    if (revealTimerRef.current) clearTimeout(revealTimerRef.current)
-    revealTimerRef.current = setTimeout(() => {
-      revealNextRef.current = false
-      revealTimerRef.current = null
-    }, REVEAL_ARM_MS)
-  }, [commit])
 
   const posts = useMemo(() => {
     const liveById = new Map((live ?? []).map((post) => [postId(post), post]))
@@ -484,7 +450,6 @@ export function useStableBoardView(
     activityById: committed.activityById,
     newCount: buffered.length,
     commit,
-    revealNext,
     isLoading: live === undefined,
     hasRawPosts: (rawLive?.length ?? 0) > 0,
   }

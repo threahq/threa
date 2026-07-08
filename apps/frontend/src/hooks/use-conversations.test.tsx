@@ -345,6 +345,32 @@ describe("useCreateBoardPost", () => {
     )
   })
 
+  it("does not fail the send when the optimistic cache write throws (message already committed server-side)", async () => {
+    const { putOptimistic } = mockBoardDeps({
+      message: { id: "msg_1", createdAt: "2026-06-22T12:00:00.000Z" },
+      conversationId: "conv_new",
+    })
+    putOptimistic.mockRejectedValue(new Error("IDB quota exceeded"))
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([
+      { id: STREAM_ID, type: "channel", rootStreamId: null },
+    ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>)
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
+
+    // The mutation resolves despite the cache-write failure — no false send error
+    // that would prompt a duplicate resend.
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({
+          target: { type: "stream", streamId: STREAM_ID },
+          contentJson: { type: "doc", content: [] },
+        })
+      ).resolves.toBeUndefined()
+    })
+    expect(putOptimistic).toHaveBeenCalled()
+  })
+
   it("creates a draft scratchpad and queues the first message via the promote-on-send queue (no eager server stream)", async () => {
     const { create, createScratchpad, queueDraftMessage } = mockBoardDeps()
 
