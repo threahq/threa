@@ -589,7 +589,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
 
           {!bodyCollapsed && (
             <>
-              <div ref={bodyRef} className="mt-3 [&>*:first-child]:mt-0">
+              <div ref={bodyRef}>
                 {provenance && (
                   <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
                 )}

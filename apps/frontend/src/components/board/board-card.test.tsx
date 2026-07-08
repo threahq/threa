@@ -24,6 +24,7 @@ import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as inlineComposerModule from "@/components/board/board-inline-composer"
 import { spyOnExport } from "@/test/spy"
+import { MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -475,6 +476,34 @@ describe("BoardCard collapse", () => {
       expect(screen.queryByText("Opening body.")).toBeNull()
     } finally {
       restore()
+    }
+  })
+})
+
+describe("BoardCard row layout", () => {
+  beforeEach(() => {
+    vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
+      value: readValue,
+      hasUnread: () => false,
+      markReadSilently: () => Promise.resolve(),
+      setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
+    })
+  })
+
+  // The board row must carry the same vertical rhythm as the timeline
+  // (MessageEvent), applied to the *accent* row so a persona/bot tint band stays
+  // contiguous across a group — not on the outer wrapper as a margin, which
+  // reintroduces the between-block gaps this alignment removed (INV-35).
+  it("applies the shared message-row padding to the accent row, not the wrapper", async () => {
+    mountCard()
+    const wrapper = (await screen.findByText("Opening body.")).closest("[data-message-row]")
+    expect(wrapper).toBeTruthy()
+    expect(wrapper!.className).not.toMatch(/(^|\s)mt-/)
+    const accent = wrapper!.querySelector(".reveal-host")
+    expect(accent).toBeTruthy()
+    for (const cls of MESSAGE_ROW_HEAD_PADDING.split(" ")) {
+      expect(accent!.className).toContain(cls)
     }
   })
 })
