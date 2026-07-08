@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test"
-import { VOICE_STEERING_WORDS_MAX, VOICE_STEERING_WORD_MAX_LENGTH } from "@threa/types"
+import {
+  MESSAGE_COLLAPSE_AT_HEIGHT_MAX,
+  MESSAGE_COLLAPSE_AT_HEIGHT_MIN,
+  MESSAGE_COLLAPSE_TO_HEIGHT_MAX,
+  MESSAGE_COLLAPSE_TO_HEIGHT_MIN,
+  VOICE_STEERING_WORDS_MAX,
+  VOICE_STEERING_WORD_MAX_LENGTH,
+} from "@threa/types"
 import { updatePreferencesSchema } from "./handlers"
 
 describe("updatePreferencesSchema voiceSteeringWords", () => {
@@ -38,5 +45,44 @@ describe("updatePreferencesSchema boardDefaultLens", () => {
 
   it("treats the field as optional", () => {
     expect(updatePreferencesSchema.parse({}).boardDefaultLens).toBeUndefined()
+  })
+})
+
+describe("updatePreferencesSchema message collapse settings", () => {
+  it("accepts valid message collapse settings", () => {
+    const parsed = updatePreferencesSchema.parse({
+      messageCollapseEnabled: true,
+      messageCollapseAtHeight: MESSAGE_COLLAPSE_AT_HEIGHT_MIN,
+      messageCollapseToHeight: MESSAGE_COLLAPSE_TO_HEIGHT_MIN,
+    })
+
+    expect(parsed.messageCollapseEnabled).toBe(true)
+    expect(parsed.messageCollapseAtHeight).toBe(MESSAGE_COLLAPSE_AT_HEIGHT_MIN)
+    expect(parsed.messageCollapseToHeight).toBe(MESSAGE_COLLAPSE_TO_HEIGHT_MIN)
+  })
+
+  it("rejects collapse-at heights outside the bounds", () => {
+    expect(
+      updatePreferencesSchema.safeParse({ messageCollapseAtHeight: MESSAGE_COLLAPSE_AT_HEIGHT_MIN - 1 }).success
+    ).toBe(false)
+    expect(
+      updatePreferencesSchema.safeParse({ messageCollapseAtHeight: MESSAGE_COLLAPSE_AT_HEIGHT_MAX + 1 }).success
+    ).toBe(false)
+  })
+
+  it("rejects collapse-to heights outside the bounds", () => {
+    expect(
+      updatePreferencesSchema.safeParse({ messageCollapseToHeight: MESSAGE_COLLAPSE_TO_HEIGHT_MIN - 1 }).success
+    ).toBe(false)
+    expect(
+      updatePreferencesSchema.safeParse({ messageCollapseToHeight: MESSAGE_COLLAPSE_TO_HEIGHT_MAX + 1 }).success
+    ).toBe(false)
+  })
+
+  it("treats the fields as optional", () => {
+    const parsed = updatePreferencesSchema.parse({})
+    expect(parsed.messageCollapseEnabled).toBeUndefined()
+    expect(parsed.messageCollapseAtHeight).toBeUndefined()
+    expect(parsed.messageCollapseToHeight).toBeUndefined()
   })
 })

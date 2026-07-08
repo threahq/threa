@@ -24,13 +24,10 @@ interface UseBlockCollapseOptions {
    */
   hashNamespace?: string
   content: string
-  /**
-   * Whether the block is long enough to be worth collapsing at all. Short
-   * blocks (≤ threshold) render plain with no fold chrome — there is nothing
-   * worth hiding. When true the block also starts collapsed unless the user
-   * has a persisted override expanding it.
-   */
+  /** Whether the block is long enough to show fold chrome. */
   collapsible: boolean
+  /** Initial state when there is no persisted per-message override. */
+  defaultCollapsed?: boolean
 }
 
 /**
@@ -45,6 +42,7 @@ export function useBlockCollapse({
   hashNamespace = kind,
   content,
   collapsible,
+  defaultCollapsed = true,
 }: UseBlockCollapseOptions): BlockCollapseState {
   const messageContext = useMarkdownBlockContext()
   const nested = useIsInsideCollapsibleBlock()
@@ -59,12 +57,7 @@ export function useBlockCollapse({
 
   const persistedOverride = useBlockCollapseStore(collapseKey)
 
-  // Render plain (expanded, no toggle) whenever there is nothing to fold
-  // against: nested inside another foldable block, too short to collapse, or
-  // no persistence key (standalone preview) — collapsing with no way to
-  // toggle would strand the content clamped. Otherwise start collapsed unless
-  // the user persisted an expand.
-  const collapsed = !collapseKey ? false : (persistedOverride ?? true)
+  const collapsed = !collapseKey ? false : (persistedOverride ?? defaultCollapsed)
 
   const toggle = useCallback(() => {
     if (!collapseKey || !messageContext) return

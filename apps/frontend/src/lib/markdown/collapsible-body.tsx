@@ -1,6 +1,10 @@
 import { useRef, type ReactNode } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
-import { DEFAULT_MESSAGE_COLLAPSE_THRESHOLD } from "@threa/types"
+import {
+  DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
+  DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
+  type UserPreferences,
+} from "@threa/types"
 import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
@@ -12,9 +16,15 @@ interface CollapsibleBodyProps {
   kind: Extract<MarkdownBlockKind, "description" | "message">
   /** Markdown source: hashes the persisted toggle key and drives remeasure. */
   content: string
-  /** Rendered line count above which the body starts folded. */
-  threshold: number
-  /** The rendered body (a `MarkdownContent`) measured and clamped by line count. */
+  /** Rendered line count above which the body can fold. */
+  threshold?: number
+  /** Rendered height above which the body can fold. */
+  collapseAtHeight?: number
+  /** Height to clamp to when folded. */
+  collapseToHeight?: number
+  /** Initial state when no persisted per-message override exists. */
+  defaultCollapsed?: boolean
+  /** The rendered body (a `MarkdownContent`) measured and clamped when folded. */
   children: ReactNode
 }
 
@@ -29,23 +39,33 @@ const COLLAPSED_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 1.5rem
 
 /**
  * Folds a whole markdown body behind a Show more/less toggle past a rendered
- * line threshold — the same measure-then-clamp mechanism code/quote blocks use,
+ * size threshold — the same measure-then-clamp mechanism code/quote blocks use,
  * persisted per message via the shared block-collapse cache so it survives the
  * timeline remounting rows under virtualization. Must be mounted inside a
  * `MarkdownBlockProvider` (the caller supplies the `messageId` scope); when this
  * body is an active fold it marks its subtree inside-a-collapsible so nested
  * code/quote blocks skip their own chrome and the whole body folds as one unit.
  */
-export function CollapsibleBody({ kind, content, threshold, children }: CollapsibleBodyProps) {
+export function CollapsibleBody({
+  kind,
+  content,
+  threshold,
+  collapseAtHeight,
+  collapseToHeight,
+  defaultCollapsed = true,
+  children,
+}: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  const { lineCount, lineHeightPx } = useMeasuredLineCount(bodyRef, [content])
-  // The extra half line keeps a barely-over body from sprouting a toggle that
-  // hides only a sliver — and is the half line the collapsed view shows as the
-  // "there's more" hint. Mirrors the code/quote-block threshold math.
-  const collapsible = lineCount !== null && lineCount > threshold + 0.5
-  const { collapsed, canToggle, toggle } = useBlockCollapse({ kind, content, collapsible })
+  const { lineCount, lineHeightPx, heightPx } = useMeasuredLineCount(bodyRef, [content])
+  const lineCollapsible = threshold !== undefined && lineCount !== null && lineCount > threshold + 0.5
+  const heightCollapsible =
+    collapseAtHeight !== undefined && heightPx !== null && heightPx !== undefined && heightPx > collapseAtHeight
+  const collapsible = heightCollapsible || lineCollapsible
+  const { collapsed, canToggle, toggle } = useBlockCollapse({ kind, content, collapsible, defaultCollapsed })
 
-  const collapsedMaxHeight = collapsed && lineHeightPx !== null ? (threshold + 0.5) * lineHeightPx : undefined
+  const collapsedMaxHeight = collapsed
+    ? collapseToHeight ?? (threshold !== undefined && lineHeightPx !== null ? (threshold + 0.5) * lineHeightPx : undefined)
+    : undefined
 
   return (
     <div>
@@ -95,11 +115,23 @@ export function CollapsibleBody({ kind, content, threshold, children }: Collapsi
   )
 }
 
-/**
- * The user's message collapse threshold, falling back to the default when
- * preferences haven't hydrated (or in test contexts with no provider).
- */
-export function useMessageCollapseThreshold(): number {
+export interface MessageCollapseSettings {
+  enabled: boolean
+  collapseAtHeight: number
+  collapseToHeight: number
+}
+
+export function resolveMessageCollapseSettings(preferences?: UserPreferences | null): MessageCollapseSettings {
+  const collapseAtHeight = preferences?.messageCollapseAtHeight ?? DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT
+  const collapseToHeight = preferences?.messageCollapseToHeight ?? DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT
+  return {
+    enabled: preferences?.messageCollapseEnabled ?? false,
+    collapseAtHeight,
+    collapseToHeight: Math.min(collapseToHeight, collapseAtHeight),
+  }
+}
+
+export function useMessageCollapseSettings(): MessageCollapseSettings {
   const preferences = usePreferencesOptional()
-  return preferences?.preferences?.messageCollapseThreshold ?? DEFAULT_MESSAGE_COLLAPSE_THRESHOLD
+  return resolveMessageCollapseSettings(preferences?.preferences)
 }

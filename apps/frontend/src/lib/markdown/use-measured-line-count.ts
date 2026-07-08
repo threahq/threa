@@ -10,9 +10,11 @@ export interface MeasuredLines {
   lineCount: number | null
   /** Computed line-height in CSS px, used to build the collapsed clamp. */
   lineHeightPx: number | null
+  /** Rendered content height in CSS px. */
+  heightPx?: number | null
 }
 
-const UNMEASURED: MeasuredLines = { lineCount: null, lineHeightPx: null }
+const UNMEASURED: MeasuredLines = { lineCount: null, lineHeightPx: null, heightPx: null }
 
 function resolveLineHeightPx(el: HTMLElement): number {
   const cs = getComputedStyle(el)
@@ -61,9 +63,12 @@ export function useMeasuredLineCount(ref: RefObject<HTMLElement | null>, deps: R
       }
       const lineCount = height / lineHeightPx
       setMeasured((prev) =>
-        prev.lineCount !== null && Math.abs(prev.lineCount - lineCount) < 0.01 && prev.lineHeightPx === lineHeightPx
+        prev.lineCount !== null &&
+        Math.abs(prev.lineCount - lineCount) < 0.01 &&
+        prev.lineHeightPx === lineHeightPx &&
+        prev.heightPx === height
           ? prev
-          : { lineCount, lineHeightPx }
+          : { lineCount, lineHeightPx, heightPx: height }
       )
     }
 
