@@ -82,7 +82,7 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     createdAt: new Date("2026-06-11T09:00:04.000Z"),
   }
   const createMessageInTransaction = mock((_client: unknown, _params: Record<string, unknown>) =>
-    Promise.resolve(message)
+    Promise.resolve({ message })
   )
   const eventService = {
     createMessageInTransaction,

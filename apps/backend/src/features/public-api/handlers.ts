@@ -1401,24 +1401,26 @@ export function createPublicApiHandlers({
       const { message, sessionFinalized } = await withTransaction(pool, async (client) => {
         const reply = data.reply
         const message = reply
-          ? await eventService.createMessageInTransaction(client, {
-              id: reply.messageId,
-              workspaceId: stream.workspaceId,
-              streamId: session.streamId,
-              sessionId: session.id,
-              authorId: bot.id,
-              authorType: AuthorTypes.BOT,
-              contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-              contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-              ciphertext: Buffer.from(reply.ciphertext, "base64"),
-              envelope: reply.envelope,
-              e2eVersion: 2,
-              // Restrict the bot's reach to this scratchpad and dedupe a redelivered
-              // completion (one reply per invocation), mirroring the enclave reply.
-              accessibleStreamIds: [session.streamId],
-              clientMessageId: `bot-invocation:${session.id}`,
-              ...(reply.attachmentIds && reply.attachmentIds.length > 0 && { attachmentIds: reply.attachmentIds }),
-            })
+          ? (
+              await eventService.createMessageInTransaction(client, {
+                id: reply.messageId,
+                workspaceId: stream.workspaceId,
+                streamId: session.streamId,
+                sessionId: session.id,
+                authorId: bot.id,
+                authorType: AuthorTypes.BOT,
+                contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+                contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+                ciphertext: Buffer.from(reply.ciphertext, "base64"),
+                envelope: reply.envelope,
+                e2eVersion: 2,
+                // Restrict the bot's reach to this scratchpad and dedupe a redelivered
+                // completion (one reply per invocation), mirroring the enclave reply.
+                accessibleStreamIds: [session.streamId],
+                clientMessageId: `bot-invocation:${session.id}`,
+                ...(reply.attachmentIds && reply.attachmentIds.length > 0 && { attachmentIds: reply.attachmentIds }),
+              })
+            ).message
           : null
 
         // Flip the claim atomically (INV-20): the `status = 'claimed'` predicate
@@ -1535,33 +1537,37 @@ export function createPublicApiHandlers({
               { status: 400, code: "E2E_WRONG_KEY_GENERATION" }
             )
           }
-          message = await eventService.createMessageInTransaction(client, {
-            id: data.sealedReply.messageId,
-            workspaceId: req.workspaceId!,
-            streamId: claim.responseStreamId,
-            authorId: bot.id,
-            authorType: AuthorTypes.BOT,
-            contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-            contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-            ciphertext: Buffer.from(data.sealedReply.ciphertext, "base64"),
-            envelope: data.sealedReply.envelope,
-            e2eVersion: 2,
-            accessibleStreamIds: [claim.responseStreamId],
-            clientMessageId: `bot-invocation:${claim.id}`,
-          })
+          message = (
+            await eventService.createMessageInTransaction(client, {
+              id: data.sealedReply.messageId,
+              workspaceId: req.workspaceId!,
+              streamId: claim.responseStreamId,
+              authorId: bot.id,
+              authorType: AuthorTypes.BOT,
+              contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+              contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+              ciphertext: Buffer.from(data.sealedReply.ciphertext, "base64"),
+              envelope: data.sealedReply.envelope,
+              e2eVersion: 2,
+              accessibleStreamIds: [claim.responseStreamId],
+              clientMessageId: `bot-invocation:${claim.id}`,
+            })
+          ).message
         } else if (contentMarkdown) {
-          message = await eventService.createMessageInTransaction(client, {
-            workspaceId: req.workspaceId!,
-            streamId: claim.responseStreamId,
-            authorId: bot.id,
-            authorType: AuthorTypes.BOT,
-            contentJson: contentJson!,
-            contentMarkdown,
-            attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-            clientMessageId: `bot-invocation:${claim.id}`,
-            sources: data.sources,
-            metadata: data.metadata,
-          })
+          message = (
+            await eventService.createMessageInTransaction(client, {
+              workspaceId: req.workspaceId!,
+              streamId: claim.responseStreamId,
+              authorId: bot.id,
+              authorType: AuthorTypes.BOT,
+              contentJson: contentJson!,
+              contentMarkdown,
+              attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+              clientMessageId: `bot-invocation:${claim.id}`,
+              sources: data.sources,
+              metadata: data.metadata,
+            })
+          ).message
         }
         const completed = await botRuntimeService.completeInvocationInTransaction(client, {
           workspaceId: req.workspaceId!,

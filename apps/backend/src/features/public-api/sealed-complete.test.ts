@@ -92,8 +92,7 @@ function arrange(
   const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
   const createMessageInTransaction = mock(async (_client: unknown, params: { id: string }) => ({
-    id: params.id,
-    streamId: session.streamId,
+    message: { id: params.id, streamId: session.streamId },
   }))
   const getLatestSequence = mock(async () => 5n)
   const completeInvocationInTransaction = mock(async (_db: unknown, _params: unknown) =>

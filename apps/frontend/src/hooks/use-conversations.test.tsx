@@ -8,6 +8,8 @@ import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as draftScratchpadsModule from "./use-draft-scratchpads"
 import * as queueDraftModule from "./use-queue-draft-message"
+import * as boardStoreModule from "@/stores/board-store"
+import * as workspaceStoreModule from "@/stores/workspace-store"
 import { SocketEventGate } from "@/sync/socket-event-gate"
 import {
   useConversations,
@@ -258,8 +260,8 @@ describe("useCreateBoardPost", () => {
     vi.restoreAllMocks()
   })
 
-  function mockBoardDeps() {
-    const create = vi.fn().mockResolvedValue({})
+  function mockBoardDeps(createResult: unknown = {}) {
+    const create = vi.fn().mockResolvedValue(createResult)
     vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
       create,
     } as unknown as contextsModule.MessageService)
@@ -272,11 +274,13 @@ describe("useCreateBoardPost", () => {
       queueDraftMessage,
       currentUserId: "user_1",
     } as unknown as ReturnType<typeof queueDraftModule.useQueueDraftMessage>)
-    return { create, createScratchpad, queueDraftMessage }
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([])
+    const putOptimistic = vi.spyOn(boardStoreModule, "putOptimisticBoardPost").mockResolvedValue(undefined)
+    return { create, createScratchpad, queueDraftMessage, putOptimistic }
   }
 
   it("posts to an existing stream as a new-conversation message with an idempotency key (no scratchpad created)", async () => {
-    const { create, createScratchpad, queueDraftMessage } = mockBoardDeps()
+    const { create, createScratchpad, queueDraftMessage, putOptimistic } = mockBoardDeps()
 
     const { queryClient, wrapper } = createWrapper()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
@@ -304,6 +308,41 @@ describe("useCreateBoardPost", () => {
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: [...conversationKeys.all, "workspaceList", WORKSPACE_ID],
     })
+    // No conversation id on the response (nothing to key an optimistic card by).
+    expect(putOptimistic).not.toHaveBeenCalled()
+  })
+
+  it("slots an optimistic card keyed by the conversation id the send returns", async () => {
+    const { putOptimistic } = mockBoardDeps({
+      message: { id: "msg_1", createdAt: "2026-06-22T12:00:00.000Z" },
+      conversationId: "conv_new",
+    })
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([
+      { id: STREAM_ID, type: "channel", rootStreamId: null },
+    ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>)
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        target: { type: "stream", streamId: STREAM_ID },
+        contentJson: { type: "doc", content: [] },
+      })
+    })
+
+    expect(putOptimistic).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      expect.objectContaining({
+        conversationId: "conv_new",
+        messageId: "msg_1",
+        streamId: STREAM_ID,
+        authorId: "user_1",
+        rootStreamId: STREAM_ID,
+        rootStreamType: "channel",
+        createdAt: "2026-06-22T12:00:00.000Z",
+      })
+    )
   })
 
   it("creates a draft scratchpad and queues the first message via the promote-on-send queue (no eager server stream)", async () => {

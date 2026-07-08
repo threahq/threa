@@ -871,7 +871,7 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
     contentMarkdown: "hello",
   }
 
-  const assignInTransaction = mock(async () => {})
+  const assignInTransaction = mock(async () => "conv_assigned")
   const conversationAssigner = { assignInTransaction }
 
   beforeEach(() => {
@@ -958,6 +958,19 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
     const eventPayload = (StreamEventRepository.insert as any).mock.calls[0][1].payload
     expect(eventPayload).not.toHaveProperty("declaredConversationId")
     expect(assignInTransaction).not.toHaveBeenCalled()
+  })
+
+  it("surfaces the assigner's conversation id from createMessageReturningConversation for an optimistic board card", async () => {
+    const service = new EventService({} as any, conversationAssigner)
+
+    const declared = await service.createMessageReturningConversation({
+      ...baseParams,
+      conversation: { intent: ConversationIntents.NEW },
+    })
+    expect(declared.conversationId).toBe("conv_assigned")
+
+    const undeclared = await service.createMessageReturningConversation({ ...baseParams })
+    expect(undeclared.conversationId).toBeUndefined()
   })
 })
 

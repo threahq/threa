@@ -396,7 +396,10 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       const inlineRefIds = collectAttachmentReferenceIds(contentJson)
       const attachmentIds = [...new Set([...explicitAttachmentIds, ...inlineRefIds])]
 
-      const message = await eventService.createMessage({
+      // `conversationId` is the id the declared directive assigned the message to
+      // (a fresh mint for a board `new` post) — surfaced so the board composer can
+      // slot an optimistic card keyed by the real id, reconciled by the echo.
+      const { message, conversationId } = await eventService.createMessageReturningConversation({
         workspaceId,
         streamId,
         authorId: userId,
@@ -410,7 +413,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
         confirmedPrivacyWarning: data.confirmedPrivacyWarning,
       })
 
-      res.status(201).json({ message: serializeMessage(message) })
+      res.status(201).json({ message: serializeMessage(message), ...(conversationId && { conversationId }) })
     },
 
     async update(req: Request, res: Response) {

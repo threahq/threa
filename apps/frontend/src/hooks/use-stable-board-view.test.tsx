@@ -187,6 +187,20 @@ describe("useStableBoardView", () => {
     expect(result.current.newCount).toBe(0)
   })
 
+  it("reveals a post that already buffered before revealNext armed (the optimistic write landed first)", () => {
+    mockLive(feed(post("a", 300)))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
+    // The optimistic IDB write lands and buffers BEFORE the send resolves and arms.
+    act(() => mockLive(feed(post("mine", 600), post("a", 300))))
+    rerender()
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+    expect(result.current.newCount).toBe(1)
+    // Arming now flushes the already-buffered card instead of stranding it.
+    act(() => result.current.revealNext())
+    expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "a"])
+    expect(result.current.newCount).toBe(0)
+  })
+
   it("disarms revealNext after its window, so a later unrelated arrival buffers", () => {
     vi.useFakeTimers()
     try {

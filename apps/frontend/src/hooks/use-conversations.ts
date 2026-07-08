@@ -9,8 +9,10 @@ import {
   createDraftPanelId,
 } from "@/contexts"
 import { db } from "@/db"
+import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { serializeToMarkdown } from "@threa/prosemirror"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import { seedBoardPosts, useBoardPost, mergeBoardConversation } from "@/stores/board-store"
+import { seedBoardPosts, useBoardPost, mergeBoardConversation, putOptimisticBoardPost } from "@/stores/board-store"
 import { seedBoardExclusions, putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
 import type { BoardViewPost } from "./use-stable-board-view"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -243,8 +245,9 @@ export function useWorkspaceConversations(
 export function useCreateBoardPost(workspaceId: string) {
   const messageService = useMessageService()
   const { createScratchpad } = useDraftScratchpads(workspaceId)
-  const { queueDraftMessage } = useQueueDraftMessage(workspaceId)
+  const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const queryClient = useQueryClient()
+  const streams = useWorkspaceStreams(workspaceId)
 
   return useMutation({
     mutationFn: async ({ target, contentJson, attachmentIds }: CreateBoardPostInput) => {
@@ -262,13 +265,31 @@ export function useCreateBoardPost(workspaceId: string) {
         return
       }
 
-      await messageService.create(workspaceId, target.streamId, {
+      const { message, conversationId } = await messageService.create(workspaceId, target.streamId, {
         streamId: target.streamId,
         contentJson,
         attachmentIds,
         clientMessageId: generateClientId(),
         conversation: { intent: "new" },
       })
+
+      // Slot the card the instant the send returns, keyed by the real conversation
+      // id the backend minted synchronously — so it's on screen as the composer
+      // clears, not after the echo + board-head refetch. Reconciled in place by
+      // both (same id, `_status` cleared). A channel/DM is its own effective root.
+      const stream = streams.find((s) => s.id === target.streamId)
+      if (conversationId && currentUserId && stream) {
+        await putOptimisticBoardPost(workspaceId, {
+          conversationId,
+          messageId: message.id,
+          streamId: target.streamId,
+          authorId: currentUserId,
+          contentMarkdown: serializeToMarkdown(contentJson),
+          rootStreamId: stream.rootStreamId ?? stream.id,
+          rootStreamType: stream.type as BoardScopeStreamType,
+          createdAt: message.createdAt,
+        })
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [...conversationKeys.all, "workspaceList", workspaceId] })

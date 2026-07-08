@@ -150,17 +150,19 @@ describe("public API E2E-stream plaintext gate", () => {
       fn({})) as never)
     const createMessageInTransaction = mock((_client: unknown, params: Record<string, unknown>) =>
       Promise.resolve({
-        id: params.id,
-        streamId: "stream_1",
-        sequence: 1n,
-        authorId: "bot_1",
-        authorType: "bot",
-        contentJson: { type: "doc", content: [] },
-        contentMarkdown: params.contentMarkdown,
-        reactions: {},
-        metadata: {},
-        editedAt: null,
-        createdAt: new Date(),
+        message: {
+          id: params.id,
+          streamId: "stream_1",
+          sequence: 1n,
+          authorId: "bot_1",
+          authorType: "bot",
+          contentJson: { type: "doc", content: [] },
+          contentMarkdown: params.contentMarkdown,
+          reactions: {},
+          metadata: {},
+          editedAt: null,
+          createdAt: new Date(),
+        },
       })
     )
     const botRuntimeService = {

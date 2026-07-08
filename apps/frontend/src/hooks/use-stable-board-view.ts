@@ -365,6 +365,13 @@ export function useStableBoardView(
   // drops it — a removal never shifts the rows below it.
   const retainedRef = useRef<Map<string, CachedBoardPost>>(new Map())
   const liveRef = useRef<CachedBoardPost[]>([])
+  // Mirror of `buffered` for `revealNext` to read synchronously: the viewer's own
+  // post can land in the buffer BEFORE `revealNext` arms (the optimistic IDB write
+  // fires its liveQuery a tick before the send resolves), so arming also flushes
+  // whatever is already buffered — otherwise the just-posted card would strand
+  // behind its own pill.
+  const bufferedRef = useRef<string[]>([])
+  bufferedRef.current = buffered
   // One-shot: when armed, the next live change with fresh arrivals commits
   // instead of buffering — so the viewer's own just-posted card is revealed, not
   // hidden behind its own pill. Auto-disarms after REVEAL_ARM_MS so a post that
@@ -444,13 +451,16 @@ export function useStableBoardView(
   }, [])
 
   const revealNext = useCallback(() => {
+    // Flush anything already buffered (the post may have landed before this armed)…
+    if (bufferedRef.current.length > 0) commit()
+    // …and arm for an arrival still in flight (the send hasn't echoed yet).
     revealNextRef.current = true
     if (revealTimerRef.current) clearTimeout(revealTimerRef.current)
     revealTimerRef.current = setTimeout(() => {
       revealNextRef.current = false
       revealTimerRef.current = null
     }, REVEAL_ARM_MS)
-  }, [])
+  }, [commit])
 
   const posts = useMemo(() => {
     const liveById = new Map((live ?? []).map((post) => [postId(post), post]))
