@@ -1,7 +1,8 @@
 import { useCallback, useState, type ReactNode } from "react"
-import { Check, ChevronUp, Layers, Loader2, Plus, X } from "lucide-react"
+import { Check, ChevronUp, Layers, Loader2, Plus, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { ConversationSplitDialog } from "@/components/conversations/conversation-split-dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,11 +32,15 @@ import { ConversationOverlayRowProvider } from "./row-context"
  */
 export function ConversationOverlayPanel({
   overlay,
+  workspaceId,
+  streamId,
   inViewConversations,
   onClose,
   topBarOpen = false,
 }: {
   overlay: ConversationOverlayContext
+  workspaceId: string
+  streamId: string
   inViewConversations: ConversationWithStaleness[]
   onClose: () => void
   /** A full-width strip (stream search, or the split-selection bar) occupies the
@@ -46,6 +51,8 @@ export function ConversationOverlayPanel({
   // Collapsed by default on mobile; the user's explicit choice wins once made.
   const [userCollapsed, setUserCollapsed] = useState<boolean | null>(null)
   const collapsed = userCollapsed ?? isMobile
+  // Which conversation the AI-split dialog is open for (null = closed).
+  const [splitConversationId, setSplitConversationId] = useState<string | null>(null)
   const { model, focusedConversationId, onToggleFocus } = overlay
 
   return (
@@ -112,37 +119,66 @@ export function ConversationOverlayPanel({
                 const colorIndex = model.colorIndexById.get(conversation.id) ?? 0
                 const isFocused = focusedConversationId === conversation.id
                 return (
-                  <button
+                  <div
                     key={conversation.id}
-                    type="button"
-                    onClick={() => onToggleFocus(conversation.id)}
-                    aria-pressed={isFocused}
-                    title={conversation.topicSummary ?? undefined}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
-                      isFocused && "font-medium",
+                      "group/row flex w-full items-center rounded-md pr-1 transition-colors hover:bg-accent",
                       focusedConversationId != null && !isFocused && "opacity-50"
                     )}
                     style={isFocused ? { backgroundColor: conversationColor(colorIndex, 0.12) } : undefined}
                   >
-                    <span
-                      aria-hidden
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: conversationColor(colorIndex) }}
-                    />
-                    <span className="min-w-0 flex-1 truncate">
-                      {conversation.topicSummary || "Untitled conversation"}
-                    </span>
-                    <span className="shrink-0 tabular-nums text-muted-foreground">
-                      {conversation.messageIds.length}
-                    </span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => onToggleFocus(conversation.id)}
+                      aria-pressed={isFocused}
+                      title={conversation.topicSummary ?? undefined}
+                      className={cn(
+                        "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
+                        isFocused && "font-medium"
+                      )}
+                    >
+                      <span
+                        aria-hidden
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: conversationColor(colorIndex) }}
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {conversation.topicSummary || "Untitled conversation"}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        {conversation.messageIds.length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSplitConversationId(conversation.id)}
+                      title="Split with AI"
+                      aria-label="Split this conversation with AI"
+                      className={cn(
+                        "ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100",
+                        // Touch has no hover to reveal it — keep it visible; on
+                        // desktop it stays a quiet hover/focus affordance.
+                        isMobile ? "opacity-100" : "opacity-0 group-hover/row:opacity-100"
+                      )}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                    </button>
+                  </div>
                 )
               })
             )}
           </div>
         </div>
       )}
+      <ConversationSplitDialog
+        workspaceId={workspaceId}
+        streamId={streamId}
+        conversationId={splitConversationId}
+        open={splitConversationId !== null}
+        onOpenChange={(open) => {
+          if (!open) setSplitConversationId(null)
+        }}
+      />
     </div>
   )
 }

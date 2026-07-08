@@ -74,6 +74,8 @@ export interface ConversationService {
   markUnread: typeof conversationsApi.markUnread
   reassignMessage: typeof conversationsApi.reassignMessage
   reassignMessages: typeof conversationsApi.reassignMessages
+  proposeSplit: typeof conversationsApi.proposeSplit
+  applySplit: typeof conversationsApi.applySplit
   updateConversation: typeof conversationsApi.updateConversation
   hideConversation: typeof conversationsApi.hideConversation
   unhideConversation: typeof conversationsApi.unhideConversation

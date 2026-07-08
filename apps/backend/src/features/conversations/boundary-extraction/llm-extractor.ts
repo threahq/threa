@@ -9,6 +9,9 @@ import type {
   ExtractionResult,
   MessageAssignment,
   Reassignment,
+  SplitContext,
+  SplitProposal,
+  SplitGroup,
 } from "./types"
 import type { Message } from "../../messaging"
 import { logger } from "../../../lib/logger"
@@ -19,8 +22,26 @@ import {
   BOUNDARY_EXTRACTION_PROMPT,
   NEW_MESSAGE_ATTACHMENT_CHARS,
   RECENT_ATTACHMENT_CHARS,
+  CONVERSATION_SPLIT_SYSTEM_PROMPT,
+  CONVERSATION_SPLIT_PROMPT,
+  conversationSplitResponseSchema,
   type ExtractionResponse,
+  type ConversationSplitResponse,
 } from "./config"
+
+/** Below this, a conversation is too short to split meaningfully — skip the AI call. */
+const MIN_MESSAGES_TO_SPLIT = 4
+
+/**
+ * Upper bound on the messages fed into one split prompt. A drifted conversation
+ * can in principle be large; without a cap the prompt is unbounded and can
+ * exceed what `applySplit` will accept on confirm (its 500-message ceiling),
+ * wasting the call. We consider the most recent window — older messages beyond
+ * it stay in the source conversation (the apply path only moves messages that
+ * land in a proposed group). Kept under the apply ceiling so a proposal always
+ * fits.
+ */
+const MAX_SPLIT_MESSAGES = 300
 
 function indent(text: string, prefix: string): string {
   return text
@@ -111,6 +132,140 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
       }
       throw error
     }
+  }
+
+  async splitConversation(context: SplitContext): Promise<SplitProposal> {
+    // Too short (or empty) to split — return the whole thing as one group without
+    // an AI call. `groups.length === 1` is the caller's "no split needed" signal.
+    // An empty conversation (a resolved/emptied thread-split shell) lands here too.
+    if (context.messages.length < MIN_MESSAGES_TO_SPLIT) {
+      return {
+        groups: [{ title: this.splitFallbackTitle(context), messageIds: context.messages.map((m) => m.id) }],
+        confidence: 1.0,
+        reasoning: "Conversation is too short to split.",
+      }
+    }
+
+    // Bound the prompt: consider only the most recent MAX_SPLIT_MESSAGES. Anything
+    // older stays in the source (apply only moves messages that land in a group),
+    // and the proposal always fits applySplit's ceiling.
+    const scoped =
+      context.messages.length > MAX_SPLIT_MESSAGES
+        ? { ...context, messages: context.messages.slice(-MAX_SPLIT_MESSAGES) }
+        : context
+    if (scoped !== context) {
+      logger.info(
+        { conversationId: context.conversationId, total: context.messages.length, considered: MAX_SPLIT_MESSAGES },
+        "Conversation exceeds the split window — splitting the most recent messages only"
+      )
+    }
+
+    const config = await this.configResolver.resolve(COMPONENT_PATHS.BOUNDARY_EXTRACTION)
+    const prompt = this.buildSplitPrompt(scoped)
+
+    try {
+      const { value } = await this.ai.generateObject({
+        model: config.modelId,
+        schema: conversationSplitResponseSchema,
+        messages: [
+          { role: "system", content: CONVERSATION_SPLIT_SYSTEM_PROMPT },
+          { role: "user", content: prompt },
+        ],
+        temperature: config.temperature,
+        telemetry: {
+          functionId: "conversation-split",
+          metadata: { streamType: scoped.streamType, messageCount: scoped.messages.length },
+        },
+        context: { workspaceId: scoped.workspaceId, origin: "user" },
+      })
+
+      return this.validateSplit(value, scoped)
+    } catch (error) {
+      // Same narrow handling as extract(): an unparseable object degrades to "no
+      // split" (INV-11 — not a silent fallback: logged, and only this error type;
+      // API/rate-limit errors still propagate for the request to surface).
+      if (error instanceof NoObjectGeneratedError) {
+        logger.warn(
+          { conversationId: context.conversationId, text: error.text?.slice(0, 200) },
+          "LLM returned unparseable split response, proposing no split"
+        )
+        return {
+          groups: [{ title: this.splitFallbackTitle(scoped), messageIds: scoped.messages.map((m) => m.id) }],
+          confidence: 0.0,
+          reasoning: null,
+        }
+      }
+      throw error
+    }
+  }
+
+  /** Empty-safe title for a no-split proposal: the stored topic, else the first
+   *  message's opening, else a neutral label (an emptied conversation has neither). */
+  private splitFallbackTitle(context: SplitContext): string {
+    if (context.topicSummary) return context.topicSummary
+    const first = context.messages[0]
+    return first ? this.truncateAsTopic(first) : "Conversation"
+  }
+
+  private buildSplitPrompt(context: SplitContext): string {
+    const now = context.messages[context.messages.length - 1]?.createdAt ?? context.messages[0].createdAt
+    const messagesSection = context.messages
+      .map(
+        (m) =>
+          `[${m.id}] (${formatRelativeAge(m.createdAt, now)}) ${m.authorType}:${m.authorId.slice(-8)}: ${m.contentMarkdown.slice(0, 300)}${m.contentMarkdown.length > 300 ? "…" : ""}`
+      )
+      .join("\n")
+
+    return CONVERSATION_SPLIT_PROMPT.replace("{{TITLE}}", context.topicSummary ?? "No title yet")
+      .replace("{{SUMMARY}}", context.summary ? `Current summary: ${context.summary}` : "")
+      .replace("{{MESSAGES}}", messagesSection)
+  }
+
+  /**
+   * Coerce the raw response into a partition of the input messages: keep only
+   * known ids, drop duplicates (first group wins), and sweep any message the
+   * model left unassigned into the largest group so nothing is lost. Groups
+   * emptied by that filtering are dropped; groups are ordered largest-first so
+   * the caller keeps the most representative group as the source conversation.
+   */
+  private validateSplit(parsed: ConversationSplitResponse, context: SplitContext): SplitProposal {
+    const validIds = new Set(context.messages.map((m) => m.id))
+    const orderIndex = new Map(context.messages.map((m, i) => [m.id, i]))
+    const assigned = new Set<string>()
+
+    const groups: SplitGroup[] = []
+    for (const g of parsed.groups) {
+      const ids = g.messageIds.filter((id) => validIds.has(id) && !assigned.has(id))
+      for (const id of ids) assigned.add(id)
+      if (ids.length === 0) continue
+      ids.sort((a, b) => (orderIndex.get(a) ?? 0) - (orderIndex.get(b) ?? 0))
+      groups.push({ title: g.title, summary: g.summary ?? undefined, messageIds: ids })
+    }
+
+    // Nothing survived (all ids unknown) — treat as no split.
+    if (groups.length === 0) {
+      return {
+        groups: [{ title: this.splitFallbackTitle(context), messageIds: [...validIds] }],
+        confidence: parsed.confidence,
+        reasoning: parsed.reasoning,
+      }
+    }
+
+    // Order largest-first so the "kept" group (the caller keeps groups[0] in the
+    // source conversation) is the most representative — fewest messages move.
+    groups.sort((a, b) => b.messageIds.length - a.messageIds.length)
+
+    // Sweep any unassigned messages into the largest group so the partition is
+    // total (the apply path only moves messages that ARE in a group).
+    const leftover = context.messages.map((m) => m.id).filter((id) => !assigned.has(id))
+    if (leftover.length > 0) {
+      const target = groups[0]
+      target.messageIds = [...target.messageIds, ...leftover].sort(
+        (a, b) => (orderIndex.get(a) ?? 0) - (orderIndex.get(b) ?? 0)
+      )
+    }
+
+    return { groups, confidence: parsed.confidence, reasoning: parsed.reasoning }
   }
 
   private buildPrompt(context: ExtractionContext): string {

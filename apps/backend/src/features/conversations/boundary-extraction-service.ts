@@ -14,7 +14,9 @@ import type {
   MessageAssignment,
   Reassignment,
   ReplyTarget,
+  SplitProposal,
 } from "./boundary-extraction/types"
+import { HttpError } from "../../lib/errors"
 import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
 import { addStalenessFields } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
@@ -42,6 +44,49 @@ export class BoundaryExtractionService {
     private pool: Pool,
     private extractor: BoundaryExtractor
   ) {}
+
+  /**
+   * On-demand, read-only: ask the clustering model how an existing conversation
+   * should be split into smaller topics. Loads the conversation's messages,
+   * runs {@link BoundaryExtractor.splitConversation}, and returns the proposal —
+   * NO writes. The caller renders it for confirmation, then applies the confirmed
+   * groups via {@link ConversationService.applySplit}. A single returned group
+   * means the model judged the conversation focused (no split suggested).
+   */
+  async proposeSplit(conversationId: string, workspaceId: string): Promise<SplitProposal & { conversationId: string }> {
+    const { conversation, stream, messages } = await withClient(this.pool, async (client) => {
+      const conversation = await ConversationRepository.findById(client, conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return { conversation: null, stream: null, messages: [] as Message[] }
+      }
+      const stream = await StreamRepository.findById(client, conversation.streamId)
+      const messagesMap = await MessageRepository.findByIds(client, conversation.messageIds)
+      // Preserve the conversation's stored (chronological) order.
+      const messages = conversation.messageIds
+        .map((id) => messagesMap.get(id))
+        .filter((m): m is Message => m !== undefined)
+      return { conversation, stream, messages }
+    })
+
+    if (!conversation || !stream) {
+      throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+    }
+
+    const proposal = await this.extractor.splitConversation({
+      conversationId: conversation.id,
+      topicSummary: conversation.topicSummary,
+      summary: conversation.summary,
+      messages,
+      streamType: stream.type,
+      workspaceId,
+    })
+
+    logger.info(
+      { conversationId: conversation.id, groupCount: proposal.groups.length, messageCount: messages.length },
+      "Conversation split proposed"
+    )
+    return { conversationId: conversation.id, ...proposal }
+  }
 
   /**
    * Three-phase pattern (INV-41) so the AI call holds no DB connection:

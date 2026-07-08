@@ -15,6 +15,29 @@ export interface ListConversationsParams {
   limit?: number
 }
 
+/** One proposed topic group from an AI split (see {@link conversationsApi.proposeSplit}). */
+export interface SplitGroup {
+  title: string
+  summary?: string | null
+  messageIds: string[]
+}
+
+/** A proposed split of one conversation. `groups` is ordered most-central-first
+ *  and partitions the conversation; a single group means "no split suggested". */
+export interface SplitProposal {
+  conversationId: string
+  groups: SplitGroup[]
+  confidence: number
+  reasoning: string | null
+}
+
+/** A confirmed group sent back to apply the split. */
+export interface SplitGroupInput {
+  title: string
+  summary?: string
+  messageIds: string[]
+}
+
 export interface ListWorkspaceConversationsParams extends ListConversationsParams {
   /** Structural lens to filter the feed by (`all` = no narrowing; omitted on the wire). */
   lens?: BoardLens
@@ -183,6 +206,30 @@ export const conversationsApi = {
     body: { streamId: string; messageIds: string[]; targetConversationId?: string | null }
   ): Promise<{ conversation: ConversationWithStaleness; sourceConversations: ConversationWithStaleness[] }> {
     return api.post(`/api/workspaces/${workspaceId}/conversations/reassign-messages`, body)
+  },
+
+  /**
+   * Ask the clustering model how a conversation should be split into smaller
+   * topics. Read-only — returns a proposal for the user to confirm. A single-group
+   * proposal means the model judged the conversation focused (no split suggested).
+   */
+  async proposeSplit(workspaceId: string, conversationId: string): Promise<SplitProposal> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/split-proposal`)
+  },
+
+  /**
+   * Apply a user-confirmed split: `groups[0]` stays in the source conversation
+   * (re-titled), the rest are minted as new titled conversations. The response
+   * carries the re-titled source and every minted conversation, so the caches
+   * recolor immediately (the follow-up `conversation:*` socket events are
+   * idempotent overwrites).
+   */
+  async applySplit(
+    workspaceId: string,
+    conversationId: string,
+    groups: SplitGroupInput[]
+  ): Promise<{ conversation: ConversationWithStaleness; newConversations: ConversationWithStaleness[] }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/split`, { groups })
   },
 
   /**

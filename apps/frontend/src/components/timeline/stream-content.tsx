@@ -965,97 +965,98 @@ export function StreamContent({
   // The drag-onto-a-target gesture belongs to move-to-thread only. Split mode
   // attaches nothing here: each row toggles via its own `onClick`, so native
   // touch scrolling stays intact (see BatchTimelineState.dragSelect).
-  const batchPointerHandlers = batchMode && batchIntent === "moveToThread"
-    ? {
-        onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
-          const target = event.target as HTMLElement
-          if (target.closest("[data-batch-control]")) return
-          const messageId = target.closest<HTMLElement>("[data-message-id]")?.dataset.messageId
-          if (!messageId) return
-          event.preventDefault()
-          batchPointerRef.current = {
-            id: event.pointerId,
-            messageId,
-            x: event.clientX,
-            y: event.clientY,
-            dragging: false,
-            wasSelected: selectedMessageIds.has(messageId),
-          }
-          if (!selectedMessageIds.has(messageId)) {
-            setSelectedMessageIds((prev) => new Set(prev).add(messageId))
-          }
-        },
-        onPointerMove: (event: React.PointerEvent<HTMLElement>) => {
-          const pointer = batchPointerRef.current
-          if (!pointer || pointer.id !== event.pointerId) return
-          const distance = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y)
-          if (!pointer.dragging && distance < 6) return
-          event.preventDefault()
-          if (!pointer.dragging && !selectedMessageIds.has(pointer.messageId)) {
-            setSelectedMessageIds((prev) => new Set(prev).add(pointer.messageId))
-          }
-          pointer.dragging = true
-          setDragGhost({ x: event.clientX, y: event.clientY })
-          const targetId = findMessageIdFromPoint(event.clientX, event.clientY)
-          const validTargetId = isValidBatchTarget(targetId) ? targetId : null
-          setHoveredBatchTargetId((previous) => {
-            if (previous !== validTargetId && validTargetId && "vibrate" in navigator) {
-              navigator.vibrate?.(10)
+  const batchPointerHandlers =
+    batchMode && batchIntent === "moveToThread"
+      ? {
+          onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
+            const target = event.target as HTMLElement
+            if (target.closest("[data-batch-control]")) return
+            const messageId = target.closest<HTMLElement>("[data-message-id]")?.dataset.messageId
+            if (!messageId) return
+            event.preventDefault()
+            batchPointerRef.current = {
+              id: event.pointerId,
+              messageId,
+              x: event.clientX,
+              y: event.clientY,
+              dragging: false,
+              wasSelected: selectedMessageIds.has(messageId),
             }
-            return validTargetId
-          })
-        },
-        onPointerUp: (event: React.PointerEvent<HTMLElement>) => {
-          const pointer = batchPointerRef.current
-          if (!pointer || pointer.id !== event.pointerId) return
-          event.preventDefault()
-          suppressNextBatchClickRef.current = true
-          if (suppressNextBatchClickTimerRef.current !== null) {
-            window.clearTimeout(suppressNextBatchClickTimerRef.current)
-          }
-          suppressNextBatchClickTimerRef.current = window.setTimeout(() => {
-            suppressNextBatchClickRef.current = false
-            suppressNextBatchClickTimerRef.current = null
-          }, 350)
-          const targetId = hoveredBatchTargetId
-          const wasDragging = pointer.dragging
-          batchPointerRef.current = null
-          setDragGhost(null)
-          setHoveredBatchTargetId(null)
-          if (!wasDragging) {
-            setSelectedMessageIds((prev) => {
-              const next = new Set(prev)
-              if (pointer.wasSelected) {
-                next.delete(pointer.messageId)
-              } else {
-                next.add(pointer.messageId)
+            if (!selectedMessageIds.has(messageId)) {
+              setSelectedMessageIds((prev) => new Set(prev).add(messageId))
+            }
+          },
+          onPointerMove: (event: React.PointerEvent<HTMLElement>) => {
+            const pointer = batchPointerRef.current
+            if (!pointer || pointer.id !== event.pointerId) return
+            const distance = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y)
+            if (!pointer.dragging && distance < 6) return
+            event.preventDefault()
+            if (!pointer.dragging && !selectedMessageIds.has(pointer.messageId)) {
+              setSelectedMessageIds((prev) => new Set(prev).add(pointer.messageId))
+            }
+            pointer.dragging = true
+            setDragGhost({ x: event.clientX, y: event.clientY })
+            const targetId = findMessageIdFromPoint(event.clientX, event.clientY)
+            const validTargetId = isValidBatchTarget(targetId) ? targetId : null
+            setHoveredBatchTargetId((previous) => {
+              if (previous !== validTargetId && validTargetId && "vibrate" in navigator) {
+                navigator.vibrate?.(10)
               }
-              return next
+              return validTargetId
             })
-            return
-          }
-          if (wasDragging && targetId && isValidBatchTarget(targetId)) {
-            void dropBatchOnTarget(targetId)
-          }
-        },
-        onPointerCancel: () => {
-          batchPointerRef.current = null
-          setDragGhost(null)
-          setHoveredBatchTargetId(null)
-          suppressNextBatchClickRef.current = false
-          if (suppressNextBatchClickTimerRef.current !== null) {
-            window.clearTimeout(suppressNextBatchClickTimerRef.current)
-            suppressNextBatchClickTimerRef.current = null
-          }
-        },
-        onClickCapture: (event: React.MouseEvent<HTMLElement>) => {
-          if (!suppressNextBatchClickRef.current) return
-          suppressNextBatchClickRef.current = false
-          event.preventDefault()
-          event.stopPropagation()
-        },
-      }
-    : {}
+          },
+          onPointerUp: (event: React.PointerEvent<HTMLElement>) => {
+            const pointer = batchPointerRef.current
+            if (!pointer || pointer.id !== event.pointerId) return
+            event.preventDefault()
+            suppressNextBatchClickRef.current = true
+            if (suppressNextBatchClickTimerRef.current !== null) {
+              window.clearTimeout(suppressNextBatchClickTimerRef.current)
+            }
+            suppressNextBatchClickTimerRef.current = window.setTimeout(() => {
+              suppressNextBatchClickRef.current = false
+              suppressNextBatchClickTimerRef.current = null
+            }, 350)
+            const targetId = hoveredBatchTargetId
+            const wasDragging = pointer.dragging
+            batchPointerRef.current = null
+            setDragGhost(null)
+            setHoveredBatchTargetId(null)
+            if (!wasDragging) {
+              setSelectedMessageIds((prev) => {
+                const next = new Set(prev)
+                if (pointer.wasSelected) {
+                  next.delete(pointer.messageId)
+                } else {
+                  next.add(pointer.messageId)
+                }
+                return next
+              })
+              return
+            }
+            if (wasDragging && targetId && isValidBatchTarget(targetId)) {
+              void dropBatchOnTarget(targetId)
+            }
+          },
+          onPointerCancel: () => {
+            batchPointerRef.current = null
+            setDragGhost(null)
+            setHoveredBatchTargetId(null)
+            suppressNextBatchClickRef.current = false
+            if (suppressNextBatchClickTimerRef.current !== null) {
+              window.clearTimeout(suppressNextBatchClickTimerRef.current)
+              suppressNextBatchClickTimerRef.current = null
+            }
+          },
+          onClickCapture: (event: React.MouseEvent<HTMLElement>) => {
+            if (!suppressNextBatchClickRef.current) return
+            suppressNextBatchClickRef.current = false
+            event.preventDefault()
+            event.stopPropagation()
+          },
+        }
+      : {}
 
   // For drafts with pending events, compute timeline items from those events. Drafts
   // are a single-author transcript already, but running the same pipeline keeps the
@@ -2082,6 +2083,8 @@ export function StreamContent({
                     {activeConversationOverlay && (
                       <ConversationOverlayPanel
                         overlay={activeConversationOverlay}
+                        workspaceId={workspaceId}
+                        streamId={streamId}
                         inViewConversations={inViewConversations}
                         onClose={closeConversationOverlay}
                         // Split mode keeps the overlay panel mounted while the

@@ -17,6 +17,7 @@ import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
+import type { SplitGroupInput } from "@/api/conversations"
 import { StreamTypes } from "@threa/types"
 import type {
   BoardLens,
@@ -669,6 +670,51 @@ export function useReassignMessagesToConversation(workspaceId: string, streamId:
         }
       )
       for (const id of [conversation.id, ...sourceConversations.map((c) => c.id)]) {
+        queryClient.invalidateQueries({ queryKey: conversationKeys.messages(id) })
+      }
+    },
+  })
+}
+
+/**
+ * Ask the clustering model how a conversation should be split. Read-only — the
+ * mutation returns the proposal and writes nothing; the caller renders it for
+ * confirmation and applies it via {@link useApplySplit}.
+ */
+export function useProposeSplit(workspaceId: string) {
+  const conversationService = useConversationService()
+  return useMutation({
+    mutationFn: (conversationId: string) => conversationService.proposeSplit(workspaceId, conversationId),
+  })
+}
+
+/**
+ * Apply a confirmed split proposal. Mirrors {@link useReassignMessagesToConversation}'s
+ * cache handling: the re-titled source and every minted conversation are written
+ * straight into the list cache (minted ones appended) so the board/overlay recolor
+ * immediately; the `conversation:*` socket events that follow are idempotent
+ * overwrites of the same rows. Messages for touched conversations are invalidated.
+ */
+export function useApplySplit(workspaceId: string, streamId: string) {
+  const conversationService = useConversationService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ conversationId, groups }: { conversationId: string; groups: SplitGroupInput[] }) =>
+      conversationService.applySplit(workspaceId, conversationId, groups),
+    onSuccess: ({ conversation, newConversations }) => {
+      const updatedById = new Map([conversation, ...newConversations].map((c) => [c.id, c]))
+      queryClient.setQueryData(
+        conversationKeys.list(workspaceId, streamId, {}),
+        (old: ConversationWithStaleness[] | undefined) => {
+          if (!old) return old
+          const merged = old.map((c) => updatedById.get(c.id) ?? c)
+          // Minted conversations aren't in the list yet — append the new ones.
+          const present = new Set(old.map((c) => c.id))
+          return [...merged, ...newConversations.filter((c) => !present.has(c.id))]
+        }
+      )
+      for (const id of [conversation.id, ...newConversations.map((c) => c.id)]) {
         queryClient.invalidateQueries({ queryKey: conversationKeys.messages(id) })
       }
     },

@@ -256,6 +256,7 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
           <ConversationActionsMenu
             workspaceId={workspaceId}
             conversationId={post.conversation.id}
+            streamId={post.conversation.streamId}
             topicSummary={post.conversation.topicSummary}
             status={post.conversation.status}
             isHidden={hiddenConversations.has(post.conversation.id)}
