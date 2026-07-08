@@ -14,7 +14,7 @@ import {
   PanelRight,
   type LucideIcon,
 } from "lucide-react"
-import { DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD } from "@threa/types"
+import { DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT, DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT } from "@threa/types"
 import { RelativeTime } from "@/components/relative-time"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -136,16 +136,16 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
   const streamId = conversation.streamId
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
 
-  // Whole-card fold: every card can be folded to its header from the chevron; the
-  // threshold only decides whether a TALL conversation starts folded so it doesn't
-  // dominate the feed. The trigger is the card body's rendered height, not a
-  // message count — one long composed message warrants folding as much as a long
-  // back-and-forth, and a run of one-line messages that stays short does not.
-  // Measured pre-paint and latched at the first real measurement (per threshold)
-  // so a card that grows tall while on screen never folds under the eye; a
-  // per-card toggle persists an override that wins over the measured default.
+  // Whole-card fold: every card can be folded from the chevron; automatic
+  // collapse is opt-in and only decides whether a tall conversation starts
+  // folded. The trigger is the card body's rendered height, not message count.
   const { preferences } = usePreferences()
-  const collapseThreshold = preferences?.boardCardCollapseThreshold ?? DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD
+  const boardCardCollapseEnabled = preferences?.boardCardCollapseEnabled ?? false
+  const collapseAtHeight = preferences?.boardCardCollapseAtHeight ?? DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT
+  const collapseToHeight = Math.min(
+    preferences?.boardCardCollapseToHeight ?? DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
+    collapseAtHeight
+  )
   const messageCount = totalReplies + (openingMessage ? 1 : 0)
   const bodyRef = useRef<HTMLDivElement>(null)
   const [tall, setTall] = useState(false)
@@ -168,7 +168,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
       // the card renders expanded rather than folding on a zero measurement.
       if (height <= 0) return
       tallDecidedRef.current = true
-      setTall(height > collapseThreshold)
+      setTall(height > collapseAtHeight)
     }
     measure()
     const el = bodyRef.current
@@ -176,8 +176,11 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [collapseThreshold, preferencesLoaded])
-  const { collapsed: bodyCollapsed, toggle: toggleBodyCollapsed } = useBoardCardCollapse(conversation.id, tall)
+  }, [collapseAtHeight, preferencesLoaded])
+  const { collapsed: bodyCollapsed, toggle: toggleBodyCollapsed } = useBoardCardCollapse(
+    conversation.id,
+    boardCardCollapseEnabled && tall
+  )
 
   // Conversation read state: per-row gating + actions for the message rows, plus
   // the card's effectively-unread signal for the header dot. Both derive live
@@ -574,8 +577,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
               </div>
             )}
 
-            {/* Collapsed: the header stands alone; the message count names how much
-              is folded so scale is legible without unfolding. */}
+            {/* Collapsed: keep scale visible without hiding the whole conversation body. */}
             {bodyCollapsed && (
               <button
                 type="button"
@@ -587,15 +589,62 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
             )}
           </div>
 
-          {!bodyCollapsed && (
-            <>
-              <div ref={bodyRef}>
-                {provenance && (
-                  <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
-                )}
-                {contiguous ? (
+          <div
+            className={cn(bodyCollapsed && "overflow-hidden")}
+            style={bodyCollapsed ? { maxHeight: collapseToHeight } : undefined}
+          >
+            <div ref={bodyRef}>
+              {provenance && (
+                <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
+              )}
+              {contiguous ? (
+                <BranchedBoardRows
+                  rows={branchRows(openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies)}
+                  workspaceId={workspaceId}
+                  renderMessage={renderMessage}
+                  continueThreadTo={continueThreadTo}
+                  onSplitThread={onSplitThread}
+                  renderBranchMessage={renderBranchMessage}
+                  renderBranchTail={inlineComposer.renderBranchTail}
+                  renderAfterMessage={inlineComposer.renderAfterMessage}
+                  onRedirectSession={openReplyComposer}
+                />
+              ) : (
+                <>
+                  {openingMessage && renderMessage(openingMessage, false)}
+                  {/* The opening renders outside the row builder here, so its inline
+                    "new sub-topic" composer slot must be placed explicitly. */}
+                  {openingMessage && inlineComposer.renderAfterMessage(openingMessage.id)}
+                  {!expanded && hiddenCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        beginReveal()
+                        setExpanded(true)
+                      }}
+                      className="mt-3 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      <ChevronDown className="h-3.5 w-3.5" />
+                      {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
+                    </button>
+                  )}
+                  {loadingMore && (
+                    <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>
+                  )}
+                  {/* The backfill loads the older/full window; the recent replies the
+                rail carried are already shown above, so the error names "older"
+                rather than contradicting visible content. */}
+                  {expanded && expandFailed && (
+                    <button
+                      type="button"
+                      onClick={() => void refetchMessages()}
+                      className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
+                    >
+                      Couldn't load older messages. Retry.
+                    </button>
+                  )}
                   <BranchedBoardRows
-                    rows={branchRows(openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies)}
+                    rows={branchRows(displayedReplies)}
                     workspaceId={workspaceId}
                     renderMessage={renderMessage}
                     continueThreadTo={continueThreadTo}
@@ -605,55 +654,11 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
                     renderAfterMessage={inlineComposer.renderAfterMessage}
                     onRedirectSession={openReplyComposer}
                   />
-                ) : (
-                  <>
-                    {openingMessage && renderMessage(openingMessage, false)}
-                    {/* The opening renders outside the row builder here, so its inline
-                    "new sub-topic" composer slot must be placed explicitly. */}
-                    {openingMessage && inlineComposer.renderAfterMessage(openingMessage.id)}
-                    {!expanded && hiddenCount > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          beginReveal()
-                          setExpanded(true)
-                        }}
-                        className="mt-3 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                      >
-                        <ChevronDown className="h-3.5 w-3.5" />
-                        {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
-                      </button>
-                    )}
-                    {loadingMore && (
-                      <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>
-                    )}
-                    {/* The backfill loads the older/full window; the recent replies the
-                rail carried are already shown above, so the error names "older"
-                rather than contradicting visible content. */}
-                    {expanded && expandFailed && (
-                      <button
-                        type="button"
-                        onClick={() => void refetchMessages()}
-                        className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
-                      >
-                        Couldn't load older messages. Retry.
-                      </button>
-                    )}
-                    <BranchedBoardRows
-                      rows={branchRows(displayedReplies)}
-                      workspaceId={workspaceId}
-                      renderMessage={renderMessage}
-                      continueThreadTo={continueThreadTo}
-                      onSplitThread={onSplitThread}
-                      renderBranchMessage={renderBranchMessage}
-                      renderBranchTail={inlineComposer.renderBranchTail}
-                      renderAfterMessage={inlineComposer.renderAfterMessage}
-                      onRedirectSession={openReplyComposer}
-                    />
-                  </>
-                )}
-              </div>
+                </>
+              )}
+            </div>
 
+            {!bodyCollapsed && (
               <BoardReplyComposer
                 workspaceId={workspaceId}
                 post={post}
@@ -668,8 +673,8 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
                 // opening message's, which for a thread post is the parent-stream message.
                 lastActiveStreamId={displayedReplies.at(-1)?.streamId ?? streamId}
               />
-            </>
-          )}
+            )}
+          </div>
         </div>
       </QuoteReplyProvider>
     </ConversationReadProvider>

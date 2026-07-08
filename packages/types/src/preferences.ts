@@ -133,16 +133,19 @@ export const MESSAGE_COLLAPSE_THRESHOLD_MIN = 0
 export const MESSAGE_COLLAPSE_THRESHOLD_MAX = 500
 export const DEFAULT_MESSAGE_COLLAPSE_THRESHOLD = 16
 
-// Board-card collapse threshold - rendered card height (CSS px) above which a
-// board card starts collapsed to just its header (locator + topic), so a tall
-// conversation folds away and compact ones stay open. Measured by the card
-// body's actual pixel height, not message count — one long composed message
-// warrants folding as much as a long back-and-forth, and a barrage of one-line
-// messages that stays short does not. A user can always toggle an individual
-// card; this preference only sets the initial folded state. 0 folds every card.
+// Board-card collapse is opt-in. When enabled, cards taller than
+// BOARD_CARD_COLLAPSE_AT_HEIGHT collapse to BOARD_CARD_COLLAPSE_TO_HEIGHT; a
+// per-card toggle always overrides the automatic initial state.
+export const BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN = 120
+export const BOARD_CARD_COLLAPSE_AT_HEIGHT_MAX = 4000
+export const DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT = 600
+export const BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN = 120
+export const BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX = 2000
+export const DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT = 320
+// Legacy threshold retained on the wire for older clients.
 export const BOARD_CARD_COLLAPSE_THRESHOLD_MIN = 0
 export const BOARD_CARD_COLLAPSE_THRESHOLD_MAX = 4000
-export const DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD = 600
+export const DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD = DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT
 
 // Voice polish level: how aggressively the polish model rewrites a finalized
 // dictation transcript. The id flows through the wire format and is mirrored
@@ -277,10 +280,13 @@ export interface UserPreferences {
   messageCollapseToHeight: number
   /** Legacy line-count setting retained for older clients. */
   messageCollapseThreshold: number
-  /**
-   * Rendered card height (px) above which a board card starts collapsed to its
-   * header. A per-card toggle overrides it; this only sets the initial state.
-   */
+  /** Whether tall board cards start collapsed automatically. */
+  boardCardCollapseEnabled: boolean
+  /** Rendered card-body height (px) above which the fold control appears. */
+  boardCardCollapseAtHeight: number
+  /** Max visible card-body height (px) while collapsed. */
+  boardCardCollapseToHeight: number
+  /** Legacy height setting retained for older clients. */
   boardCardCollapseThreshold: number
   /**
    * The lens the board lands on when the URL names no lens segment (bare
@@ -354,6 +360,9 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   messageCollapseAtHeight: DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
   messageCollapseToHeight: DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
   messageCollapseThreshold: DEFAULT_MESSAGE_COLLAPSE_THRESHOLD,
+  boardCardCollapseEnabled: false,
+  boardCardCollapseAtHeight: DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT,
+  boardCardCollapseToHeight: DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
   boardCardCollapseThreshold: DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
   boardDefaultLens: DEFAULT_BOARD_LENS,
   voiceTranscriptionModel: null,
@@ -388,6 +397,9 @@ export interface UpdateUserPreferencesInput {
   messageCollapseAtHeight?: number
   messageCollapseToHeight?: number
   messageCollapseThreshold?: number
+  boardCardCollapseEnabled?: boolean
+  boardCardCollapseAtHeight?: number
+  boardCardCollapseToHeight?: number
   boardCardCollapseThreshold?: number
   boardDefaultLens?: BoardLens
   voiceTranscriptionModel?: string | null

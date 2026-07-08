@@ -25,6 +25,10 @@ import {
   MESSAGE_COLLAPSE_TO_HEIGHT_MAX,
   MESSAGE_COLLAPSE_THRESHOLD_MIN,
   MESSAGE_COLLAPSE_THRESHOLD_MAX,
+  BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN,
+  BOARD_CARD_COLLAPSE_AT_HEIGHT_MAX,
+  BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN,
+  BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX,
   BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
   BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
   BOARD_LENSES,
@@ -75,6 +79,19 @@ const updatePreferencesSchema = z.object({
     .int()
     .min(MESSAGE_COLLAPSE_THRESHOLD_MIN)
     .max(MESSAGE_COLLAPSE_THRESHOLD_MAX)
+    .optional(),
+  boardCardCollapseEnabled: z.boolean().optional(),
+  boardCardCollapseAtHeight: z
+    .number()
+    .int()
+    .min(BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN)
+    .max(BOARD_CARD_COLLAPSE_AT_HEIGHT_MAX)
+    .optional(),
+  boardCardCollapseToHeight: z
+    .number()
+    .int()
+    .min(BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN)
+    .max(BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX)
     .optional(),
   boardCardCollapseThreshold: z
     .number()

@@ -424,7 +424,13 @@ describe("BoardCard collapse", () => {
 
   function withThreshold(px: number) {
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
-      preferences: { timezone: "UTC", locale: "en-US", boardCardCollapseThreshold: px },
+      preferences: {
+        timezone: "UTC",
+        locale: "en-US",
+        boardCardCollapseEnabled: true,
+        boardCardCollapseAtHeight: px,
+        boardCardCollapseToHeight: 320,
+      },
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
   }
 
@@ -456,10 +462,10 @@ describe("BoardCard collapse", () => {
 
     await user.click(screen.getByLabelText("Collapse conversation"))
 
-    // Header (topic + count) stays; the body is gone.
+    // Header (topic + count) stays; the body remains mounted and visually clipped.
     expect(screen.getByText("Rotate the API tokens")).toBeTruthy()
     expect(screen.getByText("1 message")).toBeTruthy()
-    expect(screen.queryByText("Opening body.")).toBeNull()
+    expect(screen.getByText("Opening body.")).toBeTruthy()
 
     await user.click(screen.getByLabelText("Expand conversation"))
     expect(await screen.findByText("Opening body.")).toBeTruthy()
@@ -473,7 +479,7 @@ describe("BoardCard collapse", () => {
       mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
       expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
       expect(screen.getByLabelText("Expand conversation")).toBeTruthy()
-      expect(screen.queryByText("Opening body.")).toBeNull()
+      expect(screen.getByText("Opening body.")).toBeTruthy()
     } finally {
       restore()
     }
