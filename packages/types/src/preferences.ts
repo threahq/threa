@@ -85,6 +85,18 @@ export const MessageSendModes = {
   CMD_ENTER: "cmdEnter",
 } as const satisfies Record<string, MessageSendMode>
 
+// Where a stream opens when there are unread messages. "latest" (default)
+// lands at the newest message with an "N new messages" affordance pointing up
+// at the unread marker; "marker" (Discord-style) lands on the first unread
+// with a jump-to-latest affordance pointing down.
+export const UNREAD_OPEN_POSITION_OPTIONS = ["latest", "marker"] as const
+export type UnreadOpenPosition = (typeof UNREAD_OPEN_POSITION_OPTIONS)[number]
+
+export const UnreadOpenPositions = {
+  LATEST: "latest",
+  MARKER: "marker",
+} as const satisfies Record<string, UnreadOpenPosition>
+
 // Label-remove-on-move behavior — when a labeled stream is dragged out of its
 // label section in the sidebar (into a custom section or a different label),
 // whether to also strip the label it was sitting under. "ask" prompts each time
@@ -269,6 +281,11 @@ export interface UserPreferences {
    * label. "ask" prompts each time; "always"/"never" act without prompting.
    */
   labelRemoveOnMove: LabelRemoveOnMove
+  /**
+   * Where a stream with unread messages opens: at the newest message
+   * ("latest", the default) or at the first unread ("marker", Discord-style).
+   */
+  unreadOpenPosition: UnreadOpenPosition
   scratchpadCustomPrompt: string | null
   codeBlockCollapseThreshold: number
   blockquoteCollapseThreshold: number
@@ -353,6 +370,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   messageSendMode: "enter",
   linkPreviewDefault: "open",
   labelRemoveOnMove: "ask",
+  unreadOpenPosition: "latest",
   scratchpadCustomPrompt: null,
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
@@ -390,6 +408,7 @@ export interface UpdateUserPreferencesInput {
   messageSendMode?: MessageSendMode
   linkPreviewDefault?: LinkPreviewDefault
   labelRemoveOnMove?: LabelRemoveOnMove
+  unreadOpenPosition?: UnreadOpenPosition
   scratchpadCustomPrompt?: string | null
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number

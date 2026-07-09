@@ -70,6 +70,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "messageSendMode",
     "linkPreviewDefault",
     "labelRemoveOnMove",
+    "unreadOpenPosition",
     "scratchpadCustomPrompt",
     "codeBlockCollapseThreshold",
     "blockquoteCollapseThreshold",

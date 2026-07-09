@@ -26,7 +26,7 @@ import {
   streamKeys,
   workspaceKeys,
 } from "@/hooks"
-import { useSocket, useCoordinatedLoading } from "@/contexts"
+import { useSocket, useCoordinatedLoading, usePreferencesOptional } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams, useWorkspaceStreamMemberships } from "@/stores/workspace-store"
@@ -55,6 +55,7 @@ import {
   type StreamBootstrap,
   type ConversationWithStaleness,
   type DelegationStatusChangedEventPayload,
+  type UnreadOpenPosition,
 } from "@threa/types"
 import {
   EventList,
@@ -411,6 +412,45 @@ export function resolveDateJumpAnchor(args: {
     sawEarlierMessage = true
   }
   return null
+}
+
+/**
+ * Decide the initial scroll for a stream opened under the "marker"
+ * unread-open-position preference (Discord-style: land on the first unread).
+ *
+ * Returns:
+ *  - "wait"   — inputs still resolving (window loading, cold-load settle
+ *               masking, read position or the preference itself unhydrated);
+ *               do NOT consume the once-per-stream decision yet.
+ *  - "skip"   — decision consumed, open at the bottom as usual ("latest" mode,
+ *               nothing unread, a deep-link/jump owns the scroll, or the user
+ *               already scrolled).
+ *  - "scroll" — decision consumed, scroll to the unread divider.
+ *
+ * A deep-link or jump consumes the decision even mid-load: a stream entered
+ * via `?m=` must never marker-scroll for that view, including after the param
+ * auto-clears (the PR #1099 yank pattern). A user gesture consumes it too — a
+ * late-resolving divider must not move a position the user chose.
+ */
+export function resolveUnreadMarkerOpen(args: {
+  unreadOpenPosition: UnreadOpenPosition | null
+  alreadyDecided: boolean
+  isLoading: boolean
+  isSettling: boolean
+  readStateResolved: boolean
+  isJumpMode: boolean
+  hasDeepLink: boolean
+  userInteractedAt: number
+  dividerEventId: string | undefined
+}): "wait" | "skip" | "scroll" {
+  if (args.alreadyDecided) return "skip"
+  if (args.hasDeepLink || args.isJumpMode) return "skip"
+  if (args.userInteractedAt > 0) return "skip"
+  if (args.unreadOpenPosition === null) return "wait"
+  if (args.unreadOpenPosition !== "marker") return "skip"
+  if (args.isLoading || args.isSettling || !args.readStateResolved) return "wait"
+  if (!args.dividerEventId) return "skip"
+  return "scroll"
 }
 
 interface StreamContentProps {
@@ -1832,7 +1872,10 @@ export function StreamContent({
     streamId,
     isLoading,
     highlightMessageId,
-    // Never auto-scroll to the unread line — opening lands at the live bottom.
+    // The hook never drives the scroll itself. The "marker" open-position
+    // preference is handled by the resolveUnreadMarkerOpen effect below, which
+    // scrolls via the virtua-aware scrollToFirstUnread instead of the hook's
+    // querySelector path (off-screen rows aren't in the DOM when virtualized).
     scrollToUnread: false,
     // `lastReadEventId` is `string | null` once resolved; it is only `undefined`
     // while the read sources (stream row / membership) are still hydrating. Gate
@@ -2006,6 +2049,62 @@ export function StreamContent({
         ?.scrollIntoView({ block: "start" })
     }
   }, [dividerEventId, useVirtualized, visibleItems, listRef, disableAutoScroll, scrollContainerRef])
+
+  // "Open at the unread marker" (unreadOpenPosition: "marker"). One decision
+  // per stream open, made by resolveUnreadMarkerOpen once the window has
+  // loaded, the cold-load settle has revealed, and the read position is known.
+  // A layout effect so the scroll lands pre-paint in the reveal commit — the
+  // viewer's first painted frame is already at the marker, not a bottom flash.
+  // "latest" mode (the default) consumes the decision without scrolling, so
+  // existing behaviour is untouched.
+  const preferencesCtx = usePreferencesOptional()
+  const unreadOpenPosition = preferencesCtx?.preferences?.unreadOpenPosition ?? null
+  const unreadMarkerOpenRef = useRef<{ streamId: string; decided: boolean }>({ streamId, decided: false })
+  if (unreadMarkerOpenRef.current.streamId !== streamId) {
+    unreadMarkerOpenRef.current = { streamId, decided: false }
+  }
+  useLayoutEffect(() => {
+    const decision = resolveUnreadMarkerOpen({
+      unreadOpenPosition,
+      alreadyDecided: unreadMarkerOpenRef.current.decided,
+      isLoading,
+      isSettling: useVirtualized && virtualIsInitialSettling,
+      // `lastReadEventId` is only undefined while the read sources are still
+      // hydrating (same gate as readStateResolved on useUnreadDivider above).
+      readStateResolved: lastReadEventId !== undefined,
+      isJumpMode,
+      // The per-stream deep-link latch, not the transient ?m= param — a stream
+      // entered via deep-link must never marker-scroll, even after ?m= clears.
+      hasDeepLink: skipInitialScroll,
+      userInteractedAt: userInteractedAtRef.current,
+      dividerEventId,
+    })
+    if (decision === "wait") return
+    unreadMarkerOpenRef.current.decided = true
+    if (decision !== "scroll") return
+    // Prefer scrollToMessage: its refine loop converges over rows virtua hasn't
+    // measured yet (a one-shot scrollToIndex on a fresh window lands pages off
+    // target). Falls back to the one-shot path for non-message divider rows and
+    // the plain thread scroller, where all rows are real DOM already.
+    const dividerEvent = events.find((e) => e.id === dividerEventId)
+    const messageId = (dividerEvent?.payload as { messageId?: string } | null)?.messageId
+    if (!useVirtualized || !messageId || !scrollToMessage(messageId)) {
+      scrollToFirstUnread()
+    }
+  }, [
+    unreadOpenPosition,
+    streamId,
+    isLoading,
+    useVirtualized,
+    virtualIsInitialSettling,
+    lastReadEventId,
+    isJumpMode,
+    skipInitialScroll,
+    dividerEventId,
+    events,
+    scrollToMessage,
+    scrollToFirstUnread,
+  ])
 
   const editLastMessageCtxWithScroll = useMemo(
     () => ({ ...editLastMessageCtx, scrollToMessage }),

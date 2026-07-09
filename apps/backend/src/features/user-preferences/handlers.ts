@@ -12,6 +12,7 @@ import {
   MESSAGE_SEND_MODE_OPTIONS,
   LINK_PREVIEW_DEFAULT_OPTIONS,
   LABEL_REMOVE_ON_MOVE_OPTIONS,
+  UNREAD_OPEN_POSITION_OPTIONS,
   VOICE_POLISH_LEVEL_OPTIONS,
   VOICE_STEERING_WORDS_MAX,
   VOICE_STEERING_WORD_MAX_LENGTH,
@@ -48,6 +49,7 @@ const updatePreferencesSchema = z.object({
   messageSendMode: z.enum(MESSAGE_SEND_MODE_OPTIONS).optional(),
   linkPreviewDefault: z.enum(LINK_PREVIEW_DEFAULT_OPTIONS).optional(),
   labelRemoveOnMove: z.enum(LABEL_REMOVE_ON_MOVE_OPTIONS).optional(),
+  unreadOpenPosition: z.enum(UNREAD_OPEN_POSITION_OPTIONS).optional(),
   scratchpadCustomPrompt: z.string().max(8000).nullable().optional(),
   codeBlockCollapseThreshold: z
     .number()
