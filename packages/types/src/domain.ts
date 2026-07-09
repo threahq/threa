@@ -1526,8 +1526,9 @@ export interface ConversationLinkPreviewData {
   /** Count of primary-membership messages (full tier only) */
   messageCount?: number
   /**
-   * Distinct participant (author) ids, so the card renders their avatars live
-   * from the workspace store. Capped to a small display set (full tier only).
+   * Distinct participant (author) ids (full set), so the card renders their
+   * avatars live from the workspace store; the card caps how many it shows and
+   * rolls the rest into a "+N". Full tier only.
    */
   participantIds?: string[]
   /** Anchor stream display label the conversation lives in (full tier only) */

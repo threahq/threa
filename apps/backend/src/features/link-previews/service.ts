@@ -360,7 +360,7 @@ export class LinkPreviewService {
   }
 
   /**
-   * Resolve an in-app link preview (message, stream, or memo) for a specific viewer.
+   * Resolve an in-app link preview (message, stream, memo, or conversation) for a specific viewer.
    * Returns access-tiered data: full content for accessible targets, limited info
    * for private targets, and a minimal card for cross-workspace links. A
    * cross-workspace target is never inspected — same-workspace check happens first

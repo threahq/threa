@@ -143,6 +143,7 @@ describe("InAppLinkPreviewCard", () => {
     expect(screen.getByText("Deciding how auth flows through the router.")).toBeInTheDocument()
     expect(screen.getByText("Resolved")).toBeInTheDocument()
     expect(screen.getByText("4 messages")).toBeInTheDocument()
+    expect(screen.getByText("#eng")).toBeInTheDocument()
   })
 
   it("shows a minimal card for a private conversation without leaking content", async () => {

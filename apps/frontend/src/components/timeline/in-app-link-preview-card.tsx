@@ -117,7 +117,7 @@ function skeletonVariant(contentType: LinkPreviewSummary["contentType"]): CardVa
 const CARD_HEADER_H = "min-h-[2.0625rem]" // text/icon line + py-1.5 + border, fits the h-5 dismiss button
 const CARD_BODY_MESSAGE = "min-h-[5.5rem]" // avatar + author line + 2-line clamp
 const CARD_BODY_MEMO = "min-h-[7rem]" // tile + title + 2-line clamp + source line
-const CARD_BODY_CONVERSATION = "min-h-[7.5rem]" // tile + title + 2-line clamp + participants/count line
+const CARD_BODY_CONVERSATION = "min-h-[8.5rem]" // tile + title + 2-line clamp + participants/count line + source stream line
 
 type CardVariant = "message" | "memo" | "conversation"
 
@@ -515,6 +515,14 @@ function ConversationLinkCard({
               </span>
             )}
           </div>
+          {data.streamName && (
+            <span className="mt-1.5 inline-flex max-w-full items-center gap-1 text-[11px] text-muted-foreground [&>svg]:h-3 [&>svg]:w-3 [&>svg]:shrink-0">
+              {streamKindIcon(data.streamType)}
+              <span className="truncate">
+                {data.streamType === "channel" ? `#${data.streamName}` : data.streamName}
+              </span>
+            </span>
+          )}
         </div>
       </div>
     </CardBody>
