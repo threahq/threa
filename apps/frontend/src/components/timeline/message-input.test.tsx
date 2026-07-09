@@ -252,6 +252,7 @@ beforeEach(() => {
         fileInputRef: { current: null },
         handleFileSelect: mockHandleFileSelect,
         handleRemoveAttachment: mockHandleRemoveAttachment,
+        handleCancelAttachmentUpload: mockHandleRemoveAttachment,
         canSend: mockComposerState.canSend,
         isSending: mockComposerState.isSending,
         setIsSending: mockSetIsSending,

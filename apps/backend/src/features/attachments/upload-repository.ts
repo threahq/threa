@@ -94,6 +94,10 @@ export const AttachmentUploadRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  async deleteByAttachmentId(client: Querier, attachmentId: string): Promise<void> {
+    await client.query(sql`DELETE FROM attachment_uploads WHERE attachment_id = ${attachmentId}`)
+  },
+
   async markUploaded(
     client: Querier,
     attachmentId: string,

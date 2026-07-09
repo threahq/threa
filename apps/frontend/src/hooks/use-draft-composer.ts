@@ -46,6 +46,8 @@ export interface DraftComposerState {
   fileInputRef: RefObject<HTMLInputElement | null>
   handleFileSelect: (e: ChangeEvent<HTMLInputElement>) => void
   handleRemoveAttachment: (id: string) => void
+  /** Abort an in-flight upload and drop its chip. */
+  handleCancelAttachmentUpload: (id: string) => void
   /** Upload a file programmatically (for paste/drop) */
   uploadFile: (file: File) => Promise<UploadResult>
   /** Current count of images (for sequential naming) */
@@ -125,6 +127,7 @@ export function useDraftComposer({
     handleFileSelect,
     uploadFile,
     removeAttachment,
+    cancelUpload,
     uploadedIds,
     isUploading,
     hasFailed,
@@ -378,6 +381,17 @@ export function useDraftComposer({
     [removeAttachment, removeDraftAttachment]
   )
 
+  // Cancel an in-flight upload: abort the fetch, drop the chip, and best-effort
+  // delete the server reservation. Also remove it from the persisted draft so a
+  // rehydrate doesn't resurrect a file the user just abandoned.
+  const handleCancelAttachmentUpload = useCallback(
+    (id: string) => {
+      cancelUpload(id)
+      removeDraftAttachment(id)
+    },
+    [cancelUpload, removeDraftAttachment]
+  )
+
   // Check if document has actual content (not just empty paragraphs)
   const hasContent = hasDocContent(content)
 
@@ -416,6 +430,7 @@ export function useDraftComposer({
     fileInputRef,
     handleFileSelect,
     handleRemoveAttachment,
+    handleCancelAttachmentUpload,
     uploadFile,
     imageCount,
 

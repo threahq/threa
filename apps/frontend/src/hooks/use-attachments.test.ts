@@ -181,7 +181,7 @@ describe("useAttachments", () => {
       expect(mockDelete).toHaveBeenCalledWith(workspaceId, "attach_123")
     })
 
-    it("should not call delete API for failed uploads", async () => {
+    it("should delete the leaked reservation when a failed upload is removed", async () => {
       mockUpload.mockRejectedValue(new Error("Failed"))
 
       const { result } = renderHook(() => useAttachments(workspaceId))
@@ -195,14 +195,77 @@ describe("useAttachments", () => {
         expect(result.current.pendingAttachments[0].status).toBe("error")
       })
 
-      const tempId = result.current.pendingAttachments[0].id
+      // Under the reservation model the attachment row exists on the server
+      // even though the bytes upload failed, so removing the error chip must
+      // delete it so the reservation doesn't leak.
+      const failedId = result.current.pendingAttachments[0].id
 
       await act(async () => {
-        await result.current.removeAttachment(tempId)
+        await result.current.removeAttachment(failedId)
       })
 
       expect(result.current.pendingAttachments).toHaveLength(0)
-      expect(mockDelete).not.toHaveBeenCalled()
+      expect(mockDelete).toHaveBeenCalledWith(workspaceId, failedId)
+    })
+  })
+
+  describe("cancel upload", () => {
+    it("aborts an in-flight upload, drops the chip, and deletes the reservation", async () => {
+      // Never resolves: simulates a bytes upload stuck on a slow/flaky link.
+      mockUpload.mockImplementation(
+        () => new Promise(() => {}) // intentionally hangs until aborted
+      )
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
+
+      await act(async () => {
+        await result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
+      })
+
+      // Reserve lands -> id flips temp->server while bytes are still uploading.
+      await waitFor(() => {
+        expect(result.current.isUploading).toBe(true)
+        expect(result.current.pendingAttachments[0].id).toBe("attach_123")
+      })
+
+      const uploadingId = result.current.pendingAttachments[0].id
+      expect(result.current.cancelUpload).toBeTypeOf("function")
+
+      act(() => {
+        result.current.cancelUpload(uploadingId)
+      })
+
+      await waitFor(() => {
+        expect(result.current.pendingAttachments).toHaveLength(0)
+      })
+      // The reserved row exists on the server; cancel must clean it up.
+      expect(mockDelete).toHaveBeenCalledWith(workspaceId, uploadingId)
+    })
+
+    it("is a no-op for an attachment that isn't uploading", async () => {
+      mockUpload.mockResolvedValue({
+        id: "attach_123",
+        filename: "test.txt",
+        mimeType: "text/plain",
+        sizeBytes: 1024,
+      })
+      const { result } = renderHook(() => useAttachments(workspaceId))
+
+      await act(async () => {
+        await result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
+      })
+      await waitFor(() => {
+        expect(result.current.pendingAttachments[0].status).toBe("uploaded")
+      })
+
+      const id = result.current.pendingAttachments[0].id
+      act(() => {
+        result.current.cancelUpload(id)
+      })
+
+      // An uploaded attachment should not be silently dropped by cancelUpload —
+      // use removeAttachment for that. The chip stays and no delete fires here.
+      expect(result.current.pendingAttachments).toHaveLength(1)
     })
   })
 

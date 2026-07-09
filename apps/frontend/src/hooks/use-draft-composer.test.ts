@@ -113,6 +113,8 @@ describe("useDraftComposer", () => {
           fileInputRef: mockFileInputRef,
           handleFileSelect: mockHandleFileSelect,
           removeAttachment: mockRemoveAttachment,
+          cancelUpload: vi.fn(),
+          uploadFile: vi.fn(),
           uploadedIds: mockPendingAttachments
             .filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_"))
             .map((a) => a.id),
@@ -409,7 +411,7 @@ describe("useDraftComposer", () => {
       expect(result.current.canSend).toBe(false)
     })
 
-    it("should be false while uploads are still in progress", () => {
+    it("should stay sendable while uploads are still in progress (send-while-uploading)", () => {
       mockPendingAttachments = [
         { id: "temp_1", filename: "test.txt", mimeType: "text/plain", sizeBytes: 100, status: "uploading" },
       ]
@@ -420,7 +422,11 @@ describe("useDraftComposer", () => {
         result.current.setContent(makeDoc("Hello"))
       })
 
-      expect(result.current.canSend).toBe(false)
+      // Reservations make an attachment id available before its bytes finish, so
+      // an in-flight upload no longer gates send: the message goes out, and a
+      // still-reserving (temp-id) file that hasn't landed its id yet is simply
+      // left out of the attachmentIds. A stuck upload can be cancelled instead.
+      expect(result.current.canSend).toBe(true)
     })
 
     it("should be true when uploads have failed (send with whatever succeeded)", () => {

@@ -90,6 +90,11 @@ export interface UseAttachmentsReturn {
   uploadFile: (file: File) => Promise<UploadResult>
   /** Remove an attachment by ID */
   removeAttachment: (id: string) => void
+  /**
+   * Abort an in-flight upload, drop its chip, and best-effort delete the
+   * server-side reservation. No-op for an attachment that isn't uploading.
+   */
+  cancelUpload: (id: string) => void
   /** IDs of reserved or uploaded attachments that can be sent with a message. */
   uploadedIds: string[]
   /** Whether any files are currently uploading */
@@ -110,6 +115,10 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
   const [imageCount, setImageCount] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // Per-upload AbortControllers keyed by attachment id (both the temp id used
+  // during reservation and the final server id after the reservation lands),
+  // so a cancel click at either phase aborts the in-flight bytes upload.
+  const uploadControllersRef = useRef(new Map<string, AbortController>())
 
   const updatePendingAttachments = useCallback(
     (updater: PendingAttachment[] | ((prev: PendingAttachment[]) => PendingAttachment[])) => {
@@ -130,18 +139,22 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
   // name/mime) and keep the real facts locally for the composer chip and the
   // message ref; non-E2E uploads the file as-is and trusts the server's echo.
   const uploadOne = useCallback(
-    async (file: File): Promise<UploadedFacts> => {
+    async (file: File, signal: AbortSignal): Promise<UploadedFacts> => {
       if (e2eEnabled) {
         const plaintext = new Uint8Array(await file.arrayBuffer())
         const { ciphertext, key, iv } = await encryptAttachmentBytes(plaintext)
         const filename = file.name
         const mimeType = file.type || E2E_CIPHERTEXT_MIME
-        const reservation = await attachmentsApi.reserve(workspaceId, {
-          filename,
-          mimeType,
-          sizeBytes: ciphertext.byteLength,
-          e2e: true,
-        })
+        const reservation = await attachmentsApi.reserve(
+          workspaceId,
+          {
+            filename,
+            mimeType,
+            sizeBytes: ciphertext.byteLength,
+            e2e: true,
+          },
+          { signal }
+        )
         const attachment = reservation.attachment
         if (!attachment?.id) throw new Error("Invalid response: missing attachment data")
         rememberAttachmentRef({ attachmentId: attachment.id, key, iv, filename, mimeType, sizeBytes: file.size })
@@ -152,15 +165,19 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
           mimeType,
           sizeBytes: file.size,
           uploadPromise: attachmentsApi
-            .upload(workspaceId, cipherFile, { e2e: true, attachmentId: attachment.id })
+            .upload(workspaceId, cipherFile, { e2e: true, attachmentId: attachment.id, signal })
             .then(() => undefined),
         }
       }
-      const reservation = await attachmentsApi.reserve(workspaceId, {
-        filename: file.name,
-        mimeType: file.type || "application/octet-stream",
-        sizeBytes: file.size,
-      })
+      const reservation = await attachmentsApi.reserve(
+        workspaceId,
+        {
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+          sizeBytes: file.size,
+        },
+        { signal }
+      )
       const attachment = reservation.attachment
       if (!attachment?.id) throw new Error("Invalid response: missing attachment data")
       return {
@@ -168,7 +185,9 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         filename: attachment.filename,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
-        uploadPromise: attachmentsApi.upload(workspaceId, file, { attachmentId: attachment.id }).then(() => undefined),
+        uploadPromise: attachmentsApi
+          .upload(workspaceId, file, { attachmentId: attachment.id, signal })
+          .then(() => undefined),
       }
     },
     [workspaceId, e2eEnabled]
@@ -187,6 +206,8 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       for (const file of files) {
         const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`
         const previewUrl = createPreviewUrl(file)
+        const controller = new AbortController()
+        uploadControllersRef.current.set(tempId, controller)
 
         updatePendingAttachments((prev) => [
           ...prev,
@@ -201,18 +222,29 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         ])
 
         try {
-          const { uploadPromise, ...facts } = await uploadOne(file)
+          const { uploadPromise, ...facts } = await uploadOne(file, controller.signal)
+
+          // The id flips temp→server once the reservation lands; keep the
+          // controller reachable under the new id so a cancel click during the
+          // (potentially long) bytes-upload phase still aborts it.
+          uploadControllersRef.current.set(facts.id, controller)
+          uploadControllersRef.current.delete(tempId)
 
           updatePendingAttachments((prev) =>
             prev.map((a) => (a.id === tempId ? { ...facts, status: "uploading" as const, previewUrl } : a))
           )
           uploadPromise
             .then(() => {
+              uploadControllersRef.current.delete(facts.id)
               updatePendingAttachments((prev) =>
                 prev.map((a) => (a.id === facts.id ? { ...a, status: "uploaded" as const } : a))
               )
             })
             .catch((err) => {
+              uploadControllersRef.current.delete(facts.id)
+              // A user-initiated cancel removes the chip already; don't relabel
+              // the dropped attachment as failed.
+              if (controller.signal.aborted) return
               updatePendingAttachments((prev) =>
                 prev.map((a) =>
                   a.id === facts.id
@@ -222,6 +254,13 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
               )
             })
         } catch (err) {
+          uploadControllersRef.current.delete(tempId)
+          if (controller.signal.aborted) {
+            // Cancelled mid-reservation: drop the chip quietly.
+            updatePendingAttachments((prev) => prev.filter((a) => a.id !== tempId))
+            revokePreviewUrl(previewUrl)
+            continue
+          }
           updatePendingAttachments((prev) =>
             prev.map((a) =>
               a.id === tempId
@@ -258,6 +297,8 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       }
 
       const previewUrl = createPreviewUrl(file)
+      const controller = new AbortController()
+      uploadControllersRef.current.set(tempId, controller)
       const pendingAttachment: PendingAttachment = {
         id: tempId,
         filename: file.name,
@@ -270,7 +311,10 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       updatePendingAttachments((prev) => [...prev, pendingAttachment])
 
       try {
-        const { uploadPromise, ...facts } = await uploadOne(file)
+        const { uploadPromise, ...facts } = await uploadOne(file, controller.signal)
+
+        uploadControllersRef.current.set(facts.id, controller)
+        uploadControllersRef.current.delete(tempId)
 
         const uploadedAttachment: PendingAttachment = {
           ...facts,
@@ -281,11 +325,14 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         updatePendingAttachments((prev) => prev.map((a) => (a.id === tempId ? uploadedAttachment : a)))
         uploadPromise
           .then(() => {
+            uploadControllersRef.current.delete(facts.id)
             updatePendingAttachments((prev) =>
               prev.map((a) => (a.id === facts.id ? { ...a, status: "uploaded" as const } : a))
             )
           })
           .catch((err) => {
+            uploadControllersRef.current.delete(facts.id)
+            if (controller.signal.aborted) return
             updatePendingAttachments((prev) =>
               prev.map((a) =>
                 a.id === facts.id
@@ -301,6 +348,16 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
           tempId,
         }
       } catch (err) {
+        uploadControllersRef.current.delete(tempId)
+        if (controller.signal.aborted) {
+          updatePendingAttachments((prev) => prev.filter((a) => a.id !== tempId))
+          revokePreviewUrl(previewUrl)
+          return {
+            attachment: { ...pendingAttachment, status: "error", error: "Cancelled" },
+            imageIndex: assignedImageIndex,
+            tempId,
+          }
+        }
         const errorAttachment: PendingAttachment = {
           ...pendingAttachment,
           status: "error",
@@ -324,10 +381,18 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       const attachment = pendingAttachmentsRef.current.find((a) => a.id === attachmentId)
       if (!attachment) return
 
+      // Abort any in-flight upload first so a lingering bytes fetch can't
+      // resolve after the chip is gone and mutate state for a dropped id.
+      uploadControllersRef.current.get(attachmentId)?.abort()
+      uploadControllersRef.current.delete(attachmentId)
+
       revokePreviewUrl(attachment.previewUrl)
       updatePendingAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
 
-      if (attachment.status === "uploaded" && !attachmentId.startsWith("temp_")) {
+      // Clean up the server-side row for any real (non-temp) id — an uploaded
+      // file, a reserved-but-not-yet-uploaded file, or a failed upload that
+      // still holds a reservation. Temp ids never reached the server.
+      if (!attachmentId.startsWith("temp_")) {
         try {
           await attachmentsApi.delete(workspaceId, attachmentId)
         } catch (err) {
@@ -338,8 +403,24 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
     [updatePendingAttachments, workspaceId]
   )
 
+  // User-facing cancel: abort the in-flight fetch, drop the chip, and let
+  // removeAttachment best-effort delete the reservation. Safe at both phases
+  // (temp id mid-reservation, server id mid-bytes-upload) because the
+  // controller is registered under whichever id the chip currently shows.
+  const cancelUpload = useCallback(
+    (id: string) => {
+      const attachment = pendingAttachmentsRef.current.find((a) => a.id === id)
+      if (!attachment || attachment.status !== "uploading") return
+      void removeAttachment(id)
+    },
+    [removeAttachment]
+  )
+
   const clear = useCallback(() => {
     for (const a of pendingAttachmentsRef.current) revokePreviewUrl(a.previewUrl)
+    // Abort any uploads still in flight so they can't settle after a send.
+    for (const controller of uploadControllersRef.current.values()) controller.abort()
+    uploadControllersRef.current.clear()
     pendingAttachmentsRef.current = []
     setPendingAttachments([])
     setImageCount(0)
@@ -399,6 +480,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
     handleFileSelect,
     uploadFile,
     removeAttachment,
+    cancelUpload,
     uploadedIds,
     isUploading,
     hasFailed,

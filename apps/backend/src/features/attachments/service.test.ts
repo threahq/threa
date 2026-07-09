@@ -5,6 +5,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, type Attachment } from "./repository"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
+import { AttachmentUploadRepository } from "./upload-repository"
 import {
   AttachmentService,
   buildUploadParams,
@@ -91,6 +92,9 @@ describe("AttachmentService", () => {
       steps.push("extraction:delete")
       return true
     })
+    spyOn(AttachmentUploadRepository, "deleteByAttachmentId").mockImplementation(async () => {
+      steps.push("upload:delete")
+    })
     spyOn(AttachmentRepository, "delete").mockImplementation(async () => {
       steps.push("attachment:delete")
       return true
@@ -108,6 +112,7 @@ describe("AttachmentService", () => {
       "transaction:start",
       "attachment:lock",
       "extraction:delete",
+      "upload:delete",
       "attachment:delete",
       "transaction:end",
       "storage:delete",

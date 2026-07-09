@@ -80,8 +80,16 @@ export interface AttachmentReservationResponse {
 }
 
 export const attachmentsApi = {
-  reserve(workspaceId: string, input: AttachmentReservationInput): Promise<AttachmentReservationResponse> {
-    return api.post<AttachmentReservationResponse>(`/api/workspaces/${workspaceId}/attachments/reservations`, input)
+  reserve(
+    workspaceId: string,
+    input: AttachmentReservationInput,
+    options?: { signal?: AbortSignal }
+  ): Promise<AttachmentReservationResponse> {
+    return api.post<AttachmentReservationResponse>(
+      `/api/workspaces/${workspaceId}/attachments/reservations`,
+      input,
+      options?.signal ? { signal: options.signal } : undefined
+    )
   },
 
   /**
@@ -90,7 +98,7 @@ export const attachmentsApi = {
   async upload(
     workspaceId: string,
     file: File,
-    options?: { e2e?: boolean; attachmentId?: string }
+    options?: { e2e?: boolean; attachmentId?: string; signal?: AbortSignal }
   ): Promise<Attachment> {
     const formData = new FormData()
     formData.append("file", file)
@@ -108,6 +116,10 @@ export const attachmentsApi = {
       body: formData,
       credentials: "include",
       // No Content-Type header — browser sets it with the multipart boundary.
+      // No timeout: uploads of large files on slow links can legitimately take
+      // minutes. The caller owns cancellation via `options.signal`
+      // (see useAttachments.cancelUpload).
+      signal: options?.signal,
     })
 
     if (!response.ok) {

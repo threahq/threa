@@ -414,6 +414,7 @@ export class AttachmentService {
       }
 
       await AttachmentExtractionRepository.deleteByAttachmentId(client, id)
+      await AttachmentUploadRepository.deleteByAttachmentId(client, id)
       const deleted = await AttachmentRepository.delete(client, id)
       if (!deleted) {
         throw new Error(`Attachment ${id} could not be deleted after row lock`)
