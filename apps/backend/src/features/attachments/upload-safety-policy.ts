@@ -42,6 +42,8 @@ export function isAttachmentSafeForSharing(safetyStatus: AttachmentSafetyStatus)
 
 export function safetyStatusBlockReason(safetyStatus: AttachmentSafetyStatus): string {
   switch (safetyStatus) {
+    case AttachmentSafetyStatuses.PENDING_UPLOAD:
+      return "Attachment upload is not complete"
     case AttachmentSafetyStatuses.PENDING_SCAN:
       return "Attachment is pending malware scan"
     case AttachmentSafetyStatuses.QUARANTINED:

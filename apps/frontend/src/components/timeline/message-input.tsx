@@ -67,8 +67,18 @@ export function extractUploadedAttachments(content: JSONContent): Array<{
   filename: string
   mimeType: string
   sizeBytes: number
+  uploadStatus?: "reserved" | "uploading" | "uploaded" | "failed" | "abandoned"
 }> {
-  const attachments = new Map<string, { id: string; filename: string; mimeType: string; sizeBytes: number }>()
+  const attachments = new Map<
+    string,
+    {
+      id: string
+      filename: string
+      mimeType: string
+      sizeBytes: number
+      uploadStatus?: "reserved" | "uploading" | "uploaded" | "failed" | "abandoned"
+    }
+  >()
 
   const visitNode = (node: JSONContent): void => {
     if (
@@ -79,11 +89,13 @@ export function extractUploadedAttachments(content: JSONContent): Array<{
       typeof node.attrs?.mimeType === "string" &&
       typeof node.attrs?.sizeBytes === "number"
     ) {
+      const status = node.attrs.status === "uploading" ? "uploading" : undefined
       attachments.set(node.attrs.id, {
         id: node.attrs.id,
         filename: node.attrs.filename,
         mimeType: node.attrs.mimeType,
         sizeBytes: node.attrs.sizeBytes,
+        ...(status && { uploadStatus: status }),
       })
     }
 
@@ -102,7 +114,7 @@ export function materializePendingAttachmentReferences(
 ): JSONContent {
   const uploadedQueues = new Map<string, PendingAttachment[]>()
   for (const attachment of pendingAttachments) {
-    if (attachment.status !== "uploaded") continue
+    if (attachment.status === "error" || attachment.id.startsWith("temp_")) continue
     const key = attachmentMatchKey(attachment)
     const queue = uploadedQueues.get(key)
     if (queue) {
@@ -140,7 +152,7 @@ export function materializePendingAttachmentReferences(
             filename: matchedUpload.filename,
             mimeType: matchedUpload.mimeType,
             sizeBytes: matchedUpload.sizeBytes,
-            status: "uploaded",
+            status: matchedUpload.status === "uploading" ? "uploading" : "uploaded",
             imageIndex: isImage ? imageIndex : null,
             error: null,
           },
@@ -182,7 +194,7 @@ export function materializePendingAttachmentReferences(
             filename: attachment.filename,
             mimeType: attachment.mimeType,
             sizeBytes: attachment.sizeBytes,
-            status: "uploaded",
+            status: attachment.status === "uploading" ? "uploading" : "uploaded",
             imageIndex,
             error: null,
           },

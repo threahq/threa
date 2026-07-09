@@ -65,11 +65,33 @@ export function attachmentContentUrl(
   return `${API_BASE}/api/workspaces/${workspaceId}/attachments/${attachmentId}/content${params}`
 }
 
+export interface AttachmentReservationInput {
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  clientMessageId?: string
+  draftId?: string
+  e2e?: boolean
+}
+
+export interface AttachmentReservationResponse {
+  attachment: Attachment
+  upload: { method: "POST"; url: string; field: "file" }
+}
+
 export const attachmentsApi = {
+  reserve(workspaceId: string, input: AttachmentReservationInput): Promise<AttachmentReservationResponse> {
+    return api.post<AttachmentReservationResponse>(`/api/workspaces/${workspaceId}/attachments/reservations`, input)
+  },
+
   /**
    * Upload a file at workspace level; streamId is set when attached to a message.
    */
-  async upload(workspaceId: string, file: File, options?: { e2e?: boolean }): Promise<Attachment> {
+  async upload(
+    workspaceId: string,
+    file: File,
+    options?: { e2e?: boolean; attachmentId?: string }
+  ): Promise<Attachment> {
     const formData = new FormData()
     formData.append("file", file)
     // E2E: `file` is already client-side ciphertext. The flag tells the server
@@ -77,7 +99,11 @@ export const attachmentsApi = {
     // filename/mime (the real metadata rides in the message's attachmentRefs).
     if (options?.e2e) formData.append("e2e", "true")
 
-    const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/attachments`, {
+    const path = options?.attachmentId
+      ? `${API_BASE}/api/workspaces/${workspaceId}/attachments/${options.attachmentId}/content`
+      : `${API_BASE}/api/workspaces/${workspaceId}/attachments`
+
+    const response = await fetch(path, {
       method: "POST",
       body: formData,
       credentials: "include",

@@ -5,7 +5,7 @@ import { MessageRepository } from "./repository"
 import { SharedMessageRepository } from "./sharing/repository"
 import { MessageVersionRepository } from "./version-repository"
 import { StreamEventRepository, StreamMemberRepository, StreamRepository, type StreamEvent } from "../streams"
-import { AttachmentRepository, AttachmentReferenceRepository } from "../attachments"
+import { AttachmentRepository, AttachmentReferenceRepository, AttachmentUploadRepository } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
 import * as db from "../../db"
 import { messagesTotal } from "../../lib/observability"
@@ -201,6 +201,82 @@ describe("EventService attachment safety checks", () => {
     expect(AttachmentRepository.attachToMessage).toHaveBeenCalledWith(
       expect.anything(),
       ["attach_e2e"],
+      expect.stringMatching(/^msg_/),
+      "stream_1"
+    )
+  })
+
+  it("binds an author-owned pending upload when the clientMessageId matches", async () => {
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
+      {
+        id: "attach_pending",
+        workspaceId: "ws_1",
+        streamId: null,
+        messageId: null,
+        uploadedBy: "usr_1",
+        safetyStatus: AttachmentSafetyStatuses.PENDING_SCAN,
+        e2eOnly: false,
+        filename: "large.mov",
+        mimeType: "video/quicktime",
+        sizeBytes: 1234,
+      },
+    ] as any)
+    spyOn(AttachmentUploadRepository, "findByAttachmentId").mockResolvedValue({
+      attachmentId: "attach_pending",
+      workspaceId: "ws_1",
+      uploadedBy: "usr_1",
+      clientMessageId: "client_1",
+      status: "uploaded",
+    } as any)
+    spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: "evt_1",
+      streamId: params.streamId,
+      sequence: 1n,
+      eventType: params.eventType,
+      payload: params.payload,
+      actorId: params.actorId,
+      actorType: params.actorType,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: params.id,
+      streamId: params.streamId,
+      sequence: params.sequence,
+      authorId: params.authorId,
+      authorType: params.authorType,
+      contentJson: params.contentJson,
+      contentMarkdown: params.contentMarkdown,
+      replyCount: 0,
+      clientMessageId: params.clientMessageId ?? null,
+      sentVia: null,
+      reactions: {},
+      metadata: {},
+      editedAt: null,
+      deletedAt: null,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
+    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(1)
+
+    const service = new EventService({} as any)
+    await service.createMessage({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "usr_1",
+      authorType: "user",
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "hello",
+      clientMessageId: "client_1",
+      attachmentIds: ["attach_pending"],
+    })
+
+    expect(AttachmentRepository.attachToMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      ["attach_pending"],
       expect.stringMatching(/^msg_/),
       "stream_1"
     )

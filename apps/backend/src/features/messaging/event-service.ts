@@ -9,6 +9,7 @@ import { ShareService, type ResolveEffectiveStream } from "./sharing"
 import {
   AttachmentRepository,
   AttachmentReferenceRepository,
+  AttachmentUploadRepository,
   isAttachmentReadableViaShareOrReference,
   isAttachmentSafeForSharing,
   toAttachmentSummary,
@@ -537,10 +538,17 @@ export class EventService {
         if (a.workspaceId !== params.workspaceId) {
           throw new Error("Invalid attachment IDs: must belong to this workspace")
         }
-        // Shareable = scanned-clean OR E2E ciphertext (unscannable, owner's own
-        // bytes). Single source of truth with the download path.
+        const isPendingUpload = a.safetyStatus === "pending_upload" || a.safetyStatus === "pending_scan"
+        const upload = isPendingUpload ? await AttachmentUploadRepository.findByAttachmentId(client, a.id) : null
         if (!isAttachmentSafeForSharing(a.safetyStatus)) {
-          throw new Error("Invalid attachment IDs: must be malware-scan clean or E2E-encrypted")
+          if (!isPendingUpload || a.messageId !== null || a.uploadedBy !== params.authorId) {
+            throw new Error(
+              "Invalid attachment IDs: must be malware-scan clean or E2E-encrypted, unless uploaded by this author and still pending"
+            )
+          }
+          if (upload?.clientMessageId && upload.clientMessageId !== params.clientMessageId) {
+            throw new Error("Invalid attachment IDs: pending upload belongs to a different client message")
+          }
         }
         // INV-E1 backstop, the attachment sibling of assertE2eContentMatch: a
         // sealed message binds only E2E ciphertext rows (a plaintext row would

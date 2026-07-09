@@ -1062,6 +1062,34 @@ describe("MessageInput", () => {
       ).toEqual(content)
     })
 
+    it("should keep uploading status for reserved attachments that are sent before bytes finish", () => {
+      expect(
+        materializePendingAttachmentReferences(EMPTY_DOC, [
+          {
+            id: "attach_pending",
+            filename: "large.mov",
+            mimeType: "video/quicktime",
+            sizeBytes: 1024,
+            status: "uploading",
+          },
+        ])
+      ).toMatchObject({
+        content: [
+          {},
+          {
+            content: [
+              {
+                attrs: {
+                  id: "attach_pending",
+                  status: "uploading",
+                },
+              },
+            ],
+          },
+        ],
+      })
+    })
+
     it("should append uploaded attachments that are missing from the editor document", () => {
       expect(
         materializePendingAttachmentReferences(EMPTY_DOC, [

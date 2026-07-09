@@ -28,6 +28,7 @@ import type {
   StorageProvider,
   ProcessingStatus,
   AttachmentSafetyStatus,
+  AttachmentUploadStatus,
   ConversationStatus,
   BoardScopeStreamType,
   BoardLens,
@@ -580,6 +581,7 @@ export interface Attachment {
   storageProvider: StorageProvider
   processingStatus: ProcessingStatus
   safetyStatus: AttachmentSafetyStatus
+  uploadStatus?: AttachmentUploadStatus
   /**
    * True when the bytes in S3 are client-side ciphertext (E2E scratchpad). The
    * server holds opaque bytes only — the real filename/mime/size and the
@@ -598,6 +600,9 @@ export interface AttachmentSummary {
   filename: string
   mimeType: string
   sizeBytes: number
+  /** Present while async upload/scanning is still settling. */
+  uploadStatus?: AttachmentUploadStatus
+  safetyStatus?: AttachmentSafetyStatus
   /** Present for video attachments so the frontend knows transcoding state */
   processingStatus?: ProcessingStatus
   /**

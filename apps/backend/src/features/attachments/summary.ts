@@ -18,6 +18,8 @@ export function toAttachmentSummary(a: Attachment): AttachmentSummary {
     filename: a.filename,
     mimeType: a.mimeType,
     sizeBytes: a.sizeBytes,
+    ...(a.uploadStatus && { uploadStatus: a.uploadStatus }),
+    ...(!a.e2eOnly && { safetyStatus: a.safetyStatus }),
     ...(isVideoAttachment(a.mimeType, a.filename) && { processingStatus: a.processingStatus }),
     ...(isImage && a.width != null && a.height != null && { width: a.width, height: a.height }),
   }

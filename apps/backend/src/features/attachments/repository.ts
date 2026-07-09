@@ -3,6 +3,7 @@ import { streamAccessPredicateSql } from "../streams"
 import {
   AttachmentSafetyStatuses,
   SHAREABLE_SAFETY_STATUSES,
+  BINDABLE_ATTACHMENT_SAFETY_STATUSES,
   ProcessingStatuses,
   mimePrefixesForCategory,
   type StorageProvider,
@@ -10,6 +11,7 @@ import {
   type ExtractionContentType,
   type AttachmentSafetyStatus,
   type AttachmentCategory,
+  type AttachmentUploadStatus,
 } from "@threa/types"
 
 interface AttachmentRow {
@@ -25,6 +27,7 @@ interface AttachmentRow {
   storage_path: string
   processing_status: string
   safety_status: string
+  upload_status: string | null
   e2e_only: boolean
   thumbnail_storage_path: string | null
   width: number | null
@@ -45,6 +48,7 @@ export interface Attachment {
   storagePath: string
   processingStatus: ProcessingStatus
   safetyStatus: AttachmentSafetyStatus
+  uploadStatus?: AttachmentUploadStatus | null
   /**
    * True when the S3 bytes are client-side ciphertext (E2E scratchpad). The
    * server never holds the key or the real filename/mime — those ride in the
@@ -102,6 +106,7 @@ function mapRowToAttachment(row: AttachmentRow): Attachment {
     storagePath: row.storage_path,
     processingStatus: row.processing_status as ProcessingStatus,
     safetyStatus: row.safety_status as AttachmentSafetyStatus,
+    uploadStatus: row.upload_status as AttachmentUploadStatus | null,
     e2eOnly: row.e2e_only,
     thumbnailStoragePath: row.thumbnail_storage_path ?? null,
     width: row.width ?? null,
@@ -126,7 +131,9 @@ function mapRowToAttachmentWithExtraction(row: AttachmentWithExtractionRow): Att
 const SELECT_FIELDS = `
   id, workspace_id, stream_id, message_id, uploaded_by,
   filename, mime_type, size_bytes,
-  storage_provider, storage_path, processing_status, safety_status, e2e_only,
+  storage_provider, storage_path, processing_status, safety_status,
+  (SELECT au.status FROM attachment_uploads au WHERE au.attachment_id = attachments.id) AS upload_status,
+  e2e_only,
   thumbnail_storage_path, width, height,
   created_at
 `
@@ -187,7 +194,9 @@ export const AttachmentRepository = {
       SELECT
         a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
         a.filename, a.mime_type, a.size_bytes,
-        a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
+        a.storage_provider, a.storage_path, a.processing_status, a.safety_status,
+        (SELECT au.status FROM attachment_uploads au WHERE au.attachment_id = a.id) AS upload_status,
+        a.e2e_only,
         a.thumbnail_storage_path, a.width, a.height,
         a.created_at,
         e.content_type AS extraction_content_type,
@@ -249,7 +258,7 @@ export const AttachmentRepository = {
       UPDATE attachments
       SET message_id = ${messageId}, stream_id = ${streamId}
       WHERE id = ANY(${attachmentIds}) AND message_id IS NULL
-        AND safety_status = ANY(${[...SHAREABLE_SAFETY_STATUSES]})
+        AND safety_status = ANY(${[...BINDABLE_ATTACHMENT_SAFETY_STATUSES]})
     `)
     return result.rowCount ?? 0
   },
@@ -397,7 +406,9 @@ export const AttachmentRepository = {
         SELECT
           a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
           a.filename, a.mime_type, a.size_bytes,
-          a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
+          a.storage_provider, a.storage_path, a.processing_status, a.safety_status,
+        (SELECT au.status FROM attachment_uploads au WHERE au.attachment_id = a.id) AS upload_status,
+        a.e2e_only,
           a.thumbnail_storage_path, a.width, a.height,
           a.created_at,
           e.content_type AS extraction_content_type,
@@ -424,7 +435,9 @@ export const AttachmentRepository = {
       SELECT
         a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
         a.filename, a.mime_type, a.size_bytes,
-        a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
+        a.storage_provider, a.storage_path, a.processing_status, a.safety_status,
+        (SELECT au.status FROM attachment_uploads au WHERE au.attachment_id = a.id) AS upload_status,
+        a.e2e_only,
         a.thumbnail_storage_path, a.width, a.height,
         a.created_at,
         e.content_type AS extraction_content_type,
@@ -517,7 +530,9 @@ export const AttachmentRepository = {
       SELECT
         a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
         a.filename, a.mime_type, a.size_bytes,
-        a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
+        a.storage_provider, a.storage_path, a.processing_status, a.safety_status,
+        (SELECT au.status FROM attachment_uploads au WHERE au.attachment_id = a.id) AS upload_status,
+        a.e2e_only,
         a.thumbnail_storage_path, a.width, a.height,
         a.created_at,
         e.content_type AS extraction_content_type,

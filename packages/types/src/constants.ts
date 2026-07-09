@@ -289,10 +289,17 @@ export const ProcessingStatuses = {
 } as const satisfies Record<string, ProcessingStatus>
 
 // Attachment malware safety status
-export const ATTACHMENT_SAFETY_STATUSES = ["pending_scan", "clean", "quarantined", "e2e_unscanned"] as const
+export const ATTACHMENT_SAFETY_STATUSES = [
+  "pending_upload",
+  "pending_scan",
+  "clean",
+  "quarantined",
+  "e2e_unscanned",
+] as const
 export type AttachmentSafetyStatus = (typeof ATTACHMENT_SAFETY_STATUSES)[number]
 
 export const AttachmentSafetyStatuses = {
+  PENDING_UPLOAD: "pending_upload",
   PENDING_SCAN: "pending_scan",
   CLEAN: "clean",
   QUARANTINED: "quarantined",
@@ -314,6 +321,23 @@ export const SHAREABLE_SAFETY_STATUSES = [
   AttachmentSafetyStatuses.CLEAN,
   AttachmentSafetyStatuses.E2E_UNSCANNED,
 ] as const satisfies readonly AttachmentSafetyStatus[]
+
+export const BINDABLE_ATTACHMENT_SAFETY_STATUSES = [
+  AttachmentSafetyStatuses.PENDING_UPLOAD,
+  AttachmentSafetyStatuses.PENDING_SCAN,
+  ...SHAREABLE_SAFETY_STATUSES,
+] as const satisfies readonly AttachmentSafetyStatus[]
+
+export const ATTACHMENT_UPLOAD_STATUSES = ["reserved", "uploading", "uploaded", "failed", "abandoned"] as const
+export type AttachmentUploadStatus = (typeof ATTACHMENT_UPLOAD_STATUSES)[number]
+
+export const AttachmentUploadStatuses = {
+  RESERVED: "reserved",
+  UPLOADING: "uploading",
+  UPLOADED: "uploaded",
+  FAILED: "failed",
+  ABANDONED: "abandoned",
+} as const satisfies Record<string, AttachmentUploadStatus>
 
 // Video transcode job status
 export const VIDEO_TRANSCODE_STATUSES = ["pending", "submitted", "completed", "failed"] as const

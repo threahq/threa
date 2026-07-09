@@ -49,6 +49,7 @@ interface UploadedFacts {
   filename: string
   mimeType: string
   sizeBytes: number
+  uploadPromise: Promise<void>
 }
 
 export interface PendingAttachment {
@@ -89,7 +90,7 @@ export interface UseAttachmentsReturn {
   uploadFile: (file: File) => Promise<UploadResult>
   /** Remove an attachment by ID */
   removeAttachment: (id: string) => void
-  /** IDs of successfully uploaded attachments */
+  /** IDs of reserved or uploaded attachments that can be sent with a message. */
   uploadedIds: string[]
   /** Whether any files are currently uploading */
   isUploading: boolean
@@ -133,21 +134,41 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       if (e2eEnabled) {
         const plaintext = new Uint8Array(await file.arrayBuffer())
         const { ciphertext, key, iv } = await encryptAttachmentBytes(plaintext)
-        const cipherFile = new File([ciphertext], E2E_CIPHERTEXT_FILENAME, { type: E2E_CIPHERTEXT_MIME })
-        const attachment = await attachmentsApi.upload(workspaceId, cipherFile, { e2e: true })
-        if (!attachment?.id) throw new Error("Invalid response: missing attachment data")
         const filename = file.name
         const mimeType = file.type || E2E_CIPHERTEXT_MIME
+        const reservation = await attachmentsApi.reserve(workspaceId, {
+          filename,
+          mimeType,
+          sizeBytes: ciphertext.byteLength,
+          e2e: true,
+        })
+        const attachment = reservation.attachment
+        if (!attachment?.id) throw new Error("Invalid response: missing attachment data")
         rememberAttachmentRef({ attachmentId: attachment.id, key, iv, filename, mimeType, sizeBytes: file.size })
-        return { id: attachment.id, filename, mimeType, sizeBytes: file.size }
+        const cipherFile = new File([ciphertext], E2E_CIPHERTEXT_FILENAME, { type: E2E_CIPHERTEXT_MIME })
+        return {
+          id: attachment.id,
+          filename,
+          mimeType,
+          sizeBytes: file.size,
+          uploadPromise: attachmentsApi
+            .upload(workspaceId, cipherFile, { e2e: true, attachmentId: attachment.id })
+            .then(() => undefined),
+        }
       }
-      const attachment = await attachmentsApi.upload(workspaceId, file)
+      const reservation = await attachmentsApi.reserve(workspaceId, {
+        filename: file.name,
+        mimeType: file.type || "application/octet-stream",
+        sizeBytes: file.size,
+      })
+      const attachment = reservation.attachment
       if (!attachment?.id) throw new Error("Invalid response: missing attachment data")
       return {
         id: attachment.id,
         filename: attachment.filename,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
+        uploadPromise: attachmentsApi.upload(workspaceId, file, { attachmentId: attachment.id }).then(() => undefined),
       }
     },
     [workspaceId, e2eEnabled]
@@ -180,11 +201,26 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         ])
 
         try {
-          const facts = await uploadOne(file)
+          const { uploadPromise, ...facts } = await uploadOne(file)
 
           updatePendingAttachments((prev) =>
-            prev.map((a) => (a.id === tempId ? { ...facts, status: "uploaded" as const, previewUrl } : a))
+            prev.map((a) => (a.id === tempId ? { ...facts, status: "uploading" as const, previewUrl } : a))
           )
+          uploadPromise
+            .then(() => {
+              updatePendingAttachments((prev) =>
+                prev.map((a) => (a.id === facts.id ? { ...a, status: "uploaded" as const } : a))
+              )
+            })
+            .catch((err) => {
+              updatePendingAttachments((prev) =>
+                prev.map((a) =>
+                  a.id === facts.id
+                    ? { ...a, status: "error" as const, error: err instanceof Error ? err.message : "Upload failed" }
+                    : a
+                )
+              )
+            })
         } catch (err) {
           updatePendingAttachments((prev) =>
             prev.map((a) =>
@@ -234,15 +270,30 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       updatePendingAttachments((prev) => [...prev, pendingAttachment])
 
       try {
-        const facts = await uploadOne(file)
+        const { uploadPromise, ...facts } = await uploadOne(file)
 
         const uploadedAttachment: PendingAttachment = {
           ...facts,
-          status: "uploaded",
+          status: "uploading",
           previewUrl,
         }
 
         updatePendingAttachments((prev) => prev.map((a) => (a.id === tempId ? uploadedAttachment : a)))
+        uploadPromise
+          .then(() => {
+            updatePendingAttachments((prev) =>
+              prev.map((a) => (a.id === facts.id ? { ...a, status: "uploaded" as const } : a))
+            )
+          })
+          .catch((err) => {
+            updatePendingAttachments((prev) =>
+              prev.map((a) =>
+                a.id === facts.id
+                  ? { ...a, status: "error" as const, error: err instanceof Error ? err.message : "Upload failed" }
+                  : a
+              )
+            )
+          })
 
         return {
           attachment: uploadedAttachment,
@@ -335,7 +386,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
   )
 
   const uploadedIds = pendingAttachments
-    .filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_"))
+    .filter((a) => a.status !== "error" && !a.id.startsWith("temp_"))
     .map((a) => a.id)
 
   const isUploading = pendingAttachments.some((a) => a.status === "uploading")

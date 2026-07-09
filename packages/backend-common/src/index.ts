@@ -48,6 +48,7 @@ export {
   eventId,
   messageId,
   attachmentId,
+  attachmentUploadId,
   personaId,
   notificationId,
   invitationId,

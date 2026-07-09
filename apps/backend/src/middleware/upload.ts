@@ -57,7 +57,7 @@ export function createUploadMiddleware({ s3Config }: UploadMiddlewareConfig): Re
     contentType: multerS3.AUTO_CONTENT_TYPE,
     key: (req: Request, file: Express.Multer.File, cb) => {
       const { workspaceId } = req.params
-      const id = attachmentId()
+      const id = req.params.attachmentId ?? attachmentId()
       req.attachmentId = id
       // Workspace-scoped path (no streamId - set when attached to message)
       const key = `${workspaceId}/${id}/${file.originalname}`

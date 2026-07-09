@@ -502,6 +502,14 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.delete("/api/workspaces/:workspaceId/messages/:messageId/reactions/:emoji", ...authed, message.removeReaction)
 
   // Attachments (workspace-scoped upload, stream assigned on message creation)
+  app.post("/api/workspaces/:workspaceId/attachments/reservations", ...authed, rateLimits.upload, attachment.reserve)
+  app.post(
+    "/api/workspaces/:workspaceId/attachments/:attachmentId/content",
+    ...authed,
+    rateLimits.upload,
+    upload,
+    attachment.upload
+  )
   app.post("/api/workspaces/:workspaceId/attachments", ...authed, rateLimits.upload, upload, attachment.upload)
   app.post("/api/workspaces/:workspaceId/attachments/search", ...authed, rateLimits.search, attachment.search)
   app.get("/api/workspaces/:workspaceId/attachments/:attachmentId/url", ...authed, attachment.getDownloadUrl)

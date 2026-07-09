@@ -4,6 +4,7 @@ import { useAttachments } from "./use-attachments"
 import { attachmentsApi } from "@/api"
 
 const mockUpload = vi.fn()
+const mockReserve = vi.fn()
 const mockDelete = vi.fn()
 
 describe("useAttachments", () => {
@@ -12,7 +13,29 @@ describe("useAttachments", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockUpload.mockReset()
+    mockReserve.mockReset()
     mockDelete.mockReset()
+    mockReserve.mockImplementation(
+      (_workspaceId: string, input: { filename: string; mimeType: string; sizeBytes: number }) => {
+        const idByName: Record<string, string> = {
+          "test.txt": "attach_123",
+          "success.txt": "attach_1",
+          "fail.txt": "attach_2",
+          "pasted.png": "attach_456",
+          "image1.png": "attach_1",
+          "image2.png": "attach_2",
+          "doc.pdf": "attach_3",
+        }
+        const id = idByName[input.filename] ?? "attach_1"
+        return Promise.resolve({
+          attachment: { id, filename: input.filename, mimeType: input.mimeType, sizeBytes: input.sizeBytes },
+          upload: { method: "POST", url: `/api/workspaces/${workspaceId}/attachments/${id}/content`, field: "file" },
+        })
+      }
+    )
+    vi.spyOn(attachmentsApi, "reserve").mockImplementation((...args: Parameters<typeof attachmentsApi.reserve>) =>
+      mockReserve(...args)
+    )
     vi.spyOn(attachmentsApi, "upload").mockImplementation((...args: Parameters<typeof attachmentsApi.upload>) =>
       mockUpload(...args)
     )
@@ -278,7 +301,7 @@ describe("useAttachments", () => {
       expect(uploadResult!.attachment).toMatchObject({
         id: "attach_456",
         filename: "pasted.png",
-        status: "uploaded",
+        status: "uploading",
       })
       expect(uploadResult!.imageIndex).toBe(1) // First image
 
@@ -341,10 +364,13 @@ describe("useAttachments", () => {
         uploadResult = await result.current.uploadFile(file)
       })
 
-      expect(uploadResult!.attachment.status).toBe("error")
-      expect(uploadResult!.attachment.error).toBe("Network error")
+      expect(uploadResult!.attachment.status).toBe("uploading")
       expect(uploadResult!.imageIndex).toBe(1) // Image index was still assigned
 
+      await waitFor(() => {
+        expect(result.current.pendingAttachments[0].status).toBe("error")
+        expect(result.current.pendingAttachments[0].error).toBe("Network error")
+      })
       expect(result.current.hasFailed).toBe(true)
     })
 

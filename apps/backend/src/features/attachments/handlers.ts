@@ -3,6 +3,7 @@ import type { Request, Response } from "express"
 import { z } from "zod"
 import type { Pool } from "pg"
 import { buildContentDisposition, buildUploadParams, parseE2eUploadFlag, type AttachmentService } from "./service"
+import { attachmentId as generateAttachmentId } from "../../lib/id"
 import { isAttachmentReadableViaShareOrReference } from "./access"
 import {
   AttachmentRepository,
@@ -24,8 +25,44 @@ interface Dependencies {
   pool: Pool
 }
 
+const reserveAttachmentSchema = z.object({
+  filename: z.string().min(1),
+  mimeType: z.string().min(1).default("application/octet-stream"),
+  sizeBytes: z.number().int().positive(),
+  clientMessageId: z.string().min(1).optional(),
+  draftId: z.string().min(1).optional(),
+  e2e: z.boolean().optional(),
+})
+
 export function createAttachmentHandlers({ attachmentService, streamService, storage, pool }: Dependencies) {
   return {
+    async reserve(req: Request, res: Response) {
+      const parsed = reserveAttachmentSchema.safeParse(req.body)
+      if (!parsed.success) return res.status(400).json({ error: "Invalid request body" })
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const id = generateAttachmentId()
+      const attachment = await attachmentService.reserve({
+        id,
+        workspaceId,
+        uploadedBy: userId,
+        filename: parsed.data.filename,
+        mimeType: parsed.data.mimeType,
+        sizeBytes: parsed.data.sizeBytes,
+        clientMessageId: parsed.data.clientMessageId,
+        draftId: parsed.data.draftId,
+        e2e: parsed.data.e2e === true,
+      })
+      res.status(201).json({
+        attachment,
+        upload: {
+          method: "POST",
+          url: `/api/workspaces/${workspaceId}/attachments/${id}/content`,
+          field: "file",
+        },
+      })
+    },
+
     /**
      * Upload a file to the workspace.
      * Files are uploaded to workspace-level (no stream) and attached to a stream when linked to a message.
@@ -45,7 +82,10 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       // E2E upload: the body bytes are client-side ciphertext. buildUploadParams
       // forces placeholder metadata — the real filename/mime ride encrypted in
       // the message's attachmentRefs, never on this row.
-      const uploadResult = await attachmentService.createForUpload(
+      const createUpload = req.params?.attachmentId
+        ? attachmentService.completeReservedUpload.bind(attachmentService)
+        : attachmentService.createForUpload.bind(attachmentService)
+      const uploadResult = await createUpload(
         buildUploadParams(
           {
             id: attachmentId,

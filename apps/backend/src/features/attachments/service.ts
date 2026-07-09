@@ -3,12 +3,14 @@ import { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, type Attachment } from "./repository"
+import { AttachmentUploadRepository } from "./upload-repository"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { AttachmentSafetyStatuses, ProcessingStatuses } from "@threa/types"
 import { isAttachmentSafeForSharing, safetyStatusBlockReason, type MalwareScanner } from "./upload-safety-policy"
 import { logger } from "../../lib/logger"
+import { attachmentUploadId } from "../../lib/id"
 
 /**
  * Builds a Content-Disposition header value with both ASCII fallback and
@@ -90,12 +92,131 @@ export type CreateAttachmentForUploadResult =
   | { status: "blocked"; reason: string }
   | { status: "cleanup_failed"; attachmentId: string }
 
+export interface ReserveAttachmentParams {
+  id: string
+  workspaceId: string
+  uploadedBy: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  clientMessageId?: string | null
+  draftId?: string | null
+  e2e?: boolean
+}
+
 export class AttachmentService {
   constructor(
     private pool: Pool,
     private storage: StorageProvider,
     private malwareScanner: MalwareScanner
   ) {}
+
+  async reserve(params: ReserveAttachmentParams): Promise<Attachment> {
+    const storagePath = `${params.workspaceId}/${params.id}/${params.e2e ? E2E_PLACEHOLDER_FILENAME : params.filename}`
+    return withTransaction(this.pool, async (client) => {
+      const attachment = await AttachmentRepository.insert(client, {
+        id: params.id,
+        workspaceId: params.workspaceId,
+        uploadedBy: params.uploadedBy,
+        filename: params.e2e ? E2E_PLACEHOLDER_FILENAME : params.filename,
+        mimeType: params.e2e ? E2E_PLACEHOLDER_MIME_TYPE : params.mimeType,
+        sizeBytes: params.sizeBytes,
+        storagePath,
+        safetyStatus: AttachmentSafetyStatuses.PENDING_UPLOAD,
+        processingStatus: ProcessingStatuses.PENDING,
+        e2eOnly: params.e2e === true,
+      })
+      await AttachmentUploadRepository.insert(client, {
+        id: attachmentUploadId(),
+        workspaceId: params.workspaceId,
+        attachmentId: params.id,
+        uploadedBy: params.uploadedBy,
+        clientMessageId: params.clientMessageId ?? null,
+        draftId: params.draftId ?? null,
+        expectedSizeBytes: params.sizeBytes,
+      })
+      return attachment
+    })
+  }
+
+  async completeReservedUpload(params: CreateAttachmentParams): Promise<CreateAttachmentForUploadResult> {
+    const upload = await AttachmentUploadRepository.findByAttachmentId(this.pool, params.id)
+    if (!upload) {
+      return this.createForUpload(params)
+    }
+    if (upload.workspaceId !== params.workspaceId || upload.uploadedBy !== params.uploadedBy) {
+      throw new Error("Attachment upload reservation does not belong to this user/workspace")
+    }
+
+    if (params.e2e) {
+      const attachment = await withTransaction(this.pool, async (client) => {
+        const upload = await AttachmentUploadRepository.markUploaded(client, params.id, params.sizeBytes)
+        if (!upload) throw new Error(`Attachment upload ${params.id} is not in a completable state`)
+        await AttachmentRepository.updateSafetyStatus(client, params.id, AttachmentSafetyStatuses.E2E_UNSCANNED, {
+          onlyIfStatus: AttachmentSafetyStatuses.PENDING_UPLOAD,
+        })
+        await AttachmentRepository.updateProcessingStatus(client, params.id, ProcessingStatuses.SKIPPED)
+        const updated = await AttachmentRepository.findById(client, params.id)
+        if (!updated) throw new Error(`Attachment not found after upload completion: ${params.id}`)
+        return updated
+      })
+      return { status: "created", attachment }
+    }
+
+    await withTransaction(this.pool, async (client) => {
+      const upload = await AttachmentUploadRepository.markUploaded(client, params.id, params.sizeBytes)
+      if (!upload) throw new Error(`Attachment upload ${params.id} is not in a completable state`)
+      const updated = await AttachmentRepository.updateSafetyStatus(
+        client,
+        params.id,
+        AttachmentSafetyStatuses.PENDING_SCAN,
+        { onlyIfStatus: AttachmentSafetyStatuses.PENDING_UPLOAD }
+      )
+      if (!updated) {
+        const current = await AttachmentRepository.findById(client, params.id)
+        if (!current) throw new Error(`Attachment not found after upload completion: ${params.id}`)
+        if (current.safetyStatus !== AttachmentSafetyStatuses.PENDING_SCAN) {
+          throw new Error(`Attachment ${params.id} safety status transition rejected from ${current.safetyStatus}`)
+        }
+      }
+    })
+
+    const scanResult = await this.malwareScanner.scan({
+      storagePath: params.storagePath,
+      filename: params.filename,
+      mimeType: params.mimeType,
+    })
+
+    const attachment = await withTransaction(this.pool, async (client) => {
+      const safetyUpdated = await AttachmentRepository.updateSafetyStatus(client, params.id, scanResult.status, {
+        onlyIfStatus: AttachmentSafetyStatuses.PENDING_SCAN,
+      })
+      if (!safetyUpdated) {
+        const current = await AttachmentRepository.findById(client, params.id)
+        if (!current) throw new Error(`Attachment ${params.id} was deleted before safety status could be updated`)
+        throw new Error(`Attachment ${params.id} safety status transition rejected from ${current.safetyStatus}`)
+      }
+      if (scanResult.status === AttachmentSafetyStatuses.CLEAN) {
+        await OutboxRepository.insert(client, "attachment:uploaded", {
+          workspaceId: params.workspaceId,
+          attachmentId: params.id,
+          filename: params.filename,
+          mimeType: params.mimeType,
+          sizeBytes: params.sizeBytes,
+          storagePath: params.storagePath,
+        })
+      } else {
+        await AttachmentRepository.updateProcessingStatus(client, params.id, ProcessingStatuses.SKIPPED)
+      }
+      const updated = await AttachmentRepository.findById(client, params.id)
+      if (!updated) throw new Error(`Attachment not found after safety update: ${params.id}`)
+      return updated
+    })
+
+    const blockReason = this.getSharingBlockReason(attachment)
+    if (!blockReason) return { status: "created", attachment }
+    return { status: "blocked", reason: blockReason }
+  }
 
   /**
    * Records attachment metadata after file has been uploaded to S3.

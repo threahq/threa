@@ -399,7 +399,7 @@ export function useDraftComposer({
     (ref: DraftContextRef) => ref.status === "ready" || ref.status === "inline"
   )
   const hasPayload = hasContent || uploadedIds.length > 0 || savedContextRefs.length > 0
-  const canSend = hasPayload && !isSending && !isUploading && contextRefsReady
+  const canSend = hasPayload && !isSending && contextRefsReady
 
   return {
     // Content
