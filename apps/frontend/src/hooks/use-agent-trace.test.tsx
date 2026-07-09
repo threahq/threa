@@ -126,6 +126,11 @@ describe("useAgentTrace", () => {
     reconnectCount = 1
     rerender()
 
+    // The re-arm must be a background heal: already-fetched steps stay on
+    // screen (no skeleton swap) while the room is re-joined and refetched.
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.steps).toHaveLength(1)
+
     await waitFor(() => expect(joinSpy).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(getSessionSpy).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(result.current.steps.map((s) => s.stepNumber)).toEqual([1, 2, 3]))

@@ -316,7 +316,12 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     relatedSessions: data?.relatedSessions ?? [],
     persona: data?.persona ?? null,
     status,
-    isLoading: isSubscribing || isQueryLoading,
+    // Gate the subscribing spinner on having no data yet: a reconnect re-arm
+    // flips isSubscribing while the dialog already shows steps, and surfacing
+    // it would swap the rendered list for skeletons (losing scroll) on every
+    // network blip. With data present the re-join + refetch heal in the
+    // background; skeletons appear only before the first bootstrap.
+    isLoading: (isSubscribing && !data) || isQueryLoading,
     error: (queryError as Error | null) ?? (data ? null : subscriptionError),
   }
 }

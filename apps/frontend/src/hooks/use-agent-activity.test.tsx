@@ -1,8 +1,17 @@
-import { describe, expect, test } from "vitest"
+import { beforeEach, describe, expect, test, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
 import type { Socket } from "socket.io-client"
 import { AuthorTypes, type StreamEvent } from "@threa/types"
+import * as contextsModule from "@/contexts"
 import { useAgentActivity } from "./use-agent-activity"
+
+let reconnectCount = 0
+
+beforeEach(() => {
+  vi.restoreAllMocks()
+  reconnectCount = 0
+  vi.spyOn(contextsModule, "useSocketReconnectCount").mockImplementation(() => reconnectCount)
+})
 
 function streamEvent(payload: unknown): StreamEvent {
   return {
@@ -150,6 +159,30 @@ describe("useAgentActivity", () => {
         triggerMessageId: "msg_in_thread",
       })
     })
+    expect(result.current.get("msg_parent")).toBeUndefined()
+    expect(result.current.get("msg_in_thread")).toBeUndefined()
+  })
+
+  test("clears socket-only entries on reconnect so a swallowed activity_ended can't strand the indicator", () => {
+    const { socket, handlers } = fakeSocket()
+    const { result, rerender } = renderHook(() => useAgentActivity([], socket, "ws_test", "usr_test"))
+
+    act(() => {
+      handlers.get("agent_session:activity_started")?.({
+        sessionId: "asess_1",
+        triggerMessageId: "msg_in_thread",
+        personaName: "Ariadne",
+        threadStreamId: "thread_1",
+        parentMessageId: "msg_parent",
+      })
+    })
+    expect(result.current.get("msg_parent")).toBeDefined()
+
+    // Disconnect/reconnect: activity_ended may have been swallowed while the
+    // socket was down. The slate resets; a still-running session re-announces
+    // itself on its next progress emit.
+    reconnectCount = 1
+    rerender()
     expect(result.current.get("msg_parent")).toBeUndefined()
     expect(result.current.get("msg_in_thread")).toBeUndefined()
   })

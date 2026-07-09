@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react"
 import type { Socket } from "socket.io-client"
+import { useSocketReconnectCount } from "@/contexts"
 import type {
   StreamEvent,
   AgentStepType,
@@ -76,6 +77,7 @@ export function useAgentActivity(
   userId: string | null
 ): Map<string, MessageAgentActivity> {
   const [progressBySession, setProgressBySession] = useState<Map<string, ProgressEntry>>(new Map())
+  const reconnectCount = useSocketReconnectCount()
 
   // Mirror of `progressBySession` for synchronous reads inside event handlers —
   // lets a substep capture the session's step generation at *arrival* time so a
@@ -84,6 +86,18 @@ export function useAgentActivity(
   useEffect(() => {
     progressRef.current = progressBySession
   }, [progressBySession])
+
+  // Socket-only entries have exactly one deletion path: the activity_ended
+  // event. A disconnect that swallows it would strand a "working" indicator
+  // forever (the parent-view alias has no events-array cleanup — the session's
+  // lifecycle events live in the thread, not this stream). Reset the slate on
+  // reconnect (INV-53): a session still running re-announces itself on its next
+  // progress/substep emit, and the stream-room rejoin bootstrap re-seeds the
+  // session's own stream immediately.
+  useEffect(() => {
+    if (reconnectCount === 0) return
+    setProgressBySession((prev) => (prev.size === 0 ? prev : new Map()))
+  }, [reconnectCount])
 
   // Derive running sessions from events array (bootstrap source of truth for streams
   // that contain session lifecycle events, e.g. threads and scratchpads)
