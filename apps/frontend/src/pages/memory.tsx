@@ -341,6 +341,11 @@ export function MemoryPage() {
     ? {
         isMutating,
         onSave: async (fields: MemoUpdateRequest) => {
+          // Pin the acted memo in the URL first (same as archive/unarchive): a
+          // re-embed changes the search ranking, and without an explicit ?memo=
+          // the invalidation-triggered refetch could re-rank the edited memo off
+          // results[0] and swap the detail pane away from what the user just saved.
+          syncToUrl({ memo: selectedMemoId })
           try {
             await updateMemo.mutateAsync({ memoId: selectedMemoId, update: fields })
           } catch (error) {
