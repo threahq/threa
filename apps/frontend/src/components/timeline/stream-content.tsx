@@ -291,6 +291,16 @@ export function shouldPrefetchOlderHistory(args: {
   return !(args.followingLiveTail && args.scrollerScrollable)
 }
 
+export function shouldRunEdgePagination(args: {
+  scrollRefineActive: boolean
+  isJumpMode: boolean
+  userInteractedAt: number
+}): boolean {
+  if (args.scrollRefineActive) return false
+  if (args.isJumpMode && args.userInteractedAt <= 0) return false
+  return true
+}
+
 /** How long an older-page fetch must be in flight before skeleton rows render,
  *  so a fast response never flashes them. */
 export const OLDER_SKELETON_APPEAR_DELAY_MS = 150
@@ -2133,6 +2143,8 @@ export function StreamContent({
                           registerScroller={registerVirtualScroller}
                           contentRef={virtualContentRef}
                           scrollAbortRef={scrollAbortRef}
+                          isJumpMode={isJumpMode}
+                          userInteractedAtRef={userInteractedAtRef}
                           shift={shift}
                           isInitialSettling={virtualIsInitialSettling}
                           onTimelineScroll={handleVirtualScroll}
@@ -2393,6 +2405,8 @@ function TimelineMessageList({
   registerScroller,
   contentRef,
   scrollAbortRef,
+  isJumpMode,
+  userInteractedAtRef,
   shift,
   isInitialSettling,
   onTimelineScroll,
@@ -2439,6 +2453,10 @@ function TimelineMessageList({
   /** Non-null while a scrollToMessage refine loop is in flight. Programmatic
    *  scroll-into-view must not trigger edge pagination. */
   scrollAbortRef: React.MutableRefObject<(() => void) | null>
+  /** True while reading a deep-linked / searched history window. */
+  isJumpMode: boolean
+  /** Last genuine user scroll gesture on the scroller. */
+  userInteractedAtRef: React.MutableRefObject<number>
   /** virtua `shift`: maintain scroll from the end on this render (older page
    *  prepended) so the viewport doesn't move. */
   shift: boolean
@@ -2645,7 +2663,15 @@ function TimelineMessageList({
   const handleScroll = useCallback(() => {
     onTimelineScroll()
     updateDatePill()
-    if (scrollAbortRef.current !== null) return
+    if (
+      !shouldRunEdgePagination({
+        scrollRefineActive: scrollAbortRef.current !== null,
+        isJumpMode,
+        userInteractedAt: userInteractedAtRef.current,
+      })
+    ) {
+      return
+    }
     const el = scrollerRef.current
     if (!el) return
     const { reachedStart, reachedEnd } = computeScrollEdges({
@@ -2656,7 +2682,16 @@ function TimelineMessageList({
     })
     if (reachedStart) handleStartReached()
     if (reachedEnd) handleEndReached()
-  }, [onTimelineScroll, updateDatePill, scrollAbortRef, scrollerRef, handleStartReached, handleEndReached])
+  }, [
+    onTimelineScroll,
+    updateDatePill,
+    scrollAbortRef,
+    isJumpMode,
+    userInteractedAtRef,
+    scrollerRef,
+    handleStartReached,
+    handleEndReached,
+  ])
 
   // virtua has no rangeChanged, so a window that fits the viewport (not
   // scrollable) would never fire a scroll to page in older history the user
