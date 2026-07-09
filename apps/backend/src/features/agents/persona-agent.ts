@@ -226,6 +226,23 @@ export interface PersonaAgentDeps {
     brief: string
     contextRefs: string[]
   }) => Promise<import("./tools/tool-deps").DelegateTaskToolResult>
+  /**
+   * Write an agent-authored memo (roadmap 6.2), bound to `MemoService.saveMemo`
+   * in server.ts. The turn supplies its workspace/stream/session identity; the
+   * tool supplies the memo content + source-message anchors. Absent in harnesses
+   * that don't wire memos, which disables the `save_memo` tool.
+   */
+  saveMemo?: (params: {
+    workspaceId: string
+    streamId: string
+    sessionId: string | null
+    title: string
+    abstract: string
+    keyPoints: string[]
+    tags: string[]
+    knowledgeType: import("@threa/types").KnowledgeType
+    sourceMessageIds: string[]
+  }) => Promise<import("./tools/tool-deps").SaveMemoToolResult>
 }
 
 export interface PersonaAgentInput {
@@ -315,6 +332,7 @@ export class PersonaAgent {
       loadFollowUp,
       updateBrief,
       delegateTask,
+      saveMemo,
     } = this.deps
     const { workspaceId, streamId, messageId, personaId, serverId, purpose, currentTime, attempt, maxAttempts } = input
     // Supersede-rerun payload, extracted once from the purpose (roadmap 1.5) and
@@ -802,6 +820,21 @@ export class PersonaAgent {
               }
             : undefined
 
+        // Memo saving for the save_memo tool (roadmap 6.2), bound to this
+        // persona's stream + session. The write scopes dedup and the capture
+        // event to the addressed stream, and records the session as provenance.
+        const saveMemoDeps: import("./tools/tool-deps").SaveMemoToolDeps | undefined = saveMemo
+          ? {
+              saveMemo: (params) =>
+                saveMemo({
+                  workspaceId,
+                  streamId: session.streamId,
+                  sessionId: session.id,
+                  ...params,
+                }),
+            }
+          : undefined
+
         const githubDeps = workspaceIntegrationService
           ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }
           : undefined
@@ -883,6 +916,7 @@ export class PersonaAgent {
             brief: briefDeps,
             briefVersion: agentContext.streamBrief?.version ?? 0,
             delegation: delegateDeps,
+            saveMemo: saveMemoDeps,
             github: githubDeps,
             linear: linearDeps,
             supportsVision: modelRegistry.supportsVision(turnModel.model),

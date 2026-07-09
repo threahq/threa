@@ -287,3 +287,159 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-62)", 
     expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_nearest" }))
   })
 })
+
+function fakeMemoRow(id: string, overrides: Partial<import("./repository").Memo> = {}): import("./repository").Memo {
+  return {
+    id,
+    workspaceId: WORKSPACE_ID,
+    memoType: "message",
+    sourceMessageId: "msg_1",
+    sourceConversationId: null,
+    title: "Deploys only on Fridays after the smoke suite",
+    abstract: "The team deploys only on Fridays, and only after the smoke suite passes.",
+    keyPoints: [],
+    sourceMessageIds: ["msg_1", "msg_2"],
+    participantIds: ["usr_1"],
+    knowledgeType: "decision",
+    tags: ["deploys"],
+    parentMemoId: null,
+    status: "active",
+    version: 1,
+    revisionReason: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    archivedAt: null,
+    ...overrides,
+  }
+}
+
+function setupSaveMemo() {
+  const clientQuery = mock(async () => ({ rows: [] }))
+  const fakeClient = { query: clientQuery } as unknown as PoolClient
+  spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
+    fn(fakeClient)) as typeof dbModule.withTransaction)
+
+  spyOn(MessageRepository, "findByIds").mockResolvedValue(fakeMessages())
+  const findNearDuplicate = spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
+  const insert = spyOn(MemoRepository, "insert").mockImplementation(
+    async (_db, params) => fakeMemoRow(params.id, { title: params.title }) as never
+  )
+  spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
+  const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+  const outboxInsertMany = spyOn(OutboxRepository, "insertMany").mockResolvedValue([] as never)
+  const captureEvent: StreamEvent = {
+    id: "evt_capture",
+    streamId: STREAM_ID,
+    sequence: 12n,
+    broadcastSequence: 8n,
+    eventType: "memos:captured",
+    payload: {},
+    actorId: null,
+    actorType: "system",
+    createdAt: new Date(),
+  }
+  const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([captureEvent])
+
+  const service = new MemoService({
+    pool: {} as never,
+    classifier: {} as never,
+    memorizer: {} as never,
+    embeddingService: { embedBatch: async (texts: string[]) => texts.map(() => [0.4, 0.5]) } as never,
+    messageFormatter: {} as never,
+  })
+
+  return { service, clientQuery, findNearDuplicate, insert, streamEventInsertMany, outboxInsert, outboxInsertMany }
+}
+
+const saveMemoInput = {
+  workspaceId: WORKSPACE_ID,
+  streamId: STREAM_ID,
+  sessionId: "agsess_1",
+  title: "Deploys only on Fridays after the smoke suite",
+  abstract: "The team deploys only on Fridays, and only after the smoke suite passes.",
+  keyPoints: ["Smoke suite gates the deploy"],
+  tags: ["deploys"],
+  knowledgeType: "decision" as const,
+  sourceMessageIds: ["msg_1", "msg_2"],
+}
+
+describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
+  afterEach(() => mock.restore())
+
+  it("inserts an agent memo with session provenance and appends a capture event", async () => {
+    const { service, clientQuery, insert, streamEventInsertMany, outboxInsert, outboxInsertMany } = setupSaveMemo()
+
+    const result = await service.saveMemo(saveMemoInput)
+
+    expect(result).toMatchObject({ ok: true, deduped: false })
+    // Serialized on the same per-stream lock the batch takes (INV-20).
+    expect(clientQuery).toHaveBeenCalledWith("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${STREAM_ID}`])
+    // Message-sourced, agent-authored, session provenance, participants from sources.
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        memoType: "message",
+        sourceMessageId: "msg_1",
+        sourceMessageIds: ["msg_1", "msg_2"],
+        authoredByKind: "agent",
+        sourceSessionId: "agsess_1",
+        participantIds: ["usr_1"],
+        status: "active",
+      })
+    )
+    // memo:created rides the outbox.
+    expect(outboxInsert).toHaveBeenCalledWith(
+      expect.anything(),
+      "memo:created",
+      expect.objectContaining({ workspaceId: WORKSPACE_ID })
+    )
+    // Visible in situ (INV-62): capture event on the stream, no conversationId.
+    expect(streamEventInsertMany).toHaveBeenCalledWith(expect.anything(), [
+      expect.objectContaining({
+        streamId: STREAM_ID,
+        eventType: "memos:captured",
+        actorType: "system",
+        payload: {
+          memos: [
+            expect.objectContaining({
+              memoId: expect.stringMatching(/^memo_/),
+              title: saveMemoInput.title,
+              knowledgeType: "decision",
+              sourceMessageIds: ["msg_1", "msg_2"],
+            }),
+          ],
+        },
+      }),
+    ])
+    expect(streamEventInsertMany.mock.calls[0][1][0].payload).not.toHaveProperty("conversationId")
+    expect(outboxInsertMany).toHaveBeenCalledWith(expect.anything(), [
+      { eventType: "stream:memos_captured", payload: expect.objectContaining({ streamId: STREAM_ID }) },
+    ])
+  })
+
+  it("returns the existing memo without inserting when the knowledge is already captured", async () => {
+    const { service, insert, streamEventInsertMany, outboxInsert } = setupSaveMemo()
+    spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue({
+      memo: fakeMemoRow("memo_existing", { title: "Existing" }),
+      distance: 0.02,
+    })
+
+    const result = await service.saveMemo(saveMemoInput)
+
+    expect(result).toEqual({ ok: true, memoId: "memo_existing", title: "Existing", deduped: true })
+    expect(insert).not.toHaveBeenCalled()
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
+    expect(outboxInsert).not.toHaveBeenCalled()
+  })
+
+  it("rejects a save with no source messages before touching the database", async () => {
+    const { service, insert } = setupSaveMemo()
+    const withTx = spyOn(dbModule, "withTransaction")
+
+    const result = await service.saveMemo({ ...saveMemoInput, sourceMessageIds: [] })
+
+    expect(result).toEqual({ ok: false, reason: "no_source_messages" })
+    expect(insert).not.toHaveBeenCalled()
+    expect(withTx).not.toHaveBeenCalled()
+  })
+})

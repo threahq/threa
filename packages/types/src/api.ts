@@ -1188,9 +1188,14 @@ export interface CapturedMemoSummary {
  * normally just after the conversation that produced it — and carries the
  * source conversation/message ids so the row can point back at the messages
  * the knowledge came from.
+ *
+ * `conversationId` is omitted for an agent-authored memo (`save_memo`, roadmap
+ * 6.2): that capture is message-sourced with no owning conversation, so the row
+ * links back through `memos[].sourceMessageIds` alone. The board's
+ * source-conversation grouping already treats it as optional.
  */
 export interface MemosCapturedEventPayload {
-  conversationId: string
+  conversationId?: string
   memos: CapturedMemoSummary[]
 }
 

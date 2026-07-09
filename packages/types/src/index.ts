@@ -101,6 +101,9 @@ export {
   MEMO_ABSTRACT_MAX_CHARS,
   MEMO_KEY_POINTS_MAX,
   MEMO_TAGS_MAX,
+  AUTHORED_BY_KINDS,
+  type AuthoredByKind,
+  AuthoredByKinds,
   PENDING_ITEM_TYPES,
   type PendingItemType,
   // Agent tools

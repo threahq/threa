@@ -501,6 +501,21 @@ export const DELEGATION_TITLE_MAX_CHARS = 200
 export const DELEGATION_BRIEF_MAX_CHARS = 20_000
 export const DELEGATION_CONTEXT_REFS_MAX = 20
 
+/**
+ * Who authored a memo. `pipeline` is the passive GAM extractor (the batch
+ * memorizer over settled conversations — the default for every existing row);
+ * `agent` is an explicit persona write via the `save_memo` tool (roadmap 6.2).
+ * The distinction feeds a structural retrieval boost (agent memos rank below
+ * conversation-sourced ones to damp self-reinforcement) and provenance.
+ */
+export const AUTHORED_BY_KINDS = ["pipeline", "agent"] as const
+export type AuthoredByKind = (typeof AUTHORED_BY_KINDS)[number]
+
+export const AuthoredByKinds = {
+  PIPELINE: "pipeline",
+  AGENT: "agent",
+} as const satisfies Record<string, AuthoredByKind>
+
 // Pending memo item types
 export const PENDING_ITEM_TYPES = ["message", "conversation"] as const
 export type PendingItemType = (typeof PENDING_ITEM_TYPES)[number]
@@ -524,6 +539,7 @@ export const AGENT_TOOL_NAMES = [
   "update_follow_up",
   "update_stream_brief",
   "delegate_task",
+  "save_memo",
   "github_repos",
   "github_commits",
   "github_pulls",
@@ -557,6 +573,7 @@ export const AgentToolNames = {
   UPDATE_FOLLOW_UP: "update_follow_up",
   UPDATE_STREAM_BRIEF: "update_stream_brief",
   DELEGATE_TASK: "delegate_task",
+  SAVE_MEMO: "save_memo",
   GITHUB_REPOS: "github_repos",
   GITHUB_COMMITS: "github_commits",
   GITHUB_PULLS: "github_pulls",

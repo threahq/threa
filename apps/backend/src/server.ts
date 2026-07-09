@@ -770,6 +770,21 @@ export async function startServer(): Promise<ServerInstance> {
 
   const serverId = `server_${ulid()}`
 
+  // Memo (GAM) processing — batched extraction, heavy LLM work. Constructed
+  // before PersonaAgent so the companion's save_memo callback can bind to it.
+  const memoService = config.useStubAI
+    ? new StubMemoService()
+    : new MemoService({
+        pool,
+        classifier: new MemoClassifier(ai, configResolver, messageFormatter),
+        memorizer: new Memorizer(ai, configResolver, messageFormatter),
+        embeddingService,
+        messageFormatter,
+        // Passive to-do collection rides the classifier flag on each settled
+        // conversation (INV-52 — the capability, not the concrete service).
+        suggestionCollector: savedSuggestionsService,
+      })
+
   const workspaceAgent = new WorkspaceAgent({ pool, ai, configResolver, embeddingService })
 
   // General researcher: bounded multi-surface research (workspace + web +
@@ -915,6 +930,32 @@ export async function startServer(): Promise<ServerInstance> {
       })
       return { ok: true, delegationId: delegation.id, droppedRefs: dropped }
     },
+    saveMemo: async ({
+      workspaceId,
+      streamId,
+      sessionId,
+      title,
+      abstract,
+      keyPoints,
+      tags,
+      knowledgeType,
+      sourceMessageIds,
+    }) => {
+      const result = await memoService.saveMemo({
+        workspaceId,
+        streamId,
+        sessionId,
+        title,
+        abstract,
+        keyPoints,
+        tags,
+        knowledgeType,
+        sourceMessageIds,
+      })
+      return result.ok
+        ? { ok: true, memoId: result.memoId, title: result.title, deduped: result.deduped }
+        : { ok: false }
+    },
   })
   // Tier assignments (see QueueManager `tiers` config above):
   //  - INTERACTIVE: user-facing work that must drain quickly (agent responses,
@@ -976,19 +1017,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Memo (GAM) processing — batched extraction, heavy LLM work
-  const memoService = config.useStubAI
-    ? new StubMemoService()
-    : new MemoService({
-        pool,
-        classifier: new MemoClassifier(ai, configResolver, messageFormatter),
-        memorizer: new Memorizer(ai, configResolver, messageFormatter),
-        embeddingService,
-        messageFormatter,
-        // Passive to-do collection rides the classifier flag on each settled
-        // conversation (INV-52 — the capability, not the concrete service).
-        suggestionCollector: savedSuggestionsService,
-      })
   const memoBatchCheckWorker = createMemoBatchCheckWorker({ pool, memoService, jobQueue })
   const memoBatchProcessWorker = createMemoBatchProcessWorker({ pool, memoService, jobQueue })
   // memo.batch-check is a lightweight cron-driven dispatcher; the actual heavy

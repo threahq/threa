@@ -56,7 +56,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 5.4  | claude-code-remote delegation support                 | ☐      |       |
 | 5.5  | `@threa/mcp` server                                   | ☐      |       |
 | 6.1  | Memo edit/archive endpoints + explorer UI             | ☑      | #1246 |
-| 6.2  | `save_memo` tool                                      | ☐      |       |
+| 6.2  | `save_memo` tool                                      | ☑      |       |
 | 6.3  | Reflective capture at session completion              | ☐      |       |
 | 6.4  | `memoScope` (user/stream/workspace)                   | ☐      |       |
 | 6.5  | Retrieval feedback decay                              | ☐      |       |
@@ -547,6 +547,16 @@ Completes GAM into the two-tier private/shared shape (Collaborative Memory, arXi
 **Tests:** dedup against an existing near-identical memo; boost ordering; capture event presence.
 
 **Done when:** "remember that we deploy on Fridays only after the smoke suite" produces a visible, deduped, retrievable memo.
+
+**Deviations (shipped):**
+
+- **`save_memo` writes through a new `MemoService.saveMemo`, reusing the pipeline's embedding + dedup + capture machinery (INV-35).** Embed the abstract (before the txn, INV-41), then in one transaction take the SAME per-stream advisory lock the batch worker uses (`memo-batch:${streamId}`, so save_memo and the passive batch serialize), run `findNearDuplicate` against the stream, insert with `authored_by_kind: 'agent'` + `source_session_id`, `updateEmbedding`, `memo:created` outbox, and the `memos:captured` broadcast event — all atomic. `MemoServiceLike` + `StubMemoService` gained the method; `server.ts` moves `memoService` construction above `PersonaAgent` so the companion's `saveMemo` callback binds to it.
+- **`memo_type` stays `'message'`, not a new value.** The tool requires ≥1 `sourceMessageIds` (Zod `.min(1)`), sets `source_message_id` to the first and `source_message_ids` to all, so the row satisfies the existing `memo_type_source` CHECK unchanged. The 6.3 session-sourced CHECK alternative is deferred to 6.3 as specced. `participant_ids` are the user authors of the cited source messages (best-effort — a missing id just yields fewer participants, never a failed write, INV-1).
+- **Dedup returns the existing memo rather than erroring.** A near-duplicate (same `MEMO_DEDUP_DISTANCE` gate) short-circuits: no insert, no capture event, and the tool result carries `deduped: true` + the existing `memoId` so the model learns "already remembered" instead of re-saving. No same-conversation supersession — that path is conversation-scoped; an agent memo has no source conversation.
+- **Capture event `conversationId` is now optional.** An agent memo is message-sourced with no owning conversation, so the `memos:captured` payload omits `conversationId` and the row links back through `memos[].sourceMessageIds`. The frontend renderer (`memo-captured-event.tsx`), `stream-context/derive.ts`, and the board's `source-conversation` grouping already treated it as optional, so no read-side change was needed.
+- **Structural boost added as a third factor.** `MEMO_AUTHORED_BY_KIND_BOOST` (`pipeline: 1.0`, `agent: 0.9`) in `memos/config.ts` multiplies into `buildBoostExpression`'s outer-stage `CASE` (single SQL source of truth, INV-33) alongside the knowledge/stream factors — an agent memo ranks below an equivalent conversation-sourced one to damp self-reinforcement.
+- **Privacy category is `workspace`, not `messaging`.** Unlike the stream-local brief/follow-up tools, `save_memo` promotes content into workspace-wide retrieval, so a scratchpad that denies `workspace` tools must not let its companion publish memos. (The passive GAM pipeline is gated separately by the stream's `memory_mode`.) Ariadne gains `save_memo` in `enabledTools`; the researcher sub-agent never gets the callback. Enclave/E2E parity omitted, consistent with the other durable-write tools.
+- **Migration is columns-only:** `authored_by_kind TEXT DEFAULT 'pipeline'` (every existing row = pipeline) + nullable `source_session_id`. No `memo_type` value, no CHECK change.
 
 ### 6.3 Reflective capture at session completion
 

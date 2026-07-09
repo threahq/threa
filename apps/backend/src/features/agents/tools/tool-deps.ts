@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import type { KnowledgeType } from "@threa/types"
 import type { AttachmentService } from "../../attachments"
 import type { MemoExplorerService } from "../../memos"
 import type { SearchService } from "../../search"
@@ -140,4 +141,31 @@ export type DelegateTaskToolResult =
  */
 export interface DelegateTaskToolDeps {
   delegateTask: (params: { title: string; brief: string; contextRefs: string[] }) => Promise<DelegateTaskToolResult>
+}
+
+/**
+ * Result of the `save_memo` tool's callback (roadmap 6.2). `deduped: true` means
+ * an equivalent memo already existed in this stream, so `memoId` points at that
+ * row and nothing new was written — the knowledge is retained either way. The
+ * tool surfaces `deduped` so the model learns "already remembered" rather than
+ * re-saving.
+ */
+export type SaveMemoToolResult = { ok: true; memoId: string; title: string; deduped: boolean } | { ok: false }
+
+/**
+ * Callback for the `save_memo` tool, bound to the running persona's
+ * workspace/stream/session by the caller (like the follow-up/brief tools). The
+ * tool supplies the memo content + its source message ids; the write goes
+ * through `MemoService.saveMemo` (dedup + embedding + capture event). Absent when
+ * memos aren't wired (some test harnesses), which disables the tool.
+ */
+export interface SaveMemoToolDeps {
+  saveMemo: (params: {
+    title: string
+    abstract: string
+    keyPoints: string[]
+    tags: string[]
+    knowledgeType: KnowledgeType
+    sourceMessageIds: string[]
+  }) => Promise<SaveMemoToolResult>
 }
