@@ -1,20 +1,11 @@
 /**
- * Delegation limits and claim timing (roadmap 5.1). Shared by the service, the
- * tool's input schema, and (later) evals — one source of truth (INV-33/44).
+ * Delegation limits and claim timing (roadmap 5.1). One source of truth
+ * (INV-33/44). The content caps live in `@threa/types` — the `delegate_task`
+ * tool (features/agents/) needs them too, and importing this feature's barrel
+ * from an agents tool would close a module cycle through the agents barrel —
+ * and are re-exported here so feature code has one import site.
  */
-
-/** Card title — short enough to scan in the timeline. */
-export const DELEGATION_TITLE_MAX_CHARS = 200
-
-/**
- * The compiled hand-off prompt. Generous — a self-contained brief with
- * acceptance criteria is the whole point — but bounded so a runaway turn can't
- * persist megabytes onto the timeline event.
- */
-export const DELEGATION_BRIEF_MAX_CHARS = 20_000
-
-/** Pointer URLs per delegation; enough to link the relevant sources without inlining walls of text. */
-export const DELEGATION_CONTEXT_REFS_MAX = 20
+export { DELEGATION_TITLE_MAX_CHARS, DELEGATION_BRIEF_MAX_CHARS, DELEGATION_CONTEXT_REFS_MAX } from "@threa/types"
 
 /**
  * How long a claim holds without a heartbeat before the expiry sweep flips the

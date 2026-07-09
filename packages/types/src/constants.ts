@@ -491,6 +491,16 @@ export const MEMO_ABSTRACT_MAX_CHARS = 2000
 export const MEMO_KEY_POINTS_MAX = 20
 export const MEMO_TAGS_MAX = 20
 
+// Delegation content caps (roadmap 5.1) — shared by the backend Zod schema and
+// the delegations feature config (re-exported there, INV-33). Live here rather
+// than in features/delegations/config.ts because the delegate_task tool (in
+// features/agents/) also needs them, and importing the delegations barrel from
+// an agents tool creates a module cycle (delegations/service -> agents barrel
+// -> tools barrel -> the tool) that leaves these undefined at init.
+export const DELEGATION_TITLE_MAX_CHARS = 200
+export const DELEGATION_BRIEF_MAX_CHARS = 20_000
+export const DELEGATION_CONTEXT_REFS_MAX = 20
+
 // Pending memo item types
 export const PENDING_ITEM_TYPES = ["message", "conversation"] as const
 export type PendingItemType = (typeof PENDING_ITEM_TYPES)[number]

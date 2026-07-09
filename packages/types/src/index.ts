@@ -120,6 +120,9 @@ export {
   type FollowUpStatus,
   FollowUpStatuses,
   // Delegated tasks
+  DELEGATION_TITLE_MAX_CHARS,
+  DELEGATION_BRIEF_MAX_CHARS,
+  DELEGATION_CONTEXT_REFS_MAX,
   DELEGATION_STATUSES,
   type DelegationStatus,
   DelegationStatuses,

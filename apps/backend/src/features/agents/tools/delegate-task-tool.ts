@@ -1,8 +1,14 @@
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
+import {
+  AgentStepTypes,
+  AgentToolNames,
+  DELEGATION_BRIEF_MAX_CHARS,
+  DELEGATION_CONTEXT_REFS_MAX,
+  DELEGATION_TITLE_MAX_CHARS,
+  TOOL_CATEGORIES_BY_NAME,
+} from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
-import { DELEGATION_BRIEF_MAX_CHARS, DELEGATION_CONTEXT_REFS_MAX, DELEGATION_TITLE_MAX_CHARS } from "../../delegations"
 import type { DelegateTaskToolDeps } from "./tool-deps"
 
 const DelegateTaskSchema = z.object({
