@@ -50,8 +50,8 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 4.2  | `update_stream_brief` tool + timeline event           | ☑      | #1220 |
 | 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2) | ☑      | #1218 |
 | 4.4  | Brief correction eval                                 | ☐      |       |
-| 5.1  | `delegate_task` tool + delegation substrate + INV-64  | ☐      |       |
-| 5.2  | Delegation card UI                                    | ☐      |       |
+| 5.1  | `delegate_task` tool + delegation substrate + INV-65  | ☑      | #1261 |
+| 5.2  | Delegation card UI                                    | ☑      | #1261 |
 | 5.3  | Delegation public API (claim/status/complete)         | ☐      |       |
 | 5.4  | claude-code-remote delegation support                 | ☐      |       |
 | 5.5  | `@threa/mcp` server                                   | ☐      |       |
