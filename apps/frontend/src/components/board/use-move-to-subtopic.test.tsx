@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ServicesProvider } from "@/contexts"
 import { useMoveToSubtopic } from "./use-move-to-subtopic"
+import * as boardStoreModule from "@/stores/board-store"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
 
 const WS = "ws_1"
@@ -94,6 +95,43 @@ describe("useMoveToSubtopic", () => {
     await waitFor(() => expect(reassignMessage).toHaveBeenCalledWith(WS, "conv_sub", "m_target"))
     // Selecting closes the picker (no confirm step — the move is reversible).
     expect(screen.queryByText("GPU budget")).toBeNull()
+  })
+
+  it("offers nested (depth-2) sub-topics as targets, and applies the response to the board store", async () => {
+    const merge = vi.spyOn(boardStoreModule, "mergeBoardConversation").mockResolvedValue(true)
+    const conversationResult = { id: "conv_grandchild" }
+    const previousResult = { id: "conv_main" }
+    const reassignMessage = vi
+      .fn()
+      .mockResolvedValue({ conversation: conversationResult, previousConversation: previousResult })
+    const nested = branch({
+      children: [branch({ conversationId: "conv_grandchild", threadStreamId: "thread_2", title: "Deep dive" })],
+    })
+    render(<Harness branches={[nested]} currentConversationId="conv_main" reassignMessage={reassignMessage} />)
+
+    await userEvent.click(screen.getByRole("button", { name: "Move to sub-topic" }))
+    await userEvent.click(screen.getByRole("button", { name: /Deep dive/ }))
+
+    await waitFor(() => expect(reassignMessage).toHaveBeenCalledWith(WS, "conv_grandchild", "m_target"))
+    // The board store re-files on the HTTP response, not the socket echo.
+    await waitFor(() => expect(merge).toHaveBeenCalledWith("conv_grandchild", conversationResult))
+    expect(merge).toHaveBeenCalledWith("conv_main", previousResult)
+    merge.mockRestore()
+  })
+
+  it("ignores re-opens while a move is in flight", async () => {
+    // A move that never settles: the action must not open the picker again (a
+    // second pick would enqueue a duplicate correction).
+    const reassignMessage = vi.fn().mockReturnValue(new Promise(() => {}))
+    render(<Harness branches={[branch({})]} currentConversationId="conv_main" reassignMessage={reassignMessage} />)
+
+    await userEvent.click(screen.getByRole("button", { name: "Move to sub-topic" }))
+    await userEvent.click(screen.getByRole("button", { name: /GPU budget/ }))
+    expect(reassignMessage).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByRole("button", { name: "Move to sub-topic" }))
+    expect(screen.queryByRole("button", { name: /GPU budget/ })).toBeNull()
+    expect(reassignMessage).toHaveBeenCalledTimes(1)
   })
 
   it("offers the main topic to a branch row", async () => {

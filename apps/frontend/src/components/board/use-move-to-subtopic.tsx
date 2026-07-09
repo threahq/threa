@@ -36,12 +36,21 @@ export function useMoveToSubtopic(params: {
   const [pendingMove, setPendingMove] = useState<{ messageId: string; currentConversationId: string } | null>(null)
   const reassign = useReassignConversationMessage(workspaceId, conversation.streamId)
 
-  // A pending branch's conversation doesn't exist server-side yet (its id is the
-  // draft panel id), so it can be neither source nor target.
-  const branches = useMemo(
-    () => [...branchesByForkMessageId.values()].flat().filter((b) => !b.pending),
-    [branchesByForkMessageId]
-  )
+  // Every branch at any depth (sub-topics nest to depth 2 — a grandchild is as
+  // valid a target as its parent; the server's one-root rule resolves any depth
+  // to the same root). A pending branch's conversation doesn't exist server-side
+  // yet (its id is the draft panel id), so it can be neither source nor target.
+  const branches = useMemo(() => {
+    const out: BranchConversationView[] = []
+    const walk = (list: BranchConversationView[]) => {
+      for (const branch of list) {
+        if (!branch.pending) out.push(branch)
+        walk(branch.children)
+      }
+    }
+    walk([...branchesByForkMessageId.values()].flat())
+    return out
+  }, [branchesByForkMessageId])
 
   const targetsFor = useCallback(
     (currentConversationId: string): MoveTarget[] => [
@@ -61,17 +70,24 @@ export function useMoveToSubtopic(params: {
     [conversation.id, conversation.topicSummary, branches]
   )
 
+  // Ignore opens and picks while a move is already in flight (mirrors the
+  // conversation overlay's per-message pending guard): the re-file lands on the
+  // mutation response, but a rapid re-tap before it settles must not enqueue a
+  // second correction.
   const moveHandlerFor = useCallback(
     (messageId: string, currentConversationId: string): (() => void) | undefined => {
       if (targetsFor(currentConversationId).length === 0) return undefined
-      return () => setPendingMove({ messageId, currentConversationId })
+      return () => {
+        if (reassign.isPending) return
+        setPendingMove({ messageId, currentConversationId })
+      }
     },
-    [targetsFor]
+    [targetsFor, reassign.isPending]
   )
 
   const selectTarget = useCallback(
     (target: MoveTarget) => {
-      if (!pendingMove) return
+      if (!pendingMove || reassign.isPending) return
       reassign.mutate(
         { messageId: pendingMove.messageId, toConversationId: target.conversationId },
         { onError: () => toast.error("Couldn't move the message. Please try again.") }
