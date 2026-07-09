@@ -6,6 +6,7 @@ import {
   canActOnDeepLinkNavigation,
   computeScrollEdges,
   shouldPrefetchOlderHistory,
+  shouldRunEdgePagination,
   shouldShowOlderSkeletons,
   resolveDateJumpAnchor,
 } from "./stream-content"
@@ -314,6 +315,24 @@ describe("shouldPrefetchOlderHistory", () => {
 
   it("does not stack a second fetch while one is already in flight", () => {
     expect(shouldPrefetchOlderHistory({ ...base, isFetchingOlder: true })).toBe(false)
+  })
+})
+
+describe("shouldRunEdgePagination", () => {
+  it("blocks edge prefetch while a programmatic jump is still refining", () => {
+    expect(shouldRunEdgePagination({ scrollRefineActive: true, isJumpMode: false, userInteractedAt: 0 })).toBe(false)
+  })
+
+  it("blocks automatic edge prefetch after landing in a jump window before user scroll", () => {
+    expect(shouldRunEdgePagination({ scrollRefineActive: false, isJumpMode: true, userInteractedAt: 0 })).toBe(false)
+  })
+
+  it("allows edge prefetch in jump mode after a genuine user scroll", () => {
+    expect(shouldRunEdgePagination({ scrollRefineActive: false, isJumpMode: true, userInteractedAt: 123 })).toBe(true)
+  })
+
+  it("allows normal edge prefetch outside jump mode", () => {
+    expect(shouldRunEdgePagination({ scrollRefineActive: false, isJumpMode: false, userInteractedAt: 0 })).toBe(true)
   })
 })
 
