@@ -253,6 +253,8 @@ describe("buildSystemPrompt", () => {
 
     expect(prompt).toContain("## Invocation Context")
     expect(prompt).toContain("You were explicitly @mentioned by **Kris**")
+    expect(prompt).toContain("Your reply must directly answer that mention message.")
+    expect(prompt).toContain("never let them displace the question you were asked")
   })
 
   test("omits the mention invocation section for a catch-up turn", () => {
