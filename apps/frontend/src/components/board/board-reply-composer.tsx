@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuoteReply, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
 import { useReplyToBoardPost } from "@/hooks/use-conversations"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
 import type { BoardPost } from "@threa/types"
 
@@ -31,6 +32,15 @@ interface BoardReplyComposerProps {
    * manual collapse; `0`/absent leaves it collapsed (board cards open on tap).
    */
   openReplySignal?: number
+  /**
+   * Names the reply target ("Replying in <topic/stream>") when the mobile
+   * composer floats away from its card into the page-level pill — the feed can
+   * scroll on under it, so proximity no longer identifies the conversation. The
+   * board card passes its topic/locator; the panel omits it (single-conversation
+   * surface, the header already names it). Mobile-only: the in-place desktop
+   * form keeps its context by position.
+   */
+  contextChip?: string
 }
 
 /**
@@ -119,12 +129,14 @@ function BoardReplyComposerForm({
   onClose,
   pendingQuote,
   onQuoteConsumed,
+  contextChip,
 }: BoardReplyComposerProps & {
   onClose: (opts?: { refocus?: boolean; hadContent?: boolean }) => void
   pendingQuote: QuoteReplyData | null
   onQuoteConsumed: () => void
 }) {
   const reply = useReplyToBoardPost(workspaceId)
+  const isMobile = useIsMobile()
   const streamId = post.conversation.streamId
 
   const onSubmit = useCallback(
@@ -150,6 +162,7 @@ function BoardReplyComposerForm({
       memoAnchorStreamId={streamId}
       draftKey={`board:reply:${post.conversation.id}`}
       placeholder="Write a reply…"
+      contextChip={isMobile && contextChip ? `Replying in ${contextChip}` : undefined}
       pendingQuote={pendingQuote}
       onQuoteConsumed={onQuoteConsumed}
       rejectE2e="Encrypted notes can't be replied to from the board yet — open the note to reply there."

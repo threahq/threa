@@ -664,6 +664,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
                 post={post}
                 hostStreamType={streamType}
                 openReplySignal={openReplySignal}
+                contextChip={conversation.topicSummary ?? contextLabel}
                 // The conversation's most-recently-active stream — the latest displayed
                 // reply's own stream (a thread under the root), INCLUDING the viewer's own
                 // pending reply and any expand-backfilled rows, so a continuation follows

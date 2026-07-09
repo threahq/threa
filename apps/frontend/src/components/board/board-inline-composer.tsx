@@ -134,6 +134,14 @@ export function InlineComposerForm({
   const anchorEl = anchor?.el
   const claim = anchor?.claim
   const release = anchor?.release
+  const claimantId = anchor?.claimantId
+  // The portal renders only while the slot is free or held by this form. Two
+  // forms are briefly mounted during a hand-off (the loser closes via a passive
+  // effect, one commit after the winner's claim lands) — gating the render, not
+  // just the close, is what keeps two pills from ever stacking in the anchor.
+  // `null` renders immediately so the common single-open case doesn't flash a
+  // frame of nothing while its own claim effect is still pending.
+  const holdsFloatingSlot = floating && (claimantId === null || claimantId === formId)
 
   useEffect(() => {
     if (!floating || !claim || !release) return
@@ -148,7 +156,6 @@ export function InlineComposerForm({
   const wasClaimantRef = useRef(false)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
-  const claimantId = anchor?.claimantId
   useEffect(() => {
     if (!floating) return
     if (claimantId === formId) {
@@ -166,7 +173,7 @@ export function InlineComposerForm({
   // measured, and must not wipe the incoming form's value.
   const shellRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
-    if (!floating || !anchorEl) return
+    if (!holdsFloatingSlot || !anchorEl) return
     const shell = shellRef.current
     if (!shell) return
     const write = () => {
@@ -183,7 +190,7 @@ export function InlineComposerForm({
         delete anchorEl.dataset.floatingComposerOwner
       }
     }
-  }, [floating, anchorEl, formId])
+  }, [holdsFloatingSlot, anchorEl, formId])
 
   // Keep the reply target visible: the marker sits where the form would render
   // in place, so scrolling it into view parks the tail of the conversation above
@@ -192,7 +199,7 @@ export function InlineComposerForm({
   // bottom of the scroller — then scrolling is the user's.
   const markerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (!floating || !anchorEl) return
+    if (!holdsFloatingSlot || !anchorEl) return
     const center = () => markerRef.current?.scrollIntoView({ block: "center" })
     const raf = requestAnimationFrame(center)
     const deadline = performance.now() + 2000
@@ -209,7 +216,7 @@ export function InlineComposerForm({
       clearTimeout(timer)
       ro.disconnect()
     }
-  }, [floating, anchorEl])
+  }, [holdsFloatingSlot, anchorEl])
 
   const handleFloatingClose = useCallback(() => {
     void composerRef.current.flushDraft()
@@ -310,25 +317,26 @@ export function InlineComposerForm({
         {/* In-place marker: the scroll target that stands in for the portaled
             form, keeping the reply target in view above the floating pill. */}
         <div ref={markerRef} data-floating-composer-marker aria-hidden />
-        {createPortal(
-          <FloatingComposerShell ref={shellRef}>
-            <div ref={containerRef} onBlur={handleBlur}>
-              <div className="mb-1 flex items-center gap-2">
-                {contextChipNode}
-                <button
-                  type="button"
-                  aria-label="Close composer"
-                  onClick={handleFloatingClose}
-                  className="ml-auto shrink-0 rounded-full bg-muted p-1.5 text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+        {holdsFloatingSlot &&
+          createPortal(
+            <FloatingComposerShell ref={shellRef}>
+              <div ref={containerRef} onBlur={handleBlur}>
+                <div className="mb-1 flex items-center gap-2">
+                  {contextChipNode}
+                  <button
+                    type="button"
+                    aria-label="Close composer"
+                    onClick={handleFloatingClose}
+                    className="ml-auto shrink-0 rounded-full bg-muted p-2 text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {editor}
               </div>
-              {editor}
-            </div>
-          </FloatingComposerShell>,
-          anchorEl
-        )}
+            </FloatingComposerShell>,
+            anchorEl
+          )}
       </>
     )
   }

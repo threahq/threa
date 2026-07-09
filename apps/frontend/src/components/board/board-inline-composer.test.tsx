@@ -141,5 +141,14 @@ describe("InlineComposerForm floating anchor (mobile)", () => {
     await waitFor(() => expect(closeFirst).toHaveBeenCalledWith({ hadContent: false }))
     expect(closeSecond).not.toHaveBeenCalled()
     await screen.findByText("Second")
+
+    // The render gate, not just the close callback, enforces exclusivity: the
+    // superseded form is still mounted here (onClose is a spy, nothing unmounted
+    // it), yet only the claimant's pill exists in the anchor — two pills can
+    // never stack during a hand-off.
+    const anchor = screen.getByTestId("anchor")
+    const pills = anchor.querySelectorAll('[data-testid="editor-stub"]')
+    expect(pills).toHaveLength(1)
+    expect(pills[0]?.textContent).toBe("Second")
   })
 })
