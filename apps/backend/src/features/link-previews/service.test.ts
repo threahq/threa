@@ -4,6 +4,7 @@ import { LinkPreviewService } from "./service"
 import { LinkPreviewRepository, type LinkPreview } from "./repository"
 import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
+import { ConversationRepository, type Conversation } from "../conversations"
 import { SearchRepository } from "../search"
 import type { StreamService } from "../streams"
 import { StreamMemberRepository } from "../streams"
@@ -34,6 +35,7 @@ function makePreview(overrides: Partial<LinkPreview>): LinkPreview {
     targetStreamId: "stream_1",
     targetMessageId: null,
     targetMemoId: null,
+    targetConversationId: null,
     fetchedAt: null,
     expiresAt: null,
     createdAt: new Date(),
@@ -61,6 +63,27 @@ function makeStream(overrides: Partial<AccessibleStream> = {}): AccessibleStream
     archivedAt: null,
     ...overrides,
   } as AccessibleStream
+}
+
+function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
+  return {
+    id: "conv_1",
+    streamId: "stream_1",
+    workspaceId: WORKSPACE_ID,
+    messageIds: ["msg_1", "msg_2", "msg_3"],
+    participantIds: ["user_a", "user_b"],
+    secondaryMessageIds: [],
+    topicSummary: "Auth redesign",
+    summary: "Deciding how auth flows through the router.",
+    completenessScore: 3,
+    confidence: 0.8,
+    status: "active",
+    parentConversationId: null,
+    lastActivityAt: new Date(),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  }
 }
 
 function makeService(streamService: Partial<StreamService>, memoExplorerService: Partial<MemoExplorerService>) {
@@ -170,6 +193,76 @@ describe("LinkPreviewService.resolveInAppLink", () => {
     const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
 
     expect(result).toEqual({ kind: "memo", accessTier: "private" })
+  })
+
+  test("returns cross_workspace for a conversation link in another workspace without inspecting it", async () => {
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({
+        contentType: "conversation_link",
+        targetStreamId: null,
+        targetWorkspaceId: "ws_other",
+        targetConversationId: "conv_1",
+      })
+    )
+    const findById = spyOn(ConversationRepository, "findById").mockResolvedValue(makeConversation())
+    const tryAccess = spyOn({ tryAccess: async () => null }, "tryAccess")
+    const service = makeService({ tryAccess: tryAccess as never }, {})
+
+    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
+
+    expect(result).toEqual({ kind: "conversation", accessTier: "cross_workspace" })
+    expect(findById).not.toHaveBeenCalled()
+    expect(tryAccess).not.toHaveBeenCalled()
+  })
+
+  test("returns private when the conversation is missing", async () => {
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({ contentType: "conversation_link", targetStreamId: null, targetConversationId: "conv_1" })
+    )
+    spyOn(ConversationRepository, "findById").mockResolvedValue(null)
+    const service = makeService({ tryAccess: async () => makeStream() }, {})
+
+    expect(await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")).toEqual({
+      kind: "conversation",
+      accessTier: "private",
+    })
+  })
+
+  test("returns private when the viewer cannot access the conversation's anchor stream", async () => {
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({ contentType: "conversation_link", targetStreamId: null, targetConversationId: "conv_1" })
+    )
+    spyOn(ConversationRepository, "findById").mockResolvedValue(makeConversation())
+    const service = makeService({ tryAccess: async () => null }, {})
+
+    expect(await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")).toEqual({
+      kind: "conversation",
+      accessTier: "private",
+    })
+  })
+
+  test("returns full conversation metadata when the viewer has access", async () => {
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({ contentType: "conversation_link", targetStreamId: null, targetConversationId: "conv_1" })
+    )
+    spyOn(ConversationRepository, "findById").mockResolvedValue(
+      makeConversation({ status: "resolved", messageIds: ["msg_1", "msg_2", "msg_3", "msg_4"] })
+    )
+    const service = makeService({ tryAccess: async () => makeStream({ slug: "eng", type: "channel" }) }, {})
+
+    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
+
+    expect(result).toEqual({
+      kind: "conversation",
+      accessTier: "full",
+      topicSummary: "Auth redesign",
+      summary: "Deciding how auth flows through the router.",
+      status: "resolved",
+      messageCount: 4,
+      participantIds: ["user_a", "user_b"],
+      streamName: "eng",
+      streamType: "channel",
+    })
   })
 
   test("returns null for a non-existent preview", async () => {

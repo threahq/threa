@@ -761,6 +761,7 @@ export const LINK_PREVIEW_CONTENT_TYPES = [
   "message_link",
   "stream_link",
   "memo_link",
+  "conversation_link",
 ] as const
 export type LinkPreviewContentType = (typeof LINK_PREVIEW_CONTENT_TYPES)[number]
 
@@ -772,6 +773,7 @@ export const LinkPreviewContentTypes = {
   MESSAGE_LINK: "message_link",
   STREAM_LINK: "stream_link",
   MEMO_LINK: "memo_link",
+  CONVERSATION_LINK: "conversation_link",
 } as const satisfies Record<string, LinkPreviewContentType>
 
 /**
@@ -780,7 +782,7 @@ export const LinkPreviewContentTypes = {
  * and never fetched over the network, so the worker skips them and the frontend
  * routes them to the in-app preview card instead of the generic web card.
  */
-export const IN_APP_LINK_CONTENT_TYPES = ["message_link", "stream_link", "memo_link"] as const
+export const IN_APP_LINK_CONTENT_TYPES = ["message_link", "stream_link", "memo_link", "conversation_link"] as const
 export type InAppLinkContentType = (typeof IN_APP_LINK_CONTENT_TYPES)[number]
 
 export function isInAppLinkContentType(contentType: LinkPreviewContentType): contentType is InAppLinkContentType {
@@ -790,12 +792,12 @@ export function isInAppLinkContentType(contentType: LinkPreviewContentType): con
 /**
  * In-app link kinds that render as an inline chip inside the message body
  * (replacing the URL text) rather than a card below it. Their below-message
- * preview card is suppressed — the inline chip is the single surface. Memo
- * links keep their card (`MemoPreviewList`), so they are excluded.
+ * preview card is suppressed — the inline chip is the single surface. Memo and
+ * conversation links keep their metadata card, so they are excluded.
  */
-export type InlineChipContentType = Exclude<InAppLinkContentType, "memo_link">
+export type InlineChipContentType = Exclude<InAppLinkContentType, "memo_link" | "conversation_link">
 export const INLINE_CHIP_CONTENT_TYPES = IN_APP_LINK_CONTENT_TYPES.filter(
-  (t): t is InlineChipContentType => t !== "memo_link"
+  (t): t is InlineChipContentType => t !== "memo_link" && t !== "conversation_link"
 )
 
 export function isInlineChipContentType(contentType: LinkPreviewContentType): contentType is InlineChipContentType {

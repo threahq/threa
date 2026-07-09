@@ -4,7 +4,11 @@ import { collectLinkUrls } from "@threa/prosemirror"
 /** Mirrors the backend `parseInAppLink` path shapes (`url-utils.ts`). */
 const STREAM_PATH = /^\/w\/[^/]+\/s\/([^/]+)$/
 const MEMO_PATH = /^\/w\/[^/]+\/memos\/([^/]+)$/
+const BOARD_PATH = /^\/w\/[^/]+\/board$/
 const WORKSPACE_PATH = /^\/w\/([^/]+)\//
+
+/** Panel-id prefix a conversation deep-link carries in `?panel=` (mirrors `CONVERSATION_PANEL_PREFIX`). */
+const CONVERSATION_PANEL_PREFIX = "conv:"
 
 /**
  * Matches the server's MAX_PREVIEWS_PER_MESSAGE so the composer never chips more
@@ -22,19 +26,20 @@ export type DraftLinkRef =
   | { kind: "stream"; url: string; workspaceId: string; streamId: string }
   | { kind: "message"; url: string; workspaceId: string; streamId: string; messageId: string }
   | { kind: "memo"; url: string; workspaceId: string; memoId: string }
+  | { kind: "conversation"; url: string; workspaceId: string; conversationId: string }
 
 /**
  * Draft link kinds that earn a below-composer chip. Stream/message in-app links
  * are excluded: like a posted message (#1103), they render as an inline chip in
  * the draft body (a pasted one becomes an atom node; a typed one converts on
  * send), so a below-row chip would double the surface. This mirrors the
- * timeline's `isInlineChipContentType` card suppression — web and memo links
- * keep their below-row chip exactly as they keep their card.
+ * timeline's `isInlineChipContentType` card suppression — web, memo, and
+ * conversation links keep their below-row chip exactly as they keep their card.
  */
-export type BelowRowDraftLink = Extract<DraftLinkRef, { kind: "web" | "memo" }>
+export type BelowRowDraftLink = Extract<DraftLinkRef, { kind: "web" | "memo" | "conversation" }>
 
 export function isBelowRowDraftLink(link: DraftLinkRef): link is BelowRowDraftLink {
-  return link.kind === "web" || link.kind === "memo"
+  return link.kind === "web" || link.kind === "memo" || link.kind === "conversation"
 }
 
 function currentOrigin(): string | null {
@@ -42,8 +47,8 @@ function currentOrigin(): string | null {
 }
 
 /**
- * Classify a draft URL into an in-app target (stream / message / memo at this
- * app's origin) or a plain web link. In-app path shapes mirror the backend
+ * Classify a draft URL into an in-app target (stream / message / memo /
+ * conversation at this app's origin) or a plain web link. In-app path shapes mirror the backend
  * `parseInAppLink`; a same-origin URL that isn't a recognized resource (e.g.
  * `/settings`) falls through to a web chip. Returns null for non-http(s) URLs.
  */
@@ -68,6 +73,13 @@ export function classifyDraftLink(url: string, origin: string | null = currentOr
       }
       const memoId = parsed.pathname.match(MEMO_PATH)?.[1]
       if (memoId) return { kind: "memo", url, workspaceId, memoId }
+      if (BOARD_PATH.test(parsed.pathname)) {
+        const panel = parsed.searchParams.get("panel")
+        if (panel?.startsWith(CONVERSATION_PANEL_PREFIX)) {
+          const conversationId = panel.slice(CONVERSATION_PANEL_PREFIX.length)
+          if (conversationId) return { kind: "conversation", url, workspaceId, conversationId }
+        }
+      }
     }
   }
 

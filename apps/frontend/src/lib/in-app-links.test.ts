@@ -35,6 +35,28 @@ describe("classifyDraftLink", () => {
     })
   })
 
+  it("classifies a conversation board-panel link at this origin", () => {
+    expect(classifyDraftLink(`${ORIGIN}/w/ws_1/board?panel=conv:conv_1`, ORIGIN)).toEqual({
+      kind: "conversation",
+      url: `${ORIGIN}/w/ws_1/board?panel=conv:conv_1`,
+      workspaceId: "ws_1",
+      conversationId: "conv_1",
+    })
+    // A message deep-link on the same conversation panel still classifies as the conversation.
+    expect(classifyDraftLink(`${ORIGIN}/w/ws_1/board?panel=conv:conv_1&m=msg_9`, ORIGIN)).toMatchObject({
+      kind: "conversation",
+      conversationId: "conv_1",
+    })
+  })
+
+  it("treats a board URL without a conversation panel as a web link", () => {
+    expect(classifyDraftLink(`${ORIGIN}/w/ws_1/board`, ORIGIN)).toMatchObject({ kind: "web", host: "app.threa.io" })
+    expect(classifyDraftLink(`${ORIGIN}/w/ws_1/board?panel=stream:stream_1`, ORIGIN)).toMatchObject({
+      kind: "web",
+      host: "app.threa.io",
+    })
+  })
+
   it("treats external and same-origin non-resource URLs as web links", () => {
     expect(classifyDraftLink("https://example.com/post", ORIGIN)).toEqual({
       kind: "web",

@@ -391,6 +391,7 @@ export type {
   MessageLinkPreviewData,
   StreamLinkPreviewData,
   MemoLinkPreviewData,
+  ConversationLinkPreviewData,
   InAppLinkPreviewData,
 } from "./domain"
 

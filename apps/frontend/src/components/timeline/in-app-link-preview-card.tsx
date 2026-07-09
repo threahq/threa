@@ -1,10 +1,22 @@
 import { useMemo, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import { MessageSquare, Hash, Brain, Lock, Globe, NotebookPen, ArrowUpRight, X } from "lucide-react"
+import {
+  MessageSquare,
+  MessagesSquare,
+  Hash,
+  Brain,
+  Lock,
+  Globe,
+  NotebookPen,
+  ArrowUpRight,
+  CheckCircle2,
+  X,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { ActorAvatar } from "@/components/actor-avatar"
+import { actorTypeFromId } from "@/hooks/use-actors"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { classifyDraftLink } from "@/lib/in-app-links"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -16,6 +28,8 @@ import type {
   MessageLinkPreviewData,
   StreamLinkPreviewData,
   MemoLinkPreviewData,
+  ConversationLinkPreviewData,
+  ConversationStatus,
   StreamType,
 } from "@threa/types"
 
@@ -83,8 +97,14 @@ export function InAppLinkPreviewCard({ preview, workspaceId, onDismiss, hydrate 
     )
   }
 
-  if (loading) return <CardSkeleton variant={preview.contentType === "memo_link" ? "memo" : "message"} />
+  if (loading) return <CardSkeleton variant={skeletonVariant(preview.contentType)} />
   return null
+}
+
+function skeletonVariant(contentType: LinkPreviewSummary["contentType"]): CardVariant {
+  if (contentType === "memo_link") return "memo"
+  if (contentType === "conversation_link") return "conversation"
+  return "message"
 }
 
 // The timeline does not compensate a row that grows after its first paint — its
@@ -97,8 +117,15 @@ export function InAppLinkPreviewCard({ preview, workspaceId, onDismiss, hydrate 
 const CARD_HEADER_H = "min-h-[2.0625rem]" // text/icon line + py-1.5 + border, fits the h-5 dismiss button
 const CARD_BODY_MESSAGE = "min-h-[5.5rem]" // avatar + author line + 2-line clamp
 const CARD_BODY_MEMO = "min-h-[7rem]" // tile + title + 2-line clamp + source line
+const CARD_BODY_CONVERSATION = "min-h-[7.5rem]" // tile + title + 2-line clamp + participants/count line
 
-type CardVariant = "message" | "memo"
+type CardVariant = "message" | "memo" | "conversation"
+
+function cardBodyHeight(variant: CardVariant): string {
+  if (variant === "memo") return CARD_BODY_MEMO
+  if (variant === "conversation") return CARD_BODY_CONVERSATION
+  return CARD_BODY_MESSAGE
+}
 
 /** Stream id of an in-app stream/message link, for client-side name resolution. */
 function streamIdFromUrl(url: string): string | null {
@@ -129,6 +156,10 @@ function ResolvedInAppLink({
   if (data.kind === "stream")
     return <StreamLinkCard data={data} url={url} workspaceId={workspaceId} onDismiss={onDismiss} />
   if (data.kind === "memo") return <MemoLinkCard data={data} url={url} reserve={reserve} onDismiss={onDismiss} />
+  if (data.kind === "conversation")
+    return (
+      <ConversationLinkCard data={data} url={url} workspaceId={workspaceId} reserve={reserve} onDismiss={onDismiss} />
+    )
   return <MessageLinkCard data={data} url={url} workspaceId={workspaceId} reserve={reserve} onDismiss={onDismiss} />
 }
 
@@ -386,6 +417,116 @@ function MemoLinkCard({
   )
 }
 
+/** Up to this many participant avatars render on a conversation card; the rest roll into "+N". */
+const CONVERSATION_MAX_AVATARS = 5
+
+function conversationStatusBadge(status?: ConversationStatus): ReactNode {
+  if (status === "resolved") return <MetaBadge icon={<CheckCircle2 />}>Resolved</MetaBadge>
+  if (status === "stalled") return <MetaBadge>Stalled</MetaBadge>
+  return null
+}
+
+function ConversationLinkCard({
+  data,
+  url,
+  workspaceId,
+  reserve,
+  onDismiss,
+}: {
+  data: ConversationLinkPreviewData
+  url: string
+  workspaceId: string
+  reserve: boolean
+  onDismiss?: () => void
+}) {
+  if (data.accessTier === "cross_workspace") {
+    return (
+      <MinimalCard
+        kindIcon={<MessagesSquare />}
+        kindLabel="Conversation"
+        label="In another workspace"
+        variant="conversation"
+        reserve={reserve}
+        onDismiss={onDismiss}
+      />
+    )
+  }
+
+  if (data.accessTier === "private") {
+    return (
+      <MinimalCard
+        kindIcon={<MessagesSquare />}
+        kindLabel="Conversation"
+        bodyIcon={<Lock />}
+        label="Private conversation"
+        variant="conversation"
+        reserve={reserve}
+        onDismiss={onDismiss}
+      />
+    )
+  }
+
+  const internalPath = getInternalPath(url)
+  const participantIds = data.participantIds ?? []
+  const shownParticipants = participantIds.slice(0, CONVERSATION_MAX_AVATARS)
+  const overflow = participantIds.length - shownParticipants.length
+  const messageCount = data.messageCount ?? 0
+
+  const body = (
+    <CardBody className={reserve ? CARD_BODY_CONVERSATION : undefined}>
+      <div className="flex items-start gap-3">
+        <IconTile>
+          <MessagesSquare />
+        </IconTile>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <h4 className="truncate text-sm font-semibold leading-snug text-foreground">
+              {data.topicSummary ?? "Conversation"}
+            </h4>
+            {conversationStatusBadge(data.status)}
+          </div>
+          {data.summary && (
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground line-clamp-2">
+              {stripMarkdownToInline(data.summary)}
+            </p>
+          )}
+          <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+            {shownParticipants.length > 0 && (
+              <div className="flex -space-x-1.5">
+                {shownParticipants.map((id) => (
+                  <ActorAvatar
+                    key={id}
+                    actorId={id}
+                    actorType={actorTypeFromId(id)}
+                    workspaceId={workspaceId}
+                    size="xs"
+                    alt=""
+                    showStatus={false}
+                    className="ring-2 ring-card"
+                  />
+                ))}
+              </div>
+            )}
+            {overflow > 0 && <span>+{overflow}</span>}
+            {messageCount > 0 && (
+              <span className="inline-flex items-center gap-1">
+                <MessageSquare className="h-3 w-3 shrink-0" />
+                {messageCount} message{messageCount === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </CardBody>
+  )
+
+  return (
+    <CardShell header={<CardHeader label="Conversation" onDismiss={onDismiss} />}>
+      <InternalLink path={internalPath}>{body}</InternalLink>
+    </CardShell>
+  )
+}
+
 /** Rounded primary-tinted tile that anchors a stream/memo card the way an avatar anchors a message. */
 function IconTile({ children }: { children: ReactNode }) {
   return (
@@ -461,9 +602,7 @@ function CardSkeleton({ variant }: { variant: CardVariant }) {
       <div className={cn("flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5", CARD_HEADER_H)}>
         <div className="h-3 w-20 rounded bg-muted" />
       </div>
-      <div
-        className={cn("flex items-start gap-3 px-3.5 py-3", variant === "memo" ? CARD_BODY_MEMO : CARD_BODY_MESSAGE)}
-      >
+      <div className={cn("flex items-start gap-3 px-3.5 py-3", cardBodyHeight(variant))}>
         <div className="h-9 w-9 shrink-0 rounded-lg bg-muted" />
         <div className="flex-1 space-y-1.5 pt-0.5">
           <div className="h-3.5 w-32 rounded bg-muted" />
@@ -511,10 +650,7 @@ function MinimalCard({
         <DismissButton onDismiss={onDismiss} />
       </div>
       <div
-        className={cn(
-          "flex items-center gap-3 px-3.5 py-3 text-muted-foreground",
-          reserve && (variant === "memo" ? CARD_BODY_MEMO : CARD_BODY_MESSAGE)
-        )}
+        className={cn("flex items-center gap-3 px-3.5 py-3 text-muted-foreground", reserve && cardBodyHeight(variant))}
       >
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40 [&>svg]:h-[18px] [&>svg]:w-[18px]">
           {bodyIcon ?? kindIcon}
