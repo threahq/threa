@@ -314,7 +314,12 @@ describe("useCreateBoardPost", () => {
 
   it("slots an optimistic card keyed by the conversation id the send returns", async () => {
     const { putOptimistic } = mockBoardDeps({
-      message: { id: "msg_1", createdAt: "2026-06-22T12:00:00.000Z" },
+      message: {
+        id: "msg_1",
+        createdAt: "2026-06-22T12:00:00.000Z",
+        // Server-resolved markdown (mentions → ids, INV-64), not the client input.
+        contentMarkdown: "hey [@ana](user:usr_ana)",
+      },
       conversationId: "conv_new",
     })
     vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([
@@ -341,6 +346,7 @@ describe("useCreateBoardPost", () => {
         rootStreamId: STREAM_ID,
         rootStreamType: "channel",
         createdAt: "2026-06-22T12:00:00.000Z",
+        contentMarkdown: "hey [@ana](user:usr_ana)",
       })
     )
   })

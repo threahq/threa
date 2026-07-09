@@ -10,7 +10,6 @@ import {
 } from "@/contexts"
 import { db } from "@/db"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import { serializeToMarkdown } from "@threa/prosemirror"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { seedBoardPosts, useBoardPost, mergeBoardConversation, putOptimisticBoardPost } from "@/stores/board-store"
 import { seedBoardExclusions, putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
@@ -296,7 +295,10 @@ export function useCreateBoardPost(workspaceId: string) {
             messageId: message.id,
             streamId: target.streamId,
             authorId: currentUserId,
-            contentMarkdown: serializeToMarkdown(contentJson),
+            // Server-resolved markdown (mentions → ids, INV-64), not a client
+            // re-serialize that could show a bare `@slug` until reconcile — matches
+            // the drain path.
+            contentMarkdown: message.contentMarkdown,
             rootStreamId: stream.rootStreamId ?? stream.id,
             rootStreamType: stream.type as BoardScopeStreamType,
             createdAt: message.createdAt,
