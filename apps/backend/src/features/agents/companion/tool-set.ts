@@ -4,6 +4,7 @@ import type { WorkspaceAgentResult } from "../researcher"
 import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
 import type {
+  DelegateTaskToolDeps,
   FollowUpToolDeps,
   ReactionToolDeps,
   UpdateStreamBriefToolDeps,
@@ -25,6 +26,7 @@ import {
   createCancelFollowUpTool,
   createUpdateFollowUpTool,
   createUpdateStreamBriefTool,
+  createDelegateTaskTool,
   createWorkspaceResearchTool,
   createGithubReposTool,
   createGithubCommitsTool,
@@ -74,6 +76,13 @@ export interface ToolSetConfig {
    * clobber. Defaults to 0 (no brief yet → create).
    */
   briefVersion?: number
+  /**
+   * Delegation callback bound to the running persona/session/stream and the
+   * invoking user, gating the `delegate_task` tool. Present only on the live
+   * companion turn — and only when the stream is not sealed and a human
+   * triggered the turn (the brief resolves against that user's access).
+   */
+  delegation?: DelegateTaskToolDeps
   github?: GitHubToolDeps
   linear?: LinearToolDeps
   supportsVision?: boolean
@@ -97,6 +106,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     followUps,
     brief,
     briefVersion,
+    delegation,
     github,
     linear,
     supportsVision,
@@ -175,6 +185,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     brief && isToolEnabled(enabledTools, AgentToolNames.UPDATE_STREAM_BRIEF)
       ? createUpdateStreamBriefTool(brief, { currentVersion: briefVersion ?? 0 })
       : null,
+    delegation && isToolEnabled(enabledTools, AgentToolNames.DELEGATE_TASK) ? createDelegateTaskTool(delegation) : null,
 
     // GitHub tools (workspace-scoped via installed GitHub App; read-only)
     github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_REPOS) ? createGithubReposTool(github) : null,

@@ -207,6 +207,25 @@ export interface PersonaAgentDeps {
     reason: string
     expectedVersion: number
   }) => Promise<import("./tools/tool-deps").UpdateStreamBriefToolResult>
+  /**
+   * Compile a delegation hand-off (roadmap 5.1), bound to the
+   * `DelegationService` in server.ts. The turn supplies identity, the
+   * source-conversation anchor, and the invoking user's access reach; context
+   * refs are validated against that user before the row lands. Absent when
+   * delegations aren't wired, which disables the `delegate_task` tool.
+   */
+  delegateTask?: (params: {
+    workspaceId: string
+    streamId: string
+    personaId: string
+    sessionId: string
+    sourceConversationId: string | null
+    invokingUserId: string
+    accessibleStreamIds: string[]
+    title: string
+    brief: string
+    contextRefs: string[]
+  }) => Promise<import("./tools/tool-deps").DelegateTaskToolResult>
 }
 
 export interface PersonaAgentInput {
@@ -295,6 +314,7 @@ export class PersonaAgent {
       updateFollowUp,
       loadFollowUp,
       updateBrief,
+      delegateTask,
     } = this.deps
     const { workspaceId, streamId, messageId, personaId, serverId, purpose, currentTime, attempt, maxAttempts } = input
     // Supersede-rerun payload, extracted once from the purpose (roadmap 1.5) and
@@ -745,6 +765,33 @@ export class PersonaAgent {
             }
           : undefined
 
+        // Delegation hand-off for the delegate_task tool (roadmap 5.1), bound to
+        // this persona/session/stream and the invoking user. Deliberately absent
+        // — disabling the tool — on sealed streams (a server-built plaintext
+        // brief cannot egress an E2E stream, the #1118 ruling) and on turns
+        // without a human trigger, since the hand-off may carry only what the
+        // requesting user can see.
+        const delegationUserId = agentContext.invokingUserId
+        const delegationStreamIds = agentContext.accessibleStreamIds
+        const delegateDeps: import("./tools/tool-deps").DelegateTaskToolDeps | undefined =
+          delegateTask && delegationUserId && delegationStreamIds && !stream.e2eEnabled
+            ? {
+                delegateTask: async ({ title, brief, contextRefs }) =>
+                  delegateTask({
+                    workspaceId,
+                    streamId: session.streamId,
+                    personaId: persona.id,
+                    sessionId: session.id,
+                    sourceConversationId: await resolveTriggerConversationId(),
+                    invokingUserId: delegationUserId,
+                    accessibleStreamIds: [...delegationStreamIds],
+                    title,
+                    brief,
+                    contextRefs,
+                  }),
+              }
+            : undefined
+
         const githubDeps = workspaceIntegrationService
           ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }
           : undefined
@@ -825,6 +872,7 @@ export class PersonaAgent {
             followUps: followUpDeps,
             brief: briefDeps,
             briefVersion: agentContext.streamBrief?.version ?? 0,
+            delegation: delegateDeps,
             github: githubDeps,
             linear: linearDeps,
             supportsVision: modelRegistry.supportsVision(turnModel.model),

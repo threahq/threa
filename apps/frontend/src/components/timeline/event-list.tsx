@@ -7,6 +7,7 @@ import {
   type CommandDispatchedPayload,
   type CommandCompletedPayload,
   type CommandFailedPayload,
+  type DelegationStatusChangedEventPayload,
 } from "@threa/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import type { MessageAgentActivity } from "@/hooks"
@@ -316,6 +317,8 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   // Cancellation is a patch on the scheduled card (flips it to "Cancelled" via
   // collectCancelledFollowUpIds), not a row of its own — renders null.
   "agent:follow_up_cancelled",
+  // Status changes patch the delegation card (collectDelegationStatusPatches).
+  "delegation:status_changed",
 ])
 
 /**
@@ -366,6 +369,25 @@ export function collectCancelledFollowUpIds(items: TimelineItem[]): Set<string> 
     if (followUpId) ids.add(followUpId)
   }
   return ids
+}
+
+/**
+ * Collect the latest `delegation:status_changed` payload per delegationId in
+ * the loaded window (items are in sequence order, so the last patch wins). A
+ * delegation card reads its entry to render the authoritative live status for
+ * every viewer (roadmap 5.2) — claim, progress, completion, cancel — without a
+ * fetch.
+ */
+export function collectDelegationStatusPatches(
+  items: TimelineItem[]
+): Map<string, DelegationStatusChangedEventPayload> {
+  const patches = new Map<string, DelegationStatusChangedEventPayload>()
+  for (const item of items) {
+    if (item.type !== "event" || item.event.eventType !== "delegation:status_changed") continue
+    const payload = item.event.payload as DelegationStatusChangedEventPayload | undefined
+    if (payload?.delegationId) patches.set(payload.delegationId, payload)
+  }
+  return patches
 }
 
 /**
@@ -653,6 +675,8 @@ export interface TimelineItemRenderContext {
    * Cancel — and hides the (now no-op) Cancel button once it's cancelled.
    */
   cancelledFollowUpIds: Set<string>
+  /** Latest `delegation:status_changed` payload per delegationId in the loaded window. */
+  delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
   batch?: BatchTimelineState
   /** Set while the conversation overlay is active; decorates message rows. */
   conversationOverlay?: ConversationOverlayContext
@@ -690,6 +714,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         isNew={ctx.newMessageIds?.has(item.event.id)}
         deferSecondaryHydration={deferSecondaryHydration}
         cancelledFollowUpIds={ctx.cancelledFollowUpIds}
+        delegationStatusPatches={ctx.delegationStatusPatches}
         batch={ctx.batch}
         // Continuations directly under an UnreadDivider promote back to head so
         // the first unread message in a run still reads as a fresh turn for the
@@ -902,6 +927,18 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
     if (fid !== undefined && p.cancelledFollowUpIds.has(fid) !== n.cancelledFollowUpIds.has(fid)) return false
   }
 
+  // A delegation card repaints only when its own latest patch changes. Payload
+  // objects get fresh identity per data tick (Dexie re-emits new arrays), so
+  // compare the fields the card actually renders, not object identity.
+  if (item.event.eventType === "delegation:created") {
+    const did = (item.event.payload as { delegationId?: string })?.delegationId
+    if (
+      did !== undefined &&
+      !delegationPatchEqual(p.delegationStatusPatches.get(did), n.delegationStatusPatches.get(did))
+    )
+      return false
+  }
+
   const messageId = getEventMessageId(item.event)
   if ((p.highlightMessageId === messageId) !== (n.highlightMessageId === messageId)) return false
   if ((p.firstMessageId === messageId) !== (n.firstMessageId === messageId)) return false
@@ -923,6 +960,20 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
     }
   }
   return true
+}
+
+function delegationPatchEqual(
+  a: DelegationStatusChangedEventPayload | undefined,
+  b: DelegationStatusChangedEventPayload | undefined
+): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.status === b.status &&
+    a.claimedByLabel === b.claimedByLabel &&
+    a.resultMessageId === b.resultMessageId &&
+    a.statusNote === b.statusNote
+  )
 }
 
 /**
@@ -1010,6 +1061,7 @@ export function EventList({
   // at send. `timelineItems` is already in render order (oldest first).
   const firstMessageId = findFirstMessageId(timelineItems)
   const cancelledFollowUpIds = collectCancelledFollowUpIds(timelineItems)
+  const delegationStatusPatches = collectDelegationStatusPatches(timelineItems)
 
   if (timelineItems.length === 0) {
     return (
@@ -1036,6 +1088,7 @@ export function EventList({
     sessionLiveSubsteps,
     onStopSession: handleStopSession,
     cancelledFollowUpIds,
+    delegationStatusPatches,
     batch,
     conversationOverlay,
   }

@@ -53,6 +53,7 @@ import {
   type WorkspaceBootstrap,
   type StreamBootstrap,
   type ConversationWithStaleness,
+  type DelegationStatusChangedEventPayload,
 } from "@threa/types"
 import {
   EventList,
@@ -66,6 +67,7 @@ import {
   itemDayStartMs,
   findFirstMessageId,
   collectCancelledFollowUpIds,
+  collectDelegationStatusPatches,
   findMessageItemIndex,
   findEventItemIndex,
   getTimelineItemKey,
@@ -1166,6 +1168,10 @@ export function StreamContent({
   // could never flip on the virtualized path. Passed into TimelineMessageList's
   // render context so every viewer's card reflects the cancel (survives reload).
   const cancelledFollowUpIds = useMemo(() => collectCancelledFollowUpIds(timelineItems), [timelineItems])
+  // Same full-window read for delegation status patches (they're zero-height,
+  // filtered out of `visibleItems`): the card must see claim/progress/terminal
+  // patches to render the authoritative live status on the virtualized path.
+  const delegationStatusPatches = useMemo(() => collectDelegationStatusPatches(timelineItems), [timelineItems])
 
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
   // its closure is created once per scroll but runs for up to ~1.2s, during
@@ -2135,6 +2141,7 @@ export function StreamContent({
                         <TimelineMessageList
                           visibleItems={visibleItems}
                           cancelledFollowUpIds={cancelledFollowUpIds}
+                          delegationStatusPatches={delegationStatusPatches}
                           isLoading={isLoading}
                           holdForDeepLink={holdForDeepLink}
                           isConfirmedEmpty={isConfirmedEmpty}
@@ -2397,6 +2404,7 @@ export function StreamContent({
 function TimelineMessageList({
   visibleItems,
   cancelledFollowUpIds,
+  delegationStatusPatches,
   isLoading,
   holdForDeepLink,
   isConfirmedEmpty,
@@ -2433,6 +2441,7 @@ function TimelineMessageList({
 }: {
   visibleItems: TimelineItem[]
   cancelledFollowUpIds: Set<string>
+  delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
   isLoading: boolean
   /** Hold the skeleton until a deep-link (?m=) target is in the loaded window
    *  so the keyed list mounts already anchored on it. */
@@ -2550,6 +2559,7 @@ function TimelineMessageList({
       sessionLiveSubsteps,
       onStopSession: handleStopSession,
       cancelledFollowUpIds,
+      delegationStatusPatches,
       batch,
       conversationOverlay,
     }),
@@ -2567,6 +2577,7 @@ function TimelineMessageList({
       sessionLiveSubsteps,
       handleStopSession,
       cancelledFollowUpIds,
+      delegationStatusPatches,
       batch,
       conversationOverlay,
     ]

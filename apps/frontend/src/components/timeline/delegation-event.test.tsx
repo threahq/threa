@@ -1,0 +1,168 @@
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router-dom"
+import type { DelegationCreatedEventPayload, DelegationStatusChangedEventPayload, StreamEvent } from "@threa/types"
+import { toast } from "sonner"
+import * as hooksModule from "@/hooks"
+import { delegationsApi } from "@/api"
+import { buildDelegationPrompt, DelegationEvent } from "./delegation-event"
+
+beforeEach(() => {
+  vi.restoreAllMocks()
+  vi.spyOn(hooksModule, "useActors").mockReturnValue({
+    getActorName: () => "Ariadne",
+  } as unknown as ReturnType<typeof hooksModule.useActors>)
+})
+
+function createdEvent(payload: DelegationCreatedEventPayload): StreamEvent {
+  return {
+    id: "evt_dlg",
+    streamId: "stream_1",
+    sequence: "20",
+    broadcastSequence: "12",
+    eventType: "delegation:created",
+    actorId: "persona_system_ariadne",
+    actorType: "persona",
+    createdAt: new Date().toISOString(),
+    payload,
+  }
+}
+
+const CREATED_PAYLOAD: DelegationCreatedEventPayload = {
+  delegationId: "dlg_1",
+  title: "Add rate limiting to the webhook endpoint",
+  brief: "Implement a token bucket. Done when the e2e suite passes.",
+  contextRefs: ["memo:memo_1"],
+  sourceConversationId: null,
+}
+
+function renderCard(statusPatch?: DelegationStatusChangedEventPayload) {
+  return render(
+    <MemoryRouter>
+      <DelegationEvent
+        event={createdEvent(CREATED_PAYLOAD)}
+        workspaceId="ws_1"
+        streamId="stream_1"
+        statusPatch={statusPatch}
+      />
+    </MemoryRouter>
+  )
+}
+
+describe("buildDelegationPrompt", () => {
+  it("compiles title, brief, and context refs into one paste-ready prompt", () => {
+    expect(buildDelegationPrompt(CREATED_PAYLOAD)).toBe(
+      [
+        "# Add rate limiting to the webhook endpoint",
+        "",
+        "Implement a token bucket. Done when the e2e suite passes.",
+        "",
+        "## Threa context refs",
+        "- memo:memo_1",
+      ].join("\n")
+    )
+  })
+
+  it("omits the refs section when there are none", () => {
+    const prompt = buildDelegationPrompt({ ...CREATED_PAYLOAD, contextRefs: [] })
+    expect(prompt).not.toContain("Threa context refs")
+  })
+})
+
+describe("DelegationEvent", () => {
+  it("renders the open state: title, actor · status meta, Copy prompt, and Cancel", () => {
+    renderCard()
+
+    expect(screen.getByText("Add rate limiting to the webhook endpoint")).toBeInTheDocument()
+    expect(screen.getByText(/Ariadne · Open/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Copy prompt/ })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "View result" })).not.toBeInTheDocument()
+  })
+
+  it("advances with the authoritative status patch: claimed shows the claimer label", () => {
+    renderCard({ delegationId: "dlg_1", status: "claimed", claimedByLabel: "Kris's MacBook / Claude Code" })
+
+    expect(screen.getByText(/Ariadne · Claimed · Kris's MacBook \/ Claude Code/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
+  })
+
+  it("shows the running progress note", () => {
+    renderCard({ delegationId: "dlg_1", status: "running", statusNote: "tests are compiling" })
+
+    expect(screen.getByText(/Ariadne · Running/)).toBeInTheDocument()
+    expect(screen.getByText("tests are compiling")).toBeInTheDocument()
+  })
+
+  it("completed: links the result message, hides Cancel", () => {
+    renderCard({ delegationId: "dlg_1", status: "completed", resultMessageId: "msg_result" })
+
+    const link = screen.getByRole("link", { name: "View result" })
+    expect(link).toHaveAttribute("href", "/w/ws_1/s/stream_1?m=msg_result")
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+  })
+
+  it.each(["failed", "cancelled", "expired"] as const)("%s is terminal: no Cancel, status in meta", (status) => {
+    renderCard({ delegationId: "dlg_1", status })
+
+    expect(screen.getByText(new RegExp(`Ariadne · ${status}`, "i"))).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+  })
+
+  it("copies the compiled prompt and confirms in place with a checkmark (INV-63/21: no toast, same footprint)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } })
+    const success = vi.spyOn(toast, "success")
+
+    renderCard()
+    await userEvent.click(screen.getByRole("button", { name: /Copy prompt/ }))
+
+    expect(writeText).toHaveBeenCalledWith(buildDelegationPrompt(CREATED_PAYLOAD))
+    await screen.findByRole("button", { name: "Prompt copied" })
+    expect(success).not.toHaveBeenCalled()
+  })
+
+  it("cancels via the API and flips to Cancelled for the clicking member", async () => {
+    const cancel = vi.spyOn(delegationsApi, "cancel").mockResolvedValue({ cancelled: true })
+
+    renderCard()
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+    expect(cancel).toHaveBeenCalledWith("ws_1", "dlg_1")
+    await waitFor(() => expect(screen.getByText(/Ariadne · Cancelled/)).toBeInTheDocument())
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+  })
+
+  it("does not flip when the cancel lost the race — the authoritative patch will land", async () => {
+    const info = vi.spyOn(toast, "info").mockImplementation(() => "")
+    vi.spyOn(delegationsApi, "cancel").mockResolvedValue({ cancelled: false })
+
+    renderCard()
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+    await waitFor(() => expect(info).toHaveBeenCalled())
+    expect(screen.getByText(/Ariadne · Open/)).toBeInTheDocument()
+  })
+
+  it("expands the hand-off prompt inline as source text", async () => {
+    renderCard()
+
+    await userEvent.click(screen.getByRole("button", { name: /Show hand-off prompt/ }))
+    expect(screen.getByText(/# Add rate limiting to the webhook endpoint/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Hide hand-off prompt/ })).toBeInTheDocument()
+  })
+
+  it("renders nothing without a payload", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <DelegationEvent
+          event={{ ...createdEvent(CREATED_PAYLOAD), payload: undefined }}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+    expect(container).toBeEmptyDOMElement()
+  })
+})

@@ -78,6 +78,8 @@ export type OutboxEventType =
   | "stream:agent_follow_up_scheduled"
   | "stream:agent_follow_up_cancelled"
   | "stream:brief_updated"
+  | "stream:delegation_created"
+  | "stream:delegation_status_changed"
   | "invitation:sent"
   | "invitation:link-created"
   | "invitation:link-claimed"
@@ -130,6 +132,8 @@ export type StreamScopedEventType =
   | "stream:agent_follow_up_scheduled"
   | "stream:agent_follow_up_cancelled"
   | "stream:brief_updated"
+  | "stream:delegation_created"
+  | "stream:delegation_status_changed"
   | "stream:activity"
   | "conversation:created"
   | "conversation:updated"
@@ -321,6 +325,20 @@ export interface StreamAgentFollowUpCancelledOutboxPayload extends StreamScopedP
  * the brief lives.
  */
 export interface StreamBriefUpdatedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+/**
+ * Carries a `delegation:created` / `delegation:status_changed` timeline event
+ * (roadmap 5.1) to the stream's room. Same envelope shape as the follow-up
+ * events: the full stream event rides along so clients append it without a
+ * fetch (created renders the card; status_changed patches it).
+ */
+export interface StreamDelegationCreatedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+export interface StreamDelegationStatusChangedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -930,6 +948,8 @@ export interface OutboxEventPayloadMap {
   "stream:agent_follow_up_scheduled": StreamAgentFollowUpScheduledOutboxPayload
   "stream:agent_follow_up_cancelled": StreamAgentFollowUpCancelledOutboxPayload
   "stream:brief_updated": StreamBriefUpdatedOutboxPayload
+  "stream:delegation_created": StreamDelegationCreatedOutboxPayload
+  "stream:delegation_status_changed": StreamDelegationStatusChangedOutboxPayload
   "stream:read": StreamReadOutboxPayload
   "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
@@ -1042,6 +1062,8 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:agent_follow_up_scheduled",
   "stream:agent_follow_up_cancelled",
   "stream:brief_updated",
+  "stream:delegation_created",
+  "stream:delegation_status_changed",
   "stream:activity",
   "conversation:created",
   "conversation:updated",

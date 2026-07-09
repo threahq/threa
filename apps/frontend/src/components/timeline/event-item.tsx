@@ -1,4 +1,4 @@
-import type { StreamEvent } from "@threa/types"
+import type { DelegationStatusChangedEventPayload, StreamEvent } from "@threa/types"
 import type { MessageAgentActivity } from "@/hooks"
 import type { BatchTimelineState } from "./event-list"
 import type { ConversationRevival } from "./conversation-overlay/model"
@@ -7,6 +7,7 @@ import { MembershipEvent } from "./membership-event"
 import { MessagesMovedEvent } from "./messages-moved-event"
 import { MemoCapturedEvent } from "./memo-captured-event"
 import { FollowUpScheduledEvent } from "./follow-up-event"
+import { DelegationEvent } from "./delegation-event"
 import { BriefUpdatedEvent } from "./brief-updated-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { SystemEvent } from "./system-event"
@@ -25,6 +26,8 @@ interface EventItemProps {
   isNew?: boolean
   /** followUpIds cancelled within the loaded window — drives the scheduled card's cancelled state. */
   cancelledFollowUpIds?: Set<string>
+  /** Latest status patch per delegationId within the loaded window — drives the delegation card's state. */
+  delegationStatusPatches?: Map<string, DelegationStatusChangedEventPayload>
   /** Defer non-critical per-message hydration until coordinated reveal completes */
   deferSecondaryHydration?: boolean
   /**
@@ -57,6 +60,7 @@ export function EventItem({
   agentActivity,
   isNew,
   cancelledFollowUpIds,
+  delegationStatusPatches,
   deferSecondaryHydration = false,
   groupContinuation = false,
   isFirstMessage = false,
@@ -168,6 +172,21 @@ export function EventItem({
           <BriefUpdatedEvent event={event} workspaceId={workspaceId} streamId={streamId} />
         </div>
       )
+
+    case "delegation:created": {
+      const delegationId = (event.payload as { delegationId?: string })?.delegationId
+      const statusPatch = delegationId ? delegationStatusPatches?.get(delegationId) : undefined
+      return (
+        <div data-event-id={event.id}>
+          <DelegationEvent event={event} workspaceId={workspaceId} streamId={streamId} statusPatch={statusPatch} />
+        </div>
+      )
+    }
+
+    case "delegation:status_changed":
+      // Patch, not a row: it advances the matching delegation card via
+      // delegationStatusPatches (collected in event-list) — renders nothing.
+      return null
 
     case "agent:follow_up_cancelled":
       // Patch, not a row: it flips the matching scheduled card to "Cancelled"

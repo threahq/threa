@@ -17,6 +17,7 @@ import type {
   E2eKeyWrapRecipientKind,
   AgentStepType,
   KnowledgeType,
+  DelegationStatus,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
 import type { ContextBag, ContextIntent, ContextRefKind } from "./context-bag"
@@ -1220,6 +1221,46 @@ export interface AgentFollowUpScheduledEventPayload {
  */
 export interface AgentFollowUpCancelledEventPayload {
   followUpId: string
+}
+
+/**
+ * Payload for `delegation:created` timeline events (roadmap 5.1): appended when
+ * an agent (or, later, a person) compiles a hand-off for the user's local agent,
+ * in the same transaction as the `delegated_tasks` row insert (INV-4/7). The
+ * card renders — and "Copy prompt" assembles — entirely from this payload, so
+ * the day-one zero-tooling hand-off needs no extra fetch. `title`/`brief`/
+ * `contextRefs` are snapshots: a delegation's content is immutable after
+ * creation (only its status moves), so they cannot go stale.
+ */
+export interface DelegationCreatedEventPayload {
+  delegationId: string
+  title: string
+  /** The compiled, self-contained hand-off prompt (markdown). */
+  brief: string
+  /** Pointer URLs (`shared-message:`/`memo:`/`attachment:`) into the workspace. */
+  contextRefs: string[]
+  /** The topic the delegation is anchored to, when the trigger had one. */
+  sourceConversationId: string | null
+}
+
+/**
+ * Payload for `delegation:status_changed` events (roadmap 5.1): appended in the
+ * same transaction as every status CAS so the card can never sit on stale state.
+ * This is a patch, not a visible row: the matching `delegation:created` card
+ * advances to `status`. One payload type carries every transition; the optional
+ * fields are populated when the transition supplies them (`claimedByLabel` on
+ * claim, `resultMessageId` on completion, `statusNote` on running/failed). The
+ * event's `actorId`/`actorType` record who drove the transition.
+ */
+export interface DelegationStatusChangedEventPayload {
+  delegationId: string
+  status: DelegationStatus
+  /** Free-text label for the claiming agent, e.g. "Kris's MacBook / Claude Code". */
+  claimedByLabel?: string | null
+  /** The stream message the completing agent posted its result as. */
+  resultMessageId?: string | null
+  /** Free-text progress/error note from the executing agent. */
+  statusNote?: string | null
 }
 
 /**
