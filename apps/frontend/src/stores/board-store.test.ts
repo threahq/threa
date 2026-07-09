@@ -93,17 +93,51 @@ describe("seedBoardPosts", () => {
 })
 
 describe("mergeBoardConversation", () => {
-  it("merges the aggregate, re-sorts on activity, and keeps the cached preview", async () => {
+  it("merges the aggregate, re-sorts on activity, and keeps the cached preview of members", async () => {
     await seedBoardPosts(WORKSPACE_ID, [
       makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1")]),
       makePost("conv_2", "2026-06-21T12:00:00.000Z"),
     ])
-    const merged = await mergeBoardConversation("conv_1", makeConversation("conv_1", "2026-06-22T12:00:00.000Z"))
+    const conversation = {
+      ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
+      messageIds: ["m1", "r1"],
+    }
+    const merged = await mergeBoardConversation("conv_1", conversation)
     expect(merged).toBe(true)
     const board = await readBoard()
     expect(board.map((p) => p.id)).toEqual(["conv_1", "conv_2"])
-    // The event carries the aggregate, not message bodies — preview is preserved.
+    // The event carries the aggregate, not message bodies — a member's cached
+    // preview is preserved.
     expect(board[0]?.recentMessages.map((m) => m.id)).toEqual(["r1"])
+  })
+
+  it("drops a re-filed message from the preview when it leaves the membership", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [
+      makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1"), makeMessage("r2")]),
+    ])
+    // r2 moved to another conversation (reassignMessage): the aggregate lists
+    // m1 + r1 only, so the stale preview row must leave with it.
+    const conversation = {
+      ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
+      messageIds: ["m1", "r1"],
+    }
+    const merged = await mergeBoardConversation("conv_1", conversation)
+    expect(merged).toBe(true)
+    expect((await db.conversations.get("conv_1"))?.recentMessages.map((m) => m.id)).toEqual(["r1"])
+  })
+
+  it("reports unhandled when the opening itself moved away, so the caller refetches", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1")])])
+    // The opening (m1) re-filed elsewhere; its replacement's body isn't in the
+    // event, so the merge lands what it knows and signals a board-head refetch.
+    const conversation = {
+      ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
+      messageIds: ["r1"],
+    }
+    const merged = await mergeBoardConversation("conv_1", conversation)
+    expect(merged).toBe(false)
+    // The row stays put (no vanish-and-return) with the aggregate applied.
+    expect((await db.conversations.get("conv_1"))?.conversation.messageIds).toEqual(["r1"])
   })
 
   it("returns false when the card isn't cached (caller hydrates instead)", async () => {

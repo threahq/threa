@@ -144,6 +144,11 @@ interface MessageItemProps {
    * — so the action shows exactly where a fresh branch is valid; other surfaces
    * leave it undefined and the action hides. */
   onNewSubtopic?: () => void
+  /** Open the surface's "Move to sub-topic" target picker for this row — re-file
+   * the message's membership into another conversation under the same root.
+   * Passed already-gated by the conversation surfaces (set only when the row has
+   * a valid target); other surfaces leave it undefined and the action hides. */
+  onMoveToSubtopic?: () => void
 }
 
 /**
@@ -170,6 +175,7 @@ export function MessageItem({
   surfaceClassName,
   rowInsetClassName,
   onNewSubtopic,
+  onMoveToSubtopic,
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
   const messageCollapse = useMessageCollapseSettings()
@@ -420,6 +426,7 @@ export function MessageItem({
     },
     onLabelMessage: () => setLabelPickerOpen(true),
     onNewSubtopic,
+    onMoveToSubtopic,
     onMarkReadUpToHere:
       conversationRead && rowRead !== "read" ? () => conversationRead.markReadUpToHere(message.id) : undefined,
     onMarkUnread: conversationRead && rowRead !== "unread" ? () => conversationRead.markUnread(message.id) : undefined,

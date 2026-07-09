@@ -266,13 +266,30 @@ export async function mergeBoardConversation(
     }
     const existing = await db.conversations.get(conversationId)
     if (!existing) return false
+    // The aggregate names the members but carries no bodies, so the projection
+    // snapshots must be reconciled here: a message re-filed OUT of this
+    // conversation (`reassignMessage`) must leave `recentMessages`, or a card
+    // whose rail hasn't synced keeps rendering the moved row off the stale
+    // snapshot until the next board refetch. Removal only — a message re-filed
+    // IN has no body in the event; its row fills from the rail or the refetch.
+    const memberIds = Array.isArray(conversation.messageIds) ? new Set(conversation.messageIds) : null
+    const recentMessages = memberIds
+      ? existing.recentMessages.filter((m) => memberIds.has(m.id))
+      : existing.recentMessages
+    // An opening that moved away can't be patched in place (its replacement's
+    // body isn't in the event): merge what's known but report unhandled, so the
+    // caller refetches the board head and re-seeds the card with its real new
+    // opener — the row stays put meanwhile (no vanish-and-return motion).
+    const openingMoved =
+      memberIds !== null && existing.openingMessage !== null && !memberIds.has(existing.openingMessage.id)
     await db.conversations.put({
       ...existing,
       conversation,
+      recentMessages,
       _lastActivityMs: lastActivityMs(conversation),
       _cachedAt: Date.now(),
       _status: undefined,
     })
-    return true
+    return !openingMoved
   })
 }

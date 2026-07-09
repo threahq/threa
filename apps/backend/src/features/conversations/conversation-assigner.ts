@@ -203,8 +203,10 @@ async function attachThreadReplyToSource(
  * The stream's effective access root: a top-level stream is its own root, a
  * thread defers to `root_stream_id` (board-view-design.md / INV-62). Falls back
  * to the stream's own id when the row is missing (FK-less schema, INV-1).
+ * Shared with the reassign path (`ConversationService.reassignMessage`), whose
+ * one-root rule must match the assigner's `existing` directive exactly.
  */
-async function effectiveRootId(client: PoolClient, streamId: string): Promise<string> {
+export async function effectiveRootId(client: PoolClient, streamId: string): Promise<string> {
   const stream = await StreamRepository.findById(client, streamId)
   return stream?.rootStreamId ?? streamId
 }

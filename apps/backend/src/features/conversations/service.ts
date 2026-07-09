@@ -11,6 +11,7 @@ import { MemoRepository } from "../memos"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
+import { effectiveRootId } from "./conversation-assigner"
 import { conversationFeedbackId, conversationId as generateConversationId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
@@ -458,9 +459,12 @@ export class ConversationService {
 
   /**
    * User correction: move a message's primary membership to another
-   * conversation in the same stream. Applies the move immediately (same
-   * repository operations the boundary extractor uses) and records a
-   * `conversation_feedback` row as ground truth for improving extraction.
+   * conversation under the same effective root — same stream, or between the
+   * root and one of its threads (the board's "move to sub-topic" re-file).
+   * Membership only; the message row never changes streams. Applies the move
+   * immediately (same repository operations the boundary extractor uses) and
+   * records a `conversation_feedback` row as ground truth for improving
+   * extraction.
    *
    * Mirrors the boundary extractor's persist phase: message row locked
    * FOR UPDATE before reading the current primary (INV-20), membership
@@ -484,11 +488,22 @@ export class ConversationService {
       if (!message) {
         throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
+      // One-root rule, same as the assigner's `existing` directive: same stream
+      // passes trivially; a cross-stream move between the root and its threads
+      // (the board's "move to sub-topic" re-file) passes; a cross-root move is
+      // rejected. Membership moves only — the message row itself never leaves
+      // its stream (re-file, not relocation).
       if (message.streamId !== target.streamId) {
-        throw new HttpError("Message does not belong to the conversation's stream", {
-          status: 400,
-          code: "MESSAGE_NOT_IN_CONVERSATION_STREAM",
-        })
+        const [targetRoot, messageRoot] = await Promise.all([
+          effectiveRootId(client, target.streamId),
+          effectiveRootId(client, message.streamId),
+        ])
+        if (targetRoot !== messageRoot) {
+          throw new HttpError("Conversation is in a different root stream", {
+            status: 400,
+            code: "CONVERSATION_NOT_IN_ROOT",
+          })
+        }
       }
 
       const previous = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, messageId)
@@ -523,17 +538,24 @@ export class ConversationService {
       const touchedIds = previous ? [previous.id, target.id] : [target.id]
       await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
 
-      // One delivery resolution for every touched conversation is correct here
-      // (unlike the boundary extractor, which spans streams): both `previous` and
-      // `target` live in the message's stream — the guard above pins `target` to
-      // it, and a primary membership is always in the message's own stream — so
-      // they share one access-root visibility (INV-62). Routing `previous` by
-      // `target`'s stream can't leak because they're the same stream.
-      const stream = await StreamRepository.findById(client, target.streamId)
-      const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
+      // `previous` and `target` share one access root (the one-root guard above,
+      // INV-62) but can be anchored in different streams under it — the root and
+      // one of its threads — so delivery is resolved per conversation stream,
+      // mirroring the boundary extractor's cross-stream persist.
+      const deliveryByStreamId = new Map<string, Awaited<ReturnType<typeof resolveConversationDelivery>>>()
+      const deliveryFor = async (streamId: string) => {
+        let resolved = deliveryByStreamId.get(streamId)
+        if (!resolved) {
+          const stream = await StreamRepository.findById(client, streamId)
+          resolved = await resolveConversationDelivery(client, stream)
+          deliveryByStreamId.set(streamId, resolved)
+        }
+        return resolved
+      }
 
       const touched = await ConversationRepository.findByIds(client, workspaceId, touchedIds)
       for (const conv of touched) {
+        const { parentStreamId, streamVisibility } = await deliveryFor(conv.streamId)
         await OutboxRepository.insert(client, "conversation:updated", {
           workspaceId,
           streamId: conv.streamId,
@@ -557,7 +579,7 @@ export class ConversationService {
         await OutboxRepository.insert(client, "conversation:message_assigned", {
           workspaceId,
           streamId: message.streamId,
-          parentStreamId,
+          parentStreamId: (await deliveryFor(message.streamId)).parentStreamId,
           messageId,
           conversationId: target.id,
           isPrimary: true,
