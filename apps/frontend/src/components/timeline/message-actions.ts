@@ -22,6 +22,7 @@ import {
   ArrowUpRight,
   PanelRight,
   GitBranch,
+  FolderInput,
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
@@ -101,6 +102,14 @@ export interface MessageActionContext {
    * D). The plain timeline never sets it.
    */
   onNewSubtopic?: () => void
+  /**
+   * Re-file the message's primary membership into another conversation under
+   * the same root — the main topic or one of its nested sub-topics (the target
+   * picker the conversation surfaces host). Membership only: the message row
+   * never leaves its stream. Set ONLY by the conversation surfaces (board card /
+   * conversation panel), and only when the row has somewhere to go.
+   */
+  onMoveToSubtopic?: () => void
   /**
    * Share-to-root fast path: queue a pointer share into the top-level non-thread
    * ancestor (channel/dm/scratchpad) and navigate there. Always preferred over
@@ -370,6 +379,16 @@ export const messageActions: MessageAction[] = [
     icon: GitBranch,
     when: (ctx) => !!ctx.onNewSubtopic,
     action: (ctx) => ctx.onNewSubtopic?.(),
+  },
+  {
+    // Re-file into another conversation under the same root (main topic or a
+    // nested sub-topic) — the conversation surfaces set the handler only when
+    // the row has a valid target. Membership move, not a message move.
+    id: "move-to-subtopic",
+    label: "Move to sub-topic…",
+    icon: FolderInput,
+    when: (ctx) => !!ctx.onMoveToSubtopic,
+    action: (ctx) => ctx.onMoveToSubtopic?.(),
   },
   {
     // In-stream → conversation panel (the mirror of "View in channel"). Only

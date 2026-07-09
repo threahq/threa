@@ -698,6 +698,11 @@ export function useReassignConversationMessage(workspaceId: string, streamId: st
         conversationKeys.list(workspaceId, streamId, {}),
         (old: ConversationWithStaleness[] | undefined) => old?.map((c) => updatedById.get(c.id) ?? c)
       )
+      // Apply the returned aggregates to the board store now, so the board card /
+      // panel re-file on the HTTP response instead of waiting for the socket echo
+      // (which then lands as an idempotent overwrite). No-op for uncached rows.
+      void mergeBoardConversation(conversation.id, conversation)
+      if (previousConversation) void mergeBoardConversation(previousConversation.id, previousConversation)
       // The expanded per-conversation message panels refetch their row sets.
       queryClient.invalidateQueries({ queryKey: conversationKeys.messages(conversation.id) })
       if (previousConversation) {

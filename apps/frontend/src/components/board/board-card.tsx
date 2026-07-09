@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
+import { useMoveToSubtopic } from "@/components/board/use-move-to-subtopic"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams } from "@/hooks"
@@ -304,6 +305,10 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
       branchesByForkMessageId,
       openingMessage?.id
     )
+  // "Move to sub-topic" re-file: membership move between this conversation and
+  // its nested sub-topics (one root). The hook hides the action when a row has
+  // nowhere to go.
+  const moveToSubtopic = useMoveToSubtopic({ workspaceId, conversation, branchesByForkMessageId })
   // A spanning-overflow row from a card opens the whole conversation in the panel.
   const continueThreadTo = () => getPanelUrl(createConversationPanelId(conversation.id))
   // Heal a soft-thread seam into its own topic (the card re-forms as a nested
@@ -442,6 +447,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
         surfaceClassName="bg-card px-3 sm:px-4"
         rowInsetClassName="-mx-3 sm:-mx-4"
         onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
+        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id)}
       />
     )
   }
@@ -469,6 +475,9 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
               ? () => inlineComposer.openNewSubtopic(message.streamId ?? branch.threadStreamId, message.id)
               : undefined
           }
+          onMoveToSubtopic={
+            branch.pending ? undefined : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId)
+          }
         />
       </ConversationReadProvider>
     )
@@ -481,6 +490,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
       <QuoteReplyProvider>
         {/* Desktop text-selection → floating "Quote" button, scoped to this card. */}
         <TextSelectionQuote streamId={streamId} containerRef={cardRef} />
+        {moveToSubtopic.moveDialog}
         <div ref={cardRef} className="rounded-xl border bg-card p-3 sm:p-4">
           {/* Zero-height marker at the card top: drives the header's stuck state
               (see the observer above). In flow but h-0, so it shifts nothing. */}

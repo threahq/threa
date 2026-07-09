@@ -306,7 +306,7 @@ describe("ConversationService.reassignMessage", () => {
     expect(sideEffects).toEqual({ feedbackRows: [], outboxRows: [] })
   })
 
-  test("rejects a message from a different stream than the conversation", async () => {
+  test("rejects a message from a different root than the conversation", async () => {
     const { convBId } = await seedTwoConversations()
     const otherStreamId = streamId()
     const foreignMsgId = messageId()
@@ -337,7 +337,73 @@ describe("ConversationService.reassignMessage", () => {
         messageId: foreignMsgId,
         userId: testUserId,
       })
-    ).rejects.toMatchObject({ code: "MESSAGE_NOT_IN_CONVERSATION_STREAM" })
+    ).rejects.toMatchObject({ code: "CONVERSATION_NOT_IN_ROOT" })
+  })
+
+  test("moves a root-stream message into a conversation anchored in a thread under the same root", async () => {
+    const { convAId, msg1Id, msg2Id } = await seedTwoConversations()
+    const threadStreamId = streamId()
+    const threadMsgId = messageId()
+    const convSubId = conversationId()
+
+    await withTransaction(pool, async (client) => {
+      // A thread under msg1 in the shared root channel, holding a sub-topic
+      // conversation — the board's nested-branch shape.
+      await StreamRepository.insert(client, {
+        id: threadStreamId,
+        workspaceId: testWorkspaceId,
+        type: "thread",
+        visibility: "private",
+        companionMode: "off",
+        createdBy: testUserId,
+        parentStreamId: testStreamId,
+        parentMessageId: msg1Id,
+        rootStreamId: testStreamId,
+      })
+      await MessageRepository.insert(client, {
+        id: threadMsgId,
+        streamId: threadStreamId,
+        sequence: BigInt(1),
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("Sub-topic opener"),
+      })
+      await ConversationRepository.insert(client, {
+        id: convSubId,
+        streamId: threadStreamId,
+        workspaceId: testWorkspaceId,
+        topicSummary: "Sub-topic",
+      })
+      await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convSubId, threadMsgId, testUserId)
+    })
+
+    // Re-file: membership moves across streams under one root; the message row
+    // stays in the root channel.
+    const result = await service.reassignMessage({
+      workspaceId: testWorkspaceId,
+      conversationId: convSubId,
+      messageId: msg2Id,
+      userId: testUserId,
+    })
+
+    expect(result.conversation).toMatchObject({ id: convSubId, messageIds: [threadMsgId, msg2Id] })
+    expect(result.previousConversation).toMatchObject({ id: convAId, messageIds: [msg1Id] })
+
+    const movedRow = await withTransaction(pool, (client) => MessageRepository.findById(client, msg2Id))
+    expect(movedRow?.streamId).toBe(testStreamId)
+
+    // Delivery resolves per conversation stream: the thread-anchored target
+    // routes with its parent channel, the root-anchored source with none.
+    const events = await withTransaction(pool, async (client) => {
+      const res = await client.query<{ payload: { conversationId: string; parentStreamId?: string } }>(
+        `SELECT payload FROM outbox WHERE event_type = 'conversation:updated'`
+      )
+      return res.rows
+    })
+    const updatedSub = events.find((e) => e.payload.conversationId === convSubId)
+    const updatedA = events.find((e) => e.payload.conversationId === convAId)
+    expect(updatedSub?.payload.parentStreamId).toBe(testStreamId)
+    expect(updatedA?.payload.parentStreamId).toBeUndefined()
   })
 
   test("rejects a conversation from a different workspace", async () => {

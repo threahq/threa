@@ -37,6 +37,7 @@ import {
   deriveBranchProvenance,
 } from "@/hooks/use-conversation-graph"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
+import { useMoveToSubtopic } from "@/components/board/use-move-to-subtopic"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
 import { useBoardHiddenConversations } from "@/stores/board-exclusions-store"
 import { cn } from "@/lib/utils"
@@ -488,6 +489,9 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     branchesByForkMessageId,
     openingMessage?.id
   )
+  // "Move to sub-topic" re-file — same gesture as the board card (membership move
+  // within one root; the hook hides the action when a row has nowhere to go).
+  const moveToSubtopic = useMoveToSubtopic({ workspaceId, conversation, branchesByForkMessageId })
   const renderMessage = (message: RenderableMessage, continuation: boolean) => {
     // Each row renders against its own stream so reactions and the permalink
     // target where the message actually lives (one root, many streams); fall
@@ -515,6 +519,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
         surfaceClassName="bg-background px-4"
         rowInsetClassName="-mx-4"
         onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
+        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id)}
       />
     )
   }
@@ -539,6 +544,9 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
             canBranch
               ? () => inlineComposer.openNewSubtopic(message.streamId ?? branch.threadStreamId, message.id)
               : undefined
+          }
+          onMoveToSubtopic={
+            branch.pending ? undefined : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId)
           }
         />
       </ConversationReadProvider>
@@ -579,6 +587,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
       <QuoteReplyProvider>
         {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
         <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
+        {moveToSubtopic.moveDialog}
         <div
           ref={listRef}
           className="min-h-0 flex-1 overflow-y-auto px-4"
