@@ -9,8 +9,9 @@ import {
   createDraftPanelId,
 } from "@/contexts"
 import { db } from "@/db"
+import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import { seedBoardPosts, useBoardPost, mergeBoardConversation } from "@/stores/board-store"
+import { seedBoardPosts, useBoardPost, mergeBoardConversation, putOptimisticBoardPost } from "@/stores/board-store"
 import { seedBoardExclusions, putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
 import type { BoardViewPost } from "./use-stable-board-view"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -42,6 +43,9 @@ export interface CreateBoardPostInput {
   target: BoardPostTarget
   contentJson: JSONContent
   attachmentIds?: string[]
+  /** Full attachment summaries (not just ids) so the optimistic card renders
+   *  thumbnails immediately instead of popping them in on refetch. */
+  attachments?: AttachmentSummary[]
 }
 
 /** Shared stable empty list so a disabled/loading query returns one identity. */
@@ -243,32 +247,67 @@ export function useWorkspaceConversations(
 export function useCreateBoardPost(workspaceId: string) {
   const messageService = useMessageService()
   const { createScratchpad } = useDraftScratchpads(workspaceId)
-  const { queueDraftMessage } = useQueueDraftMessage(workspaceId)
+  const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const queryClient = useQueryClient()
+  const streams = useWorkspaceStreams(workspaceId)
 
   return useMutation({
-    mutationFn: async ({ target, contentJson, attachmentIds }: CreateBoardPostInput) => {
+    mutationFn: async ({ target, contentJson, attachmentIds, attachments }: CreateBoardPostInput) => {
       if (target.type === "newScratchpad") {
         const draftId = await createScratchpad(target.companionMode)
         await queueDraftMessage(
-          { contentJson, attachmentIds },
+          { contentJson, attachmentIds, attachments },
           {
             workspaceId,
             streamId: draftId,
             streamCreation: { type: StreamTypes.SCRATCHPAD, companionMode: target.companionMode },
             draftId,
+            // Declare the fresh conversation so the promote-on-send backend mints
+            // it synchronously (and returns its id) instead of leaving it to the
+            // async extractor — the queue drain seeds the board card off that id
+            // the moment the scratchpad materializes. `intent: "new"` because an
+            // authored post is always a new topic boundary.
+            conversation: { intent: "new" },
           }
         )
         return
       }
 
-      await messageService.create(workspaceId, target.streamId, {
+      const { message, conversationId } = await messageService.create(workspaceId, target.streamId, {
         streamId: target.streamId,
         contentJson,
         attachmentIds,
         clientMessageId: generateClientId(),
         conversation: { intent: "new" },
       })
+
+      // Slot the card the instant the send returns, keyed by the real conversation
+      // id the backend minted synchronously — so it's on screen as the composer
+      // clears, not after the echo + board-head refetch. Reconciled in place by
+      // both (same id, `_status` cleared). A channel/DM is its own effective root.
+      // Best-effort: the message is already committed server-side, so a local IDB
+      // write failure must not fail the send (which would risk a duplicate resend).
+      const stream = streams.find((s) => s.id === target.streamId)
+      if (conversationId && currentUserId && stream) {
+        try {
+          await putOptimisticBoardPost(workspaceId, {
+            conversationId,
+            messageId: message.id,
+            streamId: target.streamId,
+            authorId: currentUserId,
+            // Server-resolved markdown (mentions → ids, INV-64), not a client
+            // re-serialize that could show a bare `@slug` until reconcile — matches
+            // the drain path.
+            contentMarkdown: message.contentMarkdown,
+            rootStreamId: stream.rootStreamId ?? stream.id,
+            rootStreamType: stream.type as BoardScopeStreamType,
+            createdAt: message.createdAt,
+            attachments,
+          })
+        } catch (err) {
+          console.error("Failed to seed optimistic board post", err)
+        }
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [...conversationKeys.all, "workspaceList", workspaceId] })

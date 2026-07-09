@@ -18,12 +18,21 @@ export const messageKeys = {
 }
 
 export const messagesApi = {
-  async create(workspaceId: string, streamId: string, data: CreateMessageInput): Promise<Message> {
-    const res = await api.post<{ message: Message }>(`/api/workspaces/${workspaceId}/messages`, {
+  /**
+   * Send a message. Returns the created `message` and — when the send declared a
+   * conversation directive (a board post's `intent: "new"`) — the `conversationId`
+   * the backend assigned it synchronously, so the board composer can slot an
+   * optimistic card keyed by the real id (reconciled by the `conversation:*` echo).
+   */
+  async create(
+    workspaceId: string,
+    streamId: string,
+    data: CreateMessageInput
+  ): Promise<{ message: Message; conversationId?: string }> {
+    return api.post<{ message: Message; conversationId?: string }>(`/api/workspaces/${workspaceId}/messages`, {
       ...data,
       streamId,
     })
-    return res.message
   },
 
   async createDm(workspaceId: string, dmUserId: string, data: CreateDmMessageInput): Promise<Message> {

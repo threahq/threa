@@ -1,7 +1,7 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedBoardPost } from "@/db"
-import type { BoardPost, ConversationWithStaleness } from "@threa/types"
+import type { AttachmentSummary, BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threa/types"
 
 /**
  * How many trailing replies a board card previews. Mirrors the backend's
@@ -69,6 +69,90 @@ export function useBoardPost(conversationId: string | null): CachedBoardPost | n
 export async function seedBoardPosts(workspaceId: string, posts: BoardPost[]): Promise<void> {
   if (posts.length === 0) return
   await db.conversations.bulkPut(posts.map((post) => toCached(workspaceId, post)))
+}
+
+/** The known facts about a board post the instant the send returns — enough to
+ *  render its card before the `conversation:*` echo carries the full aggregate. */
+export interface OptimisticBoardPostInput {
+  /** The conversation the backend minted for this post, returned on the send. */
+  conversationId: string
+  /** The opening message's server id (from the send response). */
+  messageId: string
+  /** The stream the post was authored into (a channel or DM). */
+  streamId: string
+  /** The author — the current user. */
+  authorId: string
+  /** The post body, already serialized to markdown for the card preview. */
+  contentMarkdown: string
+  /** The stream's effective root (a channel/DM is its own root). */
+  rootStreamId: string
+  rootStreamType: BoardScopeStreamType
+  /** ISO timestamp used for the opening message and the card's activity sort. */
+  createdAt: string
+  /** The post's uploaded attachments, so the card renders them immediately
+   *  instead of popping the thumbnail in when the board-head refetch reconciles. */
+  attachments?: AttachmentSummary[]
+}
+
+/**
+ * Slot an authored board post into the reactive feed the instant the send
+ * returns, keyed by the REAL conversation id the backend assigned synchronously
+ * (surfaced on the send response) — so the card appears as the composer clears
+ * rather than after the socket echo + board-head refetch round-trips. Written
+ * `_status: "pending"`; the `conversation:*` echo (`mergeBoardConversation`) and
+ * the board-head refetch (`seedBoardPosts`) reconcile it in place by the same id,
+ * clearing `_status` with no card swap or flash. Skipped if a row already exists
+ * for the id (the echo/refetch won the race), so a live aggregate is never
+ * regressed to a pending stub.
+ */
+export async function putOptimisticBoardPost(workspaceId: string, input: OptimisticBoardPostInput): Promise<void> {
+  const conversation: ConversationWithStaleness = {
+    id: input.conversationId,
+    streamId: input.streamId,
+    workspaceId,
+    messageIds: [input.messageId],
+    participantIds: [input.authorId],
+    secondaryMessageIds: [],
+    topicSummary: null,
+    summary: null,
+    completenessScore: 1,
+    confidence: 1,
+    status: "active",
+    parentConversationId: null,
+    lastActivityAt: input.createdAt,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    temporalStaleness: 0,
+    effectiveCompleteness: 1,
+  }
+  const post: BoardPost = {
+    conversation,
+    openingMessage: {
+      id: input.messageId,
+      streamId: input.streamId,
+      authorId: input.authorId,
+      authorType: "user",
+      contentMarkdown: input.contentMarkdown,
+      reactions: {},
+      attachments: input.attachments ?? [],
+      linkPreviews: [],
+      createdAt: input.createdAt,
+      editedAt: null,
+    },
+    recentMessages: [],
+    totalReplies: 0,
+    streamIds: [input.streamId],
+    hasCapturedMemo: false,
+    // The author's own post is trivially theirs — shows on the Mine lens at once.
+    isMine: true,
+    rootStreamId: input.rootStreamId,
+    rootStreamType: input.rootStreamType,
+    rootArchived: false,
+  }
+  await db.transaction("rw", db.conversations, async () => {
+    if (await db.conversations.get(input.conversationId)) return
+    await db.conversations.put(toCached(workspaceId, post, "pending"))
+  })
 }
 
 /**

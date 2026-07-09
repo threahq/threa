@@ -55,6 +55,11 @@ function post(id: string, activityMs: number): CachedBoardPost {
   } as unknown as CachedBoardPost
 }
 
+/** The viewer's own optimistic post — `_status: "pending"`, as `putOptimisticBoardPost` writes it. */
+function pendingPost(id: string, activityMs: number): CachedBoardPost {
+  return { ...post(id, activityMs), _status: "pending" } as unknown as CachedBoardPost
+}
+
 /** A post carrying the fields `matchesBoardLens` reads, for cross-lens tests. */
 function lensPost(
   id: string,
@@ -177,32 +182,40 @@ describe("useStableBoardView", () => {
     expect(result.current.newCount).toBe(0)
   })
 
-  it("auto-reveals on the next arrival when revealNext is armed (the viewer's own post)", () => {
+  it("reveals the viewer's own pending post at top the moment it lands", () => {
     mockLive(feed(post("a", 300)))
     const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
-    act(() => result.current.revealNext())
-    act(() => mockLive(feed(post("mine", 600), post("a", 300))))
+    act(() => mockLive(feed(pendingPost("mine", 600), post("a", 300))))
     rerender()
     expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "a"])
     expect(result.current.newCount).toBe(0)
   })
 
-  it("disarms revealNext after its window, so a later unrelated arrival buffers", () => {
-    vi.useFakeTimers()
-    try {
-      mockLive(feed(post("a", 300)))
-      const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
-      act(() => result.current.revealNext())
-      // Nothing arrived within the window; the arm expires.
-      act(() => vi.advanceTimersByTime(8001))
-      act(() => mockLive(feed(post("late", 600), post("a", 300))))
-      rerender()
-      // The stale arm did not fire — the late arrival waits behind the pill.
-      expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
-      expect(result.current.newCount).toBe(1)
-    } finally {
-      vi.useRealTimers()
-    }
+  it("reveals a pending post that materializes arbitrarily later (a queued scratchpad send), no arm window", () => {
+    mockLive(feed(post("a", 300)))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
+    // An unrelated arrival buffers first; then, much later (past any old 8s arm),
+    // the viewer's own scratchpad card finally lands from the drain.
+    act(() => mockLive(feed(post("other", 500), post("a", 300))))
+    rerender()
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+    expect(result.current.newCount).toBe(1)
+    act(() => mockLive(feed(pendingPost("mine", 900), post("other", 500), post("a", 300))))
+    rerender()
+    // The own card reveals at top; the unrelated arrival stays behind the pill.
+    expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "a"])
+    expect(result.current.newCount).toBe(1)
+  })
+
+  it("reveals ONLY the viewer's own pending card, leaving other users' arrivals buffered", () => {
+    mockLive(feed(post("a", 300)))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
+    // Two unrelated new conversations accumulate, then the viewer posts.
+    act(() => mockLive(feed(pendingPost("mine", 900), post("x", 700), post("y", 600), post("a", 300))))
+    rerender()
+    // Posting doesn't flush x/y — they stay behind the pill; only "mine" surfaces.
+    expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "a"])
+    expect(result.current.newCount).toBe(2)
   })
 
   it("keeps a vanished committed card rendering in place until the next commit", () => {
@@ -323,10 +336,10 @@ describe("useStableBoardView", () => {
     expect(result.current.posts.map((p) => p.id)).toEqual(["i"])
   })
 
-  it("keeps the reveal arm across a filter reset — posting from a filtered view reveals on All", () => {
+  it("reveals the viewer's own pending post after a filter reset (posting from a filtered view)", () => {
     // Posting from a filtered board navigates back to the All home (the new post
-    // might not match the filter); the reveal armed by the post must survive that
-    // reset so the authored card surfaces instead of hiding behind its own pill.
+    // might not match the filter); the pending optimistic card reveals itself at
+    // top there via reconcile, no arm to carry across the reset.
     const stalled = lensPost("s", 300, { status: "stalled" })
     mockLive(feed(stalled))
     const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter), {
@@ -334,12 +347,9 @@ describe("useStableBoardView", () => {
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
 
-    act(() => result.current.revealNext())
+    // Navigate to All, then the authored card lands after the fresh view's commit.
     rerender({ filter: ALL })
-    expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
-
-    // The authored post lands after the fresh view's wholesale commit.
-    act(() => mockLive(feed(lensPost("mine", 900, { status: "active" }), stalled)))
+    act(() => mockLive(feed(pendingPost("mine", 900), stalled)))
     rerender({ filter: ALL })
     expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "s"])
     expect(result.current.newCount).toBe(0)

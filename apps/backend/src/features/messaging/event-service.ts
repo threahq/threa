@@ -380,10 +380,14 @@ function assertE2eContentMatch(params: {
  * row + its outbox events). Invoked only when a send declares a directive.
  */
 export interface ConversationAssigner {
+  /** Assigns the message to its declared conversation and returns that
+   *  conversation's id — minted (a `new` post) or joined (`existing`,
+   *  `threadFromMessage`, `newSubtopic`) — so the caller can surface it on the
+   *  send response for an optimistic board card. */
   assignInTransaction(
     client: PoolClient,
     params: { workspaceId: string; message: Message; directive: ConversationDirective }
-  ): Promise<void>
+  ): Promise<string>
 }
 
 export class EventService {
@@ -444,21 +448,42 @@ export class EventService {
   }
 
   async createMessage(params: CreateMessageParams): Promise<Message> {
+    return (await this.createMessageReturningConversation(params)).message
+  }
+
+  /**
+   * Same send as {@link createMessage}, but also returns the id of the
+   * conversation a declared directive assigned the message to (minted for `new`,
+   * joined for `existing`/`threadFromMessage`/`newSubtopic`) — `undefined` when
+   * no directive was declared. The board composer surfaces it on the send
+   * response so it can write an optimistic board card keyed by the real
+   * conversation id (no temp-id swap), reconciled by the `conversation:*` echo.
+   */
+  async createMessageReturningConversation(
+    params: CreateMessageParams
+  ): Promise<{ message: Message; conversationId?: string }> {
     try {
       return await this._createMessageTxn(params)
     } catch (error) {
       // Concurrent duplicate: the txn rolled back (no orphaned stream_events/outbox),
       // and we return the already-committed message from the winning transaction.
-      if (error instanceof DuplicateMessageError) return error.existingMessage
+      // No conversation id — the winner already surfaced its own; the loser's
+      // optimistic card would double the winner's, so leave it to the echo/refetch.
+      if (error instanceof DuplicateMessageError) return { message: error.existingMessage }
       throw error
     }
   }
 
-  async createMessageInTransaction(client: PoolClient, params: CreateMessageParams): Promise<Message> {
-    // Fast path for sequential retries: return the existing message without writes.
+  async createMessageInTransaction(
+    client: PoolClient,
+    params: CreateMessageParams
+  ): Promise<{ message: Message; conversationId?: string }> {
+    // Fast path for sequential retries: return the existing message without
+    // writes. No conversation id — the first send already surfaced it; a retry
+    // reconciles through the echo/refetch, not a fresh optimistic card.
     if (params.clientMessageId) {
       const existing = await MessageRepository.findByClientMessageId(client, params.streamId, params.clientMessageId)
-      if (existing) return existing
+      if (existing) return { message: existing }
     }
     // The enclave seals its E2E reply with the message AAD bound to a
     // server-minted id, so the caller can pass that same id here to keep the
@@ -736,22 +761,24 @@ export class EventService {
     // transaction (so the board sees it the instant the send returns and the
     // async extractor leaves it locked). The assigner is injected to keep
     // messaging decoupled from conversation internals; fail loud (INV-11) if a
-    // directive arrives without one wired rather than silently dropping it.
+    // directive arrives without one wired rather than silently dropping it. Its
+    // returned id rides the send response for an optimistic board card.
+    let conversationId: string | undefined
     if (params.conversation) {
       if (!this.conversationAssigner) {
         throw new Error("Message declares a conversation but no ConversationAssigner is configured")
       }
-      await this.conversationAssigner.assignInTransaction(client, {
+      conversationId = await this.conversationAssigner.assignInTransaction(client, {
         workspaceId: params.workspaceId,
         message,
         directive: params.conversation,
       })
     }
 
-    return message
+    return { message, conversationId }
   }
 
-  private async _createMessageTxn(params: CreateMessageParams): Promise<Message> {
+  private async _createMessageTxn(params: CreateMessageParams): Promise<{ message: Message; conversationId?: string }> {
     return withTransaction(this.pool, (client) => this.createMessageInTransaction(client, params))
   }
 

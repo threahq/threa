@@ -1017,7 +1017,7 @@ describe("Access Control", () => {
         await withTransaction(pool, async (client) => {
           // The explorer search requires message_id IS NOT NULL; create a
           // message in the stream and point the attachment at it.
-          const message = await eventService.createMessageInTransaction(client, {
+          const { message } = await eventService.createMessageInTransaction(client, {
             workspaceId: wsId,
             streamId: streamIdValue,
             authorId: ownerId,

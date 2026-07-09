@@ -39,21 +39,17 @@ import { HttpError } from "../../lib/errors"
 export const conversationAssigner: ConversationAssigner = {
   async assignInTransaction(client, { workspaceId, message, directive }) {
     if (directive.intent === ConversationIntents.THREAD_FROM_MESSAGE) {
-      if (await attachThreadReplyToSource(client, workspaceId, message, directive.sourceConversationId)) {
-        return
-      }
-      await mintConversationForMessage(client, workspaceId, message)
-      return
+      const sourceId = await attachThreadReplyToSource(client, workspaceId, message, directive.sourceConversationId)
+      if (sourceId) return sourceId
+      return mintConversationForMessage(client, workspaceId, message)
     }
 
     if (directive.intent === ConversationIntents.NEW_SUBTOPIC) {
-      await mintOrAttachSubtopicConversation(client, workspaceId, message)
-      return
+      return mintOrAttachSubtopicConversation(client, workspaceId, message)
     }
 
     if (directive.intent === ConversationIntents.NEW) {
-      await mintConversationForMessage(client, workspaceId, message)
-      return
+      return mintConversationForMessage(client, workspaceId, message)
     }
 
     // `existing`. Workspace-scoped + row-locked (INV-8, INV-20): a stale/foreign
@@ -90,11 +86,13 @@ export const conversationAssigner: ConversationAssigner = {
       created: false,
       reason: "declared",
     })
+    return target.id
   },
 }
 
-/** Mint a fresh conversation in the message's stream, seeded with the message. */
-async function mintConversationForMessage(client: PoolClient, workspaceId: string, message: Message): Promise<void> {
+/** Mint a fresh conversation in the message's stream, seeded with the message.
+ *  Returns the minted id. */
+async function mintConversationForMessage(client: PoolClient, workspaceId: string, message: Message): Promise<string> {
   const newId = conversationId()
   await ConversationRepository.insert(client, {
     id: newId,
@@ -112,6 +110,7 @@ async function mintConversationForMessage(client: PoolClient, workspaceId: strin
     created: true,
     reason: "declared",
   })
+  return newId
 }
 
 /**
@@ -127,12 +126,11 @@ async function mintOrAttachSubtopicConversation(
   client: PoolClient,
   workspaceId: string,
   message: Message
-): Promise<void> {
+): Promise<string> {
   await client.query(sql`SELECT id FROM streams WHERE id = ${message.streamId} FOR UPDATE`)
   const active = (await ConversationRepository.findActiveByStream(client, message.streamId))[0]
   if (!active) {
-    await mintConversationForMessage(client, workspaceId, message)
-    return
+    return mintConversationForMessage(client, workspaceId, message)
   }
   await ConversationRepository.addPrimaryMessage(client, workspaceId, active.id, message.id, message.authorId)
   await ConversationRepository.bumpActivityForIds(client, workspaceId, [active.id])
@@ -143,6 +141,7 @@ async function mintOrAttachSubtopicConversation(
     created: false,
     reason: "declared",
   })
+  return active.id
 }
 
 /**
@@ -155,15 +154,16 @@ async function mintOrAttachSubtopicConversation(
  * The reply's stream must be a thread whose parent message belongs to the source
  * conversation, the source must be anchored at that parent stream (the root), and
  * the actor must be able to reach it (INV-62). Any mismatch
- * (foreign/non-member/no-access/race) returns false so the caller mints a fresh
- * conversation instead — the reply is never left without a primary.
+ * (foreign/non-member/no-access/race) returns null so the caller mints a fresh
+ * conversation instead — the reply is never left without a primary. On success
+ * returns the source conversation's id.
  */
 async function attachThreadReplyToSource(
   client: PoolClient,
   workspaceId: string,
   message: Message,
   sourceConversationId: string
-): Promise<boolean> {
+): Promise<string | null> {
   const thread = await StreamRepository.findById(client, message.streamId)
   const source = await ConversationRepository.findByIdForUpdate(client, workspaceId, sourceConversationId)
   if (
@@ -174,7 +174,7 @@ async function attachThreadReplyToSource(
     !source.messageIds.includes(thread.parentMessageId) ||
     !(await checkStreamAccess(client, source.streamId, workspaceId, message.authorId))
   ) {
-    return false
+    return null
   }
   await ConversationRepository.addPrimaryMessage(client, workspaceId, source.id, message.id, message.authorId)
   await ConversationRepository.reactivateIfInactive(client, workspaceId, source.id)
@@ -186,7 +186,7 @@ async function attachThreadReplyToSource(
     created: false,
     reason: "declared",
   })
-  return true
+  return source.id
 }
 
 /**

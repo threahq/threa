@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import Dexie from "dexie"
 import { db } from "@/db"
-import { seedBoardPosts, mergeBoardConversation } from "./board-store"
+import { seedBoardPosts, mergeBoardConversation, putOptimisticBoardPost } from "./board-store"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
 
 const WORKSPACE_ID = "ws_1"
@@ -135,5 +135,60 @@ describe("mergeBoardConversation", () => {
     const merged = await mergeBoardConversation("conv_absent", emptied)
     expect(merged).toBe(true)
     expect(await readBoard()).toHaveLength(0)
+  })
+})
+
+describe("putOptimisticBoardPost", () => {
+  const input = {
+    conversationId: "conv_new",
+    messageId: "msg_1",
+    streamId: "stream_1",
+    authorId: "usr_1",
+    contentMarkdown: "just posted",
+    rootStreamId: "stream_1",
+    rootStreamType: "channel" as const,
+    createdAt: "2026-06-22T12:00:00.000Z",
+  }
+
+  it("slots a pending card keyed by the real conversation id, renderable from the send alone", async () => {
+    await putOptimisticBoardPost(WORKSPACE_ID, input)
+    const row = await db.conversations.get("conv_new")
+    expect(row).toMatchObject({
+      id: "conv_new",
+      workspaceId: WORKSPACE_ID,
+      _status: "pending",
+      openingMessage: expect.objectContaining({ id: "msg_1", contentMarkdown: "just posted", authorId: "usr_1" }),
+      isMine: true,
+      rootStreamType: "channel",
+    })
+    expect(row?.conversation.status).toBe("active")
+    expect(row?.conversation.messageIds).toEqual(["msg_1"])
+  })
+
+  it("reconciles in place: the conversation echo merges over it and clears the pending flag", async () => {
+    await putOptimisticBoardPost(WORKSPACE_ID, input)
+    await mergeBoardConversation("conv_new", makeConversation("conv_new", "2026-06-22T12:00:05.000Z"))
+    const row = await db.conversations.get("conv_new")
+    expect(row?._status).toBeUndefined()
+    // Merge keeps the optimistic opening body (the echo carries no message bodies).
+    expect(row?.openingMessage?.contentMarkdown).toBe("just posted")
+  })
+
+  it("never regresses a live row to pending when the echo/refetch won the race", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [makePost("conv_new", "2026-06-22T12:00:09.000Z")])
+    await putOptimisticBoardPost(WORKSPACE_ID, input)
+    const row = await db.conversations.get("conv_new")
+    expect(row?._status).toBeUndefined()
+  })
+
+  it("renders the post's attachments immediately so the thumbnail doesn't pop in on reconcile", async () => {
+    await putOptimisticBoardPost(WORKSPACE_ID, {
+      ...input,
+      attachments: [{ id: "att_1", filename: "shot.png", mimeType: "image/png", sizeBytes: 2048 }],
+    })
+    const row = await db.conversations.get("conv_new")
+    expect(row?.openingMessage?.attachments).toEqual([
+      { id: "att_1", filename: "shot.png", mimeType: "image/png", sizeBytes: 2048 },
+    ])
   })
 })

@@ -159,7 +159,8 @@ function BoardComposerForm({
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
     const liveContent = editorContent ?? composer.content
     const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
-    const attachmentIds = extractUploadedAttachments(normalizedContent).map((a) => a.id)
+    const uploadedAttachments = extractUploadedAttachments(normalizedContent)
+    const attachmentIds = uploadedAttachments.map((a) => a.id)
 
     composer.setIsSending(true)
     try {
@@ -167,6 +168,8 @@ function BoardComposerForm({
         target,
         contentJson: normalizedContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        // Full summaries so the optimistic board card renders thumbnails at once.
+        attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
       })
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()

@@ -56,8 +56,8 @@ describe("conversationAssigner — threadFromMessage", () => {
     mock.restore()
   })
 
-  async function thread(sourceConversationId: string, reply = makeReply()): Promise<void> {
-    await conversationAssigner.assignInTransaction(CLIENT, {
+  async function thread(sourceConversationId: string, reply = makeReply()): Promise<string> {
+    return conversationAssigner.assignInTransaction(CLIENT, {
       workspaceId: WORKSPACE_ID,
       message: reply,
       directive: { intent: "threadFromMessage", sourceConversationId },
@@ -67,7 +67,8 @@ describe("conversationAssigner — threadFromMessage", () => {
   test("attaches the reply to the SAME source conversation — one conversation, no mint", async () => {
     findByIdForUpdate.mockResolvedValue(makeSource())
 
-    await thread("conv_src")
+    // Returns the joined source id so the caller can surface it on the send.
+    expect(await thread("conv_src")).toBe("conv_src")
 
     // The reply joins the source as a cross-stream member; nothing is minted.
     expect(insert).not.toHaveBeenCalled()
@@ -91,11 +92,13 @@ describe("conversationAssigner — threadFromMessage", () => {
   test("falls back to minting a conversation when the source is missing/foreign (reply never orphaned)", async () => {
     findByIdForUpdate.mockResolvedValue(null)
 
-    await thread("conv_gone")
+    const returned = await thread("conv_gone")
 
-    // No source to attach to → mint a fresh conversation in the thread stream.
+    // No source to attach to → mint a fresh conversation in the thread stream,
+    // and return that minted id (never orphaned, never the missing source id).
     expect(insert).toHaveBeenCalledTimes(1)
     expect(insert.mock.calls[0][1]).toMatchObject({ streamId: "thr_1", workspaceId: WORKSPACE_ID })
+    expect(returned).toBe(insert.mock.calls[0][1].id as string)
     expect(emitAssignmentEvents.mock.calls[0][1]).toMatchObject({ created: true })
   })
 
@@ -143,8 +146,8 @@ describe("conversationAssigner — newSubtopic (declared branch, stream-locked m
     mock.restore()
   })
 
-  async function newSubtopic(reply = makeReply("thr_1")): Promise<void> {
-    await conversationAssigner.assignInTransaction(LOCK_CLIENT, {
+  async function newSubtopic(reply = makeReply("thr_1")): Promise<string> {
+    return conversationAssigner.assignInTransaction(LOCK_CLIENT, {
       workspaceId: WORKSPACE_ID,
       message: reply,
       directive: { intent: "newSubtopic" },
@@ -154,7 +157,7 @@ describe("conversationAssigner — newSubtopic (declared branch, stream-locked m
   test("mints a fresh conversation anchored to the thread stream when none is active there", async () => {
     findActiveByStream.mockResolvedValue([])
 
-    await newSubtopic()
+    const returned = await newSubtopic()
 
     // Locks the thread stream row before deciding (INV-20), then mints anchored to
     // the thread — the branch relationship (thr_1.parentMessageId ∈ the parent
@@ -164,6 +167,7 @@ describe("conversationAssigner — newSubtopic (declared branch, stream-locked m
     expect(insert.mock.calls[0][1]).toMatchObject({ streamId: "thr_1", workspaceId: WORKSPACE_ID })
     // The mint generates its own id; the reply joins that same conversation.
     const mintedId = insert.mock.calls[0][1].id as string
+    expect(returned).toBe(mintedId)
     expect(addPrimaryMessage).toHaveBeenCalledWith(LOCK_CLIENT, WORKSPACE_ID, mintedId, "msg_reply", "usr_1")
     expect(bumpActivityForIds).toHaveBeenCalledWith(LOCK_CLIENT, WORKSPACE_ID, [mintedId])
     expect(emitAssignmentEvents.mock.calls[0][1]).toMatchObject({
@@ -192,7 +196,7 @@ describe("conversationAssigner — newSubtopic (declared branch, stream-locked m
     // stream lock + findActiveByStream and attaches instead of minting again.
     findActiveByStream.mockResolvedValue([{ id: "conv_sub", streamId: "thr_1" } as unknown as Conversation])
 
-    await newSubtopic()
+    expect(await newSubtopic()).toBe("conv_sub")
 
     expect(insert).not.toHaveBeenCalled()
     expect(addPrimaryMessage).toHaveBeenCalledWith(LOCK_CLIENT, WORKSPACE_ID, "conv_sub", "msg_reply", "usr_1")
@@ -225,9 +229,9 @@ describe("conversationAssigner — existing (same-root guard)", () => {
     mock.restore()
   })
 
-  async function existing(target: Conversation, reply: Message): Promise<void> {
+  async function existing(target: Conversation, reply: Message): Promise<string> {
     findByIdForUpdate.mockResolvedValue(target)
-    await conversationAssigner.assignInTransaction(CLIENT, {
+    return conversationAssigner.assignInTransaction(CLIENT, {
       workspaceId: WORKSPACE_ID,
       message: reply,
       directive: { intent: "existing", conversationId: target.id },
@@ -235,7 +239,7 @@ describe("conversationAssigner — existing (same-root guard)", () => {
   }
 
   test("attaches a same-stream reply", async () => {
-    await existing(makeSource({ id: "conv_a", streamId: "chan_1" }), makeReply("chan_1"))
+    expect(await existing(makeSource({ id: "conv_a", streamId: "chan_1" }), makeReply("chan_1"))).toBe("conv_a")
     expect(addPrimaryMessage).toHaveBeenCalledWith(CLIENT, WORKSPACE_ID, "conv_a", "msg_reply", "usr_1")
   })
 

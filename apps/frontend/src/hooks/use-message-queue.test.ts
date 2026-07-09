@@ -8,6 +8,7 @@ import * as prosemirrorModule from "@threa/prosemirror"
 import * as draftPromotionsModule from "@/lib/draft-promotions"
 import * as streamSyncModule from "@/sync/stream-sync"
 import * as draftStoreModule from "@/stores/draft-store"
+import * as boardStoreModule from "@/stores/board-store"
 import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
@@ -122,13 +123,15 @@ describe("useMessageQueue", () => {
       mockEventsUpdate(...args)) as unknown as typeof dbModule.db.events.update)
 
     vi.spyOn(dbModule.db.streams, "put").mockResolvedValue(undefined as never)
+    vi.spyOn(dbModule.db.streams, "delete").mockResolvedValue(undefined as never)
     vi.spyOn(dbModule.db.draftScratchpads, "delete").mockResolvedValue(undefined as never)
 
-    vi.spyOn(dbModule.db, "transaction").mockImplementation(((
-      _mode: string,
-      _tables: unknown,
-      fn: () => Promise<void>
-    ) => fn()) as unknown as typeof dbModule.db.transaction)
+    // db.transaction is called with a variable table list (2- and 3-table forms);
+    // invoke the LAST arg (the callback) regardless of how many tables precede it.
+    vi.spyOn(dbModule.db, "transaction").mockImplementation(((...args: unknown[]) => {
+      const fn = args[args.length - 1] as () => Promise<void>
+      return fn()
+    }) as unknown as typeof dbModule.db.transaction)
 
     vi.spyOn(dbModule, "sequenceToNum").mockImplementation((seq: string) => Number(seq))
 
@@ -397,5 +400,81 @@ describe("useMessageQueue", () => {
       attachmentIds: ["attach_1", "attach_2"],
       clientMessageId: "temp_attach",
     })
+  })
+
+  it("seeds an optimistic board card once a new-scratchpad post's send returns its conversation id", async () => {
+    // A promoted scratchpad send: streamId is already the real stream, and the
+    // send declares the fresh conversation (`intent: "new"`) so the backend mints
+    // and returns it. (Promotion itself is covered by its own tests.)
+    const realStream = { id: "stream_real", type: "scratchpad", rootStreamId: null }
+    vi.spyOn(dbModule.db.streams, "get").mockResolvedValue(realStream as never)
+    mockCreate.mockResolvedValue({
+      message: {
+        id: "msg_1",
+        authorId: "usr_1",
+        contentMarkdown: "first note",
+        streamId: "stream_real",
+        createdAt: "2026-07-08T12:00:00.000Z",
+      },
+      conversationId: "conv_new",
+    })
+    const putOptimistic = vi.spyOn(boardStoreModule, "putOptimisticBoardPost").mockResolvedValue(undefined)
+
+    mockPendingMessages = [
+      {
+        clientId: "temp_scratch",
+        workspaceId: "ws_1",
+        streamId: "stream_real",
+        content: "first note",
+        contentFormat: "markdown",
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "first note" }] }] },
+        createdAt: 1000,
+        retryCount: 0,
+        conversation: { intent: "new" },
+      } as unknown as MockPendingMessage,
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    // The card is seeded from the response, keyed by the real conversation +
+    // stream ids, so it lands the moment the scratchpad materializes.
+    expect(putOptimistic).toHaveBeenCalledWith(
+      "ws_1",
+      expect.objectContaining({
+        conversationId: "conv_new",
+        messageId: "msg_1",
+        streamId: "stream_real",
+        authorId: "usr_1",
+        contentMarkdown: "first note",
+        rootStreamId: "stream_real",
+        rootStreamType: "scratchpad",
+      })
+    )
+  })
+
+  it("does not seed a board card for an ordinary send that declared no new conversation", async () => {
+    const putOptimistic = vi.spyOn(boardStoreModule, "putOptimisticBoardPost").mockResolvedValue(undefined)
+    mockPendingMessages = [
+      {
+        clientId: "temp_plain",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Hello",
+        contentFormat: "markdown",
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hello" }] }] },
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(putOptimistic).not.toHaveBeenCalled()
   })
 })
