@@ -10,6 +10,7 @@ import {
   BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN,
   VOICE_STEERING_WORDS_MAX,
   VOICE_STEERING_WORD_MAX_LENGTH,
+  DEFAULT_USER_PREFERENCES,
 } from "@threa/types"
 import { updatePreferencesSchema } from "./handlers"
 
@@ -49,6 +50,22 @@ describe("updatePreferencesSchema boardDefaultLens", () => {
 
   it("treats the field as optional", () => {
     expect(updatePreferencesSchema.parse({}).boardDefaultLens).toBeUndefined()
+  })
+})
+
+describe("updatePreferencesSchema unreadOpenPosition", () => {
+  it("accepts both positions", () => {
+    expect(updatePreferencesSchema.parse({ unreadOpenPosition: "latest" }).unreadOpenPosition).toBe("latest")
+    expect(updatePreferencesSchema.parse({ unreadOpenPosition: "marker" }).unreadOpenPosition).toBe("marker")
+  })
+
+  it("rejects an unknown position", () => {
+    expect(updatePreferencesSchema.safeParse({ unreadOpenPosition: "top" }).success).toBe(false)
+  })
+
+  it("treats the field as optional and defaults to latest", () => {
+    expect(updatePreferencesSchema.parse({}).unreadOpenPosition).toBeUndefined()
+    expect(DEFAULT_USER_PREFERENCES.unreadOpenPosition).toBe("latest")
   })
 })
 
