@@ -32,6 +32,7 @@ import { useBoardRailsReady } from "@/hooks/use-board-card-messages"
 import { useBoardRevealLatch } from "@/hooks/use-board-reveal-latch"
 import { useConversationGraphReady } from "@/hooks/use-conversation-graph"
 import { SKELETON_DELAY_MS } from "@/contexts/coordinated-loading-context"
+import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
@@ -654,6 +655,11 @@ function BoardPageInner({
     }
   }
 
+  // Anchor for the mobile floating reply composer: an open card composer portals
+  // into this positioned container (pinned above the keyboard) instead of
+  // expanding in place mid-feed. Desktop composers ignore it.
+  const [floatingAnchorEl, setFloatingAnchorEl] = useState<HTMLElement | null>(null)
+
   const boardColumn = (
     <div className="flex h-full flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
@@ -693,36 +699,43 @@ function BoardPageInner({
           so buffered posts never shove the composer/feed down the way the old
           in-flow banner did. Anchored to the viewport top (fixed `top-2`), not the
           composer's height, so a mobile-expanded composer can't clip it. */}
-      <div className="relative flex-1 overflow-hidden">
+      <div ref={setFloatingAnchorEl} className="relative flex-1 overflow-hidden">
         {newCount > 0 && <BoardNewPostsPill count={newCount} onReveal={revealNew} scrollerRef={scrollerRef} />}
         {/* Owned scroller (a plain overflow div, like the timeline): virtua drives
             it via `scrollRef`, so scroll decisions read native metrics with no
             library tug-of-war. `overflowAnchor: none` keeps the browser's own
             scroll anchoring from fighting virtua. `data-board-scroll-viewport` is
             the IntersectionObserver root the cards' sticky-header sentinel reads. */}
-        <div
-          ref={registerScroller}
-          data-board-scroll-viewport
-          className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
-          style={{ overflowAnchor: "none" }}
-        >
-          <main className="mx-auto w-full max-w-[800px] px-2 sm:px-4">
-            {/* Composer sits above the virtualized rows in the same scroller; its
-                measured height feeds virtua's `startMargin` so item offsets stay
-                aligned. It is not virtualized, so its open/draft state survives a
-                scroll away and back. */}
-            <div ref={setComposerEl} className="pt-3">
-              <BoardComposer workspaceId={workspaceId} onPosted={handlePosted} />
-            </div>
-            {showFeed ? (
-              <BoardFeedList scrollRef={scrollerRef} listRef={listRef} startMargin={startMargin}>
-                {renderedRows}
-              </BoardFeedList>
-            ) : (
-              stateContent
-            )}
-          </main>
-        </div>
+        <FloatingComposerAnchorProvider el={floatingAnchorEl}>
+          <div
+            ref={registerScroller}
+            data-board-scroll-viewport
+            className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
+            style={{ overflowAnchor: "none" }}
+          >
+            <main
+              className="mx-auto w-full max-w-[800px] px-2 sm:px-4"
+              // Reserve space under the feed while a mobile floating composer is
+              // open, so the reply target can scroll above the pill; 0 otherwise.
+              style={{ paddingBottom: `var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px)` }}
+            >
+              {/* Composer sits above the virtualized rows in the same scroller; its
+                  measured height feeds virtua's `startMargin` so item offsets stay
+                  aligned. It is not virtualized, so its open/draft state survives a
+                  scroll away and back. */}
+              <div ref={setComposerEl} className="pt-3">
+                <BoardComposer workspaceId={workspaceId} onPosted={handlePosted} />
+              </div>
+              {showFeed ? (
+                <BoardFeedList scrollRef={scrollerRef} listRef={listRef} startMargin={startMargin}>
+                  {renderedRows}
+                </BoardFeedList>
+              ) : (
+                stateContent
+              )}
+            </main>
+          </div>
+        </FloatingComposerAnchorProvider>
       </div>
     </div>
   )

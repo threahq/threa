@@ -985,14 +985,32 @@ export function createStreamHandlers({
       // scope the (otherwise whole-stream) thread queries to the loaded message
       // IDs. Runs after the event window is finalized rather than in the upfront
       // Promise.all — keeps deep streams from scanning every thread they own.
+      //
+      // Append mode widens the scan to the whole stream: an append response only
+      // carries events past the client's cursor, so a thread patch the client
+      // missed live (`message:updated` is a broadcast-sequence-less patch — gap
+      // detection can't see it, and the parent row is behind the cursor) would
+      // otherwise stay stale until a hard refresh. The full map rides the
+      // response as `threadStates` so the client can heal already-persisted
+      // parent rows.
       const parentMessageIds = events
         .filter((e) => e.eventType === "message_created")
         .map((e) => (e.payload as { messageId?: string }).messageId)
         .filter((id): id is string => !!id)
+      const threadScope = syncMode === "append" ? undefined : parentMessageIds
       const [threadDataMap, threadSummaryMap] = await Promise.all([
-        streamService.getThreadsWithReplyCounts(streamId, parentMessageIds),
-        streamService.getThreadSummaries(streamId, parentMessageIds),
+        streamService.getThreadsWithReplyCounts(streamId, threadScope),
+        streamService.getThreadSummaries(streamId, threadScope),
       ])
+      const threadStates =
+        syncMode === "append"
+          ? [...threadDataMap.entries()].map(([parentMessageId, thread]) => ({
+              parentMessageId,
+              threadId: thread.threadId,
+              replyCount: thread.replyCount,
+              threadSummary: threadSummaryMap.get(parentMessageId) ?? null,
+            }))
+          : undefined
 
       const enrichedEvents = await eventService.enrichBootstrapEvents(events, threadDataMap, threadSummaryMap)
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(
@@ -1030,6 +1048,7 @@ export function createStreamHandlers({
           snapshotAt,
           hasOlderEvents,
           syncMode,
+          threadStates,
           unreadCount,
           mentionCount: activityCounts?.mentionCount ?? 0,
           activityCount: activityCounts?.totalCount ?? 0,

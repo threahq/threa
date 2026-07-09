@@ -36,6 +36,7 @@ import type {
   Persona,
   Bot,
   BoardView,
+  ThreadSummary,
 } from "./domain"
 import type { UserPreferences } from "./preferences"
 import type { WorkspaceSettings } from "./workspace-settings"
@@ -203,6 +204,22 @@ export interface StreamBootstrap {
   snapshotAt?: string
   hasOlderEvents: boolean
   syncMode: "append" | "replace"
+  /**
+   * Present on append-mode responses only: current thread state for every
+   * thread parented in this stream. An append response carries only events
+   * past the client's cursor, but thread patches (`message:updated`
+   * reply_count) mutate parent rows BEHIND the cursor and carry no broadcast
+   * sequence — a patch missed live is invisible to gap detection and never
+   * re-fetched, so opening the stream applies this map to heal stale thread
+   * cards. `threadSummary: null` = thread exists but has no non-deleted
+   * replies.
+   */
+  threadStates?: Array<{
+    parentMessageId: string
+    threadId: string
+    replyCount: number
+    threadSummary: ThreadSummary | null
+  }>
   unreadCount: number
   mentionCount: number
   activityCount: number
@@ -354,9 +371,17 @@ export interface SyncHeartbeatPayload {
  * sibling of the discriminant (not folded into one field) so a missing/garbage id
  * on `existing`/`threadFromMessage` is a validation error, distinct from `new`
  * and `newSubtopic`.
+ *
+ * `new` may carry a client-minted `conversationId`: the sender mints the id up
+ * front (a `conv_` ULID, INV-2) so it can slot the board card the instant the
+ * composer clears — rather than waiting for the send response to learn the
+ * server-minted id — and the card reconciles by the SAME id when the echo lands.
+ * Idempotent like `clientMessageId`: the send dedupes on that key before the
+ * assigner runs, so a retried send inserts the conversation exactly once. Omit to
+ * let the backend mint one (every non-board `new` caller does).
  */
 export type ConversationDirective =
-  | { intent: "new" }
+  | { intent: "new"; conversationId?: string }
   | { intent: "existing"; conversationId: string }
   | { intent: "threadFromMessage"; sourceConversationId: string }
   | { intent: "newSubtopic" }

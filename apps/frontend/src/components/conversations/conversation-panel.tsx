@@ -44,6 +44,11 @@ import { ConversationReadProvider, useConversationReadController } from "@/compo
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
+import {
+  FloatingComposerAnchorProvider,
+  useFloatingComposerAnchor,
+  FLOATING_COMPOSER_HEIGHT_VAR,
+} from "@/components/composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { SidebarToggle } from "@/components/layout"
@@ -81,6 +86,7 @@ interface ConversationPanelProps {
  */
 export function ConversationPanel({ workspaceId, onClose }: ConversationPanelProps) {
   const { isMobile } = useSidebar()
+  const [floatingAnchorEl, setFloatingAnchorEl] = useState<HTMLElement | null>(null)
   const { panelId } = usePanel()
   const conversationId = panelId ? parseConversationPanel(panelId) : null
   const { post, isLoading, notFound, refetch } = useConversationBoardPost(workspaceId, conversationId)
@@ -281,7 +287,12 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
         )}
         {!isMobile && <SidePanelClose onClose={onClose} />}
       </SidePanelHeader>
-      <SidePanelContent className="flex flex-col">{body}</SidePanelContent>
+      {/* `relative` + the anchor: on mobile an open reply/branch composer portals
+          to this container's bottom as the shared floating pill (same as the
+          stream page) instead of sitting in the scrolled flow. */}
+      <SidePanelContent ref={setFloatingAnchorEl} className="relative flex flex-col">
+        <FloatingComposerAnchorProvider el={floatingAnchorEl}>{body}</FloatingComposerAnchorProvider>
+      </SidePanelContent>
     </SidePanel>
   )
 }
@@ -543,6 +554,10 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   // Scopes text-selection quoting to this panel's message list.
   const listRef = useRef<HTMLDivElement>(null)
 
+  // True while any of the panel's composers (footer reply, branch tail, new
+  // sub-topic) floats in the mobile pill over this panel.
+  const floatingComposerOpen = useFloatingComposerAnchor()?.claimantId != null
+
   // Viewport auto-read: every rendered row is eligible. While older replies are
   // still backfilling, the cutoff through a rendered row also covers the not-
   // yet-fetched middle — deliberate, same as the board card: reading the
@@ -564,7 +579,13 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
       <QuoteReplyProvider>
         {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
         <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
-        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
+        <div
+          ref={listRef}
+          className="min-h-0 flex-1 overflow-y-auto px-4"
+          // pb-3 baseline, plus room for the mobile floating composer while one
+          // is open so the conversation tail can scroll above the pill.
+          style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
+        >
           {provenance && (
             <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
           )}
@@ -589,7 +610,11 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
             </button>
           )}
         </div>
-        <div className="border-t px-4 py-3">
+        {/* Hidden while a mobile composer floats over the panel (the pill replaces
+            the footer's affordance; a second bottom bar under it would double up).
+            `hidden`, not unmount — the reply composer inside must stay mounted to
+            keep its portal, draft, and open state alive. */}
+        <div className={cn("border-t px-4 py-3", floatingComposerOpen && "hidden")}>
           <BoardReplyComposer
             workspaceId={workspaceId}
             post={post}

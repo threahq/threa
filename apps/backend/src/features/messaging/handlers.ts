@@ -31,8 +31,11 @@ import { messageMetadataSchema } from "./metadata-schema"
 // Optional conversation directive: declare the message's conversation instead
 // of leaving the extractor to infer it. The id is a sibling of the discriminant,
 // so `existing` without a non-empty id is a validation error, distinct from `new`.
+// `new` may carry a client-minted `conversationId` (a `conv_` ULID) the send
+// honors instead of minting one — the prefix guard rejects a stray id from the
+// wrong id-space (INV-11) rather than persisting it.
 export const conversationDirectiveSchema = z.discriminatedUnion("intent", [
-  z.object({ intent: z.literal("new") }),
+  z.object({ intent: z.literal("new"), conversationId: z.string().startsWith("conv_").optional() }),
   z.object({ intent: z.literal("existing"), conversationId: z.string().min(1) }),
   z.object({ intent: z.literal("threadFromMessage"), sourceConversationId: z.string().min(1) }),
   z.object({ intent: z.literal("newSubtopic") }),

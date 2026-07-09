@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef } from "react"
-import { CornerDownRight } from "lucide-react"
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef } from "react"
+import { createPortal } from "react-dom"
+import { CornerDownRight, X } from "lucide-react"
 import { toast } from "sonner"
-import { MessageComposer, type ComposerControlHandle } from "@/components/composer"
+import {
+  MessageComposer,
+  FloatingComposerShell,
+  useFloatingComposerAnchor,
+  FLOATING_COMPOSER_HEIGHT_VAR,
+  type ComposerControlHandle,
+} from "@/components/composer"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
 import { useDraftComposer } from "@/hooks"
 import { usePreferences } from "@/contexts"
@@ -115,6 +123,108 @@ export function InlineComposerForm({
   const isEmptyRef = useRef(true)
   isEmptyRef.current = isEmptyContent(composer.content) && composer.pendingAttachments.length === 0
 
+  // Mobile: portal the open form into the surface's floating-composer anchor as
+  // the stream's floating pill (shared FloatingComposerShell), pinned to the
+  // visible bottom above the keyboard, instead of expanding in place mid-scroll.
+  // Desktop (or a surface without an anchor) keeps the in-place form.
+  const isMobile = useIsMobile()
+  const anchor = useFloatingComposerAnchor()
+  const floating = isMobile && anchor !== null
+  const formId = useId()
+  const anchorEl = anchor?.el
+  const claim = anchor?.claim
+  const release = anchor?.release
+  const claimantId = anchor?.claimantId
+  // The portal renders only while the slot is free or held by this form. Two
+  // forms are briefly mounted during a hand-off (the loser closes via a passive
+  // effect, one commit after the winner's claim lands) — gating the render, not
+  // just the close, is what keeps two pills from ever stacking in the anchor.
+  // `null` renders immediately so the common single-open case doesn't flash a
+  // frame of nothing while its own claim effect is still pending.
+  const holdsFloatingSlot = floating && (claimantId === null || claimantId === formId)
+
+  useEffect(() => {
+    if (!floating || !claim || !release) return
+    claim(formId)
+    return () => release(formId)
+  }, [floating, claim, release, formId])
+
+  // The anchor's floating slot is exclusive: when another form claims it,
+  // collapse back to the resting affordance. Only after having *held* the claim
+  // — on mount this effect runs before our own claim lands, and closing on that
+  // stale claimant would collapse the form the instant it opens.
+  const wasClaimantRef = useRef(false)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  useEffect(() => {
+    if (!floating) return
+    if (claimantId === formId) {
+      wasClaimantRef.current = true
+      return
+    }
+    if (!wasClaimantRef.current) return
+    void composerRef.current.flushDraft()
+    onCloseRef.current({ hadContent: !isEmptyRef.current })
+  }, [floating, claimantId, formId])
+
+  // Publish the shell's height so the anchor's scrollable content can reserve
+  // bottom space while the composer floats over it. Ownership-tagged: during a
+  // slot hand-off the outgoing form unmounts after the incoming one has already
+  // measured, and must not wipe the incoming form's value.
+  const shellRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (!holdsFloatingSlot || !anchorEl) return
+    const shell = shellRef.current
+    if (!shell) return
+    const write = () => {
+      anchorEl.style.setProperty(FLOATING_COMPOSER_HEIGHT_VAR, `${Math.ceil(shell.getBoundingClientRect().height)}px`)
+      anchorEl.dataset.floatingComposerOwner = formId
+    }
+    write()
+    const ro = new ResizeObserver(write)
+    ro.observe(shell)
+    return () => {
+      ro.disconnect()
+      if (anchorEl.dataset.floatingComposerOwner === formId) {
+        anchorEl.style.removeProperty(FLOATING_COMPOSER_HEIGHT_VAR)
+        delete anchorEl.dataset.floatingComposerOwner
+      }
+    }
+  }, [holdsFloatingSlot, anchorEl, formId])
+
+  // Keep the reply target visible: the marker sits where the form would render
+  // in place, so scrolling it into view parks the tail of the conversation above
+  // the floating pill. Re-centered on anchor shrink for the opening beat only —
+  // the keyboard resizes the layout viewport shortly after focus, hiding the
+  // bottom of the scroller — then scrolling is the user's.
+  const markerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!holdsFloatingSlot || !anchorEl) return
+    const center = () => markerRef.current?.scrollIntoView({ block: "center" })
+    const raf = requestAnimationFrame(center)
+    const deadline = performance.now() + 2000
+    let lastHeight = anchorEl.clientHeight
+    const ro = new ResizeObserver(() => {
+      const height = anchorEl.clientHeight
+      if (height < lastHeight && performance.now() < deadline) center()
+      lastHeight = height
+    })
+    ro.observe(anchorEl)
+    const timer = setTimeout(() => ro.disconnect(), 2200)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(timer)
+      ro.disconnect()
+    }
+  }, [holdsFloatingSlot, anchorEl])
+
+  const handleFloatingClose = useCallback(() => {
+    void composerRef.current.flushDraft()
+    // No refocus: returning focus to the resting button after a touch dismissal
+    // would draw a focus ring the user never keyboard-navigated to.
+    onCloseRef.current({ hadContent: !isEmptyRef.current })
+  }, [])
+
   const handleBlur = useCallback(() => {
     requestAnimationFrame(() => {
       const container = containerRef.current
@@ -162,44 +272,80 @@ export function InlineComposerForm({
     }
   }
 
+  const contextChipNode = contextChip ? (
+    <div className="flex w-fit min-w-0 max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+      <CornerDownRight className="h-3 w-3 shrink-0" />
+      <span className="truncate">{contextChip}</span>
+    </div>
+  ) : null
+
+  const editor = (
+    <MessageComposer
+      composerRef={composerControlRef}
+      content={composer.content}
+      onContentChange={composer.handleContentChange}
+      pendingAttachments={composer.pendingAttachments}
+      onRemoveAttachment={composer.handleRemoveAttachment}
+      onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
+      workspaceId={workspaceId}
+      streamId={hostStream?.id}
+      memoAnchorStreamId={memoAnchorStreamId}
+      fileInputRef={composer.fileInputRef}
+      onFileSelect={composer.handleFileSelect}
+      onFileUpload={composer.uploadFile}
+      imageCount={composer.imageCount}
+      onSubmit={handleSubmit}
+      canSubmit={canSubmit}
+      isSubmitting={composer.isSending}
+      hasFailed={composer.hasFailed}
+      placeholder={placeholder}
+      messageSendMode={preferences?.messageSendMode ?? "enter"}
+      autoFocus={autoFocus}
+      initialMobileChromeOpen
+      scopeId={draftKey}
+      streamContext={streamContext}
+      onEscapeBlur={() => {
+        const hadContent = !isEmptyRef.current
+        void composer.flushDraft()
+        onClose({ refocus: true, hadContent })
+      }}
+    />
+  )
+
+  if (floating && anchorEl) {
+    return (
+      <>
+        {/* In-place marker: the scroll target that stands in for the portaled
+            form, keeping the reply target in view above the floating pill. */}
+        <div ref={markerRef} data-floating-composer-marker aria-hidden />
+        {holdsFloatingSlot &&
+          createPortal(
+            <FloatingComposerShell ref={shellRef}>
+              <div ref={containerRef} onBlur={handleBlur}>
+                <div className="mb-1 flex items-center gap-2">
+                  {contextChipNode}
+                  <button
+                    type="button"
+                    aria-label="Close composer"
+                    onClick={handleFloatingClose}
+                    className="ml-auto shrink-0 rounded-full bg-muted p-2 text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {editor}
+              </div>
+            </FloatingComposerShell>,
+            anchorEl
+          )}
+      </>
+    )
+  }
+
   return (
     <div ref={containerRef} className="mt-3" onBlur={handleBlur}>
-      {contextChip && (
-        <div className="mb-1 flex w-fit max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-          <CornerDownRight className="h-3 w-3 shrink-0" />
-          <span className="truncate">{contextChip}</span>
-        </div>
-      )}
-      <MessageComposer
-        composerRef={composerControlRef}
-        content={composer.content}
-        onContentChange={composer.handleContentChange}
-        pendingAttachments={composer.pendingAttachments}
-        onRemoveAttachment={composer.handleRemoveAttachment}
-        onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
-        workspaceId={workspaceId}
-        streamId={hostStream?.id}
-        memoAnchorStreamId={memoAnchorStreamId}
-        fileInputRef={composer.fileInputRef}
-        onFileSelect={composer.handleFileSelect}
-        onFileUpload={composer.uploadFile}
-        imageCount={composer.imageCount}
-        onSubmit={handleSubmit}
-        canSubmit={canSubmit}
-        isSubmitting={composer.isSending}
-        hasFailed={composer.hasFailed}
-        placeholder={placeholder}
-        messageSendMode={preferences?.messageSendMode ?? "enter"}
-        autoFocus={autoFocus}
-        initialMobileChromeOpen
-        scopeId={draftKey}
-        streamContext={streamContext}
-        onEscapeBlur={() => {
-          const hadContent = !isEmptyRef.current
-          void composer.flushDraft()
-          onClose({ refocus: true, hadContent })
-        }}
-      />
+      {contextChipNode && <div className="mb-1">{contextChipNode}</div>}
+      {editor}
     </div>
   )
 }

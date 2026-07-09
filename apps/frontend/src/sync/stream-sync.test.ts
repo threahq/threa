@@ -1913,3 +1913,212 @@ describe("registerStreamSocketHandlers — read-state counter wiring", () => {
     cleanup()
   })
 })
+
+describe("registerStreamSocketHandlers — message:updated reply_count patch", () => {
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("sets threadId from the patch so the card renders without a prior stream:created", async () => {
+    const streamId = "stream_patch_threadid"
+
+    // Parent row as a viewer who never saw stream:created holds it: no threadId.
+    await db.events.put({
+      ...makeEvent({ id: "evt_parent", streamId, sequence: "10" }),
+      payload: { messageId: "msg_parent", contentMarkdown: "parent" },
+      workspaceId: "ws_1",
+      _sequenceNum: 10,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
+
+    const threadSummary = {
+      lastReplyAt: new Date().toISOString(),
+      participants: [{ id: "user_2", type: "user" }],
+      latestReply: { messageId: "msg_r1", actorId: "user_2", actorType: "user", contentMarkdown: "a reply" },
+    }
+    await emit("message:updated", {
+      workspaceId: "ws_1",
+      streamId,
+      messageId: "msg_parent",
+      updateType: "reply_count",
+      replyCount: 1,
+      threadSummary,
+      threadId: "stream_thread_9",
+    })
+
+    const row = await db.events.get("evt_parent")
+    expect(row?.payload).toMatchObject({
+      messageId: "msg_parent",
+      replyCount: 1,
+      threadId: "stream_thread_9",
+      threadSummary,
+    })
+
+    cleanup()
+  })
+
+  it("does not clear an existing threadId when the patch carries threadId: null", async () => {
+    const streamId = "stream_patch_null_threadid"
+
+    await db.events.put({
+      ...makeEvent({ id: "evt_parent2", streamId, sequence: "11" }),
+      payload: { messageId: "msg_parent2", contentMarkdown: "parent", threadId: "stream_thread_kept", replyCount: 3 },
+      workspaceId: "ws_1",
+      _sequenceNum: 11,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
+
+    await emit("message:updated", {
+      workspaceId: "ws_1",
+      streamId,
+      messageId: "msg_parent2",
+      updateType: "reply_count",
+      replyCount: 2,
+      threadId: null,
+    })
+
+    const row = await db.events.get("evt_parent2")
+    expect(row?.payload).toMatchObject({ replyCount: 2, threadId: "stream_thread_kept" })
+
+    cleanup()
+  })
+})
+
+describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.pendingMessages.clear()
+  })
+
+  const healSummary = {
+    lastReplyAt: new Date().toISOString(),
+    participants: [{ id: "user_2", type: "user" as const }],
+    latestReply: { messageId: "msg_r9", actorId: "user_2", actorType: "user" as const, contentMarkdown: "latest" },
+  }
+
+  it("heals a stale parent row behind the append cursor from threadStates", async () => {
+    const streamId = "stream_heal"
+
+    // Parent row persisted long ago; every live thread patch for it was missed.
+    await db.events.put({
+      ...makeEvent({ id: "evt_stale_parent", streamId, sequence: "10" }),
+      payload: { messageId: "msg_stale_parent", contentMarkdown: "parent" },
+      workspaceId: "ws_1",
+      _sequenceNum: 10,
+      _cachedAt: Date.now() - 60_000,
+    })
+
+    // Append response: only a newer unrelated event, plus the threadStates map.
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([makeEvent({ id: "evt_new", streamId, sequence: "20" })], streamId),
+      syncMode: "append",
+      snapshotAt: new Date().toISOString(),
+      threadStates: [
+        { parentMessageId: "msg_stale_parent", threadId: "stream_thread_1", replyCount: 6, threadSummary: healSummary },
+      ],
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    const row = await db.events.get("evt_stale_parent")
+    expect(row?.payload).toMatchObject({
+      messageId: "msg_stale_parent",
+      threadId: "stream_thread_1",
+      replyCount: 6,
+      threadSummary: healSummary,
+    })
+    // Bootstrap data, not a socket patch — the freshness watermark stays unset.
+    expect(row?._patchedAt).toBeUndefined()
+  })
+
+  it("preserves a parent row patched by a socket handler after the snapshot", async () => {
+    const streamId = "stream_heal_fresh"
+    const snapshotAt = new Date(Date.now() - 5_000).toISOString()
+
+    // Socket patch landed AFTER the bootstrap snapshot — it is fresher.
+    await db.events.put({
+      ...makeEvent({ id: "evt_fresh_parent", streamId, sequence: "10" }),
+      payload: { messageId: "msg_fresh_parent", contentMarkdown: "parent", threadId: "stream_thread_2", replyCount: 7 },
+      workspaceId: "ws_1",
+      _sequenceNum: 10,
+      _cachedAt: Date.now(),
+      _patchedAt: Date.now(),
+    })
+
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([], streamId),
+      syncMode: "append",
+      snapshotAt,
+      threadStates: [
+        { parentMessageId: "msg_fresh_parent", threadId: "stream_thread_2", replyCount: 6, threadSummary: null },
+      ],
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    const row = await db.events.get("evt_fresh_parent")
+    expect(row?.payload).toMatchObject({ replyCount: 7, threadId: "stream_thread_2" })
+  })
+
+  it("does not rewrite rows whose thread state already matches (no useless liveQuery churn)", async () => {
+    const streamId = "stream_heal_noop"
+    const cachedAt = Date.now() - 60_000
+
+    await db.events.put({
+      ...makeEvent({ id: "evt_noop_parent", streamId, sequence: "10" }),
+      payload: {
+        messageId: "msg_noop_parent",
+        contentMarkdown: "parent",
+        threadId: "stream_thread_3",
+        replyCount: 2,
+        threadSummary: null,
+      },
+      workspaceId: "ws_1",
+      _sequenceNum: 10,
+      _cachedAt: cachedAt,
+    })
+
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([], streamId),
+      syncMode: "append",
+      snapshotAt: new Date().toISOString(),
+      threadStates: [
+        { parentMessageId: "msg_noop_parent", threadId: "stream_thread_3", replyCount: 2, threadSummary: null },
+      ],
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    const row = await db.events.get("evt_noop_parent")
+    expect(row?._cachedAt).toBe(cachedAt)
+  })
+})

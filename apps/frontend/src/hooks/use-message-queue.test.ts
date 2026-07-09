@@ -402,10 +402,12 @@ describe("useMessageQueue", () => {
     })
   })
 
-  it("seeds an optimistic board card once a new-scratchpad post's send returns its conversation id", async () => {
+  it("reconciles the optimistic board card to real ids once a new-scratchpad post's send returns", async () => {
     // A promoted scratchpad send: streamId is already the real stream, and the
-    // send declares the fresh conversation (`intent: "new"`) so the backend mints
-    // and returns it. (Promotion itself is covered by its own tests.)
+    // send declares the fresh conversation (`intent: "new"`, carrying the
+    // client-minted id) so the backend honors and returns it. (Promotion itself is
+    // covered by its own tests.) The card was seeded at composer-clear under the
+    // draft ids; the drain rewrites it to the real ones.
     const realStream = { id: "stream_real", type: "scratchpad", rootStreamId: null }
     vi.spyOn(dbModule.db.streams, "get").mockResolvedValue(realStream as never)
     mockCreate.mockResolvedValue({
@@ -418,7 +420,7 @@ describe("useMessageQueue", () => {
       },
       conversationId: "conv_new",
     })
-    const putOptimistic = vi.spyOn(boardStoreModule, "putOptimisticBoardPost").mockResolvedValue(undefined)
+    const reconcile = vi.spyOn(boardStoreModule, "reconcileOptimisticBoardPost").mockResolvedValue(undefined)
 
     mockPendingMessages = [
       {
@@ -430,7 +432,7 @@ describe("useMessageQueue", () => {
         contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "first note" }] }] },
         createdAt: 1000,
         retryCount: 0,
-        conversation: { intent: "new" },
+        conversation: { intent: "new", conversationId: "conv_new" },
       } as unknown as MockPendingMessage,
     ]
 
@@ -439,9 +441,9 @@ describe("useMessageQueue", () => {
       await new Promise((r) => setTimeout(r, 10))
     })
 
-    // The card is seeded from the response, keyed by the real conversation +
-    // stream ids, so it lands the moment the scratchpad materializes.
-    expect(putOptimistic).toHaveBeenCalledWith(
+    // The card reconciles to the real conversation + stream + message ids the
+    // moment the scratchpad materializes.
+    expect(reconcile).toHaveBeenCalledWith(
       "ws_1",
       expect.objectContaining({
         conversationId: "conv_new",
@@ -455,8 +457,8 @@ describe("useMessageQueue", () => {
     )
   })
 
-  it("does not seed a board card for an ordinary send that declared no new conversation", async () => {
-    const putOptimistic = vi.spyOn(boardStoreModule, "putOptimisticBoardPost").mockResolvedValue(undefined)
+  it("does not touch a board card for an ordinary send that declared no new conversation", async () => {
+    const reconcile = vi.spyOn(boardStoreModule, "reconcileOptimisticBoardPost").mockResolvedValue(undefined)
     mockPendingMessages = [
       {
         clientId: "temp_plain",
@@ -475,6 +477,6 @@ describe("useMessageQueue", () => {
       await new Promise((r) => setTimeout(r, 10))
     })
 
-    expect(putOptimistic).not.toHaveBeenCalled()
+    expect(reconcile).not.toHaveBeenCalled()
   })
 })

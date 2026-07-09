@@ -94,18 +94,9 @@ export interface OptimisticBoardPostInput {
   attachments?: AttachmentSummary[]
 }
 
-/**
- * Slot an authored board post into the reactive feed the instant the send
- * returns, keyed by the REAL conversation id the backend assigned synchronously
- * (surfaced on the send response) — so the card appears as the composer clears
- * rather than after the socket echo + board-head refetch round-trips. Written
- * `_status: "pending"`; the `conversation:*` echo (`mergeBoardConversation`) and
- * the board-head refetch (`seedBoardPosts`) reconcile it in place by the same id,
- * clearing `_status` with no card swap or flash. Skipped if a row already exists
- * for the id (the echo/refetch won the race), so a live aggregate is never
- * regressed to a pending stub.
- */
-export async function putOptimisticBoardPost(workspaceId: string, input: OptimisticBoardPostInput): Promise<void> {
+/** Build the `BoardPost` projection an authored post renders from before its
+ *  aggregate echoes — shared by the seed and the post-promotion reconcile. */
+function buildOptimisticPost(workspaceId: string, input: OptimisticBoardPostInput): BoardPost {
   const conversation: ConversationWithStaleness = {
     id: input.conversationId,
     streamId: input.streamId,
@@ -125,7 +116,7 @@ export async function putOptimisticBoardPost(workspaceId: string, input: Optimis
     temporalStaleness: 0,
     effectiveCompleteness: 1,
   }
-  const post: BoardPost = {
+  return {
     conversation,
     openingMessage: {
       id: input.messageId,
@@ -149,9 +140,82 @@ export async function putOptimisticBoardPost(workspaceId: string, input: Optimis
     rootStreamType: input.rootStreamType,
     rootArchived: false,
   }
+}
+
+/**
+ * Slot an authored board post into the reactive feed, keyed by the conversation
+ * id — client-minted up front for a new scratchpad (so the card lands the instant
+ * the composer clears, before the promote+send round-trips) or the real id for an
+ * existing-stream post (surfaced on the send response). Written `_status:
+ * "pending"`; the `conversation:*` echo (`mergeBoardConversation`) and the
+ * board-head refetch (`seedBoardPosts`) reconcile it in place by the same id,
+ * clearing `_status` with no card swap or flash.
+ *
+ * Insert-if-absent: it never overwrites an existing row (the echo/refetch won the
+ * race, or a new scratchpad's composer-clear stub is already down). The drain's
+ * post-promotion refine goes through {@link reconcileOptimisticBoardPost}, which is
+ * the only writer allowed to rewrite an existing card's draft ids with the real
+ * ones.
+ */
+export async function putOptimisticBoardPost(workspaceId: string, input: OptimisticBoardPostInput): Promise<void> {
+  const post = buildOptimisticPost(workspaceId, input)
   await db.transaction("rw", db.conversations, async () => {
     if (await db.conversations.get(input.conversationId)) return
     await db.conversations.put(toCached(workspaceId, post, "pending"))
+  })
+}
+
+/**
+ * Rewrite a new-scratchpad post's card with its real ids once the send promotes
+ * the draft and returns the server message. The composer-clear stub
+ * ({@link putOptimisticBoardPost}) carried the DRAFT stream id and the client temp
+ * message id; this lands the real stream/message ids + server-resolved markdown so
+ * the card deep-links correctly and `openingId === messageIds[0]` (else the flat
+ * projection renders the post twice — the stub as opening, the real row as a reply).
+ *
+ * Three cases, so it's correct under any echo↔drain ordering:
+ *  - **No row** — the user cancelled the post mid-send (its card + queued message
+ *    were deleted). Do NOT resurrect it.
+ *  - **Still pending** — the drain beat the `conversation:created` echo; the stub's
+ *    aggregate is synthetic, so replace the card wholesale with the real projection
+ *    (still pending; the echo/refetch clears `_status`).
+ *  - **Already reconciled** — the echo cleared `_status` first but `mergeBoardConversation`
+ *    kept the stub's stale opening. Patch only the authoritative opening + stream
+ *    onto it; never regress the echo's real aggregate/recentMessages back to a stub.
+ */
+export async function reconcileOptimisticBoardPost(
+  workspaceId: string,
+  input: OptimisticBoardPostInput
+): Promise<void> {
+  const post = buildOptimisticPost(workspaceId, input)
+  await db.transaction("rw", db.conversations, async () => {
+    const existing = await db.conversations.get(input.conversationId)
+    if (!existing) return
+    if (existing._status === "pending") {
+      await db.conversations.put(toCached(workspaceId, post, "pending"))
+      return
+    }
+    await db.conversations.put({
+      ...existing,
+      openingMessage: post.openingMessage,
+      rootStreamId: input.rootStreamId,
+      rootStreamType: input.rootStreamType,
+      conversation: { ...existing.conversation, streamId: input.streamId },
+    })
+  })
+}
+
+/**
+ * Drop a still-pending optimistic board card — the composer-clear stub of a new
+ * scratchpad post whose queued send the user cancelled/deleted before it landed,
+ * so the card doesn't linger as a phantom that will never reconcile. Guarded on
+ * `_status: "pending"`: a card the send already committed (server-reconciled, or
+ * even mid-flight) is never removed by a stale cancel.
+ */
+export async function deleteOptimisticBoardPost(conversationId: string): Promise<void> {
+  await db.transaction("rw", db.conversations, async () => {
+    const existing = await db.conversations.get(conversationId)
+    if (existing?._status === "pending") await db.conversations.delete(conversationId)
   })
 }
 
