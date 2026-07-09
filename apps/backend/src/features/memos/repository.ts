@@ -123,7 +123,16 @@ export interface MemoSearchFilters {
   tags?: string[]
   before?: Date
   after?: Date
+  /**
+   * Which memo lifecycle statuses to return. Defaults to `["active"]` so
+   * agent retrieval (the researcher) keeps excluding archived/superseded
+   * memos untouched; only the memory explorer opts into other statuses to
+   * let a user browse and un-archive them.
+   */
+  statuses?: MemoStatus[]
 }
+
+const DEFAULT_SEARCH_STATUSES: MemoStatus[] = ["active"]
 
 export interface SemanticSearchParams {
   workspaceId: string
@@ -567,14 +576,53 @@ export const MemoRepository = {
     `)
   },
 
+  /**
+   * Archive an active memo. Guarded on `status = 'active'` so a `superseded`
+   * memo can't be flipped to `archived` and then restored via `unarchive`
+   * (which only accepts `status = 'archived'`) — that two-step would resurrect
+   * retired-by-supersession content into retrieval. Returns null when the row
+   * is missing or not active.
+   */
   async archive(db: Querier, id: string): Promise<Memo | null> {
     const result = await db.query<MemoRow>(sql`
       UPDATE memos
       SET status = 'archived',
           archived_at = NOW(),
           updated_at = NOW()
-      WHERE id = ${id}
+      WHERE id = ${id} AND status = 'active'
       RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    if (!result.rows[0]) return null
+    return mapRowToMemo(result.rows[0])
+  },
+
+  /**
+   * Restore an archived memo to active. Guarded on `status = 'archived'` so a
+   * `superseded` memo (retired because a newer capture replaced it) can never
+   * be resurrected into retrieval — only user-archived memos come back.
+   * Returns null when the row is missing or not archived.
+   */
+  async unarchive(db: Querier, id: string): Promise<Memo | null> {
+    const result = await db.query<MemoRow>(sql`
+      UPDATE memos
+      SET status = 'active',
+          archived_at = NULL,
+          updated_at = NOW()
+      WHERE id = ${id} AND status = 'archived'
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    if (!result.rows[0]) return null
+    return mapRowToMemo(result.rows[0])
+  },
+
+  /** The active memo that superseded `memoId`, if any (reverse of parent_memo_id). */
+  async findSupersededBy(db: Querier, workspaceId: string, memoId: string): Promise<Memo | null> {
+    const result = await db.query<MemoRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}
+      FROM memos
+      WHERE workspace_id = ${workspaceId} AND parent_memo_id = ${memoId} AND status = 'active'
+      ORDER BY created_at DESC
+      LIMIT 1
     `)
     if (!result.rows[0]) return null
     return mapRowToMemo(result.rows[0])
@@ -645,6 +693,7 @@ export const MemoRepository = {
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
+    const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
 
     if (!query.trim()) {
       const result = await db.query<MemoSearchRow>(sql`
@@ -664,7 +713,7 @@ export const MemoRepository = {
           LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id
           LEFT JOIN streams root_stream ON root_stream.id = COALESCE(msg_stream.root_stream_id, conv_stream.root_stream_id)
           WHERE m.workspace_id = ${workspaceId}
-            AND m.status = 'active'
+            AND m.status = ANY(${statuses})
             AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
             AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
             AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
@@ -702,7 +751,7 @@ export const MemoRepository = {
         LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id
         LEFT JOIN streams root_stream ON root_stream.id = COALESCE(msg_stream.root_stream_id, conv_stream.root_stream_id)
         WHERE m.workspace_id = ${workspaceId}
-          AND m.status = 'active'
+          AND m.status = ANY(${statuses})
           AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
           AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
@@ -756,6 +805,7 @@ export const MemoRepository = {
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
+    const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
 
     const embeddingLiteral = `[${embedding.join(",")}]`
     const tsvector = sql.raw(
@@ -787,7 +837,7 @@ export const MemoRepository = {
         FROM memos m
         ${streamJoins}
         WHERE m.workspace_id = ${workspaceId}
-          AND m.status = 'active'
+          AND m.status = ANY(${statuses})
           AND (
             ${!hasStreamFilter}
             OR COALESCE(msg_stream.id, conv_stream.id) = ANY(${streamIds ?? []})
@@ -808,7 +858,7 @@ export const MemoRepository = {
         FROM memos m
         ${streamJoins}
         WHERE m.workspace_id = ${workspaceId}
-          AND m.status = 'active'
+          AND m.status = ANY(${statuses})
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${semanticDistanceThreshold}
           AND (
@@ -857,6 +907,7 @@ export const MemoRepository = {
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
+    const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
 
     if (!query.trim()) {
       return this.fullTextSearch(db, { workspaceId, query, filters, limit })
@@ -881,7 +932,7 @@ export const MemoRepository = {
         LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id
         LEFT JOIN streams root_stream ON root_stream.id = COALESCE(msg_stream.root_stream_id, conv_stream.root_stream_id)
         WHERE m.workspace_id = ${workspaceId}
-          AND m.status = 'active'
+          AND m.status = ANY(${statuses})
           AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
           AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})

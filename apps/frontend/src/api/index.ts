@@ -25,6 +25,9 @@ export {
 export {
   searchMemos,
   getMemo,
+  updateMemo,
+  archiveMemo,
+  unarchiveMemo,
   type MemoExplorerStreamRef,
   type MemoExplorerResult,
   type MemoExplorerDetail,
@@ -33,6 +36,7 @@ export {
   type MemoSearchRequest,
   type MemoSearchResponse,
   type MemoDetailResponse,
+  type MemoUpdateRequest,
 } from "./memos"
 export { conversationsApi, type ListConversationsParams } from "./conversations"
 export { syncApi } from "./sync"

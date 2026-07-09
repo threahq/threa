@@ -1,4 +1,4 @@
-import type { AuthorType, KnowledgeType, Memo, MemoType } from "@threa/types"
+import type { AuthorType, KnowledgeType, Memo, MemoStatus, MemoType } from "@threa/types"
 import api from "./client"
 
 export interface MemoExplorerStreamRef {
@@ -27,6 +27,8 @@ export interface MemoExplorerSourceMessage {
 
 export interface MemoExplorerDetail extends MemoExplorerResult {
   sourceMessages: MemoExplorerSourceMessage[]
+  /** For a superseded memo, the id of the active memo that replaced it. */
+  successorMemoId: string | null
 }
 
 export interface MemoSearchFilters {
@@ -34,8 +36,16 @@ export interface MemoSearchFilters {
   memoType?: MemoType[]
   knowledgeType?: KnowledgeType[]
   tags?: string[]
+  status?: MemoStatus[]
   before?: string
   after?: string
+}
+
+export interface MemoUpdateRequest {
+  title?: string
+  abstract?: string
+  keyPoints?: string[]
+  tags?: string[]
 }
 
 export interface MemoSearchRequest {
@@ -72,6 +82,7 @@ export async function searchMemos(workspaceId: string, request: MemoSearchReques
     memoType: request.filters?.memoType,
     knowledgeType: request.filters?.knowledgeType,
     tags: request.filters?.tags,
+    status: request.filters?.status,
     before: request.filters?.before,
     after: request.filters?.after,
   }
@@ -81,4 +92,20 @@ export async function searchMemos(workspaceId: string, request: MemoSearchReques
 
 export async function getMemo(workspaceId: string, memoId: string): Promise<MemoDetailResponse> {
   return api.get<MemoDetailResponse>(`/api/workspaces/${workspaceId}/memos/${memoId}`)
+}
+
+export async function updateMemo(
+  workspaceId: string,
+  memoId: string,
+  request: MemoUpdateRequest
+): Promise<MemoDetailResponse> {
+  return api.patch<MemoDetailResponse>(`/api/workspaces/${workspaceId}/memos/${memoId}`, request)
+}
+
+export async function archiveMemo(workspaceId: string, memoId: string): Promise<MemoDetailResponse> {
+  return api.post<MemoDetailResponse>(`/api/workspaces/${workspaceId}/memos/${memoId}/archive`, {})
+}
+
+export async function unarchiveMemo(workspaceId: string, memoId: string): Promise<MemoDetailResponse> {
+  return api.post<MemoDetailResponse>(`/api/workspaces/${workspaceId}/memos/${memoId}/unarchive`, {})
 }

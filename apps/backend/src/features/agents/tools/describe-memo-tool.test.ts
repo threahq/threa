@@ -49,6 +49,7 @@ describe("describe_memo tool", () => {
       distance: 0,
       sourceStream: { id: "stream_1", type: "channel", name: "general" },
       rootStream: { id: "stream_1", type: "channel", name: "general" },
+      successorMemoId: null,
       sourceMessages: [
         {
           id: "msg_1",
@@ -150,6 +151,7 @@ describe("describe_memo tool", () => {
       distance: 0,
       sourceStream: { id: "stream_1", type: "channel", name: "g" },
       rootStream: null,
+      successorMemoId: null,
       sourceMessages: [
         {
           id: "msg_1",

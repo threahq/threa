@@ -1,8 +1,9 @@
 import { startTransition, useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import { ArrowLeft, Search, RefreshCw, Hash, MessageSquareQuote, Check, ChevronsUpDown } from "lucide-react"
-import { KNOWLEDGE_TYPES, MEMO_TYPES, type KnowledgeType, type MemoType } from "@threa/types"
+import { KNOWLEDGE_TYPES, MEMO_TYPES, type KnowledgeType, type MemoStatus, type MemoType } from "@threa/types"
 import { Link, useParams, useSearchParams } from "react-router-dom"
-import { useMemoDetail, useMemoSearch } from "@/hooks"
+import { useArchiveMemo, useMemoDetail, useMemoSearch, useUnarchiveMemo, useUpdateMemo } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { Button } from "@/components/ui/button"
@@ -15,14 +16,26 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { RelativeTime } from "@/components/relative-time"
 import { SidebarToggle } from "@/components/layout"
-import { KnowledgeTypeBadge, MemoDetailContent, formatStreamRef } from "@/components/memo/memo-detail"
+import {
+  KnowledgeTypeBadge,
+  MemoDetailContent,
+  formatStreamRef,
+  type MemoEditControls,
+} from "@/components/memo/memo-detail"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
 import { getKnowledgeConfig, memoLabel } from "@/lib/memo-display"
-import type { MemoExplorerResult } from "@/api"
+import type { MemoExplorerResult, MemoUpdateRequest } from "@/api"
 
 const ALL_MEMO_TYPES = "all-memo-types"
 const ALL_KNOWLEDGE_TYPES = "all-knowledge-types"
+
+// Drafts are never user-facing; the explorer browses these three lifecycle states.
+const EXPLORER_STATUSES: { value: MemoStatus; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "archived", label: "Archived" },
+  { value: "superseded", label: "Superseded" },
+]
 
 function updateParams(
   searchParams: URLSearchParams,
@@ -223,6 +236,9 @@ export function MemoryPage() {
   const [selectedKnowledgeType, setSelectedKnowledgeType] = useState(
     () => searchParams.get("knowledgeType") as KnowledgeType | null
   )
+  const [selectedStatus, setSelectedStatus] = useState<MemoStatus>(
+    () => (searchParams.get("status") as MemoStatus | null) ?? "active"
+  )
 
   // Debounced query for the API — updates 300ms after the user stops typing
   const [debouncedQuery, setDebouncedQuery] = useState(localQuery)
@@ -256,14 +272,18 @@ export function MemoryPage() {
     stream?: string | null
     memoType?: MemoType | null
     knowledgeType?: KnowledgeType | null
+    status?: MemoStatus
   }) {
     if ("stream" in updates) setSelectedStreamId(updates.stream ?? null)
     if ("memoType" in updates) setSelectedMemoType(updates.memoType ?? null)
     if ("knowledgeType" in updates) setSelectedKnowledgeType(updates.knowledgeType ?? null)
+    if (updates.status) setSelectedStatus(updates.status)
     syncToUrl({
       ...("stream" in updates && { stream: updates.stream }),
       ...("memoType" in updates && { memoType: updates.memoType }),
       ...("knowledgeType" in updates && { knowledgeType: updates.knowledgeType }),
+      // "active" is the default view, so keep it out of the URL.
+      ...(updates.status && { status: updates.status === "active" ? null : updates.status }),
       memo: null,
     })
   }
@@ -272,7 +292,8 @@ export function MemoryPage() {
     setSelectedStreamId(null)
     setSelectedMemoType(null)
     setSelectedKnowledgeType(null)
-    syncToUrl({ stream: null, memoType: null, knowledgeType: null, memo: null })
+    setSelectedStatus("active")
+    syncToUrl({ stream: null, memoType: null, knowledgeType: null, status: null, memo: null })
   }
 
   const searchResponse = useMemoSearch(workspaceId ?? "", {
@@ -282,6 +303,7 @@ export function MemoryPage() {
       in: selectedStreamId ? [selectedStreamId] : undefined,
       memoType: selectedMemoType ? [selectedMemoType] : undefined,
       knowledgeType: selectedKnowledgeType ? [selectedKnowledgeType] : undefined,
+      status: [selectedStatus],
     },
   })
 
@@ -308,7 +330,51 @@ export function MemoryPage() {
   }
 
   const selectedMemoData = selectedMemo.data?.memo ?? null
-  const hasActiveFilters = selectedStreamId || selectedMemoType || selectedKnowledgeType
+  const hasActiveFilters = selectedStreamId || selectedMemoType || selectedKnowledgeType || selectedStatus !== "active"
+
+  const updateMemo = useUpdateMemo(workspaceId ?? "")
+  const archiveMemo = useArchiveMemo(workspaceId ?? "")
+  const unarchiveMemo = useUnarchiveMemo(workspaceId ?? "")
+  const isMutating = updateMemo.isPending || archiveMemo.isPending || unarchiveMemo.isPending
+
+  const editControls: MemoEditControls | undefined = selectedMemoId
+    ? {
+        isMutating,
+        onSave: async (fields: MemoUpdateRequest) => {
+          // Pin the acted memo in the URL first (same as archive/unarchive): a
+          // re-embed changes the search ranking, and without an explicit ?memo=
+          // the invalidation-triggered refetch could re-rank the edited memo off
+          // results[0] and swap the detail pane away from what the user just saved.
+          syncToUrl({ memo: selectedMemoId })
+          try {
+            await updateMemo.mutateAsync({ memoId: selectedMemoId, update: fields })
+          } catch (error) {
+            toast.error("Couldn't save the memo — try again")
+            throw error
+          }
+        },
+        onArchive: async () => {
+          // Pin the acted memo in the URL first: archiving drops it from the
+          // active list, and without an explicit ?memo= the detail pane would
+          // fall back to results[0] — silently swapping to an unrelated memo
+          // instead of showing the just-archived one flip to its Restore state.
+          syncToUrl({ memo: selectedMemoId })
+          try {
+            await archiveMemo.mutateAsync(selectedMemoId)
+          } catch {
+            toast.error("Couldn't archive the memo — try again")
+          }
+        },
+        onUnarchive: async () => {
+          syncToUrl({ memo: selectedMemoId })
+          try {
+            await unarchiveMemo.mutateAsync(selectedMemoId)
+          } catch {
+            toast.error("Couldn't restore the memo — try again")
+          }
+        },
+      }
+    : undefined
 
   // Brief confirmation flash when a manual refresh completes
   const [refreshConfirmed, setRefreshConfirmed] = useState(false)
@@ -428,6 +494,24 @@ export function MemoryPage() {
             </SelectContent>
           </Select>
 
+          <Select value={selectedStatus} onValueChange={(value) => setFilter({ status: value as MemoStatus })}>
+            <SelectTrigger
+              className={cn(
+                "h-7 w-auto gap-1.5 rounded-md border-border/50 bg-background/60 px-2.5 text-xs",
+                selectedStatus !== "active" && "border-primary/40 bg-primary/5"
+              )}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {EXPLORER_STATUSES.map((status) => (
+                <SelectItem key={status.value} value={status.value}>
+                  {status.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           {hasActiveFilters && (
             <Button
               variant="ghost"
@@ -500,7 +584,12 @@ export function MemoryPage() {
         {!isMobile && (
           <div className="min-w-0 flex-1 min-h-0 overflow-y-auto">
             <main className="mx-auto min-w-0 max-w-3xl p-5 sm:p-8">
-              <MemoDetailContent data={selectedMemoData} workspaceId={workspaceId} isLoading={selectedMemo.isLoading} />
+              <MemoDetailContent
+                data={selectedMemoData}
+                workspaceId={workspaceId}
+                isLoading={selectedMemo.isLoading}
+                edit={editControls}
+              />
             </main>
           </div>
         )}
@@ -526,7 +615,12 @@ export function MemoryPage() {
               message-action-drawer.tsx).
             */}
             <div data-vaul-no-drag className="min-w-0 flex-1 min-h-0 overflow-y-auto p-4 pb-8">
-              <MemoDetailContent data={selectedMemoData} workspaceId={workspaceId} isLoading={selectedMemo.isLoading} />
+              <MemoDetailContent
+                data={selectedMemoData}
+                workspaceId={workspaceId}
+                isLoading={selectedMemo.isLoading}
+                edit={editControls}
+              />
             </div>
           </DrawerContent>
         </Drawer>

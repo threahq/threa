@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
-import type { AuthorType, KnowledgeType, MemoType } from "@threa/types"
+import type { AuthorType, KnowledgeType, MemoStatus, MemoType } from "@threa/types"
+import { withTransaction } from "../../db"
 import { logger } from "../../lib/logger"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository, type Message } from "../messaging"
@@ -21,6 +22,14 @@ export interface MemoExplorerFilters {
   tags?: string[]
   before?: Date
   after?: Date
+  statuses?: MemoStatus[]
+}
+
+export interface MemoUpdateFields {
+  title?: string
+  abstract?: string
+  keyPoints?: string[]
+  tags?: string[]
 }
 
 export interface MemoExplorerPermissions {
@@ -62,12 +71,19 @@ export interface MemoExplorerSourceMessage {
 
 export interface MemoExplorerDetail extends MemoExplorerResult {
   sourceMessages: MemoExplorerSourceMessage[]
+  /** For a superseded memo, the id of the active memo that replaced it. */
+  successorMemoId: string | null
 }
 
 export interface MemoExplorerServiceDeps {
   pool: Pool
   embeddingService: EmbeddingServiceLike
   reranker: RerankerLike
+}
+
+interface MemoSourceContext {
+  sourceStream: Stream | null
+  rootStream: Stream | null
 }
 
 export class MemoExplorerService {
@@ -96,6 +112,7 @@ export class MemoExplorerService {
       tags: filters.tags,
       before: filters.before,
       after: filters.after,
+      statuses: filters.statuses,
     }
 
     if (!query.trim()) {
@@ -182,8 +199,105 @@ export class MemoExplorerService {
     memoId: string,
     permissions: MemoExplorerPermissions
   ): Promise<MemoExplorerDetail | null> {
+    const resolved = await this.resolveAccessibleMemo(workspaceId, memoId, permissions)
+    if (!resolved) {
+      return null
+    }
+    return this.buildDetail(workspaceId, resolved.memo, resolved.sourceContext, permissions)
+  }
+
+  /**
+   * Correct a memo's text fields. Re-embeds whenever the abstract is part of
+   * the update so the stored embedding always matches the stored abstract — the
+   * embedding is derived from the abstract, and re-embedding on write (rather
+   * than on a diff against a pre-read value) keeps the two consistent even when
+   * a concurrent edit lands between the read and this write (INV-20). Callers
+   * that leave the abstract out (a title/tags-only edit) skip the AI call. The
+   * `embed` runs outside the write transaction (INV-41). Access-gated
+   * identically to `getById`.
+   */
+  async update(
+    workspaceId: string,
+    memoId: string,
+    permissions: MemoExplorerPermissions,
+    fields: MemoUpdateFields
+  ): Promise<MemoExplorerDetail | null> {
+    const resolved = await this.resolveAccessibleMemo(workspaceId, memoId, permissions)
+    if (!resolved) {
+      return null
+    }
+
+    const embedding =
+      fields.abstract !== undefined
+        ? await this.embeddingService.embed(fields.abstract, { workspaceId, functionId: "memo-edit-embedding" })
+        : null
+
+    const updated = await withTransaction(this.pool, async (client) => {
+      const row = await MemoRepository.update(client, memoId, {
+        title: fields.title,
+        abstract: fields.abstract,
+        keyPoints: fields.keyPoints,
+        tags: fields.tags,
+      })
+      if (row && embedding) {
+        await MemoRepository.updateEmbedding(client, memoId, embedding)
+      }
+      return row
+    })
+
+    if (!updated) {
+      return null
+    }
+    return this.buildDetail(workspaceId, updated, resolved.sourceContext, permissions)
+  }
+
+  async archive(
+    workspaceId: string,
+    memoId: string,
+    permissions: MemoExplorerPermissions
+  ): Promise<MemoExplorerDetail | null> {
+    const resolved = await this.resolveAccessibleMemo(workspaceId, memoId, permissions)
+    if (!resolved) {
+      return null
+    }
+    const archived = await MemoRepository.archive(this.pool, memoId)
+    if (!archived) {
+      return null
+    }
+    return this.buildDetail(workspaceId, archived, resolved.sourceContext, permissions)
+  }
+
+  async unarchive(
+    workspaceId: string,
+    memoId: string,
+    permissions: MemoExplorerPermissions
+  ): Promise<MemoExplorerDetail | null> {
+    const resolved = await this.resolveAccessibleMemo(workspaceId, memoId, permissions)
+    if (!resolved) {
+      return null
+    }
+    const restored = await MemoRepository.unarchive(this.pool, memoId)
+    // null when the memo was not archived (e.g. superseded) — nothing to restore.
+    if (!restored) {
+      return null
+    }
+    return this.buildDetail(workspaceId, restored, resolved.sourceContext, permissions)
+  }
+
+  /**
+   * Load a memo and confirm the caller can access its source stream — the same
+   * gate `getById` applies. Unlike search/retrieval this does NOT filter on
+   * status, so archived and superseded memos resolve (the explorer browses and
+   * un-archives them). Returns null when missing, cross-workspace, or the
+   * source stream is inaccessible.
+   */
+  private async resolveAccessibleMemo(
+    workspaceId: string,
+    memoId: string,
+    permissions: MemoExplorerPermissions
+  ): Promise<{ memo: Memo; sourceContext: MemoSourceContext } | null> {
     const memo = await MemoRepository.findById(this.pool, memoId)
-    if (!memo || memo.workspaceId !== workspaceId || memo.status !== "active") {
+    if (!memo || memo.workspaceId !== workspaceId) {
       return null
     }
 
@@ -192,7 +306,18 @@ export class MemoExplorerService {
       return null
     }
 
+    return { memo, sourceContext }
+  }
+
+  private async buildDetail(
+    workspaceId: string,
+    memo: Memo,
+    sourceContext: MemoSourceContext,
+    permissions: MemoExplorerPermissions
+  ): Promise<MemoExplorerDetail> {
     const sourceMessages = await this.loadSourceMessages(workspaceId, memo, permissions.accessibleStreamIds)
+    const successor =
+      memo.status === "superseded" ? await MemoRepository.findSupersededBy(this.pool, workspaceId, memo.id) : null
 
     return {
       memo,
@@ -200,6 +325,7 @@ export class MemoExplorerService {
       sourceStream: this.toStreamRef(sourceContext.sourceStream),
       rootStream: this.toStreamRef(sourceContext.rootStream),
       sourceMessages,
+      successorMemoId: successor?.id ?? null,
     }
   }
 
@@ -212,7 +338,7 @@ export class MemoExplorerService {
     return [...new Set(requestedStreamIds)].filter((streamId) => accessibleSet.has(streamId))
   }
 
-  private async loadSourceContext(memo: Memo): Promise<{ sourceStream: Stream | null; rootStream: Stream | null }> {
+  private async loadSourceContext(memo: Memo): Promise<MemoSourceContext> {
     let sourceStreamId: string | null = null
 
     if (memo.sourceMessageId) {

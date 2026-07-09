@@ -1,5 +1,14 @@
-import { useQuery } from "@tanstack/react-query"
-import { getMemo, searchMemos, type MemoSearchRequest } from "@/api"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  archiveMemo,
+  getMemo,
+  searchMemos,
+  unarchiveMemo,
+  updateMemo,
+  type MemoDetailResponse,
+  type MemoSearchRequest,
+  type MemoUpdateRequest,
+} from "@/api"
 
 export const memoKeys = {
   all: ["memos"] as const,
@@ -23,5 +32,44 @@ export function useMemoDetail(workspaceId: string, memoId: string | null) {
     queryKey: memoKeys.detail(workspaceId, memoId ?? ""),
     queryFn: () => getMemo(workspaceId, memoId!),
     enabled: !!workspaceId && !!memoId,
+  })
+}
+
+/**
+ * Seed the memo's detail cache with the mutation's response and invalidate the
+ * search lists so the row reflects the edit/archive/restore (a search list
+ * scoped to `status: ['active']` drops an archived memo; an `archived` list
+ * gains it). Shared by all three memo mutations.
+ */
+function useMemoMutationSettled(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return (response: MemoDetailResponse) => {
+    queryClient.setQueryData(memoKeys.detail(workspaceId, response.memo.memo.id), response)
+    void queryClient.invalidateQueries({ queryKey: memoKeys.searches(workspaceId) })
+  }
+}
+
+export function useUpdateMemo(workspaceId: string) {
+  const onSuccess = useMemoMutationSettled(workspaceId)
+  return useMutation({
+    mutationFn: ({ memoId, update }: { memoId: string; update: MemoUpdateRequest }) =>
+      updateMemo(workspaceId, memoId, update),
+    onSuccess,
+  })
+}
+
+export function useArchiveMemo(workspaceId: string) {
+  const onSuccess = useMemoMutationSettled(workspaceId)
+  return useMutation({
+    mutationFn: (memoId: string) => archiveMemo(workspaceId, memoId),
+    onSuccess,
+  })
+}
+
+export function useUnarchiveMemo(workspaceId: string) {
+  const onSuccess = useMemoMutationSettled(workspaceId)
+  return useMutation({
+    mutationFn: (memoId: string) => unarchiveMemo(workspaceId, memoId),
+    onSuccess,
   })
 }

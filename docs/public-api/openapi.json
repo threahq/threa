@@ -457,9 +457,17 @@
                             ],
                             "additionalProperties": false
                           }
-                        }
+                        },
+                        "successorMemoId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
                       },
-                      "required": ["memo", "distance", "sourceStream", "rootStream", "sourceMessages"],
+                      "required": [
+                        "memo",
+                        "distance",
+                        "sourceStream",
+                        "rootStream",
+                        "sourceMessages",
+                        "successorMemoId"
+                      ],
                       "additionalProperties": false
                     }
                   },
