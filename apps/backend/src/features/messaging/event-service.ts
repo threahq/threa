@@ -409,7 +409,10 @@ export class EventService {
     const parentMessage = await MessageRepository.findById(client, params.parentMessageId)
     if (!parentMessage) return
 
-    const threadSummary = await StreamRepository.findThreadSummaryByParentMessage(client, params.parentMessageId)
+    const [threadSummary, thread] = await Promise.all([
+      StreamRepository.findThreadSummaryByParentMessage(client, params.parentMessageId),
+      StreamRepository.findByParentMessage(client, params.parentStreamId, params.parentMessageId),
+    ])
     await OutboxRepository.insert(client, "message:updated", {
       workspaceId: params.workspaceId,
       streamId: params.parentStreamId,
@@ -417,6 +420,7 @@ export class EventService {
       updateType: "reply_count",
       replyCount: parentMessage.replyCount,
       threadSummary,
+      threadId: thread?.id ?? null,
     })
   }
 

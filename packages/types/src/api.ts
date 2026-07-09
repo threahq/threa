@@ -36,6 +36,7 @@ import type {
   Persona,
   Bot,
   BoardView,
+  ThreadSummary,
 } from "./domain"
 import type { UserPreferences } from "./preferences"
 import type { WorkspaceSettings } from "./workspace-settings"
@@ -203,6 +204,22 @@ export interface StreamBootstrap {
   snapshotAt?: string
   hasOlderEvents: boolean
   syncMode: "append" | "replace"
+  /**
+   * Present on append-mode responses only: current thread state for every
+   * thread parented in this stream. An append response carries only events
+   * past the client's cursor, but thread patches (`message:updated`
+   * reply_count) mutate parent rows BEHIND the cursor and carry no broadcast
+   * sequence — a patch missed live is invisible to gap detection and never
+   * re-fetched, so opening the stream applies this map to heal stale thread
+   * cards. `threadSummary: null` = thread exists but has no non-deleted
+   * replies.
+   */
+  threadStates?: Array<{
+    parentMessageId: string
+    threadId: string
+    replyCount: number
+    threadSummary: ThreadSummary | null
+  }>
   unreadCount: number
   mentionCount: number
   activityCount: number
