@@ -1104,3 +1104,87 @@ describe("EventService.listEventsAroundDate", () => {
     expect(result).toEqual({ ...around, anchorMessageId: "msg_anchor" })
   })
 })
+
+describe("EventService.createMessage parent thread update (reply in thread)", () => {
+  const baseParams = {
+    workspaceId: "ws_1",
+    streamId: "stream_thread",
+    authorId: "usr_1",
+    authorType: "user" as const,
+    contentJson: { type: "doc", content: [] },
+    contentMarkdown: "a reply",
+  }
+
+  beforeEach(() => {
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback({})) as any)
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_thread",
+      type: "thread",
+      parentStreamId: "stream_root",
+      parentMessageId: "msg_parent",
+    } as any)
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
+    spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
+    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
+    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: "evt_1",
+      streamId: params.streamId,
+      sequence: 1n,
+      eventType: params.eventType,
+      payload: params.payload,
+      actorId: params.actorId,
+      actorType: params.actorType,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: params.id,
+      streamId: params.streamId,
+      sequence: params.sequence,
+      authorId: params.authorId,
+      authorType: params.authorType,
+      contentJson: params.contentJson,
+      contentMarkdown: params.contentMarkdown,
+      replyCount: 0,
+      clientMessageId: null,
+      sentVia: null,
+      reactions: {},
+      metadata: {},
+      editedAt: null,
+      deletedAt: null,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "incrementReplyCount").mockResolvedValue(undefined as any)
+    spyOn(MessageRepository, "findById").mockResolvedValue({ id: "msg_parent", replyCount: 4 } as any)
+    spyOn(StreamRepository, "findThreadSummaryByParentMessage").mockResolvedValue(null)
+    spyOn(StreamRepository, "findByParentMessage").mockResolvedValue({ id: "stream_thread" } as any)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+    spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("publishes message:updated carrying threadId so one patch suffices to render the thread card", async () => {
+    const service = new EventService({} as any)
+
+    await service.createMessage(baseParams)
+
+    expect(OutboxRepository.insert).toHaveBeenCalledWith(
+      expect.anything(),
+      "message:updated",
+      expect.objectContaining({
+        streamId: "stream_root",
+        messageId: "msg_parent",
+        updateType: "reply_count",
+        replyCount: 4,
+        threadId: "stream_thread",
+      })
+    )
+  })
+})

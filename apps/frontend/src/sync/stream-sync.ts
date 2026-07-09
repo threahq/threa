@@ -300,6 +300,8 @@ async function writeBootstrapEventsAndStream(
     }
   }
 
+  await applyBootstrapThreadStates(streamId, bootstrap, now)
+
   // Merge stream metadata without destroying fields that only exist on the
   // workspace bootstrap's StreamWithPreview (e.g. lastMessagePreview, which
   // is the sidebar's activity sort key). Use update() for existing records
@@ -329,6 +331,51 @@ async function writeBootstrapEventsAndStream(
   if (updated === 0) {
     await db.streams.put(fullStreamData)
   }
+}
+
+/**
+ * Heal thread state on already-persisted parent rows from the bootstrap's
+ * `threadStates` map (append-mode responses). Thread patches (`message:updated`
+ * reply_count) have no broadcast sequence and mutate rows behind the append
+ * cursor, so one missed live patch would otherwise stay stale until a hard
+ * refresh — this makes every stream open converge on the server's state.
+ *
+ * Same freshness rule as the event merge above: rows patched by a socket
+ * handler AFTER the bootstrap snapshot keep their (newer) values. Only
+ * `_cachedAt` is bumped — this is bootstrap data, not a socket patch, so
+ * `_patchedAt` must stay untouched for later bootstraps to reason against.
+ */
+async function applyBootstrapThreadStates(streamId: string, bootstrap: StreamBootstrap, now: number): Promise<void> {
+  if (!bootstrap.threadStates || bootstrap.threadStates.length === 0) return
+
+  const snapshotMs = bootstrap.snapshotAt ? Date.parse(bootstrap.snapshotAt) : null
+  const stateByMessageId = new Map(bootstrap.threadStates.map((state) => [state.parentMessageId, state]))
+
+  await db.events
+    .where("[streamId+eventType]")
+    .equals([streamId, "message_created"])
+    .filter((event) => {
+      const state = stateByMessageId.get((event.payload as { messageId?: string })?.messageId ?? "")
+      if (!state) return false
+      if (snapshotMs !== null && event._patchedAt !== undefined && event._patchedAt > snapshotMs) return false
+      const payload = event.payload as { threadId?: string; replyCount?: number; threadSummary?: unknown }
+      return (
+        payload.threadId !== state.threadId ||
+        (payload.replyCount ?? 0) !== state.replyCount ||
+        JSON.stringify(payload.threadSummary ?? null) !== JSON.stringify(state.threadSummary)
+      )
+    })
+    .modify((event) => {
+      const state = stateByMessageId.get((event.payload as { messageId?: string })?.messageId ?? "")
+      if (!state) return
+      event.payload = {
+        ...(event.payload as Record<string, unknown>),
+        threadId: state.threadId,
+        replyCount: state.replyCount,
+        threadSummary: state.threadSummary,
+      }
+      event._cachedAt = now
+    })
 }
 
 /**
@@ -437,6 +484,13 @@ interface MessageUpdatedPayload {
    * without waiting for the next bootstrap. `null` = last reply was deleted.
    */
   threadSummary?: ThreadSummary | null
+  /**
+   * For reply_count updates, the thread stream's id. The card needs a
+   * navigable thread id, and `stream:created` (its usual source) reaches only
+   * clients in the parent's room at creation time — carrying the id on every
+   * reply patch makes each patch self-sufficient for rendering the card.
+   */
+  threadId?: string | null
 }
 
 interface CommandEventPayload {
@@ -978,6 +1032,12 @@ export function registerStreamSocketHandlers(
         const next: Record<string, unknown> = { ...p, replyCount: payload.replyCount }
         if (payload.threadSummary !== undefined) {
           next.threadSummary = payload.threadSummary
+        }
+        // A truthy threadId makes the patch self-sufficient for the thread
+        // card when stream:created was missed. `null` (thread gone) is left
+        // alone — replyCount 0 already hides the card.
+        if (payload.threadId) {
+          next.threadId = payload.threadId
         }
         return next
       }

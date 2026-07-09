@@ -237,6 +237,14 @@ export interface MessageUpdatedOutboxPayload extends StreamScopedPayload {
    * the next bootstrap.
    */
   threadSummary?: import("@threa/types").ThreadSummary | null
+  /**
+   * When `updateType === "reply_count"`, the thread stream's id. A viewer who
+   * missed `stream:created` (delivered only to clients in the parent's room at
+   * creation time) cannot render the thread card from `replyCount` alone — the
+   * card needs a navigable thread id — so every reply patch carries it, making
+   * each patch self-sufficient.
+   */
+  threadId?: string | null
 }
 
 export interface ReactionOutboxPayload extends StreamScopedPayload {
