@@ -200,12 +200,13 @@ function sameIds(a: string[], b: string[]): boolean {
  *    the viewport, so appending it to the frozen order shifts nothing on-screen;
  *    fold it in immediately (no pill).
  *  - **The viewer's own optimistic post** (`_status === "pending"`, only ever set
- *    by `putOptimisticBoardPost` for the author's own send) — revealed at top
- *    immediately, regardless of any timer. The authored card must surface as soon
- *    as it lands, whether that's inline (existing-stream) or after the promote-on-
- *    send drain (a new scratchpad, arbitrarily later). Revealing ONLY the pending
- *    card leaves unrelated arrivals still buffered, so posting never reorders the
- *    cards the viewer was reading (board-view-design.md "don't move shit on me").
+ *    by `putOptimisticBoardPost`/`reconcileOptimisticBoardPost` for the author's
+ *    own send) — revealed at top immediately, regardless of any timer. The authored
+ *    card must surface as soon as it lands, whether that's inline (existing-stream)
+ *    or at composer-clear (a new scratchpad, keyed by the client-minted id).
+ *    Revealing ONLY the pending card leaves unrelated arrivals still buffered, so
+ *    posting never reorders the cards the viewer was reading (board-view-design.md
+ *    "don't move shit on me").
  *  - **Any other at-or-above-floor arrival** — a new conversation from someone
  *    else, or a card bumped up. Revealing it would reorder the view, so it waits
  *    in the buffer and is surfaced as the "N new" pill count instead.

@@ -7,7 +7,7 @@ import { parseMarkdown } from "@threa/prosemirror"
 import { emitDraftPromoted } from "@/lib/draft-promotions"
 import { setParentThreadId } from "@/sync/stream-sync"
 import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
-import { putOptimisticBoardPost } from "@/stores/board-store"
+import { reconcileOptimisticBoardPost } from "@/stores/board-store"
 import { rescopeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
 import { StreamTypes, ShareErrorCodes, draftStreamScope } from "@threa/types"
@@ -256,14 +256,15 @@ export function useMessageQueue(): void {
           })
 
           // A board post to a NEW scratchpad minted a fresh conversation on send
-          // (`intent: "new"`). Seed its board card from the response — keyed by the
-          // real conversation + (post-promotion) stream ids — so it appears the
-          // moment the scratchpad materializes rather than after the async
-          // `conversation:created` echo + board-head refetch. Reconciled in place by
-          // both (same id, `_status` cleared). `existing`/`threadFromMessage` replies
-          // also return an id, but their card already exists so the write no-ops.
-          // Best-effort: the send already succeeded, so a local IDB failure must not
-          // drop the iteration into the retry/failed path for a delivered message.
+          // (`intent: "new"`). The card is already on screen — the composer-clear
+          // stub `useCreateBoardPost` seeded, keyed by the SAME client-minted id,
+          // under the draft stream id. Now that promotion returned the real stream +
+          // message, reconcile the stub to those real ids (and server-resolved
+          // markdown) so it deep-links correctly and doesn't render twice. Lands in
+          // any echo↔drain ordering, and no-ops if the user cancelled the post mid-
+          // send (its card is gone — don't resurrect it). Best-effort: the send
+          // already succeeded, so a local IDB failure must not drop the iteration
+          // into the retry/failed path for a delivered message.
           if (conversationId && next.conversation?.intent === "new") {
             try {
               const stream = await db.streams.get(next.streamId)
@@ -273,7 +274,7 @@ export function useMessageQueue(): void {
                 const optimisticEvent = await db.events.get(next.clientId)
                 const attachments = (optimisticEvent?.payload as { attachments?: AttachmentSummary[] } | undefined)
                   ?.attachments
-                await putOptimisticBoardPost(next.workspaceId, {
+                await reconcileOptimisticBoardPost(next.workspaceId, {
                   conversationId,
                   messageId: message.id,
                   streamId: next.streamId,
@@ -286,7 +287,7 @@ export function useMessageQueue(): void {
                 })
               }
             } catch (err) {
-              console.error("Failed to seed optimistic board post from queue drain", err)
+              console.error("Failed to reconcile optimistic board post from queue drain", err)
             }
           }
         }

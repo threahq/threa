@@ -5,6 +5,7 @@ import {
   seedBoardPosts,
   mergeBoardConversation,
   putOptimisticBoardPost,
+  reconcileOptimisticBoardPost,
   deleteOptimisticBoardPost,
 } from "./board-store"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
@@ -179,11 +180,14 @@ describe("putOptimisticBoardPost", () => {
     expect(row?.openingMessage?.contentMarkdown).toBe("just posted")
   })
 
-  it("never regresses a live row to pending when the echo/refetch won the race", async () => {
+  it("is insert-if-absent: never overwrites an existing row (echo/refetch won, or the stub is already down)", async () => {
     await seedBoardPosts(WORKSPACE_ID, [makePost("conv_new", "2026-06-22T12:00:09.000Z")])
     await putOptimisticBoardPost(WORKSPACE_ID, input)
     const row = await db.conversations.get("conv_new")
     expect(row?._status).toBeUndefined()
+    // The existing row's opening (msg m1 from makePost) is untouched, not clobbered
+    // with the seed's msg_1.
+    expect(row?.openingMessage?.id).toBe("m1")
   })
 
   it("renders the post's attachments immediately so the thumbnail doesn't pop in on reconcile", async () => {
@@ -196,32 +200,73 @@ describe("putOptimisticBoardPost", () => {
       { id: "att_1", filename: "shot.png", mimeType: "image/png", sizeBytes: 2048 },
     ])
   })
+})
 
-  it("refines a still-pending stub in place: the drain rewrites the composer-clear draft ids with the real ones", async () => {
-    // Composer-clear stub: keyed by the client-minted id, under the DRAFT stream id.
-    await putOptimisticBoardPost(WORKSPACE_ID, {
-      ...input,
-      messageId: "temp_scratch",
-      streamId: "draft_1",
-      rootStreamId: "draft_1",
-      rootStreamType: "scratchpad",
-      contentMarkdown: "client markdown",
-    })
-    // Drain post-promotion: same conversation id, now the real stream/message ids
-    // and server-resolved markdown — refines the pending stub, still pending.
-    await putOptimisticBoardPost(WORKSPACE_ID, {
-      ...input,
-      messageId: "msg_real",
-      streamId: "stream_real",
-      rootStreamId: "stream_real",
-      rootStreamType: "scratchpad",
-      contentMarkdown: "server markdown",
-    })
+describe("reconcileOptimisticBoardPost (new-scratchpad drain refine)", () => {
+  // The composer-clear stub: keyed by the client-minted id, under the DRAFT stream
+  // id, with a client temp message id and client-serialized markdown.
+  const stub = {
+    conversationId: "conv_new",
+    messageId: "temp_scratch",
+    streamId: "draft_1",
+    authorId: "usr_1",
+    contentMarkdown: "client markdown",
+    rootStreamId: "draft_1",
+    rootStreamType: "scratchpad" as const,
+    createdAt: "2026-06-22T12:00:00.000Z",
+  }
+  // The drain's post-promotion refine: real stream + message ids, server markdown.
+  const real = {
+    ...stub,
+    messageId: "msg_real",
+    streamId: "stream_real",
+    rootStreamId: "stream_real",
+    contentMarkdown: "server markdown",
+  }
+
+  it("drain beat the echo (still pending): replaces the stub wholesale with the real ids", async () => {
+    await putOptimisticBoardPost(WORKSPACE_ID, stub)
+    await reconcileOptimisticBoardPost(WORKSPACE_ID, real)
     const row = await db.conversations.get("conv_new")
     expect(row?._status).toBe("pending")
     expect(row?.conversation.streamId).toBe("stream_real")
+    expect(row?.conversation.messageIds).toEqual(["msg_real"])
     expect(row?.openingMessage?.id).toBe("msg_real")
     expect(row?.openingMessage?.contentMarkdown).toBe("server markdown")
+    // openingId === messageIds[0] → the card renders the post once, not twice.
+    expect(row?.openingMessage?.id).toBe(row?.conversation.messageIds[0])
+  })
+
+  it("echo won first: patches the real opening/stream onto the reconciled aggregate without a duplicate", async () => {
+    await putOptimisticBoardPost(WORKSPACE_ID, stub)
+    // The `conversation:created` echo reconciles the aggregate (real messageIds,
+    // clears `_status`) but keeps the stub's stale opening (mergeBoardConversation
+    // carries no message bodies).
+    await mergeBoardConversation("conv_new", {
+      ...makeConversation("conv_new", "2026-06-22T12:00:05.000Z"),
+      streamId: "stream_real",
+      messageIds: ["msg_real"],
+    })
+    const afterEcho = await db.conversations.get("conv_new")
+    expect(afterEcho?._status).toBeUndefined()
+    expect(afterEcho?.openingMessage?.id).toBe("temp_scratch") // stale, mismatched → would render twice
+    expect(afterEcho?.openingMessage?.id).not.toBe(afterEcho?.conversation.messageIds[0])
+
+    // The drain's later refine patches the real opening onto the reconciled row.
+    await reconcileOptimisticBoardPost(WORKSPACE_ID, real)
+    const row = await db.conversations.get("conv_new")
+    expect(row?._status).toBeUndefined() // not regressed back to pending
+    expect(row?.openingMessage?.id).toBe("msg_real")
+    expect(row?.openingMessage?.contentMarkdown).toBe("server markdown")
+    expect(row?.conversation.streamId).toBe("stream_real")
+    // openingId === messageIds[0] again → no double-render.
+    expect(row?.openingMessage?.id).toBe(row?.conversation.messageIds[0])
+  })
+
+  it("cancelled mid-send (no row): does NOT resurrect the card", async () => {
+    // The user deleted the post while the send was in flight — its card is gone.
+    await reconcileOptimisticBoardPost(WORKSPACE_ID, real)
+    expect(await db.conversations.get("conv_new")).toBeUndefined()
   })
 })
 
