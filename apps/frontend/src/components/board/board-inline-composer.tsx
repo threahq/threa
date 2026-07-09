@@ -248,7 +248,7 @@ export function InlineComposerForm({
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
     const liveContent = editorContent ?? composer.content
     const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
-    const attachments = extractUploadedAttachments(normalizedContent)
+    const attachments = extractUploadedAttachments(normalizedContent, pendingAttachments)
     const attachmentIds = attachments.map((a) => a.id)
 
     composer.setIsSending(true)

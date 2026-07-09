@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { Pool } from "pg"
+import { Pool, type PoolClient } from "pg"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, type Attachment } from "./repository"
@@ -7,7 +7,7 @@ import { AttachmentUploadRepository } from "./upload-repository"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
 import type { StorageProvider } from "../../lib/storage/s3-client"
-import { AttachmentSafetyStatuses, ProcessingStatuses } from "@threa/types"
+import { AttachmentSafetyStatuses, AttachmentUploadStatuses, ProcessingStatuses } from "@threa/types"
 import { isAttachmentSafeForSharing, safetyStatusBlockReason, type MalwareScanner } from "./upload-safety-policy"
 import { logger } from "../../lib/logger"
 import { attachmentUploadId } from "../../lib/id"
@@ -142,10 +142,22 @@ export class AttachmentService {
   async completeReservedUpload(params: CreateAttachmentParams): Promise<CreateAttachmentForUploadResult> {
     const upload = await AttachmentUploadRepository.findByAttachmentId(this.pool, params.id)
     if (!upload) {
-      return this.createForUpload(params)
+      // The reserved-content route validates the reservation before the S3
+      // middleware runs; reaching here without one is a wiring bug, not a
+      // legacy upload — fail loudly rather than minting a row for an
+      // unreserved id (INV-11).
+      throw new Error(`No upload reservation found for attachment ${params.id}`)
     }
     if (upload.workspaceId !== params.workspaceId || upload.uploadedBy !== params.uploadedBy) {
       throw new Error("Attachment upload reservation does not belong to this user/workspace")
+    }
+    const reserved = await AttachmentRepository.findById(this.pool, params.id)
+    if (!reserved) throw new Error(`Attachment row missing for reservation ${params.id}`)
+    // The e2e-ness of an attachment is fixed at reserve time. Trusting a
+    // request-supplied flag here would let a plaintext reservation complete as
+    // `e2e_unscanned` (shareable) and skip the malware scan entirely.
+    if (params.e2e !== reserved.e2eOnly) {
+      throw new Error(`Attachment ${params.id} e2e flag does not match its reservation`)
     }
 
     if (params.e2e) {
@@ -158,6 +170,7 @@ export class AttachmentService {
         await AttachmentRepository.updateProcessingStatus(client, params.id, ProcessingStatuses.SKIPPED)
         const updated = await AttachmentRepository.findById(client, params.id)
         if (!updated) throw new Error(`Attachment not found after upload completion: ${params.id}`)
+        await this.publishUploadCompleted(client, updated)
         return updated
       })
       return { status: "created", attachment }
@@ -210,12 +223,31 @@ export class AttachmentService {
       }
       const updated = await AttachmentRepository.findById(client, params.id)
       if (!updated) throw new Error(`Attachment not found after safety update: ${params.id}`)
+      await this.publishUploadCompleted(client, updated)
       return updated
     })
 
     const blockReason = this.getSharingBlockReason(attachment)
     if (!blockReason) return { status: "created", attachment }
     return { status: "blocked", reason: blockReason }
+  }
+
+  /**
+   * Tell clients a reserved upload's safety settled. A message can bind the
+   * attachment while bytes are still uploading, and stored message content is
+   * never revisited — this event is what flips the timeline chip from
+   * "uploading" to ready (or blocked) after the fact, mirroring
+   * `attachment:transcoded` for video processing.
+   */
+  private async publishUploadCompleted(client: PoolClient, attachment: Attachment): Promise<void> {
+    await OutboxRepository.insert(client, "attachment:upload_completed", {
+      workspaceId: attachment.workspaceId,
+      ...(attachment.streamId && { streamId: attachment.streamId }),
+      ...(attachment.messageId && { messageId: attachment.messageId }),
+      attachmentId: attachment.id,
+      uploadStatus: AttachmentUploadStatuses.UPLOADED,
+      safetyStatus: attachment.safetyStatus,
+    })
   }
 
   /**

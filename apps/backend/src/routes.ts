@@ -507,6 +507,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     "/api/workspaces/:workspaceId/attachments/:attachmentId/content",
     ...authed,
     rateLimits.upload,
+    // Must run before `upload`: multer-s3 streams bytes to the reserved key,
+    // so reservation ownership/state has to be checked before any byte lands.
+    attachment.validateReservedUpload,
     upload,
     attachment.upload
   )

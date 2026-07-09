@@ -418,9 +418,11 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
 
   const clear = useCallback(() => {
     for (const a of pendingAttachmentsRef.current) revokePreviewUrl(a.previewUrl)
-    // Abort any uploads still in flight so they can't settle after a send.
-    for (const controller of uploadControllersRef.current.values()) controller.abort()
-    uploadControllersRef.current.clear()
+    // Deliberately do NOT abort in-flight uploads: clear() runs right after a
+    // send, and the sent message already binds the reserved attachment ids —
+    // the bytes must keep streaming to completion. Late settlement is safe
+    // (the status updates map over ids no longer in the list) and each
+    // upload's settle handler removes its own controller from the map.
     pendingAttachmentsRef.current = []
     setPendingAttachments([])
     setImageCount(0)
@@ -445,18 +447,25 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       // instant the draft persisted. Preview persistence across an actual reload
       // is the reader's job (server thumbnail / E2E decrypt) — there are no local
       // bytes to carry then.
-      const priorPreviewById = new Map(
-        pendingAttachmentsRef.current.filter((a) => a.previewUrl).map((a) => [a.id, a.previewUrl])
-      )
+      const priorById = new Map(pendingAttachmentsRef.current.map((a) => [a.id, a]))
       const restoredIds = new Set(attachments.map((a) => a.id))
       for (const a of pendingAttachmentsRef.current) {
         if (a.previewUrl && !restoredIds.has(a.id)) revokePreviewUrl(a.previewUrl)
       }
-      const restoredAttachments = attachments.map((a) => ({
-        ...a,
-        status: "uploaded" as const,
-        previewUrl: priorPreviewById.get(a.id),
-      }))
+      // The restore payload carries no upload state, so trust the live
+      // in-memory entry: a bytes upload still in flight keeps its spinner and
+      // cancel affordance, a failed one keeps its error. Only ids this hook
+      // instance doesn't know default to "uploaded" — the reload case, where
+      // drafts persist completed uploads only.
+      const restoredAttachments = attachments.map((a) => {
+        const prior = priorById.get(a.id)
+        return {
+          ...a,
+          status: prior?.status ?? ("uploaded" as const),
+          error: prior?.error,
+          previewUrl: prior?.previewUrl,
+        }
+      })
       pendingAttachmentsRef.current = restoredAttachments
       setPendingAttachments(restoredAttachments)
       const restoredImageCount = attachments.filter((a) => a.mimeType.startsWith("image/")).length

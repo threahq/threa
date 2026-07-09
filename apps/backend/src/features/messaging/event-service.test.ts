@@ -221,13 +221,20 @@ describe("EventService attachment safety checks", () => {
         sizeBytes: 1234,
       },
     ] as any)
-    spyOn(AttachmentUploadRepository, "findByAttachmentId").mockResolvedValue({
-      attachmentId: "attach_pending",
-      workspaceId: "ws_1",
-      uploadedBy: "usr_1",
-      clientMessageId: "client_1",
-      status: "uploaded",
-    } as any)
+    spyOn(AttachmentUploadRepository, "findByAttachmentIds").mockResolvedValue(
+      new Map([
+        [
+          "attach_pending",
+          {
+            attachmentId: "attach_pending",
+            workspaceId: "ws_1",
+            uploadedBy: "usr_1",
+            clientMessageId: "client_1",
+            status: "uploaded",
+          } as any,
+        ],
+      ])
+    )
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
       streamId: params.streamId,

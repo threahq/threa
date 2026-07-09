@@ -62,7 +62,13 @@ function attachmentMatchKey(attachment: Pick<PendingAttachment, "filename" | "mi
   return `${attachment.filename}::${attachment.mimeType}`
 }
 
-export function extractUploadedAttachments(content: JSONContent): Array<{
+export function extractUploadedAttachments(
+  content: JSONContent,
+  // Node attrs always persist `status: "uploaded"` (stored contentJson is
+  // immutable — nothing revisits it when bytes land), so live upload state for
+  // the optimistic summary comes from the composer's pending snapshot instead.
+  pendingAttachments: PendingAttachment[] = []
+): Array<{
   id: string
   filename: string
   mimeType: string
@@ -79,6 +85,7 @@ export function extractUploadedAttachments(content: JSONContent): Array<{
       uploadStatus?: "reserved" | "uploading" | "uploaded" | "failed" | "abandoned"
     }
   >()
+  const stillUploading = new Set(pendingAttachments.filter((a) => a.status === "uploading").map((a) => a.id))
 
   const visitNode = (node: JSONContent): void => {
     if (
@@ -89,13 +96,12 @@ export function extractUploadedAttachments(content: JSONContent): Array<{
       typeof node.attrs?.mimeType === "string" &&
       typeof node.attrs?.sizeBytes === "number"
     ) {
-      const status = node.attrs.status === "uploading" ? "uploading" : undefined
       attachments.set(node.attrs.id, {
         id: node.attrs.id,
         filename: node.attrs.filename,
         mimeType: node.attrs.mimeType,
         sizeBytes: node.attrs.sizeBytes,
-        ...(status && { uploadStatus: status }),
+        ...(stillUploading.has(node.attrs.id) && { uploadStatus: "uploading" as const }),
       })
     }
 
@@ -152,7 +158,13 @@ export function materializePendingAttachmentReferences(
             filename: matchedUpload.filename,
             mimeType: matchedUpload.mimeType,
             sizeBytes: matchedUpload.sizeBytes,
-            status: matchedUpload.status === "uploading" ? "uploading" : "uploaded",
+            // Persisted contentJson always says "uploaded": stored message
+            // content is never revisited when bytes land, so a transient
+            // "uploading" here would freeze a spinner into the message forever
+            // and drop the attachment from content_markdown (the serializer
+            // skips uploading nodes). Live upload state rides the message's
+            // attachment summaries instead.
+            status: "uploaded",
             imageIndex: isImage ? imageIndex : null,
             error: null,
           },
@@ -194,7 +206,7 @@ export function materializePendingAttachmentReferences(
             filename: attachment.filename,
             mimeType: attachment.mimeType,
             sizeBytes: attachment.sizeBytes,
-            status: attachment.status === "uploading" ? "uploading" : "uploaded",
+            status: "uploaded",
             imageIndex,
             error: null,
           },
@@ -651,7 +663,7 @@ function MessageInputComponent({
         return
       }
 
-      const attachments = extractUploadedAttachments(normalizedContent)
+      const attachments = extractUploadedAttachments(normalizedContent, pendingAttachments)
       const attachmentIds = attachments.map((attachment) => attachment.id)
 
       const contentJson = liveContent
@@ -724,7 +736,7 @@ function MessageInputComponent({
       const pendingAttachments = composer.getPendingAttachmentsSnapshot()
       const liveContent = composer.content
       const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
-      const attachments = extractUploadedAttachments(normalizedContent)
+      const attachments = extractUploadedAttachments(normalizedContent, pendingAttachments)
       const attachmentIds = attachments.map((a) => a.id)
 
       // A live send whose conversation has drifted into a thread hands off to the

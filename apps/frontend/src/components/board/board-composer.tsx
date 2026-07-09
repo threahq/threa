@@ -159,7 +159,7 @@ function BoardComposerForm({
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
     const liveContent = editorContent ?? composer.content
     const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
-    const uploadedAttachments = extractUploadedAttachments(normalizedContent)
+    const uploadedAttachments = extractUploadedAttachments(normalizedContent, pendingAttachments)
     const attachmentIds = uploadedAttachments.map((a) => a.id)
 
     composer.setIsSending(true)

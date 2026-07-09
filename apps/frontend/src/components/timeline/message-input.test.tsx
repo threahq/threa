@@ -19,7 +19,7 @@ import * as composerModule from "@/components/composer"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
 import { toast } from "sonner"
-import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
+import { MessageInput, materializePendingAttachmentReferences, extractUploadedAttachments } from "./message-input"
 import type { JSONContent } from "@threa/types"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
@@ -1063,18 +1063,22 @@ describe("MessageInput", () => {
       ).toEqual(content)
     })
 
-    it("should keep uploading status for reserved attachments that are sent before bytes finish", () => {
-      expect(
-        materializePendingAttachmentReferences(EMPTY_DOC, [
-          {
-            id: "attach_pending",
-            filename: "large.mov",
-            mimeType: "video/quicktime",
-            sizeBytes: 1024,
-            status: "uploading",
-          },
-        ])
-      ).toMatchObject({
+    it("materializes a still-uploading reserved attachment with persisted status 'uploaded'", () => {
+      // Stored contentJson is never revisited when bytes land, so the node
+      // must not freeze a transient "uploading" into the message (it would
+      // spin forever and be dropped from content_markdown). Live upload state
+      // rides the attachment summaries via extractUploadedAttachments below.
+      const pending = [
+        {
+          id: "attach_pending",
+          filename: "large.mov",
+          mimeType: "video/quicktime",
+          sizeBytes: 1024,
+          status: "uploading" as const,
+        },
+      ]
+      const materialized = materializePendingAttachmentReferences(EMPTY_DOC, pending)
+      expect(materialized).toMatchObject({
         content: [
           {},
           {
@@ -1082,13 +1086,39 @@ describe("MessageInput", () => {
               {
                 attrs: {
                   id: "attach_pending",
-                  status: "uploading",
+                  status: "uploaded",
                 },
               },
             ],
           },
         ],
       })
+    })
+
+    it("extracts uploadStatus 'uploading' from the pending snapshot, not node attrs", () => {
+      const pending = [
+        {
+          id: "attach_pending",
+          filename: "large.mov",
+          mimeType: "video/quicktime",
+          sizeBytes: 1024,
+          status: "uploading" as const,
+        },
+      ]
+      const materialized = materializePendingAttachmentReferences(EMPTY_DOC, pending)
+      expect(extractUploadedAttachments(materialized, pending)).toEqual([
+        {
+          id: "attach_pending",
+          filename: "large.mov",
+          mimeType: "video/quicktime",
+          sizeBytes: 1024,
+          uploadStatus: "uploading",
+        },
+      ])
+      // Without the snapshot (or once the upload settled) no uploadStatus is claimed.
+      expect(extractUploadedAttachments(materialized)).toEqual([
+        { id: "attach_pending", filename: "large.mov", mimeType: "video/quicktime", sizeBytes: 1024 },
+      ])
     })
 
     it("should append uploaded attachments that are missing from the editor document", () => {

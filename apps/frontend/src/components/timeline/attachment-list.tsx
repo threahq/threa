@@ -437,6 +437,39 @@ function OpenableFileChip({
   )
 }
 
+/**
+ * A bound attachment whose bytes/scan haven't settled yet, or that the scan
+ * blocked. Message content is sent while uploads are still in flight, so the
+ * live state rides the summary's uploadStatus/safetyStatus (patched by the
+ * attachment:upload_completed socket event) — not the frozen node attrs.
+ */
+export function attachmentPendingState(a: AttachmentSummary): "uploading" | "scanning" | "blocked" | null {
+  if (a.safetyStatus === "quarantined") return "blocked"
+  if (a.safetyStatus === "pending_upload" || a.uploadStatus === "reserved" || a.uploadStatus === "uploading") {
+    return "uploading"
+  }
+  if (a.safetyStatus === "pending_scan") return "scanning"
+  return null
+}
+
+const PENDING_LABELS = { uploading: "Uploading…", scanning: "Scanning…", blocked: "Blocked by malware scan" } as const
+
+function PendingAttachmentChip({
+  attachment,
+  state,
+}: {
+  attachment: AttachmentSummary
+  state: "uploading" | "scanning" | "blocked"
+}) {
+  return (
+    <Button variant="outline" size="sm" className="h-8 gap-2 text-xs" disabled>
+      {state === "blocked" ? <File className="h-3.5 w-3.5" /> : <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+      <span className="max-w-[150px] truncate">{attachment.filename}</span>
+      <span className="text-muted-foreground">{PENDING_LABELS[state]}</span>
+    </Button>
+  )
+}
+
 function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentItemProps) {
   const [isDownloading, setIsDownloading] = useState(false)
   const Icon = getFileIcon(attachment.mimeType)
@@ -478,43 +511,60 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   const attachmentIds = useMemo(() => new Set((attachments ?? []).map((a) => a.id)), [attachments])
   const selectedAttachmentId = mediaAttachmentId && attachmentIds.has(mediaAttachmentId) ? mediaAttachmentId : null
 
-  const imageAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => a.mimeType.startsWith("image/")),
+  // Attachments still uploading/scanning (or blocked by the scan) render as an
+  // inert status chip and are excluded from every interactive partition below —
+  // their bytes may not exist yet, so previews/downloads would 404 or be
+  // rejected server-side with no explanation.
+  const pendingAttachments = useMemo(
+    () =>
+      (attachments ?? []).flatMap((a) => {
+        const state = attachmentPendingState(a)
+        return state ? [{ attachment: a, state }] : []
+      }),
     [attachments]
+  )
+  const settledAttachments = useMemo(
+    () => (attachments ?? []).filter((a) => attachmentPendingState(a) === null),
+    [attachments]
+  )
+
+  const imageAttachments = useMemo(
+    () => settledAttachments.filter((a) => a.mimeType.startsWith("image/")),
+    [settledAttachments]
   )
   // Use processingStatus as the video discriminator — the backend sets it for
   // all video attachments, including application/octet-stream files with video
   // extensions that wouldn't match a pure mimeType.startsWith("video/") check.
   const videoAttachments = useMemo(
     () =>
-      (attachments ?? []).filter(
+      settledAttachments.filter(
         (a) => !a.mimeType.startsWith("image/") && a.processingStatus && a.processingStatus !== "failed"
       ),
     [attachments]
   )
   const failedVideoAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.mimeType.startsWith("image/") && a.processingStatus === "failed"),
+    () => settledAttachments.filter((a) => !a.mimeType.startsWith("image/") && a.processingStatus === "failed"),
     [attachments]
   )
   const markdownAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.processingStatus && isMarkdownAttachment(a)),
+    () => settledAttachments.filter((a) => !a.processingStatus && isMarkdownAttachment(a)),
     [attachments]
   )
   const htmlAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.processingStatus && isHtmlAttachment(a)),
+    () => settledAttachments.filter((a) => !a.processingStatus && isHtmlAttachment(a)),
     [attachments]
   )
   const pdfAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.processingStatus && isPdfAttachment(a)),
+    () => settledAttachments.filter((a) => !a.processingStatus && isPdfAttachment(a)),
     [attachments]
   )
   const textAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.processingStatus && isTextPreviewableAttachment(a)),
+    () => settledAttachments.filter((a) => !a.processingStatus && isTextPreviewableAttachment(a)),
     [attachments]
   )
   const fileAttachments = useMemo(
     () =>
-      (attachments ?? []).filter(
+      settledAttachments.filter(
         (a) =>
           !a.mimeType.startsWith("image/") &&
           !a.processingStatus &&
@@ -523,7 +573,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
           !isPdfAttachment(a) &&
           !isTextPreviewableAttachment(a)
       ),
-    [attachments]
+    [settledAttachments]
   )
 
   // Build gallery items — images + completed videos. Image URLs are
@@ -646,6 +696,13 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   return (
     <>
       <div className={cn("flex flex-col gap-2 mt-2", className)}>
+        {pendingAttachments.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {pendingAttachments.map(({ attachment, state }) => (
+              <PendingAttachmentChip key={attachment.id} attachment={attachment} state={state} />
+            ))}
+          </div>
+        )}
         {(imageAttachments.length > 0 || videoAttachments.length > 0) && (
           <div className="flex flex-wrap gap-2">
             {imageAttachments.map((attachment) => (

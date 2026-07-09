@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { Request, Response } from "express"
+import type { NextFunction, Request, Response } from "express"
 import { z } from "zod"
 import type { Pool } from "pg"
 import { buildContentDisposition, buildUploadParams, parseE2eUploadFlag, type AttachmentService } from "./service"
@@ -11,12 +11,27 @@ import {
   type AttachmentSearchCursor,
   type AttachmentSearchRow,
 } from "./repository"
+import { AttachmentUploadRepository } from "./upload-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
 import type { StreamService } from "../streams"
 import { VideoTranscodeJobRepository } from "./video"
 import { isImageAttachment } from "./image-caption"
 import type { StorageProvider } from "../../lib/storage/s3-client"
-import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threa/types"
+import { ATTACHMENT_CATEGORIES, AttachmentUploadStatuses, type AttachmentCategory } from "@threa/types"
+
+declare module "express" {
+  interface Request {
+    /** Set by `validateReservedUpload` for the reserved-content route. */
+    reservedAttachment?: Attachment
+  }
+}
+
+/** Upload states a reserved-content POST may complete from. */
+const COMPLETABLE_UPLOAD_STATUSES: readonly string[] = [
+  AttachmentUploadStatuses.RESERVED,
+  AttachmentUploadStatuses.UPLOADING,
+  AttachmentUploadStatuses.FAILED,
+]
 
 interface Dependencies {
   attachmentService: AttachmentService
@@ -36,6 +51,36 @@ const reserveAttachmentSchema = z.object({
 
 export function createAttachmentHandlers({ attachmentService, streamService, storage, pool }: Dependencies) {
   return {
+    /**
+     * Gate for the reserved-content route, mounted BEFORE the S3 upload
+     * middleware. multer-s3 streams bytes to the attachment's key as they
+     * arrive, so an invalid request must be rejected here — after the
+     * middleware runs, a hostile POST has already overwritten the object
+     * (including one that was already scanned clean and bound to a message).
+     */
+    async validateReservedUpload(req: Request, res: Response, next: NextFunction) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { attachmentId } = req.params
+
+      const upload = await AttachmentUploadRepository.findByAttachmentId(pool, attachmentId)
+      if (!upload || upload.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Attachment upload reservation not found" })
+      }
+      if (upload.uploadedBy !== userId) {
+        return res.status(403).json({ error: "Attachment upload reservation belongs to another user" })
+      }
+      if (!COMPLETABLE_UPLOAD_STATUSES.includes(upload.status)) {
+        return res.status(409).json({ error: "Attachment upload is already complete" })
+      }
+      const attachment = await AttachmentRepository.findById(pool, attachmentId)
+      if (!attachment || attachment.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Attachment not found" })
+      }
+      req.reservedAttachment = attachment
+      next()
+    },
+
     async reserve(req: Request, res: Response) {
       const parsed = reserveAttachmentSchema.safeParse(req.body)
       if (!parsed.success) return res.status(400).json({ error: "Invalid request body" })
@@ -82,9 +127,13 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       // E2E upload: the body bytes are client-side ciphertext. buildUploadParams
       // forces placeholder metadata — the real filename/mime ride encrypted in
       // the message's attachmentRefs, never on this row.
-      const createUpload = req.params?.attachmentId
+      const createUpload = req.reservedAttachment
         ? attachmentService.completeReservedUpload.bind(attachmentService)
         : attachmentService.createForUpload.bind(attachmentService)
+      // A reservation fixed its e2e-ness at reserve time; trusting the request
+      // flag would let a plaintext reservation complete as e2e_unscanned
+      // (shareable) without ever hitting the malware scanner.
+      const e2e = req.reservedAttachment ? req.reservedAttachment.e2eOnly : parseE2eUploadFlag(req.body)
       const uploadResult = await createUpload(
         buildUploadParams(
           {
@@ -96,7 +145,7 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
             sizeBytes: file.size,
             storagePath: file.key,
           },
-          parseE2eUploadFlag(req.body)
+          e2e
         )
       )
 

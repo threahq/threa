@@ -99,6 +99,7 @@ export type OutboxEventType =
   | "link_preview:dismissed"
   | "attachment:transcoded"
   | "attachment:thumbnailed"
+  | "attachment:upload_completed"
   | "bot_invocation:available"
   | "bot_invocation:claimed"
   | "bot:active_actor_changed"
@@ -160,6 +161,7 @@ export type WorkspaceScopedEventType =
   | "bot:updated"
   | "attachment:transcoded"
   | "attachment:thumbnailed"
+  | "attachment:upload_completed"
 
 interface StreamScopedPayload {
   workspaceId: string
@@ -374,6 +376,20 @@ export interface AttachmentUploadedOutboxPayload extends WorkspaceScopedPayload 
 export interface AttachmentTranscodedOutboxPayload extends WorkspaceScopedPayload {
   attachmentId: string
   processingStatus: string
+  streamId?: string
+  messageId?: string
+}
+
+/**
+ * Fired when a reserved attachment upload's safety status settles (scan clean,
+ * quarantined, or E2E complete). A message can bind the attachment while its
+ * bytes are still uploading, and stored message content is never revisited —
+ * this event updates already-rendered timeline chips after the fact.
+ */
+export interface AttachmentUploadCompletedOutboxPayload extends WorkspaceScopedPayload {
+  attachmentId: string
+  uploadStatus: string
+  safetyStatus: string
   streamId?: string
   messageId?: string
 }
@@ -981,6 +997,7 @@ export interface OutboxEventPayloadMap {
   "link_preview:dismissed": LinkPreviewDismissedOutboxPayload
   "attachment:transcoded": AttachmentTranscodedOutboxPayload
   "attachment:thumbnailed": AttachmentThumbnailedOutboxPayload
+  "attachment:upload_completed": AttachmentUploadCompletedOutboxPayload
   "attachment:extraction_completed": AttachmentExtractionCompletedOutboxPayload
   "bot_invocation:available": BotInvocationAvailableOutboxPayload
   "bot_invocation:claimed": BotInvocationClaimedOutboxPayload

@@ -395,7 +395,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     const contentJson = materializePendingAttachmentReferences(composer.content, pendingAttachments)
 
     // Extract attachment info from the materialized content
-    const attachments = extractUploadedAttachments(contentJson)
+    const attachments = extractUploadedAttachments(contentJson, pendingAttachments)
     const attachmentIds = attachments.map((a) => a.id)
 
     setDraftExpanded(false)

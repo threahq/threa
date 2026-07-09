@@ -399,6 +399,44 @@ describe("AttachmentService", () => {
       expect(result).toBeNull()
     })
   })
+
+  describe("completeReservedUpload", () => {
+    const params = buildUploadParams(
+      {
+        id: "attach_1",
+        workspaceId: "ws_1",
+        uploadedBy: "usr_1",
+        filename: "f.png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+        storagePath: "ws_1/attach_1/f.png",
+      },
+      true // claims E2E — must be rejected against a plaintext reservation
+    )
+
+    it("rejects an e2e flag that does not match the reservation (scan-bypass guard)", async () => {
+      spyOn(AttachmentUploadRepository, "findByAttachmentId").mockResolvedValue({
+        workspaceId: "ws_1",
+        uploadedBy: "usr_1",
+        attachmentId: "attach_1",
+        status: "reserved",
+      } as any)
+      spyOn(AttachmentRepository, "findById").mockResolvedValue(makeAttachment({ e2eOnly: false }))
+
+      const { service, malwareScanner } = createService()
+      await expect(service.completeReservedUpload(params)).rejects.toThrow(/e2e flag does not match/)
+      expect(malwareScanner.scan).not.toHaveBeenCalled()
+    })
+
+    it("throws instead of minting a row when no reservation exists", async () => {
+      spyOn(AttachmentUploadRepository, "findByAttachmentId").mockResolvedValue(null)
+      const insert = spyOn(AttachmentRepository, "insert")
+
+      const { service } = createService()
+      await expect(service.completeReservedUpload(params)).rejects.toThrow(/No upload reservation/)
+      expect(insert).not.toHaveBeenCalled()
+    })
+  })
 })
 
 // The single chokepoint both upload entry points (first-party + public API)

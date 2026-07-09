@@ -10,6 +10,7 @@ import {
   AttachmentRepository,
   AttachmentReferenceRepository,
   AttachmentUploadRepository,
+  type AttachmentUpload,
   isAttachmentReadableViaShareOrReference,
   isAttachmentSafeForSharing,
   toAttachmentSummary,
@@ -538,12 +539,19 @@ export class EventService {
       if (attachments.length !== params.attachmentIds.length) {
         throw new Error("Invalid attachment IDs: not all attachments were found")
       }
+      const pendingIds = attachments
+        .filter((a) => a.safetyStatus === "pending_upload" || a.safetyStatus === "pending_scan")
+        .map((a) => a.id)
+      const uploadsByAttachmentId =
+        pendingIds.length > 0
+          ? await AttachmentUploadRepository.findByAttachmentIds(client, pendingIds)
+          : new Map<string, AttachmentUpload>()
       for (const a of attachments) {
         if (a.workspaceId !== params.workspaceId) {
           throw new Error("Invalid attachment IDs: must belong to this workspace")
         }
         const isPendingUpload = a.safetyStatus === "pending_upload" || a.safetyStatus === "pending_scan"
-        const upload = isPendingUpload ? await AttachmentUploadRepository.findByAttachmentId(client, a.id) : null
+        const upload = uploadsByAttachmentId.get(a.id) ?? null
         if (!isAttachmentSafeForSharing(a.safetyStatus)) {
           if (!isPendingUpload || a.messageId !== null || a.uploadedBy !== params.authorId) {
             throw new Error(

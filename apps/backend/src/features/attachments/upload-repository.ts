@@ -94,6 +94,14 @@ export const AttachmentUploadRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  async findByAttachmentIds(client: Querier, attachmentIds: string[]): Promise<Map<string, AttachmentUpload>> {
+    if (attachmentIds.length === 0) return new Map()
+    const result = await client.query<AttachmentUploadRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM attachment_uploads WHERE attachment_id = ANY(${attachmentIds})
+    `)
+    return new Map(result.rows.map((row) => [row.attachment_id, mapRow(row)]))
+  },
+
   async deleteByAttachmentId(client: Querier, attachmentId: string): Promise<void> {
     await client.query(sql`DELETE FROM attachment_uploads WHERE attachment_id = ${attachmentId}`)
   },

@@ -24,6 +24,7 @@ import {
   type StreamUnarchivedOutboxPayload,
   type AttachmentTranscodedOutboxPayload,
   type AttachmentThumbnailedOutboxPayload,
+  type AttachmentUploadCompletedOutboxPayload,
   type MessagesMovedOutboxPayload,
   type ConversationCreatedOutboxPayload,
   type ConversationUpdatedOutboxPayload,
@@ -247,6 +248,11 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
 
   if (isOutboxEventType(event, "attachment:thumbnailed")) {
     const payload = event.payload as AttachmentThumbnailedOutboxPayload
+    return payload.streamId ? [streamGroup(payload.streamId)] : [WORKSPACE_GROUP]
+  }
+
+  if (isOutboxEventType(event, "attachment:upload_completed")) {
+    const payload = event.payload as AttachmentUploadCompletedOutboxPayload
     return payload.streamId ? [streamGroup(payload.streamId)] : [WORKSPACE_GROUP]
   }
 
