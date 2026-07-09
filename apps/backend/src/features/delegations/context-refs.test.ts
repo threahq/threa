@@ -26,8 +26,8 @@ describe("validateDelegationContextRefs", () => {
     expect(result).toEqual({ accepted: ["shared-message:stream_1/msg_1"], dropped: [] })
   })
 
-  it("drops shared-message refs that are missing, stream-mismatched, or out of the user's scope", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(
+  it("drops shared-message refs that are missing, stream-mismatched, or out of the user's scope — in ONE batched lookup", async () => {
+    const findByIds = spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(
       async (_db, _ws, ids) =>
         new Map(
           (ids as string[])
@@ -48,6 +48,8 @@ describe("validateDelegationContextRefs", () => {
       { ref: "shared-message:stream_1/msg_elsewhere", reason: "stream-mismatch" },
       { ref: "shared-message:stream_secret/msg_private", reason: "stream-out-of-scope" },
     ])
+    // Batched per kind (the strip-inaccessible-refs shape) — never one round trip per ref.
+    expect(findByIds).toHaveBeenCalledTimes(1)
   })
 
   it("accepts active memos and drops missing/retired ones (LLMs hallucinate ids)", async () => {
@@ -70,15 +72,15 @@ describe("validateDelegationContextRefs", () => {
   })
 
   it("gates attachments on workspace + malware-clean + stream reach (direct or via references)", async () => {
-    spyOn(AttachmentRepository, "findByIds").mockImplementation(async (_db, ids) => {
-      const [id] = ids as string[]
-      if (id === "att_dirty") return [{ id, workspaceId: WS, safetyStatus: "pending", streamId: "stream_1" }] as never
-      if (id === "att_reachable_via_ref")
-        return [{ id, workspaceId: WS, safetyStatus: "clean", streamId: "stream_secret" }] as never
-      if (id === "att_unreachable")
-        return [{ id, workspaceId: WS, safetyStatus: "clean", streamId: "stream_secret" }] as never
-      return [{ id, workspaceId: WS, safetyStatus: "clean", streamId: "stream_1" }] as never
-    })
+    spyOn(AttachmentRepository, "findByIds").mockImplementation(
+      async (_db, ids) =>
+        (ids as string[]).map((id) => ({
+          id,
+          workspaceId: WS,
+          safetyStatus: id === "att_dirty" ? "pending" : "clean",
+          streamId: id === "att_ok" ? "stream_1" : "stream_secret",
+        })) as never
+    )
     spyOn(AttachmentReferenceRepository, "findReferencingStreamIds").mockImplementation(async (_db, _ws, id) =>
       id === "att_reachable_via_ref" ? ["stream_2"] : []
     )

@@ -40,12 +40,30 @@ export interface ValidateContextRefsResult {
   dropped: DroppedContextRef[]
 }
 
+/** A parsed ref, or `null` when the string matches none of the supported schemes. */
+type ParsedRef =
+  | { kind: "message"; streamId: string; messageId: string }
+  | { kind: "memo"; memoId: string }
+  | { kind: "attachment"; attachmentId: string }
+
+function parseRef(ref: string): ParsedRef | null {
+  const shared = parseSharedMessageHref(ref)
+  if (shared) return { kind: "message", streamId: shared.streamId, messageId: shared.messageId }
+  const memo = parseMemoHref(ref)
+  if (memo) return { kind: "memo", memoId: memo.memoId }
+  const attachmentId = parseAttachmentRef(ref)
+  if (attachmentId) return { kind: "attachment", attachmentId }
+  return null
+}
+
 /**
  * Validate a delegation's pointer URLs (`shared-message:` / `memo:` /
  * `attachment:`) against the invoking user's access before they are persisted
- * onto the card. Mirrors the decisions of `stripInaccessibleAgentRefs`
- * (companion write path) ref-kind by ref-kind, but takes the pointer-URL wire
- * form directly — a delegation stores refs as strings, not a content tree.
+ * onto the card. Mirrors `stripInaccessibleAgentRefs` (companion write path)
+ * decision-for-decision AND shape-for-shape: a parse pass collects ids, one
+ * batched lookup per kind resolves them, then each ref is classified — never
+ * a round trip per ref. The input form differs (pointer-URL strings, not a
+ * content tree), which is why this isn't the same function.
  *
  * LLMs hallucinate ids, so unresolvable refs are dropped (and reported to the
  * tool so the model can correct), never persisted: a card whose "Copy prompt"
@@ -57,11 +75,61 @@ export async function validateDelegationContextRefs(
   const { pool, workspaceId, refs } = params
   const accessibleSet = new Set(params.accessibleStreamIds)
 
+  // Pass 1: parse and collect candidate ids so lookups batch per kind.
+  const parsed = refs.map((ref) => ({ ref, parsed: parseRef(ref) }))
+  const messageIds = new Set<string>()
+  const memoIds = new Set<string>()
+  const attachmentIds = new Set<string>()
+  for (const { parsed: p } of parsed) {
+    if (p?.kind === "message") messageIds.add(p.messageId)
+    else if (p?.kind === "memo") memoIds.add(p.memoId)
+    else if (p?.kind === "attachment") attachmentIds.add(p.attachmentId)
+  }
+
+  const [messageMap, memoMap, attachments] = await Promise.all([
+    messageIds.size > 0
+      ? MessageRepository.findByIdsInWorkspace(pool, workspaceId, [...messageIds])
+      : new Map<string, { streamId: string }>(),
+    memoIds.size > 0
+      ? MemoRepository.findByIdsInWorkspace(pool, workspaceId, [...memoIds])
+      : new Map<string, { status: string }>(),
+    attachmentIds.size > 0 ? AttachmentRepository.findByIds(pool, [...attachmentIds]) : [],
+  ])
+  const attachmentMap = new Map(attachments.map((a) => [a.id, a]))
+
+  // Attachment reachability: direct stream in scope, else any referencing
+  // stream in scope — the reference-projection fallback, batched like the
+  // strip path's Promise.all.
+  const attachmentReachable = new Map<string, boolean>()
+  await Promise.all(
+    [...attachmentIds].map(async (id) => {
+      const attachment = attachmentMap.get(id)
+      if (!attachment || attachment.workspaceId !== workspaceId) return
+      if (attachment.safetyStatus !== AttachmentSafetyStatuses.CLEAN) return
+      if (attachment.streamId && accessibleSet.has(attachment.streamId)) {
+        attachmentReachable.set(id, true)
+        return
+      }
+      const refStreamIds = await AttachmentReferenceRepository.findReferencingStreamIds(pool, workspaceId, id)
+      attachmentReachable.set(
+        id,
+        refStreamIds.some((s) => accessibleSet.has(s))
+      )
+    })
+  )
+
+  // Pass 2: classify each ref in input order.
   const accepted: string[] = []
   const dropped: DroppedContextRef[] = []
-
-  for (const ref of refs) {
-    const reason = await classifyRef(pool, workspaceId, accessibleSet, ref)
+  for (const { ref, parsed: p } of parsed) {
+    const reason = classifyParsedRef(p, {
+      workspaceId,
+      accessibleSet,
+      messageMap,
+      memoMap,
+      attachmentMap,
+      attachmentReachable,
+    })
     if (reason === null) accepted.push(ref)
     else dropped.push({ ref, reason })
   }
@@ -72,43 +140,39 @@ export async function validateDelegationContextRefs(
   return { accepted, dropped }
 }
 
-async function classifyRef(
-  pool: Pool,
-  workspaceId: string,
-  accessibleSet: Set<string>,
-  ref: string
-): Promise<DroppedContextRefReason | null> {
-  const shared = parseSharedMessageHref(ref)
-  if (shared) {
-    const messages = await MessageRepository.findByIdsInWorkspace(pool, workspaceId, [shared.messageId])
-    const message = messages.get(shared.messageId)
+function classifyParsedRef(
+  parsed: ParsedRef | null,
+  lookups: {
+    workspaceId: string
+    accessibleSet: Set<string>
+    messageMap: Map<string, { streamId: string }>
+    memoMap: Map<string, { status: string }>
+    attachmentMap: Map<string, { workspaceId: string; safetyStatus: string; streamId: string | null }>
+    attachmentReachable: Map<string, boolean>
+  }
+): DroppedContextRefReason | null {
+  if (!parsed) return "unsupported-scheme"
+
+  if (parsed.kind === "message") {
+    const message = lookups.messageMap.get(parsed.messageId)
+    // Cross-workspace collapses into "not found" (INV-8) — the lookup is workspace-scoped.
     if (!message) return "message-not-found"
-    if (message.streamId !== shared.streamId) return "stream-mismatch"
-    if (!accessibleSet.has(shared.streamId)) return "stream-out-of-scope"
+    if (message.streamId !== parsed.streamId) return "stream-mismatch"
+    if (!lookups.accessibleSet.has(parsed.streamId)) return "stream-out-of-scope"
     return null
   }
 
-  const memo = parseMemoHref(ref)
-  if (memo) {
-    const memos = await MemoRepository.findByIdsInWorkspace(pool, workspaceId, [memo.memoId])
-    const row = memos.get(memo.memoId)
-    if (!row) return "memo-not-found"
-    if (row.status !== "active") return "memo-not-active"
+  if (parsed.kind === "memo") {
+    const memo = lookups.memoMap.get(parsed.memoId)
+    if (!memo) return "memo-not-found"
+    if (memo.status !== "active") return "memo-not-active"
     return null
   }
 
-  const attachmentId = parseAttachmentRef(ref)
-  if (attachmentId) {
-    const [attachment] = await AttachmentRepository.findByIds(pool, [attachmentId])
-    // Cross-workspace collapses into "not found" (INV-8).
-    if (!attachment || attachment.workspaceId !== workspaceId) return "attachment-not-found"
-    if (attachment.safetyStatus !== AttachmentSafetyStatuses.CLEAN) return "attachment-not-clean"
-    if (attachment.streamId && accessibleSet.has(attachment.streamId)) return null
-    const refStreamIds = await AttachmentReferenceRepository.findReferencingStreamIds(pool, workspaceId, attachmentId)
-    return refStreamIds.some((s) => accessibleSet.has(s)) ? null : "attachment-out-of-scope"
-  }
-
-  return "unsupported-scheme"
+  const attachment = lookups.attachmentMap.get(parsed.attachmentId)
+  if (!attachment || attachment.workspaceId !== lookups.workspaceId) return "attachment-not-found"
+  if (attachment.safetyStatus !== AttachmentSafetyStatuses.CLEAN) return "attachment-not-clean"
+  return lookups.attachmentReachable.get(parsed.attachmentId) ? null : "attachment-out-of-scope"
 }
 
 /** `attachment:<id>` — single `[\w-]+` segment, same strictness as `parseMemoHref`. */
