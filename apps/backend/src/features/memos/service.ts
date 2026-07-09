@@ -96,6 +96,13 @@ export interface SaveMemoParams {
   workspaceId: string
   streamId: string
   sessionId: string | null
+  /**
+   * The invoking user's accessible stream ids. `sourceMessageIds` is LLM-supplied
+   * (untrusted), so source messages are resolved scoped to these streams — a cited
+   * id from another workspace or an inaccessible stream is dropped, never persisted
+   * or folded into `participant_ids` (INV-8/INV-62, matching `react_to_message`).
+   */
+  accessibleStreamIds: string[]
   title: string
   abstract: string
   keyPoints: string[]
@@ -632,8 +639,18 @@ export class MemoService implements MemoServiceLike {
    * connection is held across the AI call (INV-41).
    */
   async saveMemo(params: SaveMemoParams): Promise<SaveMemoResult> {
-    const { workspaceId, streamId, sessionId, title, abstract, keyPoints, tags, knowledgeType, sourceMessageIds } =
-      params
+    const {
+      workspaceId,
+      streamId,
+      sessionId,
+      accessibleStreamIds,
+      title,
+      abstract,
+      keyPoints,
+      tags,
+      knowledgeType,
+      sourceMessageIds,
+    } = params
 
     // A message source is required so the row satisfies `memo_type_source`
     // (memo_type 'message' ⇒ source_message_id NOT NULL). The tool enforces ≥1,
@@ -655,6 +672,33 @@ export class MemoService implements MemoServiceLike {
     const newMemoId = memoId()
 
     return withTransaction(this.pool, async (client) => {
+      // Resolve the cited source messages scoped to the invoking user's accessible
+      // streams (INV-8/INV-62): `sourceMessageIds` is LLM-supplied, so an id from
+      // another workspace or a stream the user can't see must never be persisted
+      // as `source_message_id` or fold its author into `participant_ids`. Only the
+      // ids that actually resolve survive — matching `react_to_message`'s gate.
+      const sourceMessages = await MessageRepository.findByIdsInStreams(
+        client,
+        workspaceId,
+        sourceMessageIds,
+        accessibleStreamIds
+      )
+      const resolvedSourceIds = sourceMessageIds.filter((id) => sourceMessages.has(id))
+      if (resolvedSourceIds.length === 0) {
+        // None of the cited ids are visible to this user — no valid anchor, so
+        // don't invent one (would violate the CHECK / persist a foreign id).
+        logger.info({ streamId, sourceMessageIds }, "save_memo: no accessible source messages — rejecting")
+        return { ok: false, reason: "no_source_messages" }
+      }
+      const participantIds = Array.from(
+        new Set(
+          resolvedSourceIds
+            .map((id) => sourceMessages.get(id))
+            .filter((m): m is Message => m !== undefined && m.authorType === AuthorTypes.USER)
+            .map((m) => m.authorId)
+        )
+      )
+
       // Serialize against the passive batch and other save_memo calls for this
       // stream (same lock key) so the dedup gate can't be read stale (INV-20).
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
@@ -673,27 +717,15 @@ export class MemoService implements MemoServiceLike {
         return { ok: true, memoId: duplicate.memo.id, title: duplicate.memo.title, deduped: true }
       }
 
-      // Participants are the users who authored the cited source messages.
-      // Best-effort: an id the agent cited but that no longer resolves just
-      // yields fewer participants, never a failed write (INV-1 — no FK).
-      const sourceMessages = await MessageRepository.findByIds(client, sourceMessageIds)
-      const participantIds = Array.from(
-        new Set(
-          Array.from(sourceMessages.values())
-            .filter((m): m is Message => m !== null && m.authorType === AuthorTypes.USER)
-            .map((m) => m.authorId)
-        )
-      )
-
       const inserted = await MemoRepository.insert(client, {
         id: newMemoId,
         workspaceId,
         memoType: MemoTypes.MESSAGE,
-        sourceMessageId: sourceMessageIds[0],
+        sourceMessageId: resolvedSourceIds[0],
         title,
         abstract,
         keyPoints,
-        sourceMessageIds,
+        sourceMessageIds: resolvedSourceIds,
         participantIds,
         knowledgeType,
         tags,
@@ -717,7 +749,7 @@ export class MemoService implements MemoServiceLike {
           streamId,
           eventType: "memos:captured" as const,
           payload: {
-            memos: [{ memoId: newMemoId, title, knowledgeType, sourceMessageIds }],
+            memos: [{ memoId: newMemoId, title, knowledgeType, sourceMessageIds: resolvedSourceIds }],
           } satisfies MemosCapturedEventPayload,
           actorType: AuthorTypes.SYSTEM,
         },

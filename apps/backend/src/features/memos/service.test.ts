@@ -319,7 +319,7 @@ function setupSaveMemo() {
   spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
     fn(fakeClient)) as typeof dbModule.withTransaction)
 
-  spyOn(MessageRepository, "findByIds").mockResolvedValue(fakeMessages())
+  spyOn(MessageRepository, "findByIdsInStreams").mockResolvedValue(fakeMessages())
   const findNearDuplicate = spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
   const insert = spyOn(MemoRepository, "insert").mockImplementation(
     async (_db, params) => fakeMemoRow(params.id, { title: params.title }) as never
@@ -355,6 +355,7 @@ const saveMemoInput = {
   workspaceId: WORKSPACE_ID,
   streamId: STREAM_ID,
   sessionId: "agsess_1",
+  accessibleStreamIds: [STREAM_ID],
   title: "Deploys only on Fridays after the smoke suite",
   abstract: "The team deploys only on Fridays, and only after the smoke suite passes.",
   keyPoints: ["Smoke suite gates the deploy"],
@@ -441,5 +442,33 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
     expect(result).toEqual({ ok: false, reason: "no_source_messages" })
     expect(insert).not.toHaveBeenCalled()
     expect(withTx).not.toHaveBeenCalled()
+  })
+
+  it("drops a cited source id outside the invoking user's accessible streams (INV-8)", async () => {
+    const { service, insert } = setupSaveMemo()
+    // Only msg_1 resolves within the accessible streams; msg_evil (another
+    // workspace / inaccessible stream) is not returned by the scoped fetch.
+    spyOn(MessageRepository, "findByIdsInStreams").mockResolvedValue(
+      new Map([["msg_1", { id: "msg_1", authorId: "usr_1", authorType: "user" } as never]])
+    )
+
+    const result = await service.saveMemo({ ...saveMemoInput, sourceMessageIds: ["msg_1", "msg_evil"] })
+
+    expect(result).toMatchObject({ ok: true, deduped: false })
+    // The foreign id is never persisted; only the resolved id anchors the memo.
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sourceMessageId: "msg_1", sourceMessageIds: ["msg_1"], participantIds: ["usr_1"] })
+    )
+  })
+
+  it("rejects when none of the cited source messages are accessible (INV-8)", async () => {
+    const { service, insert } = setupSaveMemo()
+    spyOn(MessageRepository, "findByIdsInStreams").mockResolvedValue(new Map())
+
+    const result = await service.saveMemo({ ...saveMemoInput, sourceMessageIds: ["msg_foreign"] })
+
+    expect(result).toEqual({ ok: false, reason: "no_source_messages" })
+    expect(insert).not.toHaveBeenCalled()
   })
 })

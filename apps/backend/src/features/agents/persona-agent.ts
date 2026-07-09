@@ -236,6 +236,7 @@ export interface PersonaAgentDeps {
     workspaceId: string
     streamId: string
     sessionId: string | null
+    accessibleStreamIds: string[]
     title: string
     abstract: string
     keyPoints: string[]
@@ -830,6 +831,7 @@ export class PersonaAgent {
                   workspaceId,
                   streamId: session.streamId,
                   sessionId: session.id,
+                  accessibleStreamIds: agentContext.accessibleStreamIds ? [...agentContext.accessibleStreamIds] : [],
                   ...params,
                 }),
             }

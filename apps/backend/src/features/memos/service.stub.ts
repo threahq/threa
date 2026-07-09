@@ -10,6 +10,7 @@ export class StubMemoService implements MemoServiceLike {
 
   async saveMemo(params: SaveMemoParams): Promise<SaveMemoResult> {
     logger.debug({ workspaceId: params.workspaceId, streamId: params.streamId }, "Stub memo service - save_memo no-op")
+    if (params.sourceMessageIds.length === 0) return { ok: false, reason: "no_source_messages" }
     return { ok: true, memoId: memoId(), title: params.title, deduped: false }
   }
 }
