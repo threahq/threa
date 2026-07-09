@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from "react"
 import { db } from "@/db"
 import { serializeToMarkdown } from "@threa/prosemirror"
-import type { JSONContent } from "@threa/types"
+import { ConversationIntents, type JSONContent } from "@threa/types"
+import { deleteOptimisticBoardPost } from "@/stores/board-store"
 
 type MessageStatus = "pending" | "failed" | "editing"
 /** Status the message had before the user entered editing mode */
@@ -298,10 +299,17 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   )
 
   const deleteMessage = useCallback(async (id: string) => {
+    // Read the directive before deleting: a cancelled new-scratchpad board post
+    // also drops its composer-clear optimistic card (keyed by the client-minted
+    // conversation id) so it doesn't linger as a phantom that never reconciles.
+    const pending = await db.pendingMessages.get(id)
     await db.transaction("rw", db.pendingMessages, db.events, async () => {
       await db.pendingMessages.delete(id)
       await db.events.delete(id)
     })
+    if (pending?.conversation?.intent === ConversationIntents.NEW && pending.conversation.conversationId) {
+      await deleteOptimisticBoardPost(pending.conversation.conversationId)
+    }
     setPendingIds((prev) => {
       const next = new Set(prev)
       next.delete(id)

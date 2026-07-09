@@ -4,6 +4,7 @@ import { renderHook, act, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { PendingMessagesProvider, usePendingMessages } from "./pending-messages-context"
 import * as dbModule from "@/db"
+import * as boardStoreModule from "@/stores/board-store"
 
 const mockGet = vi.fn()
 const mockUpdate = vi.fn().mockResolvedValue(1)
@@ -321,6 +322,40 @@ describe("PendingMessagesContext", () => {
       expect(mockDelete).toHaveBeenCalledWith("temp_del")
       expect(mockEventsDelete).toHaveBeenCalledWith("temp_del")
       expect(result.current.getStatus("temp_del")).toBeNull()
+    })
+
+    it("drops the optimistic board card when a cancelled new-scratchpad post is deleted", async () => {
+      const dropCard = vi.fn().mockResolvedValue(undefined)
+      spyOnExport(boardStoreModule, "deleteOptimisticBoardPost").mockReturnValue(dropCard)
+      mockGet.mockResolvedValue({
+        clientId: "temp_board",
+        retryCount: 0,
+        status: undefined,
+        conversation: { intent: "new", conversationId: "conv_board" },
+      })
+
+      const { result } = renderHook(() => usePendingMessages(), { wrapper })
+
+      await act(async () => {
+        await result.current.deleteMessage("temp_board")
+      })
+
+      expect(mockDelete).toHaveBeenCalledWith("temp_board")
+      expect(dropCard).toHaveBeenCalledWith("conv_board")
+    })
+
+    it("leaves the board untouched when deleting a non-board pending message", async () => {
+      const dropCard = vi.fn().mockResolvedValue(undefined)
+      spyOnExport(boardStoreModule, "deleteOptimisticBoardPost").mockReturnValue(dropCard)
+      mockGet.mockResolvedValue({ clientId: "temp_plain", retryCount: 0, status: undefined })
+
+      const { result } = renderHook(() => usePendingMessages(), { wrapper })
+
+      await act(async () => {
+        await result.current.deleteMessage("temp_plain")
+      })
+
+      expect(dropCard).not.toHaveBeenCalled()
     })
 
     it("should clear editing state when deleting an editing message", async () => {

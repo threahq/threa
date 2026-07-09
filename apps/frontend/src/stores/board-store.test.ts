@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import Dexie from "dexie"
 import { db } from "@/db"
-import { seedBoardPosts, mergeBoardConversation, putOptimisticBoardPost } from "./board-store"
+import {
+  seedBoardPosts,
+  mergeBoardConversation,
+  putOptimisticBoardPost,
+  deleteOptimisticBoardPost,
+} from "./board-store"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
 
 const WORKSPACE_ID = "ws_1"
@@ -190,5 +195,62 @@ describe("putOptimisticBoardPost", () => {
     expect(row?.openingMessage?.attachments).toEqual([
       { id: "att_1", filename: "shot.png", mimeType: "image/png", sizeBytes: 2048 },
     ])
+  })
+
+  it("refines a still-pending stub in place: the drain rewrites the composer-clear draft ids with the real ones", async () => {
+    // Composer-clear stub: keyed by the client-minted id, under the DRAFT stream id.
+    await putOptimisticBoardPost(WORKSPACE_ID, {
+      ...input,
+      messageId: "temp_scratch",
+      streamId: "draft_1",
+      rootStreamId: "draft_1",
+      rootStreamType: "scratchpad",
+      contentMarkdown: "client markdown",
+    })
+    // Drain post-promotion: same conversation id, now the real stream/message ids
+    // and server-resolved markdown — refines the pending stub, still pending.
+    await putOptimisticBoardPost(WORKSPACE_ID, {
+      ...input,
+      messageId: "msg_real",
+      streamId: "stream_real",
+      rootStreamId: "stream_real",
+      rootStreamType: "scratchpad",
+      contentMarkdown: "server markdown",
+    })
+    const row = await db.conversations.get("conv_new")
+    expect(row?._status).toBe("pending")
+    expect(row?.conversation.streamId).toBe("stream_real")
+    expect(row?.openingMessage?.id).toBe("msg_real")
+    expect(row?.openingMessage?.contentMarkdown).toBe("server markdown")
+  })
+})
+
+describe("deleteOptimisticBoardPost", () => {
+  const input = {
+    conversationId: "conv_new",
+    messageId: "temp_scratch",
+    streamId: "draft_1",
+    authorId: "usr_1",
+    contentMarkdown: "just posted",
+    rootStreamId: "draft_1",
+    rootStreamType: "scratchpad" as const,
+    createdAt: "2026-06-22T12:00:00.000Z",
+  }
+
+  it("drops a pending stub (a cancelled queued post) so it doesn't linger as a phantom", async () => {
+    await putOptimisticBoardPost(WORKSPACE_ID, input)
+    await deleteOptimisticBoardPost("conv_new")
+    expect(await db.conversations.get("conv_new")).toBeUndefined()
+  })
+
+  it("leaves a reconciled card alone (a stale cancel must not delete a committed post)", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [makePost("conv_new", "2026-06-22T12:00:00.000Z")])
+    await deleteOptimisticBoardPost("conv_new")
+    expect(await db.conversations.get("conv_new")).toBeDefined()
+  })
+
+  it("no-ops when the card doesn't exist", async () => {
+    await deleteOptimisticBoardPost("conv_absent")
+    expect(await db.conversations.get("conv_absent")).toBeUndefined()
   })
 })

@@ -49,7 +49,11 @@ export const conversationAssigner: ConversationAssigner = {
     }
 
     if (directive.intent === ConversationIntents.NEW) {
-      return mintConversationForMessage(client, workspaceId, message)
+      // Honor a client-minted id when the sender supplied one (a board post that
+      // slotted its card optimistically keyed by this id — INV-20 idempotency
+      // rides the upstream `clientMessageId` dedup, which skips this assigner on a
+      // retry, so the id inserts exactly once). Omitted → mint server-side.
+      return mintConversationForMessage(client, workspaceId, message, directive.conversationId)
     }
 
     // `existing`. Workspace-scoped + row-locked (INV-8, INV-20): a stale/foreign
@@ -91,9 +95,15 @@ export const conversationAssigner: ConversationAssigner = {
 }
 
 /** Mint a fresh conversation in the message's stream, seeded with the message.
- *  Returns the minted id. */
-async function mintConversationForMessage(client: PoolClient, workspaceId: string, message: Message): Promise<string> {
-  const newId = conversationId()
+ *  Returns the id — the client-minted `preferredId` when supplied (a board post
+ *  that already slotted its optimistic card by it), else a fresh server id. */
+async function mintConversationForMessage(
+  client: PoolClient,
+  workspaceId: string,
+  message: Message,
+  preferredId?: string
+): Promise<string> {
+  const newId = preferredId ?? conversationId()
   await ConversationRepository.insert(client, {
     id: newId,
     streamId: message.streamId,

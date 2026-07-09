@@ -269,3 +269,54 @@ describe("conversationAssigner — existing (same-root guard)", () => {
     ).rejects.toMatchObject({ code: "CONVERSATION_NOT_FOUND" })
   })
 })
+
+describe("conversationAssigner — new (client-minted id)", () => {
+  let insert: ReturnType<typeof spyOn>
+  let addPrimaryMessage: ReturnType<typeof spyOn>
+  let emitAssignmentEvents: ReturnType<typeof spyOn>
+
+  beforeEach(() => {
+    insert = spyOn(ConversationRepository, "insert").mockResolvedValue({ id: "conv_new" } as never)
+    addPrimaryMessage = spyOn(ConversationRepository, "addPrimaryMessage").mockResolvedValue(undefined as never)
+    spyOn(ConversationRepository, "bumpActivityForIds").mockResolvedValue(undefined as never)
+    emitAssignmentEvents = spyOn(assignmentEvents, "emitAssignmentEvents").mockResolvedValue(undefined as never)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  async function mintNew(conversationId?: string): Promise<string> {
+    return conversationAssigner.assignInTransaction(CLIENT, {
+      workspaceId: WORKSPACE_ID,
+      message: makeReply("chan_1"),
+      directive: { intent: "new", conversationId },
+    })
+  }
+
+  test("honors the client-minted id verbatim so the optimistic card reconciles by it", async () => {
+    const returned = await mintNew("conv_client")
+
+    expect(insert.mock.calls[0][1]).toMatchObject({
+      id: "conv_client",
+      streamId: "chan_1",
+      workspaceId: WORKSPACE_ID,
+    })
+    expect(addPrimaryMessage).toHaveBeenCalledWith(CLIENT, WORKSPACE_ID, "conv_client", "msg_reply", "usr_1")
+    expect(returned).toBe("conv_client")
+    expect(emitAssignmentEvents.mock.calls[0][1]).toMatchObject({
+      conversationId: "conv_client",
+      created: true,
+      reason: "declared",
+    })
+  })
+
+  test("mints a server id when the sender supplies none (every non-board `new` caller)", async () => {
+    const returned = await mintNew(undefined)
+
+    const mintedId = insert.mock.calls[0][1].id as string
+    expect(mintedId).toMatch(/^conv_/)
+    expect(returned).toBe(mintedId)
+    expect(addPrimaryMessage).toHaveBeenCalledWith(CLIENT, WORKSPACE_ID, mintedId, "msg_reply", "usr_1")
+  })
+})

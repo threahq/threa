@@ -269,7 +269,7 @@ describe("useCreateBoardPost", () => {
     vi.spyOn(draftScratchpadsModule, "useDraftScratchpads").mockReturnValue({
       createScratchpad,
     } as unknown as ReturnType<typeof draftScratchpadsModule.useDraftScratchpads>)
-    const queueDraftMessage = vi.fn().mockResolvedValue(undefined)
+    const queueDraftMessage = vi.fn().mockResolvedValue({ clientId: "temp_scratch" })
     vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({
       queueDraftMessage,
       currentUserId: "user_1",
@@ -377,8 +377,8 @@ describe("useCreateBoardPost", () => {
     expect(putOptimistic).toHaveBeenCalled()
   })
 
-  it("creates a draft scratchpad and queues the first message via the promote-on-send queue (no eager server stream)", async () => {
-    const { create, createScratchpad, queueDraftMessage } = mockBoardDeps()
+  it("creates a draft scratchpad, declares a client-minted conversation id, and slots the card at composer-clear", async () => {
+    const { create, createScratchpad, queueDraftMessage, putOptimistic } = mockBoardDeps()
 
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
@@ -392,6 +392,11 @@ describe("useCreateBoardPost", () => {
 
     expect(create).not.toHaveBeenCalled()
     expect(createScratchpad).toHaveBeenCalledWith("on")
+    // The directive carries a client-minted `conv_` id so the send honors it and
+    // the card can reconcile by the same id.
+    const directive = queueDraftMessage.mock.calls[0][1].conversation
+    expect(directive.intent).toBe("new")
+    expect(directive.conversationId).toMatch(/^conv_/)
     expect(queueDraftMessage).toHaveBeenCalledWith(
       { contentJson: { type: "doc", content: [] }, attachmentIds: undefined },
       expect.objectContaining({
@@ -399,6 +404,21 @@ describe("useCreateBoardPost", () => {
         streamId: "draft_1",
         draftId: "draft_1",
         streamCreation: { type: StreamTypes.SCRATCHPAD, companionMode: "on" },
+      })
+    )
+
+    // The card is seeded at composer-clear — keyed by the SAME minted id, a stub
+    // under the draft stream id (messageId = the optimistic clientId), so it lands
+    // before the promote+send round-trips complete.
+    expect(putOptimistic).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      expect.objectContaining({
+        conversationId: directive.conversationId,
+        messageId: "temp_scratch",
+        streamId: "draft_1",
+        authorId: "user_1",
+        rootStreamId: "draft_1",
+        rootStreamType: StreamTypes.SCRATCHPAD,
       })
     )
   })

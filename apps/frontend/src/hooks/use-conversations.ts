@@ -17,6 +17,8 @@ import type { BoardViewPost } from "./use-stable-board-view"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
+import { generateConversationId } from "@/lib/ids"
+import { serializeToMarkdown } from "@threa/prosemirror"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import type { SplitGroupInput } from "@/api/conversations"
 import { StreamTypes } from "@threa/types"
@@ -255,21 +257,50 @@ export function useCreateBoardPost(workspaceId: string) {
     mutationFn: async ({ target, contentJson, attachmentIds, attachments }: CreateBoardPostInput) => {
       if (target.type === "newScratchpad") {
         const draftId = await createScratchpad(target.companionMode)
-        await queueDraftMessage(
+        // Mint the conversation id up front so the card can land the instant the
+        // composer clears (below) and the send honors the same id — the card
+        // reconciles by it, no promote+send wait, no temp-id swap.
+        const conversationId = generateConversationId()
+        const { clientId } = await queueDraftMessage(
           { contentJson, attachmentIds, attachments },
           {
             workspaceId,
             streamId: draftId,
             streamCreation: { type: StreamTypes.SCRATCHPAD, companionMode: target.companionMode },
             draftId,
-            // Declare the fresh conversation so the promote-on-send backend mints
-            // it synchronously (and returns its id) instead of leaving it to the
-            // async extractor — the queue drain seeds the board card off that id
-            // the moment the scratchpad materializes. `intent: "new"` because an
-            // authored post is always a new topic boundary.
-            conversation: { intent: "new" },
+            // Declare the fresh conversation with our client-minted id so the
+            // promote-on-send backend assigns it synchronously (honoring the id)
+            // instead of leaving it to the async extractor. `intent: "new"` because
+            // an authored post is always a new topic boundary.
+            conversation: { intent: "new", conversationId },
           }
         )
+
+        // Slot the card at composer-clear, keyed by the minted conversation id —
+        // a new scratchpad post appears immediately, like a timeline optimistic
+        // message, rather than after the promote+send round-trips. It's a stub
+        // under the DRAFT stream id (rootStreamType scratchpad); the queue drain
+        // refines it with the real stream/message ids + server-resolved markdown
+        // post-promotion, and the echo/refetch clears `_status` — all by the same
+        // id. Best-effort: a local IDB failure must not fail the send. A cancelled
+        // send drops the stub via `deleteOptimisticBoardPost` (see deleteMessage).
+        if (currentUserId) {
+          try {
+            await putOptimisticBoardPost(workspaceId, {
+              conversationId,
+              messageId: clientId,
+              streamId: draftId,
+              authorId: currentUserId,
+              contentMarkdown: serializeToMarkdown(contentJson),
+              rootStreamId: draftId,
+              rootStreamType: StreamTypes.SCRATCHPAD,
+              createdAt: new Date().toISOString(),
+              attachments,
+            })
+          } catch (err) {
+            console.error("Failed to seed optimistic board post at composer-clear", err)
+          }
+        }
         return
       }
 
