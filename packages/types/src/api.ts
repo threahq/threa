@@ -371,9 +371,17 @@ export interface SyncHeartbeatPayload {
  * sibling of the discriminant (not folded into one field) so a missing/garbage id
  * on `existing`/`threadFromMessage` is a validation error, distinct from `new`
  * and `newSubtopic`.
+ *
+ * `new` may carry a client-minted `conversationId`: the sender mints the id up
+ * front (a `conv_` ULID, INV-2) so it can slot the board card the instant the
+ * composer clears — rather than waiting for the send response to learn the
+ * server-minted id — and the card reconciles by the SAME id when the echo lands.
+ * Idempotent like `clientMessageId`: the send dedupes on that key before the
+ * assigner runs, so a retried send inserts the conversation exactly once. Omit to
+ * let the backend mint one (every non-board `new` caller does).
  */
 export type ConversationDirective =
-  | { intent: "new" }
+  | { intent: "new"; conversationId?: string }
   | { intent: "existing"; conversationId: string }
   | { intent: "threadFromMessage"; sourceConversationId: string }
   | { intent: "newSubtopic" }
