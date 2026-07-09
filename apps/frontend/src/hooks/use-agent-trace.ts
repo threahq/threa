@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { useSocket } from "@/contexts"
+import { useSocket, useSocketReconnectCount } from "@/contexts"
 import { agentSessionsApi } from "@/api"
 import { debugBootstrap } from "@/lib/bootstrap-debug"
 import { joinRoomWithAck } from "@/lib/socket-room"
@@ -64,6 +64,12 @@ interface UseAgentTraceResult {
  */
 export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentTraceResult {
   const socket = useSocket()
+  // Socket.io reuses the same Socket instance across reconnects, but the server
+  // forgets room membership on every disconnect. Keying the subscribe effect on
+  // the reconnect counter re-joins the session room and re-runs the bootstrap
+  // fetch (INV-53) — without it a reconnect leaves the dialog subscribed to
+  // nothing: steps freeze and the terminal completed/failed events never arrive.
+  const reconnectCount = useSocketReconnectCount()
   const userId = useWorkspaceUserId(workspaceId)
 
   // Real-time state accumulated from socket events
@@ -224,6 +230,9 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
 
   // Subscribe to session room and listen for events
   // CRITICAL: Subscription must complete BEFORE query is enabled to avoid race conditions
+  // Re-runs on reconnect (reconnectCount): re-joins the room and, by toggling
+  // isSubscribed, re-enables the stale bootstrap query so the refetch closes the
+  // event gap the disconnect opened (INV-53).
   useEffect(() => {
     if (!socket || !workspaceId || !sessionId) return
 
@@ -282,6 +291,7 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     }
   }, [
     socket,
+    reconnectCount,
     workspaceId,
     sessionId,
     handleStepStarted,
