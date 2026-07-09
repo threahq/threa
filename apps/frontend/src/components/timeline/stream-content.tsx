@@ -1769,7 +1769,9 @@ export function StreamContent({
     currentWorkspaceUserId ?? undefined,
     streamId,
     lastReadEventId,
-    readOverlay
+    readOverlay,
+    // Away arrivals get the divider (blur re-latch below), not the flash.
+    canAutoRead
   )
 
   // Unread divider state — a bookmark line at the first unread message. The

@@ -125,6 +125,45 @@ describe("useNewMessageIndicator", () => {
     expect(result.current.size).toBe(0)
   })
 
+  it("does not flash events that arrive while the viewer is away, even after refocus", () => {
+    // Away-arrivals get the persistent unread divider (blur re-latch) instead;
+    // flashing them too would double-signal the same rows on refocus.
+    const initial = [makeEvent({ id: "evt_1", sequence: "1" })]
+
+    const { result, rerender } = renderHook(
+      ({ events, isAttentive }: { events: StreamEvent[]; isAttentive: boolean }) =>
+        useNewMessageIndicator(events, currentUserId, streamId, "evt_1", undefined, isAttentive),
+      { initialProps: { events: initial, isAttentive: true } }
+    )
+
+    const withAwayArrival = [...initial, makeEvent({ id: "evt_2", sequence: "2" })]
+    rerender({ events: withAwayArrival, isAttentive: false })
+    expect(result.current.size).toBe(0)
+
+    // Refocus: the away-arrival is already known — it must not flash late.
+    rerender({ events: withAwayArrival, isAttentive: true })
+    expect(result.current.size).toBe(0)
+  })
+
+  it("flashes events arriving after refocus as usual", () => {
+    const initial = [makeEvent({ id: "evt_1", sequence: "1" })]
+
+    const { result, rerender } = renderHook(
+      ({ events, isAttentive }: { events: StreamEvent[]; isAttentive: boolean }) =>
+        useNewMessageIndicator(events, currentUserId, streamId, "evt_1", undefined, isAttentive),
+      { initialProps: { events: initial, isAttentive: true } }
+    )
+
+    const withAwayArrival = [...initial, makeEvent({ id: "evt_2", sequence: "2" })]
+    rerender({ events: withAwayArrival, isAttentive: false })
+
+    const withFocusedArrival = [...withAwayArrival, makeEvent({ id: "evt_3", sequence: "3" })]
+    rerender({ events: withFocusedArrival, isAttentive: true })
+
+    expect(result.current.has("evt_3")).toBe(true)
+    expect(result.current.has("evt_2")).toBe(false)
+  })
+
   it("expires flashed IDs after 2 seconds", () => {
     const initial = [makeEvent({ id: "evt_1", sequence: "1" })]
 
