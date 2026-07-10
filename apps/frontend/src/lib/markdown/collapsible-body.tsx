@@ -64,7 +64,8 @@ export function CollapsibleBody({
   const { collapsed, canToggle, toggle } = useBlockCollapse({ kind, content, collapsible, defaultCollapsed })
 
   const collapsedMaxHeight = collapsed
-    ? collapseToHeight ?? (threshold !== undefined && lineHeightPx !== null ? (threshold + 0.5) * lineHeightPx : undefined)
+    ? (collapseToHeight ??
+      (threshold !== undefined && lineHeightPx !== null ? (threshold + 0.5) * lineHeightPx : undefined))
     : undefined
 
   return (
@@ -108,7 +109,7 @@ export function CollapsibleBody({
           ) : (
             <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
           )}
-          {collapsed ? "Show more" : "Show less"}
+          {collapsed ? "Show more" : "Collapse"}
         </button>
       )}
     </div>
