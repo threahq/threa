@@ -337,6 +337,8 @@ export interface CachedUploadJob {
   blob: Blob
   status: "pending" | "failed"
   error?: string
+  /** Network-class failure — the online auto-heal may retry it. Unindexed. */
+  retryable?: boolean
   createdAt: number
 }
 

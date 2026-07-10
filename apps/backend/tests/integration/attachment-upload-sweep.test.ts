@@ -172,6 +172,55 @@ describe("Attachment upload sweep", () => {
     expect(events.rows[0]?.payload).toMatchObject({ uploadStatus: "failed", safetyStatus: "quarantined" })
   })
 
+  test("transition matrix: every status × operation lands exactly where the state machine says", async () => {
+    // The wedge-class bugs (a CAS that can never match) exist precisely when
+    // no test enumerates the matrix. Rows: current status. Columns: operation.
+    // Expected: resulting status, or "blocked" (CAS miss, row unchanged).
+    const { service } = createService()
+    const ops = {
+      markUploading: (id: string) => AttachmentUploadRepository.markUploading(pool, testWorkspaceId, id),
+      markUploaded: (id: string) => AttachmentUploadRepository.markUploaded(pool, testWorkspaceId, id),
+      markFailed: (id: string) =>
+        AttachmentUploadRepository.markFailed(pool, testWorkspaceId, id, { code: "test", message: null }),
+    } as const
+
+    const matrix: Array<{ from: string; op: keyof typeof ops; expect: string | "blocked" }> = [
+      // reserved: everything may act on a fresh reservation
+      { from: "reserved", op: "markUploading", expect: "uploading" },
+      { from: "reserved", op: "markUploaded", expect: "uploaded" },
+      { from: "reserved", op: "markFailed", expect: "failed" },
+      // uploading: bytes in flight — retries restart, completion settles, failures mark
+      { from: "uploading", op: "markUploading", expect: "uploading" },
+      { from: "uploading", op: "markUploaded", expect: "uploaded" },
+      { from: "uploading", op: "markFailed", expect: "failed" },
+      // uploaded (scan window): a new byte-stream must NOT start under a
+      // running scan (validateReservedUpload 409s), but the overwrite-recovery
+      // path must be able to fail it
+      { from: "uploaded", op: "markUploading", expect: "blocked" },
+      // ...and a second completion CAS-misses — that miss is what routes a
+      // duplicate completion to the settledDuplicate recovery path
+      { from: "uploaded", op: "markUploaded", expect: "blocked" },
+      { from: "uploaded", op: "markFailed", expect: "failed" },
+      // failed: retryable
+      { from: "failed", op: "markUploading", expect: "uploading" },
+      { from: "failed", op: "markUploaded", expect: "uploaded" },
+      { from: "failed", op: "markFailed", expect: "blocked" },
+      // abandoned: a late resume may still heal a bound attachment
+      { from: "abandoned", op: "markUploading", expect: "uploading" },
+      { from: "abandoned", op: "markUploaded", expect: "uploaded" },
+      { from: "abandoned", op: "markFailed", expect: "blocked" },
+    ]
+
+    for (const { from, op, expect: expected } of matrix) {
+      const id = await reserveVia(service)
+      if (from !== "reserved") await ageUploadRow(id, 0, from)
+      const result = await ops[op](id)
+      const row = await AttachmentUploadRepository.findByAttachmentId(pool, testWorkspaceId, id)
+      const outcome = { from, op, result: result === null ? "blocked" : row?.status }
+      expect(outcome).toEqual({ from, op, result: expected === "blocked" ? "blocked" : expected })
+    }
+  })
+
   test("the boot-time stale-scan recovery skips reserved uploads (their created_at is reservation time)", async () => {
     const { service } = createService()
     const reservedId = await reserveVia(service)

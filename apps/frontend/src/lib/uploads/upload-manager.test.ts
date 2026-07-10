@@ -237,6 +237,38 @@ describe("upload-manager", () => {
     expect(await db.uploadJobs.get("attach_dup")).toBeUndefined()
   })
 
+  it("network-failed jobs auto-heal when connectivity returns (online event)", async () => {
+    vi.useFakeTimers()
+    mockReserve("attach_heal")
+    vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+    const xhr = vi.spyOn(xhrTransport, "xhrUpload").mockRejectedValue(new XhrNetworkError()) // every quick retry fails
+    const job = startUpload(WS, makeFile())
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalled())
+    await vi.advanceTimersByTimeAsync(30_000) // exhaust 2s/5s/15s backoff
+    await vi.waitFor(() => expect(findUploadJob(job.jobId)?.status).toBe("error"))
+    expect(findUploadJob(job.jobId)?.retryable).toBe(true)
+    vi.useRealTimers()
+
+    // The tunnel ends: connectivity returns and the job heals itself.
+    xhr.mockResolvedValue({ status: 201, body: {} })
+    window.dispatchEvent(new Event("online"))
+    await vi.waitFor(() => expect(findUploadJob(job.jobId)?.status).toBe("uploaded"))
+  })
+
+  it("a 4xx rejection is NOT auto-retried on reconnect", async () => {
+    mockReserve("attach_terminal")
+    vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+    const xhr = vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 422, body: { error: "nope" } })
+    const job = startUpload(WS, makeFile())
+    await waitForJobStatus(job.jobId, "error")
+    expect(findUploadJob(job.jobId)?.retryable).toBe(false)
+
+    const callsBefore = xhr.mock.calls.length
+    window.dispatchEvent(new Event("online"))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(xhr.mock.calls.length).toBe(callsBefore)
+  })
+
   it("retryUpload restarts a failed job from its locally-held bytes", async () => {
     mockReserve("attach_manual_retry")
     vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)

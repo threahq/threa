@@ -187,8 +187,24 @@ function ImageAttachment({
     : attachmentContentUrl(workspaceId, attachment.id, { variant: "thumbnail" })
   const [imgDecoded, setImgDecoded] = useState(false)
   const [error, setError] = useState(false)
+  // Bumped to remount the <img> after a failed load — the sticky error state
+  // would otherwise outlive the connectivity blip that caused it (an offline
+  // sender's own just-settled image is the common case with background
+  // uploads).
+  const [retryNonce, setRetryNonce] = useState(0)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const touchCapable = useTouchCapable()
+
+  const retryLoad = useCallback(() => {
+    setError(false)
+    setImgDecoded(false)
+    setRetryNonce((n) => n + 1)
+  }, [])
+  useEffect(() => {
+    if (!error) return
+    window.addEventListener("online", retryLoad)
+    return () => window.removeEventListener("online", retryLoad)
+  }, [error, retryLoad])
 
   const box = inlineImageBox(attachment.width, attachment.height)
 
@@ -235,7 +251,15 @@ function ImageAttachment({
   )
 
   if (error) {
-    return <div className="rounded-lg border bg-muted/50 p-2 text-xs text-muted-foreground">Failed to load image</div>
+    return (
+      <button
+        type="button"
+        onClick={retryLoad}
+        className="rounded-lg border bg-muted/50 p-2 text-xs text-muted-foreground hover:border-primary"
+      >
+        Failed to load image — tap to retry
+      </button>
+    )
   }
 
   return (
@@ -260,6 +284,8 @@ function ImageAttachment({
         {!imgDecoded && <Skeleton className="absolute inset-0 rounded-none" />}
         {thumbnailUrl && (
           <img
+            // Remount on retry so the browser re-requests the same URL.
+            key={retryNonce}
             // Cache fast path: when the browser already has the bytes (warm
             // remount — virtua unmount/remount, bootstrap rewrite), the image
             // is complete before onLoad ever fires. Flip imgDecoded during

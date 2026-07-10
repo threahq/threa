@@ -325,7 +325,39 @@ describe("AttachmentList", () => {
 
       fireEvent.error(screen.getByAltText("broken.png"))
 
-      expect(await screen.findByText("Failed to load image")).toBeInTheDocument()
+      expect(await screen.findByText(/Failed to load image/)).toBeInTheDocument()
+    })
+
+    it("retries a failed image load when connectivity returns", async () => {
+      const attachment = createAttachment({
+        id: "img_1",
+        filename: "blip.png",
+        mimeType: "image/png",
+      })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      fireEvent.error(screen.getByAltText("blip.png"))
+      expect(await screen.findByText(/Failed to load image/)).toBeInTheDocument()
+
+      fireEvent(window, new Event("online"))
+
+      expect(await screen.findByAltText("blip.png")).toBeInTheDocument()
+      expect(screen.queryByText(/Failed to load image/)).not.toBeInTheDocument()
+    })
+
+    it("retries a failed image load on tap", async () => {
+      const user = userEvent.setup()
+      const attachment = createAttachment({
+        id: "img_1",
+        filename: "tap.png",
+        mimeType: "image/png",
+      })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      fireEvent.error(screen.getByAltText("tap.png"))
+      await user.click(await screen.findByRole("button", { name: /tap to retry/i }))
+
+      expect(await screen.findByAltText("tap.png")).toBeInTheDocument()
     })
   })
 

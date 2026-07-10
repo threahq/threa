@@ -68,6 +68,12 @@ export interface UploadJob {
    * ones stay so the timeline chip can offer a retry with the local bytes.
    */
   released: boolean
+  /**
+   * The failure was network-class (connection drop / 5xx / 429 exhausted) —
+   * the bytes are fine and a retry can succeed. Drives the auto-heal on the
+   * `online` event; 4xx rejections and blocked verdicts stay terminal.
+   */
+  retryable?: boolean
 }
 
 interface ManagerState {
@@ -192,6 +198,25 @@ function isAbortError(err: unknown): boolean {
 }
 
 /**
+ * Auto-heal: when connectivity returns, network-failed jobs retry themselves
+ * — a tunnel or dead radio shouldn't require a manual tap once the device is
+ * back online. Registered lazily on first use; 4xx/blocked failures are not
+ * retryable and stay terminal.
+ */
+let onlineListenerRegistered = false
+function ensureOnlineAutoRetry(): void {
+  if (onlineListenerRegistered || typeof window === "undefined") return
+  onlineListenerRegistered = true
+  window.addEventListener("online", () => {
+    for (const job of state.jobs.values()) {
+      if (job.status === "error" && job.retryable && job.attachmentId) {
+        void retryUpload(job.attachmentId)
+      }
+    }
+  })
+}
+
+/**
  * Serialize the transfer per attachment id across tabs: `uploadJobs` is a
  * shared per-origin IDB table, so two tabs resuming the same persisted job
  * would otherwise stream the same bytes concurrently (the server tolerates
@@ -238,6 +263,7 @@ export interface StartUploadOptions {
  * reservation lands (await {@link waitForReservation}).
  */
 export function startUpload(workspaceId: string, file: File, options?: StartUploadOptions): UploadJob {
+  ensureOnlineAutoRetry()
   const jobId = newJobId()
   const controller = new AbortController()
   controllers.set(jobId, controller)
@@ -406,6 +432,9 @@ async function uploadBytesLocked(
   if (!job || !blob || signal.aborted) return
 
   let terminalError = "Upload failed"
+  // Network-class failures (connection drops, 5xx, 429 exhaustion) leave the
+  // bytes retryable; a 4xx rejection or non-network throw is terminal.
+  let terminalRetryable = true
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
       await waitForOnline(signal)
@@ -430,6 +459,7 @@ async function uploadBytesLocked(
 
       const body = response.body as { error?: string; code?: string } | null
       if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+        terminalRetryable = false
         // A duplicate completion race (another tab/device already settled this
         // upload) surfaces as 404/409 here — that's a success, not a failure.
         if ((response.status === 404 || response.status === 409) && (await probeSettled(workspaceId, attachmentId))) {
@@ -454,6 +484,7 @@ async function uploadBytesLocked(
       if (isAbortError(err) || signal.aborted) return
       if (!(err instanceof XhrNetworkError)) {
         terminalError = err instanceof Error ? err.message : "Upload failed"
+        terminalRetryable = false
         break
       }
       terminalError = "Network error during upload"
@@ -468,9 +499,9 @@ async function uploadBytesLocked(
     }
   }
 
-  patchJob(jobId, { status: "error", error: terminalError })
+  patchJob(jobId, { status: "error", error: terminalError, retryable: terminalRetryable })
   try {
-    await db.uploadJobs.update(attachmentId, { status: "failed", error: terminalError })
+    await db.uploadJobs.update(attachmentId, { status: "failed", error: terminalError, retryable: terminalRetryable })
   } catch {
     // IDB failure only costs resume-after-reload; the in-memory job is authoritative.
   }
@@ -557,6 +588,7 @@ let resumeEpoch = 0
  * session; jobs already live in memory are skipped.
  */
 export async function resumeWorkspaceUploads(workspaceId: string): Promise<void> {
+  ensureOnlineAutoRetry()
   if (resumedWorkspaces.has(workspaceId)) return
   resumedWorkspaces.add(workspaceId)
   const epoch = resumeEpoch
@@ -592,6 +624,7 @@ export async function resumeWorkspaceUploads(workspaceId: string): Promise<void>
       status: failed ? "error" : "uploading",
       progress: 0,
       error: row.error,
+      retryable: failed ? (row.retryable ?? true) : undefined,
       // E2E rows hold ciphertext — nothing previewable locally.
       previewUrl: row.e2e ? undefined : createPreviewUrl(row.blob, row),
       // Resumed jobs start unheld; a draft restore may claim them.
