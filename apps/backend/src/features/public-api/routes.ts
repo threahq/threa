@@ -24,6 +24,7 @@ import {
   PROCESSING_STATUSES,
   EXTRACTION_CONTENT_TYPES,
   THREA_CALLBACK_TOKEN_HEADER,
+  DELEGATION_STATUSES,
 } from "@threa/types"
 import type { WorkspacePermissionSlug } from "@threa/types"
 import {
@@ -57,6 +58,11 @@ import {
   updateLabelSchema,
   assignLabelByNameSchema,
   unassignLabelByNameSchema,
+  listDelegationsQuerySchema,
+  claimDelegationSchema,
+  reportDelegationStatusSchema,
+  completeDelegationSchema,
+  failDelegationSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -466,6 +472,33 @@ const provisionedWrapsSchema = z.object({ stored: z.number().int() })
 
 const renamedRuntimeSessionLinkSchema = runtimeSessionLinkSchema.extend({ displayName: z.string() })
 
+const delegationSchema = z.object({
+  id: z.string(),
+  streamId: z.string(),
+  title: z.string(),
+  status: z.enum(DELEGATION_STATUSES),
+  claimedByLabel: z.string().optional(),
+  statusNote: z.string().optional(),
+  resultMessageId: z.string().optional(),
+  sourceConversationId: z.string().optional(),
+  createdAt: z.string().datetime(),
+  statusChangedAt: z.string().datetime(),
+})
+
+const claimedDelegationSchema = delegationSchema.extend({
+  /** The complete hand-off prompt (markdown) — the executor's working set. */
+  brief: z.string(),
+  /** Pointer URLs (`shared-message:`/`memo:`/`attachment:`) backing the brief. */
+  contextRefs: z.array(z.string()),
+  /** Cleartext claim token, returned exactly once. Send it as X-Threa-Callback-Token on every later call. */
+  claimToken: z.string(),
+  claimExpiresAt: z.string().datetime(),
+})
+
+const delegationHeartbeatSchema = z.object({ claimExpiresAt: z.string().datetime() })
+
+const completedDelegationSchema = delegationSchema.extend({ resultMessageId: z.string().optional() })
+
 const invocationStatusSchema = z.object({ invocationId: z.string(), status: z.string() })
 const invocationStepSchema = z.object({ invocationId: z.string(), sessionId: z.string(), stepId: z.string() })
 const renewedInvocationSchema = invocationStatusSchema.extend({ claimExpiresAt: z.string().datetime().nullable() })
@@ -552,6 +585,22 @@ const callbackTokenHeaderParam = {
   required: true,
   schema: { type: "string" as const },
   description: "Per-claim callback token from the sealed claim response (binds the caller to the assigned session).",
+}
+
+const delegationIdParam = {
+  name: "delegationId",
+  in: "path" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Delegation ID (prefixed ULID)",
+}
+
+const delegationTokenHeaderParam = {
+  name: THREA_CALLBACK_TOKEN_HEADER,
+  in: "header" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Per-claim token from the delegation claim response (binds the caller to its claim).",
 }
 
 export interface PublicApiRoute {
@@ -903,6 +952,94 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: failInvocationSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(invocationStatusSchema),
+    canReturn404: true,
+  },
+
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/delegations",
+    operationId: "listDelegations",
+    summary: "List open delegations",
+    description:
+      "List delegated tasks that are open to claim, filtered to streams the key's user can access. Requires a user-scoped API key: a delegation is executed by the key owner's own local agent with their identity.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ],
+    parameters: [workspaceIdParam],
+    requestSchema: listDelegationsQuerySchema,
+    requestIn: "query",
+    responseSchema: dataArrayEnvelope(delegationSchema),
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/claim",
+    operationId: "claimDelegation",
+    summary: "Claim an open delegation",
+    description:
+      "Atomically claim an open delegation for the key owner's local agent. Returns the brief, context refs, and the claim token (cleartext, exactly once — send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam],
+    requestSchema: claimDelegationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(claimedDelegationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/heartbeat",
+    operationId: "heartbeatDelegation",
+    summary: "Renew a delegation claim",
+    description:
+      "Push the claim's expiry forward while the local agent is still working. Liveness only — no status change on the card. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],
+    responseSchema: dataEnvelope(delegationHeartbeatSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/status",
+    operationId: "reportDelegationStatus",
+    summary: "Report delegation progress",
+    description:
+      "Mark the delegation running and put a free-text progress note on its card (each report replaces the previous note; the claim TTL renews). Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],
+    requestSchema: reportDelegationStatusSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(delegationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/complete",
+    operationId: "completeDelegation",
+    summary: "Complete a delegation",
+    description:
+      "Complete the claimed delegation. When resultMarkdown is given, the result is posted to the delegation's stream as the key owner (with the standard via-API provenance) in the same transaction as the completion — it enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],
+    requestSchema: completeDelegationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(completedDelegationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/fail",
+    operationId: "failDelegation",
+    summary: "Fail a delegation",
+    description:
+      "Mark the claimed delegation failed, recording why on its card. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],
+    requestSchema: failDelegationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(delegationSchema),
     canReturn404: true,
   },
 

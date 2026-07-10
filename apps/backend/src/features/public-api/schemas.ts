@@ -395,3 +395,29 @@ export const listMyBotsSchema = z.object({
   /** Optional capability filter — currently only `interactive` is defined. */
   traits: z.enum(BOT_TRAITS).optional(),
 })
+
+// ── Delegations (roadmap 5.3) — a local agent's lifecycle over delegated tasks.
+
+export const listDelegationsQuerySchema = z.object({
+  /** Only the claimable queue is listed today; the enum grows when a real consumer needs more (INV-36). */
+  status: z.literal("open").optional().default("open"),
+})
+
+export const claimDelegationSchema = z.object({
+  /** Human-readable identity of the claiming agent, shown on the card (e.g. "Kris's MacBook / Claude Code"). */
+  claimedByLabel: z.string().min(1).max(200),
+})
+
+export const reportDelegationStatusSchema = z.object({
+  /** Free-text progress note shown on the card; each report replaces the previous note. */
+  statusNote: z.string().min(1).max(2000).optional(),
+})
+
+export const completeDelegationSchema = z.object({
+  /** Result message (markdown) posted to the delegation's stream as the key owner. Omit to complete without a message. */
+  resultMarkdown: z.string().min(1).max(50000).optional(),
+})
+
+export const failDelegationSchema = z.object({
+  errorMessage: z.string().min(1).max(2000),
+})

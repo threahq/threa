@@ -52,7 +52,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 4.4  | Brief correction eval                                    | ☐      |       |
 | 5.1  | `delegate_task` tool + delegation substrate + INV-65     | ☑      | #1261 |
 | 5.2  | Delegation card UI                                       | ☑      | #1261 |
-| 5.3  | Delegation public API (claim/status/complete)            | ☐      |       |
+| 5.3  | Delegation public API (claim/status/complete)            | ☑      | #1272 |
 | 5.4  | claude-code-remote delegation support                    | ☐      |       |
 | 5.5  | `@threa/mcp` server                                      | ☐      |       |
 | 6.1  | Memo edit/archive endpoints + explorer UI                | ☑      | #1246 |
@@ -484,6 +484,15 @@ The strategic bet: Threa is the shared-memory/coordination plane; the user's loc
 **Tests:** follow the sealed-claim test suite shape: claim races, token binding, expiry, complete-posts-message.
 
 **Done when:** a curl script can claim, report progress, and complete a delegation, with each transition visible on the card.
+
+**Deviations (shipped):**
+
+- **User-scoped API keys only** (bot keys 403 on every delegation endpoint), under new member-level scopes `delegations:read`/`delegations:write` — a delegation is the key owner's own local agent acting with their identity (INV-65); the completion message is authored as the user with the standard `sentVia: api_key:<id>` provenance (the public `sendMessage` two-branch model deliberately NOT mirrored — there is no bot identity in this loop).
+- **`GET /delegations?status=open` added** beyond the sketched claim/status/complete set — the 5.4 runner needs a poll surface; only `open` is filterable until a consumer needs more (INV-36). Filtered to the key user's accessible streams via `listAccessibleStreamIds` (INV-62).
+- **Lost claim race is 409 `DELEGATION_NOT_OPEN`**, not bot-invocations' `data: null` — that null is claim-_next_ queue semantics; claiming a _specific_ id wants an error. Missing/invisible ids are 404 (hides existence, mirrors cancel).
+- **Expired stays terminal — no re-claiming** (the open 5.3 decision): the sweep's visible `expired` transition keeps its meaning; a runner that lapses claims a fresh delegation instead. Revisit only with a concrete runner need.
+- **Client decision for 5.4 (recorded per the spec):** a **sibling `DelegationClient`** in `extensions/remote-session`, not new methods on the bot-runtime `ThreaClient` — the two surfaces authenticate with different key types (bot key vs user key) and mixing them into one client invites sending the wrong credential; the delegation loop also has its own token header (`X-Threa-Callback-Token` carrying the claim token, hashed at rest — bot invocations carry `claimToken` in the body and store it plaintext).
+- **dev:test gotcha:** user API keys 401 `OWNER_INACTIVE` under stub auth — nothing populates the `workspace_user_permissions` mirror without WorkOS webhooks. Seed a row manually (`INSERT … role_slugs='{owner}', status='active'`) before exercising user-key endpoints locally.
 
 ### 5.4 Connector-SDK delegation support (`@threa/remote-session`)
 

@@ -217,17 +217,29 @@ export class DelegationService {
     claimToken: string
     resultMessageId?: string
   }): Promise<DelegatedTask | null> {
-    return withTransaction(this.pool, async (client) => {
-      const completed = await DelegatedTaskRepository.complete(client, {
-        workspaceId: params.workspaceId,
-        id: params.id,
-        claimTokenHash: hashCallbackToken(params.claimToken),
-        resultMessageId: params.resultMessageId ?? null,
-      })
-      if (!completed) return null
-      await this.appendStatusEvent(client, completed, SYSTEM_ACTOR)
-      return completed
+    return withTransaction(this.pool, (client) => this.completeInTransaction(client, params))
+  }
+
+  /**
+   * Transaction-scoped completion for callers that pair the CAS with other
+   * writes — the public API posts the result message via
+   * `eventService.createMessageInTransaction` in the same transaction, so a
+   * lost claim race rolls the message back with the CAS (the
+   * `completeBotInvocation` shape).
+   */
+  async completeInTransaction(
+    client: PoolClient,
+    params: { workspaceId: string; id: string; claimToken: string; resultMessageId?: string }
+  ): Promise<DelegatedTask | null> {
+    const completed = await DelegatedTaskRepository.complete(client, {
+      workspaceId: params.workspaceId,
+      id: params.id,
+      claimTokenHash: hashCallbackToken(params.claimToken),
+      resultMessageId: params.resultMessageId ?? null,
     })
+    if (!completed) return null
+    await this.appendStatusEvent(client, completed, SYSTEM_ACTOR)
+    return completed
   }
 
   /** Terminal failure: `claimed|running → failed`, recording why. */
