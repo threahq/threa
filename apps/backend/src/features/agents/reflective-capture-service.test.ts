@@ -183,6 +183,31 @@ describe("ReflectiveCaptureService", () => {
     expect(captureSessionReflection).not.toHaveBeenCalled()
   })
 
+  test("releases the claim when the capture work throws, so a retry can recover", async () => {
+    const captureSessionReflection = mock(async () => {
+      throw new Error("embed provider timeout")
+    })
+    const memoService = {
+      processBatch: async () => ({ processed: 0, memosCreated: 0 }),
+      saveMemo: async () => ({ ok: false as const, reason: "no_source_messages" as const }),
+      captureSessionReflection,
+    } satisfies MemoServiceLike
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())
+    spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage("msg_trigger_1", "how do we deploy?"))
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([digestStep("Deploys run Fridays.")])
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
+      new Map([["msg_agent_1", makeMessage("msg_agent_1", "We deploy Fridays.")]])
+    )
+    spyOn(AgentSessionRepository, "setReflectiveCaptured").mockResolvedValue(true)
+    const release = spyOn(AgentSessionRepository, "clearReflectiveCaptured").mockResolvedValue(undefined)
+
+    // The error propagates (so the job retries), and the claim is released first.
+    await expect(service(memoService).capture({ workspaceId: "ws_1", sessionId: "session_1" })).rejects.toThrow(
+      "embed provider timeout"
+    )
+    expect(release).toHaveBeenCalledWith(expect.anything(), "session_1")
+  })
+
   test("no-ops when it loses the claim race to a concurrent delivery", async () => {
     const { service: memoService, captureSessionReflection } = makeMemoService({
       classified: false,

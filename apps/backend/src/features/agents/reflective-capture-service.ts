@@ -66,15 +66,30 @@ export class ReflectiveCaptureService {
       return { captured: 0 }
     }
 
-    const result = await memoService.captureSessionReflection({
-      workspaceId,
-      streamId: session.streamId,
-      sessionId,
-      digest: digest.text,
-      anchorMessageId: digest.anchorMessageId,
-      participantIds: digest.participantUserIds,
-    })
-    logger.info({ sessionId, workspaceId, ...result }, "reflective capture processed")
-    return { captured: result.captured }
+    try {
+      const result = await memoService.captureSessionReflection({
+        workspaceId,
+        streamId: session.streamId,
+        sessionId,
+        digest: digest.text,
+        anchorMessageId: digest.anchorMessageId,
+        participantIds: digest.participantUserIds,
+      })
+      logger.info({ sessionId, workspaceId, ...result }, "reflective capture processed")
+      return { captured: result.captured }
+    } catch (err) {
+      // The claim was taken before the fallible AI + save work; that work
+      // committed nothing on failure (the memo writes are transactional), so
+      // release the claim to keep the session retryable rather than marking it
+      // captured-with-zero-memos forever. Unlike the episode summarizer (whose
+      // CAS is its terminal write, so a mid-flight failure leaves it NULL), the
+      // claim here precedes the AI calls — the release restores that same
+      // retry-on-transient-failure behavior while keeping the no-duplicate
+      // guarantee (only the delivery that won the atomic claim reaches here).
+      await AgentSessionRepository.clearReflectiveCaptured(pool, sessionId).catch((clearErr) =>
+        logger.error({ sessionId, err: clearErr }, "reflective capture — failed to release claim after error")
+      )
+      throw err
+    }
   }
 }

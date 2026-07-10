@@ -665,6 +665,25 @@ export const AgentSessionRepository = {
   },
 
   /**
+   * Release a reflective-capture claim (roadmap 6.3). The reflective job claims
+   * the CAS *before* the classifier/memorizer/embed/save run so a concurrent or
+   * re-delivered delivery can't double-capture; if that fallible AI+DB work then
+   * throws, the claim holder calls this to reset the marker to NULL so a retry can
+   * pick the session back up (the memo writes are transactional — a failure
+   * committed nothing). Only the delivery that won the claim calls this, so the
+   * reset can't stomp a peer's in-flight claim.
+   */
+  async clearReflectiveCaptured(db: Querier, id: string): Promise<void> {
+    await db.query(
+      sql`
+        UPDATE agent_sessions
+        SET reflective_captured_at = NULL
+        WHERE id = ${id}
+      `
+    )
+  },
+
+  /**
    * Mark a running supersede-rerun session as having failed response
    * validation (kept the previous reply because revised drafts repeatedly
    * failed the validator). Read by the next rerun's model resolution
