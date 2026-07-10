@@ -60,7 +60,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 6.3  | Reflective capture at session completion                 | ☑      | #1273 |
 | 6.4  | `memoScope` (user/stream/workspace)                      | ☐      |       |
 | 6.5  | Retrieval feedback decay                                 | ☐      |       |
-| 6.6  | Agent-memo safety: read-time provenance + type allowlist | ☑      |       |
+| 6.6  | Agent-memo safety: read-time provenance + type allowlist | ☑      | #1277 |
 | 7.1  | Workspace persona CRUD API                               | ☐      |       |
 | 7.2  | Persona picker UI                                        | ☐      |       |
 | 8.1  | Ambient classifier on settled conversations              | ☐      |       |
