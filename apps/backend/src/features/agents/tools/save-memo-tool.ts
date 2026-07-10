@@ -108,7 +108,7 @@ Use when the user asks you to remember something, or when something clearly wort
     trace: {
       stepType: AgentStepTypes.TOOL_CALL,
       formatContent: (input) =>
-        JSON.stringify({ tool: "save_memo", title: input.title, knowledgeType: input.knowledgeType }),
+        JSON.stringify({ tool: AgentToolNames.SAVE_MEMO, title: input.title, knowledgeType: input.knowledgeType }),
     },
   })
 }
