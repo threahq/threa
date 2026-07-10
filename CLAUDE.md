@@ -221,6 +221,8 @@ AI component config lives next to the component in `config.ts` and is shared by 
 
 Do not make semantic decisions with language-specific heuristics or English-only literals/regexes; use model-based decisions for language-dependent behavior (INV-54).
 
+Companion sessions are minutes-bounded (INV-65). Threa does not host long-horizon autonomous agent work — the cost, babysitting, and error compounding belong on the user's machine, not our compute. Anything longer than a session becomes a scheduled follow-up (`agent_follow_ups`, the `schedule_follow_up` tool) or a delegation to the user's local agent (`delegated_tasks`, the `delegate_task` tool in `features/delegations/`): Threa compiles the hand-off brief (it has the workspace context), the local agent executes with the user's own credentials and filesystem, and the completion posts back into the stream where GAM memorizes it. Do not build tools or prompts that encourage a persona to attempt hours-long in-session work; see `docs/plans/ariadne-collaborator-roadmap.md` Phase 5.
+
 Memory capture is visible in situ (INV-62). When GAM extracts memos from a stream's conversations, the same transaction that inserts the memo rows appends a `memos:captured` broadcast timeline event to the source stream, carrying per-memo provenance (`memoId`, `title`, `knowledgeType`, `sourceMessageIds`) so the row renders and deep-links to the memory explorer (`?memo=`) without an extra fetch. Memory creation is never silent — the stream that produced the knowledge shows the capture in its own timeline. Because extraction is debounced per stream, the event lands just after the conversation it came from; the payload's source ids, not the event's position, are the authoritative link back to the messages. The event type is in `TIMELINE_BROADCAST_EVENT_TYPES`, so it consumes a dense broadcast slot and contiguity (INV-61) covers it like any other row.
 
 ### 5) Frontend Composition and UX Semantics
@@ -303,7 +305,7 @@ When handling variants, colocate variant config and keep shared behavior on one 
 - **Persistence and data integrity:** INV-1, INV-2, INV-3, INV-8, INV-17, INV-20, INV-30, INV-41, INV-50, INV-56, INV-57, INV-62
 - **Architecture and dependencies:** INV-4, INV-5, INV-6, INV-7, INV-9, INV-10, INV-11, INV-12, INV-13, INV-27, INV-34, INV-35, INV-37, INV-51, INV-52
 - **API and backend contracts:** INV-31, INV-32, INV-33, INV-46, INV-55, INV-58, INV-64
-- **AI and eval discipline:** INV-16, INV-19, INV-28, INV-44, INV-45, INV-54
+- **AI and eval discipline:** INV-16, INV-19, INV-28, INV-44, INV-45, INV-54, INV-65
 - **Frontend and UX behavior:** INV-14, INV-15, INV-18, INV-21, INV-40, INV-42, INV-53, INV-59, INV-60, INV-61, INV-62, INV-63
 - **Testing:** INV-22, INV-23, INV-24, INV-26, INV-39, INV-48
 - **Code hygiene and maneuverability:** INV-25, INV-29, INV-36, INV-38, INV-43, INV-47, INV-49

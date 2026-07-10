@@ -32,6 +32,9 @@ describe("TOOL_CATEGORIES_BY_NAME", () => {
     // (the agent planning its own return), not a privacy-gated read — its abuse
     // bound is the per-stream pending cap, so it rides messaging.
     expect(messaging).toContain("schedule_follow_up")
+    // delegate_task hands work to the invoking user's own local agent; its refs
+    // are access-checked against that user, so it is participation, not egress.
+    expect(messaging).toContain("delegate_task")
     for (const name of messaging) expect(categoriesOf(name)).toEqual(["messaging"])
   })
 

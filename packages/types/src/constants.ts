@@ -123,6 +123,8 @@ export const EVENT_TYPES = [
   "agent:follow_up_scheduled",
   "agent:follow_up_cancelled",
   "brief_updated",
+  "delegation:created",
+  "delegation:status_changed",
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -173,11 +175,16 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   // and persona `update_stream_brief` writes alike — brief changes are never
   // silent (INV-62 spirit).
   "brief_updated",
-  // `agent:follow_up_cancelled` is deliberately NOT here: it's a patch on the
+  // A delegated task was handed off (roadmap 5.1): every member sees the
+  // delegation card, so it takes a broadcast slot like `agent:follow_up_scheduled`.
+  "delegation:created",
+  // `agent:follow_up_cancelled` and `delegation:status_changed` are deliberately
+  // NOT here: each is a patch on its originating card (cancel flips the
+  // scheduled card; a delegation status change flips the created card), not a
   // scheduled card (it flips that row to "Cancelled" via correlation), not a
   // visible row of its own — so, like edits/reactions, it takes no broadcast
-  // slot (INV-61). It's still an EVENT_TYPE, delivered + persisted, so every
-  // viewer's scheduled card reflects the cancel live and after reload.
+  // slot (INV-61). Each is still an EVENT_TYPE, delivered + persisted, so every
+  // viewer's card reflects the change live and after reload.
 ] as const
 export type TimelineBroadcastEventType = (typeof TIMELINE_BROADCAST_EVENT_TYPES)[number]
 
@@ -484,6 +491,16 @@ export const MEMO_ABSTRACT_MAX_CHARS = 2000
 export const MEMO_KEY_POINTS_MAX = 20
 export const MEMO_TAGS_MAX = 20
 
+// Delegation content caps (roadmap 5.1) — shared by the backend Zod schema and
+// the delegations feature config (re-exported there, INV-33). Live here rather
+// than in features/delegations/config.ts because the delegate_task tool (in
+// features/agents/) also needs them, and importing the delegations barrel from
+// an agents tool creates a module cycle (delegations/service -> agents barrel
+// -> tools barrel -> the tool) that leaves these undefined at init.
+export const DELEGATION_TITLE_MAX_CHARS = 200
+export const DELEGATION_BRIEF_MAX_CHARS = 20_000
+export const DELEGATION_CONTEXT_REFS_MAX = 20
+
 // Pending memo item types
 export const PENDING_ITEM_TYPES = ["message", "conversation"] as const
 export type PendingItemType = (typeof PENDING_ITEM_TYPES)[number]
@@ -506,6 +523,7 @@ export const AGENT_TOOL_NAMES = [
   "cancel_follow_up",
   "update_follow_up",
   "update_stream_brief",
+  "delegate_task",
   "github_repos",
   "github_commits",
   "github_pulls",
@@ -538,6 +556,7 @@ export const AgentToolNames = {
   CANCEL_FOLLOW_UP: "cancel_follow_up",
   UPDATE_FOLLOW_UP: "update_follow_up",
   UPDATE_STREAM_BRIEF: "update_stream_brief",
+  DELEGATE_TASK: "delegate_task",
   GITHUB_REPOS: "github_repos",
   GITHUB_COMMITS: "github_commits",
   GITHUB_PULLS: "github_pulls",
@@ -581,6 +600,40 @@ export const FollowUpStatuses = {
   CANCELLED: "cancelled",
   FAILED: "failed",
 } as const satisfies Record<string, FollowUpStatus>
+
+// Delegated-task lifecycle (roadmap 5.1): a hand-off compiled by an agent (or a
+// person, later) for the user's local agent to execute. `open` until a local
+// agent claims it via the public API (5.3); `claimed`/`running` while held under
+// a TTL'd claim token; `completed`/`failed` are terminal reports; `cancelled` by
+// a stream member from the card; `expired` when the sweep finds a lapsed claim.
+export const DELEGATION_STATUSES = [
+  "open",
+  "claimed",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+  "expired",
+] as const
+export type DelegationStatus = (typeof DELEGATION_STATUSES)[number]
+
+export const DelegationStatuses = {
+  OPEN: "open",
+  CLAIMED: "claimed",
+  RUNNING: "running",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  CANCELLED: "cancelled",
+  EXPIRED: "expired",
+} as const satisfies Record<string, DelegationStatus>
+
+/** Terminal delegation statuses — no further transitions (and no expiry sweep interest). */
+export const DELEGATION_TERMINAL_STATUSES = [
+  "completed",
+  "failed",
+  "cancelled",
+  "expired",
+] as const satisfies readonly DelegationStatus[]
 
 // Agent session event types (stream events for session lifecycle)
 export const AGENT_SESSION_EVENT_TYPES = [

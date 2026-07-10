@@ -20,7 +20,7 @@ These recur across every step; the step descriptions assume them rather than res
 - New timeline rows that every member sees go in `TIMELINE_BROADCAST_EVENT_TYPES` (`packages/types/src/constants.ts:139`) and consume a dense `broadcastSequence` (INV-61).
 - Success is silent (INV-63): no `toast.success` for actions the UI already reflects.
 
-**Product invariant introduced by this roadmap (proposed INV-64):** companion sessions are minutes-bounded. Threa does not host long-horizon autonomous work; anything longer than a session becomes a scheduled follow-up (Phase 1) or a delegation to the user's local agent (Phase 5). Codified in CLAUDE.md in step 5.1.
+**Product invariant introduced by this roadmap (landed as INV-65 — INV-64 was taken by mentions/actor-refs while this doc was in flight):** companion sessions are minutes-bounded. Threa does not host long-horizon autonomous work; anything longer than a session becomes a scheduled follow-up (Phase 1) or a delegation to the user's local agent (Phase 5). Codified in CLAUDE.md in step 5.1.
 
 ## Adjacent systems this roadmap must respect
 
@@ -50,8 +50,8 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 4.2  | `update_stream_brief` tool + timeline event           | ☑      | #1220 |
 | 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2) | ☑      | #1218 |
 | 4.4  | Brief correction eval                                 | ☐      |       |
-| 5.1  | `delegate_task` tool + delegation substrate + INV-64  | ☐      |       |
-| 5.2  | Delegation card UI                                    | ☐      |       |
+| 5.1  | `delegate_task` tool + delegation substrate + INV-65  | ☑      | #1261 |
+| 5.2  | Delegation card UI                                    | ☑      | #1261 |
 | 5.3  | Delegation public API (claim/status/complete)         | ☐      |       |
 | 5.4  | claude-code-remote delegation support                 | ☐      |       |
 | 5.5  | `@threa/mcp` server                                   | ☐      |       |
@@ -440,13 +440,23 @@ The strategic bet: Threa is the shared-memory/coordination plane; the user's loc
 - Tool per the 1.1 checklist: `delegate_task`, input `{ title, brief, contextRefs }`. promptBlock guidance: the brief must be self-contained (assume the executor has repo access but zero Threa context); include acceptance criteria; link sources as pointer URLs rather than inlining walls of text; suggest delegation when the user describes work that is long-horizon, code-heavy, or local-filesystem-shaped — do not attempt such work in-session (INV-64). Tool is available in the live companion turn only (not inside the researcher sub-loop). Brief assembly reuses the context-bag machinery (`features/agents/context-bag/`) rather than a parallel compiler (INV-35).
 - **Access ruling (from the #1118 exploration, adopted):** the brief resolves against the **requesting user's** access spec, not the persona's stream scope — the user owns the local agent and its credentials, so the hand-off may carry only what they can see. And **delegation from E2E streams is disabled in v1**: a server-built plaintext brief cannot egress a sealed stream (revisit with the sealed wire).
 - **Decision to make in-step:** dedicated `delegated_tasks` table (as specced) vs reusing `bot_invocations` + a `task-executor` trait (#1118's sketch — its claim/TTL/retry machinery already exists). Default to the dedicated table (lifecycle and fields differ: claimed by a _person's_ agent via the public API, person-facing card, `brief`/`context_refs`/`result_message_id`), but record the alternative and mirror its mechanics.
-- CLAUDE.md: add INV-64 (sessions minutes-bounded; long-horizon work delegates) with pointer here.
+- CLAUDE.md: add INV-65 (sessions minutes-bounded; long-horizon work delegates) with pointer here. _(Was specced as INV-64; that id was claimed by mentions/actor-refs first.)_
 
 **Files:** migration, `features/delegations/{repository,service,index}.ts`, types constants/domain, tool file + test, `tool-deps.ts`, barrel, `tool-set.ts`, `built-in-agents.ts`, CLAUDE.md.
 
 **Tests:** state-machine transitions incl. claim-vs-cancel race, expiry sweep; event presence; tool creates row + event; tool refused when stream policy denies the category.
 
 **Done when:** "can you get someone to actually build this?" yields a lifecycle-tracked delegation row with a coherent, self-contained brief and a visible `delegation:created` event.
+
+**Deviations (shipped, together with 5.2 in one PR):**
+
+- **Event shape:** not seven event types. `delegation:created` is the one broadcast row (slot-consuming, INV-61, in `STREAM_ROW_SPEC` as a board-joining `source-conversation` row); every later transition is ONE patch type, `delegation:status_changed`, carrying `{status, claimedByLabel?, resultMessageId?, statusNote?}` — exactly the follow-up scheduled/cancelled row-vs-patch split, so a status change repaints the card instead of appending a redundant second row. The frontend correlates via `collectDelegationStatusPatches` (last patch wins), the sibling of `collectCancelledFollowUpIds`.
+- **The created payload snapshots `title`/`brief`/`contextRefs`** — immutable after create, so the card and 5.2's Copy-prompt need zero fetch.
+- **`contextRefs` are validated, not "assembled via context-bag":** the spec's "brief assembly reuses the context-bag machinery" conflated two ref systems — context-bag refs are structured `{kind, streamId}` objects; a delegation's refs are pointer URLs (`shared-message:`/`memo:`/`attachment:`). What's actually shared is the _access discipline_: `validateDelegationContextRefs` (`features/delegations/context-refs.ts`) mirrors `stripInaccessibleAgentRefs`' per-kind decisions against the invoking user's `accessibleStreamIds`; drops are reported back to the model in the tool result.
+- **Companion-only + refusals are bind-time, not runtime:** the tool's deps bundle is simply absent on sealed streams (`stream.e2eEnabled`, the #1118 ruling) and on turns without a human trigger, so the tool never appears in those tool sets (same mechanism that keeps it out of the researcher sub-loop and `GENERAL_RESEARCH_TOOL_POLICY`).
+- **Dedicated-table decision confirmed;** mechanics mirror bot-invocations (CAS transitions, TTL'd claim, sha256 token-at-rest via `hashCallbackToken`) but with sweep-based expiry: `createDelegationExpirySweep` (orphan-cleanup `setInterval` shape) CASes lapsed claims to `expired` set-based (INV-56) and appends each card's patch in the same tx. A lapsed-but-unswept claim is NOT reclaimable (unlike bot-invocations' reclaim-in-claim-SQL) — the sweep emits the visible `expired` transition first; re-claiming an expired task is a 5.3 decision.
+- **No pending cap** (unlike follow-ups 1.1) — deliberate; a delegation is high-friction to create and trivially cancellable. Revisit if abuse shows up.
+- **Machine transitions (claim/running/complete/fail/expired) act as `system`** with no `actorId` (like `memos:captured`); `claimedByLabel` on the payload carries the executor's human-readable identity.
 
 ### 5.2 Delegation card UI
 
@@ -459,6 +469,8 @@ The strategic bet: Threa is the shared-memory/coordination plane; the user's loc
 **Tests:** component test across statuses; copy-prompt content assembly; INV-63 guard stays green (no success toast).
 
 **Done when:** the copy-prompt path works end-to-end with zero local tooling installed — the day-one delegation story.
+
+**Deviations (shipped with 5.1):** dispatched from `event-item.tsx` (where the follow-up/memo cards dispatch), not `event-list.tsx`. Cancel is backed by a new first-party endpoint `POST /api/workspaces/:wid/delegations/:id/cancel` (`features/delegations/handlers.ts`, `checkStreamAccess`-gated, 404 hides existence — the follow-up-cancel template). The "how to run this locally" hint is one line under the expandable hand-off prompt ("paste into your local agent"); the claim-via-API instructions arrive with 5.3, which is when they become true (INV-36). The brief is shown as source text (mono, pre-wrap) — what you read is exactly what Copy ships.
 
 ### 5.3 Delegation public API (claim/status/complete)
 

@@ -119,6 +119,14 @@ export {
   FOLLOW_UP_STATUSES,
   type FollowUpStatus,
   FollowUpStatuses,
+  // Delegated tasks
+  DELEGATION_TITLE_MAX_CHARS,
+  DELEGATION_BRIEF_MAX_CHARS,
+  DELEGATION_CONTEXT_REFS_MAX,
+  DELEGATION_STATUSES,
+  type DelegationStatus,
+  DelegationStatuses,
+  DELEGATION_TERMINAL_STATUSES,
   // Agent session events
   AGENT_SESSION_EVENT_TYPES,
   type AgentSessionEventType,
@@ -496,6 +504,8 @@ export type {
   MemosCapturedEventPayload,
   AgentFollowUpScheduledEventPayload,
   AgentFollowUpCancelledEventPayload,
+  DelegationCreatedEventPayload,
+  DelegationStatusChangedEventPayload,
   DescriptionSetEventPayload,
   BriefUpdatedEventPayload,
   // Workspaces

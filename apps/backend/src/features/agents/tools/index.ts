@@ -54,6 +54,7 @@ export { createListFollowUpsTool, type ListFollowUpsInput } from "./list-follow-
 export { createCancelFollowUpTool, type CancelFollowUpInput } from "./cancel-follow-up-tool"
 export { createUpdateFollowUpTool, type UpdateFollowUpInput } from "./update-follow-up-tool"
 export { createUpdateStreamBriefTool, type UpdateStreamBriefInput } from "./update-stream-brief-tool"
+export { createDelegateTaskTool, type DelegateTaskInput } from "./delegate-task-tool"
 export {
   createWorkspaceResearchTool,
   WORKSPACE_RESEARCH_TOOL_NAME,

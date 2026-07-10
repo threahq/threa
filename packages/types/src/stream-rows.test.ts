@@ -64,6 +64,7 @@ describe("STREAM_ROW_SPEC", () => {
         "agent_session:deleted",
         "memos:captured",
         "agent:follow_up_scheduled",
+        "delegation:created",
       ])
     )
     // None of them are message bodies (those are `self-message`, handled directly).

@@ -67,6 +67,13 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // keep the brief current, and the write is bounded by the 4k content cap and
   // the stream's own membership, not a privacy grant.
   update_stream_brief: ["messaging"],
+  // Delegating a task posts a hand-off card into this stream for the invoking
+  // user's own local agent — in-product participation, like a reply that asks a
+  // person to do something. The brief is compiled from context the turn already
+  // holds, its refs are access-checked against the invoking user, and execution
+  // happens on the user's machine with their credentials, so there is no data
+  // egress beyond the stream itself. Rides the always-allowed `messaging` class.
+  delegate_task: ["messaging"],
 
   web_search: ["web"],
   read_url: ["web"],
