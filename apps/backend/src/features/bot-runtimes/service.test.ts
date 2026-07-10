@@ -3,6 +3,7 @@ import { BotRuntimeService } from "./service"
 import {
   BOT_CLAIM_MAX_ATTEMPTS,
   BotInvocationRepository,
+  BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
   type BotInvocation,
@@ -601,6 +602,155 @@ describe("BotRuntimeService outbox emission", () => {
       expect(createLinkSpy).not.toHaveBeenCalled()
     })
   })
+  describe("archive/unarchive session-link lifecycle", () => {
+    function makeLink(overrides: Partial<BotRuntimeSessionLink> = {}): BotRuntimeSessionLink {
+      const now = new Date("2026-07-10T12:00:00Z")
+      return {
+        id: "brsl_1",
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        runtimeKind: "claude-code-channel",
+        instanceId: "inst_42",
+        runtimeSessionId: "sess_1",
+        rootStreamId: "stream_root",
+        activeStreamId: "stream_root",
+        status: "active",
+        linkedBy: "usr_owner",
+        metadata: {},
+        lastSeenAt: now,
+        createdAt: now,
+        updatedAt: now,
+        ...overrides,
+      }
+    }
+
+    it("endSessionsForArchivedStream marks links archived and emits bot:session_archived per link", async () => {
+      patchWithTransaction()
+      spyOn(BotRuntimeSessionLinkRepository, "archiveActiveByRootStream").mockResolvedValue([
+        makeLink({ status: "archived" }),
+      ])
+      const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const count = await service.endSessionsForArchivedStream({ workspaceId: "ws_1", rootStreamId: "stream_root" })
+
+      expect(count).toBe(1)
+      expect(insertSpy.mock.calls[0]?.[1]).toBe("bot:session_archived")
+      expect(insertSpy.mock.calls[0]?.[2]).toEqual({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        runtimeSessionId: "sess_1",
+        rootStreamId: "stream_root",
+      })
+    })
+
+    it("restoreSessionsForUnarchivedStream revives archive-ended links and emits bot:session_restored per link", async () => {
+      patchWithTransaction()
+      const reactivateSpy = spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRootStream").mockResolvedValue([
+        makeLink({ status: "active" }),
+      ])
+      const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const count = await service.restoreSessionsForUnarchivedStream({
+        workspaceId: "ws_1",
+        rootStreamId: "stream_root",
+      })
+
+      expect(count).toBe(1)
+      expect(reactivateSpy.mock.calls[0]?.[1]).toEqual({ workspaceId: "ws_1", rootStreamId: "stream_root" })
+      expect(insertSpy.mock.calls[0]?.[1]).toBe("bot:session_restored")
+      expect(insertSpy.mock.calls[0]?.[2]).toEqual({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        runtimeSessionId: "sess_1",
+        rootStreamId: "stream_root",
+      })
+    })
+
+    it("restoreSessionsForUnarchivedStream emits nothing when no archived links exist (normal-shutdown links stay dead)", async () => {
+      patchWithTransaction()
+      spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRootStream").mockResolvedValue([])
+      const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const count = await service.restoreSessionsForUnarchivedStream({
+        workspaceId: "ws_1",
+        rootStreamId: "stream_root",
+      })
+
+      expect(count).toBe(0)
+      expect(insertSpy).not.toHaveBeenCalled()
+    })
+
+    it("reattachArchivedRuntimeSession revives the link, refreshes presence, and re-claims the active-actor slot", async () => {
+      patchWithTransaction()
+      const revived = makeLink({ status: "active" })
+      spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRuntimeSession").mockResolvedValue(revived)
+      const presenceSpy = spyOn(BotRuntimeInstanceRepository, "upsertPresence").mockResolvedValue({} as never)
+      const setActorSpy = spyOn(BotRuntimeService.prototype, "setActiveActorInTransaction").mockResolvedValue(
+        {} as never
+      )
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const result = await service.reattachArchivedRuntimeSession({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        runtimeKind: "claude-code-channel",
+        instanceId: "inst_42",
+        runtimeSessionId: "sess_1",
+      })
+
+      expect(result).toEqual({ status: "reattached", link: revived })
+      expect(presenceSpy).toHaveBeenCalled()
+      expect(setActorSpy.mock.calls[0]?.[1]).toMatchObject({
+        workspaceId: "ws_1",
+        rootStreamId: "stream_root",
+        actorType: "bot",
+        actorId: "bot_alice",
+        createdBy: "usr_owner",
+      })
+    })
+
+    it("reattachArchivedRuntimeSession reports archived_stream when the link exists but its stream is still archived", async () => {
+      patchWithTransaction()
+      spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRuntimeSession").mockResolvedValue(null)
+      spyOn(BotRuntimeSessionLinkRepository, "findArchivedByRuntimeSession").mockResolvedValue(
+        makeLink({ status: "archived" })
+      )
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const result = await service.reattachArchivedRuntimeSession({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        runtimeKind: "claude-code-channel",
+        instanceId: "inst_42",
+        runtimeSessionId: "sess_1",
+      })
+
+      expect(result).toEqual({ status: "archived_stream" })
+    })
+
+    it("reattachArchivedRuntimeSession reports none when no archived link exists for the runtime session", async () => {
+      patchWithTransaction()
+      spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRuntimeSession").mockResolvedValue(null)
+      spyOn(BotRuntimeSessionLinkRepository, "findArchivedByRuntimeSession").mockResolvedValue(null)
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const result = await service.reattachArchivedRuntimeSession({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        runtimeKind: "claude-code-channel",
+        instanceId: "inst_42",
+        runtimeSessionId: "sess_1",
+      })
+
+      expect(result).toEqual({ status: "none" })
+    })
+  })
+
   describe("requestResyncInTransaction", () => {
     it("rejects instanceId without botId", async () => {
       const service = new BotRuntimeService({ pool: fakePool })

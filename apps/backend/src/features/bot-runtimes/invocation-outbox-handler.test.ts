@@ -108,6 +108,32 @@ describe("BotInvocationOutboxHandler E2E delivery verdict", () => {
   })
 })
 
+describe("BotInvocationOutboxHandler stream lifecycle", () => {
+  it("stream:archived ends the stream's runtime session links", async () => {
+    const endSpy = spyOn(BotRuntimeService.prototype, "endSessionsForArchivedStream").mockResolvedValue(1)
+    const handler = new BotInvocationOutboxHandler({} as Pool)
+
+    await (handler as unknown as { processStreamArchived(p: unknown): Promise<void> }).processStreamArchived({
+      workspaceId: "ws_1",
+      streamId: "stream_root",
+    })
+
+    expect(endSpy).toHaveBeenCalledWith({ workspaceId: "ws_1", rootStreamId: "stream_root" })
+  })
+
+  it("stream:unarchived restores the links the archive ended", async () => {
+    const restoreSpy = spyOn(BotRuntimeService.prototype, "restoreSessionsForUnarchivedStream").mockResolvedValue(1)
+    const handler = new BotInvocationOutboxHandler({} as Pool)
+
+    await (handler as unknown as { processStreamUnarchived(p: unknown): Promise<void> }).processStreamUnarchived({
+      workspaceId: "ws_1",
+      streamId: "stream_root",
+    })
+
+    expect(restoreSpy).toHaveBeenCalledWith({ workspaceId: "ws_1", rootStreamId: "stream_root" })
+  })
+})
+
 describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => {
   const channelStream = {
     id: "stream_1",

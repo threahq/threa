@@ -11,6 +11,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import {
+  archiveStream,
   botApiGet,
   botApiPost,
   botUploadFile,
@@ -21,6 +22,7 @@ import {
   sendMessage,
   sendMessageWithAttachments,
   TestClient,
+  unarchiveStream,
   uploadAttachment,
 } from "../client"
 
@@ -116,6 +118,102 @@ describe("claude-code-channel runtime sessions", () => {
     // Same scratchpad, not a fresh one (and not a 500).
     expect(second.data.data.linkId).toBe(first.data.data.linkId)
     expect(second.data.data.activeStreamId).toBe(first.data.data.activeStreamId)
+  })
+
+  // Archive→unarchive symmetry: archiving ends the session link (recoverably);
+  // while archived, session-create refuses with SCRATCHPAD_ARCHIVED instead of
+  // minting a duplicate scratchpad; after unarchive the SAME link revives and
+  // dispatch works again — the reattach a self-healing live channel relies on.
+  test("archive ends the link, unarchive revives the same scratchpad, and dispatch resumes", async () => {
+    const client = new TestClient()
+    await loginAs(client, `cc-arch-${testRunId}@test.com`, "CC Archive User")
+    const workspace = await createWorkspace(client, `CC Archive WS ${testRunId}`)
+    const bot = await createBot(client, workspace.id, {
+      type: "personal",
+      name: `CCA ${testRunId}`,
+      slug: `cca-${testRunId}`,
+      traits: [BotTraits.ACTIVE_SCRATCHPAD, BotTraits.MENTIONABLE],
+    })
+    const apiKey = await createBotKey(client, workspace.id, bot.id, [
+      WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE,
+    ])
+
+    const instanceId = `cca-inst-${testRunId}`
+    const runtimeSessionId = `cca-sess-${testRunId}`
+    const body = {
+      runtimeKind: "claude-code-channel",
+      instanceId,
+      runtimeSessionId,
+      displayName: "Claude Code - arch",
+      localCwd: "/tmp/threa-cc-arch",
+    }
+    const first = await botApiPost<{ data: SessionLinkData }>(
+      client,
+      workspace.id,
+      "/bot-runtime/sessions",
+      apiKey,
+      body
+    )
+    expect(first.status).toBe(200)
+    const rootStreamId = first.data.data.rootStreamId
+
+    await archiveStream(client, workspace.id, rootStreamId)
+
+    // The link-end rides the outbox, so poll until session-create stops seeing
+    // an active link and reports the archived state (never a duplicate create).
+    let sawArchivedConflict = false
+    for (let i = 0; i < 50 && !sawArchivedConflict; i++) {
+      const whileArchived = await botApiPost<{ data?: SessionLinkData; code?: string }>(
+        client,
+        workspace.id,
+        "/bot-runtime/sessions",
+        apiKey,
+        body
+      )
+      if (whileArchived.status === 409) {
+        expect(whileArchived.data.code).toBe("SCRATCHPAD_ARCHIVED")
+        sawArchivedConflict = true
+      } else {
+        // Outbox not processed yet: the still-active link is reused (same id).
+        expect(whileArchived.status).toBe(200)
+        expect(whileArchived.data.data!.linkId).toBe(first.data.data.linkId)
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
+    }
+    expect(sawArchivedConflict).toBe(true)
+
+    await unarchiveStream(client, workspace.id, rootStreamId)
+
+    // After unarchive the link revives (via the outbox branch or this reattach
+    // call) — the SAME scratchpad, not a new one.
+    let revived: SessionLinkData | null = null
+    for (let i = 0; i < 50 && !revived; i++) {
+      const res = await botApiPost<{ data: SessionLinkData }>(
+        client,
+        workspace.id,
+        "/bot-runtime/sessions",
+        apiKey,
+        body
+      )
+      if (res.status === 200) revived = res.data.data
+      else await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+    expect(revived).not.toBeNull()
+    expect(revived!.linkId).toBe(first.data.data.linkId)
+    expect(revived!.rootStreamId).toBe(rootStreamId)
+
+    // The revived link dispatches turns again.
+    await sendMessage(client, workspace.id, rootStreamId, "Reply with exactly: back-from-archive")
+    const claimed = await claimInvocation(client, workspace.id, apiKey, {
+      runtimeKind: "claude-code-channel",
+      instanceId,
+      runtimeSessionId,
+      supportedCapabilities: ["active-scratchpad", "mentionable"],
+      claimTtlSeconds: 120,
+    })
+    expect(claimed.promptMarkdown).toContain("back-from-archive")
   })
 
   test("rejects a link-free runtime kind", async () => {

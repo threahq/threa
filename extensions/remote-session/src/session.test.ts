@@ -363,8 +363,34 @@ describe("RemoteSession.onReplyTimeout", () => {
   })
 })
 
-describe("RemoteSession session-archived handling", () => {
-  test("goes offline, fails in-flight turns, and hands the connector the final word", async () => {
+describe("RemoteSession session-archived handling (grace window)", () => {
+  function makeGraceSession(params: {
+    client: ThreaClient
+    transport: BotRuntimeTransport
+    archiveGraceMs: number
+    onArchived?: (payload: { rootStreamId: string }) => void
+  }): RemoteSession {
+    return new RemoteSession({
+      config: makeConfig(),
+      client: params.client,
+      delegate: { deliverTurn: async () => {}, ...(params.onArchived ? { onArchived: params.onArchived } : {}) },
+      runtime: RUNTIME,
+      transport: params.transport,
+      archiveGraceMs: params.archiveGraceMs,
+    })
+  }
+
+  const asInternal = (session: RemoteSession) =>
+    session as unknown as {
+      handleSessionArchived: (p: unknown) => Promise<void>
+      handleSessionRestored: (p: unknown) => Promise<void>
+      claimDrain: () => Promise<boolean>
+      nextPollDelay: (claimed: boolean) => number
+      link: unknown
+      archivePending: unknown
+    }
+
+  test("detaches on archive: goes offline, fails in-flight turns, but does NOT wind down within the grace window", async () => {
     const failed: string[] = []
     const client = {
       fail: async (id: string) => {
@@ -373,32 +399,102 @@ describe("RemoteSession session-archived handling", () => {
     } as unknown as ThreaClient
     const { transport, presence } = makeFakeTransport()
     const archived: Array<{ rootStreamId: string }> = []
-    const session = makeSession(client, transport, { onArchived: (payload) => void archived.push(payload) })
+    const session = makeGraceSession({
+      client,
+      transport,
+      archiveGraceMs: 60_000,
+      onArchived: (payload) => void archived.push(payload),
+    })
     seedInflight(session, makeInvocation({ id: "binv_running" }))
 
-    await (session as unknown as { handleSessionArchived: (p: unknown) => Promise<void> }).handleSessionArchived({
-      runtimeSessionId: "rts-test",
-      rootStreamId: "stream_root",
-    })
+    await asInternal(session).handleSessionArchived({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
 
     expect(presence.at(-1)?.status).toBe("offline")
     expect(failed).toEqual(["binv_running"])
-    expect(archived).toEqual([{ rootStreamId: "stream_root" }])
+    // The wind-down is deferred: an unarchive within the grace window reattaches instead.
+    expect(archived).toEqual([])
+    expect(asInternal(session).archivePending).toBeDefined()
+    // Detached: no claims while the scratchpad is archived, and the poll probes at the reattach cadence.
+    expect(await asInternal(session).claimDrain()).toBe(false)
+    expect(asInternal(session).nextPollDelay(false)).toBe(45_000)
+    await session.shutdown()
   })
 
-  test("ignores an event for a different runtime session (stale re-registration)", async () => {
+  test("bot:session_restored within the grace cancels the wind-down and reattaches the same scratchpad", async () => {
+    const created: unknown[] = []
+    const client = {
+      fail: async () => {},
+      getMe: async () => ({ kind: "bot" }),
+      createSession: async (body: unknown) => {
+        created.push(body)
+        return {
+          linkId: "brsl_1",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_root",
+          runtimeSessionId: "rts-test",
+          streamUrlPath: "/w/ws_1/s/stream_root",
+        }
+      },
+      claim: async () => null,
+    } as unknown as ThreaClient
+    const { transport, presence } = makeFakeTransport()
+    const archived: Array<{ rootStreamId: string }> = []
+    const session = makeGraceSession({
+      client,
+      transport,
+      archiveGraceMs: 60_000,
+      onArchived: (payload) => void archived.push(payload),
+    })
+
+    await asInternal(session).handleSessionArchived({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
+    await asInternal(session).handleSessionRestored({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
+
+    // Reattached: session-create re-issued (the server revives the same link),
+    // presence back to available, wind-down cancelled, claims live again.
+    expect(created).toHaveLength(1)
+    expect(asInternal(session).archivePending).toBeUndefined()
+    expect(asInternal(session).link).toMatchObject({ rootStreamId: "stream_root" })
+    expect(presence.at(-1)?.status).toBe("available")
+    expect(archived).toEqual([])
+    await session.shutdown()
+  })
+
+  test("winds down (onArchived) when the grace expires without a restore", async () => {
+    const client = { fail: async () => {} } as unknown as ThreaClient
+    const { transport, presence } = makeFakeTransport()
+    const archived: Array<{ rootStreamId: string }> = []
+    const session = makeGraceSession({
+      client,
+      transport,
+      archiveGraceMs: 10,
+      onArchived: (payload) => void archived.push(payload),
+    })
+
+    await asInternal(session).handleSessionArchived({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    expect(archived).toEqual([{ rootStreamId: "stream_root" }])
+    expect(presence.at(-1)?.status).toBe("offline")
+  })
+
+  test("ignores archive and restore events for a different runtime session (stale re-registration)", async () => {
     const { client } = makeFakeClient()
     const { transport, presence } = makeFakeTransport()
     const archived: unknown[] = []
     const session = makeSession(client, transport, { onArchived: (payload) => void archived.push(payload) })
 
-    await (session as unknown as { handleSessionArchived: (p: unknown) => Promise<void> }).handleSessionArchived({
+    await asInternal(session).handleSessionArchived({
+      runtimeSessionId: "rts-someone-else",
+      rootStreamId: "stream_root",
+    })
+    await asInternal(session).handleSessionRestored({
       runtimeSessionId: "rts-someone-else",
       rootStreamId: "stream_root",
     })
 
     expect(archived).toEqual([])
     expect(presence).toEqual([])
+    expect(asInternal(session).archivePending).toBeUndefined()
   })
 })
 

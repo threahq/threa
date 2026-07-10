@@ -251,6 +251,35 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
     }
   })
 
+  it("routes bot:session_archived and bot:session_restored to their callbacks", async () => {
+    const fake = makeFakeSocket()
+    const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      stubHintFetch()
+      const archived: unknown[] = []
+      const restored: unknown[] = []
+      const transport = new BotRuntimeTransport({
+        baseUrl: "https://app.example.test",
+        workspaceId: "ws_1",
+        apiKey: "threa_bk_test",
+        hello: HELLO,
+        callbacks: {
+          onSessionArchived: (payload) => void archived.push(payload),
+          onSessionRestored: (payload) => void restored.push(payload),
+        },
+      })
+      await transport.connect()
+
+      fake.handlers["bot:session_archived"]!({ runtimeSessionId: "rts_1" })
+      fake.handlers["bot:session_restored"]!({ runtimeSessionId: "rts_1", rootStreamId: "stream_root" })
+
+      expect(archived).toEqual([{ runtimeSessionId: "rts_1" }])
+      expect(restored).toEqual([{ runtimeSessionId: "rts_1", rootStreamId: "stream_root" }])
+    } finally {
+      ioSpy.mockRestore()
+    }
+  })
+
   it("connect() leaves a fresh outage to Socket.IO but tears down and redials a stale one", async () => {
     const first = makeFakeSocket()
     const second = makeFakeSocket()

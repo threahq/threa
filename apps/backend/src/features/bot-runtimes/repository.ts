@@ -482,20 +482,105 @@ export const BotRuntimeSessionLinkRepository = {
 
   /**
    * End every active link rooted at a stream (its scratchpad was archived) and
-   * return the ended rows so the caller can notify each runtime. One set-based
+   * return the ended rows so the caller can notify each runtime. Writes the
+   * recoverable 'archived' status — not terminal 'ended' — so a later
+   * stream:unarchived can revive exactly these links. One set-based
    * UPDATE … RETURNING so concurrent archive/consumer retries can't double-end
    * or race a link back to life (INV-20, INV-56).
    */
-  async endActiveByRootStream(
+  async archiveActiveByRootStream(
     db: Querier,
     params: { workspaceId: string; rootStreamId: string }
   ): Promise<BotRuntimeSessionLink[]> {
     const result = await db.query<BotRuntimeSessionLinkRow>(
-      sql`UPDATE bot_runtime_session_links SET status = 'ended', updated_at = NOW()
+      sql`UPDATE bot_runtime_session_links SET status = 'archived', updated_at = NOW()
       WHERE workspace_id = ${params.workspaceId} AND root_stream_id = ${params.rootStreamId} AND status = 'active'
       RETURNING *`
     )
     return result.rows.map(mapSessionLink)
+  },
+
+  /**
+   * Revive every archive-ended link rooted at a stream (its scratchpad was
+   * unarchived). Scoped to status = 'archived' so links a runtime ended by
+   * shutting down normally stay dead (INV-20, INV-56).
+   */
+  async reactivateArchivedByRootStream(
+    db: Querier,
+    params: { workspaceId: string; rootStreamId: string }
+  ): Promise<BotRuntimeSessionLink[]> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`UPDATE bot_runtime_session_links SET status = 'active', last_seen_at = NOW(), updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND root_stream_id = ${params.rootStreamId} AND status = 'archived'
+      RETURNING *`
+    )
+    return result.rows.map(mapSessionLink)
+  },
+
+  /**
+   * Revive the newest archive-ended link for one runtime session identity —
+   * the session-create reattach path. The stream guard keeps a still-archived
+   * scratchpad's link dead (the caller 409s instead of minting a duplicate
+   * scratchpad), and the locked CTE makes concurrent reattach/unarchive
+   * consumers converge on one winner (INV-20).
+   */
+  async reactivateArchivedByRuntimeSession(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      runtimeKind: BotRuntimeKind
+      instanceId: string
+      runtimeSessionId: string
+    }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(sql`WITH candidate AS (
+        SELECT l.id FROM bot_runtime_session_links l
+        WHERE l.workspace_id = ${params.workspaceId}
+          AND l.bot_id = ${params.botId}
+          AND l.runtime_kind = ${params.runtimeKind}
+          AND l.instance_id = ${params.instanceId}
+          AND l.runtime_session_id = ${params.runtimeSessionId}
+          AND l.status = 'archived'
+          AND EXISTS (
+            SELECT 1 FROM streams s
+            WHERE s.workspace_id = l.workspace_id AND s.id = l.root_stream_id AND s.archived_at IS NULL
+          )
+        ORDER BY l.updated_at DESC
+        FOR UPDATE OF l SKIP LOCKED
+        LIMIT 1
+      )
+      UPDATE bot_runtime_session_links l
+      SET status = 'active', last_seen_at = NOW(), updated_at = NOW()
+      FROM candidate
+      WHERE l.id = candidate.id
+      RETURNING l.*`)
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
+
+  /** Newest archive-ended link for one runtime session identity (regardless of the stream's archive state). */
+  async findArchivedByRuntimeSession(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      runtimeKind: BotRuntimeKind
+      instanceId: string
+      runtimeSessionId: string
+    }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT * FROM bot_runtime_session_links
+        WHERE workspace_id = ${params.workspaceId}
+          AND bot_id = ${params.botId}
+          AND runtime_kind = ${params.runtimeKind}
+          AND instance_id = ${params.instanceId}
+          AND runtime_session_id = ${params.runtimeSessionId}
+          AND status = 'archived'
+        ORDER BY updated_at DESC
+        LIMIT 1`
+    )
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
   async findActiveByStream(
