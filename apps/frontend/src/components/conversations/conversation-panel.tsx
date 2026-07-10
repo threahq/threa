@@ -243,12 +243,7 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
           )}
           {/* The topic is the conversation's identity — show it when set, falling
             back to the stream locator (the pre-topic behavior). */}
-          <span
-            className={cn(
-              "truncate",
-              post?.conversation.status === "resolved" && "text-muted-foreground line-through decoration-1"
-            )}
-          >
+          <span className={cn("truncate", post?.conversation.status === "resolved" && "text-muted-foreground")}>
             {post?.conversation.topicSummary ?? locator}
           </span>
           {post && (

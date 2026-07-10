@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { Archive, Ban, Bell, BellOff, Check, ChevronDown, Hash, Layers, Tag, X } from "lucide-react"
+import { Archive, Ban, Bell, BellOff, Check, ChevronDown, Hash, Layers, Pin, Tag, X } from "lucide-react"
 import {
   BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
@@ -27,6 +27,7 @@ import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
 import { BoardSavedViews, isViewActive, type BoardViewSelection } from "@/components/board/board-saved-views"
 import { useBoardViews } from "@/hooks/use-board-views"
 import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
+import { usePreferences } from "@/contexts"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import { isBoardFiltered } from "@/lib/board/filter-state"
 import { cn } from "@/lib/utils"
@@ -455,6 +456,7 @@ function BoardLensMenu({
 }) {
   const [open, setOpen] = useState(false)
   const { search } = useLocation()
+  const { updatePreference } = usePreferences()
   const current = BOARD_LENS_DEFS[lens]
   const CurrentIcon = current.icon
 
@@ -480,24 +482,44 @@ function BoardLensMenu({
           const def = BOARD_LENS_DEFS[value]
           const Icon = def.icon
           const selected = value === lens && activeViewId === null
+          const isHome = value === homeLens
           return (
-            <Link
+            <div
               key={value}
-              to={lensHref(workspaceId, value, search, homeLens)}
-              onClick={() => setOpen(false)}
-              aria-current={selected ? "true" : undefined}
               className={cn(
-                "mx-1 flex items-start gap-2.5 rounded-item px-2.5 py-2 transition-colors hover:bg-muted",
+                "mx-1 flex items-center rounded-item transition-colors hover:bg-muted",
                 selected && "bg-muted/60"
               )}
             >
-              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{def.label}</span>
-                <span className="block text-xs text-muted-foreground">{def.description}</span>
-              </span>
-              {selected && <Check className="mt-1 h-4 w-4 shrink-0" />}
-            </Link>
+              <Link
+                to={lensHref(workspaceId, value, search, homeLens)}
+                onClick={() => setOpen(false)}
+                aria-current={selected ? "true" : undefined}
+                className="flex min-w-0 flex-1 items-start gap-2.5 rounded-item px-2.5 py-2"
+              >
+                <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">{def.label}</span>
+                  <span className="block text-xs text-muted-foreground">{def.description}</span>
+                </span>
+                {selected && <Check className="mt-1 h-4 w-4 shrink-0" />}
+              </Link>
+              {/* Pin this lens as the board home (bare `/board`) — the same write the
+                  appearance-settings radio does, placed where lenses are picked. Filled
+                  when it's the current home; silent per INV-63 (the fill is the signal). */}
+              <button
+                type="button"
+                onClick={() => void updatePreference("boardDefaultLens", value)}
+                aria-pressed={isHome}
+                aria-label={isHome ? `${def.label} is your board home` : `Set ${def.label} as board home`}
+                className={cn(
+                  "mr-1 shrink-0 rounded p-1.5 transition-colors",
+                  isHome ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground"
+                )}
+              >
+                <Pin className={cn("h-3.5 w-3.5", isHome && "fill-current")} />
+              </button>
+            </div>
           )
         })}
       </nav>
