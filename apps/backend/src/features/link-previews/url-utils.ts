@@ -8,6 +8,10 @@ export type InAppLinkRef =
   | { kind: "message"; workspaceId: string; streamId: string; messageId: string }
   | { kind: "stream"; workspaceId: string; streamId: string }
   | { kind: "memo"; workspaceId: string; memoId: string }
+  | { kind: "conversation"; workspaceId: string; conversationId: string }
+
+/** Panel-id prefix a conversation deep-link carries in `?panel=` (mirrors the frontend `CONVERSATION_PANEL_PREFIX`). */
+const CONVERSATION_PANEL_PREFIX = "conv:"
 
 export type LinearUrlMatch =
   | {
@@ -73,6 +77,7 @@ export type GitHubUrlMatch =
  * - `{origin}/w/{workspaceId}/s/{streamId}?m={messageId}` → message
  * - `{origin}/w/{workspaceId}/s/{streamId}` → stream
  * - `{origin}/w/{workspaceId}/memos/{memoId}` → memo
+ * - `{origin}/w/{workspaceId}/board?panel=conv:{conversationId}` → conversation
  * Returns null if the origin isn't recognized or no shape matches.
  */
 export function parseInAppLink(url: string, appOrigins: string[]): InAppLinkRef | null {
@@ -93,6 +98,18 @@ export function parseInAppLink(url: string, appOrigins: string[]): InAppLinkRef 
     if (memoMatch) {
       const [, workspaceId, memoId] = memoMatch
       return { kind: "memo", workspaceId, memoId }
+    }
+
+    // A conversation has no `/s/:id` permalink — it spans a root stream + threads
+    // — so it deep-links to the board panel host. The id rides the `panel` param.
+    const boardMatch = parsed.pathname.match(/^\/w\/([^/]+)\/board$/)
+    if (boardMatch) {
+      const [, workspaceId] = boardMatch
+      const panel = parsed.searchParams.get("panel")
+      if (panel?.startsWith(CONVERSATION_PANEL_PREFIX)) {
+        const conversationId = panel.slice(CONVERSATION_PANEL_PREFIX.length)
+        if (conversationId) return { kind: "conversation", workspaceId, conversationId }
+      }
     }
 
     return null

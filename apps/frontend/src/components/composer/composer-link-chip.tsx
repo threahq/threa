@@ -5,12 +5,13 @@ import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-
 import type { BelowRowDraftLink } from "@/lib/in-app-links"
 
 /**
- * One compact chip for a below-row draft link — web or memo only. Stream/message
- * in-app links never reach here: they render as an inline chip in the draft body
- * (`ComposerLinkPreviews` filters them via `isBelowRowDraftLink`), matching the
- * posted message (#1103). Stealing the attachment-pill semantics keeps several
- * links from eating the screen (a full preview card per link buries the composer
- * on mobile). Memo links resolve via the backend; web links chip their host.
+ * One compact chip for a below-row draft link — web or memo only. Stream,
+ * message, and conversation in-app links never reach here: they render as an
+ * inline chip in the draft body (`ComposerLinkPreviews` filters them via
+ * `isBelowRowDraftLink`), matching the posted message (#1103). Stealing the
+ * attachment-pill semantics keeps several links from eating the screen (a full
+ * preview card per link buries the composer on mobile). Memo links resolve via
+ * the backend; web links chip their host.
  *
  * Non-navigable on purpose: clicking must not abandon the draft mid-compose.
  */

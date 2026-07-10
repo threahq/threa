@@ -1,8 +1,9 @@
 import { type MouseEvent } from "react"
-import { MessageSquare } from "lucide-react"
+import { MessageSquare, MessagesSquare, Globe, Lock } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { useInAppLinkChip } from "@/hooks/use-in-app-link-chip"
+import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
 import { InAppLinkChip } from "./in-app-link-chip"
 
 /**
@@ -38,6 +39,45 @@ export function InAppLinkInline({
   const label = state.status === "pending" ? fallbackLabel || "Link" : state.label
   const prefix = state.status === "resolved" ? state.prefix : undefined
   const chip = <InAppLinkChip icon={icon} prefix={prefix} label={label} />
+
+  const internalPath = resolveInternalAppPath(href)
+  if (!internalPath) return chip
+
+  const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    e.preventDefault()
+    navigate(internalPath)
+  }
+
+  return (
+    <a href={href} onClick={handleClick} className="no-underline">
+      {chip}
+    </a>
+  )
+}
+
+/**
+ * Posted-message rendering of an in-app conversation link as a compact chip
+ * (`💬 {topicSummary}`), the inline sibling of the below-message conversation
+ * card. Resolves its title through the same access-tiered resolver the card uses
+ * (shared query cache), so the chip and card never round-trip twice. A restricted
+ * tier (cross-workspace / private) renders a non-navigable placeholder chip; a
+ * cold resolve shows the generic "Conversation" label behind the same glyph, so
+ * resolving only swaps the text, never the icon (INV-21).
+ */
+export function ConversationLinkInline({ href, workspaceId }: { href: string; workspaceId: string }) {
+  const navigate = useNavigate()
+  const { data } = useResolvedInAppLink(workspaceId, undefined, href, true)
+
+  if (data?.accessTier === "cross_workspace") {
+    return <InAppLinkChip icon={Globe} label="Another workspace" />
+  }
+  if (data?.accessTier === "private") {
+    return <InAppLinkChip icon={Lock} label="Private conversation" />
+  }
+
+  const label = (data?.kind === "conversation" && data.topicSummary) || "Conversation"
+  const chip = <InAppLinkChip icon={MessagesSquare} label={label} />
 
   const internalPath = resolveInternalAppPath(href)
   if (!internalPath) return chip

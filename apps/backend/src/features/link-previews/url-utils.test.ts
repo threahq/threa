@@ -306,9 +306,31 @@ describe("parseInAppLink", () => {
     })
   })
 
+  test("parses a conversation link (board panel)", () => {
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/board?panel=conv:conv_1", origins)).toEqual({
+      kind: "conversation",
+      workspaceId: "ws_123",
+      conversationId: "conv_1",
+    })
+  })
+
+  test("parses a conversation link that also deep-links a message", () => {
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/board?panel=conv:conv_1&m=msg_9", origins)).toEqual({
+      kind: "conversation",
+      workspaceId: "ws_123",
+      conversationId: "conv_1",
+    })
+  })
+
+  test("returns null for a board URL with a non-conversation panel", () => {
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/board?panel=stream:stream_1", origins)).toBeNull()
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/board", origins)).toBeNull()
+  })
+
   test("returns null for unrecognized origin", () => {
     expect(parseInAppLink("https://evil.com/w/ws_123/s/stream_456", origins)).toBeNull()
     expect(parseInAppLink("https://evil.com/w/ws_123/memos/memo_1", origins)).toBeNull()
+    expect(parseInAppLink("https://evil.com/w/ws_123/board?panel=conv:conv_1", origins)).toBeNull()
   })
 
   test("returns null for non-resource paths", () => {

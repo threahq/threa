@@ -1509,7 +1509,40 @@ export interface MemoLinkPreviewData {
 }
 
 /**
+ * Resolved in-app conversation link data. A conversation carries its own title
+ * (`topicSummary`) and rolling prose `summary`, so the card renders from that
+ * metadata rather than a raw message body. Content fields are only populated for
+ * the "full" access tier.
+ */
+export interface ConversationLinkPreviewData {
+  kind: "conversation"
+  accessTier: InAppLinkAccessTier
+  /** LLM-generated 2–5 word title (full tier only) */
+  topicSummary?: string
+  /** Rolling prose summary of the conversation (full tier only) */
+  summary?: string
+  /** active / stalled / resolved (full tier only) */
+  status?: ConversationStatus
+  /** Count of primary-membership messages (full tier only) */
+  messageCount?: number
+  /**
+   * Distinct participant (author) ids (full set), so the card renders their
+   * avatars live from the workspace store; the card caps how many it shows and
+   * rolls the rest into a "+N". Full tier only.
+   */
+  participantIds?: string[]
+  /** Anchor stream display label the conversation lives in (full tier only) */
+  streamName?: string
+  /** Anchor stream type — channel / scratchpad / dm (full tier only) */
+  streamType?: StreamType
+}
+
+/**
  * Discriminated union returned by the permission-checked in-app link resolve
  * endpoint. The `kind` mirrors the link preview's in-app content type.
  */
-export type InAppLinkPreviewData = MessageLinkPreviewData | StreamLinkPreviewData | MemoLinkPreviewData
+export type InAppLinkPreviewData =
+  | MessageLinkPreviewData
+  | StreamLinkPreviewData
+  | MemoLinkPreviewData
+  | ConversationLinkPreviewData

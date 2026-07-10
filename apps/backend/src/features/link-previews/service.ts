@@ -4,6 +4,7 @@ import { logger } from "@threa/backend-common"
 import { withTransaction } from "../../db"
 import { linkPreviewId } from "../../lib/id"
 import type {
+  ConversationLinkPreviewData,
   InAppLinkPreviewData,
   LinkPreviewContentType,
   LinkPreviewSummary,
@@ -15,6 +16,7 @@ import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { StreamService } from "../streams"
 import { StreamMemberRepository } from "../streams"
+import { ConversationRepository } from "../conversations"
 import type { MemoExplorerService } from "../memos"
 import { resolveUserAccessibleStreamIds } from "../search"
 import { OutboxRepository } from "../../lib/outbox"
@@ -53,6 +55,7 @@ interface InAppLinkTarget {
   targetStreamId?: string | null
   targetMessageId?: string | null
   targetMemoId?: string | null
+  targetConversationId?: string | null
 }
 
 /**
@@ -68,6 +71,7 @@ function inAppLinkInsertFields(
   targetStreamId?: string
   targetMessageId?: string
   targetMemoId?: string
+  targetConversationId?: string
 } {
   if (!ref) return { contentType: detectContentType(url) }
   switch (ref.kind) {
@@ -89,6 +93,12 @@ function inAppLinkInsertFields(
         contentType: "memo_link",
         targetWorkspaceId: ref.workspaceId,
         targetMemoId: ref.memoId,
+      }
+    case "conversation":
+      return {
+        contentType: "conversation_link",
+        targetWorkspaceId: ref.workspaceId,
+        targetConversationId: ref.conversationId,
       }
   }
 }
@@ -350,7 +360,7 @@ export class LinkPreviewService {
   }
 
   /**
-   * Resolve an in-app link preview (message, stream, or memo) for a specific viewer.
+   * Resolve an in-app link preview (message, stream, memo, or conversation) for a specific viewer.
    * Returns access-tiered data: full content for accessible targets, limited info
    * for private targets, and a minimal card for cross-workspace links. A
    * cross-workspace target is never inspected — same-workspace check happens first
@@ -394,6 +404,8 @@ export class LinkPreviewService {
         return this.resolveStreamTarget(workspaceId, userId, target)
       case "memo_link":
         return this.resolveMemoTarget(workspaceId, userId, target, opts?.accessibleStreamIds)
+      case "conversation_link":
+        return this.resolveConversationTarget(workspaceId, userId, target)
       default:
         return Promise.resolve(null)
     }
@@ -535,6 +547,48 @@ export class LinkPreviewService {
       abstract,
       knowledgeType: memo.memo.knowledgeType,
       sourceStreamName: memo.sourceStream?.name ?? undefined,
+    }
+  }
+
+  private async resolveConversationTarget(
+    workspaceId: string,
+    userId: string,
+    target: InAppLinkTarget
+  ): Promise<ConversationLinkPreviewData | null> {
+    const { targetWorkspaceId, targetConversationId } = target
+    if (!targetWorkspaceId || !targetConversationId) return null
+
+    if (targetWorkspaceId !== workspaceId) {
+      return { kind: "conversation", accessTier: "cross_workspace" }
+    }
+
+    // Collapse "not found", "wrong workspace", and "no access to the anchor
+    // stream" into the private tier so a conversation link never leaks whether
+    // the conversation exists (matches the message/stream/memo resolvers).
+    const conversation = await ConversationRepository.findById(this.deps.pool, targetConversationId)
+    if (!conversation || conversation.workspaceId !== workspaceId) {
+      return { kind: "conversation", accessTier: "private" }
+    }
+
+    // A conversation inherits access from its anchor stream (INV-62 resolves a
+    // thread anchor through its root inside tryAccess).
+    const stream = await this.deps.streamService.tryAccess(conversation.streamId, workspaceId, userId)
+    if (!stream) {
+      return { kind: "conversation", accessTier: "private" }
+    }
+
+    const summary = conversation.summary ? buildPreviewSnippet(conversation.summary) : undefined
+
+    return {
+      kind: "conversation",
+      accessTier: "full",
+      topicSummary: conversation.topicSummary ?? undefined,
+      summary,
+      status: conversation.status,
+      messageCount: conversation.messageIds.length,
+      participantIds: conversation.participantIds,
+      streamName: stream.displayName ?? stream.slug ?? undefined,
+      streamType: stream.type,
     }
   }
 

@@ -119,6 +119,43 @@ describe("InAppLinkPreviewCard", () => {
     expect(screen.getByText("From #eng")).toBeInTheDocument()
   })
 
+  it("renders a full-access conversation link with title, summary, status and count", async () => {
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
+
+    renderWith(
+      {
+        kind: "conversation",
+        accessTier: "full",
+        topicSummary: "Auth redesign",
+        summary: "Deciding how auth flows through the router.",
+        status: "resolved",
+        messageCount: 4,
+        participantIds: ["usr_a", "usr_b"],
+        streamName: "eng",
+        streamType: "channel",
+      },
+      makePreview({ contentType: "conversation_link", url: "https://app.threa.io/w/ws_123/board?panel=conv:conv_1" })
+    )
+
+    await waitFor(() => expect(screen.getByText("Auth redesign")).toBeInTheDocument())
+    expect(screen.getByText("Deciding how auth flows through the router.")).toBeInTheDocument()
+    expect(screen.getByText("Resolved")).toBeInTheDocument()
+    expect(screen.getByText("4 messages")).toBeInTheDocument()
+    expect(screen.getByText("#eng")).toBeInTheDocument()
+  })
+
+  it("shows a minimal card for a private conversation without leaking content", async () => {
+    renderWith(
+      { kind: "conversation", accessTier: "private" },
+      makePreview({ contentType: "conversation_link", url: "https://app.threa.io/w/ws_123/board?panel=conv:conv_1" })
+    )
+
+    await waitFor(() => expect(screen.getByText("Private conversation")).toBeInTheDocument())
+    expect(screen.queryByText("Auth redesign")).not.toBeInTheDocument()
+  })
+
   it("shows a minimal card for a private stream without leaking content", async () => {
     renderWith({ kind: "stream", accessTier: "private" }, makePreview())
 

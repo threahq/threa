@@ -5,9 +5,24 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { linkPreviewsApi } from "@/api"
 import * as workspaceStore from "@/stores/workspace-store"
 import * as currentUserModule from "@/hooks/use-current-workspace-user-id"
-import { InAppLinkInline } from "./in-app-link-inline"
+import { InAppLinkInline, ConversationLinkInline } from "./in-app-link-inline"
 
 const origin = window.location.origin
+
+function renderConversationLink() {
+  const href = `${origin}/w/ws_1/board?panel=conv:conv_1`
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return {
+    href,
+    ...render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <ConversationLinkInline href={href} workspaceId="ws_1" />
+        </MemoryRouter>
+      </QueryClientProvider>
+    ),
+  }
+}
 
 function renderMessageLink(streamId: string) {
   const href = `${origin}/w/ws_1/s/${streamId}?m=msg_1`
@@ -57,9 +72,7 @@ describe("InAppLinkInline (message chip)", () => {
 
     renderMessageLink("stream_1")
 
-    await waitFor(() =>
-      expect(screen.getByText("Kristoffer Remback in #tech-big-new-prop")).toBeInTheDocument()
-    )
+    await waitFor(() => expect(screen.getByText("Kristoffer Remback in #tech-big-new-prop")).toBeInTheDocument())
   })
 
   it("settles a fully-resolved but unnamed (bot/persona) message to 'Message', not the parent stream name", async () => {
@@ -91,5 +104,49 @@ describe("InAppLinkInline (message chip)", () => {
     renderMessageLink("stream_1")
 
     await waitFor(() => expect(screen.getByText("Deleted message")).toBeInTheDocument())
+  })
+})
+
+describe("ConversationLinkInline (conversation chip)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("renders the conversation topic as a navigable chip", async () => {
+    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
+      kind: "conversation",
+      accessTier: "full",
+      topicSummary: "GPU budget for Q3",
+    })
+
+    const { href } = renderConversationLink()
+
+    const chip = await screen.findByText("GPU budget for Q3")
+    expect(chip.closest("a")).toHaveAttribute("href", href)
+  })
+
+  it("shows a non-navigable placeholder for an inaccessible (private) conversation", async () => {
+    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
+      kind: "conversation",
+      accessTier: "private",
+    })
+
+    renderConversationLink()
+
+    await waitFor(() => expect(screen.getByText("Private conversation")).toBeInTheDocument())
+    expect(screen.queryByText("GPU budget for Q3")).not.toBeInTheDocument()
+    expect(screen.queryByRole("link")).not.toBeInTheDocument()
+  })
+
+  it("shows a cross-workspace placeholder without leaking the topic", async () => {
+    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
+      kind: "conversation",
+      accessTier: "cross_workspace",
+    })
+
+    renderConversationLink()
+
+    await waitFor(() => expect(screen.getByText("Another workspace")).toBeInTheDocument())
+    expect(screen.queryByRole("link")).not.toBeInTheDocument()
   })
 })

@@ -103,7 +103,7 @@ export function LinkPreviewList({
   return (
     <div className={cn("flex flex-col gap-2 mt-2", className)}>
       {displayedPreviews.map((preview) => {
-        // In-app links (message / stream / memo) use a specialized card with
+        // In-app links (message / stream / memo / conversation) use a specialized card with
         // permission-checked resolve instead of a network-fetched web card.
         if (isInAppLinkContentType(preview.contentType)) {
           return (

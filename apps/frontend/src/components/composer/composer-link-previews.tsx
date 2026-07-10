@@ -25,8 +25,8 @@ interface ComposerLinkPreviewsProps {
 /**
  * Compact chip row for the links in a draft — the same attachment-pill surface
  * file uploads use, so several links don't bury the composer on mobile the way a
- * full preview card each would. In-app links chip to their stream/memo name;
- * web links chip their host. Dismiss hides a chip (the link text stays); a
+ * full preview card each would. Memo in-app links chip to their memo name; web
+ * links chip their host. Dismiss hides a chip (the link text stays); a
  * dismissal is forgotten once its link leaves the draft.
  */
 export function ComposerLinkPreviews({ content, workspaceId, className }: ComposerLinkPreviewsProps) {
@@ -48,9 +48,9 @@ export function ComposerLinkPreviews({ content, workspaceId, className }: Compos
     })
   }, [urls])
 
-  // Stream/message in-app links render as an inline chip in the draft body, not
-  // a below-row chip (`isBelowRowDraftLink`) — so this row carries only web and
-  // memo links, matching the timeline's inline-chip card suppression (#1103).
+  // Stream/message/conversation in-app links render as an inline chip in the draft
+  // body, not a below-row chip (`isBelowRowDraftLink`) — so this row carries only
+  // web and memo links, matching the timeline's inline-chip card suppression (#1103).
   const visible = useMemo(
     () =>
       urls

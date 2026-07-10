@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { classifyDraftLink } from "@/lib/in-app-links"
-import { InAppLinkInline } from "@/components/in-app-link/in-app-link-inline"
+import { InAppLinkInline, ConversationLinkInline } from "@/components/in-app-link/in-app-link-inline"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
@@ -209,9 +209,11 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
 
   const internalPath = href ? resolveInternalAppPath(href) : null
 
-  // In-app stream/message links render as the same named chip the composer
-  // shows (the below-message preview card is suppressed in `link-preview-list`).
-  // Keyed on URL classification so old and new messages render identically.
+  // In-app stream/message/conversation links render as the same named chip the
+  // composer shows. Stream cards are suppressed in `link-preview-list`; message
+  // and conversation keep their below-message card (the chip is a compact
+  // reference, the card the rich preview). Keyed on URL classification so old and
+  // new messages render identically.
   const inAppRef = href ? classifyDraftLink(href) : null
   if (inAppRef && (inAppRef.kind === "stream" || inAppRef.kind === "message") && workspaceId) {
     return (
@@ -223,6 +225,9 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
         fallbackLabel={extractTextFromChildren(children)}
       />
     )
+  }
+  if (inAppRef && inAppRef.kind === "conversation" && workspaceId) {
+    return <ConversationLinkInline href={inAppRef.url} workspaceId={workspaceId} />
   }
 
   if (internalPath) {
