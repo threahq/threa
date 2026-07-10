@@ -45,7 +45,7 @@ function buildMentionSection(context: StreamContext, mentionerName?: string): st
 
 ## Invocation Context
 
-You were explicitly @mentioned by ${mentionerDesc} who wants your assistance.`
+You were explicitly @mentioned by ${mentionerDesc} who wants your assistance. Your reply must directly answer that mention message. If more messages arrive while you are working, treat them as context — in group conversations they are often participants talking to each other, not to you — and never let them displace the question you were asked.`
 
   if (context.streamType === StreamTypes.CHANNEL) {
     section += ` This conversation is happening in a thread created specifically for your response.`
@@ -56,7 +56,12 @@ You were explicitly @mentioned by ${mentionerDesc} who wants your assistance.`
 
 function buildFollowUpSection(context: StreamContext, followUp: { note: string; scheduledFor: Date }): string {
   const scheduledForDisplay = context.temporal
-    ? formatCurrentTime(followUp.scheduledFor, context.temporal.timezone, context.temporal.dateFormat, context.temporal.timeFormat)
+    ? formatCurrentTime(
+        followUp.scheduledFor,
+        context.temporal.timezone,
+        context.temporal.dateFormat,
+        context.temporal.timeFormat
+      )
     : followUp.scheduledFor.toISOString()
 
   return `

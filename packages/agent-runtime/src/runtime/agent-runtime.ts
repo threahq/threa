@@ -17,6 +17,11 @@ const KEEP_RESPONSE_TOOL_NAME = "keep_response"
 const MAX_REPEATED_INVALID_DRAFTS = 3
 const MAX_EMPTY_FINAL_DECISION_ATTEMPTS = 3
 
+// Shared by all three mid-turn reconsideration prompts so the guidance can't
+// drift between the text-draft, pending-send, and keep-response paths.
+const SIDE_CONVERSATION_GUIDANCE =
+  "Check who authored the new messages and who they address — in group conversations they are often participants talking to each other, not to you."
+
 export interface NewMessageAwareness {
   check: (streamId: string, sinceSequence: bigint, excludeAuthorId: string) => Promise<NewMessageInfo[]>
   updateSequence: (sessionId: string, sequence: bigint) => Promise<void>
@@ -368,9 +373,11 @@ export class AgentRuntime {
               hasTextReconsidered = true
               this.pushRuntimePrompt(
                 conversation,
-                `[New context arrived while you were responding]\n\n` +
-                  `Your draft response was:\n"${lastAssistantText}"\n\n` +
-                  `Please incorporate the new messages and respond.`
+                `[New messages arrived while you were composing]\n\n` +
+                  `Your draft below was NOT sent — no one has seen it:\n"${lastAssistantText}"\n\n` +
+                  `The request you were originally responding to is still unanswered. ${SIDE_CONVERSATION_GUIDANCE} ` +
+                  `Send your final response now: it must still answer the original request, revised only if the new messages ` +
+                  `genuinely change or answer it. Do not reply to the new messages instead of the original request.`
               )
               continue
             }
@@ -477,10 +484,12 @@ export class AgentRuntime {
 
             this.pushRuntimePrompt(
               conversation,
-              `[New context arrived while you were responding]\n\n` +
-                `Your draft response${execResult.pendingMessages.length > 1 ? "s were" : " was"}:\n"${pendingContents}"\n\n` +
-                `Please respond to all messages, incorporating the new context. ` +
-                `You may send the same response${execResult.pendingMessages.length > 1 ? "s" : ""} if still appropriate, or revise based on the new information.`
+              `[New messages arrived before your response was committed]\n\n` +
+                `Your draft${execResult.pendingMessages.length > 1 ? "s below were" : " below was"} NOT sent — no one has seen ${execResult.pendingMessages.length > 1 ? "them" : "it"}:\n"${pendingContents}"\n\n` +
+                `The request you were originally responding to is still unanswered. ${SIDE_CONVERSATION_GUIDANCE} ` +
+                `Call send_message with your final response now: it must still answer the original request. Keep the draft if it ` +
+                `still holds; revise only if the new messages genuinely change or answer the original request. Do not reply to ` +
+                `the new messages instead of the original request.`
             )
           }
         } else if (execResult.keepResponseReason) {
@@ -504,10 +513,10 @@ export class AgentRuntime {
 
           this.pushRuntimePrompt(
             conversation,
-            `[New context arrived after you decided to keep the existing response]\n\n` +
+            `[New messages arrived after you decided to keep the existing response]\n\n` +
               `Your keep-response reason was:\n"${execResult.keepResponseReason}"\n\n` +
-              `Please reconsider. If the previous response is still correct, call keep_response again with an updated reason. ` +
-              `If changes are needed, call send_message with the updated response.`
+              `${SIDE_CONVERSATION_GUIDANCE} If the previous response is still correct, call keep_response again with an updated reason. ` +
+              `If the new messages genuinely change what your response should say, call send_message with the updated response.`
           )
         } else if (newMessages.length > 0) {
           const maxSeq = await this.injectNewMessages(newMessages, lastProcessedSequence, nm, conversation)
@@ -859,7 +868,14 @@ export class AgentRuntime {
 
     await this.emit({ type: "context:received", messages: newMessages })
 
-    const userMessages: ModelMessage[] = newMessages.map((m) => ({ role: "user" as const, content: m.content }))
+    // Same `[msg:… author:…] [@Name]` surface as turn-start history (pointer-tag
+    // contract) — without it the model cannot tell who a mid-turn message is
+    // from, and mistakes side conversation between participants for input
+    // addressed to it.
+    const userMessages: ModelMessage[] = newMessages.map((m) => ({
+      role: "user" as const,
+      content: `[msg:${m.messageId} author:${m.authorId}] [@${m.authorName}] ${m.content}`,
+    }))
     conversation.push(...userMessages)
 
     return maxSequence

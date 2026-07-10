@@ -729,3 +729,192 @@ describe("AgentRuntime runAbortSignal (graceful session Stop)", () => {
     await expect(runtime.run()).rejects.toThrow("upstream 500")
   })
 })
+
+describe("AgentRuntime mid-turn reconsideration", () => {
+  // Regression for the Ariadne/Pierre production failure: a mention question was
+  // drafted correctly, an unrelated interjection landed mid-turn, and the model —
+  // believing its draft had already been sent — replied only to the interjection.
+  const interjection = {
+    sequence: BigInt(4265),
+    messageId: "msg_banter",
+    changeType: "message_created" as const,
+    content: "Now you know how to fix sessions ;)",
+    authorId: "usr_pierre",
+    authorName: "Pierre Boberg",
+    authorType: "user" as const,
+    createdAt: "2026-07-09T19:34:29.123Z",
+  }
+
+  function newMessagesOnce(): { nm: any; updateSequence: ReturnType<typeof mock> } {
+    let delivered = false
+    const updateSequence = mock(async () => {})
+    const nm = {
+      check: async () => {
+        if (delivered) return []
+        delivered = true
+        return [interjection]
+      },
+      updateSequence,
+      awaitAttachments: async () => {},
+      streamId: "stream_1",
+      sessionId: "session_1",
+      personaId: "persona_1",
+      lastProcessedSequence: BigInt(4263),
+    }
+    return { nm, updateSequence }
+  }
+
+  it("tells the model its text draft was not sent and re-anchors the original request", async () => {
+    const { nm, updateSequence } = newMessagesOnce()
+    const prompts: Array<Array<{ role: string; content: unknown }>> = []
+    let call = 0
+    const generateTextWithTools = mock(
+      async ({ messages }: { messages: Array<{ role: string; content: unknown }> }) => {
+        prompts.push(messages)
+        call += 1
+        const text =
+          call === 1
+            ? "Check digits reduce the OTP search space — bad idea."
+            : "Final: check digits reduce the OTP search space — bad idea."
+        return {
+          text,
+          toolCalls: [],
+          response: { messages: [{ role: "assistant", content: text } as any] },
+        }
+      }
+    )
+    const sendMessage = mock(async () => ({ messageId: "msg_reply", operation: "created" as const }))
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [
+        {
+          role: "user",
+          content: "[msg:msg_q author:usr_pierre] [@Pierre Boberg] What about a 5-digit OTP plus a check digit?",
+        },
+      ],
+      tools: [],
+      newMessages: nm,
+      sendMessage,
+    })
+
+    const result = await runtime.run()
+
+    expect(generateTextWithTools).toHaveBeenCalledTimes(2)
+    // Injected interjection carries the same author surface as turn-start history.
+    const secondCall = prompts[1]!
+    const injected = secondCall.find((m) => typeof m.content === "string" && m.content.includes("msg_banter"))
+    expect(injected).toMatchObject({
+      role: "user",
+      content: `[msg:msg_banter author:usr_pierre] [@Pierre Boberg] Now you know how to fix sessions ;)`,
+    })
+    // The reconsideration prompt must not imply the draft was delivered, and must
+    // keep the original request as the thing to answer.
+    const runtimePrompt = secondCall.at(-1)!
+    expect(runtimePrompt.role).toBe("user")
+    expect(runtimePrompt.content).toContain("NOT sent")
+    expect(runtimePrompt.content).toContain("Check digits reduce the OTP search space")
+    expect(runtimePrompt.content).toContain("answer the original request")
+    expect(runtimePrompt.content).toContain("talking to each other")
+
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    expect(result.sentContents).toEqual(["Final: check digits reduce the OTP search space — bad idea."])
+    expect(updateSequence).toHaveBeenCalledWith("session_1", BigInt(4265))
+    expect(result.lastProcessedSequence).toBe(BigInt(4265))
+  })
+
+  it("tells the model a pending send_message draft was not committed and re-anchors the original request", async () => {
+    const { nm } = newMessagesOnce()
+    const prompts: Array<Array<{ role: string; content: unknown }>> = []
+    let call = 0
+    const generateTextWithTools = mock(
+      async ({ messages }: { messages: Array<{ role: string; content: unknown }> }) => {
+        prompts.push(messages)
+        call += 1
+        const content = call === 1 ? "Draft answer to the OTP question." : "Final answer to the OTP question."
+        return {
+          text: "",
+          toolCalls: [{ toolCallId: `tool_${call}`, toolName: AgentToolNames.SEND_MESSAGE, input: { content } }],
+          response: { messages: [{ role: "assistant", content: "" } as any] },
+        }
+      }
+    )
+    const sendMessage = mock(async () => ({ messageId: "msg_reply", operation: "created" as const }))
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "What about a 5-digit OTP plus a check digit?" }],
+      tools: [],
+      newMessages: nm,
+      sendMessage,
+    })
+
+    const result = await runtime.run()
+
+    expect(generateTextWithTools).toHaveBeenCalledTimes(2)
+    const runtimePrompt = prompts[1]!.at(-1)!
+    expect(runtimePrompt.role).toBe("user")
+    expect(runtimePrompt.content).toContain("NOT sent")
+    expect(runtimePrompt.content).toContain("Draft answer to the OTP question.")
+    expect(runtimePrompt.content).toContain("answer the original request")
+
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    expect(result.sentContents).toEqual(["Final answer to the OTP question."])
+  })
+
+  it("re-anchors a keep_response decision when messages arrive after it", async () => {
+    const { nm } = newMessagesOnce()
+    const prompts: Array<Array<{ role: string; content: unknown }>> = []
+    let call = 0
+    const generateTextWithTools = mock(
+      async ({ messages }: { messages: Array<{ role: string; content: unknown }> }) => {
+        prompts.push(messages)
+        call += 1
+        const reason =
+          call === 1
+            ? "Prior response still covers the request."
+            : "Interjection is a side conversation; prior response stands."
+        return {
+          text: "",
+          toolCalls: [{ toolCallId: `tool_${call}`, toolName: "keep_response", input: { reason } }],
+          response: { messages: [{ role: "assistant", content: "" } as any] },
+        }
+      }
+    )
+    const sendMessage = mock(async () => ({ messageId: "msg_unused", operation: "created" as const }))
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [
+        { role: "user", content: "What about a 5-digit OTP plus a check digit?" },
+        { role: "assistant", content: "Check digits shrink the search space - bad idea." },
+      ],
+      tools: [],
+      allowNoMessageOutput: true,
+      newMessages: nm,
+      sendMessage,
+    })
+
+    const result = await runtime.run()
+
+    expect(generateTextWithTools).toHaveBeenCalledTimes(2)
+    const runtimePrompt = prompts[1]!.at(-1)!
+    expect(runtimePrompt.role).toBe("user")
+    // No unsent-draft framing here - the kept response was already delivered.
+    // The prompt must carry the shared side-conversation guidance and the
+    // keep_response/send_message choice instead of implying completion.
+    expect(runtimePrompt.content).toContain("Prior response still covers the request.")
+    expect(runtimePrompt.content).toContain("talking to each other")
+    expect(runtimePrompt.content).toContain("call keep_response again")
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(result.messagesSent).toBe(0)
+    expect(result.noMessageReason).toBe("Interjection is a side conversation; prior response stands.")
+  })
+})
