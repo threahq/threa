@@ -1023,9 +1023,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.failBotInvocation
   )
 
-  // Delegations (roadmap 5.3) — the local-agent lifecycle over delegated tasks.
-  // User-scoped keys only (enforced in the handlers); claim mints the token,
-  // later transitions authenticate via X-Threa-Callback-Token.
+  // Delegations (roadmap 5.3) — the agent lifecycle over delegated tasks.
+  // Both key kinds (identity resolved in the handlers: user key posts results
+  // as the user, workspace key as the bot); claim mints the token, later
+  // transitions authenticate via X-Threa-Callback-Token.
   app.get(
     "/api/v1/workspaces/:workspaceId/delegations",
     ...publicMiddleware,

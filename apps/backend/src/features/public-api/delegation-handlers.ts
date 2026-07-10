@@ -1,7 +1,13 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { PoolClient } from "pg"
-import { AuthorTypes, THREA_CALLBACK_TOKEN_HEADER, sentViaApiKey, type AuthorType } from "@threa/types"
+import {
+  AuthorTypes,
+  DelegationStatuses,
+  THREA_CALLBACK_TOKEN_HEADER,
+  sentViaApiKey,
+  type AuthorType,
+} from "@threa/types"
 import { HttpError } from "@threa/backend-common"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
 import { withTransaction } from "../../db"
@@ -12,6 +18,7 @@ import type { StreamService } from "../streams"
 import { listAccessibleStreamIds } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import type { BotChannelService } from "../api-keys"
+import { hashCallbackToken } from "../agents"
 import { BotRepository } from "./bot-repository"
 import type { DelegatedTask, DelegationService } from "../delegations"
 import {
@@ -212,8 +219,29 @@ export function createDelegationPublicApiHandlers({
         throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
       }
 
+      // Idempotent retry: a completion can commit and then lose its response
+      // in transit. The terminal row keeps the claim token hash, so a retry
+      // bearing the same token gets the committed outcome back instead of a
+      // false 404 it has no other endpoint to disambiguate.
+      if (
+        delegation.status === DelegationStatuses.COMPLETED &&
+        delegation.claimTokenHash === hashCallbackToken(claimToken)
+      ) {
+        res.json({
+          data: { ...serializeDelegation(delegation), resultMessageId: delegation.resultMessageId ?? undefined },
+        })
+        return
+      }
+
       let author: { authorId: string; authorType: AuthorType; sentVia?: string } | null = null
       if (resultMarkdown) {
+        // Access can be revoked between claim and complete (a bot's channel
+        // grant pulled, a user removed from the stream); posting is a fresh
+        // write into the stream, so re-check like recordSteps does — token
+        // possession alone must not smuggle a message past a revocation.
+        if (!(await streamAccessibleFor(identity, workspaceId, delegation.streamId))) {
+          throw new HttpError("Stream not accessible", { status: 403, code: "FORBIDDEN" })
+        }
         // Defensive: delegations are never created on sealed streams (the tool
         // is absent there), but a plaintext write into an E2E stream would
         // break the sealed timeline — fail before any insert.
@@ -285,6 +313,19 @@ export function createDelegationPublicApiHandlers({
         statusNote: errorMessage,
       })
       if (!failed) {
+        // Same lost-response retry story as complete: a fail that already
+        // committed answers the retry with its outcome, not a false 404.
+        const existing = await delegationService.getById({
+          workspaceId: req.workspaceId!,
+          id: req.params.delegationId!,
+        })
+        if (
+          existing?.status === DelegationStatuses.FAILED &&
+          existing.claimTokenHash === hashCallbackToken(claimToken)
+        ) {
+          res.json({ data: serializeDelegation(existing) })
+          return
+        }
         throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
       }
       res.json({ data: serializeDelegation(failed) })

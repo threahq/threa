@@ -628,6 +628,8 @@ export interface PublicApiRoute {
   successStatus?: number
   /** Whether the endpoint can return 404 (resource not found) */
   canReturn404?: boolean
+  /** Whether the endpoint can return 409 (resource not in the required state) */
+  canReturn409?: boolean
 }
 
 export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
@@ -983,6 +985,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestIn: "body",
     responseSchema: dataEnvelope(claimedDelegationSchema),
     canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "post",

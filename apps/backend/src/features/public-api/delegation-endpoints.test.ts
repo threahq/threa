@@ -5,6 +5,7 @@ import { AuthorTypes, DelegationStatuses, THREA_CALLBACK_TOKEN_HEADER } from "@t
 import * as db from "../../db"
 import * as streams from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { hashCallbackToken } from "../agents"
 import type { BotChannelService } from "../api-keys"
 import type { DelegatedTask, DelegationService } from "../delegations"
 import type { EventService } from "../messaging"
@@ -161,6 +162,20 @@ describe("claimDelegation", () => {
     )
   })
 
+  it("gates a bot-key claim on the bot's channel grants (404 without one)", async () => {
+    const isStreamAccessibleForBot = mock(async () => false)
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => makeDelegation()) },
+      botChannelService: { isStreamAccessibleForBot },
+    })
+    const { res } = createResponse()
+
+    await expect(
+      handlers.claimDelegation(makeRequest({ userKey: false, botKey: true, body: { claimedByLabel: "Runner" } }), res)
+    ).rejects.toMatchObject({ status: 404 })
+    expect(isStreamAccessibleForBot).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1")
+  })
+
   it("409s a lost claim race with DELEGATION_NOT_OPEN", async () => {
     const handlers = makeHandlers({
       delegationService: {
@@ -210,6 +225,8 @@ describe("heartbeat / status / fail — token-guarded transitions", () => {
         heartbeat: mock(async () => null),
         markRunning: mock(async () => null),
         fail: mock(async () => null),
+        // Non-terminal row: the fail path's idempotent-retry check falls through.
+        getById: mock(async () => makeDelegation()),
       },
     })
     const { res } = createResponse()
@@ -265,6 +282,8 @@ describe("completeDelegation", () => {
     return {
       handlers: makeHandlers({
         delegationService: { getById: mock(async () => makeDelegation()), completeInTransaction },
+        streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
+        botChannelService: { isStreamAccessibleForBot: mock(async () => true) },
         eventService: { createMessageInTransaction },
       }),
       createMessageInTransaction,
@@ -336,5 +355,74 @@ describe("completeDelegation", () => {
     await expect(
       handlers.completeDelegation(makeRequest({ token: "tok", body: { resultMarkdown: "All done." } }), res)
     ).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED" })
+  })
+
+  it("403s a result whose stream access was revoked between claim and complete", async () => {
+    spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as PoolClient))
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => makeDelegation({ status: DelegationStatuses.RUNNING })) },
+      streamService: { tryAccess: mock(async () => null) },
+    })
+    const { res } = createResponse()
+    await expect(
+      handlers.completeDelegation(makeRequest({ token: "tok", body: { resultMarkdown: "All done." } }), res)
+    ).rejects.toMatchObject({ status: 403 })
+  })
+
+  it("answers a retried completion idempotently instead of a false 404", async () => {
+    const committed = makeDelegation({
+      status: DelegationStatuses.COMPLETED,
+      resultMessageId: "msg_result",
+      claimTokenHash: hashCallbackToken("tok"),
+    })
+    const completeInTransaction = mock(async () => null)
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => committed), completeInTransaction },
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.completeDelegation(makeRequest({ token: "tok", body: { resultMarkdown: "All done." } }), res)
+
+    expect(completeInTransaction).not.toHaveBeenCalled()
+    expect((payloads[0] as { data: { status: string; resultMessageId?: string } }).data).toMatchObject({
+      status: DelegationStatuses.COMPLETED,
+      resultMessageId: "msg_result",
+    })
+  })
+
+  it("still 404s a retry bearing the wrong token", async () => {
+    spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as PoolClient))
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    const committed = makeDelegation({
+      status: DelegationStatuses.COMPLETED,
+      claimTokenHash: hashCallbackToken("the-real-token"),
+    })
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => committed), completeInTransaction: mock(async () => null) },
+      eventService: { createMessageInTransaction: mock(async () => ({ message: { id: "msg_x" } })) as never },
+      streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
+    })
+    const { res } = createResponse()
+    await expect(
+      handlers.completeDelegation(makeRequest({ token: "wrong-token", body: { resultMarkdown: "x" } }), res)
+    ).rejects.toMatchObject({ status: 404 })
+  })
+})
+
+describe("failDelegation retry", () => {
+  it("answers a retried fail idempotently when the terminal row carries this token", async () => {
+    const failedRow = makeDelegation({
+      status: DelegationStatuses.FAILED,
+      statusNote: "boom",
+      claimTokenHash: hashCallbackToken("tok"),
+    })
+    const handlers = makeHandlers({
+      delegationService: { fail: mock(async () => null), getById: mock(async () => failedRow) },
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.failDelegation(makeRequest({ token: "tok", body: { errorMessage: "boom" } }), res)
+
+    expect((payloads[0] as { data: { status: string } }).data.status).toBe(DelegationStatuses.FAILED)
   })
 })
