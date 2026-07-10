@@ -17,6 +17,11 @@ const KEEP_RESPONSE_TOOL_NAME = "keep_response"
 const MAX_REPEATED_INVALID_DRAFTS = 3
 const MAX_EMPTY_FINAL_DECISION_ATTEMPTS = 3
 
+// Shared by all three mid-turn reconsideration prompts so the guidance can't
+// drift between the text-draft, pending-send, and keep-response paths.
+const SIDE_CONVERSATION_GUIDANCE =
+  "Check who authored the new messages and who they address — in group conversations they are often participants talking to each other, not to you."
+
 export interface NewMessageAwareness {
   check: (streamId: string, sinceSequence: bigint, excludeAuthorId: string) => Promise<NewMessageInfo[]>
   updateSequence: (sessionId: string, sequence: bigint) => Promise<void>
@@ -370,8 +375,7 @@ export class AgentRuntime {
                 conversation,
                 `[New messages arrived while you were composing]\n\n` +
                   `Your draft below was NOT sent — no one has seen it:\n"${lastAssistantText}"\n\n` +
-                  `The request you were originally responding to is still unanswered. Check who authored the new messages ` +
-                  `and who they address — in group conversations they are often participants talking to each other, not to you. ` +
+                  `The request you were originally responding to is still unanswered. ${SIDE_CONVERSATION_GUIDANCE} ` +
                   `Send your final response now: it must still answer the original request, revised only if the new messages ` +
                   `genuinely change or answer it. Do not reply to the new messages instead of the original request.`
               )
@@ -482,8 +486,7 @@ export class AgentRuntime {
               conversation,
               `[New messages arrived before your response was committed]\n\n` +
                 `Your draft${execResult.pendingMessages.length > 1 ? "s below were" : " below was"} NOT sent — no one has seen ${execResult.pendingMessages.length > 1 ? "them" : "it"}:\n"${pendingContents}"\n\n` +
-                `The request you were originally responding to is still unanswered. Check who authored the new messages ` +
-                `and who they address — in group conversations they are often participants talking to each other, not to you. ` +
+                `The request you were originally responding to is still unanswered. ${SIDE_CONVERSATION_GUIDANCE} ` +
                 `Call send_message with your final response now: it must still answer the original request. Keep the draft if it ` +
                 `still holds; revise only if the new messages genuinely change or answer the original request. Do not reply to ` +
                 `the new messages instead of the original request.`
@@ -512,8 +515,7 @@ export class AgentRuntime {
             conversation,
             `[New messages arrived after you decided to keep the existing response]\n\n` +
               `Your keep-response reason was:\n"${execResult.keepResponseReason}"\n\n` +
-              `Check who authored the new messages and who they address — they may be a side conversation that does not ` +
-              `concern your response. If the previous response is still correct, call keep_response again with an updated reason. ` +
+              `${SIDE_CONVERSATION_GUIDANCE} If the previous response is still correct, call keep_response again with an updated reason. ` +
               `If the new messages genuinely change what your response should say, call send_message with the updated response.`
           )
         } else if (newMessages.length > 0) {

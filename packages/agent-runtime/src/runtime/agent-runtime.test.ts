@@ -865,4 +865,56 @@ describe("AgentRuntime mid-turn reconsideration", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1)
     expect(result.sentContents).toEqual(["Final answer to the OTP question."])
   })
+
+  it("re-anchors a keep_response decision when messages arrive after it", async () => {
+    const { nm } = newMessagesOnce()
+    const prompts: Array<Array<{ role: string; content: unknown }>> = []
+    let call = 0
+    const generateTextWithTools = mock(
+      async ({ messages }: { messages: Array<{ role: string; content: unknown }> }) => {
+        prompts.push(messages)
+        call += 1
+        const reason =
+          call === 1
+            ? "Prior response still covers the request."
+            : "Interjection is a side conversation; prior response stands."
+        return {
+          text: "",
+          toolCalls: [{ toolCallId: `tool_${call}`, toolName: "keep_response", input: { reason } }],
+          response: { messages: [{ role: "assistant", content: "" } as any] },
+        }
+      }
+    )
+    const sendMessage = mock(async () => ({ messageId: "msg_unused", operation: "created" as const }))
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [
+        { role: "user", content: "What about a 5-digit OTP plus a check digit?" },
+        { role: "assistant", content: "Check digits shrink the search space - bad idea." },
+      ],
+      tools: [],
+      allowNoMessageOutput: true,
+      newMessages: nm,
+      sendMessage,
+    })
+
+    const result = await runtime.run()
+
+    expect(generateTextWithTools).toHaveBeenCalledTimes(2)
+    const runtimePrompt = prompts[1]!.at(-1)!
+    expect(runtimePrompt.role).toBe("user")
+    // No unsent-draft framing here - the kept response was already delivered.
+    // The prompt must carry the shared side-conversation guidance and the
+    // keep_response/send_message choice instead of implying completion.
+    expect(runtimePrompt.content).toContain("Prior response still covers the request.")
+    expect(runtimePrompt.content).toContain("talking to each other")
+    expect(runtimePrompt.content).toContain("call keep_response again")
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(result.messagesSent).toBe(0)
+    expect(result.noMessageReason).toBe("Interjection is a side conversation; prior response stands.")
+  })
 })
