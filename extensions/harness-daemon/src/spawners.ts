@@ -30,6 +30,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
 
     const session = tmuxSession(options)
     ensureTmuxSession(session)
+    ensurePiDefaultLabel()
     const { worktree, branch } = this.createWorktree(options)
     const window = pickTmuxWindow(session, options.name)
     const windowId = createWindow(session, window, worktree, piBin)
@@ -202,6 +203,19 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     }
     const json = (await response.json()) as { data?: { streamUrlPath?: string } }
     return json.data?.streamUrlPath ? `${baseUrl}${json.data.streamUrlPath}` : undefined
+  }
+}
+
+function ensurePiDefaultLabel(): void {
+  const path = join(homedir(), ".pi", "agent", "threa-remote.json")
+  if (!existsSync(path)) return
+  try {
+    const config = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    if (typeof config.defaultLabel === "string" && config.defaultLabel.trim()) return
+    writeFileSync(path, `${JSON.stringify({ ...config, defaultLabel: "coding" }, null, 2)}\n`)
+    console.log("harnessd: set Pi remote defaultLabel=coding")
+  } catch (error) {
+    console.warn(`harnessd: could not ensure Pi default label: ${error}`)
   }
 }
 
