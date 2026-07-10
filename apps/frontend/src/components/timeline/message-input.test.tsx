@@ -70,6 +70,7 @@ const mockSetContent = vi.fn()
 const mockSetIsSending = vi.fn()
 const mockHandleContentChange = vi.fn()
 const mockHandleRemoveAttachment = vi.fn()
+const mockHandleCancelAttachmentUpload = vi.fn()
 const mockHandleFileSelect = vi.fn()
 const mockComposerFocus = vi.fn()
 const mockComposerFocusAfterQuoteReply = vi.fn()
@@ -252,7 +253,7 @@ beforeEach(() => {
         fileInputRef: { current: null },
         handleFileSelect: mockHandleFileSelect,
         handleRemoveAttachment: mockHandleRemoveAttachment,
-        handleCancelAttachmentUpload: mockHandleRemoveAttachment,
+        handleCancelAttachmentUpload: mockHandleCancelAttachmentUpload,
         canSend: mockComposerState.canSend,
         isSending: mockComposerState.isSending,
         setIsSending: mockSetIsSending,

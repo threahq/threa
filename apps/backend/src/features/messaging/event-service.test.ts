@@ -289,6 +289,85 @@ describe("EventService attachment safety checks", () => {
     )
   })
 
+  const pendingAttachmentRow = (overrides: Record<string, unknown> = {}) =>
+    [
+      {
+        id: "attach_pending",
+        workspaceId: "ws_1",
+        streamId: null,
+        messageId: null,
+        uploadedBy: "usr_1",
+        safetyStatus: AttachmentSafetyStatuses.PENDING_SCAN,
+        e2eOnly: false,
+        filename: "large.mov",
+        mimeType: "video/quicktime",
+        sizeBytes: 1234,
+        ...overrides,
+      },
+    ] as any
+
+  const pendingUploadRow = (overrides: Record<string, unknown> = {}) =>
+    new Map([
+      [
+        "attach_pending",
+        {
+          attachmentId: "attach_pending",
+          workspaceId: "ws_1",
+          uploadedBy: "usr_1",
+          clientMessageId: "client_1",
+          status: "uploaded",
+          ...overrides,
+        } as any,
+      ],
+    ])
+
+  const sendPending = (service: EventService, params: Record<string, unknown> = {}) =>
+    service.createMessage({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "usr_1",
+      authorType: "user",
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "hello",
+      clientMessageId: "client_1",
+      attachmentIds: ["attach_pending"],
+      ...params,
+    } as any)
+
+  it("rejects a pending upload owned by a different author", async () => {
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue(pendingAttachmentRow({ uploadedBy: "usr_other" }))
+    spyOn(AttachmentUploadRepository, "findByAttachmentIds").mockResolvedValue(
+      pendingUploadRow({ uploadedBy: "usr_other" })
+    )
+
+    const service = new EventService({} as any)
+    await expect(sendPending(service)).rejects.toThrow("unless uploaded by this author and still pending")
+    expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
+  })
+
+  it("rejects a pending upload reserved for a different client message", async () => {
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue(pendingAttachmentRow())
+    spyOn(AttachmentUploadRepository, "findByAttachmentIds").mockResolvedValue(
+      pendingUploadRow({ clientMessageId: "client_other" })
+    )
+
+    const service = new EventService({} as any)
+    await expect(sendPending(service)).rejects.toThrow("pending upload belongs to a different client message")
+    expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
+  })
+
+  it("rejects a pending upload already attached to another message", async () => {
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue(pendingAttachmentRow({ messageId: "msg_other" }))
+    spyOn(AttachmentUploadRepository, "findByAttachmentIds").mockResolvedValue(pendingUploadRow())
+
+    const service = new EventService({} as any)
+    await expect(sendPending(service)).rejects.toThrow("unless uploaded by this author and still pending")
+    expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
+  })
+
   it("allows re-referencing an attachment the author can already read and skips re-attach", async () => {
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
       {

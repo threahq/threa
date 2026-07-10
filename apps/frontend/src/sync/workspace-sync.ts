@@ -1464,6 +1464,58 @@ export function registerWorkspaceSocketHandlers(
     queryClient.invalidateQueries({ queryKey: invitationKeys.list(workspaceId) })
   }
 
+  // Shared write path for attachment-status socket events (transcoded,
+  // upload-completed, thumbnailed): patch the given fields onto one attachment
+  // in the message's cached `attachments` array, in both IDB and the live
+  // bootstrap query. Falls back to an active-bootstrap invalidation when the
+  // event row isn't cached yet.
+  const patchCachedMessageAttachment = async (
+    streamId: string,
+    messageId: string,
+    attachmentId: string,
+    patch: Record<string, unknown>
+  ) => {
+    const updatePayload = (p: Record<string, unknown>) => {
+      if (!Array.isArray(p.attachments)) return p
+      const attachments = p.attachments as Array<Record<string, unknown>>
+      const updatedAttachments = attachments.map((a) => (a.id === attachmentId ? { ...a, ...patch } : a))
+      return { ...p, attachments: updatedAttachments }
+    }
+
+    const events = await db.events
+      .where("[streamId+eventType]")
+      .equals([streamId, "message_created"])
+      .filter((e) => (e.payload as { messageId?: string })?.messageId === messageId)
+      .toArray()
+
+    if (events.length > 0) {
+      const event = events[0]
+      await db.events.update(event.id, {
+        payload: updatePayload(event.payload as Record<string, unknown>),
+        _cachedAt: Date.now(),
+      })
+    } else {
+      queryClient.invalidateQueries({
+        queryKey: streamKeys.bootstrap(workspaceId, streamId),
+        type: "active",
+      })
+    }
+
+    queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) => {
+      if (!old) return old
+      return {
+        ...old,
+        events: old.events.map((event) => {
+          const eventPayload = event.payload as { messageId?: string } & Record<string, unknown>
+          if (event.eventType !== "message_created" || eventPayload.messageId !== messageId) {
+            return event
+          }
+          return { ...event, payload: updatePayload(eventPayload) }
+        }),
+      }
+    })
+  }
+
   // Handle attachment transcoded (video processing completed or failed)
   const handleAttachmentTranscoded = async (payload: {
     workspaceId: string
@@ -1473,51 +1525,10 @@ export function registerWorkspaceSocketHandlers(
     messageId?: string
   }) => {
     if (payload.workspaceId !== workspaceId) return
-
-    // Update the message event in IDB if we have stream + message context
-    if (payload.streamId && payload.messageId) {
-      const updatePayload = (p: Record<string, unknown>) => {
-        if (!Array.isArray(p.attachments)) return p
-        const attachments = p.attachments as Array<Record<string, unknown>>
-        const updatedAttachments = attachments.map((a) =>
-          a.id === payload.attachmentId ? { ...a, processingStatus: payload.processingStatus } : a
-        )
-        return { ...p, attachments: updatedAttachments }
-      }
-
-      const events = await db.events
-        .where("[streamId+eventType]")
-        .equals([payload.streamId, "message_created"])
-        .filter((e) => (e.payload as { messageId?: string })?.messageId === payload.messageId)
-        .toArray()
-
-      if (events.length > 0) {
-        const event = events[0]
-        await db.events.update(event.id, {
-          payload: updatePayload(event.payload as Record<string, unknown>),
-          _cachedAt: Date.now(),
-        })
-      } else {
-        queryClient.invalidateQueries({
-          queryKey: streamKeys.bootstrap(workspaceId, payload.streamId),
-          type: "active",
-        })
-      }
-
-      queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, payload.streamId), (old) => {
-        if (!old) return old
-        return {
-          ...old,
-          events: old.events.map((event) => {
-            const eventPayload = event.payload as { messageId?: string } & Record<string, unknown>
-            if (event.eventType !== "message_created" || eventPayload.messageId !== payload.messageId) {
-              return event
-            }
-            return { ...event, payload: updatePayload(eventPayload) }
-          }),
-        }
-      })
-    }
+    if (!payload.streamId || !payload.messageId) return
+    await patchCachedMessageAttachment(payload.streamId, payload.messageId, payload.attachmentId, {
+      processingStatus: payload.processingStatus,
+    })
   }
 
   // Reserved upload settled (scan clean, quarantined, or E2E complete) — patch
@@ -1535,49 +1546,9 @@ export function registerWorkspaceSocketHandlers(
   }) => {
     if (payload.workspaceId !== workspaceId) return
     if (!payload.streamId || !payload.messageId) return
-
-    const updatePayload = (p: Record<string, unknown>) => {
-      if (!Array.isArray(p.attachments)) return p
-      const attachments = p.attachments as Array<Record<string, unknown>>
-      const updatedAttachments = attachments.map((a) =>
-        a.id === payload.attachmentId
-          ? { ...a, uploadStatus: payload.uploadStatus, safetyStatus: payload.safetyStatus }
-          : a
-      )
-      return { ...p, attachments: updatedAttachments }
-    }
-
-    const events = await db.events
-      .where("[streamId+eventType]")
-      .equals([payload.streamId, "message_created"])
-      .filter((e) => (e.payload as { messageId?: string })?.messageId === payload.messageId)
-      .toArray()
-
-    if (events.length > 0) {
-      const event = events[0]
-      await db.events.update(event.id, {
-        payload: updatePayload(event.payload as Record<string, unknown>),
-        _cachedAt: Date.now(),
-      })
-    } else {
-      queryClient.invalidateQueries({
-        queryKey: streamKeys.bootstrap(workspaceId, payload.streamId),
-        type: "active",
-      })
-    }
-
-    queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, payload.streamId), (old) => {
-      if (!old) return old
-      return {
-        ...old,
-        events: old.events.map((event) => {
-          const eventPayload = event.payload as { messageId?: string } & Record<string, unknown>
-          if (event.eventType !== "message_created" || eventPayload.messageId !== payload.messageId) {
-            return event
-          }
-          return { ...event, payload: updatePayload(eventPayload) }
-        }),
-      }
+    await patchCachedMessageAttachment(payload.streamId, payload.messageId, payload.attachmentId, {
+      uploadStatus: payload.uploadStatus,
+      safetyStatus: payload.safetyStatus,
     })
   }
 
@@ -1594,47 +1565,9 @@ export function registerWorkspaceSocketHandlers(
   }) => {
     if (payload.workspaceId !== workspaceId) return
     if (!payload.streamId || !payload.messageId) return
-
-    const updatePayload = (p: Record<string, unknown>) => {
-      if (!Array.isArray(p.attachments)) return p
-      const attachments = p.attachments as Array<Record<string, unknown>>
-      const updatedAttachments = attachments.map((a) =>
-        a.id === payload.attachmentId ? { ...a, width: payload.width, height: payload.height } : a
-      )
-      return { ...p, attachments: updatedAttachments }
-    }
-
-    const events = await db.events
-      .where("[streamId+eventType]")
-      .equals([payload.streamId, "message_created"])
-      .filter((e) => (e.payload as { messageId?: string })?.messageId === payload.messageId)
-      .toArray()
-
-    if (events.length > 0) {
-      const event = events[0]
-      await db.events.update(event.id, {
-        payload: updatePayload(event.payload as Record<string, unknown>),
-        _cachedAt: Date.now(),
-      })
-    } else {
-      queryClient.invalidateQueries({
-        queryKey: streamKeys.bootstrap(workspaceId, payload.streamId),
-        type: "active",
-      })
-    }
-
-    queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, payload.streamId), (old) => {
-      if (!old) return old
-      return {
-        ...old,
-        events: old.events.map((event) => {
-          const eventPayload = event.payload as { messageId?: string } & Record<string, unknown>
-          if (event.eventType !== "message_created" || eventPayload.messageId !== payload.messageId) {
-            return event
-          }
-          return { ...event, payload: updatePayload(eventPayload) }
-        }),
-      }
+    await patchCachedMessageAttachment(payload.streamId, payload.messageId, payload.attachmentId, {
+      width: payload.width,
+      height: payload.height,
     })
   }
 

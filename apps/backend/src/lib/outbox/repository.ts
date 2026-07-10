@@ -24,6 +24,8 @@ import type {
   AuthorType,
   Visibility,
   NotificationLevel,
+  AttachmentUploadStatus,
+  AttachmentSafetyStatus,
 } from "@threa/types"
 
 export type OutboxEventType =
@@ -388,8 +390,8 @@ export interface AttachmentTranscodedOutboxPayload extends WorkspaceScopedPayloa
  */
 export interface AttachmentUploadCompletedOutboxPayload extends WorkspaceScopedPayload {
   attachmentId: string
-  uploadStatus: string
-  safetyStatus: string
+  uploadStatus: AttachmentUploadStatus
+  safetyStatus: AttachmentSafetyStatus
   streamId?: string
   messageId?: string
 }

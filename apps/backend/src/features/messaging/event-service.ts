@@ -28,6 +28,7 @@ import { OperationLeaseRepository } from "../../lib/operation-leases"
 import { resolveMentionContent } from "../mentions"
 import { deriveContentMarkdown } from "./content"
 import {
+  AttachmentSafetyStatuses,
   AuthorTypes,
   CompanionModes,
   ConversationIntents,
@@ -540,7 +541,11 @@ export class EventService {
         throw new Error("Invalid attachment IDs: not all attachments were found")
       }
       const pendingIds = attachments
-        .filter((a) => a.safetyStatus === "pending_upload" || a.safetyStatus === "pending_scan")
+        .filter(
+          (a) =>
+            a.safetyStatus === AttachmentSafetyStatuses.PENDING_UPLOAD ||
+            a.safetyStatus === AttachmentSafetyStatuses.PENDING_SCAN
+        )
         .map((a) => a.id)
       const uploadsByAttachmentId =
         pendingIds.length > 0
@@ -550,7 +555,9 @@ export class EventService {
         if (a.workspaceId !== params.workspaceId) {
           throw new Error("Invalid attachment IDs: must belong to this workspace")
         }
-        const isPendingUpload = a.safetyStatus === "pending_upload" || a.safetyStatus === "pending_scan"
+        const isPendingUpload =
+          a.safetyStatus === AttachmentSafetyStatuses.PENDING_UPLOAD ||
+          a.safetyStatus === AttachmentSafetyStatuses.PENDING_SCAN
         const upload = uploadsByAttachmentId.get(a.id) ?? null
         if (!isAttachmentSafeForSharing(a.safetyStatus)) {
           if (!isPendingUpload || a.messageId !== null || a.uploadedBy !== params.authorId) {

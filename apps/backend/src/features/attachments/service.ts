@@ -159,14 +159,32 @@ export class AttachmentService {
     if (params.e2e !== reserved.e2eOnly) {
       throw new Error(`Attachment ${params.id} e2e flag does not match its reservation`)
     }
+    // params.sizeBytes is the byte count multer actually streamed, so this is
+    // the enforcement point for the reservation's declared size — the upload
+    // middleware only applies the global cap.
+    if (params.sizeBytes !== upload.expectedSizeBytes) {
+      throw new Error(
+        `Attachment ${params.id} uploaded size ${params.sizeBytes} does not match reserved size ${upload.expectedSizeBytes}`
+      )
+    }
 
     if (params.e2e) {
       const attachment = await withTransaction(this.pool, async (client) => {
         const upload = await AttachmentUploadRepository.markUploaded(client, params.id, params.sizeBytes)
         if (!upload) throw new Error(`Attachment upload ${params.id} is not in a completable state`)
-        await AttachmentRepository.updateSafetyStatus(client, params.id, AttachmentSafetyStatuses.E2E_UNSCANNED, {
-          onlyIfStatus: AttachmentSafetyStatuses.PENDING_UPLOAD,
-        })
+        const safetyUpdated = await AttachmentRepository.updateSafetyStatus(
+          client,
+          params.id,
+          AttachmentSafetyStatuses.E2E_UNSCANNED,
+          { onlyIfStatus: AttachmentSafetyStatuses.PENDING_UPLOAD }
+        )
+        if (!safetyUpdated) {
+          const current = await AttachmentRepository.findById(client, params.id)
+          if (!current) throw new Error(`Attachment not found after upload completion: ${params.id}`)
+          if (current.safetyStatus !== AttachmentSafetyStatuses.E2E_UNSCANNED) {
+            throw new Error(`Attachment ${params.id} safety status transition rejected from ${current.safetyStatus}`)
+          }
+        }
         await AttachmentRepository.updateProcessingStatus(client, params.id, ProcessingStatuses.SKIPPED)
         const updated = await AttachmentRepository.findById(client, params.id)
         if (!updated) throw new Error(`Attachment not found after upload completion: ${params.id}`)

@@ -428,6 +428,34 @@ describe("AttachmentService", () => {
       expect(malwareScanner.scan).not.toHaveBeenCalled()
     })
 
+    it("rejects an uploaded size that does not match the reservation", async () => {
+      spyOn(AttachmentUploadRepository, "findByAttachmentId").mockResolvedValue({
+        workspaceId: "ws_1",
+        uploadedBy: "usr_1",
+        attachmentId: "attach_1",
+        status: "reserved",
+        expectedSizeBytes: 999,
+      } as any)
+      spyOn(AttachmentRepository, "findById").mockResolvedValue(makeAttachment({ e2eOnly: false }))
+      const markUploaded = spyOn(AttachmentUploadRepository, "markUploaded")
+
+      const plainParams = buildUploadParams(
+        {
+          id: "attach_1",
+          workspaceId: "ws_1",
+          uploadedBy: "usr_1",
+          filename: "f.png",
+          mimeType: "image/png",
+          sizeBytes: 1,
+          storagePath: "ws_1/attach_1/f.png",
+        },
+        false
+      )
+      const { service } = createService()
+      await expect(service.completeReservedUpload(plainParams)).rejects.toThrow(/does not match reserved size/)
+      expect(markUploaded).not.toHaveBeenCalled()
+    })
+
     it("throws instead of minting a row when no reservation exists", async () => {
       spyOn(AttachmentUploadRepository, "findByAttachmentId").mockResolvedValue(null)
       const insert = spyOn(AttachmentRepository, "insert")

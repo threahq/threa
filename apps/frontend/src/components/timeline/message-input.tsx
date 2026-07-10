@@ -811,6 +811,7 @@ function MessageInputComponent({
     onContentChange: composer.handleContentChange,
     pendingAttachments: composer.pendingAttachments,
     onRemoveAttachment: composer.handleRemoveAttachment,
+    onCancelAttachmentUpload: composer.handleCancelAttachmentUpload,
     contextRefs: composer.contextRefs,
     streamId,
     workspaceId,
