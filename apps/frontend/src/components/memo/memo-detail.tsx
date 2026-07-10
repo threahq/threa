@@ -1,5 +1,15 @@
-import { useEffect, useState } from "react"
-import { Archive, ArchiveRestore, BookOpen, ExternalLink, Hash, MessageSquareQuote, Pencil } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import {
+  Archive,
+  ArchiveRestore,
+  BookOpen,
+  Check,
+  Copy,
+  ExternalLink,
+  Hash,
+  MessageSquareQuote,
+  Pencil,
+} from "lucide-react"
 import { Link } from "react-router-dom"
 import { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS, type StreamType } from "@threa/types"
 import { Badge } from "@/components/ui/badge"
@@ -10,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { RelativeTime } from "@/components/relative-time"
 import { cn } from "@/lib/utils"
+import { buildMemoLink } from "@/lib/memo-url"
 import { streamFallbackLabel } from "@/lib/streams"
 import { getKnowledgeConfig, memoLabel } from "@/lib/memo-display"
 import type { MemoExplorerDetail, MemoExplorerStreamRef, MemoUpdateRequest } from "@/api"
@@ -217,6 +228,54 @@ function MemoStatusBadge({ status }: { status: string }) {
   return null
 }
 
+/**
+ * Copies the memo's shareable resource URL. Confirms in place by swapping the
+ * icon to a checkmark rather than toasting (INV-63) — the label stays fixed so
+ * the button's footprint doesn't shift (INV-21).
+ */
+function CopyMemoLinkButton({ workspaceId, memoId }: { workspaceId: string; memoId: string }) {
+  const [copied, setCopied] = useState(false)
+  const resetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(
+    () => () => {
+      if (resetRef.current) clearTimeout(resetRef.current)
+    },
+    []
+  )
+
+  // Clear the confirmation when the memo changes so a checkmark from one memo
+  // never lingers onto the next.
+  useEffect(() => {
+    setCopied(false)
+    if (resetRef.current) clearTimeout(resetRef.current)
+  }, [memoId])
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(buildMemoLink(workspaceId, memoId))
+    } catch {
+      return
+    }
+    setCopied(true)
+    if (resetRef.current) clearTimeout(resetRef.current)
+    resetRef.current = setTimeout(() => setCopied(false), 1200)
+  }
+
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className={cn("h-7 gap-1.5 px-2 text-xs", copied && "text-emerald-500")}
+      onClick={() => void handleCopy()}
+      aria-label={copied ? "Memo link copied" : "Copy memo link"}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      Copy link
+    </Button>
+  )
+}
+
 export function MemoDetailContent({
   data,
   workspaceId,
@@ -285,35 +344,45 @@ export function MemoDetailContent({
             <RelativeTime date={data.memo.updatedAt} className="text-[11px] text-muted-foreground/50" />
           </div>
 
-          {edit && !isEditing && (
+          {!isEditing && (
             <div className="flex shrink-0 items-center gap-2">
-              <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-xs" onClick={() => setIsEditing(true)}>
-                <Pencil className="h-3 w-3" />
-                Edit
-              </Button>
-              {isArchived && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 gap-1.5 px-2 text-xs"
-                  disabled={edit.isMutating}
-                  onClick={() => void edit.onUnarchive()}
-                >
-                  <ArchiveRestore className="h-3 w-3" />
-                  Restore
-                </Button>
-              )}
-              {isActive && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
-                  disabled={edit.isMutating}
-                  onClick={() => void edit.onArchive()}
-                >
-                  <Archive className="h-3 w-3" />
-                  Archive
-                </Button>
+              <CopyMemoLinkButton workspaceId={workspaceId} memoId={data.memo.id} />
+              {edit && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 gap-1.5 px-2 text-xs"
+                    onClick={() => setIsEditing(true)}
+                  >
+                    <Pencil className="h-3 w-3" />
+                    Edit
+                  </Button>
+                  {isArchived && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1.5 px-2 text-xs"
+                      disabled={edit.isMutating}
+                      onClick={() => void edit.onUnarchive()}
+                    >
+                      <ArchiveRestore className="h-3 w-3" />
+                      Restore
+                    </Button>
+                  )}
+                  {isActive && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+                      disabled={edit.isMutating}
+                      onClick={() => void edit.onArchive()}
+                    >
+                      <Archive className="h-3 w-3" />
+                      Archive
+                    </Button>
+                  )}
+                </>
               )}
             </div>
           )}
