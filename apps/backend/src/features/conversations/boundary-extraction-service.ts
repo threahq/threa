@@ -513,6 +513,7 @@ export class BoundaryExtractionService {
         })
       }
 
+      const reopenedConversationIds = new Set<string>()
       for (const a of resolvedAssignments) {
         if (a.isPrimary) {
           await ConversationRepository.addPrimaryMessage(
@@ -523,10 +524,9 @@ export class BoundaryExtractionService {
             message.authorId
           )
           // A stalled/resolved conversation gaining a message is live again
-          // (sweep fades must not stick to conversations that resume). Runs
-          // before completenessUpdates, so an explicit resolve in the same
-          // pass still wins.
-          await ConversationRepository.reactivateIfInactive(client, workspaceId, a.conversationId)
+          // (sweep fades must not stick to conversations that resume).
+          const reopened = await ConversationRepository.reactivateIfInactive(client, workspaceId, a.conversationId)
+          if (reopened) reopenedConversationIds.add(a.conversationId)
         } else {
           await ConversationRepository.addSecondaryMessage(client, workspaceId, a.conversationId, messageId)
         }
@@ -543,11 +543,23 @@ export class BoundaryExtractionService {
             continue
           }
 
+          // A conversation reopened this pass (a message just landed in it) must
+          // not be pinned closed by a same-pass status echoing its pre-reopen
+          // "resolved" — the model demonstrably echoes the stored status when it
+          // continues a just-resolved conversation, which would freeze the
+          // conversation closed while the discussion runs on (and let the memo
+          // settle gate capture mid-debate). Keep score/summary, force active;
+          // if the discussion really is over, the next pass or the staleness
+          // sweep closes it again.
+          const status = reopenedConversationIds.has(update.conversationId)
+            ? ConversationStatuses.ACTIVE
+            : update.status
+
           // Refine completeness freely, but never override a status the user set
           // (Mark resolved / Reopen) — user intent wins over the LLM (guarded in SQL).
           await ConversationRepository.applyExtractionUpdate(client, workspaceId, update.conversationId, {
             completenessScore: update.score,
-            status: update.status,
+            status,
             summary: update.summary,
           })
           touchedConversationIds.add(update.conversationId)

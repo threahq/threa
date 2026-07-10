@@ -926,13 +926,16 @@ export const ConversationRepository = {
    * faded by the staleness sweep. Conditional in SQL (INV-20), so it no-ops
    * for active conversations.
    */
-  async reactivateIfInactive(db: Querier, workspaceId: string, conversationId: string): Promise<void> {
-    await db.query(sql`
+  /** Returns true when the conversation was actually reopened (was resolved/stalled). */
+  async reactivateIfInactive(db: Querier, workspaceId: string, conversationId: string): Promise<boolean> {
+    const result = await db.query(sql`
       UPDATE conversations
       SET status = ${ConversationStatuses.ACTIVE}, updated_at = NOW()
       WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
         AND status IN (${ConversationStatuses.RESOLVED}, ${ConversationStatuses.STALLED})
+      RETURNING id
     `)
+    return (result.rowCount ?? 0) > 0
   },
 
   /**

@@ -26,7 +26,12 @@ export { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE
 // GAM failure mode. See docs/model-reference.md.
 export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 
-export const MEMO_MEMORIZER_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
+// Luna over mini for memorization (July 2026, 6-run tallies): Luna passed all
+// 10 memorizer cases every round where mini still leaked the anti-gossip
+// residuals (news-facts 1/6, transient-status 2/6) and had inverted a decision
+// direction in prod. +33% price on the lowest-volume component (settle-gated,
+// one capture per settled conversation). See docs/model-reference.md.
+export const MEMO_MEMORIZER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 export const MEMO_TEMPERATURES = {
   classification: 0.1,
@@ -42,6 +47,18 @@ export const MEMO_GEM_CONFIDENCE_FLOOR = 0.7
  * Deferred items are retried on the next batch cycle (5-minute cap interval).
  */
 export const MEMO_SINGLE_MESSAGE_AGE_GATE_MS = 10 * 60 * 1000
+
+/**
+ * Settle gate: an ACTIVE conversation touched more recently than this is
+ * mid-flight and is deferred, not memorized. Capturing a live exchange
+ * snapshots a debate before it lands — each swing of an unsettled decision
+ * becomes its own "decision" memo (observed prod failure: one 40-minute
+ * discussion produced 7 contradictory decision memos while it oscillated).
+ * A conversation is memorized on the first batch cycle after it resolves,
+ * stalls, or has been quiet this long. Resolution emits conversation:updated,
+ * which queues a fresh pending item, so settle-time capture is never missed.
+ */
+export const MEMO_ACTIVE_CONVERSATION_QUIET_MS = 30 * 60 * 1000
 
 /**
  * Upper bound on memos extracted from a single conversation. A conversation can
@@ -218,6 +235,13 @@ export const memoItemSchema = z.object({
     .describe("Up to 3 supporting facts; leave empty when the abstract already stands alone"),
   tags: z.array(z.string()).max(5).describe("Up to 5 relevant tags for categorization"),
   sourceMessageIds: z.array(z.string()).describe("IDs of the messages this specific memo draws from"),
+  supersedesMemoIds: z
+    .array(z.string())
+    .max(5)
+    .nullable()
+    .describe(
+      "Ids of existing memos (from the Existing Memos list) whose conclusion this memo REPLACES or REVERSES — the retired memos are removed from active memory. Only for genuine reversals/replacements; null when this memo retires nothing"
+    ),
 })
 
 export type MemoItemOutput = z.infer<typeof memoItemSchema>
@@ -298,6 +322,8 @@ How to write the memos that clear both gates:
 7. Use consistent vocabulary with prior memos when the same concept reappears.
 8. RESOLVE PRONOUNS when possible - If you can determine who "he/she/they" refers to from the conversation, use their actual name. If unclear (e.g., conversation continues from offline), leave the pronoun. When in doubt, preserve the original wording.
 9. ANCHOR DATES when possible - Convert relative dates ("yesterday", "next week") to actual dates using today's date: {{CURRENT_DATE}}. Message tags also carry a relative \`age\` (e.g. \`age="3 days ago"\`) — use it to anchor dates and to judge durability: a passing state from days ago has gone stale, while a decision or validated learning stays durable regardless of age. If ambiguous, leave as-is.
+10. CAPTURE THE LANDING, NOT THE JOURNEY. When a conversation weighs options or swings back and forth, the memo records where it LANDED — the final position with the winning rationale. A stance the conversation itself later abandoned or reversed is the journey, not the knowledge; never emit a memo for it, and never present an intermediate lean as the decision.
+11. NEVER INVERT A CONCLUSION. State a decision only in the direction the messages actually commit to. Before writing a decision memo, locate the message where the choice is committed ("let's do X", "ok, we'll go with X", agreement right after X was proposed) and make the memo's headline match THAT side — a memo whose supporting rationale argues for X must not conclude Y. If you cannot tell which side was chosen, it is not a decision memo; capture nothing rather than guessing.
 
 CHOOSING knowledgeType — pick the tightest fit; if nothing fits, the memo probably should not exist:
 - decision: a choice the participants committed to, with its rationale.
@@ -346,6 +372,8 @@ Return one memo per distinct topic worth remembering, each terse and self-contai
 export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos. Capture only what is NEW or has CHANGED since them. Do NOT re-create memos for topics the existing memos already cover unchanged.
 
 Treat the existing memos as authoritative coverage: a topic that is restated, rephrased, elaborated with opinions, or met with agreement in the new messages is COVERED — emit nothing for it. Only a changed conclusion (a decision reversed, a setup replaced, a fact corrected) or a genuinely new topic earns a memo. Returning an empty set is the expected common case when a conversation is re-processed after a few new messages.
+
+When the conversation has REVERSED or replaced a conclusion an existing memo states, emit the corrected memo and list the replaced memo's id(s) in supersedesMemoIds — the retired memo is removed from active memory instead of standing next to its own contradiction. Use supersedesMemoIds ONLY for genuine reversals/replacements; a memo on a new topic leaves it null.
 
 ## Memory Context (prior memos for vocabulary consistency)
 {{MEMORY_CONTEXT}}

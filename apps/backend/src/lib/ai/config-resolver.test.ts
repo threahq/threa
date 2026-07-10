@@ -20,7 +20,7 @@ describe("StaticConfigResolver", () => {
     expect(memoClassifierConfig.temperature).toBe(0.1)
 
     const memoMemorizerConfig = await resolver.resolve(COMPONENT_PATHS.MEMO_MEMORIZER)
-    expect(memoMemorizerConfig.modelId).toBe("openrouter:openai/gpt-5.4-mini")
+    expect(memoMemorizerConfig.modelId).toBe("openrouter:openai/gpt-5.6-luna")
     expect(memoMemorizerConfig.temperature).toBe(0.3)
 
     const companionConfig = await resolver.resolve(COMPONENT_PATHS.COMPANION_AGENT)
