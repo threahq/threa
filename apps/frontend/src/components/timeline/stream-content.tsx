@@ -12,6 +12,7 @@ import {
   useStreamBootstrap,
   useWorkspaceUserId,
   useAutoMarkAsRead,
+  useAutoReadAttention,
   useLastSeenEvent,
   useUnreadCounts,
   useUnreadDivider,
@@ -1787,6 +1788,7 @@ export function StreamContent({
     enabled: autoMarkEnabled,
   })
   useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
+  const canAutoRead = useAutoReadAttention()
 
   const isMobile = useIsMobile()
   const { markAsRead, markUnread, getUnreadCount } = useUnreadCounts(workspaceId)
@@ -1804,7 +1806,9 @@ export function StreamContent({
     currentWorkspaceUserId ?? undefined,
     streamId,
     lastReadEventId,
-    readOverlay
+    readOverlay,
+    // Away arrivals get the divider (blur re-latch below), not the flash.
+    canAutoRead
   )
 
   // Unread divider state — a bookmark line at the first unread message. The
@@ -1829,6 +1833,10 @@ export function StreamContent({
     // Skip overlay-read events so the divider anchors on the first *effectively*
     // unread row, not one already read from a conversation surface.
     overlayReadIds: readOverlay,
+    // Same signal that gates auto-read: while the viewer is away the divider may
+    // re-latch forward at the first away-arrival (messages that came in while
+    // blurred get the persistent red→grey strip, as if the stream were re-opened).
+    isAttentive: canAutoRead,
   })
 
   // The divider is red while unread still sits at/after it, and turns muted-gray

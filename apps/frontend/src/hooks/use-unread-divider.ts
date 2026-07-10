@@ -36,6 +36,16 @@ interface UseUnreadDividerOptions {
    * surface is skipped. See docs/sparse-read-overlay-design.md.
    */
   overlayReadIds?: ReadonlySet<string>
+  /**
+   * Whether the viewer's attention is plausibly on this page — the same signal
+   * that gates auto-read (`useAutoReadAttention`). While false, the read pointer
+   * is frozen, so the first unread IS the first message that arrived while away;
+   * the latch is allowed to move FORWARD to it, marking the away block exactly
+   * as a re-open would. While true, forward moves stay suppressed (focused live
+   * arrivals get the transient flash, not a moving divider). Defaults to true so
+   * callers without an attention signal keep the latch-once behavior.
+   */
+  isAttentive?: boolean
 }
 
 interface UseUnreadDividerResult {
@@ -88,6 +98,7 @@ export function useUnreadDivider({
   isLoading = false,
   readStateResolved = false,
   overlayReadIds,
+  isAttentive = true,
 }: UseUnreadDividerOptions): UseUnreadDividerResult {
   const firstUnreadEventId = useMemo(() => {
     if (events.length === 0 || !readStateResolved) return undefined
@@ -128,12 +139,16 @@ export function useUnreadDivider({
   }
   if (firstUnreadEventId && latchRef.current.eventId !== firstUnreadEventId) {
     // Capture the first unread, then hold it for the session — auto-mark-as-read
-    // advancing the live unread forward does NOT move it. The one exception is a
-    // BACKWARD move (mark-as-unread re-surfaced messages above the divider): the
-    // first unread is now earlier, so the divider must follow it up.
+    // advancing the live unread forward does NOT move it. Two exceptions:
+    // - A BACKWARD move (mark-as-unread re-surfaced messages above the divider):
+    //   the first unread is now earlier, so the divider must follow it up.
+    // - A FORWARD move while the viewer is away (`!isAttentive`): auto-read is
+    //   frozen by the same signal, so the first unread is the first message that
+    //   arrived while away — re-latch there, as if the stream were re-opened.
     const latchedIdx = latchRef.current.eventId ? events.findIndex((e) => e.id === latchRef.current.eventId) : -1
     const firstIdx = events.findIndex((e) => e.id === firstUnreadEventId)
-    if (!latchRef.current.eventId || (firstIdx >= 0 && (latchedIdx < 0 || firstIdx < latchedIdx))) {
+    const movesEarlier = firstIdx >= 0 && (latchedIdx < 0 || firstIdx < latchedIdx)
+    if (!latchRef.current.eventId || movesEarlier || !isAttentive) {
       latchRef.current.eventId = firstUnreadEventId
     }
   }

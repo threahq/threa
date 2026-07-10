@@ -105,7 +105,7 @@ export { useActivityCounts } from "./use-activity-counts"
 
 export { useActivityFeed, useMarkActivityRead, useMarkAllActivityRead, activityKeys } from "./use-activity"
 
-export { useAutoMarkAsRead } from "./use-auto-mark-as-read"
+export { useAutoMarkAsRead, useAutoReadAttention } from "./use-auto-mark-as-read"
 
 export { useLastSeenEvent } from "./use-last-seen-event"
 

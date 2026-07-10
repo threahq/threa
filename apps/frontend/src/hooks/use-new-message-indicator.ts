@@ -14,13 +14,19 @@ import type { StreamEvent } from "@threa/types"
  * Events after it that were already present when the stream opened get the
  * divider instead (handled by useUnreadDivider). Only events that arrive
  * via socket while viewing AND are after the read boundary flash here.
+ *
+ * `isAttentive` (the shared auto-read attention signal) splits live arrivals
+ * between the two signals: attentive arrivals flash here, away arrivals are
+ * recorded as known without flashing — they get the persistent unread divider
+ * (blur re-latch in useUnreadDivider) instead, never both.
  */
 export function useNewMessageIndicator(
   events: StreamEvent[],
   currentUserId: string | undefined,
   streamId: string,
   lastReadEventId?: string | null,
-  overlayReadIds?: ReadonlySet<string>
+  overlayReadIds?: ReadonlySet<string>,
+  isAttentive: boolean = true
 ): Set<string> {
   const [newIds, setNewIds] = useState<Set<string>>(new Set())
   /** Event IDs present when the stream was opened. With the eventCache removed,
@@ -64,6 +70,7 @@ export function useNewMessageIndicator(
       if (knownEventIdsRef.current.has(event.id)) break
       const messageId = (event.payload as { messageId?: string } | null)?.messageId
       if (
+        isAttentive &&
         !trackedIdsRef.current.has(event.id) &&
         event.actorId !== currentUserId &&
         event.actorType === "user" &&
@@ -96,7 +103,7 @@ export function useNewMessageIndicator(
       })
     }, 2000)
     timersRef.current.add(timer)
-  }, [events, currentUserId, lastReadEventId, overlayReadIds])
+  }, [events, currentUserId, lastReadEventId, overlayReadIds, isAttentive])
 
   return newIds
 }
