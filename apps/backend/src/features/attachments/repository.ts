@@ -363,13 +363,36 @@ export const AttachmentRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
+  /**
+   * Quarantine specific attachments still stuck in `pending_scan` (the
+   * upload sweep's scan-window cleanup). Returns the ids actually flipped.
+   */
+  async quarantineStuckPendingScans(client: Querier, ids: string[]): Promise<string[]> {
+    if (ids.length === 0) return []
+    const result = await client.query<{ id: string }>(sql`
+      UPDATE attachments
+      SET safety_status = ${AttachmentSafetyStatuses.QUARANTINED},
+          processing_status = ${ProcessingStatuses.SKIPPED}
+      WHERE id = ANY(${ids}) AND safety_status = ${AttachmentSafetyStatuses.PENDING_SCAN}
+      RETURNING id
+    `)
+    return result.rows.map((row) => row.id)
+  },
+
   async quarantineStalePendingScans(client: Querier, options: { olderThan: Date; limit: number }): Promise<string[]> {
+    // Reserved background uploads are excluded (their `created_at` is the
+    // reservation time, possibly hours before bytes arrive — this age check
+    // assumes the synchronous upload path's created≈scan-entry). While an
+    // `attachment_uploads` row exists, the upload staleness sweep owns the
+    // row's lifecycle; its scan-window cleanup quarantines a genuinely stuck
+    // pending_scan when it removes the orphaned tracking row.
     const result = await client.query<{ id: string }>(sql`
       WITH stale AS (
         SELECT id
         FROM attachments
         WHERE safety_status = ${AttachmentSafetyStatuses.PENDING_SCAN}
           AND created_at < ${options.olderThan}
+          AND NOT EXISTS (SELECT 1 FROM attachment_uploads au WHERE au.attachment_id = attachments.id)
         ORDER BY created_at ASC
         LIMIT ${options.limit}
         FOR UPDATE SKIP LOCKED

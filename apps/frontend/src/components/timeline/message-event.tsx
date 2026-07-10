@@ -579,7 +579,7 @@ function MessageLayout({
           // E2E attachments: the server rows are opaque placeholders (no
           // thumbnails/metadata), so render from the decrypted refs — fetch the
           // ciphertext and decrypt on view — instead of the normal list.
-          <E2eAttachmentList workspaceId={workspaceId} refs={attachmentRefs} />
+          <E2eAttachmentList workspaceId={workspaceId} refs={attachmentRefs} attachments={payload.attachments} />
         ) : (
           payload.attachments &&
           payload.attachments.length > 0 && (

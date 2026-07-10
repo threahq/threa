@@ -125,12 +125,16 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const result = await attachmentService.completeReservedUpload({
         attachment: reserved,
         receivedSizeBytes: file.size,
+        receivedETag: file.etag,
       })
 
       if (result.status === "size_mismatch") {
         return res.status(400).json({
           error: `Uploaded size ${result.receivedSizeBytes} does not match reserved size ${result.expectedSizeBytes}`,
         })
+      }
+      if (result.status === "conflict") {
+        return res.status(409).json({ error: result.reason })
       }
       if (result.status === "blocked") {
         return res.status(400).json({ error: result.reason })

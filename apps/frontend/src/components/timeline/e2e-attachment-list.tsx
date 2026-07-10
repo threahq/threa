@@ -1,11 +1,14 @@
-import { useState } from "react"
+import { useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import { Download, FileLock2, Loader2 } from "lucide-react"
+import type { AttachmentSummary } from "@threa/types"
 import { type AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { requestAttachmentBytes } from "@/lib/crypto/attachment-cache"
 import { fetchAndDecryptAttachment, useDecryptedAttachment } from "@/hooks/use-decrypted-attachment"
 import { triggerDownload } from "@/lib/image-utils"
 import { Button } from "@/components/ui/button"
+import { subscribeUploads, getUploadsVersion } from "@/lib/uploads/upload-manager"
+import { resolveUploadChip, PendingAttachmentChip } from "./attachment-list"
 
 /**
  * Renders the attachments of an E2E message from their decrypted refs. E2E
@@ -85,17 +88,47 @@ function E2eFileAttachment({ workspaceId, attachmentRef }: { workspaceId: string
   )
 }
 
-export function E2eAttachmentList({ workspaceId, refs }: { workspaceId: string; refs: AttachmentRef[] }) {
+export function E2eAttachmentList({
+  workspaceId,
+  refs,
+  attachments,
+}: {
+  workspaceId: string
+  refs: AttachmentRef[]
+  /**
+   * The message's plaintext attachment summaries (placeholder metadata, but
+   * live `safetyStatus`/`uploadStatus` via the socket patch + bootstrap
+   * overlay). Send-while-uploading means a ref can point at bytes that don't
+   * exist yet — attempting the decrypt then 403s and caches the failure, so
+   * a still-settling ref renders a status chip until the upload lands.
+   */
+  attachments?: AttachmentSummary[]
+}) {
+  useSyncExternalStore(subscribeUploads, getUploadsVersion, getUploadsVersion)
   if (refs.length === 0) return null
+  const summaryById = new Map((attachments ?? []).map((a) => [a.id, a]))
   return (
     <div className="mt-2 flex flex-col gap-2">
-      {refs.map((ref) =>
-        ref.mimeType.startsWith("image/") ? (
+      {refs.map((ref) => {
+        const summary = summaryById.get(ref.attachmentId)
+        const chip = resolveUploadChip(
+          summary ?? { id: ref.attachmentId, filename: ref.filename, mimeType: ref.mimeType, sizeBytes: ref.sizeBytes }
+        )
+        if (chip) {
+          // Show the REAL name from the decrypted ref, not the server's
+          // "encrypted" placeholder the summary carries.
+          return (
+            <div key={ref.attachmentId} className="flex flex-wrap gap-2">
+              <PendingAttachmentChip {...chip} attachment={{ ...chip.attachment, filename: ref.filename }} />
+            </div>
+          )
+        }
+        return ref.mimeType.startsWith("image/") ? (
           <E2eImageAttachment key={ref.attachmentId} workspaceId={workspaceId} attachmentRef={ref} />
         ) : (
           <E2eFileAttachment key={ref.attachmentId} workspaceId={workspaceId} attachmentRef={ref} />
         )
-      )}
+      })}
     </div>
   )
 }

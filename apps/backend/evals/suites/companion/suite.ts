@@ -393,6 +393,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
     // Stub storage and attachment service — evals don't upload or load attachments from S3
     const stubStorage: StorageProvider = {
       getObjectSize: async () => 0,
+      getObjectETag: async () => "stub-etag",
       getSignedDownloadUrl: async () => "",
       getObject: async () => Buffer.alloc(0),
       getObjectRange: async () => Buffer.alloc(0),

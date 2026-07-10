@@ -151,13 +151,43 @@ describe("Attachment upload sweep", () => {
     expect(deletedPaths).toEqual([`${testWorkspaceId}/${unboundId}/stale.bin`])
   })
 
-  test("orphaned scan-window rows (stuck at uploaded) are dropped", async () => {
+  test("orphaned scan-window rows are dropped and a stuck pending_scan is quarantined (with a viewer event when bound)", async () => {
     const { service } = createService()
-    const id = await reserveVia(service)
+    const id = await reserveVia(service, { bindToMessage: true })
     await ageUploadRow(id, 5 * HOUR_MS, AttachmentUploadStatuses.UPLOADED)
+    // Simulate a settle that crashed after entering the scan window.
+    await pool.query(sql`
+      UPDATE attachments SET safety_status = ${AttachmentSafetyStatuses.PENDING_SCAN} WHERE id = ${id}
+    `)
 
     await service.sweepStaleUploads()
 
     expect(await AttachmentUploadRepository.findByAttachmentId(pool, testWorkspaceId, id)).toBeNull()
+    const attachment = await AttachmentRepository.findById(pool, id)
+    expect(attachment?.safetyStatus).toBe(AttachmentSafetyStatuses.QUARANTINED)
+    const events = await pool.query(sql`
+      SELECT payload FROM outbox
+      WHERE event_type = 'attachment:upload_status_changed' AND payload->>'attachmentId' = ${id}
+    `)
+    expect(events.rows[0]?.payload).toMatchObject({ uploadStatus: "failed", safetyStatus: "quarantined" })
+  })
+
+  test("the boot-time stale-scan recovery skips reserved uploads (their created_at is reservation time)", async () => {
+    const { service } = createService()
+    const reservedId = await reserveVia(service)
+    // A reservation made hours ago whose bytes just arrived: pending_scan with
+    // an old created_at, tracking row still present (scan in progress).
+    await pool.query(sql`
+      UPDATE attachments
+      SET safety_status = ${AttachmentSafetyStatuses.PENDING_SCAN},
+          created_at = NOW() - make_interval(hours => 6)
+      WHERE id = ${reservedId}
+    `)
+    await ageUploadRow(reservedId, 0, AttachmentUploadStatuses.UPLOADED)
+
+    await service.recoverStalePendingScans()
+
+    const attachment = await AttachmentRepository.findById(pool, reservedId)
+    expect(attachment?.safetyStatus).toBe(AttachmentSafetyStatuses.PENDING_SCAN)
   })
 })

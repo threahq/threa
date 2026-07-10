@@ -96,6 +96,9 @@ function getModelConfig(ctx: EvalContext): { model: string; temperature: number 
  */
 function createMockStorage(images: Map<string, Buffer>): StorageProvider {
   return {
+    async getObjectETag(): Promise<string> {
+      return "stub-etag"
+    },
     async getObjectSize(key: string): Promise<number> {
       const buffer = images.get(key)
       if (!buffer) {

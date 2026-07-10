@@ -458,7 +458,7 @@ export function attachmentPendingState(a: AttachmentSummary): "uploading" | "sca
   return null
 }
 
-interface PendingChipInfo {
+export interface PendingChipInfo {
   attachment: AttachmentSummary
   state: "uploading" | "scanning" | "failed" | "blocked"
   /** Bytes fraction when this device owns the transfer (the sender's tab). */
@@ -468,12 +468,30 @@ interface PendingChipInfo {
 }
 
 /**
+ * Live upload jobs on THIS device (the sender's tab) override the summary:
+ * they carry real progress and settle instantly on completion, ahead of the
+ * socket patch. Other viewers rely on the summary state alone. Shared by the
+ * plaintext and E2E attachment lists. Callers must subscribe to
+ * `subscribeUploads` for live job updates.
+ */
+export function resolveUploadChip(a: AttachmentSummary): PendingChipInfo | null {
+  const job = getUploadJobByAttachmentId(a.id)
+  if (job) {
+    if (job.status === "error") return { attachment: a, state: "failed", canRetry: true }
+    if (job.status === "uploaded") return null // settled locally; render normally
+    return { attachment: a, state: "uploading", progress: job.progress, canRetry: false }
+  }
+  const state = attachmentPendingState(a)
+  return state ? { attachment: a, state, canRetry: false } : null
+}
+
+/**
  * Inert status chip for a not-yet-downloadable attachment. Excluded from every
  * interactive partition — its bytes may not exist, so previews/downloads would
  * 404 or be rejected server-side with no explanation. A failed upload whose
  * bytes are still on this device offers an in-place retry.
  */
-function PendingAttachmentChip({ attachment, state, progress, canRetry }: PendingChipInfo) {
+export function PendingAttachmentChip({ attachment, state, progress, canRetry }: PendingChipInfo) {
   if (state === "failed" && canRetry) {
     return (
       <Button variant="outline" size="sm" className="h-8 gap-2 text-xs" onClick={() => retryUpload(attachment.id)}>
@@ -547,21 +565,12 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   const attachmentIds = useMemo(() => new Set((attachments ?? []).map((a) => a.id)), [attachments])
   const selectedAttachmentId = mediaAttachmentId && attachmentIds.has(mediaAttachmentId) ? mediaAttachmentId : null
 
-  // Live upload jobs on THIS device (the sender's tab) override the summary:
-  // they carry real progress and settle instantly on completion, ahead of the
-  // socket patch. Other viewers rely on the summary state alone.
   useSyncExternalStore(subscribeUploads, getUploadsVersion, getUploadsVersion)
   const pendingUploadChips = useMemo(
     () =>
       (attachments ?? []).flatMap((a): PendingChipInfo[] => {
-        const job = getUploadJobByAttachmentId(a.id)
-        if (job) {
-          if (job.status === "error") return [{ attachment: a, state: "failed", canRetry: true }]
-          if (job.status === "uploaded") return [] // settled locally; render normally
-          return [{ attachment: a, state: "uploading", progress: job.progress, canRetry: false }]
-        }
-        const state = attachmentPendingState(a)
-        return state ? [{ attachment: a, state, canRetry: false }] : []
+        const chip = resolveUploadChip(a)
+        return chip ? [chip] : []
       }),
     // getUploadsVersion() is intentionally a dependency: local jobs progress
     // while `attachments` stays referentially stable.

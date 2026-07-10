@@ -173,6 +173,22 @@ describe("upload-manager", () => {
     await vi.waitFor(() => expect(findUploadJob(job.jobId)?.status).toBe("uploaded"))
   })
 
+  it("a duplicate-completion loser (404 but settled server-side) resolves as success", async () => {
+    mockReserve("attach_dup")
+    // Another tab/device won the duplicate completion: this tab's POST 404s
+    // (tracking row deleted at settle), but the attachment IS downloadable.
+    vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 404, body: { error: "reservation not found" } })
+    vi.spyOn(attachmentsApi, "getDownloadUrl").mockResolvedValue("https://example.com/settled")
+    const report = vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+
+    const job = startUpload(WS, makeFile())
+    await waitForJobStatus(job.jobId, "uploaded")
+
+    expect(findUploadJob(job.jobId)?.status).toBe("uploaded")
+    expect(report).not.toHaveBeenCalled()
+    expect(await db.uploadJobs.get("attach_dup")).toBeUndefined()
+  })
+
   it("retryUpload restarts a failed job from its locally-held bytes", async () => {
     mockReserve("attach_manual_retry")
     vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)

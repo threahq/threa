@@ -191,6 +191,32 @@ function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError"
 }
 
+/**
+ * Serialize the transfer per attachment id across tabs: `uploadJobs` is a
+ * shared per-origin IDB table, so two tabs resuming the same persisted job
+ * would otherwise stream the same bytes concurrently (the server tolerates
+ * it, but the loser's chip would misreport). The Web Lock queues the second
+ * tab; when it acquires, the settled-probe below turns its run into a no-op.
+ */
+function withUploadLock<T>(attachmentId: string, fn: () => Promise<T>): Promise<T> {
+  if (typeof navigator === "undefined" || !navigator.locks) return fn()
+  return navigator.locks.request(`threa-upload-${attachmentId}`, fn) as Promise<T>
+}
+
+/**
+ * Did the upload already settle server-side (another tab/device won a
+ * duplicate completion)? A shareable attachment resolves a download URL;
+ * a pending/failed one is 403/404.
+ */
+async function probeSettled(workspaceId: string, attachmentId: string): Promise<boolean> {
+  try {
+    await attachmentsApi.getDownloadUrl(workspaceId, attachmentId)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** Blob → bytes, with a FileReader fallback for jsdom (no Blob.arrayBuffer). */
 async function blobBytes(blob: Blob): Promise<Uint8Array> {
   if (typeof blob.arrayBuffer === "function") return new Uint8Array(await blob.arrayBuffer())
@@ -332,9 +358,31 @@ async function runReserveAndUpload(jobId: string, file: File, signal: AbortSigna
  */
 async function uploadBytes(jobId: string, signal: AbortSignal): Promise<void> {
   const job = state.jobs.get(jobId)
-  const blob = blobs.get(jobId)
-  if (!job?.attachmentId || !blob) return
+  if (!job?.attachmentId) return
   const { workspaceId, attachmentId } = job
+  await withUploadLock(attachmentId, () => uploadBytesLocked(jobId, workspaceId, attachmentId, signal))
+}
+
+/** Settle the job locally as successfully uploaded. */
+async function settleJobUploaded(jobId: string, attachmentId: string): Promise<void> {
+  await db.uploadJobs.delete(attachmentId).catch(() => {})
+  blobs.delete(jobId)
+  controllers.delete(jobId)
+  const settled = patchJob(jobId, { status: "uploaded", progress: 1 })
+  // Nothing references a settled, released job — the timeline renders
+  // from server state (socket patch / bootstrap overlay) from here on.
+  if (settled?.released) freeJob(jobId)
+}
+
+async function uploadBytesLocked(
+  jobId: string,
+  workspaceId: string,
+  attachmentId: string,
+  signal: AbortSignal
+): Promise<void> {
+  const job = state.jobs.get(jobId)
+  const blob = blobs.get(jobId)
+  if (!job || !blob || signal.aborted) return
 
   let terminalError = "Upload failed"
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
@@ -355,18 +403,18 @@ async function uploadBytes(jobId: string, signal: AbortSignal): Promise<void> {
       })
 
       if (response.status === 201) {
-        await db.uploadJobs.delete(attachmentId)
-        blobs.delete(jobId)
-        controllers.delete(jobId)
-        const settled = patchJob(jobId, { status: "uploaded", progress: 1 })
-        // Nothing references a settled, released job — the timeline renders
-        // from server state (socket patch / bootstrap overlay) from here on.
-        if (settled?.released) freeJob(jobId)
+        await settleJobUploaded(jobId, attachmentId)
         return
       }
 
       const body = response.body as { error?: string } | null
       if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+        // A duplicate completion race (another tab/device already settled this
+        // upload) surfaces as 404/409 here — that's a success, not a failure.
+        if ((response.status === 404 || response.status === 409) && (await probeSettled(workspaceId, attachmentId))) {
+          await settleJobUploaded(jobId, attachmentId)
+          return
+        }
         terminalError = body?.error ?? `Upload rejected (${response.status})`
         break
       }

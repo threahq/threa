@@ -276,23 +276,45 @@ export const AttachmentUploadRepository = {
 
   /**
    * Sweep phase 3: `uploaded` is a seconds-long scan-window state; a row stuck
-   * there means the settle crashed mid-flight. The attachment's own
-   * `safety_status` is the durable truth by then (the startup stale-scan sweep
-   * quarantines a stuck `pending_scan`), so the orphaned tracking row is just
-   * deleted.
+   * there means the settle crashed mid-flight. The orphaned tracking row is
+   * deleted and returned with its bind state so the caller can quarantine a
+   * still-`pending_scan` attachment (this sweep owns reserved rows' lifecycle —
+   * the startup stale-scan sweep deliberately skips them).
    */
-  async deleteStaleUploaded(client: Querier, options: { olderThan: Date; limit: number }): Promise<number> {
-    const result = await client.query(sql`
-      DELETE FROM attachment_uploads
-      WHERE id IN (
-        SELECT id FROM attachment_uploads
+  async deleteStaleUploaded(
+    client: Querier,
+    options: { olderThan: Date; limit: number }
+  ): Promise<SweptAttachmentUpload[]> {
+    const result = await client.query<{
+      attachment_id: string
+      workspace_id: string
+      status: string
+      message_id: string | null
+      stream_id: string | null
+      storage_path: string | null
+    }>(sql`
+      WITH stale AS (
+        SELECT id, attachment_id
+        FROM attachment_uploads
         WHERE status = ${AttachmentUploadStatuses.UPLOADED}
           AND updated_at < ${options.olderThan}
         ORDER BY updated_at ASC
         LIMIT ${options.limit}
         FOR UPDATE SKIP LOCKED
       )
+      DELETE FROM attachment_uploads au
+      USING stale
+      LEFT JOIN attachments a ON a.id = stale.attachment_id
+      WHERE au.id = stale.id
+      RETURNING au.attachment_id, au.workspace_id, au.status, a.message_id, a.stream_id, a.storage_path
     `)
-    return result.rowCount ?? 0
+    return result.rows.map((row) => ({
+      attachmentId: row.attachment_id,
+      workspaceId: row.workspace_id,
+      status: row.status as AttachmentUploadStatus,
+      messageId: row.message_id,
+      streamId: row.stream_id,
+      storagePath: row.storage_path,
+    }))
   },
 }

@@ -112,6 +112,7 @@ export type CompleteReservedUploadResult =
   | { status: "created"; attachment: Attachment }
   | { status: "blocked"; reason: string }
   | { status: "size_mismatch"; expectedSizeBytes: number; receivedSizeBytes: number }
+  | { status: "conflict"; reason: string }
 
 export type ReportUploadFailureResult = "reported" | "already_settled" | "not_found" | "forbidden"
 
@@ -169,15 +170,22 @@ export class AttachmentService {
    * `attachment:upload_status_changed` so every viewer's chip settles.
    *
    * The route's validation middleware already checked ownership/state before
-   * any byte reached S3; reaching here without a tracking row is a wiring bug.
+   * any byte reached S3; reaching here without a tracking row means either a
+   * wiring bug or a concurrent duplicate completion (two tabs resuming the
+   * same persisted job) whose winner already settled — the latter is treated
+   * as idempotent success.
    */
   async completeReservedUpload(params: {
     attachment: Attachment
     receivedSizeBytes: number
+    /** ETag multer-s3 got back for the streamed bytes (quotes optional). */
+    receivedETag?: string
   }): Promise<CompleteReservedUploadResult> {
     const { attachment, receivedSizeBytes } = params
     const upload = await AttachmentUploadRepository.findByAttachmentId(this.pool, attachment.workspaceId, attachment.id)
     if (!upload) {
+      const settled = await this.settledDuplicate(attachment.id)
+      if (settled) return { status: "created", attachment: settled }
       throw new Error(`No upload reservation found for attachment ${attachment.id}`)
     }
 
@@ -205,7 +213,7 @@ export class AttachmentService {
         const current = await AttachmentRepository.findByIdForUpdate(client, attachment.id)
         if (!current) throw new Error(`Attachment row missing for reservation ${attachment.id}`)
         const marked = await AttachmentUploadRepository.markUploaded(client, attachment.workspaceId, attachment.id)
-        if (!marked) throw new Error(`Attachment upload ${attachment.id} is not in a completable state`)
+        if (!marked) return null // concurrent duplicate — resolved below
         await this.transitionReservedSafety(client, current, AttachmentSafetyStatuses.E2E_UNSCANNED)
         await AttachmentRepository.updateProcessingStatus(client, attachment.id, ProcessingStatuses.SKIPPED)
         await AttachmentUploadRepository.deleteByAttachmentId(client, attachment.id)
@@ -214,18 +222,29 @@ export class AttachmentService {
         await this.publishUploadStatusChanged(client, updated, AttachmentUploadStatuses.UPLOADED)
         return updated
       })
+      if (!settled) {
+        const duplicate = await this.settledDuplicate(attachment.id)
+        if (duplicate) return { status: "created", attachment: duplicate }
+        throw new Error(`Attachment upload ${attachment.id} is not in a completable state`)
+      }
       return { status: "created", attachment: settled }
     }
 
     // Bytes exist now — enter the scan window. Scan runs outside any
     // transaction (INV-41), then the settle transaction applies the verdict.
-    await withTransaction(this.pool, async (client) => {
+    const enteredScan = await withTransaction(this.pool, async (client) => {
       const current = await AttachmentRepository.findByIdForUpdate(client, attachment.id)
       if (!current) throw new Error(`Attachment row missing for reservation ${attachment.id}`)
       const marked = await AttachmentUploadRepository.markUploaded(client, attachment.workspaceId, attachment.id)
-      if (!marked) throw new Error(`Attachment upload ${attachment.id} is not in a completable state`)
+      if (!marked) return false // concurrent duplicate — resolved below
       await this.transitionReservedSafety(client, current, AttachmentSafetyStatuses.PENDING_SCAN)
+      return true
     })
+    if (!enteredScan) {
+      const duplicate = await this.settledDuplicate(attachment.id)
+      if (duplicate) return { status: "created", attachment: duplicate }
+      throw new Error(`Attachment upload ${attachment.id} is not in a completable state`)
+    }
 
     const scanResult = await this.malwareScanner.scan({
       storagePath: attachment.storagePath,
@@ -236,6 +255,25 @@ export class AttachmentService {
     const settled = await withTransaction(this.pool, async (client) => {
       const current = await AttachmentRepository.findByIdForUpdate(client, attachment.id)
       if (!current) throw new Error(`Attachment ${attachment.id} was deleted before safety status could be updated`)
+
+      // The scan read bytes at a PATH; verify the object is still exactly the
+      // bytes this request streamed (multer's ETag) before blessing it. A
+      // concurrent POST to the same reservation could otherwise land different
+      // bytes between the scan read and this commit, and a quick HEAD inside
+      // the short settle transaction shrinks that byte-swap window from the
+      // whole scan duration to milliseconds.
+      if (params.receivedETag) {
+        const currentETag = await this.storage.getObjectETag(attachment.storagePath)
+        if (currentETag !== params.receivedETag.replaceAll('"', "")) {
+          const failed = await AttachmentUploadRepository.markFailed(client, attachment.workspaceId, attachment.id, {
+            code: "concurrent_overwrite",
+            message: "Stored bytes changed while the scan ran",
+          })
+          if (failed) await this.publishUploadStatusChanged(client, current, AttachmentUploadStatuses.FAILED)
+          return null
+        }
+      }
+
       await this.transitionReservedSafety(client, current, scanResult.status)
 
       if (scanResult.status === AttachmentSafetyStatuses.CLEAN) {
@@ -263,6 +301,10 @@ export class AttachmentService {
       await this.publishUploadStatusChanged(client, updated, AttachmentUploadStatuses.UPLOADED)
       return updated
     })
+
+    if (!settled) {
+      return { status: "conflict", reason: "Stored bytes changed while the scan ran; retry the upload" }
+    }
 
     const blockReason = this.getSharingBlockReason(settled)
     if (!blockReason) return { status: "created", attachment: settled }
@@ -343,10 +385,40 @@ export class AttachmentService {
         olderThan: new Date(Date.now() - abandonAfterMs),
         limit: batchSize,
       })
-      await AttachmentUploadRepository.deleteStaleUploaded(client, {
+
+      // Scan-window orphans (settle crashed after markUploaded): drop the
+      // tracking row and quarantine any attachment still stuck pending_scan —
+      // the boot-time stale-scan recovery deliberately skips rows this sweep
+      // owns, so nothing else would ever settle them.
+      const scanOrphans = await AttachmentUploadRepository.deleteStaleUploaded(client, {
         olderThan: new Date(Date.now() - failAfterMs),
         limit: batchSize,
       })
+      const quarantinedIds =
+        scanOrphans.length > 0
+          ? new Set(
+              await AttachmentRepository.quarantineStuckPendingScans(
+                client,
+                scanOrphans.map((u) => u.attachmentId)
+              )
+            )
+          : new Set<string>()
+      const scanOrphanEvents = scanOrphans
+        .filter((u) => u.messageId && u.streamId && quarantinedIds.has(u.attachmentId))
+        .map((u) => ({
+          eventType: "attachment:upload_status_changed" as const,
+          payload: {
+            workspaceId: u.workspaceId,
+            attachmentId: u.attachmentId,
+            uploadStatus: AttachmentUploadStatuses.FAILED,
+            safetyStatus: AttachmentSafetyStatuses.QUARANTINED,
+            streamId: u.streamId!,
+            messageId: u.messageId!,
+          },
+        }))
+      if (scanOrphanEvents.length > 0) {
+        await OutboxRepository.insertMany(client, scanOrphanEvents)
+      }
 
       const bound = [...failed, ...abandoned].filter((u) => u.messageId && u.streamId)
       if (bound.length > 0) {
@@ -395,6 +467,18 @@ export class AttachmentService {
       logger.info({ failed, abandoned, deleted: orphanStoragePaths.length }, "Stale attachment upload sweep")
     }
     return { failed, abandoned, deleted: orphanStoragePaths.length }
+  }
+
+  /**
+   * A duplicate completion lost its CAS (or found no tracking row) because a
+   * concurrent request already settled the upload — two tabs resuming the same
+   * persisted job both stream the same bytes, so the loser is a success too.
+   * Returns the settled attachment, or null when the state is genuinely wrong.
+   */
+  private async settledDuplicate(attachmentId: string): Promise<Attachment | null> {
+    const current = await AttachmentRepository.findById(this.pool, attachmentId)
+    if (current && isAttachmentSafeForSharing(current.safetyStatus)) return current
+    return null
   }
 
   /**

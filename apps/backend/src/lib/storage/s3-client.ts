@@ -23,6 +23,8 @@ export interface ObjectContent {
 
 export interface StorageProvider {
   getObjectSize(key: string): Promise<number>
+  /** Current ETag of the stored object (quotes stripped), for write-race detection. */
+  getObjectETag(key: string): Promise<string>
   getSignedDownloadUrl(key: string, options?: SignedDownloadUrlOptions): Promise<string>
   getObject(key: string): Promise<Buffer>
   /** Fetch first N bytes of an object using HTTP Range header */
@@ -67,6 +69,20 @@ export function createS3Storage(config: S3Config): StorageProvider {
       }
 
       return contentLength
+    },
+
+    async getObjectETag(key: string): Promise<string> {
+      const response = await client.send(
+        new HeadObjectCommand({
+          Bucket: config.bucket,
+          Key: key,
+        })
+      )
+      const etag = response.ETag
+      if (!etag) {
+        throw new Error(`S3 HeadObject missing ETag for key: ${key}`)
+      }
+      return etag.replaceAll('"', "")
     },
 
     async getSignedDownloadUrl(key: string, options?: SignedDownloadUrlOptions): Promise<string> {
