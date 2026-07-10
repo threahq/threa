@@ -278,6 +278,139 @@ for (let i = 1; i < items.length; i++) {
 Keep one-off scripts in `/tmp/claude/` — they are not part of the codebase
 and must not be committed.
 
+### Run a delegation (the local-agent loop)
+
+When a Threa persona hands off work with `delegate_task`, a card appears in the
+stream and the task sits in the open queue until something claims it. This is
+how a local agent picks it up, works it, and posts the result back. Requires a
+**user-scoped key** with `delegations:read` + `delegations:write`: the result
+message is authored as the key owner, so the identity has to be a person's.
+
+Manual walkthrough with curl:
+
+```bash
+BASE="https://staging.threa.io/api/v1/workspaces/<ws>"
+AUTH="Authorization: Bearer $THREA_STAGING_TOKEN"
+JSON="Content-Type: application/json"
+
+# List open delegations in streams you can access.
+curl -s "$BASE/delegations" -H "$AUTH" | jq '.data[] | {id, title, streamId}'
+
+# Claim one. The response carries the brief (the full hand-off prompt),
+# contextRefs, and claimToken. The token is shown once and cannot be
+# retrieved again. 409 DELEGATION_NOT_OPEN means someone else won the race.
+curl -sS -X POST "$BASE/delegations/<dlg_id>/claim" -H "$AUTH" -H "$JSON" \
+  -d '{"claimedByLabel":"Kris MacBook / Claude Code"}' | jq '.data'
+
+# While working: progress notes land on the card and renew the 15-min claim.
+TOK="X-Threa-Callback-Token: <claimToken>"
+curl -sS -X POST "$BASE/delegations/<dlg_id>/status" -H "$AUTH" -H "$TOK" -H "$JSON" \
+  -d '{"statusNote":"Tests passing, writing the migration"}'
+
+# Done: the result posts to the stream as you (via-API badge) and the card
+# flips to Completed in the same transaction, so a cancelled or expired
+# claim posts nothing.
+curl -sS -X POST "$BASE/delegations/<dlg_id>/complete" -H "$AUTH" -H "$TOK" -H "$JSON" \
+  -d '{"resultMarkdown":"Shipped in PR #42. All acceptance criteria pass."}'
+```
+
+Scripted runner (Bun). Heartbeat on an interval inside the 15-minute TTL, send
+`status` at milestones, and wrap the work in `try/catch/finally` so every exit
+path either completes, fails, or lets the claim lapse to `expired`. The card
+never shows a stale "Running".
+
+```ts
+// bun run delegate.ts <delegationId>   (reads $THREA_STAGING_TOKEN; never hardcode keys)
+const TOKEN = process.env.THREA_STAGING_TOKEN
+if (!TOKEN) {
+  console.error("THREA_STAGING_TOKEN required")
+  process.exit(1)
+}
+
+const WS = "ws_…"
+const BASE = `https://staging.threa.io/api/v1/workspaces/${WS}/delegations`
+
+interface Delegation {
+  id: string
+  streamId: string
+  title: string
+  status: string
+}
+
+interface ClaimedDelegation extends Delegation {
+  brief: string
+  contextRefs: string[]
+  claimToken: string
+  claimExpiresAt: string
+}
+
+async function api<T>(path: string, init: RequestInit & { claimToken?: string } = {}): Promise<T> {
+  const { claimToken, ...request } = init
+  const res = await fetch(`${BASE}${path}`, {
+    ...request,
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      "Content-Type": "application/json",
+      ...(claimToken ? { "X-Threa-Callback-Token": claimToken } : {}),
+    },
+  })
+  if (!res.ok) throw new Error(`${request.method ?? "GET"} ${path} → ${res.status}: ${await res.text()}`)
+  const { data } = (await res.json()) as { data: T }
+  return data
+}
+
+const delegationId = process.argv[2] ?? (await api<Delegation[]>(""))[0]?.id
+if (!delegationId) {
+  console.log("Nothing open to claim.")
+  process.exit(0)
+}
+
+const claimed = await api<ClaimedDelegation>(`/${delegationId}/claim`, {
+  method: "POST",
+  body: JSON.stringify({ claimedByLabel: "Kris MacBook / Claude Code" }),
+})
+console.log(`Claimed "${claimed.title}", expires ${claimed.claimExpiresAt}`)
+
+const { claimToken } = claimed
+const heartbeat = setInterval(() => {
+  api(`/${claimed.id}/heartbeat`, { method: "POST", claimToken }).catch(() => clearInterval(heartbeat))
+}, 5 * 60 * 1000)
+
+try {
+  await api(`/${claimed.id}/status`, {
+    method: "POST",
+    claimToken,
+    body: JSON.stringify({ statusNote: "Started, reading the brief" }),
+  })
+
+  // The actual work: claimed.brief is a self-contained prompt. Feed it to your
+  // agent (claude -p, a Claude Code session, whatever runs on this machine)
+  // and collect its final report as markdown.
+  const resultMarkdown = await runAgent(claimed.brief, claimed.contextRefs)
+
+  await api(`/${claimed.id}/complete`, {
+    method: "POST",
+    claimToken,
+    body: JSON.stringify({ resultMarkdown }),
+  })
+  console.log("Completed. Result posted to the stream.")
+} catch (error) {
+  const errorMessage = error instanceof Error ? error.message : String(error)
+  await api(`/${claimed.id}/fail`, {
+    method: "POST",
+    claimToken,
+    body: JSON.stringify({ errorMessage: errorMessage.slice(0, 2000) }),
+  })
+  throw error
+} finally {
+  clearInterval(heartbeat)
+}
+```
+
+Every transition is visible on the delegation card (and in the stream's
+"In this stream" panel) as it happens. The completion message goes through the
+normal pipeline, so workspace memory extracts the outcome.
+
 ## Safety
 
 - **Staging vs production:** `$THREA_STAGING_TOKEN` is staging-scoped.
