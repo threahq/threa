@@ -50,6 +50,7 @@ import { assignmentToCached, assignmentId } from "@/hooks/use-labels"
 import {
   NOTIFICATION_CONFIG,
   NotificationLevels,
+  SHAREABLE_SAFETY_STATUSES,
   StreamTypes,
   Visibilities,
   normalizeSidebarConfig,
@@ -1464,6 +1465,58 @@ export function registerWorkspaceSocketHandlers(
     queryClient.invalidateQueries({ queryKey: invitationKeys.list(workspaceId) })
   }
 
+  // Shared write path for attachment-state socket events (transcoded,
+  // thumbnailed, upload status): apply `transform` to the matching attachment
+  // summary in the message's cached `attachments` array, in both IDB and the
+  // live bootstrap query. Falls back to an active-bootstrap invalidation when
+  // the event row isn't cached yet.
+  const patchCachedMessageAttachment = async (
+    streamId: string,
+    messageId: string,
+    attachmentId: string,
+    transform: (a: Record<string, unknown>) => Record<string, unknown>
+  ) => {
+    const updatePayload = (p: Record<string, unknown>) => {
+      if (!Array.isArray(p.attachments)) return p
+      const attachments = p.attachments as Array<Record<string, unknown>>
+      const updatedAttachments = attachments.map((a) => (a.id === attachmentId ? transform(a) : a))
+      return { ...p, attachments: updatedAttachments }
+    }
+
+    const events = await db.events
+      .where("[streamId+eventType]")
+      .equals([streamId, "message_created"])
+      .filter((e) => (e.payload as { messageId?: string })?.messageId === messageId)
+      .toArray()
+
+    if (events.length > 0) {
+      const event = events[0]
+      await db.events.update(event.id, {
+        payload: updatePayload(event.payload as Record<string, unknown>),
+        _cachedAt: Date.now(),
+      })
+    } else {
+      queryClient.invalidateQueries({
+        queryKey: streamKeys.bootstrap(workspaceId, streamId),
+        type: "active",
+      })
+    }
+
+    queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) => {
+      if (!old) return old
+      return {
+        ...old,
+        events: old.events.map((event) => {
+          const eventPayload = event.payload as { messageId?: string } & Record<string, unknown>
+          if (event.eventType !== "message_created" || eventPayload.messageId !== messageId) {
+            return event
+          }
+          return { ...event, payload: updatePayload(eventPayload) }
+        }),
+      }
+    })
+  }
+
   // Handle attachment transcoded (video processing completed or failed)
   const handleAttachmentTranscoded = async (payload: {
     workspaceId: string
@@ -1473,51 +1526,11 @@ export function registerWorkspaceSocketHandlers(
     messageId?: string
   }) => {
     if (payload.workspaceId !== workspaceId) return
-
-    // Update the message event in IDB if we have stream + message context
-    if (payload.streamId && payload.messageId) {
-      const updatePayload = (p: Record<string, unknown>) => {
-        if (!Array.isArray(p.attachments)) return p
-        const attachments = p.attachments as Array<Record<string, unknown>>
-        const updatedAttachments = attachments.map((a) =>
-          a.id === payload.attachmentId ? { ...a, processingStatus: payload.processingStatus } : a
-        )
-        return { ...p, attachments: updatedAttachments }
-      }
-
-      const events = await db.events
-        .where("[streamId+eventType]")
-        .equals([payload.streamId, "message_created"])
-        .filter((e) => (e.payload as { messageId?: string })?.messageId === payload.messageId)
-        .toArray()
-
-      if (events.length > 0) {
-        const event = events[0]
-        await db.events.update(event.id, {
-          payload: updatePayload(event.payload as Record<string, unknown>),
-          _cachedAt: Date.now(),
-        })
-      } else {
-        queryClient.invalidateQueries({
-          queryKey: streamKeys.bootstrap(workspaceId, payload.streamId),
-          type: "active",
-        })
-      }
-
-      queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, payload.streamId), (old) => {
-        if (!old) return old
-        return {
-          ...old,
-          events: old.events.map((event) => {
-            const eventPayload = event.payload as { messageId?: string } & Record<string, unknown>
-            if (event.eventType !== "message_created" || eventPayload.messageId !== payload.messageId) {
-              return event
-            }
-            return { ...event, payload: updatePayload(eventPayload) }
-          }),
-        }
-      })
-    }
+    if (!payload.streamId || !payload.messageId) return
+    await patchCachedMessageAttachment(payload.streamId, payload.messageId, payload.attachmentId, (a) => ({
+      ...a,
+      processingStatus: payload.processingStatus,
+    }))
   }
 
   // Image thumbnail ready — patch the attachment's intrinsic dimensions into
@@ -1533,47 +1546,32 @@ export function registerWorkspaceSocketHandlers(
   }) => {
     if (payload.workspaceId !== workspaceId) return
     if (!payload.streamId || !payload.messageId) return
+    await patchCachedMessageAttachment(payload.streamId, payload.messageId, payload.attachmentId, (a) => ({
+      ...a,
+      width: payload.width,
+      height: payload.height,
+    }))
+  }
 
-    const updatePayload = (p: Record<string, unknown>) => {
-      if (!Array.isArray(p.attachments)) return p
-      const attachments = p.attachments as Array<Record<string, unknown>>
-      const updatedAttachments = attachments.map((a) =>
-        a.id === payload.attachmentId ? { ...a, width: payload.width, height: payload.height } : a
-      )
-      return { ...p, attachments: updatedAttachments }
-    }
-
-    const events = await db.events
-      .where("[streamId+eventType]")
-      .equals([payload.streamId, "message_created"])
-      .filter((e) => (e.payload as { messageId?: string })?.messageId === payload.messageId)
-      .toArray()
-
-    if (events.length > 0) {
-      const event = events[0]
-      await db.events.update(event.id, {
-        payload: updatePayload(event.payload as Record<string, unknown>),
-        _cachedAt: Date.now(),
-      })
-    } else {
-      queryClient.invalidateQueries({
-        queryKey: streamKeys.bootstrap(workspaceId, payload.streamId),
-        type: "active",
-      })
-    }
-
-    queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, payload.streamId), (old) => {
-      if (!old) return old
-      return {
-        ...old,
-        events: old.events.map((event) => {
-          const eventPayload = event.payload as { messageId?: string } & Record<string, unknown>
-          if (event.eventType !== "message_created" || eventPayload.messageId !== payload.messageId) {
-            return event
-          }
-          return { ...event, payload: updatePayload(eventPayload) }
-        }),
-      }
+  // Reserved upload state changed (settled clean/blocked, failed, abandoned) —
+  // a message binds an attachment while its bytes are still uploading and the
+  // stored content is never revisited, so this event is what flips an
+  // already-rendered timeline chip. Settled-safe state is encoded by REMOVING
+  // the pending markers, matching the summary wire shape (absence = safe).
+  const handleAttachmentUploadStatusChanged = async (payload: {
+    workspaceId: string
+    attachmentId: string
+    uploadStatus: string
+    safetyStatus: string
+    streamId: string
+    messageId: string
+  }) => {
+    if (payload.workspaceId !== workspaceId) return
+    if (!payload.streamId || !payload.messageId) return
+    const settledSafe = (SHAREABLE_SAFETY_STATUSES as readonly string[]).includes(payload.safetyStatus)
+    await patchCachedMessageAttachment(payload.streamId, payload.messageId, payload.attachmentId, (a) => {
+      const { safetyStatus: _safety, uploadStatus: _upload, ...rest } = a
+      return settledSafe ? rest : { ...rest, safetyStatus: payload.safetyStatus, uploadStatus: payload.uploadStatus }
     })
   }
 
@@ -1844,6 +1842,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("scheduled_message:sent", handleScheduledSent)
   socket.on("scheduled_message:cancelled", handleScheduledCancelled)
   socket.on("attachment:transcoded", handleAttachmentTranscoded)
+  socket.on("attachment:upload_status_changed", handleAttachmentUploadStatusChanged)
   socket.on("attachment:thumbnailed", handleAttachmentThumbnailed)
   socket.on("label:created", handleLabelUpserted)
   socket.on("label:updated", handleLabelUpserted)
@@ -1899,6 +1898,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("scheduled_message:sent", handleScheduledSent)
     socket.off("scheduled_message:cancelled", handleScheduledCancelled)
     socket.off("attachment:transcoded", handleAttachmentTranscoded)
+    socket.off("attachment:upload_status_changed", handleAttachmentUploadStatusChanged)
     socket.off("attachment:thumbnailed", handleAttachmentThumbnailed)
     socket.off("label:created", handleLabelUpserted)
     socket.off("label:updated", handleLabelUpserted)

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { PendingAttachments } from "./pending-attachments"
 import type { PendingAttachment } from "@/hooks/use-attachments"
+import * as uploadManager from "@/lib/uploads/upload-manager"
 
 function attachment(overrides: Partial<PendingAttachment> = {}): PendingAttachment {
   return {
@@ -72,6 +73,35 @@ describe("PendingAttachments", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument()
   })
 
+  it("offers an in-place retry on a retryable failed chip", () => {
+    const retrySpy = vi.spyOn(uploadManager, "retryUpload").mockResolvedValue(undefined)
+    render(
+      <PendingAttachments
+        attachments={[attachment({ status: "error", error: "Network error during upload", canRetry: true })]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.getByText("Retry")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Retry upload of screenshot.png" }))
+    expect(retrySpy).toHaveBeenCalledWith("attach_img")
+    retrySpy.mockRestore()
+  })
+
+  it("keeps remove-only recovery for a reservation failure (nothing to retry against)", () => {
+    render(
+      <PendingAttachments
+        attachments={[attachment({ status: "error", error: "Internal server error", canRetry: false })]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.getByText("Failed")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Retry upload/ })).not.toBeInTheDocument()
+  })
+
   it("keeps a plain, non-previewable chip for an unsupported file type", () => {
     render(
       <PendingAttachments
@@ -121,12 +151,52 @@ describe("PendingAttachments", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 
-  it("shows the preview while an image is still uploading (no remove control yet)", () => {
+  it("shows a Cancel control while an image is still uploading, so a stuck upload can be abandoned", () => {
     render(
-      <PendingAttachments attachments={[attachment({ status: "uploading" })]} onRemove={vi.fn()} workspaceId="ws_1" />
+      <PendingAttachments
+        attachments={[attachment({ status: "uploading" })]}
+        onRemove={vi.fn()}
+        onCancelUpload={vi.fn()}
+        workspaceId="ws_1"
+      />
     )
 
     expect(screen.getByRole("button", { name: "Preview screenshot.png" })).toBeInTheDocument()
+    // The × stays available during upload; it cancels the in-flight transfer
+    // instead of removing an already-settled chip.
+    expect(screen.getByRole("button", { name: "Cancel upload of screenshot.png" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Remove screenshot.png" })).not.toBeInTheDocument()
+  })
+
+  it("clicking the × during upload cancels the transfer, not the remove path", () => {
+    const onRemove = vi.fn()
+    const onCancelUpload = vi.fn()
+    render(
+      <PendingAttachments
+        attachments={[attachment({ status: "uploading" })]}
+        onRemove={onRemove}
+        onCancelUpload={onCancelUpload}
+        workspaceId="ws_1"
+      />
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel upload of screenshot.png" }))
+    expect(onCancelUpload).toHaveBeenCalledWith("attach_img")
+    expect(onRemove).not.toHaveBeenCalled()
+  })
+
+  it("shows a gradually-filling progress bar while uploading (no counting number)", () => {
+    render(
+      <PendingAttachments
+        attachments={[attachment({ status: "uploading", progress: 0.42 })]}
+        onRemove={vi.fn()}
+        onCancelUpload={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    const bar = screen.getByRole("progressbar", { name: "Uploading screenshot.png" })
+    expect(bar).toHaveAttribute("aria-valuenow", "42")
+    expect(screen.queryByText(/\d+%/)).not.toBeInTheDocument()
   })
 })

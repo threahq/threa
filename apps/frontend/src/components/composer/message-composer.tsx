@@ -142,6 +142,8 @@ export interface MessageComposerProps {
 
   pendingAttachments: PendingAttachment[]
   onRemoveAttachment: (id: string) => void
+  /** Abort an in-flight upload and drop its chip (the × during upload). */
+  onCancelAttachmentUpload?: (id: string) => void
   /**
    * Context refs attached to the current draft (sidecar). Rendered inline
    * with `pendingAttachments` as one unified attachment row using the same
@@ -268,6 +270,7 @@ export function MessageComposer({
   onContentChange,
   pendingAttachments,
   onRemoveAttachment,
+  onCancelAttachmentUpload,
   contextRefs,
   streamId,
   memoAnchorStreamId = streamId,
@@ -856,6 +859,7 @@ export function MessageComposer({
                     <PendingAttachments
                       attachments={pendingAttachments}
                       onRemove={onRemoveAttachment}
+                      onCancelUpload={onCancelAttachmentUpload}
                       workspaceId={workspaceId}
                       beforePills={
                         contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
@@ -1038,6 +1042,7 @@ export function MessageComposer({
         <PendingAttachments
           attachments={pendingAttachments}
           onRemove={onRemoveAttachment}
+          onCancelUpload={onCancelAttachmentUpload}
           workspaceId={workspaceId}
           beforePills={
             contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (

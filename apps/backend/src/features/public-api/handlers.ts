@@ -207,7 +207,8 @@ function serializeMessage(
     ...(message.sentVia != null && { sentVia: message.sentVia }),
     // Always present (possibly empty) so consumers can rely on the shape.
     metadata: message.metadata ?? {},
-    ...(opts?.attachments && opts.attachments.length > 0 && { attachments: opts.attachments.map(toAttachmentSummary) }),
+    ...(opts?.attachments &&
+      opts.attachments.length > 0 && { attachments: opts.attachments.map((a) => toAttachmentSummary(a)) }),
     ...(message.editedAt != null && { editedAt: message.editedAt.toISOString() }),
     createdAt: message.createdAt.toISOString(),
   }

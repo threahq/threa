@@ -18,6 +18,7 @@ import { MemoChip } from "@/components/memo-embed/memo-chip"
 import { GifChip } from "@/components/giphy/gif-chip"
 import { PointerMentionChip, ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
+import { PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
 import { useLinkPreviewContext } from "./link-preview-context"
 import { QuoteReplyBlock } from "./quote-reply-block"
 import { BlockquoteBlock } from "./blockquote-block"
@@ -171,6 +172,32 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
 
   if (href?.startsWith("attachment:")) {
     const attachmentId = href.replace("attachment:", "")
+
+    // Still uploading/scanning, failed, or quarantined: the bytes may not
+    // exist (or must not be served), and the status chip below the message
+    // already says so — a healthy-looking clickable link here would
+    // contradict it. Render muted (no link affordance) until the state
+    // settles (the socket patch / bootstrap overlay re-renders this when it
+    // does). It stays TAPPABLE: activating routes through openAttachment,
+    // whose pending guard toasts the reason — on touch there is no hover, so
+    // a tap is the only way a phone user can learn why the link is dimmed.
+    const pendingState = attachmentContext?.getAttachmentPendingState(attachmentId) ?? null
+    if (pendingState) {
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            attachmentContext?.openAttachment(attachmentId, false)
+          }}
+          title={PENDING_STATE_LABELS[pendingState]}
+          aria-label={`${extractTextFromChildren(children)} — ${PENDING_STATE_LABELS[pendingState]}`}
+          className="break-all text-muted-foreground cursor-default text-left"
+        >
+          <ProcessedChildren>{children}</ProcessedChildren>
+        </button>
+      )
+    }
 
     const handleClick = (e: MouseEvent) => {
       e.preventDefault()

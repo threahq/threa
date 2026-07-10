@@ -1,4 +1,5 @@
 import { createContext, useContext, useCallback, useState, type ReactNode } from "react"
+import { toast } from "sonner"
 import { attachmentsApi } from "@/api"
 import { triggerDownload } from "@/lib/image-utils"
 import { useMediaGallery } from "@/contexts"
@@ -8,6 +9,7 @@ import {
   isPdfAttachment,
   isTextPreviewableAttachment,
 } from "@/lib/attachment-kind"
+import { attachmentPendingState, PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
 
 interface Attachment {
   id: string
@@ -15,10 +17,20 @@ interface Attachment {
   mimeType: string
   sizeBytes: number
   processingStatus?: string
+  safetyStatus?: string
+  uploadStatus?: string
 }
+
+type AttachmentPendingState = ReturnType<typeof attachmentPendingState>
 
 interface AttachmentContextValue {
   openAttachment: (attachmentId: string, metaKey: boolean) => void
+  /**
+   * Live upload/scan state for one of this message's attachments, so the
+   * inline `attachment:` link renders (and behaves) consistently with the
+   * status chip below the message — its bytes may not exist yet.
+   */
+  getAttachmentPendingState: (attachmentId: string) => AttachmentPendingState
   hoveredAttachmentId: string | null
   setHoveredAttachmentId: (id: string | null) => void
 }
@@ -42,10 +54,37 @@ export function AttachmentProvider({ workspaceId, attachments, children }: Attac
   const [hoveredAttachmentId, setHoveredAttachmentId] = useState<string | null>(null)
   const { openMedia } = useMediaGallery()
 
+  const getAttachmentPendingState = useCallback(
+    (attachmentId: string): AttachmentPendingState => {
+      const attachment = attachments.find((a) => a.id === attachmentId)
+      return attachment ? attachmentPendingState(attachment as Parameters<typeof attachmentPendingState>[0]) : null
+    },
+    [attachments]
+  )
+
   const openAttachment = useCallback(
     async (attachmentId: string, metaKey: boolean) => {
       const attachment = attachments.find((a) => a.id === attachmentId)
       if (!attachment) return
+
+      // Bytes may not exist yet (send-while-uploading) or are blocked — a
+      // download/preview would 404 or 403 with no explanation.
+      const pending = attachmentPendingState(attachment as Parameters<typeof attachmentPendingState>[0])
+      if (pending) {
+        // In-flight states are routine, not failures — error styling is
+        // reserved for failed/blocked so a red toast always means something
+        // is actually wrong (INV-63).
+        if (pending === "uploading" || pending === "scanning") {
+          toast.info(`This file isn't available yet — ${PENDING_STATE_LABELS[pending].toLowerCase()}`)
+        } else {
+          toast.error(
+            pending === "blocked"
+              ? "This file was blocked by the malware scan"
+              : `This file isn't available yet — ${PENDING_STATE_LABELS[pending].toLowerCase()}`
+          )
+        }
+        return
+      }
 
       const isImage = attachment.mimeType.startsWith("image/")
       const isVideo = !isImage && !!attachment.processingStatus
@@ -74,13 +113,16 @@ export function AttachmentProvider({ workspaceId, attachments, children }: Attac
         }
       } catch (error) {
         console.error("Failed to get attachment URL:", error)
+        toast.error("Couldn't open this attachment")
       }
     },
     [workspaceId, attachments, openMedia]
   )
 
   return (
-    <AttachmentContext.Provider value={{ openAttachment, hoveredAttachmentId, setHoveredAttachmentId }}>
+    <AttachmentContext.Provider
+      value={{ openAttachment, getAttachmentPendingState, hoveredAttachmentId, setHoveredAttachmentId }}
+    >
       {children}
     </AttachmentContext.Provider>
   )

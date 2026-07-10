@@ -320,6 +320,29 @@ export interface PendingMessage {
 }
 
 /**
+ * A reserved background upload's durable job: the file bytes plus enough
+ * metadata to resume the transfer after a reload or app reopen. Written when
+ * the reservation lands (there is nothing durable to resume before an id
+ * exists), deleted when the upload settles or is cancelled. For E2E streams
+ * `blob` is ciphertext — plaintext never rests in IDB (E2EE-4); the real
+ * filename/mime here are display metadata the composer chip needs.
+ */
+export interface CachedUploadJob {
+  attachmentId: string
+  workspaceId: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  e2e: boolean
+  blob: Blob
+  status: "pending" | "failed"
+  error?: string
+  /** Network-class failure — the online auto-heal may retry it. Unindexed. */
+  retryable?: boolean
+  createdAt: number
+}
+
+/**
  * Generic offline operation queue for non-message writes (edits, deletes, reactions).
  * Operations are retried when back online, similar to PendingMessage for sends.
  */
@@ -881,6 +904,7 @@ export class ThreaDatabase extends Dexie {
   conversations!: EntityTable<CachedBoardPost, "id">
   boardHiddenConversations!: EntityTable<CachedBoardHiddenConversation, "id">
   boardMutedStreams!: EntityTable<CachedBoardMutedStream, "id">
+  uploadJobs!: EntityTable<CachedUploadJob, "attachmentId">
 
   constructor(name: string) {
     super(name)
@@ -1286,6 +1310,13 @@ export class ThreaDatabase extends Dexie {
       boardMutedStreams: "id, workspaceId",
     })
 
+    // v39: durable background-upload jobs (bytes + metadata) so in-flight
+    // uploads survive a reload/app-reopen and resume. The blob itself is an
+    // unindexed field.
+    this.version(39).stores({
+      uploadJobs: "attachmentId, workspaceId",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -1367,17 +1398,22 @@ export async function clearAllCachedData(): Promise<void> {
       // auto-resume — sign-out must drop it so the next account can't resume
       // this identity's unlocked session.
       db.e2eDeviceKeys.clear(),
-      // Note: we keep pendingMessages to retry sending after re-login
+      // Note: we keep pendingMessages to retry sending after re-login, and
+      // uploadJobs for the same reason — a queued message's attachment bytes
+      // must survive the re-login to heal the send.
     ])
   } finally {
-    const [{ resetWorkspaceStoreCache }, { resetStreamStoreCache }, { resetDraftStoreCache }] = await Promise.all([
-      import("@/stores/workspace-store"),
-      import("@/stores/stream-store"),
-      import("@/stores/draft-store"),
-    ])
+    const [{ resetWorkspaceStoreCache }, { resetStreamStoreCache }, { resetDraftStoreCache }, { resetUploadManager }] =
+      await Promise.all([
+        import("@/stores/workspace-store"),
+        import("@/stores/stream-store"),
+        import("@/stores/draft-store"),
+        import("@/lib/uploads/upload-manager"),
+      ])
     resetWorkspaceStoreCache()
     resetStreamStoreCache()
     resetDraftStoreCache()
+    resetUploadManager()
   }
 }
 

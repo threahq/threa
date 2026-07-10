@@ -28,6 +28,7 @@ import type {
   StorageProvider,
   ProcessingStatus,
   AttachmentSafetyStatus,
+  AttachmentUploadStatus,
   ConversationStatus,
   BoardScopeStreamType,
   BoardLens,
@@ -598,6 +599,20 @@ export interface AttachmentSummary {
   filename: string
   mimeType: string
   sizeBytes: number
+  /**
+   * Present only while the attachment is NOT yet shareable (reserved upload
+   * still settling, or quarantined). Absence means settled-and-safe — viewers
+   * render normally. Kept current via `attachment:upload_status_changed`
+   * socket patches plus the bootstrap enrichment overlay.
+   */
+  safetyStatus?: AttachmentSafetyStatus
+  /**
+   * Reserved-upload workflow state, present only while an
+   * `attachment_uploads` tracking row exists (in flight or failed). Lets
+   * viewers distinguish "still uploading" from "upload failed" — both have
+   * `safetyStatus: "pending_upload"`.
+   */
+  uploadStatus?: AttachmentUploadStatus
   /** Present for video attachments so the frontend knows transcoding state */
   processingStatus?: ProcessingStatus
   /**

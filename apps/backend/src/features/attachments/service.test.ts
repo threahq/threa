@@ -5,6 +5,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, type Attachment } from "./repository"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
+import { AttachmentUploadRepository } from "./upload-repository"
 import {
   AttachmentService,
   buildUploadParams,
@@ -91,6 +92,9 @@ describe("AttachmentService", () => {
       steps.push("extraction:delete")
       return true
     })
+    spyOn(AttachmentUploadRepository, "deleteByAttachmentId").mockImplementation(async () => {
+      steps.push("upload:delete")
+    })
     spyOn(AttachmentRepository, "delete").mockImplementation(async () => {
       steps.push("attachment:delete")
       return true
@@ -108,6 +112,7 @@ describe("AttachmentService", () => {
       "transaction:start",
       "attachment:lock",
       "extraction:delete",
+      "upload:delete",
       "attachment:delete",
       "transaction:end",
       "storage:delete",
@@ -393,6 +398,59 @@ describe("AttachmentService", () => {
 
       expect(result).toBeNull()
     })
+  })
+})
+
+describe("completeReservedUpload concurrent-overwrite recovery", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("marks the scan-window row failed (retryable) when the stored bytes changed during the scan", async () => {
+    spyOn(db, "withTransaction").mockImplementation((async (_db: unknown, callback: (client: any) => Promise<any>) =>
+      callback({})) as any)
+    const attachment = makeAttachment({
+      id: "attach_swap",
+      messageId: "msg_1",
+      streamId: "stream_1",
+      safetyStatus: AttachmentSafetyStatuses.PENDING_UPLOAD,
+    })
+    spyOn(AttachmentUploadRepository, "findByAttachmentId").mockResolvedValue({
+      attachmentId: "attach_swap",
+      workspaceId: attachment.workspaceId,
+      uploadedBy: "usr_1",
+      status: "uploading",
+      expectedSizeBytes: 10,
+    } as any)
+    spyOn(AttachmentRepository, "findByIdForUpdate").mockResolvedValue(attachment)
+    spyOn(AttachmentRepository, "findById").mockResolvedValue(attachment)
+    spyOn(AttachmentRepository, "updateSafetyStatus").mockResolvedValue(true)
+    spyOn(AttachmentUploadRepository, "markUploaded").mockResolvedValue({ status: "uploaded" } as any)
+    // The row is at `uploaded` (scan window) by the time the mismatch is
+    // detected — markFailed MUST still win, or the row wedges until the
+    // sweep falsely quarantines a legitimate file.
+    const markFailed = spyOn(AttachmentUploadRepository, "markFailed").mockResolvedValue({ status: "failed" } as any)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+
+    const { service, storage } = createService()
+    storage.getObjectStat = mock(async () => ({ sizeBytes: 10, etag: "etag-entry" }))
+    // Entry stat and settle stat disagree → concurrent overwrite detected.
+    storage.getObjectStat.mockResolvedValueOnce({ sizeBytes: 10, etag: "etag-entry" })
+    storage.getObjectStat.mockResolvedValueOnce({ sizeBytes: 10, etag: "etag-swapped" })
+
+    const result = await service.completeReservedUpload({ attachment })
+
+    expect(result).toEqual({ status: "conflict", reason: expect.stringContaining("retry") })
+    expect(markFailed).toHaveBeenCalledWith(expect.anything(), attachment.workspaceId, "attach_swap", {
+      code: "concurrent_overwrite",
+      message: expect.any(String),
+    })
+    // Bound attachment → viewers are told the upload failed.
+    expect(outbox).toHaveBeenCalledWith(
+      expect.anything(),
+      "attachment:upload_status_changed",
+      expect.objectContaining({ attachmentId: "attach_swap", uploadStatus: "failed" })
+    )
   })
 })
 

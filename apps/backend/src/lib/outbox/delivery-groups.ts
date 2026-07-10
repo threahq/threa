@@ -24,6 +24,7 @@ import {
   type StreamUnarchivedOutboxPayload,
   type AttachmentTranscodedOutboxPayload,
   type AttachmentThumbnailedOutboxPayload,
+  type AttachmentUploadStatusChangedOutboxPayload,
   type MessagesMovedOutboxPayload,
   type ConversationCreatedOutboxPayload,
   type ConversationUpdatedOutboxPayload,
@@ -248,6 +249,12 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   if (isOutboxEventType(event, "attachment:thumbnailed")) {
     const payload = event.payload as AttachmentThumbnailedOutboxPayload
     return payload.streamId ? [streamGroup(payload.streamId)] : [WORKSPACE_GROUP]
+  }
+
+  // Only emitted for message-bound attachments, so always stream-scoped.
+  if (isOutboxEventType(event, "attachment:upload_status_changed")) {
+    const payload = event.payload as AttachmentUploadStatusChangedOutboxPayload
+    return [streamGroup(payload.streamId)]
   }
 
   // Labels are owner-scoped: every label event (upsert, delete, assign,

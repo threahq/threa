@@ -53,6 +53,7 @@ let mockPendingAttachments: Array<{
 const mockFileInputRef = { current: null }
 const mockHandleFileSelect = vi.fn()
 const mockRemoveAttachment = vi.fn()
+const mockCancelUpload = vi.fn()
 const mockClearAttachments = vi.fn()
 const mockRestoreAttachments = vi.fn()
 
@@ -113,10 +114,13 @@ describe("useDraftComposer", () => {
           fileInputRef: mockFileInputRef,
           handleFileSelect: mockHandleFileSelect,
           removeAttachment: mockRemoveAttachment,
+          cancelUpload: mockCancelUpload,
           uploadedIds: mockPendingAttachments
-            .filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_"))
+            .filter((a) => a.status !== "error" && !a.id.startsWith("temp_"))
             .map((a) => a.id),
           isUploading: mockPendingAttachments.some((a) => a.status === "uploading"),
+          // Mirrors the real hook: a temp-id chip is a reservation in flight.
+          isReserving: mockPendingAttachments.some((a) => a.status === "uploading" && a.id.startsWith("temp_")),
           hasFailed: mockPendingAttachments.some((a) => a.status === "error"),
           clear: mockClearAttachments,
           restore: mockRestoreAttachments,
@@ -409,7 +413,7 @@ describe("useDraftComposer", () => {
       expect(result.current.canSend).toBe(false)
     })
 
-    it("should be false while uploads are still in progress", () => {
+    it("should be false only while a reservation is in flight (temp id, no server id yet)", () => {
       mockPendingAttachments = [
         { id: "temp_1", filename: "test.txt", mimeType: "text/plain", sizeBytes: 100, status: "uploading" },
       ]
@@ -420,7 +424,23 @@ describe("useDraftComposer", () => {
         result.current.setContent(makeDoc("Hello"))
       })
 
+      // No id yet — sending now would silently drop the file.
       expect(result.current.canSend).toBe(false)
+    })
+
+    it("should stay sendable while a reserved upload's bytes are still streaming (send-while-uploading)", () => {
+      mockPendingAttachments = [
+        { id: "attach_1", filename: "test.txt", mimeType: "text/plain", sizeBytes: 100, status: "uploading" },
+      ]
+
+      const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.setContent(makeDoc("Hello"))
+      })
+
+      // The id is real: the message binds it and the bytes finish in the background.
+      expect(result.current.canSend).toBe(true)
     })
 
     it("should be true when uploads have failed (send with whatever succeeded)", () => {

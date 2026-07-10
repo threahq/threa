@@ -24,6 +24,8 @@ import type {
   AuthorType,
   Visibility,
   NotificationLevel,
+  AttachmentSafetyStatus,
+  AttachmentUploadStatus,
 } from "@threa/types"
 
 export type OutboxEventType =
@@ -101,6 +103,7 @@ export type OutboxEventType =
   | "link_preview:dismissed"
   | "attachment:transcoded"
   | "attachment:thumbnailed"
+  | "attachment:upload_status_changed"
   | "bot_invocation:available"
   | "bot_invocation:claimed"
   | "bot:active_actor_changed"
@@ -165,6 +168,7 @@ export type WorkspaceScopedEventType =
   | "bot:updated"
   | "attachment:transcoded"
   | "attachment:thumbnailed"
+  | "attachment:upload_status_changed"
 
 interface StreamScopedPayload {
   workspaceId: string
@@ -409,6 +413,22 @@ export interface AttachmentThumbnailedOutboxPayload extends WorkspaceScopedPaylo
   height: number
   streamId?: string
   messageId?: string
+}
+
+/**
+ * Fired when a reserved upload's state changes for an attachment already
+ * bound to a message: settled (bytes landed + scan verdict applied), failed
+ * (client report or staleness sweep), or abandoned. Stored message content is
+ * never revisited, so this event is what flips already-rendered timeline
+ * chips; unbound reservations emit nothing (only the uploader's own composer
+ * tracks those, locally).
+ */
+export interface AttachmentUploadStatusChangedOutboxPayload extends WorkspaceScopedPayload {
+  attachmentId: string
+  uploadStatus: AttachmentUploadStatus
+  safetyStatus: AttachmentSafetyStatus
+  streamId: string
+  messageId: string
 }
 
 /**
@@ -1014,6 +1034,7 @@ export interface OutboxEventPayloadMap {
   "link_preview:dismissed": LinkPreviewDismissedOutboxPayload
   "attachment:transcoded": AttachmentTranscodedOutboxPayload
   "attachment:thumbnailed": AttachmentThumbnailedOutboxPayload
+  "attachment:upload_status_changed": AttachmentUploadStatusChangedOutboxPayload
   "attachment:extraction_completed": AttachmentExtractionCompletedOutboxPayload
   "bot_invocation:available": BotInvocationAvailableOutboxPayload
   "bot_invocation:claimed": BotInvocationClaimedOutboxPayload

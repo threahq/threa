@@ -575,6 +575,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                     onContentChange={composer.handleContentChange}
                     pendingAttachments={composer.pendingAttachments}
                     onRemoveAttachment={composer.handleRemoveAttachment}
+                    onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
                     fileInputRef={composer.fileInputRef}
                     onFileSelect={composer.handleFileSelect}
                     onFileUpload={composer.uploadFile}
@@ -646,6 +647,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                   onContentChange={composer.handleContentChange}
                   pendingAttachments={composer.pendingAttachments}
                   onRemoveAttachment={composer.handleRemoveAttachment}
+                  onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
                   fileInputRef={composer.fileInputRef}
                   onFileSelect={composer.handleFileSelect}
                   onFileUpload={composer.uploadFile}

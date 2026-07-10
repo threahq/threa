@@ -44,6 +44,12 @@ export interface AttachmentPillProps {
   removeLabel?: string
   /** Accessible name for the activate affordance (defaults to `label`). */
   activateLabel?: string
+  /**
+   * Upload progress 0..1. While set (and < 1) a thin bar along the pill's
+   * bottom edge fills gradually — inside the pill's existing bounds, so no
+   * layout shift (INV-21).
+   */
+  progress?: number
   labelMaxWidth?: string
   className?: string
 }
@@ -97,6 +103,29 @@ function PillLeading({
 }
 
 /**
+ * Thin fill along the pill's bottom edge — upload feedback that fills up
+ * rather than counting up. Width animates via the transition, so per-percent
+ * updates read as one continuous motion.
+ */
+export function PillProgressBar({ progress, label }: { progress: number; label: string }) {
+  return (
+    <span
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(Math.min(1, Math.max(0, progress)) * 100)}
+      aria-label={`Uploading ${label}`}
+      className="absolute inset-x-0 bottom-0 h-[3px] bg-muted-foreground/15"
+    >
+      <span
+        className="block h-full rounded-r-full bg-primary/70 transition-[width] duration-300 ease-out"
+        style={{ width: `${Math.min(1, Math.max(0, progress)) * 100}%` }}
+      />
+    </span>
+  )
+}
+
+/**
  * Canonical pill primitive used by the composer attachment row and the
  * timeline message context-ref badge. Keeps file uploads and context refs
  * visually consistent — same shape, spacing, status palette, and
@@ -115,14 +144,18 @@ export function AttachmentPill({
   href,
   removeLabel,
   activateLabel,
+  progress,
   labelMaxWidth = "max-w-[160px]",
   className,
 }: AttachmentPillProps) {
   // Matches `<Button variant="outline" size="sm" className="h-8 gap-2 text-xs">`,
   // the surface `<AttachmentList>` uses for sent-message file cards, so a chip
   // keeps identical metrics moving from composer to timeline.
-  const baseStyles = "inline-flex h-8 items-center gap-2 rounded-md px-3 text-xs select-none"
+  // relative + overflow-hidden anchor and clip the progress fill bar.
+  const baseStyles = "relative inline-flex h-8 items-center gap-2 overflow-hidden rounded-md px-3 text-xs select-none"
   const statusStyles = STATUS_STYLES[status]
+
+  const showProgress = typeof progress === "number" && progress >= 0 && progress < 1
 
   const inner = (
     <>
@@ -149,6 +182,7 @@ export function AttachmentPill({
           <X className="h-3 w-3" />
         </button>
       )}
+      {showProgress && <PillProgressBar progress={progress} label={label} />}
     </>
   )
 

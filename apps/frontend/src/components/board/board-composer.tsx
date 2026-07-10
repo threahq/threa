@@ -214,6 +214,7 @@ function BoardComposerForm({
         onContentChange={composer.handleContentChange}
         pendingAttachments={composer.pendingAttachments}
         onRemoveAttachment={composer.handleRemoveAttachment}
+        onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
         workspaceId={workspaceId}
         streamId={selectedStream?.id}
         fileInputRef={composer.fileInputRef}

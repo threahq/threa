@@ -427,6 +427,7 @@ describe("hydrateSharedMessageIds", () => {
               mimeType: "image/png",
               sizeBytes: 1234,
               processingStatus: "completed",
+              safetyStatus: "clean",
             } as any,
           ],
         ],

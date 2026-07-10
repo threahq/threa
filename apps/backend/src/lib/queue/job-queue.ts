@@ -23,6 +23,7 @@ export const JobQueues = {
   EMBEDDING_GENERATE: "embedding.generate",
   BOUNDARY_EXTRACT: "boundary.extract",
   CONVERSATION_STALENESS_SWEEP: "conversation.staleness-sweep",
+  ATTACHMENT_UPLOAD_SWEEP: "attachment.upload-sweep",
   MEMO_BATCH_CHECK: "memo.batch-check",
   MEMO_BATCH_PROCESS: "memo.batch-process",
   COMMAND_EXECUTE: "command.execute",
@@ -112,6 +113,10 @@ export interface BoundaryExtractionJobData {
 }
 
 export interface ConversationStalenessSweepJobData {
+  workspaceId: string // Use "system" for system-wide cron job
+}
+
+export interface AttachmentUploadSweepJobData {
   workspaceId: string // Use "system" for system-wide cron job
 }
 
@@ -314,6 +319,7 @@ export interface JobDataMap {
   [JobQueues.EMBEDDING_GENERATE]: EmbeddingJobData
   [JobQueues.BOUNDARY_EXTRACT]: BoundaryExtractionJobData
   [JobQueues.CONVERSATION_STALENESS_SWEEP]: ConversationStalenessSweepJobData
+  [JobQueues.ATTACHMENT_UPLOAD_SWEEP]: AttachmentUploadSweepJobData
   [JobQueues.MEMO_BATCH_CHECK]: MemoBatchCheckJobData
   [JobQueues.MEMO_BATCH_PROCESS]: MemoBatchProcessJobData
   [JobQueues.COMMAND_EXECUTE]: CommandExecuteJobData

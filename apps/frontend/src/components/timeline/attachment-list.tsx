@@ -1,6 +1,8 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
-import { Download, FileText, File, Loader2, Copy, Play, Globe, Check } from "lucide-react"
+import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react"
+import { Download, FileText, File, Loader2, Copy, Play, Globe, Check, RotateCcw, ShieldAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { PillProgressBar } from "@/components/composer/attachment-pill"
+import { attachmentPendingState, PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { useGalleryAttachmentUrls, type GalleryUrlKind } from "@/components/gallery/use-gallery-attachment-urls"
@@ -20,6 +22,12 @@ import {
   isTextPreviewableAttachment,
 } from "@/lib/attachment-kind"
 import type { AttachmentSummary } from "@threa/types"
+import {
+  subscribeUploads,
+  getUploadsVersion,
+  getUploadJobByAttachmentId,
+  retryUpload,
+} from "@/lib/uploads/upload-manager"
 
 interface AttachmentListProps {
   attachments: AttachmentSummary[]
@@ -179,8 +187,24 @@ function ImageAttachment({
     : attachmentContentUrl(workspaceId, attachment.id, { variant: "thumbnail" })
   const [imgDecoded, setImgDecoded] = useState(false)
   const [error, setError] = useState(false)
+  // Bumped to remount the <img> after a failed load — the sticky error state
+  // would otherwise outlive the connectivity blip that caused it (an offline
+  // sender's own just-settled image is the common case with background
+  // uploads).
+  const [retryNonce, setRetryNonce] = useState(0)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const touchCapable = useTouchCapable()
+
+  const retryLoad = useCallback(() => {
+    setError(false)
+    setImgDecoded(false)
+    setRetryNonce((n) => n + 1)
+  }, [])
+  useEffect(() => {
+    if (!error) return
+    window.addEventListener("online", retryLoad)
+    return () => window.removeEventListener("online", retryLoad)
+  }, [error, retryLoad])
 
   const box = inlineImageBox(attachment.width, attachment.height)
 
@@ -227,7 +251,15 @@ function ImageAttachment({
   )
 
   if (error) {
-    return <div className="rounded-lg border bg-muted/50 p-2 text-xs text-muted-foreground">Failed to load image</div>
+    return (
+      <button
+        type="button"
+        onClick={retryLoad}
+        className="rounded-lg border bg-muted/50 p-2 text-xs text-muted-foreground hover:border-primary"
+      >
+        Failed to load image — tap to retry
+      </button>
+    )
   }
 
   return (
@@ -252,6 +284,8 @@ function ImageAttachment({
         {!imgDecoded && <Skeleton className="absolute inset-0 rounded-none" />}
         {thumbnailUrl && (
           <img
+            // Remount on retry so the browser re-requests the same URL.
+            key={retryNonce}
             // Cache fast path: when the browser already has the bytes (warm
             // remount — virtua unmount/remount, bootstrap rewrite), the image
             // is complete before onLoad ever fires. Flip imgDecoded during
@@ -437,6 +471,105 @@ function OpenableFileChip({
   )
 }
 
+export { attachmentPendingState }
+
+export interface PendingChipInfo {
+  attachment: AttachmentSummary
+  state: "uploading" | "scanning" | "failed" | "blocked"
+  /** Bytes fraction when this device owns the transfer (the sender's tab). */
+  progress?: number
+  /** True when this device still holds the bytes and can restart the upload. */
+  canRetry: boolean
+}
+
+/**
+ * Live upload jobs on THIS device (the sender's tab) override the summary:
+ * they carry real progress and settle instantly on completion, ahead of the
+ * socket patch. Other viewers rely on the summary state alone. Shared by the
+ * plaintext and E2E attachment lists. Callers must subscribe to
+ * `subscribeUploads` for live job updates.
+ */
+export function resolveUploadChip(a: AttachmentSummary): PendingChipInfo | null {
+  const job = getUploadJobByAttachmentId(a.id)
+  if (job) {
+    if (job.status === "error") return { attachment: a, state: "failed", canRetry: true }
+    if (job.status === "uploaded") return null // settled locally; render normally
+    return { attachment: a, state: "uploading", progress: job.progress, canRetry: false }
+  }
+  const state = attachmentPendingState(a)
+  return state ? { attachment: a, state, canRetry: false } : null
+}
+
+/**
+ * Inert status chip for a not-yet-downloadable attachment. Excluded from every
+ * interactive partition — its bytes may not exist, so previews/downloads would
+ * 404 or be rejected server-side with no explanation. A failed upload whose
+ * bytes are still on this device offers an in-place retry.
+ */
+export function PendingAttachmentChip({ attachment, state, progress, canRetry }: PendingChipInfo) {
+  // max-w-full + a shrinkable filename keep the chip inside its column on
+  // phones — a fixed-width name next to a long status string overflows the
+  // viewport and clips the actionable part (INV-21). The filename gives way
+  // first; the status text truncates only after the name has collapsed.
+  if (state === "failed" && canRetry) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-8 max-w-full gap-2 text-xs"
+        onClick={() => retryUpload(attachment.id)}
+        aria-label={`Upload failed — retry ${attachment.filename}`}
+      >
+        <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{attachment.filename}</span>
+        <span className="shrink-0 text-destructive">Retry</span>
+      </Button>
+    )
+  }
+  const ICONS = { uploading: Loader2, scanning: Loader2, failed: File, blocked: ShieldAlert }
+  const Icon = ICONS[state]
+  const showProgress = state === "uploading" && typeof progress === "number" && progress < 1
+  return (
+    <Button variant="outline" size="sm" className="relative h-8 max-w-full gap-2 overflow-hidden text-xs" disabled>
+      <Icon className={cn("h-3.5 w-3.5 shrink-0", (state === "uploading" || state === "scanning") && "animate-spin")} />
+      <span className="min-w-0 flex-1 truncate">{attachment.filename}</span>
+      <span
+        className={cn(
+          "min-w-0 truncate",
+          state === "failed" || state === "blocked" ? "text-destructive" : "text-muted-foreground"
+        )}
+      >
+        {PENDING_STATE_LABELS[state]}
+      </span>
+      {showProgress && <PillProgressBar progress={progress} label={attachment.filename} />}
+    </Button>
+  )
+}
+
+/**
+ * In-flight image upload rendered at the size its settled thumbnail will
+ * occupy (intrinsic aspect when the summary carries dimensions, square
+ * fallback like `inlineImageBox`), so the uploading→settled transition swaps
+ * content in place instead of reshaping the message (INV-21).
+ */
+function PendingImagePlaceholder({ attachment, state, progress }: PendingChipInfo) {
+  const box = inlineImageBox(attachment.width, attachment.height)
+  return (
+    <div
+      className="relative flex items-center justify-center overflow-hidden rounded-lg border bg-muted/40"
+      style={{ width: box.width, height: box.height }}
+    >
+      <div className="flex flex-col items-center gap-1 px-2 text-center">
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <span className="text-[11px] text-muted-foreground">{state === "scanning" ? "Scanning…" : "Uploading…"}</span>
+      </div>
+      {state === "uploading" && typeof progress === "number" && progress < 1 && (
+        <PillProgressBar progress={progress} label={attachment.filename} />
+      )}
+    </div>
+  )
+}
+
 function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentItemProps) {
   const [isDownloading, setIsDownloading] = useState(false)
   const Icon = getFileIcon(attachment.mimeType)
@@ -478,43 +611,76 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   const attachmentIds = useMemo(() => new Set((attachments ?? []).map((a) => a.id)), [attachments])
   const selectedAttachmentId = mediaAttachmentId && attachmentIds.has(mediaAttachmentId) ? mediaAttachmentId : null
 
+  useSyncExternalStore(subscribeUploads, getUploadsVersion, getUploadsVersion)
+  const pendingUploads = useMemo(
+    () =>
+      (attachments ?? []).flatMap((a): PendingChipInfo[] => {
+        const chip = resolveUploadChip(a)
+        return chip ? [chip] : []
+      }),
+    // getUploadsVersion() is intentionally a dependency: local jobs progress
+    // while `attachments` stays referentially stable.
+    [attachments, getUploadsVersion()]
+  )
+  // In-flight IMAGES render as an image-sized placeholder inside the image
+  // row (same slot the settled thumbnail will occupy), so the settle swaps a
+  // box's content instead of a small chip vanishing up top while a 128px
+  // image pops in below (INV-21). Terminal states (failed/blocked) and
+  // non-image files keep the compact chip — their settled form is chip-sized
+  // anyway, and failed/blocked need the actionable/warning treatment.
+  const pendingImagePlaceholders = useMemo(
+    () =>
+      pendingUploads.filter(
+        (p) => (p.state === "uploading" || p.state === "scanning") && p.attachment.mimeType.startsWith("image/")
+      ),
+    [pendingUploads]
+  )
+  const pendingUploadChips = useMemo(() => {
+    const placeholderIds = new Set(pendingImagePlaceholders.map((p) => p.attachment.id))
+    return pendingUploads.filter((p) => !placeholderIds.has(p.attachment.id))
+  }, [pendingUploads, pendingImagePlaceholders])
+  const settledAttachments = useMemo(() => {
+    const pendingIds = new Set(pendingUploads.map((p) => p.attachment.id))
+    return (attachments ?? []).filter((a) => !pendingIds.has(a.id))
+  }, [attachments, pendingUploads])
+
   const imageAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => a.mimeType.startsWith("image/")),
-    [attachments]
+    () => settledAttachments.filter((a) => a.mimeType.startsWith("image/")),
+    [settledAttachments]
   )
   // Use processingStatus as the video discriminator — the backend sets it for
   // all video attachments, including application/octet-stream files with video
   // extensions that wouldn't match a pure mimeType.startsWith("video/") check.
   const videoAttachments = useMemo(
     () =>
-      (attachments ?? []).filter(
+      settledAttachments.filter(
         (a) => !a.mimeType.startsWith("image/") && a.processingStatus && a.processingStatus !== "failed"
       ),
-    [attachments]
+    [settledAttachments]
   )
   const failedVideoAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.mimeType.startsWith("image/") && a.processingStatus === "failed"),
-    [attachments]
+    () => settledAttachments.filter((a) => !a.mimeType.startsWith("image/") && a.processingStatus === "failed"),
+    [settledAttachments]
   )
   const markdownAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.processingStatus && isMarkdownAttachment(a)),
-    [attachments]
+    () => settledAttachments.filter((a) => !a.processingStatus && isMarkdownAttachment(a)),
+    [settledAttachments]
   )
   const htmlAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.processingStatus && isHtmlAttachment(a)),
-    [attachments]
+    () => settledAttachments.filter((a) => !a.processingStatus && isHtmlAttachment(a)),
+    [settledAttachments]
   )
   const pdfAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.processingStatus && isPdfAttachment(a)),
-    [attachments]
+    () => settledAttachments.filter((a) => !a.processingStatus && isPdfAttachment(a)),
+    [settledAttachments]
   )
   const textAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.processingStatus && isTextPreviewableAttachment(a)),
-    [attachments]
+    () => settledAttachments.filter((a) => !a.processingStatus && isTextPreviewableAttachment(a)),
+    [settledAttachments]
   )
   const fileAttachments = useMemo(
     () =>
-      (attachments ?? []).filter(
+      settledAttachments.filter(
         (a) =>
           !a.mimeType.startsWith("image/") &&
           !a.processingStatus &&
@@ -523,7 +689,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
           !isPdfAttachment(a) &&
           !isTextPreviewableAttachment(a)
       ),
-    [attachments]
+    [settledAttachments]
   )
 
   // Build gallery items — images + completed videos. Image URLs are
@@ -646,8 +812,18 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   return (
     <>
       <div className={cn("flex flex-col gap-2 mt-2", className)}>
-        {(imageAttachments.length > 0 || videoAttachments.length > 0) && (
+        {pendingUploadChips.length > 0 && (
           <div className="flex flex-wrap gap-2">
+            {pendingUploadChips.map((chip) => (
+              <PendingAttachmentChip key={chip.attachment.id} {...chip} />
+            ))}
+          </div>
+        )}
+        {(imageAttachments.length > 0 || videoAttachments.length > 0 || pendingImagePlaceholders.length > 0) && (
+          <div className="flex flex-wrap gap-2">
+            {pendingImagePlaceholders.map((chip) => (
+              <PendingImagePlaceholder key={chip.attachment.id} {...chip} />
+            ))}
             {imageAttachments.map((attachment) => (
               <ImageAttachment
                 key={attachment.id}

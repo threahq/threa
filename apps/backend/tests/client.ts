@@ -202,6 +202,8 @@ export interface Attachment {
   storagePath: string
   storageProvider: string
   processingStatus: string
+  safetyStatus?: string
+  e2eOnly?: boolean
   createdAt: string
 }
 
@@ -470,6 +472,49 @@ export async function uploadAttachment(
     throw new Error(`Upload attachment failed: ${JSON.stringify(data)}`)
   }
   return data.attachment
+}
+
+export interface AttachmentReservation {
+  attachment: Attachment
+  upload: { method: string; url: string; field: string }
+}
+
+export async function reserveAttachment(
+  client: TestClient,
+  workspaceId: string,
+  input: { filename: string; mimeType: string; sizeBytes: number; e2e?: boolean }
+): Promise<AttachmentReservation> {
+  const { status, data } = await client.post<AttachmentReservation>(
+    `/api/workspaces/${workspaceId}/attachments/reservations`,
+    input
+  )
+  if (status !== 201) {
+    throw new Error(`Reserve attachment failed: ${JSON.stringify(data)}`)
+  }
+  return data
+}
+
+/** Raw response so tests can assert the failure paths (400/403/404/409). */
+export async function uploadReservedContent(
+  client: TestClient,
+  workspaceId: string,
+  attachmentId: string,
+  file: { content: string | Buffer; filename: string; mimeType: string }
+): Promise<{ status: number; data: unknown }> {
+  return client.uploadFile(`/api/workspaces/${workspaceId}/attachments/${attachmentId}/content`, file)
+}
+
+export async function reportAttachmentUploadFailure(
+  client: TestClient,
+  workspaceId: string,
+  attachmentId: string,
+  errorMessage?: string
+): Promise<number> {
+  const { status } = await client.post(
+    `/api/workspaces/${workspaceId}/attachments/${attachmentId}/upload-failure`,
+    errorMessage ? { errorMessage } : {}
+  )
+  return status
 }
 
 export async function getAttachmentDownloadUrl(

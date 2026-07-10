@@ -65,7 +65,47 @@ export function attachmentContentUrl(
   return `${API_BASE}/api/workspaces/${workspaceId}/attachments/${attachmentId}/content${params}`
 }
 
+export interface AttachmentReservationInput {
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  e2e?: boolean
+}
+
+export interface AttachmentReservationResponse {
+  attachment: Attachment
+  upload: { method: "POST"; url: string; field: "file" }
+}
+
 export const attachmentsApi = {
+  /**
+   * Reserve an attachment id BEFORE its bytes exist. The id is immediately
+   * bindable to a message (send-while-uploading); the upload manager streams
+   * the bytes to the returned content URL afterwards.
+   */
+  reserve(
+    workspaceId: string,
+    input: AttachmentReservationInput,
+    options?: { signal?: AbortSignal }
+  ): Promise<AttachmentReservationResponse> {
+    return api.post<AttachmentReservationResponse>(
+      `/api/workspaces/${workspaceId}/attachments/reservations`,
+      input,
+      options?.signal ? { signal: options.signal } : undefined
+    )
+  },
+
+  /**
+   * Report a terminal upload failure for a reserved attachment so viewers of
+   * a message that already bound it stop seeing "Uploading…". Idempotent.
+   */
+  reportUploadFailure(workspaceId: string, attachmentId: string, errorMessage?: string): Promise<void> {
+    return api.post(
+      `/api/workspaces/${workspaceId}/attachments/${attachmentId}/upload-failure`,
+      errorMessage ? { errorMessage } : {}
+    )
+  },
+
   /**
    * Upload a file at workspace level; streamId is set when attached to a message.
    */

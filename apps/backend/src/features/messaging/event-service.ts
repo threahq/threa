@@ -9,9 +9,12 @@ import { ShareService, type ResolveEffectiveStream } from "./sharing"
 import {
   AttachmentRepository,
   AttachmentReferenceRepository,
+  AttachmentUploadRepository,
   isAttachmentReadableViaShareOrReference,
   isAttachmentSafeForSharing,
   toAttachmentSummary,
+  type Attachment,
+  type AttachmentUpload,
 } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
 import { AgentSessionRepository, StreamPersonaParticipantRepository } from "../agents"
@@ -26,6 +29,7 @@ import { OperationLeaseRepository } from "../../lib/operation-leases"
 import { resolveMentionContent } from "../mentions"
 import { deriveContentMarkdown } from "./content"
 import {
+  AttachmentSafetyStatuses,
   AuthorTypes,
   CompanionModes,
   ConversationIntents,
@@ -542,9 +546,21 @@ export class EventService {
           throw new Error("Invalid attachment IDs: must belong to this workspace")
         }
         // Shareable = scanned-clean OR E2E ciphertext (unscannable, owner's own
-        // bytes). Single source of truth with the download path.
+        // bytes). Single source of truth with the download path. One widening:
+        // the author's OWN still-settling reservation may bind (send-while-
+        // uploading) — it renders as an inert status chip and stays
+        // non-downloadable until the scan settles clean.
         if (!isAttachmentSafeForSharing(a.safetyStatus)) {
-          throw new Error("Invalid attachment IDs: must be malware-scan clean or E2E-encrypted")
+          const isPendingReservation =
+            (a.safetyStatus === AttachmentSafetyStatuses.PENDING_UPLOAD ||
+              a.safetyStatus === AttachmentSafetyStatuses.PENDING_SCAN) &&
+            a.messageId === null &&
+            a.uploadedBy === params.authorId
+          if (!isPendingReservation) {
+            throw new Error(
+              "Invalid attachment IDs: must be malware-scan clean, E2E-encrypted, or this author's own pending upload"
+            )
+          }
         }
         // INV-E1 backstop, the attachment sibling of assertE2eContentMatch: a
         // sealed message binds only E2E ciphertext rows (a plaintext row would
@@ -595,7 +611,46 @@ export class EventService {
         attachmentsToReference.push(a.id)
       }
 
-      attachmentSummaries = attachments.map(toAttachmentSummary)
+      // Bind fresh uploads BEFORE baking summaries into the event payload. The
+      // UPDATE takes the row locks a concurrent upload-settle also takes
+      // (`completeReservedUpload` locks FOR UPDATE), so re-reading pending rows
+      // afterwards observes any settle that committed first — otherwise the
+      // payload freezes "uploading" for an upload that already finished, and
+      // that settle's status event was skipped (the row was unbound then).
+      if (attachmentsToAttach.length > 0) {
+        const attached = await AttachmentRepository.attachToMessage(client, attachmentsToAttach, msgId, params.streamId)
+        if (attached !== attachmentsToAttach.length) {
+          // A concurrent send with the same clientMessageId may have won the
+          // bind: attach now runs BEFORE the message insert (whose ON CONFLICT
+          // is the usual duplicate detector), so the loser surfaces here.
+          // Route it to the duplicate-recovery path instead of a hard error.
+          if (params.clientMessageId) {
+            const winner = await MessageRepository.findByClientMessageId(
+              client,
+              params.streamId,
+              params.clientMessageId
+            )
+            if (winner) throw new DuplicateMessageError(winner)
+          }
+          throw new Error("Failed to attach all files")
+        }
+      }
+
+      let summaryRows = attachments
+      const pendingIds = attachments.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus)).map((a) => a.id)
+      let uploadsByAttachmentId = new Map<string, AttachmentUpload>()
+      if (pendingIds.length > 0) {
+        const refreshed = await AttachmentRepository.findByIds(client, pendingIds)
+        const refreshedById = new Map(refreshed.map((a) => [a.id, a]))
+        summaryRows = attachments.map((a) => refreshedById.get(a.id) ?? a)
+        const stillPendingIds = summaryRows.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus)).map((a) => a.id)
+        uploadsByAttachmentId = await AttachmentUploadRepository.findByAttachmentIds(
+          client,
+          params.workspaceId,
+          stillPendingIds
+        )
+      }
+      attachmentSummaries = summaryRows.map((a) => toAttachmentSummary(a, uploadsByAttachmentId.get(a.id)?.status))
     }
 
     // Non-empty metadata only — keep payloads and projections clean of `{}`.
@@ -678,15 +733,10 @@ export class EventService {
       await StreamPersonaParticipantRepository.recordParticipation(client, params.streamId, params.authorId)
     }
 
-    // Link first-time attachments to this message (also sets streamId).
-    // Re-referenced attachments skip this: overwriting their owning
-    // `message_id`/`stream_id` would orphan the original `attachment:` link.
-    if (attachmentsToAttach.length > 0) {
-      const attached = await AttachmentRepository.attachToMessage(client, attachmentsToAttach, msgId, params.streamId)
-      if (attached !== attachmentsToAttach.length) {
-        throw new Error("Failed to attach all files")
-      }
-    }
+    // First-time attachments were linked (attachToMessage) before the event
+    // payload was built — see the summary re-read above. Re-referenced
+    // attachments keep their owning `message_id`/`stream_id`: overwriting them
+    // would orphan the original `attachment:` link.
 
     // Record an attachment_references row for every attachment (newly-attached
     // and re-referenced) so "is this visible to a viewer of stream X?" lookups
@@ -1751,22 +1801,41 @@ export class EventService {
     // real-time reaction enrichment on bootstrap.
     const messagesMap = messageIds.length > 0 ? await this.getMessagesByIds(messageIds) : new Map<string, Message>()
 
-    // Event payloads snapshot attachment processingStatus at send time. Video
-    // transcoding completes asynchronously, so fresh-load bootstrap must overlay
-    // current processingStatus from the attachments projection; otherwise
-    // long-completed videos render as "Processing" after a page refresh.
-    const attachmentIds = messageCreatedEvents.flatMap((e) =>
-      ((e.payload as MessageCreatedPayload).attachments ?? [])
-        .filter((a) => a.processingStatus !== undefined)
-        .map((a) => a.id)
-    )
-    const attachmentStatusMap =
-      attachmentIds.length > 0
-        ? await withClient(this.pool, async (client) => {
-            const rows = await AttachmentRepository.findByIds(client, attachmentIds)
-            return new Map(rows.map((a) => [a.id, a.processingStatus as string]))
-          })
-        : new Map<string, string>()
+    // Event payloads snapshot attachment state at send time. Video transcoding
+    // AND reserved-upload settling both complete asynchronously, so fresh-load
+    // bootstrap must overlay current state from the attachments projection —
+    // otherwise long-completed videos render as "Processing" and long-settled
+    // uploads render as "Uploading…" after a page refresh (the socket patch
+    // only reaches clients that were connected when the state changed).
+    const refreshAttachmentIds = [
+      ...new Set(
+        messageCreatedEvents.flatMap((e) =>
+          ((e.payload as MessageCreatedPayload).attachments ?? [])
+            .filter(
+              (a) => a.processingStatus !== undefined || a.safetyStatus !== undefined || a.uploadStatus !== undefined
+            )
+            .map((a) => a.id)
+        )
+      ),
+    ]
+    let attachmentRowById = new Map<string, Attachment>()
+    let uploadRowByAttachmentId = new Map<string, AttachmentUpload>()
+    if (refreshAttachmentIds.length > 0) {
+      await withClient(this.pool, async (client) => {
+        const rows = await AttachmentRepository.findByIds(client, refreshAttachmentIds)
+        attachmentRowById = new Map(rows.map((a) => [a.id, a]))
+        const pendingRows = rows.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus))
+        if (pendingRows.length > 0) {
+          // One bootstrap enriches one workspace's events, so any row's
+          // workspaceId scopes the tracking-table read (INV-8).
+          uploadRowByAttachmentId = await AttachmentUploadRepository.findByAttachmentIds(
+            client,
+            pendingRows[0].workspaceId,
+            pendingRows.map((a) => a.id)
+          )
+        }
+      })
+    }
 
     const startedSessionIds = events
       .filter((e) => e.eventType === "agent_session:started")
@@ -1824,9 +1893,23 @@ export class EventService {
         }
 
         const refreshedAttachments = payload.attachments?.map((a) => {
-          if (a.processingStatus === undefined) return a
-          const current = attachmentStatusMap.get(a.id)
-          return current && current !== a.processingStatus ? { ...a, processingStatus: current } : a
+          const row = attachmentRowById.get(a.id)
+          if (!row) return a
+          let next = a
+          if (a.processingStatus !== undefined && row.processingStatus !== a.processingStatus) {
+            next = { ...next, processingStatus: row.processingStatus }
+          }
+          if (a.safetyStatus !== undefined || a.uploadStatus !== undefined) {
+            const safetyStatus = isAttachmentSafeForSharing(row.safetyStatus) ? undefined : row.safetyStatus
+            const uploadStatus = uploadRowByAttachmentId.get(a.id)?.status
+            if (safetyStatus !== a.safetyStatus || uploadStatus !== a.uploadStatus) {
+              // Settled fields are REMOVED, not overwritten — absence is the
+              // wire encoding for "safe, render normally" (see summary.ts).
+              const { safetyStatus: _staleSafety, uploadStatus: _staleUpload, ...rest } = next
+              next = { ...rest, ...(safetyStatus && { safetyStatus }), ...(uploadStatus && { uploadStatus }) }
+            }
+          }
+          return next
         })
         if (refreshedAttachments && refreshedAttachments.some((a, i) => a !== payload.attachments![i])) {
           enrichments.attachments = refreshedAttachments

@@ -21,6 +21,10 @@ import {
   sendMessage,
   joinWorkspace,
   joinStream,
+  reserveAttachment,
+  uploadReservedContent,
+  reportAttachmentUploadFailure,
+  getBootstrap,
 } from "../client"
 
 const testRunId = Math.random().toString(36).substring(7)
@@ -378,6 +382,236 @@ describe("File Attachments E2E", () => {
 
       const downloaded = await response.text()
       expect(downloaded).toBe(content)
+    })
+  })
+
+  describe("Reserved Background Uploads", () => {
+    const fileContent = `reserved bytes ${testRunId}`
+    const reservedFile = { content: fileContent, filename: "reserved.txt", mimeType: "text/plain" }
+    const reserveInput = {
+      filename: reservedFile.filename,
+      mimeType: reservedFile.mimeType,
+      sizeBytes: Buffer.byteLength(fileContent),
+    }
+
+    async function setup(name: string) {
+      const client = new TestClient()
+      await loginAs(client, testEmail(name), `${name} Test`)
+      const workspace = await createWorkspace(client, `${name} WS ${testRunId}`)
+      const stream = await createScratchpad(client, workspace.id)
+      return { client, workspace, stream }
+    }
+
+    test("reserves an id before bytes exist; downloads stay blocked until the upload settles", async () => {
+      const { client, workspace } = await setup("reserve-basic")
+
+      const { attachment, upload } = await reserveAttachment(client, workspace.id, reserveInput)
+      expect(attachment.id).toMatch(/^attach_/)
+      expect(attachment).toMatchObject({
+        workspaceId: workspace.id,
+        filename: "reserved.txt",
+        safetyStatus: "pending_upload",
+        messageId: null,
+      })
+      expect(upload.url).toContain(`/attachments/${attachment.id}/content`)
+
+      // No bytes yet — the sharing gate must reject the download.
+      const blocked = await client.get(`/api/workspaces/${workspace.id}/attachments/${attachment.id}/url`)
+      expect(blocked.status).toBe(403)
+
+      const { status } = await uploadReservedContent(client, workspace.id, attachment.id, reservedFile)
+      expect(status).toBe(201)
+
+      const url = await getAttachmentDownloadUrl(client, workspace.id, attachment.id)
+      const response = await fetch(url)
+      expect(await response.text()).toBe(fileContent)
+    })
+
+    test("send-while-uploading: a message binds the pending id, and the settle heals the summary", async () => {
+      const { client, workspace, stream } = await setup("reserve-send")
+
+      const { attachment } = await reserveAttachment(client, workspace.id, reserveInput)
+
+      // Send BEFORE the bytes exist — the whole point of the reservation.
+      const message = await sendMessageWithAttachments(client, workspace.id, stream.id, "file incoming", [
+        attachment.id,
+      ])
+      expect(message.id).toMatch(/^msg_/)
+
+      // The event payload carries the pending state for viewers.
+      const preSettle = await getBootstrap(client, workspace.id, stream.id)
+      const pendingEvent = preSettle.events.find(
+        (e: any) => e.eventType === "message_created" && (e.payload as any).messageId === message.id
+      ) as any
+      expect(pendingEvent.payload.attachments).toEqual([
+        expect.objectContaining({
+          id: attachment.id,
+          safetyStatus: "pending_upload",
+          uploadStatus: "reserved",
+        }),
+      ])
+
+      const { status } = await uploadReservedContent(client, workspace.id, attachment.id, reservedFile)
+      expect(status).toBe(201)
+
+      // Bootstrap enrichment overlays the settled state — the pending markers
+      // are gone without any socket event having been observed.
+      const postSettle = await getBootstrap(client, workspace.id, stream.id)
+      const settledEvent = postSettle.events.find(
+        (e: any) => e.eventType === "message_created" && (e.payload as any).messageId === message.id
+      ) as any
+      const settledSummary = settledEvent.payload.attachments[0]
+      expect(settledSummary.id).toBe(attachment.id)
+      expect(settledSummary.safetyStatus).toBeUndefined()
+      expect(settledSummary.uploadStatus).toBeUndefined()
+
+      const url = await getAttachmentDownloadUrl(client, workspace.id, attachment.id)
+      const response = await fetch(url)
+      expect(await response.text()).toBe(fileContent)
+    })
+
+    test("rejects another user's pending reservation at send", async () => {
+      const { client, workspace, stream } = await setup("reserve-foreign")
+      const other = new TestClient()
+      await loginAs(other, testEmail("reserve-foreign-other"), "Other Uploader")
+      await joinWorkspace(other, workspace.id)
+
+      const { attachment } = await reserveAttachment(other, workspace.id, reserveInput)
+
+      const { status } = await client.post(`/api/workspaces/${workspace.id}/messages`, {
+        streamId: stream.id,
+        content: "stealing your pending upload",
+        attachmentIds: [attachment.id],
+      })
+      expect(status).toBeGreaterThanOrEqual(400)
+    })
+
+    test("rejects bytes from a non-owner before they reach storage", async () => {
+      const { client, workspace } = await setup("reserve-hostile")
+      const other = new TestClient()
+      await loginAs(other, testEmail("reserve-hostile-other"), "Hostile Uploader")
+      await joinWorkspace(other, workspace.id)
+
+      const { attachment } = await reserveAttachment(client, workspace.id, reserveInput)
+
+      const { status } = await uploadReservedContent(other, workspace.id, attachment.id, reservedFile)
+      expect(status).toBe(403)
+    })
+
+    test("rejects a re-upload after the reservation settled", async () => {
+      const { client, workspace } = await setup("reserve-resettle")
+
+      const { attachment } = await reserveAttachment(client, workspace.id, reserveInput)
+      const first = await uploadReservedContent(client, workspace.id, attachment.id, reservedFile)
+      expect(first.status).toBe(201)
+
+      // Settled: the tracking row is gone, so a byte-swap attempt 404s.
+      const second = await uploadReservedContent(client, workspace.id, attachment.id, reservedFile)
+      expect(second.status).toBe(404)
+    })
+
+    test("size mismatch marks the upload failed, and a correct retry recovers it", async () => {
+      const { client, workspace } = await setup("reserve-size")
+
+      const { attachment } = await reserveAttachment(client, workspace.id, reserveInput)
+
+      const truncated = await uploadReservedContent(client, workspace.id, attachment.id, {
+        ...reservedFile,
+        content: fileContent.slice(0, 5),
+      })
+      expect(truncated.status).toBe(400)
+
+      // Retry from `failed` with the full bytes succeeds.
+      const retry = await uploadReservedContent(client, workspace.id, attachment.id, reservedFile)
+      expect(retry.status).toBe(201)
+
+      const url = await getAttachmentDownloadUrl(client, workspace.id, attachment.id)
+      const response = await fetch(url)
+      expect(await response.text()).toBe(fileContent)
+    })
+
+    test("failure report flips the upload to failed and a retry still works", async () => {
+      const { client, workspace, stream } = await setup("reserve-fail-report")
+
+      const { attachment } = await reserveAttachment(client, workspace.id, reserveInput)
+      const message = await sendMessageWithAttachments(client, workspace.id, stream.id, "will fail first", [
+        attachment.id,
+      ])
+
+      const reportStatus = await reportAttachmentUploadFailure(client, workspace.id, attachment.id, "network died")
+      expect(reportStatus).toBe(204)
+
+      // Viewers see the failure on a fresh bootstrap.
+      const failedBootstrap = await getBootstrap(client, workspace.id, stream.id)
+      const failedEvent = failedBootstrap.events.find(
+        (e: any) => e.eventType === "message_created" && (e.payload as any).messageId === message.id
+      ) as any
+      expect(failedEvent.payload.attachments[0]).toMatchObject({
+        id: attachment.id,
+        safetyStatus: "pending_upload",
+        uploadStatus: "failed",
+      })
+
+      const retry = await uploadReservedContent(client, workspace.id, attachment.id, reservedFile)
+      expect(retry.status).toBe(201)
+
+      const url = await getAttachmentDownloadUrl(client, workspace.id, attachment.id)
+      const response = await fetch(url)
+      expect(await response.text()).toBe(fileContent)
+    })
+
+    test("cancel (delete) removes an unsent reservation; content POST then 404s", async () => {
+      const { client, workspace } = await setup("reserve-cancel")
+
+      const { attachment } = await reserveAttachment(client, workspace.id, reserveInput)
+      await deleteAttachment(client, workspace.id, attachment.id)
+
+      const { status } = await uploadReservedContent(client, workspace.id, attachment.id, reservedFile)
+      expect(status).toBe(404)
+    })
+
+    test("streams a multipart-sized file (>5MB) through the reservation path", async () => {
+      const { client, workspace } = await setup("reserve-large")
+
+      // Above lib-storage's 5MB part threshold multer-s3 switches to S3
+      // multipart upload and reports file.size = 0 (no `total` in progress
+      // events for streams) — the regression that failed every large mobile
+      // photo. Size validation must read the stored object, not multer.
+      const big = Buffer.alloc(6 * 1024 * 1024 + 123)
+      for (let i = 0; i < big.length; i += 4096) big[i] = i % 251
+
+      const { attachment } = await reserveAttachment(client, workspace.id, {
+        filename: "large-photo.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: big.length,
+      })
+
+      const { status, data } = await uploadReservedContent(client, workspace.id, attachment.id, {
+        content: big,
+        filename: "large-photo.jpg",
+        mimeType: "image/jpeg",
+      })
+      expect({ status, error: (data as { error?: string })?.error }).toEqual({ status: 201, error: undefined })
+
+      const url = await getAttachmentDownloadUrl(client, workspace.id, attachment.id)
+      const response = await fetch(url)
+      expect(response.ok).toBe(true)
+      const downloaded = Buffer.from(await response.arrayBuffer())
+      expect(downloaded.length).toBe(big.length)
+    }, 60_000)
+
+    test("an E2E reservation never stores the real filename or mime", async () => {
+      const { client, workspace } = await setup("reserve-e2e")
+
+      const { attachment } = await reserveAttachment(client, workspace.id, {
+        filename: "secret-plans.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 42,
+        e2e: true,
+      })
+      expect(attachment.filename).toBe("encrypted")
+      expect(attachment.mimeType).toBe("application/octet-stream")
+      expect(attachment.e2eOnly).toBe(true)
     })
   })
 })

@@ -6,12 +6,15 @@ import { MediaGalleryProvider } from "@/contexts"
 import { attachmentsApi } from "@/api"
 import { API_BASE } from "@/api/client"
 import { AttachmentList } from "./attachment-list"
+import * as xhrTransport from "@/lib/uploads/xhr-upload"
+import { startUpload, resetUploadManager } from "@/lib/uploads/upload-manager"
 import type { AttachmentSummary } from "@threa/types"
 
 const mockGetDownloadUrl = vi.fn()
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  resetUploadManager()
   mockGetDownloadUrl.mockReset()
   mockGetDownloadUrl.mockResolvedValue("https://example.com/download")
   vi.spyOn(attachmentsApi, "getDownloadUrl").mockImplementation(
@@ -322,7 +325,110 @@ describe("AttachmentList", () => {
 
       fireEvent.error(screen.getByAltText("broken.png"))
 
-      expect(await screen.findByText("Failed to load image")).toBeInTheDocument()
+      expect(await screen.findByText(/Failed to load image/)).toBeInTheDocument()
+    })
+
+    it("retries a failed image load when connectivity returns", async () => {
+      const attachment = createAttachment({
+        id: "img_1",
+        filename: "blip.png",
+        mimeType: "image/png",
+      })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      fireEvent.error(screen.getByAltText("blip.png"))
+      expect(await screen.findByText(/Failed to load image/)).toBeInTheDocument()
+
+      fireEvent(window, new Event("online"))
+
+      expect(await screen.findByAltText("blip.png")).toBeInTheDocument()
+      expect(screen.queryByText(/Failed to load image/)).not.toBeInTheDocument()
+    })
+
+    it("retries a failed image load on tap", async () => {
+      const user = userEvent.setup()
+      const attachment = createAttachment({
+        id: "img_1",
+        filename: "tap.png",
+        mimeType: "image/png",
+      })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      fireEvent.error(screen.getByAltText("tap.png"))
+      await user.click(await screen.findByRole("button", { name: /tap to retry/i }))
+
+      expect(await screen.findByAltText("tap.png")).toBeInTheDocument()
+    })
+  })
+
+  describe("reserved uploads still settling", () => {
+    it("renders a still-uploading attachment as an inert status chip, not a broken preview", () => {
+      const attachment = createAttachment({
+        id: "attach_pending",
+        filename: "photo.png",
+        mimeType: "image/png",
+        safetyStatus: "pending_upload",
+        uploadStatus: "reserved",
+      })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      expect(screen.getByText("Uploading…")).toBeInTheDocument()
+      // Its bytes may not exist yet — no image element must be attempted.
+      expect(screen.queryByAltText("photo.png")).not.toBeInTheDocument()
+    })
+
+    it("renders a scanning attachment as a status chip", () => {
+      const attachment = createAttachment({ id: "attach_scan", safetyStatus: "pending_scan" })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      expect(screen.getByText("Scanning…")).toBeInTheDocument()
+    })
+
+    it("renders a failed upload visibly instead of an eternal spinner", () => {
+      const attachment = createAttachment({
+        id: "attach_dead",
+        safetyStatus: "pending_upload",
+        uploadStatus: "failed",
+      })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      expect(screen.getByText("Upload failed")).toBeInTheDocument()
+      expect(screen.queryByText("Uploading…")).not.toBeInTheDocument()
+    })
+
+    it("renders a quarantined attachment as blocked", () => {
+      const attachment = createAttachment({ id: "attach_bad", safetyStatus: "quarantined" })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      expect(screen.getByText("Blocked by malware scan")).toBeInTheDocument()
+    })
+
+    it("offers a retry when this device still holds the failed upload's bytes", async () => {
+      vi.spyOn(attachmentsApi, "reserve").mockResolvedValue({
+        attachment: { id: "attach_local_fail" } as never,
+        upload: { method: "POST", url: "/x", field: "file" },
+      })
+      vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+      const xhr = vi
+        .spyOn(xhrTransport, "xhrUpload")
+        .mockResolvedValueOnce({ status: 422, body: { error: "nope" } })
+        .mockResolvedValueOnce({ status: 201, body: {} })
+
+      // A real local job that failed terminally.
+      startUpload(workspaceId, new File(["bytes"], "local.bin", { type: "application/octet-stream" }))
+      await waitFor(() => expect(xhr).toHaveBeenCalledTimes(1))
+
+      const attachment = createAttachment({
+        id: "attach_local_fail",
+        filename: "local.bin",
+        safetyStatus: "pending_upload",
+        uploadStatus: "failed",
+      })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      const retry = await screen.findByRole("button", { name: /Upload failed — retry/ })
+      fireEvent.click(retry)
+      await waitFor(() => expect(xhr).toHaveBeenCalledTimes(2))
     })
   })
 })
