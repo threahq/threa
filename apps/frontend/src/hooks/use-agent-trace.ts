@@ -81,6 +81,11 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
   // an older/equal timestamp belongs to that finished instance — dropping it stops
   // a late E2E decrypt from resurrecting a cleared step's phase timeline.
   const closedAtByTypeRef = useRef<Map<AgentStepType, string>>(new Map())
+  // Which session the accumulated terminalStatus belongs to. The subscribe
+  // effect also re-runs on reconnect (reconnectCount dep), and terminal status
+  // is monotonic per session — resetting it there would flash a completed
+  // dialog back to data.session.status ("running") until the refetch lands.
+  const terminalSessionKeyRef = useRef<string | null>(null)
   // Track if socket is subscribed (enables query after subscription)
   const [isSubscribed, setIsSubscribed] = useState(false)
   const [isSubscribing, setIsSubscribing] = useState(false)
@@ -237,14 +242,27 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     if (!socket || !workspaceId || !sessionId) return
 
     const room = `ws:${workspaceId}:agent_session:${sessionId}`
+    const sessionKey = `${workspaceId}:${sessionId}`
     const abortController = new AbortController()
 
-    // Reset state for new session
+    // Reset accumulated state — on session change AND on reconnect. The steps
+    // and streaming-text wipes are deliberate for reconnects: mergeSteps
+    // prefers realtime on id collision, so a stale realtime "started" step
+    // held across the gap would permanently mask the refetched "completed"
+    // row; the refetch rebuilds the slate. Streaming text is stale after a
+    // gap and each progress event carries full content, so it self-heals on
+    // the next tick.
     setRealtimeSteps(new Map())
     setStreamingContent({})
     setStreamingSubsteps({})
     closedAtByTypeRef.current = new Map()
-    setTerminalStatus(null)
+    // Terminal status is the exception: monotonic per session, so it only
+    // resets when the dialog actually switches sessions (see
+    // terminalSessionKeyRef above).
+    if (terminalSessionKeyRef.current !== sessionKey) {
+      terminalSessionKeyRef.current = sessionKey
+      setTerminalStatus(null)
+    }
     setIsSubscribed(false)
     setIsSubscribing(true)
     setSubscriptionError(null)

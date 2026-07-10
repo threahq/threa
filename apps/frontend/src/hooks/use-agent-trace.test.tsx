@@ -142,4 +142,37 @@ describe("useAgentTrace", () => {
     })
     expect(result.current.status).toBe("completed")
   })
+
+  it("preserves terminal status across a reconnect (monotonic per session)", async () => {
+    const { socket, fire } = makeFakeSocket()
+    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
+    vi.spyOn(socketRoomModule, "joinRoomWithAck").mockResolvedValue(undefined)
+    // Bootstrap keeps reporting "running" — the terminal socket event raced
+    // ahead of the session row's status flip becoming visible to the fetch.
+    const getSessionSpy = vi.spyOn(agentSessionsApi, "getSession").mockResolvedValue(makeSessionResponse([makeStep(1)]))
+
+    const { result, rerender } = renderHook(() => useAgentTrace(WORKSPACE_ID, SESSION_ID), {
+      wrapper: createWrapper(),
+    })
+    await waitFor(() => expect(result.current.steps).toHaveLength(1))
+
+    act(() => {
+      fire("agent_session:step:progress", { sessionId: SESSION_ID, stepId: "step_1", content: "partial reasoning" })
+      fire("agent_session:completed", { sessionId: SESSION_ID })
+    })
+    expect(result.current.status).toBe("completed")
+
+    reconnectCount = 1
+    rerender()
+
+    // Terminal status must not flash back to the bootstrap's "running" while
+    // the re-join + refetch are in flight. In-flight streaming content is
+    // deliberately dropped (stale after the gap; full content re-arrives on
+    // the next progress tick).
+    expect(result.current.status).toBe("completed")
+    expect(result.current.streamingContent).toEqual({})
+
+    await waitFor(() => expect(getSessionSpy).toHaveBeenCalledTimes(2))
+    expect(result.current.status).toBe("completed")
+  })
 })
