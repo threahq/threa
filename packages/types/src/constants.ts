@@ -1096,13 +1096,17 @@ export const PiToolTraceSectionLabels = {
   DETAILS: "Details",
 } as const satisfies Record<string, PiToolTraceSectionLabel>
 
-export const BOT_RUNTIME_SESSION_LINK_STATUSES = ["active", "paused", "ended"] as const
+// 'archived' is the recoverable end state written when the linked scratchpad is
+// archived — stream:unarchived revives exactly these links back to 'active'.
+// 'ended' is terminal (normal shutdown) and is never revived.
+export const BOT_RUNTIME_SESSION_LINK_STATUSES = ["active", "paused", "ended", "archived"] as const
 export type BotRuntimeSessionLinkStatus = (typeof BOT_RUNTIME_SESSION_LINK_STATUSES)[number]
 
 export const BotRuntimeSessionLinkStatuses = {
   ACTIVE: "active",
   PAUSED: "paused",
   ENDED: "ended",
+  ARCHIVED: "archived",
 } as const satisfies Record<string, BotRuntimeSessionLinkStatus>
 
 export const BOT_RUNTIME_STATUSES = ["available", "busy", "offline", "error"] as const

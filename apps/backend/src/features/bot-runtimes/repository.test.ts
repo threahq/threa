@@ -247,6 +247,107 @@ describe("BotRuntimeSessionLinkRepository.rebindInstance", () => {
   })
 })
 
+describe("BotRuntimeSessionLinkRepository.archiveActiveByRootStream", () => {
+  afterEach(() => mock.restore())
+
+  it("flips only active links to 'archived' in one set-based UPDATE (INV-20/56)", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeSessionLinkRow({ status: "archived" })])
+
+    const result = await BotRuntimeSessionLinkRepository.archiveActiveByRootStream(db, {
+      workspaceId: "ws_1",
+      rootStreamId: "stream_root",
+    })
+
+    expect(captured.text).toContain("UPDATE bot_runtime_session_links")
+    // Archive-ended, not shutdown-ended: 'archived' is the recoverable state
+    // stream:unarchived revives; plain 'ended' stays dead.
+    expect(captured.text).toContain("SET status = 'archived'")
+    expect(captured.text).toContain("status = 'active'")
+    expect(captured.text).toContain("RETURNING")
+    expect(captured.values).toEqual(expect.arrayContaining(["ws_1", "stream_root"]))
+    expect(result[0]?.status).toBe("archived")
+  })
+})
+
+describe("BotRuntimeSessionLinkRepository.reactivateArchivedByRootStream", () => {
+  afterEach(() => mock.restore())
+
+  it("revives only archive-ended links — shutdown-ended rows stay dead", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeSessionLinkRow({ status: "active" })])
+
+    const result = await BotRuntimeSessionLinkRepository.reactivateArchivedByRootStream(db, {
+      workspaceId: "ws_1",
+      rootStreamId: "stream_root",
+    })
+
+    expect(captured.text).toContain("UPDATE bot_runtime_session_links")
+    expect(captured.text).toContain("SET status = 'active'")
+    expect(captured.text).toContain("status = 'archived'")
+    expect(captured.text).not.toContain("'ended'")
+    expect(captured.text).toContain("RETURNING")
+    expect(captured.values).toEqual(expect.arrayContaining(["ws_1", "stream_root"]))
+    expect(result[0]?.status).toBe("active")
+  })
+})
+
+describe("BotRuntimeSessionLinkRepository.reactivateArchivedByRuntimeSession", () => {
+  afterEach(() => mock.restore())
+
+  it("revives the newest archived link for the runtime session only when its root stream is unarchived", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeSessionLinkRow({ status: "active" })])
+
+    const result = await BotRuntimeSessionLinkRepository.reactivateArchivedByRuntimeSession(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      runtimeKind: "claude-code-channel",
+      instanceId: "inst_99",
+      runtimeSessionId: "sess_1",
+    })
+
+    // CTE picks one row race-safely (INV-20), newest first, and the stream
+    // guard keeps a still-archived scratchpad's link dead. The stream row is
+    // share-locked in the same select — an unlocked EXISTS would be TOCTOU
+    // against a concurrent re-archive.
+    expect(captured.text).toContain("SET status = 'active'")
+    expect(captured.text).toContain("status = 'archived'")
+    expect(captured.text).toContain("JOIN streams s")
+    expect(captured.text).toContain("archived_at IS NULL")
+    expect(captured.text).toContain("FOR UPDATE OF l SKIP LOCKED")
+    expect(captured.text).toContain("FOR SHARE OF s")
+    expect(captured.text).toContain("LIMIT 1")
+    expect(captured.values).toEqual(
+      expect.arrayContaining(["ws_1", "bot_alice", "claude-code-channel", "inst_99", "sess_1"])
+    )
+    expect(result?.status).toBe("active")
+  })
+})
+
+describe("BotRuntimeSessionLinkRepository.findArchivedByRuntimeSession", () => {
+  afterEach(() => mock.restore())
+
+  it("selects only archived-status links for the runtime session identity", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeSessionLinkRow({ status: "archived" })])
+
+    const result = await BotRuntimeSessionLinkRepository.findArchivedByRuntimeSession(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      runtimeKind: "claude-code-channel",
+      instanceId: "inst_99",
+      runtimeSessionId: "sess_1",
+    })
+
+    expect(captured.text).toContain("status = 'archived'")
+    expect(captured.values).toEqual(
+      expect.arrayContaining(["ws_1", "bot_alice", "claude-code-channel", "inst_99", "sess_1"])
+    )
+    expect(result?.status).toBe("archived")
+  })
+})
+
 describe("BotInvocationRepository.claimOne", () => {
   afterEach(() => mock.restore())
 

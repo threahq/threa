@@ -29,6 +29,7 @@ function createHandlers(overrides: Partial<PublicApiDeps> = {}) {
     botChannelService: {} as PublicApiDeps["botChannelService"],
     botRuntimeService: {
       findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+      reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "none" })),
       createLinkedScratchpadSession: mock(() =>
         Promise.resolve({
           link: {
@@ -79,6 +80,7 @@ describe("bot runtime session labels", () => {
     const { handlers } = createHandlers({
       botRuntimeService: {
         findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+        reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "none" })),
         createLinkedScratchpadSession,
       } as unknown as PublicApiDeps["botRuntimeService"],
     })
@@ -123,6 +125,7 @@ describe("bot runtime session labels", () => {
     const { handlers } = createHandlers({
       botRuntimeService: {
         findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+        reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "none" })),
         createLinkedScratchpadSession,
       } as unknown as PublicApiDeps["botRuntimeService"],
     })
