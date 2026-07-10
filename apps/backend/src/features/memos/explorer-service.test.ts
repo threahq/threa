@@ -3,6 +3,7 @@ import type { Pool } from "pg"
 import { MemoExplorerService } from "./explorer-service"
 import { MemoRepository, type Memo } from "./repository"
 import { MessageRepository } from "../messaging"
+import { AgentSessionRepository, PersonaRepository } from "../agents"
 import { StreamRepository, type Stream } from "../streams"
 import * as dbModule from "../../db"
 import type { EmbeddingServiceLike } from "./embedding-service"
@@ -30,6 +31,8 @@ function fakeMemo(overrides: Partial<Memo> = {}): Memo {
     status: "active",
     version: 1,
     revisionReason: null,
+    authoredByKind: "pipeline",
+    sourceSessionId: null,
     createdAt: new Date("2026-05-01T00:00:00Z"),
     updatedAt: new Date("2026-05-01T00:00:00Z"),
     archivedAt: null,
@@ -190,5 +193,47 @@ describe("MemoExplorerService.getById (roadmap 6.1)", () => {
 
     expect(result?.memo.status).toBe("superseded")
     expect(result?.successorMemoId).toBe("memo_2")
+  })
+})
+
+describe("MemoExplorerService.getById — agent provenance (roadmap 6.6)", () => {
+  it("resolves the capturing persona's name for an agent-authored memo", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(
+      fakeMemo({ authoredByKind: "agent", sourceSessionId: "agsess_1" })
+    )
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ personaId: "persona_1" } as never)
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([{ id: "persona_1", name: "Ariadne" }] as never)
+
+    const result = await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)
+
+    expect(result?.memo.authoredByKind).toBe("agent")
+    expect(result?.capturedByPersonaName).toBe("Ariadne")
+  })
+
+  it("skips the session lookup entirely for a pipeline-authored memo", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo())
+    const sessionLookup = spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+
+    const result = await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)
+
+    expect(result?.capturedByPersonaName).toBeNull()
+    expect(sessionLookup).not.toHaveBeenCalled()
+  })
+
+  it("returns null provenance when the writing session no longer resolves", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(
+      fakeMemo({ authoredByKind: "agent", sourceSessionId: "agsess_gone" })
+    )
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+
+    const result = await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)
+
+    expect(result?.capturedByPersonaName).toBeNull()
   })
 })

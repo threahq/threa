@@ -1079,8 +1079,12 @@ function SourceItem({ source, workspaceId, isLast }: { source: TraceSource; work
           {source.streamName && ` in ${source.streamName}`}
         </div>
       )}
-      {source.streamName && source.type === "workspace_memo" && (
-        <div className="text-[11px] text-muted-foreground mb-1">from {source.streamName}</div>
+      {(source.streamName || source.authoredByKind === "agent") && source.type === "workspace_memo" && (
+        <div className="text-[11px] text-muted-foreground mb-1">
+          {source.streamName ? `from ${source.streamName}` : null}
+          {source.streamName && source.authoredByKind === "agent" ? " · " : null}
+          {source.authoredByKind === "agent" ? "AI-captured" : null}
+        </div>
       )}
       {source.snippet && (
         <div className="text-muted-foreground text-[11px] leading-snug line-clamp-2">{source.snippet}</div>

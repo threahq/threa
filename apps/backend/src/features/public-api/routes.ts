@@ -20,6 +20,7 @@ import {
   LABELABLE_RESOURCE_TYPES,
   MEMO_TYPES,
   KNOWLEDGE_TYPES,
+  AUTHORED_BY_KINDS,
   PROCESSING_STATUSES,
   EXTRACTION_CONTENT_TYPES,
   THREA_CALLBACK_TOKEN_HEADER,
@@ -266,6 +267,8 @@ const memoSchema = z.object({
   status: z.string(),
   version: z.number().int(),
   revisionReason: z.string().nullable(),
+  authoredByKind: z.enum(AUTHORED_BY_KINDS),
+  sourceSessionId: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   archivedAt: z.string().datetime().nullable(),
@@ -292,6 +295,7 @@ const memoSourceMessageSchema = z.object({
 const memoDetailSchema = memoSearchResultSchema.extend({
   sourceMessages: z.array(memoSourceMessageSchema),
   successorMemoId: z.string().nullable(),
+  capturedByPersonaName: z.string().nullable(),
 })
 
 const attachmentExtractionSchema = z.object({

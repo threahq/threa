@@ -3,6 +3,7 @@ import {
   Archive,
   ArchiveRestore,
   BookOpen,
+  Bot,
   Check,
   Copy,
   ExternalLink,
@@ -209,6 +210,20 @@ function MemoEditForm({
   )
 }
 
+/**
+ * Agent-provenance badge (roadmap 6.6): an agent-authored memo (`save_memo` /
+ * reflective capture) must be legible as such wherever it renders, so a reader
+ * can weigh it differently from conversation-extracted knowledge.
+ */
+export function AgentAuthoredBadge({ personaName }: { personaName?: string | null }) {
+  return (
+    <Badge variant="outline" className="gap-1 text-[10px] text-muted-foreground">
+      <Bot className="h-2.5 w-2.5" />
+      {personaName ? `Captured by ${personaName}` : "AI-captured"}
+    </Badge>
+  )
+}
+
 function MemoStatusBadge({ status }: { status: string }) {
   if (status === "archived") {
     return (
@@ -351,6 +366,7 @@ export function MemoDetailContent({
               {memoLabel(data.memo.memoType)}
             </Badge>
             <MemoStatusBadge status={data.memo.status} />
+            {data.memo.authoredByKind === "agent" && <AgentAuthoredBadge personaName={data.capturedByPersonaName} />}
             <span className="text-[11px] tabular-nums text-muted-foreground/50">v{data.memo.version}</span>
             <span className="text-muted-foreground/30">&middot;</span>
             <RelativeTime date={data.memo.updatedAt} className="text-[11px] text-muted-foreground/50" />
@@ -450,6 +466,13 @@ export function MemoDetailContent({
       )}
 
       <DetailSection title="Provenance">
+        {data.memo.authoredByKind === "agent" && (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Bot className="h-3.5 w-3.5 shrink-0" />
+            Written by {data.capturedByPersonaName ?? "an AI agent"} from its own session work, not extracted from a
+            team conversation.
+          </p>
+        )}
         <div className="flex min-w-0 flex-wrap gap-2">
           {data.sourceStream && (
             <Link

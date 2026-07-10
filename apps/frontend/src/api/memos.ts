@@ -29,6 +29,8 @@ export interface MemoExplorerDetail extends MemoExplorerResult {
   sourceMessages: MemoExplorerSourceMessage[]
   /** For a superseded memo, the id of the active memo that replaced it. */
   successorMemoId: string | null
+  /** For an agent-authored memo, the persona that captured it (null when unresolvable or pipeline-authored). */
+  capturedByPersonaName: string | null
 }
 
 export interface MemoSearchFilters {

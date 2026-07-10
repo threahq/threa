@@ -24,6 +24,8 @@ function buildDetail(overrides: Partial<MemoExplorerDetail["memo"]> = {}): MemoE
       status: "active",
       version: 1,
       revisionReason: null,
+      authoredByKind: "pipeline",
+      sourceSessionId: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: null,
@@ -34,6 +36,7 @@ function buildDetail(overrides: Partial<MemoExplorerDetail["memo"]> = {}): MemoE
     rootStream: null,
     sourceMessages: [],
     successorMemoId: null,
+    capturedByPersonaName: null,
   }
 }
 
@@ -152,5 +155,34 @@ describe("MemoDetailContent edit controls (roadmap 6.1)", () => {
     renderDetail(<MemoDetailContent data={detail} workspaceId="ws_1" isLoading={false} />)
     const link = screen.getByRole("link", { name: /replaced by a newer memo/i })
     expect(link).toHaveAttribute("href", expect.stringContaining("memo=memo_2"))
+  })
+})
+
+describe("MemoDetailContent agent provenance (roadmap 6.6)", () => {
+  beforeEach(() => {
+    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+  })
+
+  it("flags an agent-authored memo with the capturing persona's name", () => {
+    const detail = {
+      ...buildDetail({ authoredByKind: "agent", sourceSessionId: "agsess_1" }),
+      capturedByPersonaName: "Ariadne",
+    }
+    renderDetail(<MemoDetailContent data={detail} workspaceId="ws_1" isLoading={false} />)
+    expect(screen.getByText("Captured by Ariadne")).toBeInTheDocument()
+    expect(screen.getByText(/written by Ariadne from its own session work/i)).toBeInTheDocument()
+  })
+
+  it("falls back to a generic label when the persona is unresolvable", () => {
+    const detail = buildDetail({ authoredByKind: "agent", sourceSessionId: "agsess_gone" })
+    renderDetail(<MemoDetailContent data={detail} workspaceId="ws_1" isLoading={false} />)
+    expect(screen.getByText("AI-captured")).toBeInTheDocument()
+    expect(screen.getByText(/written by an AI agent from its own session work/i)).toBeInTheDocument()
+  })
+
+  it("shows no provenance flag on a pipeline-authored memo", () => {
+    renderDetail(<MemoDetailContent data={buildDetail()} workspaceId="ws_1" isLoading={false} />)
+    expect(screen.queryByText(/AI-captured|Captured by/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/written by .* session work/i)).not.toBeInTheDocument()
   })
 })

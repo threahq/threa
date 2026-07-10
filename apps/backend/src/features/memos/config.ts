@@ -78,6 +78,28 @@ export const MEMO_MAX_PER_CONVERSATION = 5
 export const MEMO_REFLECTIVE_MAX_MEMOS = 2
 
 /**
+ * Knowledge types a reflective session capture may mint (roadmap 6.6). An agent
+ * distilling its own research must not author `decision` memos — a decision is
+ * organizational authority the team commits to (and the highest-boosted type in
+ * {@link MEMO_KNOWLEDGE_TYPE_BOOST}), so agent-minted ones would let a persona's
+ * own conclusions masquerade as team rulings and compound through retrieval.
+ * A disallowed type is coerced to `learning` (the honest label for a research
+ * conclusion) rather than dropped, so the finding itself survives. Real
+ * decisions stated in conversation are captured by the passive pipeline — and
+ * `save_memo` is deliberately NOT gated by this list, since it acts on explicit
+ * in-conversation direction, not the agent's own reflection.
+ */
+export const MEMO_REFLECTIVE_KNOWLEDGE_TYPES: readonly KnowledgeType[] = [
+  "learning",
+  "procedure",
+  "reference",
+  "context",
+]
+
+/** Coercion target for a reflective memo whose type is outside the allowlist. */
+export const MEMO_REFLECTIVE_FALLBACK_KNOWLEDGE_TYPE: KnowledgeType = "learning"
+
+/**
  * Cross-conversation dedup threshold (pgvector cosine distance, 0 = identical).
  * A candidate memo within this distance of an existing active memo in the same
  * stream — but from a different conversation — is treated as the same knowledge
