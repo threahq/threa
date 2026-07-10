@@ -137,12 +137,14 @@ describe("MemoDetailContent edit controls (roadmap 6.1)", () => {
 
     renderDetail(<MemoDetailContent data={buildDetail()} workspaceId="ws_1" isLoading={false} />)
 
-    await user.click(screen.getByRole("button", { name: "Copy memo link" }))
+    // Accessible name is the visible label until it confirms — a superset on
+    // copy keeps voice control / WCAG 2.5.3 intact.
+    await user.click(screen.getByRole("button", { name: "Copy link" }))
 
     expect(writeText).toHaveBeenCalledTimes(1)
     expect(writeText.mock.calls[0][0]).toContain("/w/ws_1/memory?memo=memo_1")
     // Same button, relabeled — the checkmark confirmation replaces the toast.
-    await screen.findByRole("button", { name: "Memo link copied" })
+    await screen.findByRole("button", { name: "Copy link, copied" })
   })
 
   it("links a superseded memo to its successor", () => {
