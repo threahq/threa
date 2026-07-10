@@ -23,8 +23,13 @@ export interface ObjectContent {
 
 export interface StorageProvider {
   getObjectSize(key: string): Promise<number>
-  /** Current ETag of the stored object (quotes stripped), for write-race detection. */
-  getObjectETag(key: string): Promise<string>
+  /**
+   * Size + ETag of the stored object in one HeadObject (quotes stripped from
+   * the ETag). The authoritative source for "what actually landed" — multer's
+   * reported size is 0 for large bodies (lib-storage multipart never emits
+   * `total` for streams) and its ETag shape varies by upload mode.
+   */
+  getObjectStat(key: string): Promise<{ sizeBytes: number; etag: string }>
   getSignedDownloadUrl(key: string, options?: SignedDownloadUrlOptions): Promise<string>
   getObject(key: string): Promise<Buffer>
   /** Fetch first N bytes of an object using HTTP Range header */
@@ -71,18 +76,22 @@ export function createS3Storage(config: S3Config): StorageProvider {
       return contentLength
     },
 
-    async getObjectETag(key: string): Promise<string> {
+    async getObjectStat(key: string): Promise<{ sizeBytes: number; etag: string }> {
       const response = await client.send(
         new HeadObjectCommand({
           Bucket: config.bucket,
           Key: key,
         })
       )
+      const contentLength = response.ContentLength
+      if (typeof contentLength !== "number" || !Number.isSafeInteger(contentLength) || contentLength < 0) {
+        throw new Error(`S3 HeadObject missing valid ContentLength for key: ${key}`)
+      }
       const etag = response.ETag
       if (!etag) {
         throw new Error(`S3 HeadObject missing ETag for key: ${key}`)
       }
-      return etag.replaceAll('"', "")
+      return { sizeBytes: contentLength, etag: etag.replaceAll('"', "") }
     },
 
     async getSignedDownloadUrl(key: string, options?: SignedDownloadUrlOptions): Promise<string> {

@@ -570,6 +570,36 @@ describe("File Attachments E2E", () => {
       expect(status).toBe(404)
     })
 
+    test("streams a multipart-sized file (>5MB) through the reservation path", async () => {
+      const { client, workspace } = await setup("reserve-large")
+
+      // Above lib-storage's 5MB part threshold multer-s3 switches to S3
+      // multipart upload and reports file.size = 0 (no `total` in progress
+      // events for streams) — the regression that failed every large mobile
+      // photo. Size validation must read the stored object, not multer.
+      const big = Buffer.alloc(6 * 1024 * 1024 + 123)
+      for (let i = 0; i < big.length; i += 4096) big[i] = i % 251
+
+      const { attachment } = await reserveAttachment(client, workspace.id, {
+        filename: "large-photo.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: big.length,
+      })
+
+      const { status, data } = await uploadReservedContent(client, workspace.id, attachment.id, {
+        content: big,
+        filename: "large-photo.jpg",
+        mimeType: "image/jpeg",
+      })
+      expect({ status, error: (data as { error?: string })?.error }).toEqual({ status: 201, error: undefined })
+
+      const url = await getAttachmentDownloadUrl(client, workspace.id, attachment.id)
+      const response = await fetch(url)
+      expect(response.ok).toBe(true)
+      const downloaded = Buffer.from(await response.arrayBuffer())
+      expect(downloaded.length).toBe(big.length)
+    }, 60_000)
+
     test("an E2E reservation never stores the real filename or mime", async () => {
       const { client, workspace } = await setup("reserve-e2e")
 

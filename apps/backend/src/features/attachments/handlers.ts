@@ -122,11 +122,10 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         return res.status(400).json({ error: "No file provided" })
       }
 
-      const result = await attachmentService.completeReservedUpload({
-        attachment: reserved,
-        receivedSizeBytes: file.size,
-        receivedETag: file.etag,
-      })
+      // Size/ETag validation reads the stored object directly (multer's
+      // reported size is 0 for multipart-sized bodies) — the file object here
+      // only proves multer ran and streamed to the reserved key.
+      const result = await attachmentService.completeReservedUpload({ attachment: reserved })
 
       if (result.status === "size_mismatch") {
         return res.status(400).json({

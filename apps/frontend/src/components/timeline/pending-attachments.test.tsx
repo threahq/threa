@@ -155,7 +155,7 @@ describe("PendingAttachments", () => {
     expect(onRemove).not.toHaveBeenCalled()
   })
 
-  it("shows live progress while uploading", () => {
+  it("shows a gradually-filling progress bar while uploading (no counting number)", () => {
     render(
       <PendingAttachments
         attachments={[attachment({ status: "uploading", progress: 0.42 })]}
@@ -165,6 +165,8 @@ describe("PendingAttachments", () => {
       />
     )
 
-    expect(screen.getByText("42%")).toBeInTheDocument()
+    const bar = screen.getByRole("progressbar", { name: "Uploading screenshot.png" })
+    expect(bar).toHaveAttribute("aria-valuenow", "42")
+    expect(screen.queryByText(/\d+%/)).not.toBeInTheDocument()
   })
 })

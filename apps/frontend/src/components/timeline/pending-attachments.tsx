@@ -108,11 +108,7 @@ function ChipView({
   // transfer, drops the chip, and deletes the reservation.
   const removeHandler = isUploading ? () => onCancelUpload(attachment.id) : () => onRemove(attachment.id)
   const removeLabel = isUploading ? `Cancel upload of ${attachment.filename}` : `Remove ${attachment.filename}`
-  let secondary = formatFileSize(attachment.sizeBytes)
-  if (isError) secondary = "Failed"
-  else if (isUploading && typeof attachment.progress === "number" && attachment.progress > 0) {
-    secondary = `${Math.min(99, Math.round(attachment.progress * 100))}%`
-  }
+  const secondary = isError ? "Failed" : formatFileSize(attachment.sizeBytes)
 
   const isGenericError =
     isError &&
@@ -138,6 +134,7 @@ function ChipView({
       tooltip={tooltip}
       onRemove={removeHandler}
       removeLabel={removeLabel}
+      progress={isUploading ? attachment.progress : undefined}
       onActivate={canPreview ? () => onOpen(key) : undefined}
       activateLabel={`Preview ${attachment.filename}`}
       labelMaxWidth="max-w-[120px]"

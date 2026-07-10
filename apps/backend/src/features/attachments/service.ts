@@ -175,13 +175,8 @@ export class AttachmentService {
    * same persisted job) whose winner already settled — the latter is treated
    * as idempotent success.
    */
-  async completeReservedUpload(params: {
-    attachment: Attachment
-    receivedSizeBytes: number
-    /** ETag multer-s3 got back for the streamed bytes (quotes optional). */
-    receivedETag?: string
-  }): Promise<CompleteReservedUploadResult> {
-    const { attachment, receivedSizeBytes } = params
+  async completeReservedUpload(params: { attachment: Attachment }): Promise<CompleteReservedUploadResult> {
+    const { attachment } = params
     const upload = await AttachmentUploadRepository.findByAttachmentId(this.pool, attachment.workspaceId, attachment.id)
     if (!upload) {
       const settled = await this.settledDuplicate(attachment.id)
@@ -189,21 +184,32 @@ export class AttachmentService {
       throw new Error(`No upload reservation found for attachment ${attachment.id}`)
     }
 
-    // The reservation declared its byte count; multer reports what actually
-    // streamed. A mismatch means a truncated transfer or a caller lying about
-    // size — mark failed (retryable, the next attempt overwrites the same key).
-    if (receivedSizeBytes !== upload.expectedSizeBytes) {
+    // What actually landed, from a HeadObject on the stored object. Multer's
+    // reported size can NOT be trusted here: for bodies large enough that
+    // lib-storage goes multipart (>5MB) it reports 0 (`total` is never emitted
+    // for streams), which would fail every large upload. The stat's ETag also
+    // anchors the settle-time write-race check below.
+    const storedStat = await this.storage.getObjectStat(attachment.storagePath)
+
+    // The reservation declared its byte count. A mismatch means a truncated
+    // transfer or a caller lying about size — mark failed (retryable, the
+    // next attempt overwrites the same key).
+    if (storedStat.sizeBytes !== upload.expectedSizeBytes) {
       await withTransaction(this.pool, async (client) => {
         const failed = await AttachmentUploadRepository.markFailed(client, attachment.workspaceId, attachment.id, {
           code: "size_mismatch",
-          message: `Expected ${upload.expectedSizeBytes} bytes, received ${receivedSizeBytes}`,
+          message: `Expected ${upload.expectedSizeBytes} bytes, received ${storedStat.sizeBytes}`,
         })
         if (failed) {
           const row = await AttachmentRepository.findById(client, attachment.id)
           if (row) await this.publishUploadStatusChanged(client, row, AttachmentUploadStatuses.FAILED)
         }
       })
-      return { status: "size_mismatch", expectedSizeBytes: upload.expectedSizeBytes, receivedSizeBytes }
+      return {
+        status: "size_mismatch",
+        expectedSizeBytes: upload.expectedSizeBytes,
+        receivedSizeBytes: storedStat.sizeBytes,
+      }
     }
 
     if (attachment.e2eOnly) {
@@ -256,15 +262,15 @@ export class AttachmentService {
       const current = await AttachmentRepository.findByIdForUpdate(client, attachment.id)
       if (!current) throw new Error(`Attachment ${attachment.id} was deleted before safety status could be updated`)
 
-      // The scan read bytes at a PATH; verify the object is still exactly the
-      // bytes this request streamed (multer's ETag) before blessing it. A
-      // concurrent POST to the same reservation could otherwise land different
-      // bytes between the scan read and this commit, and a quick HEAD inside
-      // the short settle transaction shrinks that byte-swap window from the
-      // whole scan duration to milliseconds.
-      if (params.receivedETag) {
-        const currentETag = await this.storage.getObjectETag(attachment.storagePath)
-        if (currentETag !== params.receivedETag.replaceAll('"', "")) {
+      // The scan read bytes at a PATH; verify the object is still the exact
+      // version this request validated (the entry stat's ETag) before blessing
+      // the verdict. A concurrent POST to the same reservation could otherwise
+      // land different bytes between the scan read and this commit; a quick
+      // HEAD inside the short settle transaction shrinks that byte-swap window
+      // from the whole scan duration to milliseconds.
+      {
+        const settleStat = await this.storage.getObjectStat(attachment.storagePath)
+        if (settleStat.etag !== storedStat.etag) {
           const failed = await AttachmentUploadRepository.markFailed(client, attachment.workspaceId, attachment.id, {
             code: "concurrent_overwrite",
             message: "Stored bytes changed while the scan ran",
@@ -284,7 +290,7 @@ export class AttachmentService {
           attachmentId: attachment.id,
           filename: attachment.filename,
           mimeType: attachment.mimeType,
-          sizeBytes: receivedSizeBytes,
+          sizeBytes: storedStat.sizeBytes,
           storagePath: attachment.storagePath,
         })
       } else {

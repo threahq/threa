@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react"
 import { Download, FileText, File, Loader2, Copy, Play, Globe, Check, RotateCcw, ShieldAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { PillProgressBar } from "@/components/composer/attachment-pill"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { useGalleryAttachmentUrls, type GalleryUrlKind } from "@/components/gallery/use-gallery-attachment-urls"
@@ -492,12 +493,22 @@ export function resolveUploadChip(a: AttachmentSummary): PendingChipInfo | null 
  * bytes are still on this device offers an in-place retry.
  */
 export function PendingAttachmentChip({ attachment, state, progress, canRetry }: PendingChipInfo) {
+  // max-w-full + a shrinkable filename keep the chip inside its column on
+  // phones — a fixed-width name next to a long status string overflows the
+  // viewport and clips the actionable part (INV-21). The filename gives way
+  // first; the status text truncates only after the name has collapsed.
   if (state === "failed" && canRetry) {
     return (
-      <Button variant="outline" size="sm" className="h-8 gap-2 text-xs" onClick={() => retryUpload(attachment.id)}>
-        <RotateCcw className="h-3.5 w-3.5" />
-        <span className="max-w-[150px] truncate">{attachment.filename}</span>
-        <span className="text-destructive">Upload failed — retry</span>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-8 max-w-full gap-2 text-xs"
+        onClick={() => retryUpload(attachment.id)}
+        aria-label={`Upload failed — retry ${attachment.filename}`}
+      >
+        <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{attachment.filename}</span>
+        <span className="shrink-0 text-destructive">Retry</span>
       </Button>
     )
   }
@@ -507,19 +518,22 @@ export function PendingAttachmentChip({ attachment, state, progress, canRetry }:
     failed: "Upload failed",
     blocked: "Blocked by malware scan",
   }
-  let label = LABELS[state]
-  if (state === "uploading" && typeof progress === "number" && progress > 0) {
-    label = `Uploading… ${Math.min(99, Math.round(progress * 100))}%`
-  }
   const ICONS = { uploading: Loader2, scanning: Loader2, failed: File, blocked: ShieldAlert }
   const Icon = ICONS[state]
+  const showProgress = state === "uploading" && typeof progress === "number" && progress < 1
   return (
-    <Button variant="outline" size="sm" className="h-8 gap-2 text-xs" disabled>
-      <Icon className={cn("h-3.5 w-3.5", (state === "uploading" || state === "scanning") && "animate-spin")} />
-      <span className="max-w-[150px] truncate">{attachment.filename}</span>
-      <span className={state === "failed" || state === "blocked" ? "text-destructive" : "text-muted-foreground"}>
-        {label}
+    <Button variant="outline" size="sm" className="relative h-8 max-w-full gap-2 overflow-hidden text-xs" disabled>
+      <Icon className={cn("h-3.5 w-3.5 shrink-0", (state === "uploading" || state === "scanning") && "animate-spin")} />
+      <span className="min-w-0 flex-1 truncate">{attachment.filename}</span>
+      <span
+        className={cn(
+          "min-w-0 truncate",
+          state === "failed" || state === "blocked" ? "text-destructive" : "text-muted-foreground"
+        )}
+      >
+        {LABELS[state]}
       </span>
+      {showProgress && <PillProgressBar progress={progress} label={attachment.filename} />}
     </Button>
   )
 }
