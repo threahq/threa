@@ -3,6 +3,7 @@ import type { PoolClient } from "pg"
 import type { Conversation } from "../conversations"
 import type { Message } from "../messaging"
 import { MemoService } from "./service"
+import { MEMO_REFLECTIVE_MAX_MEMOS } from "./config"
 import { MemoRepository } from "./repository"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
 import type { MemoContent } from "./memorizer"
@@ -481,5 +482,178 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
 
     expect(result).toEqual({ ok: false, reason: "no_source_messages" })
     expect(insert).not.toHaveBeenCalled()
+  })
+})
+
+function setupReflection(opts: { classification?: Partial<ConversationClassification>; memoContents?: MemoContent[] }) {
+  const clientQuery = mock(async () => ({ rows: [] }))
+  const fakeClient = { query: clientQuery } as unknown as PoolClient
+  spyOn(dbModule, "withClient").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
+    fn(fakeClient)) as typeof dbModule.withClient)
+  spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
+    fn(fakeClient)) as typeof dbModule.withTransaction)
+
+  spyOn(MemoRepository, "findByStream").mockResolvedValue([])
+  spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
+  spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
+  const findNearDuplicate = spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
+  const insert = spyOn(MemoRepository, "insert").mockImplementation(
+    async (_db, params) => fakeMemoRow(params.id, { title: params.title }) as never
+  )
+  spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
+  const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+  const outboxInsertMany = spyOn(OutboxRepository, "insertMany").mockResolvedValue([] as never)
+  const captureEvent: StreamEvent = {
+    id: "evt_reflect",
+    streamId: STREAM_ID,
+    sequence: 20n,
+    broadcastSequence: 11n,
+    eventType: "memos:captured",
+    payload: {},
+    actorId: null,
+    actorType: "system",
+    createdAt: new Date(),
+  }
+  const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([captureEvent])
+
+  const classifyConversation = mock(async () => ({
+    isKnowledgeWorthy: true,
+    shouldReviseExisting: false,
+    revisionReason: null,
+    confidence: 0.9,
+    containsActionItems: false,
+    ...opts.classification,
+  }))
+  const memorizeConversation = mock(async () => opts.memoContents ?? [memoContent])
+
+  const service = new MemoService({
+    pool: {} as never,
+    classifier: { classifyConversation } as never,
+    memorizer: { memorizeConversation, reviseMemo: async () => [] } as never,
+    embeddingService: { embedBatch: async (texts: string[]) => texts.map(() => [0.3, 0.6]) } as never,
+    messageFormatter: {} as never,
+  })
+
+  return {
+    service,
+    clientQuery,
+    insert,
+    findNearDuplicate,
+    streamEventInsertMany,
+    outboxInsert,
+    outboxInsertMany,
+    classifyConversation,
+    memorizeConversation,
+  }
+}
+
+const reflectionInput = {
+  workspaceId: WORKSPACE_ID,
+  streamId: STREAM_ID,
+  sessionId: "agsess_reflect",
+  digest: "Trigger message:\nhow do we deploy?\n\nWhat the assistant researched:\nDeploys run Fridays after smoke.",
+  anchorMessageId: "msg_trigger",
+  participantIds: ["usr_1"],
+}
+
+describe("MemoService.captureSessionReflection — reflective capture (roadmap 6.3)", () => {
+  afterEach(() => mock.restore())
+
+  it("captures agent memos anchored to the session's message with session provenance + capture event", async () => {
+    const { service, clientQuery, insert, streamEventInsertMany, outboxInsert, outboxInsertMany } = setupReflection({})
+
+    const result = await service.captureSessionReflection(reflectionInput)
+
+    expect(result).toEqual({ classified: true, captured: 1, deduped: 0 })
+    // Serialized on the same per-stream lock the batch/save_memo take (INV-20).
+    expect(clientQuery).toHaveBeenCalledWith("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${STREAM_ID}`])
+    // Message-sourced (anchored to the session's own message), agent-authored, session provenance.
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        memoType: "message",
+        sourceMessageId: "msg_trigger",
+        sourceMessageIds: ["msg_trigger"],
+        authoredByKind: "agent",
+        sourceSessionId: "agsess_reflect",
+        participantIds: ["usr_1"],
+        status: "active",
+      })
+    )
+    expect(outboxInsert).toHaveBeenCalledWith(
+      expect.anything(),
+      "memo:created",
+      expect.objectContaining({ workspaceId: WORKSPACE_ID })
+    )
+    // Visible in situ (INV-62): capture event on the session's stream, no conversationId.
+    expect(streamEventInsertMany).toHaveBeenCalledWith(expect.anything(), [
+      expect.objectContaining({
+        streamId: STREAM_ID,
+        eventType: "memos:captured",
+        actorType: "system",
+        payload: {
+          memos: [
+            expect.objectContaining({ memoId: expect.stringMatching(/^memo_/), sourceMessageIds: ["msg_trigger"] }),
+          ],
+        },
+      }),
+    ])
+    expect(streamEventInsertMany.mock.calls[0][1][0].payload).not.toHaveProperty("conversationId")
+    expect(outboxInsertMany).toHaveBeenCalledWith(expect.anything(), [
+      { eventType: "stream:memos_captured", payload: expect.objectContaining({ streamId: STREAM_ID }) },
+    ])
+  })
+
+  it("does not memorize or write when the classifier judges the digest not worthy", async () => {
+    const { service, insert, memorizeConversation, streamEventInsertMany } = setupReflection({
+      classification: { isKnowledgeWorthy: false },
+    })
+
+    const result = await service.captureSessionReflection(reflectionInput)
+
+    expect(result).toEqual({ classified: false, captured: 0, deduped: 0 })
+    expect(memorizeConversation).not.toHaveBeenCalled()
+    expect(insert).not.toHaveBeenCalled()
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
+  })
+
+  it("skips when classifier confidence is below the floor", async () => {
+    const { service, insert, memorizeConversation } = setupReflection({
+      classification: { confidence: 0.4 },
+    })
+
+    const result = await service.captureSessionReflection(reflectionInput)
+
+    expect(result).toEqual({ classified: false, captured: 0, deduped: 0 })
+    expect(memorizeConversation).not.toHaveBeenCalled()
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("caps captured memos at MEMO_REFLECTIVE_MAX_MEMOS", async () => {
+    const many: MemoContent[] = [1, 2, 3].map((n) => ({
+      ...memoContent,
+      title: `Reflective memo ${n}`,
+      abstract: `Distinct durable finding number ${n}.`,
+    }))
+    const { service, insert } = setupReflection({ memoContents: many })
+
+    const result = await service.captureSessionReflection(reflectionInput)
+
+    expect(result.captured).toBe(MEMO_REFLECTIVE_MAX_MEMOS)
+    expect(insert).toHaveBeenCalledTimes(MEMO_REFLECTIVE_MAX_MEMOS)
+  })
+
+  it("dedups a reflective memo whose knowledge already exists in the stream", async () => {
+    const { service, insert, streamEventInsertMany } = setupReflection({})
+    spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue({
+      memo: fakeMemoRow("memo_existing"),
+      distance: 0.03,
+    })
+
+    const result = await service.captureSessionReflection(reflectionInput)
+
+    expect(result).toEqual({ classified: true, captured: 0, deduped: 1 })
+    expect(insert).not.toHaveBeenCalled()
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
   })
 })

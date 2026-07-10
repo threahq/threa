@@ -37,7 +37,15 @@ export {
 export { EMBEDDING_MODEL_ID } from "./embedding-config"
 
 export { MemoService } from "./service"
-export type { MemoServiceLike, MemoServiceConfig, ProcessResult, SaveMemoParams, SaveMemoResult } from "./service"
+export type {
+  MemoServiceLike,
+  MemoServiceConfig,
+  ProcessResult,
+  SaveMemoParams,
+  SaveMemoResult,
+  CaptureSessionReflectionParams,
+  CaptureSessionReflectionResult,
+} from "./service"
 
 export { StubMemoService } from "./service.stub"
 

@@ -1,9 +1,7 @@
 import type { Pool } from "pg"
 import type { AI } from "@threa/agent-runtime"
-import { parseTurnDigestStepContent } from "@threa/agent-runtime"
-import { AgentStepTypes } from "@threa/types"
-import { MessageRepository } from "../messaging"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
+import { buildSessionDigest } from "./session-digest"
 import { logger } from "../../lib/logger"
 
 export interface EpisodeSummaryServiceDeps {
@@ -52,11 +50,12 @@ export class EpisodeSummaryService {
       return { written: false }
     }
 
-    const transcript = await this.buildTranscript(session.triggerMessageId, session.sentMessageIds, sessionId)
-    if (!transcript) {
+    const digest = await buildSessionDigest(pool, session)
+    if (!digest) {
       logger.debug({ sessionId }, "episode summary skipped — no summarizable content")
       return { written: false }
     }
+    const transcript = digest.text
 
     const { value } = await this.deps.ai.generateText({
       model: this.deps.modelId,
@@ -89,46 +88,5 @@ export class EpisodeSummaryService {
     const written = await AgentSessionRepository.setEpisodeSummary(pool, sessionId, summary)
     logger.info({ sessionId, workspaceId, written }, "episode summary processed")
     return { written }
-  }
-
-  /**
-   * Assemble the summarizer input from the session's own trace: the trigger
-   * message (what prompted it), the persona's replies (what it concluded), and
-   * any `turn_digest` findings (what the tools surfaced). Returns null when
-   * there's nothing to condense. Reads are single pooled queries (INV-30).
-   */
-  private async buildTranscript(
-    triggerMessageId: string,
-    sentMessageIds: string[],
-    sessionId: string
-  ): Promise<string | null> {
-    const { pool } = this.deps
-    const sections: string[] = []
-
-    // A fired follow-up carries a synthetic `followup_<id>` trigger with no real
-    // message row, so findById returns null — the session's other signals stand.
-    const trigger = await MessageRepository.findById(pool, triggerMessageId)
-    if (trigger?.contentMarkdown.trim()) {
-      sections.push(`Trigger message:\n${trigger.contentMarkdown.trim()}`)
-    }
-
-    const steps = await AgentSessionRepository.findStepsBySession(pool, sessionId)
-    const findings = steps
-      .filter((s) => s.stepType === AgentStepTypes.TURN_DIGEST)
-      .map((s) => parseTurnDigestStepContent(s.content)?.findings?.trim())
-      .filter((f): f is string => !!f)
-    if (findings.length > 0) {
-      sections.push(`What the assistant researched:\n${findings.join("\n\n")}`)
-    }
-
-    if (sentMessageIds.length > 0) {
-      const sent = await MessageRepository.findByIds(pool, sentMessageIds)
-      const replies = sentMessageIds.map((id) => sent.get(id)?.contentMarkdown.trim()).filter((c): c is string => !!c)
-      if (replies.length > 0) {
-        sections.push(`What the assistant replied:\n${replies.join("\n\n")}`)
-      }
-    }
-
-    return sections.length > 0 ? sections.join("\n\n") : null
   }
 }

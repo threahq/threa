@@ -105,6 +105,8 @@ import {
   createAgentFollowUpFireWorker,
   EpisodeSummaryService,
   createEpisodeSummarizeWorker,
+  ReflectiveCaptureService,
+  createReflectiveCaptureWorker,
   WorkspaceAgent,
   GeneralResearcher,
   PersonaAgent,
@@ -805,6 +807,9 @@ export async function startServer(): Promise<ServerInstance> {
     temperature: EPISODE_SUMMARY_TEMPERATURE,
     maxTokens: EPISODE_SUMMARY_MAX_TOKENS,
   })
+  // Reflective session capture reuses the memo pipeline (classify + memorize +
+  // write) via memoService — a second caller, not a second pipeline (roadmap 6.3).
+  const reflectiveCaptureService = new ReflectiveCaptureService({ pool, memoService })
 
   const personaAgent = new PersonaAgent({
     pool,
@@ -1250,6 +1255,16 @@ export async function startServer(): Promise<ServerInstance> {
   // the `setEpisodeSummary` CAS.
   const episodeSummarizeWorker = createEpisodeSummarizeWorker({ episodeSummaryService })
   jobQueue.registerHandler(JobQueues.AGENT_EPISODE_SUMMARIZE, episodeSummarizeWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
+  // Reflective-capture worker — distils a research-heavy completed session into
+  // ≤2 agent-authored memos so research work products don't evaporate with the
+  // turn (roadmap 6.3). Light tier; a redelivered job no-ops via the
+  // `reflective_captured_at` CAS.
+  const reflectiveCaptureWorker = createReflectiveCaptureWorker({ reflectiveCaptureService })
+  jobQueue.registerHandler(JobQueues.AGENT_REFLECTIVE_CAPTURE, reflectiveCaptureWorker, {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })

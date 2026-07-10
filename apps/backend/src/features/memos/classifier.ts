@@ -19,6 +19,14 @@ export interface ClassifierContext {
   authorTimezone?: string
 }
 
+/**
+ * The only conversation fields the classifier prompt reads. Narrowed from the
+ * full `Conversation` so a non-conversation caller — the reflective session
+ * capture (roadmap 6.3), which has a session digest but no conversation row —
+ * can drive the same classifier without fabricating an entire `Conversation`.
+ */
+export type ClassifiableConversation = Pick<Conversation, "id" | "topicSummary" | "participantIds">
+
 export interface ConversationClassification {
   isKnowledgeWorthy: boolean
   shouldReviseExisting: boolean
@@ -36,7 +44,7 @@ export class MemoClassifier {
   ) {}
 
   async classifyConversation(
-    conversation: Conversation,
+    conversation: ClassifiableConversation,
     formattedMessages: string,
     existingMemos: Memo[],
     context: ClassifierContext

@@ -38,6 +38,7 @@ export {
   type ScheduledMessageSendJobData,
   type AgentFollowUpFireJobData,
   type AgentEpisodeSummarizeJobData,
+  type AgentReflectiveCaptureJobData,
   type ContextBagPrecomputeJobData,
   type BackfillPlanJobData,
   type BackfillChunkJobData,

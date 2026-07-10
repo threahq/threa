@@ -107,7 +107,7 @@ describe("createPersonaAgentWorker", () => {
       })
     })
 
-    it("does not enqueue when the completed session sent no messages", async () => {
+    it("does not enqueue an episode summary when the completed session sent no messages", async () => {
       spyOn(StreamEventRepository, "getLatestUserMessageSequence").mockResolvedValue(null)
       const send = mock((_q: unknown, _d: unknown) => Promise.resolve("queue_1"))
       const worker = createPersonaAgentWorker({
@@ -121,6 +121,26 @@ describe("createPersonaAgentWorker", () => {
 
       const episodeCalls = send.mock.calls.filter((c) => c[0] === JobQueues.AGENT_EPISODE_SUMMARIZE)
       expect(episodeCalls).toHaveLength(0)
+    })
+
+    it("enqueues a reflective-capture job on completion even when the session sent no messages", async () => {
+      // Reflective capture must cover the replyless research turn the episode gate
+      // above skips (roadmap 6.3) — the service self-gates on research residue.
+      spyOn(StreamEventRepository, "getLatestUserMessageSequence").mockResolvedValue(null)
+      const send = mock((_q: unknown, _d: unknown) => Promise.resolve("queue_1"))
+      const worker = createPersonaAgentWorker({
+        agent: makeCompletedAgent({ messagesSent: 0, sentMessageIds: [] }),
+        serverId: "srv_1",
+        pool: {} as Pool,
+        jobQueue: { send } as unknown as QueueManager,
+      })
+
+      await worker({ id: "job_5", name: "persona.agent", data: baseData })
+
+      expect(send).toHaveBeenCalledWith(JobQueues.AGENT_REFLECTIVE_CAPTURE, {
+        workspaceId: "ws_1",
+        sessionId: "session_1",
+      })
     })
   })
 })
