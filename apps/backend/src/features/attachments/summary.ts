@@ -1,8 +1,28 @@
 import type { AttachmentSummary, AttachmentUploadStatus } from "@threa/types"
+import type { Querier } from "../../db"
 import type { Attachment } from "./repository"
+import { AttachmentUploadRepository } from "./upload-repository"
 import { isVideoAttachment } from "./video"
 import { isImageAttachment } from "./image-caption"
 import { isAttachmentSafeForSharing } from "./upload-safety-policy"
+
+/**
+ * Batch-fetch reserved-upload workflow statuses for the not-yet-shareable
+ * attachments in a read model (one query per batch, INV-56), for the second
+ * argument of {@link toAttachmentSummary}. Without it a failed reservation is
+ * indistinguishable from one still uploading — both sit at `pending_upload` —
+ * so viewers of that surface would render an eternal "Uploading…" chip.
+ */
+export async function fetchUploadStatuses(
+  client: Querier,
+  workspaceId: string,
+  attachments: Attachment[]
+): Promise<Map<string, AttachmentUploadStatus>> {
+  const pendingIds = attachments.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus)).map((a) => a.id)
+  if (pendingIds.length === 0) return new Map()
+  const uploads = await AttachmentUploadRepository.findByAttachmentIds(client, workspaceId, pendingIds)
+  return new Map([...uploads].map(([id, upload]) => [id, upload.status]))
+}
 
 /**
  * Map a stored `Attachment` row to the lightweight `AttachmentSummary` wire

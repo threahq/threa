@@ -330,18 +330,27 @@ async function runReserveAndUpload(jobId: string, file: File, signal: AbortSigna
 
     jobIdByAttachmentId.set(attachmentId, jobId)
     blobs.set(jobId, uploadBlob)
-    // Durable from this point: a reload resumes the transfer from IDB.
-    await db.uploadJobs.put({
-      attachmentId,
-      workspaceId: job.workspaceId,
-      filename: job.filename,
-      mimeType: job.mimeType,
-      sizeBytes: job.sizeBytes,
-      e2e: job.e2e,
-      blob: uploadBlob,
-      status: "pending",
-      createdAt: Date.now(),
-    })
+    // Durable from this point: a reload resumes the transfer from IDB. A
+    // persist failure orphans nothing — the reservation is released so the
+    // server isn't left holding a row no client can ever complete.
+    try {
+      await db.uploadJobs.put({
+        attachmentId,
+        workspaceId: job.workspaceId,
+        filename: job.filename,
+        mimeType: job.mimeType,
+        sizeBytes: job.sizeBytes,
+        e2e: job.e2e,
+        blob: uploadBlob,
+        status: "pending",
+        createdAt: Date.now(),
+      })
+    } catch (err) {
+      jobIdByAttachmentId.delete(attachmentId)
+      blobs.delete(jobId)
+      attachmentsApi.delete(job.workspaceId, attachmentId).catch(() => {})
+      throw err
+    }
 
     // Cancelled while the reservation/persist was in flight: removeUpload
     // couldn't clean up the durable bits (the job carried no attachmentId
@@ -528,6 +537,8 @@ export function claimUpload(id: string): UploadJob | undefined {
 }
 
 const resumedWorkspaces = new Set<string>()
+/** Bumped by resetUploadManager so an in-flight resume can't seed stale jobs. */
+let resumeEpoch = 0
 
 /**
  * Resume this workspace's persisted upload jobs after a reload/app reopen:
@@ -538,13 +549,20 @@ const resumedWorkspaces = new Set<string>()
 export async function resumeWorkspaceUploads(workspaceId: string): Promise<void> {
   if (resumedWorkspaces.has(workspaceId)) return
   resumedWorkspaces.add(workspaceId)
+  const epoch = resumeEpoch
 
   let rows: CachedUploadJob[]
   try {
     rows = await db.uploadJobs.where("workspaceId").equals(workspaceId).toArray()
   } catch {
+    // Transient IDB failure must not permanently mark the workspace resumed —
+    // the next workspace connect gets another shot.
+    resumedWorkspaces.delete(workspaceId)
     return
   }
+  // An account switch/reset happened while the read was in flight: these rows
+  // belong to state that was just torn down.
+  if (epoch !== resumeEpoch) return
 
   for (const row of rows) {
     if (jobIdByAttachmentId.has(row.attachmentId)) continue
@@ -584,6 +602,7 @@ export async function resumeWorkspaceUploads(workspaceId: string): Promise<void>
  * IDB rows survive (mirroring pendingMessages) so a re-login resumes them.
  */
 export function resetUploadManager(): void {
+  resumeEpoch++
   for (const controller of controllers.values()) controller.abort()
   controllers.clear()
   for (const job of state.jobs.values()) revokePreviewUrl(job.previewUrl)

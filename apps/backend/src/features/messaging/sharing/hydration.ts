@@ -3,7 +3,7 @@ import { type AttachmentSummary, type JSONContent, type StreamType, type Visibil
 import { MessageRepository, type Message } from "../repository"
 import { resolveActorNames } from "../../agents"
 import { listAccessibleStreamIds, StreamRepository, type Stream } from "../../streams"
-import { AttachmentRepository, toAttachmentSummary } from "../../attachments"
+import { AttachmentRepository, toAttachmentSummary, fetchUploadStatuses } from "../../attachments"
 
 import { SharedMessageRepository } from "./repository"
 
@@ -277,8 +277,11 @@ export async function hydrateSharedMessageIds(
       resolveActorNames(db, workspaceId, actorIds),
       AttachmentRepository.findByMessageIds(db, [...okMessages.keys()]),
     ])
+    const uploadStatuses = await fetchUploadStatuses(db, workspaceId, [...attachmentsByMessageId.values()].flat())
     for (const [id, source] of okMessages) {
-      const attachments = (attachmentsByMessageId.get(source.id) ?? []).map((a) => toAttachmentSummary(a))
+      const attachments = (attachmentsByMessageId.get(source.id) ?? []).map((a) =>
+        toAttachmentSummary(a, uploadStatuses.get(a.id))
+      )
       result[id] = {
         state: "ok",
         messageId: source.id,

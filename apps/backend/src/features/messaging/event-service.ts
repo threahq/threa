@@ -620,6 +620,18 @@ export class EventService {
       if (attachmentsToAttach.length > 0) {
         const attached = await AttachmentRepository.attachToMessage(client, attachmentsToAttach, msgId, params.streamId)
         if (attached !== attachmentsToAttach.length) {
+          // A concurrent send with the same clientMessageId may have won the
+          // bind: attach now runs BEFORE the message insert (whose ON CONFLICT
+          // is the usual duplicate detector), so the loser surfaces here.
+          // Route it to the duplicate-recovery path instead of a hard error.
+          if (params.clientMessageId) {
+            const winner = await MessageRepository.findByClientMessageId(
+              client,
+              params.streamId,
+              params.clientMessageId
+            )
+            if (winner) throw new DuplicateMessageError(winner)
+          }
           throw new Error("Failed to attach all files")
         }
       }
