@@ -650,6 +650,10 @@ export function MessageItem({
         data-actor-type={message.authorType}
         className={cn(
           "relative scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible",
+          // Touch owns selection to the long-press drawer / swipe-to-quote, so kill
+          // native selection on mobile — matches the timeline row (message-event).
+          // Desktop keeps it selectable for the quote-on-selection affordance.
+          isTouchInput && !isEditing && "select-none",
           rowInsetClassName
         )}
         {...touchHandlers}
@@ -703,6 +707,10 @@ export function MessageItem({
       data-actor-type={message.authorType}
       className={cn(
         "relative scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible",
+        // Touch owns selection to the long-press drawer / swipe-to-quote, so kill
+        // native selection on mobile — matches the timeline row (message-event).
+        // Desktop keeps it selectable for the quote-on-selection affordance.
+        isTouchInput && !isEditing && "select-none",
         rowInsetClassName
       )}
       {...touchHandlers}
