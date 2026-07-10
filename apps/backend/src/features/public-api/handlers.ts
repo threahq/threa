@@ -982,21 +982,52 @@ export function createPublicApiHandlers({
         })
       }
 
-      const { link, stream } = await botRuntimeService.createLinkedScratchpadSession({
-        workspaceId: req.workspaceId!,
-        botId: bot.id,
-        ownerUserId: bot.ownerUserId,
-        runtimeKind: data.runtimeKind,
-        instanceId: data.instanceId,
-        runtimeSessionId: data.runtimeSessionId,
-        displayName: data.displayName,
-        localCwd: data.localCwd,
-        memoryMode: data.memoryMode,
-        labelName: data.labelName,
-        description: data.description,
-        traits: requiredRuntimeTraits,
-        ...(data.e2e ? { e2e: { ownerKeyId: data.e2e.ownerKeyId } } : {}),
-      })
+      let created: Awaited<ReturnType<typeof botRuntimeService.createLinkedScratchpadSession>>
+      try {
+        created = await botRuntimeService.createLinkedScratchpadSession({
+          workspaceId: req.workspaceId!,
+          botId: bot.id,
+          ownerUserId: bot.ownerUserId,
+          runtimeKind: data.runtimeKind,
+          instanceId: data.instanceId,
+          runtimeSessionId: data.runtimeSessionId,
+          displayName: data.displayName,
+          localCwd: data.localCwd,
+          memoryMode: data.memoryMode,
+          labelName: data.labelName,
+          description: data.description,
+          traits: requiredRuntimeTraits,
+          ...(data.e2e ? { e2e: { ownerKeyId: data.e2e.ownerKeyId } } : {}),
+        })
+      } catch (error) {
+        // Unique violation on the runtime-session identity: the unarchive
+        // consumer revived the archived link between our reads above and this
+        // insert. The whole create rolled back (no orphan scratchpad) — resume
+        // the revived link instead of surfacing a 500.
+        if ((error as { code?: string }).code === "23505") {
+          const revived = await botRuntimeService.findActivePiRemoteSession({
+            workspaceId: req.workspaceId!,
+            botId: bot.id,
+            instanceId: data.instanceId,
+            runtimeSessionId: data.runtimeSessionId,
+            runtimeKind: data.runtimeKind,
+          })
+          if (revived) {
+            return res.json({
+              data: {
+                linkId: revived.id,
+                rootStreamId: revived.rootStreamId,
+                activeStreamId: revived.activeStreamId,
+                runtimeSessionId: revived.runtimeSessionId,
+                streamUrlPath: `/w/${req.workspaceId!}/s/${revived.activeStreamId}`,
+                e2eEnabled: await E2eStreamsRepository.isE2eStream(pool, req.workspaceId!, revived.rootStreamId),
+              },
+            })
+          }
+        }
+        throw error
+      }
+      const { link, stream } = created
 
       res.json({
         data: {

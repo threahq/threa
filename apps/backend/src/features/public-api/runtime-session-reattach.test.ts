@@ -102,6 +102,35 @@ describe("createBotRuntimeSession reattach after unarchive", () => {
     expect(createLinkedScratchpadSession).not.toHaveBeenCalled()
   })
 
+  it("resumes the revived link when the create loses a race to the unarchive consumer (23505)", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    const revivedLink = {
+      id: "brsl_1",
+      rootStreamId: "stream_old",
+      activeStreamId: "stream_old",
+      runtimeSessionId: "sess_1",
+    }
+    // First read misses (link still 'archived'); by the time the insert runs the
+    // unarchive consumer has flipped it 'active' → identity unique violation.
+    const findActive = mock()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(revivedLink as never)
+    const uniqueViolation = Object.assign(new Error("duplicate key value"), { code: "23505" })
+    const handlers = createHandlers({
+      findActivePiRemoteSession: findActive,
+      reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "none" })),
+      createLinkedScratchpadSession: mock(() => Promise.reject(uniqueViolation)),
+    })
+    const cap = createResponse()
+
+    await handlers.createBotRuntimeSession(botRequest(), cap.res)
+
+    expect(cap.body()).toMatchObject({
+      data: { linkId: "brsl_1", rootStreamId: "stream_old", runtimeSessionId: "sess_1" },
+    })
+  })
+
   it("falls through to scratchpad creation when the runtime session has no archived link", async () => {
     spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
     const createLinkedScratchpadSession = mock(() =>

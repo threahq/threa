@@ -308,11 +308,15 @@ describe("BotRuntimeSessionLinkRepository.reactivateArchivedByRuntimeSession", (
     })
 
     // CTE picks one row race-safely (INV-20), newest first, and the stream
-    // guard keeps a still-archived scratchpad's link dead.
+    // guard keeps a still-archived scratchpad's link dead. The stream row is
+    // share-locked in the same select — an unlocked EXISTS would be TOCTOU
+    // against a concurrent re-archive.
     expect(captured.text).toContain("SET status = 'active'")
     expect(captured.text).toContain("status = 'archived'")
+    expect(captured.text).toContain("JOIN streams s")
     expect(captured.text).toContain("archived_at IS NULL")
-    expect(captured.text).toContain("FOR UPDATE")
+    expect(captured.text).toContain("FOR UPDATE OF l SKIP LOCKED")
+    expect(captured.text).toContain("FOR SHARE OF s")
     expect(captured.text).toContain("LIMIT 1")
     expect(captured.values).toEqual(
       expect.arrayContaining(["ws_1", "bot_alice", "claude-code-channel", "inst_99", "sess_1"])

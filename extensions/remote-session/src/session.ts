@@ -407,8 +407,19 @@ export class RemoteSession {
   /** Create (or recover) the scratchpad link. Best-effort so a transient Threa outage self-heals on the next poll tick. */
   private async ensureLink(): Promise<void> {
     if (this.link || this.stopped) return
+    // Snapshot the detach state so a response that raced an archive push is
+    // dropped: a createSession issued BEFORE the archive can resolve with the
+    // pre-archive link after archivePending was set — accepting it would cancel
+    // the wind-down against a scratchpad that is still archived server-side.
+    const pendingAtStart = this.archivePending
     try {
-      this.link = await this.createSession()
+      const link = await this.createSession()
+      if (this.stopped) return
+      if (this.archivePending !== pendingAtStart) {
+        this.log("link response raced an archive state change — dropped; the next probe decides")
+        return
+      }
+      this.link = link
       // A successful link while detached-pending-restore is the reattach (the
       // server revived the archived link for this runtime session) — the probe
       // beat the bot:session_restored push. Cancel the wind-down.
@@ -1347,6 +1358,10 @@ export class RemoteSession {
       rootStreamId,
       deadline: setTimeout(() => void this.windDownAfterGrace(rootStreamId), this.archiveGraceMs),
     }
+    // Pull the next poll tick onto the probe cadence NOW — the pending tick was
+    // scheduled with the slow socket-backstop delay (15 min), which could land
+    // zero probes inside the grace window if the restore push is then missed.
+    this.reschedulePoll(this.archiveProbeDelayMs)
     await Promise.allSettled(
       inflight.map(([id, entry]) =>
         this.client.fail(id, {
@@ -1421,14 +1436,26 @@ export class RemoteSession {
   }
 
   private startPoll(): void {
-    const tick = async () => {
-      if (this.stopped) return
-      if (!this.link) await this.ensureLink()
-      if (!this.transport.socketConnected) await this.transport.connect()
-      const claimed = await this.claimDrain()
-      this.pollTimer = setTimeout(() => void tick(), this.nextPollDelay(claimed))
-    }
-    this.pollTimer = setTimeout(() => void tick(), this.config.pollMs)
+    this.reschedulePoll(this.config.pollMs)
+  }
+
+  /** (Re)arm the poll timer. Replaces any pending tick so a state change can pull the next tick closer. */
+  private reschedulePoll(delayMs: number): void {
+    if (this.pollTimer) clearTimeout(this.pollTimer)
+    this.pollTimer = setTimeout(() => void this.pollTick(), delayMs)
+  }
+
+  private async pollTick(): Promise<void> {
+    if (this.stopped) return
+    if (!this.link) await this.ensureLink()
+    if (!this.transport.socketConnected) await this.transport.connect()
+    const claimed = await this.claimDrain()
+    this.reschedulePoll(this.nextPollDelay(claimed))
+  }
+
+  /** Reattach-probe cadence while detached: scaled to the grace window so several probes always fit inside it. */
+  private get archiveProbeDelayMs(): number {
+    return Math.min(ARCHIVE_RESTORE_PROBE_MS, Math.max(Math.floor(this.archiveGraceMs / 4), 10))
   }
 
   /**
@@ -1441,7 +1468,7 @@ export class RemoteSession {
     // Detached-pending-restore: probe at a fixed cadence so a missed
     // bot:session_restored push still reattaches within the grace window. The
     // window bounds the total probes, so this cannot become a quota burn.
-    if (this.archivePending) return ARCHIVE_RESTORE_PROBE_MS
+    if (this.archivePending) return this.archiveProbeDelayMs
     if (this.transport.socketConnected) {
       this.emptyNoSocketPolls = 0
       return WS_BACKSTOP_POLL_MS

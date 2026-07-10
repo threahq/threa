@@ -523,6 +523,14 @@ export const BotRuntimeSessionLinkRepository = {
    * scratchpad's link dead (the caller 409s instead of minting a duplicate
    * scratchpad), and the locked CTE makes concurrent reattach/unarchive
    * consumers converge on one winner (INV-20).
+   *
+   * The stream row is locked FOR SHARE in the same candidate select — an
+   * unlocked read (EXISTS) would be TOCTOU against a concurrent re-archive:
+   * the re-archive's stream:archived consumer could skip this link (its
+   * 'active' write still uncommitted here) and leave an active link on an
+   * archived stream that nothing ever corrects. With the share lock, a
+   * concurrent archive of the stream waits for this commit, and its consumer
+   * then archives the freshly revived link. Call inside a transaction.
    */
   async reactivateArchivedByRuntimeSession(
     db: Querier,
@@ -536,19 +544,18 @@ export const BotRuntimeSessionLinkRepository = {
   ): Promise<BotRuntimeSessionLink | null> {
     const result = await db.query<BotRuntimeSessionLinkRow>(sql`WITH candidate AS (
         SELECT l.id FROM bot_runtime_session_links l
+        JOIN streams s
+          ON s.workspace_id = l.workspace_id AND s.id = l.root_stream_id AND s.archived_at IS NULL
         WHERE l.workspace_id = ${params.workspaceId}
           AND l.bot_id = ${params.botId}
           AND l.runtime_kind = ${params.runtimeKind}
           AND l.instance_id = ${params.instanceId}
           AND l.runtime_session_id = ${params.runtimeSessionId}
           AND l.status = 'archived'
-          AND EXISTS (
-            SELECT 1 FROM streams s
-            WHERE s.workspace_id = l.workspace_id AND s.id = l.root_stream_id AND s.archived_at IS NULL
-          )
         ORDER BY l.updated_at DESC
-        FOR UPDATE OF l SKIP LOCKED
         LIMIT 1
+        FOR UPDATE OF l SKIP LOCKED
+        FOR SHARE OF s
       )
       UPDATE bot_runtime_session_links l
       SET status = 'active', last_seen_at = NOW(), updated_at = NOW()

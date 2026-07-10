@@ -416,7 +416,72 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     expect(asInternal(session).archivePending).toBeDefined()
     // Detached: no claims while the scratchpad is archived, and the poll probes at the reattach cadence.
     expect(await asInternal(session).claimDrain()).toBe(false)
-    expect(asInternal(session).nextPollDelay(false)).toBe(45_000)
+    expect(asInternal(session).nextPollDelay(false)).toBe(15_000)
+    await session.shutdown()
+  })
+
+  test("a missed restore push still reattaches via the poll probe inside the grace window", async () => {
+    const created: unknown[] = []
+    const client = {
+      fail: async () => {},
+      createSession: async (body: unknown) => {
+        created.push(body)
+        return {
+          linkId: "brsl_1",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_root",
+          runtimeSessionId: "rts-test",
+          streamUrlPath: "/w/ws_1/s/stream_root",
+        }
+      },
+      claim: async () => null,
+    } as unknown as ThreaClient
+    const { transport } = makeFakeTransport()
+    const archived: Array<{ rootStreamId: string }> = []
+    const session = makeGraceSession({
+      client,
+      transport,
+      archiveGraceMs: 400,
+      onArchived: (payload) => void archived.push(payload),
+    })
+
+    // No bot:session_restored ever arrives; the probe (grace/4 = 100ms) must
+    // find the server-side revived link before the grace (400ms) expires.
+    await asInternal(session).handleSessionArchived({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+
+    expect(created.length).toBeGreaterThanOrEqual(1)
+    expect(asInternal(session).archivePending).toBeUndefined()
+    expect(asInternal(session).link).toMatchObject({ rootStreamId: "stream_root" })
+    expect(archived).toEqual([])
+    await session.shutdown()
+  })
+
+  test("a link response that raced the archive push is dropped — it must not cancel the wind-down", async () => {
+    let resolveCreate: ((link: unknown) => void) | undefined
+    const client = {
+      fail: async () => {},
+      createSession: () => new Promise((resolve) => (resolveCreate = resolve)),
+      claim: async () => null,
+    } as unknown as ThreaClient
+    const { transport } = makeFakeTransport()
+    const session = makeGraceSession({ client, transport, archiveGraceMs: 60_000 })
+
+    // A pre-archive ensureLink is in flight when the archive push lands; its
+    // stale (pre-archive) link response resolves afterwards.
+    const inflightLink = (session as unknown as { ensureLink: () => Promise<void> }).ensureLink()
+    await asInternal(session).handleSessionArchived({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
+    resolveCreate!({
+      linkId: "brsl_stale",
+      rootStreamId: "stream_root",
+      activeStreamId: "stream_root",
+      runtimeSessionId: "rts-test",
+      streamUrlPath: "/w/ws_1/s/stream_root",
+    })
+    await inflightLink
+
+    expect(asInternal(session).link).toBeUndefined()
+    expect(asInternal(session).archivePending).toBeDefined()
     await session.shutdown()
   })
 
