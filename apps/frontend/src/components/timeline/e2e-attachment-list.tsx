@@ -9,6 +9,7 @@ import { triggerDownload } from "@/lib/image-utils"
 import { Button } from "@/components/ui/button"
 import { subscribeUploads, getUploadsVersion } from "@/lib/uploads/upload-manager"
 import { resolveUploadChip, PendingAttachmentChip } from "./attachment-list"
+import { PillProgressBar } from "@/components/composer/attachment-pill"
 
 /**
  * Renders the attachments of an E2E message from their decrypted refs. E2E
@@ -22,6 +23,29 @@ import { resolveUploadChip, PendingAttachmentChip } from "./attachment-list"
  */
 
 const PREFIX = "🔒 "
+
+/** Same footprint as E2eImageAttachment's decrypting box (h-40 max-w-sm). */
+function E2ePendingImageBox({
+  state,
+  progress,
+  filename,
+}: {
+  state: "uploading" | "scanning"
+  progress?: number
+  filename: string
+}) {
+  return (
+    <div className="relative flex h-40 w-full max-w-sm items-center justify-center overflow-hidden rounded-lg border bg-muted/40">
+      <div className="flex flex-col items-center gap-1 px-2 text-center">
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <span className="text-[11px] text-muted-foreground">{state === "scanning" ? "Scanning…" : "Uploading…"}</span>
+      </div>
+      {state === "uploading" && typeof progress === "number" && progress < 1 && (
+        <PillProgressBar progress={progress} label={filename} />
+      )}
+    </div>
+  )
+}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -117,6 +141,23 @@ export function E2eAttachmentList({
         if (chip) {
           // Show the REAL name from the decrypted ref, not the server's
           // "encrypted" placeholder the summary carries.
+          // In-flight images get an image-shaped placeholder for the same
+          // INV-21 reason as the plaintext list: the settle should swap a
+          // box's content, not replace a small chip with a full-size image.
+          // The box mirrors E2eImageAttachment's decrypting state exactly, so
+          // uploading → decrypting → image never reshapes until the final
+          // (pre-existing) natural-size reveal. The ref's mimeType is
+          // plaintext, so the split works while the summary says "encrypted".
+          if ((chip.state === "uploading" || chip.state === "scanning") && ref.mimeType.startsWith("image/")) {
+            return (
+              <E2ePendingImageBox
+                key={ref.attachmentId}
+                state={chip.state}
+                progress={chip.progress}
+                filename={ref.filename}
+              />
+            )
+          }
           return (
             <div key={ref.attachmentId} className="flex flex-wrap gap-2">
               <PendingAttachmentChip {...chip} attachment={{ ...chip.attachment, filename: ref.filename }} />

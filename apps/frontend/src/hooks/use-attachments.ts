@@ -45,6 +45,12 @@ export interface PendingAttachment {
    * non-previewable files and for restored drafts, which carry no local bytes.
    */
   previewUrl?: string
+  /**
+   * A failed upload whose bytes can be re-streamed against its reservation
+   * (`retryUpload`). False for reservation failures — nothing durable exists
+   * to retry against, so remove-and-repick is the only recovery.
+   */
+  canRetry?: boolean
 }
 
 export interface UploadResult {
@@ -121,6 +127,7 @@ function jobToPending(job: UploadJob): PendingAttachment {
     error: job.error,
     progress: job.status === "uploaded" ? undefined : job.progress,
     previewUrl: job.previewUrl,
+    canRetry: job.status === "error" && !!job.attachmentId,
   }
 }
 

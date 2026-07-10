@@ -8,6 +8,7 @@ import { useDecryptedAttachment } from "@/hooks/use-decrypted-attachment"
 import { getAttachmentRef, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { attachmentContentUrl } from "@/api"
 import type { PendingAttachment } from "@/hooks/use-attachments"
+import { retryUpload } from "@/lib/uploads/upload-manager"
 import { formatFileSize } from "@/lib/file-size"
 
 // Leading-slot icon for a previewable type, matching the gallery's own glyphs
@@ -108,13 +109,20 @@ function ChipView({
   // transfer, drops the chip, and deletes the reservation.
   const removeHandler = isUploading ? () => onCancelUpload(attachment.id) : () => onRemove(attachment.id)
   const removeLabel = isUploading ? `Cancel upload of ${attachment.filename}` : `Remove ${attachment.filename}`
-  const secondary = isError ? "Failed" : formatFileSize(attachment.sizeBytes)
+  // A retryable failure's bytes are still held locally — same in-place retry
+  // the timeline chip offers, instead of forcing remove-and-repick.
+  const canRetry = isError && attachment.canRetry === true
+  let secondary = formatFileSize(attachment.sizeBytes)
+  if (isError) secondary = canRetry ? "Retry" : "Failed"
 
   const isGenericError =
     isError &&
     (attachment.error === "Internal server error" || attachment.error === "Upload failed" || !attachment.error)
   let tooltip: string | undefined
-  if (isGenericError) tooltip = "We couldn't upload this file. Please remove it and try again."
+  if (isGenericError)
+    tooltip = canRetry
+      ? "We couldn't upload this file. Tap to retry."
+      : "We couldn't upload this file. Please remove it and try again."
   else if (isError) tooltip = attachment.error
 
   let Icon = iconForType(galleryType)
@@ -122,6 +130,9 @@ function ChipView({
   else if (isError) Icon = AlertCircle
 
   const canPreview = !!fullSrc && !isError
+  let onActivate: (() => void) | undefined
+  if (canRetry) onActivate = () => retryUpload(attachment.id)
+  else if (canPreview) onActivate = () => onOpen(key)
 
   return (
     <AttachmentPill
@@ -135,8 +146,8 @@ function ChipView({
       onRemove={removeHandler}
       removeLabel={removeLabel}
       progress={isUploading ? attachment.progress : undefined}
-      onActivate={canPreview ? () => onOpen(key) : undefined}
-      activateLabel={`Preview ${attachment.filename}`}
+      onActivate={onActivate}
+      activateLabel={canRetry ? `Retry upload of ${attachment.filename}` : `Preview ${attachment.filename}`}
       labelMaxWidth="max-w-[120px]"
     />
   )

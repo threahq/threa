@@ -71,11 +71,18 @@ export function AttachmentProvider({ workspaceId, attachments, children }: Attac
       // download/preview would 404 or 403 with no explanation.
       const pending = attachmentPendingState(attachment as Parameters<typeof attachmentPendingState>[0])
       if (pending) {
-        toast.error(
-          pending === "blocked"
-            ? "This file was blocked by the malware scan"
-            : `This file isn't available yet — ${PENDING_STATE_LABELS[pending].toLowerCase()}`
-        )
+        // In-flight states are routine, not failures — error styling is
+        // reserved for failed/blocked so a red toast always means something
+        // is actually wrong (INV-63).
+        if (pending === "uploading" || pending === "scanning") {
+          toast.info(`This file isn't available yet — ${PENDING_STATE_LABELS[pending].toLowerCase()}`)
+        } else {
+          toast.error(
+            pending === "blocked"
+              ? "This file was blocked by the malware scan"
+              : `This file isn't available yet — ${PENDING_STATE_LABELS[pending].toLowerCase()}`
+          )
+        }
         return
       }
 

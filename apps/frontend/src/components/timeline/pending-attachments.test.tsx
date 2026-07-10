@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { PendingAttachments } from "./pending-attachments"
 import type { PendingAttachment } from "@/hooks/use-attachments"
+import * as uploadManager from "@/lib/uploads/upload-manager"
 
 function attachment(overrides: Partial<PendingAttachment> = {}): PendingAttachment {
   return {
@@ -70,6 +71,35 @@ describe("PendingAttachments", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Preview clip.mp4" }))
     expect(screen.getByRole("dialog")).toBeInTheDocument()
+  })
+
+  it("offers an in-place retry on a retryable failed chip", () => {
+    const retrySpy = vi.spyOn(uploadManager, "retryUpload").mockResolvedValue(undefined)
+    render(
+      <PendingAttachments
+        attachments={[attachment({ status: "error", error: "Network error during upload", canRetry: true })]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.getByText("Retry")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Retry upload of screenshot.png" }))
+    expect(retrySpy).toHaveBeenCalledWith("attach_img")
+    retrySpy.mockRestore()
+  })
+
+  it("keeps remove-only recovery for a reservation failure (nothing to retry against)", () => {
+    render(
+      <PendingAttachments
+        attachments={[attachment({ status: "error", error: "Internal server error", canRetry: false })]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.getByText("Failed")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Retry upload/ })).not.toBeInTheDocument()
   })
 
   it("keeps a plain, non-previewable chip for an unsupported file type", () => {
