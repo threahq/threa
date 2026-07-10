@@ -883,6 +883,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     delegationService,
     eventService,
     streamService,
+    botChannelService,
   })
   const publicMiddleware = [rateLimits.publicApiWorkspace, rateLimits.publicApiKey, publicAuth] as const
 

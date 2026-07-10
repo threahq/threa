@@ -1,6 +1,7 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { AuthorTypes, THREA_CALLBACK_TOKEN_HEADER, sentViaApiKey } from "@threa/types"
+import type { PoolClient } from "pg"
+import { AuthorTypes, THREA_CALLBACK_TOKEN_HEADER, sentViaApiKey, type AuthorType } from "@threa/types"
 import { HttpError } from "@threa/backend-common"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
 import { withTransaction } from "../../db"
@@ -10,6 +11,8 @@ import type { EventService } from "../messaging"
 import type { StreamService } from "../streams"
 import { listAccessibleStreamIds } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
+import type { BotChannelService } from "../api-keys"
+import { BotRepository } from "./bot-repository"
 import type { DelegatedTask, DelegationService } from "../delegations"
 import {
   claimDelegationSchema,
@@ -24,6 +27,7 @@ interface DelegationPublicApiDeps {
   delegationService: DelegationService
   eventService: EventService
   streamService: StreamService
+  botChannelService: BotChannelService
 }
 
 /** Wire shape for a delegation on the public API. Claim-related secrets never appear here. */
@@ -43,16 +47,17 @@ function serializeDelegation(delegation: DelegatedTask) {
 }
 
 /**
- * Public API for the delegation lifecycle (roadmap 5.3) — how a local agent
- * closes the loop on a `delegate_task` hand-off: list the open queue, claim
- * one, report progress, and complete with a result message or fail.
+ * Public API for the delegation lifecycle (roadmap 5.3) — how an agent closes
+ * the loop on a `delegate_task` hand-off: list the open queue, claim one,
+ * report progress, and complete with a result message or fail.
  *
- * Identity model: **user-scoped API keys only** (403 for bot keys). A
- * delegation is the key owner's own local agent acting with their credentials
- * (INV-65) — there is no bot identity in the loop, and completion posts the
- * result *as the user* with the standard `sentVia` API-key provenance, exactly
- * like public `sendMessage`. The message enters the normal pipeline, so GAM
- * memorizes the outcome.
+ * Identity model mirrors public `sendMessage`, two branches per key kind:
+ * a user-scoped key is the key owner's own local agent (INV-65) — the result
+ * message is authored as the user with `sentVia` API-key provenance; a
+ * workspace (bot) key is a shared runner — the result is authored as the bot
+ * entity. Access is symmetrical: user keys see streams the user can access,
+ * bot keys see the bot's channel grants. Either way the message enters the
+ * normal pipeline, so GAM memorizes the outcome.
  *
  * Claim binding: `claim` mints the token (returned once in cleartext; sha256
  * at rest via the service); every later transition authenticates with the
@@ -67,12 +72,27 @@ export function createDelegationPublicApiHandlers({
   delegationService,
   eventService,
   streamService,
+  botChannelService,
 }: DelegationPublicApiDeps) {
-  function requireUserKey(req: Request) {
-    if (!req.userApiKey || !req.user) {
-      throw new HttpError("Delegations require a user-scoped API key", { status: 403, code: "FORBIDDEN" })
+  type KeyIdentity =
+    | { kind: "user"; userId: string; userName: string; apiKeyId: string }
+    | { kind: "bot"; botId: string }
+
+  function resolveKeyIdentity(req: Request): KeyIdentity {
+    if (req.userApiKey && req.user) {
+      return { kind: "user", userId: req.user.id, userName: req.user.name, apiKeyId: req.userApiKey.id }
     }
-    return { userApiKey: req.userApiKey, user: req.user }
+    if (req.botApiKey) {
+      return { kind: "bot", botId: req.botApiKey.botId }
+    }
+    throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  async function streamAccessibleFor(identity: KeyIdentity, workspaceId: string, streamId: string): Promise<boolean> {
+    if (identity.kind === "user") {
+      return (await streamService.tryAccess(streamId, workspaceId, identity.userId)) !== null
+    }
+    return botChannelService.isStreamAccessibleForBot(workspaceId, identity.botId, streamId)
   }
 
   function requireCallbackToken(req: Request): string {
@@ -84,19 +104,22 @@ export function createDelegationPublicApiHandlers({
   }
 
   return {
-    /** The claimable queue, filtered to streams the key's user can access (INV-62). */
+    /** The claimable queue, filtered to streams the key's identity can access (INV-62 / channel grants). */
     async listDelegations(req: Request, res: Response) {
-      const { user } = requireUserKey(req)
+      const identity = resolveKeyIdentity(req)
       const workspaceId = req.workspaceId!
       validateRequest(listDelegationsQuerySchema, req.query)
 
       const open = await delegationService.listOpen({ workspaceId })
-      const accessible = await listAccessibleStreamIds(
-        pool,
-        workspaceId,
-        user.id,
-        open.map((d) => d.streamId)
-      )
+      const accessible =
+        identity.kind === "user"
+          ? await listAccessibleStreamIds(
+              pool,
+              workspaceId,
+              identity.userId,
+              open.map((d) => d.streamId)
+            )
+          : new Set(await botChannelService.getAccessibleStreamIdsForBot(workspaceId, identity.botId))
       res.json({ data: open.filter((d) => accessible.has(d.streamId)).map(serializeDelegation) })
     },
 
@@ -107,13 +130,13 @@ export function createDelegationPublicApiHandlers({
      * context refs, and the claim token (cleartext, returned exactly once).
      */
     async claimDelegation(req: Request, res: Response) {
-      const { user } = requireUserKey(req)
+      const identity = resolveKeyIdentity(req)
       const workspaceId = req.workspaceId!
       const id = req.params.delegationId!
       const { claimedByLabel } = validateRequest(claimDelegationSchema, req.body)
 
       const delegation = await delegationService.getById({ workspaceId, id })
-      if (!delegation || !(await streamService.tryAccess(delegation.streamId, workspaceId, user.id))) {
+      if (!delegation || !(await streamAccessibleFor(identity, workspaceId, delegation.streamId))) {
         throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
       }
 
@@ -138,7 +161,7 @@ export function createDelegationPublicApiHandlers({
 
     /** Push the claim TTL forward. Liveness only — no status change, no card event. */
     async heartbeatDelegation(req: Request, res: Response) {
-      requireUserKey(req)
+      resolveKeyIdentity(req)
       const claimToken = requireCallbackToken(req)
 
       const claimExpiresAt = await delegationService.heartbeat({
@@ -154,7 +177,7 @@ export function createDelegationPublicApiHandlers({
 
     /** Progress report: `claimed|running → running`, note lands on the card, TTL renews. */
     async reportDelegationStatus(req: Request, res: Response) {
-      requireUserKey(req)
+      resolveKeyIdentity(req)
       const claimToken = requireCallbackToken(req)
       const { statusNote } = validateRequest(reportDelegationStatusSchema, req.body)
 
@@ -174,10 +197,11 @@ export function createDelegationPublicApiHandlers({
      * Terminal success. When a result is given, the message insert and the
      * `completed` CAS share one transaction, so a lost claim race (cancelled /
      * expired under us) rolls the message back instead of leaving an orphan —
-     * the `completeBotInvocation` shape.
+     * the `completeBotInvocation` shape. The author follows the key kind:
+     * user key → the user (with via-API provenance), bot key → the bot.
      */
     async completeDelegation(req: Request, res: Response) {
-      const { user, userApiKey } = requireUserKey(req)
+      const identity = resolveKeyIdentity(req)
       const workspaceId = req.workspaceId!
       const id = req.params.delegationId!
       const claimToken = requireCallbackToken(req)
@@ -188,7 +212,7 @@ export function createDelegationPublicApiHandlers({
         throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
       }
 
-      let contentMarkdown: string | null = null
+      let author: { authorId: string; authorType: AuthorType; sentVia?: string } | null = null
       if (resultMarkdown) {
         // Defensive: delegations are never created on sealed streams (the tool
         // is absent there), but a plaintext write into an E2E stream would
@@ -199,24 +223,37 @@ export function createDelegationPublicApiHandlers({
             code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
           })
         }
-        contentMarkdown = normalizeMessage(resultMarkdown)
+        if (identity.kind === "user") {
+          author = {
+            authorId: identity.userId,
+            authorType: AuthorTypes.USER,
+            sentVia: sentViaApiKey(identity.apiKeyId),
+          }
+        } else {
+          const bot = await BotRepository.findById(pool, workspaceId, identity.botId)
+          if (!bot || bot.archivedAt) {
+            throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+          }
+          author = { authorId: bot.id, authorType: AuthorTypes.BOT }
+        }
       }
+      const contentMarkdown = resultMarkdown ? normalizeMessage(resultMarkdown) : null
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
 
-      const { completed, resultMessageId } = await withTransaction(pool, async (client) => {
+      const { completed, resultMessageId } = await withTransaction(pool, async (client: PoolClient) => {
         let resultMessageId: string | undefined
-        if (contentMarkdown && contentJson) {
+        if (contentMarkdown && contentJson && author) {
           const { message } = await eventService.createMessageInTransaction(client, {
             workspaceId,
             streamId: delegation.streamId,
-            authorId: user.id,
-            authorType: AuthorTypes.USER,
+            authorId: author.authorId,
+            authorType: author.authorType,
             contentJson,
             contentMarkdown,
             attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
             clientMessageId: `delegation:${delegation.id}`,
-            sentVia: sentViaApiKey(userApiKey.id),
+            sentVia: author.sentVia,
           })
           resultMessageId = message.id
         }
@@ -237,7 +274,7 @@ export function createDelegationPublicApiHandlers({
 
     /** Terminal failure: records why on the card. */
     async failDelegation(req: Request, res: Response) {
-      requireUserKey(req)
+      resolveKeyIdentity(req)
       const claimToken = requireCallbackToken(req)
       const { errorMessage } = validateRequest(failDelegationSchema, req.body)
 

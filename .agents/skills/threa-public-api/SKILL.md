@@ -90,11 +90,11 @@ Or discover via `GET /api/v1/workspaces/{workspaceId}/streams`.
 | DELETE | `/workspaces/{ws}/labels/assignments`             | `labels:write`     | Remove a label (by name) from a resource. **204**. Query `?name=…&resourceType=stream&resourceId=…`.                                                                                                 |
 | PATCH  | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`     | Edit a label you created. Body any of `{name, color, emoji, description}`.                                                                                                                           |
 | DELETE | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`     | Archive a label you created (drops its assignments). **204**.                                                                                                                                        |
-| GET    | `/workspaces/{ws}/delegations`                    | `delegations:read` | Open delegated tasks the key's user can see (query `status=open` is the only filter today). **User keys only** — all delegation endpoints 403 bot keys.                                              |
+| GET    | `/workspaces/{ws}/delegations`                    | `delegations:read` | Open delegated tasks the key can see (query `status=open` is the only filter today). User keys see the user's streams; workspace keys see the bot's channel grants.                                  |
 | POST   | `/workspaces/{ws}/delegations/{id}/claim`         | `delegations:write`| Body `{claimedByLabel}`. Returns brief + contextRefs + **`claimToken` (cleartext, once)** + expiry. Lost race → **409** `DELEGATION_NOT_OPEN`.                                                       |
 | POST   | `/workspaces/{ws}/delegations/{id}/heartbeat`     | `delegations:write`| Header `X-Threa-Callback-Token: <claimToken>`. Renews the 15-min claim TTL. Gone claim → **404**.                                                                                                    |
 | POST   | `/workspaces/{ws}/delegations/{id}/status`        | `delegations:write`| Header token. Body `{statusNote?}` — marks running, note shows on the card, TTL renews.                                                                                                              |
-| POST   | `/workspaces/{ws}/delegations/{id}/complete`      | `delegations:write`| Header token. Body `{resultMarkdown?}` — posts the result to the stream **as the key owner** (via-API badge) atomically with completion; GAM memorizes it.                                           |
+| POST   | `/workspaces/{ws}/delegations/{id}/complete`      | `delegations:write`| Header token. Body `{resultMarkdown?}` — posts the result atomically with completion, authored as the key's user (via-API badge) or as the bot for a workspace key; GAM memorizes it.                |
 | POST   | `/workspaces/{ws}/delegations/{id}/fail`          | `delegations:write`| Header token. Body `{errorMessage}` — shows on the card.                                                                                                                                             |
 
 ### Send-message body (`sendMessageSchema`)
@@ -282,9 +282,10 @@ and must not be committed.
 
 When a Threa persona hands off work with `delegate_task`, a card appears in the
 stream and the task sits in the open queue until something claims it. This is
-how a local agent picks it up, works it, and posts the result back. Requires a
-**user-scoped key** with `delegations:read` + `delegations:write`: the result
-message is authored as the key owner, so the identity has to be a person's.
+how a local agent picks it up, works it, and posts the result back. Requires
+`delegations:read` + `delegations:write`. Works with both key kinds: a
+user-scoped key posts the result as you (via-API badge); a workspace (bot) key
+posts it as the bot — the shared-runner setup.
 
 Manual walkthrough with curl:
 

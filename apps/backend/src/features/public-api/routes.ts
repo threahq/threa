@@ -961,7 +961,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "listDelegations",
     summary: "List open delegations",
     description:
-      "List delegated tasks that are open to claim, filtered to streams the key's user can access. Requires a user-scoped API key: a delegation is executed by the key owner's own local agent with their identity.",
+      "List delegated tasks that are open to claim, filtered to what the key can access: a user-scoped key sees streams its user can access, a workspace key sees the bot's channel grants.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ],
     parameters: [workspaceIdParam],
@@ -975,7 +975,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "claimDelegation",
     summary: "Claim an open delegation",
     description:
-      "Atomically claim an open delegation for the key owner's local agent. Returns the brief, context refs, and the claim token (cleartext, exactly once — send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
+      "Atomically claim an open delegation. Returns the brief, context refs, and the claim token (cleartext, exactly once — send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
     parameters: [workspaceIdParam, delegationIdParam],
@@ -1018,7 +1018,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "completeDelegation",
     summary: "Complete a delegation",
     description:
-      "Complete the claimed delegation. When resultMarkdown is given, the result is posted to the delegation's stream as the key owner (with the standard via-API provenance) in the same transaction as the completion — it enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+      "Complete the claimed delegation. When resultMarkdown is given, the result is posted to the delegation's stream in the same transaction as the completion — authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. It enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
     parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],

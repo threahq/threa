@@ -5,9 +5,11 @@ import { AuthorTypes, DelegationStatuses, THREA_CALLBACK_TOKEN_HEADER } from "@t
 import * as db from "../../db"
 import * as streams from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
+import type { BotChannelService } from "../api-keys"
 import type { DelegatedTask, DelegationService } from "../delegations"
 import type { EventService } from "../messaging"
 import type { StreamService } from "../streams"
+import { BotRepository } from "./bot-repository"
 import { createDelegationPublicApiHandlers } from "./delegation-handlers"
 
 const NOW = new Date("2026-07-10T12:00:00.000Z")
@@ -74,22 +76,24 @@ function makeHandlers(overrides: {
   delegationService?: Partial<DelegationService>
   eventService?: Partial<EventService>
   streamService?: Partial<StreamService>
+  botChannelService?: Partial<BotChannelService>
 }) {
   return createDelegationPublicApiHandlers({
     pool: { __pool: true } as unknown as Pool,
     delegationService: (overrides.delegationService ?? {}) as DelegationService,
     eventService: (overrides.eventService ?? {}) as EventService,
     streamService: (overrides.streamService ?? {}) as StreamService,
+    botChannelService: (overrides.botChannelService ?? {}) as BotChannelService,
   })
 }
 
 afterEach(() => mock.restore())
 
 describe("delegation public API — key + token gates", () => {
-  it("rejects bot API keys on every delegation endpoint (user identity is the whole model)", async () => {
+  it("401s every endpoint without any API key context", async () => {
     const handlers = makeHandlers({})
     const { res } = createResponse()
-    const botReq = makeRequest({ userKey: false, botKey: true })
+    const bareReq = makeRequest({ userKey: false, botKey: false })
     for (const handler of [
       handlers.listDelegations,
       handlers.claimDelegation,
@@ -98,7 +102,7 @@ describe("delegation public API — key + token gates", () => {
       handlers.completeDelegation,
       handlers.failDelegation,
     ]) {
-      await expect(handler(botReq, res)).rejects.toMatchObject({ status: 403 })
+      await expect(handler(bareReq, res)).rejects.toMatchObject({ status: 401 })
     }
   })
 
@@ -123,6 +127,25 @@ describe("listDelegations", () => {
 
     const data = (payloads[0] as { data: Array<{ id: string }> }).data
     expect(data.map((d) => d.id)).toEqual(["dlg_visible"])
+  })
+
+  it("filters by the bot's channel grants for a workspace (bot) key", async () => {
+    const listOpen = mock(async () => [
+      makeDelegation({ id: "dlg_granted", streamId: "stream_granted" }),
+      makeDelegation({ id: "dlg_other", streamId: "stream_other" }),
+    ])
+    const getAccessibleStreamIdsForBot = mock(async () => ["stream_granted"])
+    const handlers = makeHandlers({
+      delegationService: { listOpen },
+      botChannelService: { getAccessibleStreamIdsForBot },
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.listDelegations(makeRequest({ userKey: false, botKey: true }), res)
+
+    expect(getAccessibleStreamIdsForBot).toHaveBeenCalledWith("ws_1", "bot_1")
+    const data = (payloads[0] as { data: Array<{ id: string }> }).data
+    expect(data.map((d) => d.id)).toEqual(["dlg_granted"])
   })
 })
 
@@ -291,6 +314,20 @@ describe("completeDelegation", () => {
     expect((completeInTransaction as ReturnType<typeof mock>).mock.calls[0][1]).toMatchObject({
       resultMessageId: undefined,
     })
+  })
+
+  it("authors the result as the bot for a workspace (bot) key, with no sentVia", async () => {
+    const { handlers, createMessageInTransaction } = transactionalHandlers({})
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Runner", archivedAt: null } as never)
+    const { res } = createResponse()
+
+    await handlers.completeDelegation(
+      makeRequest({ userKey: false, botKey: true, token: "tok", body: { resultMarkdown: "All done." } }),
+      res
+    )
+
+    const messageParams = (createMessageInTransaction as ReturnType<typeof mock>).mock.calls[0][1]
+    expect(messageParams).toMatchObject({ authorId: "bot_1", authorType: AuthorTypes.BOT, sentVia: undefined })
   })
 
   it("400s a plaintext result into an E2E stream before any insert", async () => {

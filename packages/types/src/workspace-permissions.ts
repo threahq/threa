@@ -145,7 +145,7 @@ export const WORKSPACE_PERMISSIONS: readonly WorkspacePermission[] = Object.free
     slug: WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE,
     name: "Work delegations",
     description:
-      "Grants a local agent access to claim delegated tasks and report progress, completion (posting the result as the key owner), or failure.",
+      "Grants an agent access to claim delegated tasks and report progress, completion (posting the result as the key's identity), or failure.",
   },
   {
     slug: WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE,
