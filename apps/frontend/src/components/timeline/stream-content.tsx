@@ -12,6 +12,7 @@ import {
   useStreamBootstrap,
   useWorkspaceUserId,
   useAutoMarkAsRead,
+  useAutoReadAttention,
   useLastSeenEvent,
   useUnreadCounts,
   useUnreadDivider,
@@ -53,6 +54,7 @@ import {
   type WorkspaceBootstrap,
   type StreamBootstrap,
   type ConversationWithStaleness,
+  type DelegationStatusChangedEventPayload,
 } from "@threa/types"
 import {
   EventList,
@@ -66,6 +68,7 @@ import {
   itemDayStartMs,
   findFirstMessageId,
   collectCancelledFollowUpIds,
+  collectDelegationStatusPatches,
   findMessageItemIndex,
   findEventItemIndex,
   getTimelineItemKey,
@@ -187,6 +190,17 @@ export function shouldStartHighlightClear(args: {
 }): boolean {
   if (!args.highlightMessageId) return false
   return args.deepLinkTargetLoaded || args.deepLinkGaveUp
+}
+
+/**
+ * `?m=` deep-link targets are message ids or, for non-message rows (delegation
+ * cards), raw `event_…` ids — the prefixes never collide, so one matcher serves
+ * every deep-link path (mirrors findMessageItemIndex). Every in-window check a
+ * deep link flows through must use this, or an event-id target wedges that path
+ * on its give-up/timeout branch.
+ */
+export function matchesDeepLinkTarget(event: { id: string; payload: unknown }, target: string): boolean {
+  return (event.payload as { messageId?: string })?.messageId === target || event.id === target
 }
 
 /**
@@ -1203,6 +1217,10 @@ export function StreamContent({
   // could never flip on the virtualized path. Passed into TimelineMessageList's
   // render context so every viewer's card reflects the cancel (survives reload).
   const cancelledFollowUpIds = useMemo(() => collectCancelledFollowUpIds(timelineItems), [timelineItems])
+  // Same full-window read for delegation status patches (they're zero-height,
+  // filtered out of `visibleItems`): the card must see claim/progress/terminal
+  // patches to render the authoritative live status on the virtualized path.
+  const delegationStatusPatches = useMemo(() => collectDelegationStatusPatches(timelineItems), [timelineItems])
 
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
   // its closure is created once per scroll but runs for up to ~1.2s, during
@@ -1532,10 +1550,7 @@ export function StreamContent({
       // Fresh, explicit scroll intent — clear any prior manual-control stamp
       // so the refine loop is allowed to run for this jump.
       userInteractedAtRef.current = 0
-      const isInCurrentEvents = events.some((e) => {
-        const payload = e.payload as { messageId?: string }
-        return payload?.messageId === messageId
-      })
+      const isInCurrentEvents = events.some((e) => matchesDeepLinkTarget(e, messageId))
 
       if (isInCurrentEvents) {
         // Message is loaded — scroll to it (handles both in-DOM and virtualized-out items)
@@ -1648,7 +1663,7 @@ export function StreamContent({
         return
       }
 
-      const inEvents = events.some((e) => (e.payload as { messageId?: string })?.messageId === target)
+      const inEvents = events.some((e) => matchesDeepLinkTarget(e, target))
       if (inEvents && scrollToMessage(target)) {
         // scrollToMessage engaged its own resilient loop — it owns landing
         // + user-abort from here, so this driver is done.
@@ -1694,11 +1709,8 @@ export function StreamContent({
     // Disable auto-scroll so highlight scroll-into-view isn't overridden
     disableAutoScroll()
 
-    // Check if the message is already visible in current events
-    const isVisible = events.some((e) => {
-      const payload = e.payload as { messageId?: string }
-      return payload?.messageId === targetMessageId
-    })
+    // Check if the target is already visible in current events.
+    const isVisible = events.some((e) => matchesDeepLinkTarget(e, targetMessageId))
 
     if (isVisible) {
       deepLinkDebug("highlight: target already in window, scrolling directly", targetMessageId)
@@ -1787,6 +1799,7 @@ export function StreamContent({
     enabled: autoMarkEnabled,
   })
   useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
+  const canAutoRead = useAutoReadAttention()
 
   const isMobile = useIsMobile()
   const { markAsRead, markUnread, getUnreadCount } = useUnreadCounts(workspaceId)
@@ -1804,7 +1817,9 @@ export function StreamContent({
     currentWorkspaceUserId ?? undefined,
     streamId,
     lastReadEventId,
-    readOverlay
+    readOverlay,
+    // Away arrivals get the divider (blur re-latch below), not the flash.
+    canAutoRead
   )
 
   // Unread divider state — a bookmark line at the first unread message. The
@@ -1829,6 +1844,10 @@ export function StreamContent({
     // Skip overlay-read events so the divider anchors on the first *effectively*
     // unread row, not one already read from a conversation surface.
     overlayReadIds: readOverlay,
+    // Same signal that gates auto-read: while the viewer is away the divider may
+    // re-latch forward at the first away-arrival (messages that came in while
+    // blurred get the persistent red→grey strip, as if the stream were re-opened).
+    isAttentive: canAutoRead,
   })
 
   // The divider is red while unread still sits at/after it, and turns muted-gray
@@ -2008,9 +2027,7 @@ export function StreamContent({
   // reads worse than painting the cached window and snapping to the target
   // when the jump lands.
   const deepLinkTargetLoaded = useMemo(
-    () =>
-      !highlightMessageId ||
-      events.some((e) => (e.payload as { messageId?: string })?.messageId === highlightMessageId),
+    () => !highlightMessageId || events.some((e) => matchesDeepLinkTarget(e, highlightMessageId)),
     [events, highlightMessageId]
   )
   const holdForDeepLink = shouldHoldForDeepLink({
@@ -2172,6 +2189,7 @@ export function StreamContent({
                         <TimelineMessageList
                           visibleItems={visibleItems}
                           cancelledFollowUpIds={cancelledFollowUpIds}
+                          delegationStatusPatches={delegationStatusPatches}
                           isLoading={isLoading}
                           holdForDeepLink={holdForDeepLink}
                           isConfirmedEmpty={isConfirmedEmpty}
@@ -2434,6 +2452,7 @@ export function StreamContent({
 function TimelineMessageList({
   visibleItems,
   cancelledFollowUpIds,
+  delegationStatusPatches,
   isLoading,
   holdForDeepLink,
   isConfirmedEmpty,
@@ -2470,6 +2489,7 @@ function TimelineMessageList({
 }: {
   visibleItems: TimelineItem[]
   cancelledFollowUpIds: Set<string>
+  delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
   isLoading: boolean
   /** Hold the skeleton until a deep-link (?m=) target is in the loaded window
    *  so the keyed list mounts already anchored on it. */
@@ -2587,6 +2607,7 @@ function TimelineMessageList({
       sessionLiveSubsteps,
       onStopSession: handleStopSession,
       cancelledFollowUpIds,
+      delegationStatusPatches,
       batch,
       conversationOverlay,
     }),
@@ -2604,6 +2625,7 @@ function TimelineMessageList({
       sessionLiveSubsteps,
       handleStopSession,
       cancelledFollowUpIds,
+      delegationStatusPatches,
       batch,
       conversationOverlay,
     ]

@@ -153,6 +153,7 @@ export class BotRuntimeTransport {
     socket.on("bot_invocation:claimed", (payload: unknown) => this.callbacks.onInvocationClaimed?.(payload))
     socket.on("bot:active_actor_changed", (payload: unknown) => this.callbacks.onActiveActorChanged?.(payload))
     socket.on("bot:session_archived", (payload: unknown) => this.callbacks.onSessionArchived?.(payload))
+    socket.on("bot:session_restored", (payload: unknown) => this.callbacks.onSessionRestored?.(payload))
     socket.on("bot:resync", () => {
       this.sendHello()
       this.callbacks.onResync?.()

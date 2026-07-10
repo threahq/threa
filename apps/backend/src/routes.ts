@@ -81,6 +81,7 @@ import type { SavedMessagesService } from "./features/saved-messages"
 import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
 import type { AgentFollowUpService } from "./features/agents"
+import { createDelegationHandlers, type DelegationService } from "./features/delegations"
 import type { DraftsService } from "./features/drafts"
 import type { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import type { PushService } from "./features/push"
@@ -127,6 +128,7 @@ interface Dependencies {
   savedSuggestionsService: SavedSuggestionsService
   scheduledMessagesService: ScheduledMessagesService
   agentFollowUpService: AgentFollowUpService
+  delegationService: DelegationService
   draftsService: DraftsService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
@@ -188,6 +190,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     savedSuggestionsService,
     scheduledMessagesService,
     agentFollowUpService,
+    delegationService,
     draftsService,
     labelService,
     labelAssignmentService,
@@ -306,6 +309,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const label = createLabelHandlers({ labelService, labelAssignmentService, labelMessageService })
   const agentSession = createAgentSessionHandlers({ pool })
   const agentFollowUps = createAgentFollowUpHandlers({ pool, agentFollowUpService })
+  const delegations = createDelegationHandlers({ pool, delegationService })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
   const giphy = createGiphyHandlers({ giphyService })
@@ -670,6 +674,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Agent follow-ups — a stream member can cancel a follow-up they can see from
   // its timeline card (roadmap 1.3). Scheduling/listing stay agent-only tools.
   app.post("/api/workspaces/:workspaceId/agent-follow-ups/:id/cancel", ...authed, agentFollowUps.cancel)
+  app.get("/api/workspaces/:workspaceId/delegations", ...authed, delegations.list)
+  app.post("/api/workspaces/:workspaceId/delegations/:id/cancel", ...authed, delegations.cancel)
 
   // Drafts — centralized, local-first composer payloads that roam across the
   // author's devices. Private to the author; never timeline-broadcast.

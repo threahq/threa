@@ -72,4 +72,5 @@ export {
   boardViewId,
   streamBriefId,
   streamBriefRevisionId,
+  delegationId,
 } from "@threa/backend-common"

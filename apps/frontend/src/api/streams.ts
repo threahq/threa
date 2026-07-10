@@ -129,7 +129,12 @@ export const streamsApi = {
     targetId: string,
     limit?: number
   ): Promise<EventsAroundResponse> {
-    const searchParams = new URLSearchParams({ messageId: targetId })
+    // The endpoint centers on a message OR a raw timeline event (a non-message
+    // row like a delegation card has no messageId); ids are prefix-typed, so
+    // route by prefix.
+    const searchParams = new URLSearchParams(
+      targetId.startsWith("event_") ? { eventId: targetId } : { messageId: targetId }
+    )
     if (limit) searchParams.set("limit", limit.toString())
     return api.get<EventsAroundResponse>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/events/around?${searchParams.toString()}`

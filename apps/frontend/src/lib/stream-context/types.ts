@@ -1,13 +1,13 @@
-import type { AttachmentCategory, KnowledgeType } from "@threa/types"
+import type { AttachmentCategory, DelegationStatus, KnowledgeType } from "@threa/types"
 
 /**
  * The buckets the "In this stream" panel groups derived context into. `"all"`
  * is a virtual category (the interleaved recency feed), not a member of any
  * single item.
  */
-export type ContextCategory = "link" | "media" | "file" | "memo" | "thread"
+export type ContextCategory = "link" | "media" | "file" | "memo" | "delegation" | "thread"
 
-export const CONTEXT_CATEGORIES: ContextCategory[] = ["link", "media", "file", "memo", "thread"]
+export const CONTEXT_CATEGORIES: ContextCategory[] = ["link", "media", "file", "memo", "delegation", "thread"]
 
 interface ContextItemBase {
   /** Stable React key, also the dedup identity within its category. */
@@ -68,6 +68,17 @@ export interface MemoContextItem extends ContextItemBase {
   sourceMessageIds: string[]
 }
 
+export interface DelegationContextItem extends ContextItemBase {
+  category: "delegation"
+  delegationId: string
+  title: string
+  /** Live status from the authoritative list endpoint, not the loaded window. */
+  status: DelegationStatus
+  claimedByLabel: string | null
+  statusNote: string | null
+  resultMessageId: string | null
+}
+
 export interface ThreadContextItem extends ContextItemBase {
   category: "thread"
   /** The thread's stream id — open it with `getPanelUrl(threadId)`. */
@@ -76,7 +87,13 @@ export interface ThreadContextItem extends ContextItemBase {
   lastReplyPreview: string | null
 }
 
-export type ContextItem = LinkContextItem | MediaContextItem | FileContextItem | MemoContextItem | ThreadContextItem
+export type ContextItem =
+  | LinkContextItem
+  | MediaContextItem
+  | FileContextItem
+  | MemoContextItem
+  | DelegationContextItem
+  | ThreadContextItem
 
 export interface DerivedStreamContext {
   /** All items, newest first. */

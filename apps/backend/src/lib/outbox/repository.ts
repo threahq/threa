@@ -80,6 +80,8 @@ export type OutboxEventType =
   | "stream:agent_follow_up_scheduled"
   | "stream:agent_follow_up_cancelled"
   | "stream:brief_updated"
+  | "stream:delegation_created"
+  | "stream:delegation_status_changed"
   | "invitation:sent"
   | "invitation:link-created"
   | "invitation:link-claimed"
@@ -107,6 +109,7 @@ export type OutboxEventType =
   | "bot:active_actor_changed"
   | "bot:resync"
   | "bot:session_archived"
+  | "bot:session_restored"
   | "label:created"
   | "label:updated"
   | "label:deleted"
@@ -133,6 +136,8 @@ export type StreamScopedEventType =
   | "stream:agent_follow_up_scheduled"
   | "stream:agent_follow_up_cancelled"
   | "stream:brief_updated"
+  | "stream:delegation_created"
+  | "stream:delegation_status_changed"
   | "stream:activity"
   | "conversation:created"
   | "conversation:updated"
@@ -325,6 +330,20 @@ export interface StreamAgentFollowUpCancelledOutboxPayload extends StreamScopedP
  * the brief lives.
  */
 export interface StreamBriefUpdatedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+/**
+ * Carries a `delegation:created` / `delegation:status_changed` timeline event
+ * (roadmap 5.1) to the stream's room. Same envelope shape as the follow-up
+ * events: the full stream event rides along so clients append it without a
+ * fetch (created renders the card; status_changed patches it).
+ */
+export interface StreamDelegationCreatedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+export interface StreamDelegationStatusChangedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -877,6 +896,18 @@ export interface BotSessionArchivedOutboxPayload extends WorkspaceScopedPayload 
   rootStreamId: string
 }
 
+/**
+ * The unarchive counterpart of `bot:session_archived`: the scratchpad a runtime
+ * session was linked to has been unarchived and the link is 'active' again
+ * server-side. A live runtime cancels its wind-down and reattaches on receipt.
+ */
+export interface BotSessionRestoredOutboxPayload extends WorkspaceScopedPayload {
+  botId: string
+  instanceId: string
+  runtimeSessionId: string
+  rootStreamId: string
+}
+
 // Label event payloads. Labels are owner-scoped, so `targetUserId` is always the
 // owning actor and the broadcast handler delivers to that actor's user room only.
 export interface LabelUpsertedOutboxPayload extends WorkspaceScopedPayload {
@@ -950,6 +981,8 @@ export interface OutboxEventPayloadMap {
   "stream:agent_follow_up_scheduled": StreamAgentFollowUpScheduledOutboxPayload
   "stream:agent_follow_up_cancelled": StreamAgentFollowUpCancelledOutboxPayload
   "stream:brief_updated": StreamBriefUpdatedOutboxPayload
+  "stream:delegation_created": StreamDelegationCreatedOutboxPayload
+  "stream:delegation_status_changed": StreamDelegationStatusChangedOutboxPayload
   "stream:read": StreamReadOutboxPayload
   "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
@@ -1008,6 +1041,7 @@ export interface OutboxEventPayloadMap {
   "bot:active_actor_changed": BotActiveActorChangedOutboxPayload
   "bot:resync": BotResyncOutboxPayload
   "bot:session_archived": BotSessionArchivedOutboxPayload
+  "bot:session_restored": BotSessionRestoredOutboxPayload
   "label:created": LabelUpsertedOutboxPayload
   "label:updated": LabelUpsertedOutboxPayload
   "label:deleted": LabelDeletedOutboxPayload
@@ -1063,6 +1097,8 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:agent_follow_up_scheduled",
   "stream:agent_follow_up_cancelled",
   "stream:brief_updated",
+  "stream:delegation_created",
+  "stream:delegation_status_changed",
   "stream:activity",
   "conversation:created",
   "conversation:updated",
@@ -1164,6 +1200,7 @@ export type BotScopedEventType =
   | "bot:active_actor_changed"
   | "bot:resync"
   | "bot:session_archived"
+  | "bot:session_restored"
 
 const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot_invocation:available",
@@ -1171,6 +1208,7 @@ const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot:active_actor_changed",
   "bot:resync",
   "bot:session_archived",
+  "bot:session_restored",
 ]
 
 /**

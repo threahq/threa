@@ -80,6 +80,7 @@ export { useTimelineScroll } from "./use-timeline-scroll"
 
 export { useStreamSearch } from "./use-stream-search"
 export { useMemoSearch, useMemoDetail, useUpdateMemo, useArchiveMemo, useUnarchiveMemo, memoKeys } from "./use-memos"
+export { useStreamDelegations, delegationKeys } from "./use-stream-delegations"
 
 export {
   createOptimisticBootstrap,
@@ -105,7 +106,7 @@ export { useActivityCounts } from "./use-activity-counts"
 
 export { useActivityFeed, useMarkActivityRead, useMarkAllActivityRead, activityKeys } from "./use-activity"
 
-export { useAutoMarkAsRead } from "./use-auto-mark-as-read"
+export { useAutoMarkAsRead, useAutoReadAttention } from "./use-auto-mark-as-read"
 
 export { useLastSeenEvent } from "./use-last-seen-event"
 

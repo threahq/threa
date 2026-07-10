@@ -127,6 +127,12 @@ export interface AgentSessionProgressPayload {
   currentStepType: AgentStepType
   /** Thread stream ID for channel mentions - allows frontend to link directly to thread */
   threadStreamId?: string
+  /**
+   * The thread's parent message id when the session runs in a thread. The
+   * parent stream's timeline has no row for the trigger message (it lives
+   * inside the thread), so the inline indicator keys off this instead.
+   */
+  parentMessageId?: string
 }
 
 // Stream event payloads for agent session lifecycle
@@ -239,13 +245,15 @@ export interface AgentSessionSubstepPayload {
   updatedAt: string
 }
 
-// Emitted to channel room when agent session starts (for immediate inline indicator)
+// Emitted to the parent stream's room when agent session starts (for immediate inline indicator)
 export interface AgentActivityStartedPayload {
   sessionId: string
   triggerMessageId: string
   personaName: string
   /** Thread stream ID - allows frontend to link directly to thread before stream:created arrives */
   threadStreamId: string
+  /** The thread's parent message id — keys the indicator in the parent stream's timeline (see AgentSessionProgressPayload). */
+  parentMessageId?: string
 }
 
 // Emitted to channel room when agent session ends (for inline indicator cleanup)

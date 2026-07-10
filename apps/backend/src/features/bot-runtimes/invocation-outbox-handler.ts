@@ -8,6 +8,7 @@ import {
   parseMessagePayload,
   type OutboxHandler,
   type StreamArchivedOutboxPayload,
+  type StreamUnarchivedOutboxPayload,
 } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import { StreamRepository } from "../streams"
@@ -102,6 +103,8 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
           await this.processMessageCreated(event.payload)
         } else if (event.eventType === "stream:archived") {
           await this.processStreamArchived(event.payload as StreamArchivedOutboxPayload)
+        } else if (event.eventType === "stream:unarchived") {
+          await this.processStreamUnarchived(event.payload as StreamUnarchivedOutboxPayload)
         }
         seen.push(event.id)
       }
@@ -117,6 +120,20 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
   private async processStreamArchived(payload: StreamArchivedOutboxPayload): Promise<void> {
     if (!payload?.workspaceId || !payload?.streamId) return
     await this.service.endSessionsForArchivedStream({
+      workspaceId: payload.workspaceId,
+      rootStreamId: payload.streamId,
+    })
+  }
+
+  /**
+   * The unarchive counterpart: revive the links the archive ended and notify
+   * each linked runtime so a live agent reattaches without a restart. Same
+   * idempotency shape as the archive branch — already-active links return no
+   * rows, so a retried batch re-notifies nothing.
+   */
+  private async processStreamUnarchived(payload: StreamUnarchivedOutboxPayload): Promise<void> {
+    if (!payload?.workspaceId || !payload?.streamId) return
+    await this.service.restoreSessionsForUnarchivedStream({
       workspaceId: payload.workspaceId,
       rootStreamId: payload.streamId,
     })

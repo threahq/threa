@@ -23,6 +23,7 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as inlineComposerModule from "@/components/board/board-inline-composer"
+import * as inputModeModule from "@/hooks/use-input-mode"
 import { spyOnExport } from "@/test/spy"
 import { MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 
@@ -511,5 +512,53 @@ describe("BoardCard row layout", () => {
     for (const cls of MESSAGE_ROW_HEAD_PADDING.split(" ")) {
       expect(accent!.className).toContain(cls)
     }
+  })
+
+  // Parity with the timeline row (MessageEvent): on touch the row hands selection
+  // to the long-press drawer / swipe-to-quote, so native selection is disabled;
+  // on mouse the row stays selectable so the desktop quote-on-selection works.
+  // Assert across EVERY rendered row — MessageItem has separate head- and
+  // continuation-row containers, so a same-author follow-up covers both paths
+  // (an earlier version only patched the head container).
+  const withContinuationReply = (): BoardViewPost => {
+    const post = makePost()
+    return {
+      ...post,
+      conversation: { ...(post.conversation as object), messageIds: ["m_open", "m_reply"] },
+      // Same author, inside GROUP_WINDOW_MS of the opening → renders as a continuation row.
+      recentMessages: [
+        {
+          id: "m_reply",
+          streamId: STREAM,
+          authorId: "usr_other",
+          authorType: "user",
+          contentMarkdown: "Reply body.",
+          reactions: {},
+          attachments: [],
+          linkPreviews: [],
+          createdAt: "2026-06-22T12:01:00.000Z",
+          editedAt: null,
+        },
+      ],
+      totalReplies: 1,
+    } as unknown as BoardViewPost
+  }
+
+  it("disables text selection on touch input across head and continuation rows", async () => {
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
+    mountCard(withContinuationReply())
+    await screen.findByText("Reply body.")
+    const rows = document.querySelectorAll("[data-message-row]")
+    expect(rows.length).toBe(2)
+    for (const row of rows) expect(row.className).toContain("select-none")
+  })
+
+  it("keeps text selectable on mouse input across head and continuation rows", async () => {
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("mouse")
+    mountCard(withContinuationReply())
+    await screen.findByText("Reply body.")
+    const rows = document.querySelectorAll("[data-message-row]")
+    expect(rows.length).toBe(2)
+    for (const row of rows) expect(row.className).not.toContain("select-none")
   })
 })

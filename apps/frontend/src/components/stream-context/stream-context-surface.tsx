@@ -44,7 +44,7 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
         <DrawerContent className="h-[88dvh]">
           <DrawerTitle className="sr-only">In this stream</DrawerTitle>
           <DrawerDescription className="sr-only">
-            Links, files, images, and captured memories from this conversation.
+            Links, files, images, captured memories, and delegated tasks from this conversation.
           </DrawerDescription>
           <div className="flex min-h-0 flex-1 flex-col">{panel}</div>
         </DrawerContent>

@@ -3,6 +3,7 @@ import { Server as SocketIOServer } from "socket.io"
 import { createAdapter } from "@socket.io/postgres-adapter"
 import { Pool } from "pg"
 import { createApp } from "./app"
+import { DelegationService, createDelegationExpirySweep, validateDelegationContextRefs } from "./features/delegations"
 import { registerRoutes } from "./routes"
 import { errorHandler } from "./middleware/error-handler"
 import { registerSocketHandlers } from "./socket"
@@ -516,6 +517,7 @@ export async function startServer(): Promise<ServerInstance> {
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
   const agentFollowUpService = new AgentFollowUpService({ pool, workspaceSettingsService })
   const streamBriefService = new StreamBriefService({ pool })
+  const delegationService = new DelegationService({ pool })
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
   // PushService runs on pools.realtime so push delivery (outbox hot path) has
@@ -685,6 +687,7 @@ export async function startServer(): Promise<ServerInstance> {
     savedSuggestionsService,
     scheduledMessagesService,
     agentFollowUpService,
+    delegationService,
     draftsService,
     labelService,
     labelAssignmentService,
@@ -766,6 +769,21 @@ export async function startServer(): Promise<ServerInstance> {
   })
 
   const serverId = `server_${ulid()}`
+
+  // Memo (GAM) processing — batched extraction, heavy LLM work. Constructed
+  // before PersonaAgent so the companion's save_memo callback can bind to it.
+  const memoService = config.useStubAI
+    ? new StubMemoService()
+    : new MemoService({
+        pool,
+        classifier: new MemoClassifier(ai, configResolver, messageFormatter),
+        memorizer: new Memorizer(ai, configResolver, messageFormatter),
+        embeddingService,
+        messageFormatter,
+        // Passive to-do collection rides the classifier flag on each settled
+        // conversation (INV-52 — the capability, not the concrete service).
+        suggestionCollector: savedSuggestionsService,
+      })
 
   const workspaceAgent = new WorkspaceAgent({ pool, ai, configResolver, embeddingService })
 
@@ -880,6 +898,66 @@ export async function startServer(): Promise<ServerInstance> {
             currentVersion: result.current?.version ?? 0,
           }
     },
+    delegateTask: async ({
+      workspaceId,
+      streamId,
+      personaId,
+      sessionId,
+      sourceConversationId,
+      accessibleStreamIds,
+      title,
+      brief,
+      contextRefs,
+    }) => {
+      // Refs the invoking user can't read never reach the row (the #1118
+      // access ruling); the drops ride back so the model can correct them.
+      const { accepted, dropped } = await validateDelegationContextRefs({
+        pool,
+        workspaceId,
+        accessibleStreamIds,
+        refs: contextRefs,
+      })
+      const delegation = await delegationService.create({
+        workspaceId,
+        streamId,
+        sessionId,
+        sourceConversationId,
+        createdByKind: AuthorTypes.PERSONA,
+        createdById: personaId,
+        title,
+        brief,
+        contextRefs: accepted,
+      })
+      return { ok: true, delegationId: delegation.id, droppedRefs: dropped }
+    },
+    saveMemo: async ({
+      workspaceId,
+      streamId,
+      sessionId,
+      sourceStreamIds,
+      title,
+      abstract,
+      keyPoints,
+      tags,
+      knowledgeType,
+      sourceMessageIds,
+    }) => {
+      const result = await memoService.saveMemo({
+        workspaceId,
+        streamId,
+        sessionId,
+        sourceStreamIds,
+        title,
+        abstract,
+        keyPoints,
+        tags,
+        knowledgeType,
+        sourceMessageIds,
+      })
+      return result.ok
+        ? { ok: true, memoId: result.memoId, title: result.title, deduped: result.deduped }
+        : { ok: false }
+    },
   })
   // Tier assignments (see QueueManager `tiers` config above):
   //  - INTERACTIVE: user-facing work that must drain quickly (agent responses,
@@ -950,19 +1028,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Memo (GAM) processing — batched extraction, heavy LLM work
-  const memoService = config.useStubAI
-    ? new StubMemoService()
-    : new MemoService({
-        pool,
-        classifier: new MemoClassifier(ai, configResolver, messageFormatter),
-        memorizer: new Memorizer(ai, configResolver, messageFormatter),
-        embeddingService,
-        messageFormatter,
-        // Passive to-do collection rides the classifier flag on each settled
-        // conversation (INV-52 — the capability, not the concrete service).
-        suggestionCollector: savedSuggestionsService,
-      })
   const memoBatchCheckWorker = createMemoBatchCheckWorker({ pool, memoService, jobQueue })
   const memoBatchProcessWorker = createMemoBatchProcessWorker({ pool, memoService, jobQueue })
   // memo.batch-check is a lightweight cron-driven dispatcher; the actual heavy
@@ -1336,6 +1401,9 @@ export async function startServer(): Promise<ServerInstance> {
   const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
   orphanSessionCleanup.start()
 
+  const delegationExpirySweep = createDelegationExpirySweep(delegationService)
+  delegationExpirySweep.start()
+
   const pushSessionCleanup = createPushSessionCleanup(pushService)
   pushSessionCleanup.start()
 
@@ -1364,6 +1432,7 @@ export async function startServer(): Promise<ServerInstance> {
     logger.info("Shutting down server...")
     poolMonitor.stop()
     orphanSessionCleanup.stop()
+    delegationExpirySweep.stop()
     pushSessionCleanup.stop()
     voiceSessionSweeper.stop()
     agentSessionMetrics.stop()

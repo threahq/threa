@@ -17,6 +17,7 @@ import type {
   E2eKeyWrapRecipientKind,
   AgentStepType,
   KnowledgeType,
+  DelegationStatus,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
 import type { ContextBag, ContextIntent, ContextRefKind } from "./context-bag"
@@ -1187,9 +1188,14 @@ export interface CapturedMemoSummary {
  * normally just after the conversation that produced it — and carries the
  * source conversation/message ids so the row can point back at the messages
  * the knowledge came from.
+ *
+ * `conversationId` is omitted for an agent-authored memo (`save_memo`, roadmap
+ * 6.2): that capture is message-sourced with no owning conversation, so the row
+ * links back through `memos[].sourceMessageIds` alone. The board's
+ * source-conversation grouping already treats it as optional.
  */
 export interface MemosCapturedEventPayload {
-  conversationId: string
+  conversationId?: string
   memos: CapturedMemoSummary[]
 }
 
@@ -1220,6 +1226,72 @@ export interface AgentFollowUpScheduledEventPayload {
  */
 export interface AgentFollowUpCancelledEventPayload {
   followUpId: string
+}
+
+/**
+ * Payload for `delegation:created` timeline events (roadmap 5.1): appended when
+ * an agent (or, later, a person) compiles a hand-off for the user's local agent,
+ * in the same transaction as the `delegated_tasks` row insert (INV-4/7). The
+ * card renders — and "Copy prompt" assembles — entirely from this payload, so
+ * the day-one zero-tooling hand-off needs no extra fetch. `title`/`brief`/
+ * `contextRefs` are snapshots: a delegation's content is immutable after
+ * creation (only its status moves), so they cannot go stale.
+ */
+export interface DelegationCreatedEventPayload {
+  delegationId: string
+  title: string
+  /** The compiled, self-contained hand-off prompt (markdown). */
+  brief: string
+  /** Pointer URLs (`shared-message:`/`memo:`/`attachment:`) into the workspace. */
+  contextRefs: string[]
+  /** The topic the delegation is anchored to, when the trigger had one. */
+  sourceConversationId: string | null
+}
+
+/**
+ * Payload for `delegation:status_changed` events (roadmap 5.1): appended in the
+ * same transaction as every status CAS so the card can never sit on stale state.
+ * This is a patch, not a visible row: the matching `delegation:created` card
+ * advances to `status`. One payload type carries every transition; the optional
+ * fields are populated when the transition supplies them (`claimedByLabel` on
+ * claim, `resultMessageId` on completion, `statusNote` on running/failed). The
+ * event's `actorId`/`actorType` record who drove the transition.
+ */
+export interface DelegationStatusChangedEventPayload {
+  delegationId: string
+  status: DelegationStatus
+  /** Free-text label for the claiming agent, e.g. "Kris's MacBook / Claude Code". */
+  claimedByLabel?: string | null
+  /** The stream message the completing agent posted its result as. */
+  resultMessageId?: string | null
+  /** Free-text progress/error note from the executing agent. */
+  statusNote?: string | null
+}
+
+/**
+ * A member-facing snapshot of a delegation for list surfaces (the "In this
+ * stream" panel). Statuses live in `delegation:status_changed` patch events, so
+ * a view derived from the loaded timeline window would freeze out-of-window
+ * delegations on stale status — this shape is served by the authoritative
+ * `GET /delegations?streamId=` read instead. Excludes the brief (the card
+ * carries it) and everything claim-related beyond the display label.
+ */
+export interface DelegationSummary {
+  id: string
+  streamId: string
+  title: string
+  status: DelegationStatus
+  claimedByLabel: string | null
+  resultMessageId: string | null
+  statusNote: string | null
+  /** The `delegation:created` timeline event, for deep-linking the card row. */
+  createdEventId: string | null
+  createdAt: string
+  statusChangedAt: string
+}
+
+export interface ListDelegationsResponse {
+  delegations: DelegationSummary[]
 }
 
 /**

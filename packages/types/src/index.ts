@@ -105,6 +105,9 @@ export {
   MEMO_ABSTRACT_MAX_CHARS,
   MEMO_KEY_POINTS_MAX,
   MEMO_TAGS_MAX,
+  AUTHORED_BY_KINDS,
+  type AuthoredByKind,
+  AuthoredByKinds,
   PENDING_ITEM_TYPES,
   type PendingItemType,
   // Agent tools
@@ -123,6 +126,14 @@ export {
   FOLLOW_UP_STATUSES,
   type FollowUpStatus,
   FollowUpStatuses,
+  // Delegated tasks
+  DELEGATION_TITLE_MAX_CHARS,
+  DELEGATION_BRIEF_MAX_CHARS,
+  DELEGATION_CONTEXT_REFS_MAX,
+  DELEGATION_STATUSES,
+  type DelegationStatus,
+  DelegationStatuses,
+  DELEGATION_TERMINAL_STATUSES,
   // Agent session events
   AGENT_SESSION_EVENT_TYPES,
   type AgentSessionEventType,
@@ -500,6 +511,10 @@ export type {
   MemosCapturedEventPayload,
   AgentFollowUpScheduledEventPayload,
   AgentFollowUpCancelledEventPayload,
+  DelegationCreatedEventPayload,
+  DelegationStatusChangedEventPayload,
+  DelegationSummary,
+  ListDelegationsResponse,
   DescriptionSetEventPayload,
   BriefUpdatedEventPayload,
   // Workspaces

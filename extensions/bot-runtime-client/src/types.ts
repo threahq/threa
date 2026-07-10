@@ -63,6 +63,8 @@ export interface BotRuntimeTransportCallbacks {
   onResync?: () => void
   /** The scratchpad this runtime session is linked to was archived; the link is ended server-side. Wind down. */
   onSessionArchived?: (payload: unknown) => void
+  /** The archived scratchpad was unarchived; the link is active again server-side. Cancel the wind-down and reattach. */
+  onSessionRestored?: (payload: unknown) => void
   /** The `bot:hello` ack landed; carries the bootstrap snapshot. */
   onBootstrap?: (bootstrap: BotHelloBootstrap) => void
 }

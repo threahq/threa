@@ -443,7 +443,7 @@ export class BotRuntimeService {
    */
   async endSessionsForArchivedStream(params: { workspaceId: string; rootStreamId: string }): Promise<number> {
     return withTransaction(this.pool, async (db) => {
-      const ended = await BotRuntimeSessionLinkRepository.endActiveByRootStream(db, params)
+      const ended = await BotRuntimeSessionLinkRepository.archiveActiveByRootStream(db, params)
       for (const link of ended) {
         await OutboxRepository.insert(db, "bot:session_archived", {
           workspaceId: params.workspaceId,
@@ -460,6 +460,87 @@ export class BotRuntimeService {
         )
       }
       return ended.length
+    })
+  }
+
+  /**
+   * The unarchive counterpart: revive exactly the links the archive ended
+   * (status 'archived' → 'active'; normal-shutdown 'ended' links stay dead) and
+   * tell each linked runtime over the /bot socket so a live agent reattaches
+   * without a restart. Same INV-4/INV-7 shape as the archive path: revival and
+   * the notify events commit together, and the set-based UPDATE makes consumer
+   * retries idempotent.
+   */
+  async restoreSessionsForUnarchivedStream(params: { workspaceId: string; rootStreamId: string }): Promise<number> {
+    return withTransaction(this.pool, async (db) => {
+      const restored = await BotRuntimeSessionLinkRepository.reactivateArchivedByRootStream(db, params)
+      for (const link of restored) {
+        await OutboxRepository.insert(db, "bot:session_restored", {
+          workspaceId: params.workspaceId,
+          botId: link.botId,
+          instanceId: link.instanceId,
+          runtimeSessionId: link.runtimeSessionId,
+          rootStreamId: params.rootStreamId,
+        })
+      }
+      if (restored.length > 0) {
+        logger.info(
+          { workspaceId: params.workspaceId, rootStreamId: params.rootStreamId, restoredLinks: restored.length },
+          "Restored runtime session links for unarchived stream"
+        )
+      }
+      return restored.length
+    })
+  }
+
+  /**
+   * Session-create reattach: a runtime whose scratchpad was archived and then
+   * unarchived re-issues session-create with the same identity; revive its
+   * archive-ended link instead of minting a duplicate scratchpad. Presence and
+   * the active-actor slot are refreshed in the same transaction so the revived
+   * link dispatches turns immediately. `archived_stream` tells the caller the
+   * link exists but its scratchpad is still archived (the handler 409s).
+   */
+  async reattachArchivedRuntimeSession(params: {
+    workspaceId: string
+    botId: string
+    runtimeKind: BotRuntimeKind
+    instanceId: string
+    runtimeSessionId: string
+  }): Promise<{ status: "reattached"; link: BotRuntimeSessionLink } | { status: "archived_stream" | "none" }> {
+    return withTransaction(this.pool, async (db) => {
+      const link = await BotRuntimeSessionLinkRepository.reactivateArchivedByRuntimeSession(db, params)
+      if (!link) {
+        // A concurrent reattach/unarchive that already committed leaves the
+        // link 'active' (SKIP LOCKED skipped nothing; the CTE just found no
+        // 'archived' row) — report it as the reattach rather than
+        // misclassifying via the stale 'archived' read below. A racer that is
+        // still uncommitted can't be told apart without blocking; that case
+        // stays a transient archived_stream the client's probe absorbs.
+        const active = await BotRuntimeSessionLinkRepository.findActiveByRuntimeSession(db, params)
+        if (active) return { status: "reattached" as const, link: active }
+        const archived = await BotRuntimeSessionLinkRepository.findArchivedByRuntimeSession(db, params)
+        return { status: archived ? ("archived_stream" as const) : ("none" as const) }
+      }
+      await this.upsertPiRemoteSessionPresenceInTransaction(db, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        runtimeKind: params.runtimeKind,
+        instanceId: params.instanceId,
+        runtimeSessionId: params.runtimeSessionId,
+      })
+      await this.setActiveActorInTransaction(db, {
+        workspaceId: params.workspaceId,
+        rootStreamId: link.rootStreamId,
+        actorType: "bot",
+        actorId: params.botId,
+        createdBy: link.linkedBy,
+      })
+      logger.info(
+        { workspaceId: params.workspaceId, botId: params.botId, rootStreamId: link.rootStreamId, linkId: link.id },
+        "Reattached archived runtime session link"
+      )
+      return { status: "reattached" as const, link }
     })
   }
 

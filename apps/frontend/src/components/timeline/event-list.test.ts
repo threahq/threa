@@ -4,6 +4,7 @@ import {
   annotateAuthorGroups,
   annotateConversationRevivals,
   collectCancelledFollowUpIds,
+  collectDelegationStatusPatches,
   filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
@@ -521,6 +522,22 @@ describe("findMessageItemIndex", () => {
     ]
     expect(findMessageItemIndex(items, "msg_real")).toBe(1)
   })
+
+  it("resolves a raw event id, so non-message rows (delegation cards) are deep-linkable", () => {
+    const items: TimelineItem[] = [
+      eventItem("event_1", "msg_a"),
+      {
+        type: "event",
+        event: createEvent({
+          id: "event_dlg",
+          sequence: "2",
+          eventType: "delegation:created",
+          payload: { delegationId: "dlg_1" },
+        }),
+      },
+    ]
+    expect(findMessageItemIndex(items, "event_dlg")).toBe(1)
+  })
 })
 
 describe("findEventItemIndex", () => {
@@ -648,6 +665,37 @@ describe("collectCancelledFollowUpIds", () => {
   })
 })
 
+describe("collectDelegationStatusPatches", () => {
+  const patchItem = (id: string, delegationId: string, status: string, note?: string): TimelineItem => ({
+    type: "event",
+    event: createEvent({
+      id,
+      sequence: "5",
+      eventType: "delegation:status_changed",
+      payload: { delegationId, status, statusNote: note ?? null },
+    }),
+  })
+
+  it("keeps the LAST patch per delegation — items are in sequence order, so later transitions win", () => {
+    const patches = collectDelegationStatusPatches([
+      patchItem("evt_1", "dlg_1", "claimed"),
+      patchItem("evt_2", "dlg_1", "running", "half way"),
+      patchItem("evt_3", "dlg_2", "cancelled"),
+    ])
+    expect(patches.get("dlg_1")).toMatchObject({ status: "running", statusNote: "half way" })
+    expect(patches.get("dlg_2")).toMatchObject({ status: "cancelled" })
+  })
+
+  it("must run on pre-filter items — filterVisibleItems strips the zero-height status patch", () => {
+    const items = [patchItem("evt_1", "dlg_1", "completed")]
+    // Guards the call-site ordering, same as the follow-up cancelled patch: the
+    // patch is zero-height, so collecting AFTER filterVisibleItems would leave
+    // the delegation card frozen on "Open" on the virtualized path.
+    expect(collectDelegationStatusPatches(items).has("dlg_1")).toBe(true)
+    expect(collectDelegationStatusPatches(filterVisibleItems(items)).has("dlg_1")).toBe(false)
+  })
+})
+
 describe("OLDER_SKELETON_ITEMS (older-page skeleton rows)", () => {
   it("provides the configured number of skeleton items with stable, distinct keys", () => {
     expect(OLDER_SKELETON_ITEMS).toHaveLength(OLDER_SKELETON_COUNT)
@@ -675,6 +723,7 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
       sessionLiveCounts: new Map(),
       sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
+      delegationStatusPatches: new Map(),
       ...overrides,
     }
   }

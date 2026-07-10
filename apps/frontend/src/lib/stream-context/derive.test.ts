@@ -65,7 +65,7 @@ describe("deriveStreamContext", () => {
     const result = deriveStreamContext(undefined)
     expect(result.total).toBe(0)
     expect(result.items).toEqual([])
-    expect(result.counts).toEqual({ link: 0, media: 0, file: 0, memo: 0, thread: 0 })
+    expect(result.counts).toEqual({ link: 0, media: 0, file: 0, memo: 0, delegation: 0, thread: 0 })
   })
 
   it("extracts external links from rich previews and the document body, with a github badge", () => {

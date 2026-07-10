@@ -67,6 +67,13 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // keep the brief current, and the write is bounded by the 4k content cap and
   // the stream's own membership, not a privacy grant.
   update_stream_brief: ["messaging"],
+  // Delegating a task posts a hand-off card into this stream for the invoking
+  // user's own local agent — in-product participation, like a reply that asks a
+  // person to do something. The brief is compiled from context the turn already
+  // holds, its refs are access-checked against the invoking user, and execution
+  // happens on the user's machine with their credentials, so there is no data
+  // egress beyond the stream itself. Rides the always-allowed `messaging` class.
+  delegate_task: ["messaging"],
 
   web_search: ["web"],
   read_url: ["web"],
@@ -79,6 +86,15 @@ export const TOOL_CATEGORIES_BY_NAME = {
   search_attachments: ["workspace"],
   read_attachment: ["workspace"],
   describe_memo: ["workspace"],
+  // Saving a memo is a write into the workspace knowledge layer — symmetric with
+  // `describe_memo`'s read of it — so it takes the `workspace` grant: a scratchpad
+  // that denies workspace tools opts out of the knowledge layer entirely (no memo
+  // reads, no memo writes). This gates tool AVAILABILITY, not memo visibility: a
+  // saved memo inherits its retrieval access from its source stream (INV-62) like
+  // every other memo, and `save_memo` anchors it to the turn's own stream family
+  // (service `sourceStreamIds`), so it is never retrievable wider than the stream
+  // that produced it. (Passive capture is gated separately by memory_mode.)
+  save_memo: ["workspace"],
 
   // GitHub reads are public-web-class egress (a structured read_url), so they
   // ride the `web` grant as well as `github`.

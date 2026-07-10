@@ -208,6 +208,19 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   },
   // A patch that flips the matching scheduled card to "Cancelled" — not its own row.
   "agent:follow_up_cancelled": PATCH,
+
+  // Delegated-task hand-off (roadmap 5.1) — payload carries `sourceConversationId`.
+  "delegation:created": {
+    rendersAsOwnRow: true,
+    grouping: null,
+    authorGroupable: false,
+    patchesRow: false,
+    broadcastSlot: true,
+    conversationRef: "source-conversation",
+    bumps: false,
+  },
+  // A patch that advances the matching delegation card's status — not its own row.
+  "delegation:status_changed": PATCH,
 }
 
 /**

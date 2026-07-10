@@ -207,6 +207,43 @@ export interface PersonaAgentDeps {
     reason: string
     expectedVersion: number
   }) => Promise<import("./tools/tool-deps").UpdateStreamBriefToolResult>
+  /**
+   * Compile a delegation hand-off (roadmap 5.1), bound to the
+   * `DelegationService` in server.ts. The turn supplies identity, the
+   * source-conversation anchor, and the invoking user's access reach; context
+   * refs are validated against that user before the row lands. Absent when
+   * delegations aren't wired, which disables the `delegate_task` tool.
+   */
+  delegateTask?: (params: {
+    workspaceId: string
+    streamId: string
+    personaId: string
+    sessionId: string
+    sourceConversationId: string | null
+    invokingUserId: string
+    accessibleStreamIds: string[]
+    title: string
+    brief: string
+    contextRefs: string[]
+  }) => Promise<import("./tools/tool-deps").DelegateTaskToolResult>
+  /**
+   * Write an agent-authored memo (roadmap 6.2), bound to `MemoService.saveMemo`
+   * in server.ts. The turn supplies its workspace/stream/session identity; the
+   * tool supplies the memo content + source-message anchors. Absent in harnesses
+   * that don't wire memos, which disables the `save_memo` tool.
+   */
+  saveMemo?: (params: {
+    workspaceId: string
+    streamId: string
+    sessionId: string | null
+    sourceStreamIds: string[]
+    title: string
+    abstract: string
+    keyPoints: string[]
+    tags: string[]
+    knowledgeType: import("@threa/types").KnowledgeType
+    sourceMessageIds: string[]
+  }) => Promise<import("./tools/tool-deps").SaveMemoToolResult>
 }
 
 export interface PersonaAgentInput {
@@ -295,6 +332,8 @@ export class PersonaAgent {
       updateFollowUp,
       loadFollowUp,
       updateBrief,
+      delegateTask,
+      saveMemo,
     } = this.deps
     const { workspaceId, streamId, messageId, personaId, serverId, purpose, currentTime, attempt, maxAttempts } = input
     // Supersede-rerun payload, extracted once from the purpose (roadmap 1.5) and
@@ -367,7 +406,8 @@ export class PersonaAgent {
     // Create the thread eagerly so session events go there for channel mentions.
     const isChannelMention = purpose.kind === "mention" && stream.type === StreamTypes.CHANNEL
     let sessionStreamId = streamId
-    let channelStreamId: string | undefined
+    let parentStreamId: string | undefined
+    let parentMessageId: string | undefined
     if (isChannelMention) {
       const thread = await createThread({
         workspaceId,
@@ -376,8 +416,16 @@ export class PersonaAgent {
         createdBy: persona.id,
       })
       sessionStreamId = thread.id
-      channelStreamId = streamId
+      parentStreamId = streamId
+      parentMessageId = messageId
       logger.info({ threadId: thread.id, streamId, messageId }, "Created thread for channel mention (eager)")
+    } else if (stream.type === StreamTypes.THREAD && stream.parentStreamId && stream.parentMessageId) {
+      // Session in an existing thread: viewers of the parent timeline watch it
+      // through the thread slot on the parent message, so the inline indicator
+      // events must reach the parent stream's room too — the same wiring
+      // channel mentions get via their eagerly created thread.
+      parentStreamId = stream.parentStreamId
+      parentMessageId = stream.parentMessageId
     }
 
     const result = await withCompanionSession(
@@ -403,7 +451,8 @@ export class PersonaAgent {
           streamId: sessionStreamId,
           triggerMessageId: messageId,
           personaName: persona.name,
-          channelStreamId,
+          parentStreamId,
+          parentMessageId,
         })
         trace.notifyActivityStarted()
 
@@ -745,6 +794,55 @@ export class PersonaAgent {
             }
           : undefined
 
+        // Delegation hand-off for the delegate_task tool (roadmap 5.1), bound to
+        // this persona/session/stream and the invoking user. Deliberately absent
+        // — disabling the tool — on sealed streams (a server-built plaintext
+        // brief cannot egress an E2E stream, the #1118 ruling) and on turns
+        // without a human trigger, since the hand-off may carry only what the
+        // requesting user can see.
+        const delegationUserId = agentContext.invokingUserId
+        const delegationStreamIds = agentContext.accessibleStreamIds
+        const delegateDeps: import("./tools/tool-deps").DelegateTaskToolDeps | undefined =
+          delegateTask && delegationUserId && delegationStreamIds && !stream.e2eEnabled
+            ? {
+                delegateTask: async ({ title, brief, contextRefs }) =>
+                  delegateTask({
+                    workspaceId,
+                    streamId: session.streamId,
+                    personaId: persona.id,
+                    sessionId: session.id,
+                    sourceConversationId: await resolveTriggerConversationId(),
+                    invokingUserId: delegationUserId,
+                    accessibleStreamIds: [...delegationStreamIds],
+                    title,
+                    brief,
+                    contextRefs,
+                  }),
+              }
+            : undefined
+
+        // Memo saving for the save_memo tool (roadmap 6.2), bound to this
+        // persona's stream + session. The write scopes dedup and the capture
+        // event to the addressed stream, and records the session as provenance.
+        // A saved memo may only anchor to messages in the turn's own stream
+        // family — the addressed stream and its effective root (threads inherit
+        // the root). This binds the memo's inherited retrieval access (INV-62) to
+        // the producing stream, so it can't be widened by citing a message in a
+        // broader stream the user also happens to see.
+        const saveMemoStreamIds = Array.from(new Set([session.streamId, resolveBriefStreamId(stream)]))
+        const saveMemoDeps: import("./tools/tool-deps").SaveMemoToolDeps | undefined = saveMemo
+          ? {
+              saveMemo: (params) =>
+                saveMemo({
+                  workspaceId,
+                  streamId: session.streamId,
+                  sessionId: session.id,
+                  sourceStreamIds: saveMemoStreamIds,
+                  ...params,
+                }),
+            }
+          : undefined
+
         const githubDeps = workspaceIntegrationService
           ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }
           : undefined
@@ -825,6 +923,8 @@ export class PersonaAgent {
             followUps: followUpDeps,
             brief: briefDeps,
             briefVersion: agentContext.streamBrief?.version ?? 0,
+            delegation: delegateDeps,
+            saveMemo: saveMemoDeps,
             github: githubDeps,
             linear: linearDeps,
             supportsVision: modelRegistry.supportsVision(turnModel.model),
@@ -1151,7 +1251,8 @@ export class PersonaAgent {
         streamId: sessionStreamId,
         triggerMessageId: messageId,
         personaName: persona.name,
-        channelStreamId,
+        parentStreamId,
+        parentMessageId,
       })
       if (result.status === "completed") {
         trace.notifyCompleted()

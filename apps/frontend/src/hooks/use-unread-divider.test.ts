@@ -282,6 +282,196 @@ describe("useUnreadDivider", () => {
     expect(result.current.dividerEventId).toBe("event_2")
   })
 
+  it("re-latches forward at the first blurred-arrival after the session latch was consumed", () => {
+    // The dogfooding bug: an earlier focused arrival consumed the session latch
+    // (then auto-read greyed it). Messages arriving while the window is blurred
+    // must move the divider FORWARD to the first away-arrival — as if the stream
+    // had been re-opened — instead of leaving a stale grey line far above.
+    const { result, rerender } = renderHook(
+      ({
+        events,
+        lastReadEventId,
+        isAttentive,
+      }: {
+        events: ReturnType<typeof makeMessageEvent>[]
+        lastReadEventId: string | null
+        isAttentive: boolean
+      }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+          isAttentive,
+        }),
+      {
+        initialProps: {
+          events: [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")],
+          lastReadEventId: null as string | null,
+          isAttentive: true,
+        },
+      }
+    )
+
+    // Focused session: latch consumed at event_1, then auto-read passes it.
+    expect(result.current.dividerEventId).toBe("event_1")
+    rerender({
+      events: [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")],
+      lastReadEventId: "event_2",
+      isAttentive: true,
+    })
+    expect(result.current.dividerEventId).toBe("event_1")
+
+    // Window blurs; a message arrives while away → divider re-latches at it.
+    const withBlurredArrival = [
+      makeMessageEvent("event_1", "other"),
+      makeMessageEvent("event_2", "other"),
+      makeMessageEvent("event_3", "other"),
+    ]
+    rerender({ events: withBlurredArrival, lastReadEventId: "event_2", isAttentive: false })
+    expect(result.current.dividerEventId).toBe("event_3")
+
+    // isDividerReadPast compares numeric bigint sequences; the helper's
+    // sequence is its id string, so remap for the red→grey assertions.
+    const sequenced = withBlurredArrival.map((e, i) => ({ ...e, sequence: String(i + 1) })) as typeof withBlurredArrival
+
+    // Refocus: the divider stays on the away block while it is still unread…
+    rerender({ events: withBlurredArrival, lastReadEventId: "event_2", isAttentive: true })
+    expect(result.current.dividerEventId).toBe("event_3")
+    expect(isDividerReadPast(sequenced, "event_3", "event_2")).toBe(false)
+
+    // …and holds position (dimming to grey) once auto-read passes it.
+    rerender({ events: withBlurredArrival, lastReadEventId: "event_3", isAttentive: true })
+    expect(result.current.dividerEventId).toBe("event_3")
+    expect(isDividerReadPast(sequenced, "event_3", "event_3")).toBe(true)
+  })
+
+  it("does NOT move the divider forward while the viewer is attentive", () => {
+    // Focused live arrivals get the transient flash, not a moving divider — the
+    // forward re-latch is exclusively an away-time behavior.
+    const { result, rerender } = renderHook(
+      ({
+        events,
+        lastReadEventId,
+      }: {
+        events: ReturnType<typeof makeMessageEvent>[]
+        lastReadEventId: string | null
+      }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+          isAttentive: true,
+        }),
+      {
+        initialProps: {
+          events: [makeMessageEvent("event_1", "other")],
+          lastReadEventId: null as string | null,
+        },
+      }
+    )
+
+    expect(result.current.dividerEventId).toBe("event_1")
+    rerender({ events: [makeMessageEvent("event_1", "other")], lastReadEventId: "event_1" })
+
+    // A focused live arrival: first unread is now event_2, but the latch holds.
+    rerender({
+      events: [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")],
+      lastReadEventId: "event_1",
+    })
+    expect(result.current.dividerEventId).toBe("event_1")
+  })
+
+  it("latches at the first blurred-arrival in a fully-read stream with no prior divider", () => {
+    const readEvents = [makeMessageEvent("event_1", "other")]
+    const { result, rerender } = renderHook(
+      ({ events, isAttentive }: { events: ReturnType<typeof makeMessageEvent>[]; isAttentive: boolean }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId: "event_1",
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+          isAttentive,
+        }),
+      { initialProps: { events: readEvents, isAttentive: true } }
+    )
+
+    expect(result.current.dividerEventId).toBeUndefined()
+
+    rerender({
+      events: [...readEvents, makeMessageEvent("event_2", "other")],
+      isAttentive: false,
+    })
+    expect(result.current.dividerEventId).toBe("event_2")
+  })
+
+  it("does not latch on the viewer's own message arriving while blurred", () => {
+    // Sent from another device while this window is blurred — own messages are
+    // never unread, so no divider.
+    const readEvents = [makeMessageEvent("event_1", "other")]
+    const { result, rerender } = renderHook(
+      ({ events, isAttentive }: { events: ReturnType<typeof makeMessageEvent>[]; isAttentive: boolean }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId: "event_1",
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+          isAttentive,
+        }),
+      { initialProps: { events: readEvents, isAttentive: true } }
+    )
+
+    rerender({ events: [...readEvents, makeMessageEvent("event_2", "me")], isAttentive: false })
+    expect(result.current.dividerEventId).toBeUndefined()
+  })
+
+  it("re-shows a dismissed divider when a blur re-latch moves it to the away block", () => {
+    // Dismissal is keyed to the latched position; new messages while away are a
+    // fresh unread block the viewer has not escaped.
+    const { result, rerender } = renderHook(
+      ({
+        events,
+        lastReadEventId,
+        isAttentive,
+      }: {
+        events: ReturnType<typeof makeMessageEvent>[]
+        lastReadEventId: string | null
+        isAttentive: boolean
+      }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+          isAttentive,
+        }),
+      {
+        initialProps: {
+          events: [makeMessageEvent("event_1", "other")],
+          lastReadEventId: null as string | null,
+          isAttentive: true,
+        },
+      }
+    )
+
+    expect(result.current.dividerEventId).toBe("event_1")
+    act(() => result.current.dismiss())
+    expect(result.current.dividerEventId).toBeUndefined()
+
+    rerender({
+      events: [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")],
+      lastReadEventId: "event_1",
+      isAttentive: false,
+    })
+    expect(result.current.dividerEventId).toBe("event_2")
+  })
+
   it("shows no divider when every candidate unread row is overlay-read", () => {
     const events = [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")]
     const { result } = renderHook(() =>

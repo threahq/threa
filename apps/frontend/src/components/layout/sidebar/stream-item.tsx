@@ -363,8 +363,10 @@ export function StreamItem({
             onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
             className={cn(
               "flex items-stretch rounded-lg text-sm transition-colors",
+              // The tinted background means exactly one thing: "you are here".
+              // Unread is signaled by the bold title + urgency strip — giving it
+              // a near-identical primary tint made unread rows read as active.
               isActive ? "bg-primary/10" : "hover:bg-muted/50",
-              hasUnread && !isActive && "bg-primary/5 hover:bg-primary/10",
               isTouchInput && canOpenDrawer && "select-none",
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}

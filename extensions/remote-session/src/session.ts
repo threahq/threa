@@ -59,6 +59,16 @@ const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 // socket reconnect resets to the fast cadence. Worst-case degraded latency for
 // a socketless session is one cap interval.
 const NO_SOCKET_POLL_CAP_MS = 2 * 60 * 1000
+// How long a session survives its scratchpad being archived before winding
+// down. An unarchive within this window reattaches the live agent in place
+// (bot:session_restored push, or the reattach probe below when the push was
+// missed); only after it expires does the connector's destructive wind-down
+// (branch push, tmux teardown) run.
+const ARCHIVE_RESTORE_GRACE_MS = 5 * 60 * 1000
+// Poll cadence while detached-pending-restore. Bounded by the grace window
+// (≤ ~7 requests), so it cannot become a quota burn; each probe is a
+// session-create that either reattaches (scratchpad unarchived) or 409s.
+const ARCHIVE_RESTORE_PROBE_MS = 45_000
 const MAX_CLAIMS_PER_DRAIN = 20
 // Server-side cap on frames per bot:invocation:steps call (`stepsFrameSchema`
 // in apps/backend/src/features/bot-runtimes/socket-handler.ts).
@@ -135,9 +145,11 @@ export interface RemoteSessionDelegate {
   sessionControl?: SessionControlActuator
   /**
    * The linked scratchpad was archived (the server already ended the session
-   * link). Called after the SDK has gone offline and failed its in-flight
-   * turns; the connector finishes the wind-down — the Claude channel pushes
-   * its branch and kills its own tmux window, so this hook may never return.
+   * link) and stayed archived through the restore grace window. Called after
+   * the SDK has gone offline and failed its in-flight turns; the connector
+   * finishes the wind-down — the Claude channel pushes its branch and kills
+   * its own tmux window, so this hook may never return. An unarchive within
+   * the grace window reattaches the session instead and this never fires.
    */
   onArchived?: (payload: { rootStreamId: string }) => Promise<void> | void
 }
@@ -279,6 +291,8 @@ export interface RemoteSessionOptions {
   /** Injectable for tests. */
   transport?: BotRuntimeTransport
   log?: (message: string) => void
+  /** Override the archive→restore grace window (tests). */
+  archiveGraceMs?: number
 }
 
 /**
@@ -299,6 +313,14 @@ export class RemoteSession {
   private link: RuntimeSessionLink | undefined
   private claiming = false
   private stopped = false
+  private readonly archiveGraceMs: number
+  /**
+   * Set while the linked scratchpad is archived and the session is waiting out
+   * the restore grace window. Claims are suspended; the poll probes
+   * session-create at ARCHIVE_RESTORE_PROBE_MS; the deadline runs the
+   * connector wind-down that used to fire immediately on archive.
+   */
+  private archivePending: { rootStreamId: string; deadline: ReturnType<typeof setTimeout> } | undefined
   private pollTimer: ReturnType<typeof setTimeout> | undefined
   private renewTimer: ReturnType<typeof setInterval> | undefined
   /** Consecutive empty poll ticks while the socket is down; drives the poll backoff. */
@@ -317,6 +339,7 @@ export class RemoteSession {
     this.delegate = options.delegate
     this.runtime = options.runtime
     this.log = options.log ?? (() => undefined)
+    this.archiveGraceMs = options.archiveGraceMs ?? ARCHIVE_RESTORE_GRACE_MS
     this.bik = new BikKeystore({
       path: this.config.bikPath ?? join(homedir(), ".threa", `bik-${sanitizeId(this.runtime.kind)}.json`),
       log: this.log,
@@ -345,6 +368,7 @@ export class RemoteSession {
             if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) void this.claimDrain()
           },
           onSessionArchived: (payload) => void this.handleSessionArchived(payload),
+          onSessionRestored: (payload) => void this.handleSessionRestored(payload),
         },
         log: this.log,
       })
@@ -383,8 +407,27 @@ export class RemoteSession {
   /** Create (or recover) the scratchpad link. Best-effort so a transient Threa outage self-heals on the next poll tick. */
   private async ensureLink(): Promise<void> {
     if (this.link || this.stopped) return
+    // Snapshot the detach state so a response that raced an archive push is
+    // dropped: a createSession issued BEFORE the archive can resolve with the
+    // pre-archive link after archivePending was set — accepting it would cancel
+    // the wind-down against a scratchpad that is still archived server-side.
+    const pendingAtStart = this.archivePending
     try {
-      this.link = await this.createSession()
+      const link = await this.createSession()
+      if (this.stopped) return
+      if (this.archivePending !== pendingAtStart) {
+        this.log("link response raced an archive state change — dropped; the next probe decides")
+        return
+      }
+      this.link = link
+      // A successful link while detached-pending-restore is the reattach (the
+      // server revived the archived link for this runtime session) — the probe
+      // beat the bot:session_restored push. Cancel the wind-down.
+      if (this.archivePending) {
+        clearTimeout(this.archivePending.deadline)
+        this.archivePending = undefined
+        this.log("scratchpad restored — reattached")
+      }
       this.log(`linked to scratchpad ${this.config.baseUrl}${this.link.streamUrlPath}`)
       await this.syncPresence()
     } catch (error) {
@@ -397,6 +440,10 @@ export class RemoteSession {
     this.stopped = true
     if (this.pollTimer) clearTimeout(this.pollTimer)
     if (this.renewTimer) clearInterval(this.renewTimer)
+    if (this.archivePending) {
+      clearTimeout(this.archivePending.deadline)
+      this.archivePending = undefined
+    }
     // Fast, idempotent teardown first so SIGTERM cleanup isn't held hostage by
     // slow writes when Threa is the thing that's unreachable. Dropping the socket
     // before the offline push means updatePresence falls straight to HTTP rather
@@ -518,7 +565,10 @@ export class RemoteSession {
 
   /** Returns whether at least one invocation was claimed (feeds the poll backoff reset). */
   private async claimDrain(): Promise<boolean> {
-    if (this.stopped || this.claiming) return false
+    // No claims while detached-pending-restore: the scratchpad is archived, so
+    // any claimable work predates the archive and would reply into a closed
+    // stream. Restore re-runs the drain.
+    if (this.stopped || this.claiming || this.archivePending) return false
     let claimedAny = false
     this.claiming = true
     try {
@@ -1282,23 +1332,93 @@ export class RemoteSession {
 
   /**
    * The linked scratchpad was archived. The server has already ended the
-   * session link, so no more work can arrive; go offline (shutdown also fails
-   * any in-flight turn) and hand the connector the final word. Scoped to this
-   * session: the event is room-targeted, but a runtime that re-registered
-   * under a new session id must not die to a stale event for the old one.
+   * session link, so no more work can arrive: fail any in-flight turn (its
+   * reply could no longer land), go offline, and detach — but do NOT wind down
+   * yet. An unarchive within the grace window revives the link server-side and
+   * reattaches this live session (bot:session_restored, or the ensureLink
+   * probe); only when the grace expires does the connector's destructive
+   * wind-down run. Scoped to this session: the event is room-targeted, but a
+   * runtime that re-registered under a new session id must not die to a stale
+   * event for the old one.
    */
   private async handleSessionArchived(payload: unknown): Promise<void> {
     const data = (payload ?? {}) as { runtimeSessionId?: unknown; rootStreamId?: unknown }
     if (typeof data.runtimeSessionId === "string" && data.runtimeSessionId !== this.config.runtimeSessionId) return
-    if (this.stopped) return
+    if (this.stopped || this.archivePending) return
     const rootStreamId = typeof data.rootStreamId === "string" ? data.rootStreamId : (this.link?.rootStreamId ?? "")
-    this.log(`scratchpad ${rootStreamId} archived — winding down`)
+    this.log(
+      `scratchpad ${rootStreamId} archived — detaching (reattaches if unarchived within ${Math.round(this.archiveGraceMs / 1000)}s)`
+    )
+    const inflight = [...this.inflight]
+    for (const [, entry] of inflight) clearTimeout(entry.deadline)
+    this.inflight.clear()
+    this.activeTurnStream = undefined
+    this.link = undefined
+    const pending = {
+      rootStreamId,
+      deadline: setTimeout(() => void this.windDownAfterGrace(rootStreamId), this.archiveGraceMs),
+    }
+    this.archivePending = pending
+    // Pull the next poll tick onto the probe cadence NOW — the pending tick was
+    // scheduled with the slow socket-backstop delay (15 min), which could land
+    // zero probes inside the grace window if the restore push is then missed.
+    this.reschedulePoll(this.archiveProbeDelayMs)
+    await Promise.allSettled(
+      inflight.map(([id, entry]) =>
+        this.client.fail(id, {
+          instanceId: this.config.instanceId,
+          claimToken: entry.invocation.claimToken,
+          errorMessage: this.runtime.shutdownErrorMessage,
+        })
+      )
+    )
+    // A restore can reattach and publish 'available' during the awaits above —
+    // don't overwrite it with a stale 'offline'.
+    if (this.stopped || this.archivePending !== pending) return
+    await this.transport.updatePresence(this.presenceBody("offline")).catch(() => undefined)
+  }
+
+  /** The grace expired with the scratchpad still archived: run the wind-down that used to fire on archive. */
+  private async windDownAfterGrace(rootStreamId: string): Promise<void> {
+    if (this.stopped || !this.archivePending) return
+    this.archivePending = undefined
+    this.log(`scratchpad ${rootStreamId} stayed archived — winding down`)
     await this.shutdown()
     try {
       await this.delegate.onArchived?.({ rootStreamId })
     } catch (error) {
       this.log(`onArchived hook failed: ${this.summarize(error)}`)
     }
+  }
+
+  /**
+   * The archived scratchpad was unarchived and the server revived this
+   * session's link: cancel the pending wind-down, re-establish the link (the
+   * session-create path returns the revived link for the SAME scratchpad), and
+   * resume claiming — the live agent reattaches with no restart.
+   */
+  private async handleSessionRestored(payload: unknown): Promise<void> {
+    const data = (payload ?? {}) as { runtimeSessionId?: unknown; rootStreamId?: unknown }
+    if (typeof data.runtimeSessionId === "string" && data.runtimeSessionId !== this.config.runtimeSessionId) return
+    if (this.stopped) return
+    if (this.archivePending) {
+      // Don't clear the pending state yet — only ensureLink's confirmed link
+      // does that. If the createSession below fails transiently, the probe
+      // cadence and claim suppression must survive; clearing here would drop
+      // the session onto the 15-min backstop unlinked. The restore does cancel
+      // the CURRENT wind-down, but a fresh grace deadline re-arms so a
+      // reattach that never succeeds still winds down bounded.
+      clearTimeout(this.archivePending.deadline)
+      const rootStreamId = this.archivePending.rootStreamId
+      this.archivePending = {
+        rootStreamId,
+        deadline: setTimeout(() => void this.windDownAfterGrace(rootStreamId), this.archiveGraceMs),
+      }
+      this.log(`scratchpad ${rootStreamId} restored — reattaching`)
+    }
+    if (!this.link) await this.ensureLink()
+    else await this.syncPresence()
+    await this.claimDrain()
   }
 
   // --- Timers ---------------------------------------------------------------
@@ -1330,14 +1450,29 @@ export class RemoteSession {
   }
 
   private startPoll(): void {
-    const tick = async () => {
-      if (this.stopped) return
-      if (!this.link) await this.ensureLink()
-      if (!this.transport.socketConnected) await this.transport.connect()
-      const claimed = await this.claimDrain()
-      this.pollTimer = setTimeout(() => void tick(), this.nextPollDelay(claimed))
-    }
-    this.pollTimer = setTimeout(() => void tick(), this.config.pollMs)
+    this.reschedulePoll(this.config.pollMs)
+  }
+
+  /** (Re)arm the poll timer. Replaces any pending tick so a state change can pull the next tick closer. */
+  private reschedulePoll(delayMs: number): void {
+    if (this.stopped) return
+    if (this.pollTimer) clearTimeout(this.pollTimer)
+    this.pollTimer = setTimeout(() => void this.pollTick(), delayMs)
+  }
+
+  private async pollTick(): Promise<void> {
+    if (this.stopped) return
+    if (!this.link) await this.ensureLink()
+    if (!this.transport.socketConnected) await this.transport.connect()
+    const claimed = await this.claimDrain()
+    // shutdown() can land during the awaits above; re-arming then would leave
+    // a live timer past teardown.
+    if (!this.stopped) this.reschedulePoll(this.nextPollDelay(claimed))
+  }
+
+  /** Reattach-probe cadence while detached: scaled to the grace window so several probes always fit inside it. */
+  private get archiveProbeDelayMs(): number {
+    return Math.min(ARCHIVE_RESTORE_PROBE_MS, Math.max(Math.floor(this.archiveGraceMs / 4), 10))
   }
 
   /**
@@ -1347,6 +1482,10 @@ export class RemoteSession {
    * can't burn the edge-request quota. Claimed work resets the backoff.
    */
   private nextPollDelay(claimed: boolean): number {
+    // Detached-pending-restore: probe at a fixed cadence so a missed
+    // bot:session_restored push still reattaches within the grace window. The
+    // window bounds the total probes, so this cannot become a quota burn.
+    if (this.archivePending) return this.archiveProbeDelayMs
     if (this.transport.socketConnected) {
       this.emptyNoSocketPolls = 0
       return WS_BACKSTOP_POLL_MS

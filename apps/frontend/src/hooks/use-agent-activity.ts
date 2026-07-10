@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react"
 import type { Socket } from "socket.io-client"
+import { useSocketReconnectCount } from "@/contexts"
 import type {
   StreamEvent,
   AgentStepType,
@@ -50,6 +51,13 @@ interface ProgressEntry {
    */
   substepUpdatedAt?: string
   threadStreamId?: string
+  /**
+   * For sessions running inside a thread: the thread's parent message id. The
+   * parent stream's timeline has no row for the trigger message, so the result
+   * map also keys the activity under this id — that's what lights up the
+   * thread slot on the parent message.
+   */
+  parentMessageId?: string
 }
 
 /**
@@ -69,6 +77,7 @@ export function useAgentActivity(
   userId: string | null
 ): Map<string, MessageAgentActivity> {
   const [progressBySession, setProgressBySession] = useState<Map<string, ProgressEntry>>(new Map())
+  const reconnectCount = useSocketReconnectCount()
 
   // Mirror of `progressBySession` for synchronous reads inside event handlers —
   // lets a substep capture the session's step generation at *arrival* time so a
@@ -77,6 +86,18 @@ export function useAgentActivity(
   useEffect(() => {
     progressRef.current = progressBySession
   }, [progressBySession])
+
+  // Socket-only entries have exactly one deletion path: the activity_ended
+  // event. A disconnect that swallows it would strand a "working" indicator
+  // forever (the parent-view alias has no events-array cleanup — the session's
+  // lifecycle events live in the thread, not this stream). Reset the slate on
+  // reconnect (INV-53): a session still running re-announces itself on its next
+  // progress/substep emit, and the stream-room rejoin bootstrap re-seeds the
+  // session's own stream immediately.
+  useEffect(() => {
+    if (reconnectCount === 0) return
+    setProgressBySession((prev) => (prev.size === 0 ? prev : new Map()))
+  }, [reconnectCount])
 
   // Derive running sessions from events array (bootstrap source of truth for streams
   // that contain session lifecycle events, e.g. threads and scratchpads)
@@ -160,6 +181,7 @@ export function useAgentActivity(
         messageCount: 0,
         substep: null,
         threadStreamId: payload.threadStreamId,
+        parentMessageId: payload.parentMessageId,
       })
       return next
     })
@@ -183,6 +205,7 @@ export function useAgentActivity(
         substep: sameStep ? (prior?.substep ?? null) : null,
         substepUpdatedAt: sameStep ? prior?.substepUpdatedAt : undefined,
         threadStreamId: payload.threadStreamId,
+        parentMessageId: payload.parentMessageId,
       })
       return next
     })
@@ -271,10 +294,21 @@ export function useAgentActivity(
   return useMemo(() => {
     const result = new Map<string, MessageAgentActivity>()
 
+    // For a session running inside a thread, the parent stream's timeline has
+    // no row for the trigger message — the visible anchor there is the thread's
+    // parent message. Alias the same activity under that id so the thread slot
+    // lights up. Trigger-message keys win on collision (set first, never
+    // clobbered) since they anchor the session's own stream view.
+    const aliasUnderParentMessage = (parentMessageId: string | undefined, activity: MessageAgentActivity) => {
+      if (parentMessageId && !result.has(parentMessageId)) {
+        result.set(parentMessageId, activity)
+      }
+    }
+
     // Sessions known from events (thread/scratchpad view)
     for (const [sessionId, session] of runningSessions) {
       const progress = progressBySession.get(sessionId)
-      result.set(session.triggerMessageId, {
+      const activity: MessageAgentActivity = {
         sessionId,
         personaName: progress?.personaName ?? session.personaName,
         currentStepType: progress ? progress.currentStepType : session.currentStepType,
@@ -282,13 +316,15 @@ export function useAgentActivity(
         messageCount: progress ? progress.messageCount : session.messageCount,
         substep: progress?.substep ?? null,
         threadStreamId: progress?.threadStreamId,
-      })
+      }
+      result.set(session.triggerMessageId, activity)
+      aliasUnderParentMessage(progress?.parentMessageId, activity)
     }
 
-    // Sessions known only from socket (channel view where lifecycle events are in thread)
+    // Sessions known only from socket (parent view where lifecycle events are in the thread)
     for (const [sessionId, progress] of progressBySession) {
       if (runningSessions.has(sessionId)) continue
-      result.set(progress.triggerMessageId, {
+      const activity: MessageAgentActivity = {
         sessionId,
         personaName: progress.personaName,
         currentStepType: progress.currentStepType,
@@ -296,7 +332,9 @@ export function useAgentActivity(
         messageCount: progress.messageCount,
         substep: progress.substep,
         threadStreamId: progress.threadStreamId,
-      })
+      }
+      result.set(progress.triggerMessageId, activity)
+      aliasUnderParentMessage(progress.parentMessageId, activity)
     }
 
     return result

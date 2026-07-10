@@ -945,21 +945,97 @@ export function createPublicApiHandlers({
         })
       }
 
-      const { link, stream } = await botRuntimeService.createLinkedScratchpadSession({
+      // Archive→unarchive reattach: the runtime re-issues session-create with
+      // the same identity after its link was archive-ended. Revive that link
+      // (same scratchpad) rather than minting a duplicate; while the scratchpad
+      // is still archived, refuse loudly so a self-healing client can tell
+      // "wait" apart from "create" (INV-11).
+      const reattach = await botRuntimeService.reattachArchivedRuntimeSession({
         workspaceId: req.workspaceId!,
         botId: bot.id,
-        ownerUserId: bot.ownerUserId,
         runtimeKind: data.runtimeKind,
         instanceId: data.instanceId,
         runtimeSessionId: data.runtimeSessionId,
-        displayName: data.displayName,
-        localCwd: data.localCwd,
-        memoryMode: data.memoryMode,
-        labelName: data.labelName,
-        description: data.description,
-        traits: requiredRuntimeTraits,
-        ...(data.e2e ? { e2e: { ownerKeyId: data.e2e.ownerKeyId } } : {}),
       })
+      if (reattach.status === "archived_stream") {
+        throw new HttpError("The linked scratchpad is archived; unarchive it to reattach", {
+          status: 409,
+          code: "SCRATCHPAD_ARCHIVED",
+        })
+      }
+      if (reattach.status === "reattached") {
+        await withTransaction(pool, (client) =>
+          botRuntimeService.repairBotTraitsInTransaction(client, {
+            workspaceId: req.workspaceId!,
+            botId: bot.id,
+            traits: requiredRuntimeTraits,
+          })
+        )
+        return res.json({
+          data: {
+            linkId: reattach.link.id,
+            rootStreamId: reattach.link.rootStreamId,
+            activeStreamId: reattach.link.activeStreamId,
+            runtimeSessionId: reattach.link.runtimeSessionId,
+            streamUrlPath: `/w/${req.workspaceId!}/s/${reattach.link.activeStreamId}`,
+            e2eEnabled: await E2eStreamsRepository.isE2eStream(pool, req.workspaceId!, reattach.link.rootStreamId),
+          },
+        })
+      }
+
+      let created: Awaited<ReturnType<typeof botRuntimeService.createLinkedScratchpadSession>>
+      try {
+        created = await botRuntimeService.createLinkedScratchpadSession({
+          workspaceId: req.workspaceId!,
+          botId: bot.id,
+          ownerUserId: bot.ownerUserId,
+          runtimeKind: data.runtimeKind,
+          instanceId: data.instanceId,
+          runtimeSessionId: data.runtimeSessionId,
+          displayName: data.displayName,
+          localCwd: data.localCwd,
+          memoryMode: data.memoryMode,
+          labelName: data.labelName,
+          description: data.description,
+          traits: requiredRuntimeTraits,
+          ...(data.e2e ? { e2e: { ownerKeyId: data.e2e.ownerKeyId } } : {}),
+        })
+      } catch (error) {
+        // Unique violation on the runtime-session identity: the unarchive
+        // consumer revived the archived link between our reads above and this
+        // insert. The whole create rolled back (no orphan scratchpad) — resume
+        // the revived link instead of surfacing a 500.
+        if ((error as { code?: string }).code === "23505") {
+          const revived = await botRuntimeService.findActivePiRemoteSession({
+            workspaceId: req.workspaceId!,
+            botId: bot.id,
+            instanceId: data.instanceId,
+            runtimeSessionId: data.runtimeSessionId,
+            runtimeKind: data.runtimeKind,
+          })
+          if (revived) {
+            await withTransaction(pool, (client) =>
+              botRuntimeService.repairBotTraitsInTransaction(client, {
+                workspaceId: req.workspaceId!,
+                botId: bot.id,
+                traits: requiredRuntimeTraits,
+              })
+            )
+            return res.json({
+              data: {
+                linkId: revived.id,
+                rootStreamId: revived.rootStreamId,
+                activeStreamId: revived.activeStreamId,
+                runtimeSessionId: revived.runtimeSessionId,
+                streamUrlPath: `/w/${req.workspaceId!}/s/${revived.activeStreamId}`,
+                e2eEnabled: await E2eStreamsRepository.isE2eStream(pool, req.workspaceId!, revived.rootStreamId),
+              },
+            })
+          }
+        }
+        throw error
+      }
+      const { link, stream } = created
 
       res.json({
         data: {

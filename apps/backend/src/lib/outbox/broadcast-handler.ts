@@ -9,6 +9,7 @@ import {
   type BotActiveActorChangedOutboxPayload,
   type BotResyncOutboxPayload,
   type BotSessionArchivedOutboxPayload,
+  type BotSessionRestoredOutboxPayload,
 } from "./repository"
 import { resolveDeliveryGroups, emitToGroups } from "./delivery-groups"
 import { logger } from "../logger"
@@ -274,6 +275,17 @@ export class BroadcastHandler implements OutboxHandler {
       const payload = event.payload as BotSessionArchivedOutboxPayload
       // Narrow session room first (the link identifies one session); instance
       // room as fallback for runtimes that registered without a session id.
+      botNs
+        .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.runtimeSessionId}`)
+        .to(`bot:${workspaceId}:bot:${payload.botId}:instance:${payload.instanceId}`)
+        .emit(event.eventType, payload)
+      return
+    }
+
+    if (isOutboxEventType(event, "bot:session_restored")) {
+      const payload = event.payload as BotSessionRestoredOutboxPayload
+      // Same routing as bot:session_archived — the restore must reach exactly
+      // the session whose wind-down it cancels.
       botNs
         .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.runtimeSessionId}`)
         .to(`bot:${workspaceId}:bot:${payload.botId}:instance:${payload.instanceId}`)
