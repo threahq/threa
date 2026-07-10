@@ -428,12 +428,22 @@ async function uploadBytesLocked(
         return
       }
 
-      const body = response.body as { error?: string } | null
+      const body = response.body as { error?: string; code?: string } | null
       if (response.status >= 400 && response.status < 500 && response.status !== 429) {
         // A duplicate completion race (another tab/device already settled this
         // upload) surfaces as 404/409 here — that's a success, not a failure.
         if ((response.status === 404 || response.status === 409) && (await probeSettled(workspaceId, attachmentId))) {
           await settleJobUploaded(jobId, attachmentId)
+          return
+        }
+        // Quarantined by the malware scan: the verdict is server-side and
+        // final — retrying the same bytes would just be quarantined again.
+        // Drop the local job entirely so the chip falls through to the
+        // summary state ("Blocked by malware scan"), identical to what every
+        // other viewer sees, instead of a retryable-looking "Upload failed".
+        if (body?.code === "attachment_blocked") {
+          await db.uploadJobs.delete(attachmentId).catch(() => {})
+          freeJob(jobId)
           return
         }
         terminalError = body?.error ?? `Upload rejected (${response.status})`

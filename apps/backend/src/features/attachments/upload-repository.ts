@@ -164,8 +164,13 @@ export const AttachmentUploadRepository = {
   },
 
   /**
-   * CAS to `failed`. Never demotes `uploaded` — a late failure report from a
-   * client that lost the response race must not clobber a settled upload.
+   * CAS to `failed`. `uploaded` is included because it is the transient
+   * scan-window state, not a settled outcome (a settled upload has NO row —
+   * the settle transaction deletes it): the concurrent-overwrite branch must
+   * be able to fail a row mid-scan-window, or the row wedges at `uploaded`
+   * (retries 409, and the scan-orphan sweep would falsely quarantine a
+   * legitimate file 4 hours later). A racing successful settle still wins:
+   * its delete removes the row whatever this wrote.
    */
   async markFailed(
     client: Querier,
@@ -180,7 +185,9 @@ export const AttachmentUploadRepository = {
           error_message = ${error.message ?? null},
           updated_at = NOW()
       WHERE workspace_id = ${workspaceId} AND attachment_id = ${attachmentId}
-        AND status = ANY(${[AttachmentUploadStatuses.RESERVED, AttachmentUploadStatuses.UPLOADING]})
+        AND status = ANY(
+          ${[AttachmentUploadStatuses.RESERVED, AttachmentUploadStatuses.UPLOADING, AttachmentUploadStatuses.UPLOADED]}
+        )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null

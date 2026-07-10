@@ -136,7 +136,10 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         return res.status(409).json({ error: result.reason })
       }
       if (result.status === "blocked") {
-        return res.status(400).json({ error: result.reason })
+        // Machine-readable code: the uploader's device drops its local job on
+        // this so its chip converges with what every other viewer sees
+        // ("Blocked by malware scan"), instead of a retryable-looking failure.
+        return res.status(400).json({ error: result.reason, code: "attachment_blocked" })
       }
       res.status(201).json({ attachment: result.attachment })
     },

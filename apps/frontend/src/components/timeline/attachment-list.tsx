@@ -520,6 +520,30 @@ export function PendingAttachmentChip({ attachment, state, progress, canRetry }:
   )
 }
 
+/**
+ * In-flight image upload rendered at the size its settled thumbnail will
+ * occupy (intrinsic aspect when the summary carries dimensions, square
+ * fallback like `inlineImageBox`), so the uploading→settled transition swaps
+ * content in place instead of reshaping the message (INV-21).
+ */
+function PendingImagePlaceholder({ attachment, state, progress }: PendingChipInfo) {
+  const box = inlineImageBox(attachment.width, attachment.height)
+  return (
+    <div
+      className="relative flex items-center justify-center overflow-hidden rounded-lg border bg-muted/40"
+      style={{ width: box.width, height: box.height }}
+    >
+      <div className="flex flex-col items-center gap-1 px-2 text-center">
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <span className="text-[11px] text-muted-foreground">{state === "scanning" ? "Scanning…" : "Uploading…"}</span>
+      </div>
+      {state === "uploading" && typeof progress === "number" && progress < 1 && (
+        <PillProgressBar progress={progress} label={attachment.filename} />
+      )}
+    </div>
+  )
+}
+
 function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentItemProps) {
   const [isDownloading, setIsDownloading] = useState(false)
   const Icon = getFileIcon(attachment.mimeType)
@@ -562,7 +586,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   const selectedAttachmentId = mediaAttachmentId && attachmentIds.has(mediaAttachmentId) ? mediaAttachmentId : null
 
   useSyncExternalStore(subscribeUploads, getUploadsVersion, getUploadsVersion)
-  const pendingUploadChips = useMemo(
+  const pendingUploads = useMemo(
     () =>
       (attachments ?? []).flatMap((a): PendingChipInfo[] => {
         const chip = resolveUploadChip(a)
@@ -572,10 +596,27 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     // while `attachments` stays referentially stable.
     [attachments, getUploadsVersion()]
   )
+  // In-flight IMAGES render as an image-sized placeholder inside the image
+  // row (same slot the settled thumbnail will occupy), so the settle swaps a
+  // box's content instead of a small chip vanishing up top while a 128px
+  // image pops in below (INV-21). Terminal states (failed/blocked) and
+  // non-image files keep the compact chip — their settled form is chip-sized
+  // anyway, and failed/blocked need the actionable/warning treatment.
+  const pendingImagePlaceholders = useMemo(
+    () =>
+      pendingUploads.filter(
+        (p) => (p.state === "uploading" || p.state === "scanning") && p.attachment.mimeType.startsWith("image/")
+      ),
+    [pendingUploads]
+  )
+  const pendingUploadChips = useMemo(() => {
+    const placeholderIds = new Set(pendingImagePlaceholders.map((p) => p.attachment.id))
+    return pendingUploads.filter((p) => !placeholderIds.has(p.attachment.id))
+  }, [pendingUploads, pendingImagePlaceholders])
   const settledAttachments = useMemo(() => {
-    const pendingIds = new Set(pendingUploadChips.map((p) => p.attachment.id))
+    const pendingIds = new Set(pendingUploads.map((p) => p.attachment.id))
     return (attachments ?? []).filter((a) => !pendingIds.has(a.id))
-  }, [attachments, pendingUploadChips])
+  }, [attachments, pendingUploads])
 
   const imageAttachments = useMemo(
     () => settledAttachments.filter((a) => a.mimeType.startsWith("image/")),
@@ -752,8 +793,11 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
             ))}
           </div>
         )}
-        {(imageAttachments.length > 0 || videoAttachments.length > 0) && (
+        {(imageAttachments.length > 0 || videoAttachments.length > 0 || pendingImagePlaceholders.length > 0) && (
           <div className="flex flex-wrap gap-2">
+            {pendingImagePlaceholders.map((chip) => (
+              <PendingImagePlaceholder key={chip.attachment.id} {...chip} />
+            ))}
             {imageAttachments.map((attachment) => (
               <ImageAttachment
                 key={attachment.id}

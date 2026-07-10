@@ -171,6 +171,25 @@ describe("upload-manager", () => {
     expect(getUploadJobByAttachmentId("attach_orphan")).toBeUndefined()
   })
 
+  it("a malware-blocked verdict frees the local job so the summary state drives the chip", async () => {
+    mockReserve("attach_blocked")
+    vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({
+      status: 400,
+      body: { error: "Attachment is quarantined due to malware scan", code: "attachment_blocked" },
+    })
+    const report = vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+
+    const job = startUpload(WS, makeFile())
+    await waitForJobStatus(job.jobId, null)
+
+    // No local job left: the chip falls through to the message summary
+    // ("Blocked by malware scan") — identical to every other viewer, with no
+    // retryable-looking "Upload failed" on the uploader's own device.
+    expect(getUploadJobByAttachmentId("attach_blocked")).toBeUndefined()
+    expect(await db.uploadJobs.get("attach_blocked")).toBeUndefined()
+    expect(report).not.toHaveBeenCalled()
+  })
+
   it("a terminal rejection marks the job failed, persists it, and reports to the server", async () => {
     mockReserve("attach_fail")
     vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 400, body: { error: "size mismatch" } })

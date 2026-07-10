@@ -176,18 +176,26 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
     // Still uploading/scanning, failed, or quarantined: the bytes may not
     // exist (or must not be served), and the status chip below the message
     // already says so — a healthy-looking clickable link here would
-    // contradict it. Render inert muted text until the state settles (the
-    // socket patch / bootstrap overlay re-renders this when it does).
+    // contradict it. Render muted (no link affordance) until the state
+    // settles (the socket patch / bootstrap overlay re-renders this when it
+    // does). It stays TAPPABLE: activating routes through openAttachment,
+    // whose pending guard toasts the reason — on touch there is no hover, so
+    // a tap is the only way a phone user can learn why the link is dimmed.
     const pendingState = attachmentContext?.getAttachmentPendingState(attachmentId) ?? null
     if (pendingState) {
       return (
-        <span
-          aria-disabled="true"
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            attachmentContext?.openAttachment(attachmentId, false)
+          }}
           title={PENDING_STATE_LABELS[pendingState]}
-          className="break-all text-muted-foreground cursor-default"
+          aria-label={`${extractTextFromChildren(children)} — ${PENDING_STATE_LABELS[pendingState]}`}
+          className="break-all text-muted-foreground cursor-default text-left"
         >
           <ProcessedChildren>{children}</ProcessedChildren>
-        </span>
+        </button>
       )
     }
 
