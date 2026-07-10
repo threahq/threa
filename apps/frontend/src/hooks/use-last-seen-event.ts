@@ -177,17 +177,23 @@ export function useLastSeenEvent({
 
     const rowEls = el.querySelectorAll<HTMLElement>("[data-event-id]")
     if (rowEls.length === 0) return
+    const map = indexByIdRef.current
     const rows: VisibleRow[] = []
     for (let i = 0; i < rowEls.length; i++) {
       const id = rowEls[i].dataset.eventId
-      if (!id) continue
+      // Skip rows that aren't in the loaded window rather than letting them
+      // poison the range lookup below. The thread view renders its parent
+      // message as a row carrying the PARENT stream's event id — in a short
+      // thread it sits at the top of the viewport permanently, and bailing on
+      // its unmappable id would veto every scan, so the thread never auto-reads.
+      if (!id || !map.has(id)) continue
       const r = rowEls[i].getBoundingClientRect()
       rows.push({ id, top: r.top, bottom: r.bottom })
     }
+    if (rows.length === 0) return
 
     const range = pickVisibleRange(rows, viewportTop, viewportBottom)
     if (!range) return
-    const map = indexByIdRef.current
     const topIdx = map.get(range.topId)
     const botIdx = map.get(range.bottomId)
     if (topIdx === undefined || botIdx === undefined) return

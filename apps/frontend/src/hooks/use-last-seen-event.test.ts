@@ -555,6 +555,45 @@ describe("useLastSeenEvent re-scan triggers", () => {
     expect(result.current.lastSeenEventId).toBe("evt_real")
   })
 
+  it("ignores foreign rows (the thread parent banner) instead of vetoing the scan", () => {
+    // A thread renders its parent message as a timeline row carrying the PARENT
+    // stream's event id — never present in the thread's own window. In a short
+    // thread that row stays at the top of the viewport forever, so if the scan
+    // bails on the unmappable id (instead of skipping the row), the frontier
+    // never advances and the thread never auto-reads: the prod ghost-unread bug.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      parent_evt: { top: 5, bottom: 45 }, // parent-stream event id, not in `events`
+      e0: { top: 55, bottom: 95 }, // the thread's only reply — visible
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const events = [{ id: "e0", sequence: "2" }] as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+
+    const { result } = renderHook(() =>
+      useLastSeenEvent({
+        scrollContainerRef,
+        events,
+        streamId: "stream_thread",
+        // A fresh thread member's member_added watermark is remapped to null by
+        // StreamContent (it's suppressed from the rendered window): nothing read.
+        lastReadEventId: null,
+        enabled: true,
+      })
+    )
+
+    expect(result.current.lastSeenEventId).toBe("e0")
+    expect(result.current.atLastRow).toBe(true)
+  })
+
   it("does not emit a mark target while the read pointer sits outside the loaded window", () => {
     // Mark-as-unread on the oldest loaded row moves the pointer to a message below
     // the loaded window, so it is unresolvable in `events`. Emitting the stale
