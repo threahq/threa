@@ -52,6 +52,15 @@ export const MEMO_SINGLE_MESSAGE_AGE_GATE_MS = 10 * 60 * 1000
 export const MEMO_MAX_PER_CONVERSATION = 5
 
 /**
+ * Upper bound on memos a single reflective session capture may leave behind
+ * (roadmap 6.3). Tighter than {@link MEMO_MAX_PER_CONVERSATION}: a work session's
+ * durable residue is usually one finding, occasionally two — more than that and
+ * the reflective pass is transcribing the session rather than distilling it, and
+ * agent-authored memos are damped anyway (see {@link MEMO_AUTHORED_BY_KIND_BOOST}).
+ */
+export const MEMO_REFLECTIVE_MAX_MEMOS = 2
+
+/**
  * Cross-conversation dedup threshold (pgvector cosine distance, 0 = identical).
  * A candidate memo within this distance of an existing active memo in the same
  * stream — but from a different conversation — is treated as the same knowledge

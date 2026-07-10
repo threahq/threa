@@ -44,6 +44,7 @@ export const JobQueues = {
   SCHEDULED_MESSAGE_SEND: "scheduled_message.send",
   AGENT_FOLLOW_UP_FIRE: "agent.follow_up_fire",
   AGENT_EPISODE_SUMMARIZE: "agent.episode_summarize",
+  AGENT_REFLECTIVE_CAPTURE: "agent.reflective_capture",
   CONTEXT_BAG_PRECOMPUTE: "context_bag.precompute",
   BACKFILL_PLAN: "backfill.plan",
   BACKFILL_CHUNK: "backfill.chunk",
@@ -90,6 +91,20 @@ export interface AgentFollowUpFireJobData {
  * re-delivery no-ops once the row already carries a summary.
  */
 export interface AgentEpisodeSummarizeJobData {
+  workspaceId: string
+  sessionId: string
+}
+
+/**
+ * Agent reflective-capture job (roadmap 6.3). Enqueued after a companion session
+ * completes (persona-agent-worker), alongside the episode-summary job, it distils
+ * a research-heavy session's tool-work digest + reply into ≤2 agent-authored
+ * memos so research work products don't evaporate with the turn. Deferred to a
+ * job — never inline — so the completion transaction holds no connection across
+ * the classifier/memorizer AI calls (INV-41). Idempotent: a `reflective_captured_at`
+ * CAS means re-delivery no-ops.
+ */
+export interface AgentReflectiveCaptureJobData {
   workspaceId: string
   sessionId: string
 }
@@ -340,6 +355,7 @@ export interface JobDataMap {
   [JobQueues.SCHEDULED_MESSAGE_SEND]: ScheduledMessageSendJobData
   [JobQueues.AGENT_FOLLOW_UP_FIRE]: AgentFollowUpFireJobData
   [JobQueues.AGENT_EPISODE_SUMMARIZE]: AgentEpisodeSummarizeJobData
+  [JobQueues.AGENT_REFLECTIVE_CAPTURE]: AgentReflectiveCaptureJobData
   [JobQueues.CONTEXT_BAG_PRECOMPUTE]: ContextBagPrecomputeJobData
   [JobQueues.BACKFILL_PLAN]: BackfillPlanJobData
   [JobQueues.BACKFILL_CHUNK]: BackfillChunkJobData

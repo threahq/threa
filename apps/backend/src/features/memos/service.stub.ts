@@ -1,4 +1,11 @@
-import type { MemoServiceLike, ProcessResult, SaveMemoParams, SaveMemoResult } from "./service"
+import type {
+  MemoServiceLike,
+  ProcessResult,
+  SaveMemoParams,
+  SaveMemoResult,
+  CaptureSessionReflectionParams,
+  CaptureSessionReflectionResult,
+} from "./service"
 import { memoId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 
@@ -12,5 +19,13 @@ export class StubMemoService implements MemoServiceLike {
     logger.debug({ workspaceId: params.workspaceId, streamId: params.streamId }, "Stub memo service - save_memo no-op")
     if (params.sourceMessageIds.length === 0) return { ok: false, reason: "no_source_messages" }
     return { ok: true, memoId: memoId(), title: params.title, deduped: false }
+  }
+
+  async captureSessionReflection(params: CaptureSessionReflectionParams): Promise<CaptureSessionReflectionResult> {
+    logger.debug(
+      { workspaceId: params.workspaceId, sessionId: params.sessionId },
+      "Stub memo service - reflective capture no-op"
+    )
+    return { classified: false, captured: 0, deduped: 0 }
   }
 }

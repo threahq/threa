@@ -33,6 +33,7 @@ interface SessionRow {
   context_message_ids: string[] | null
   episode_summary: string | null
   response_validation_failed: boolean
+  reflective_captured_at: Date | null
   created_at: Date
   completed_at: Date | null
 }
@@ -109,6 +110,13 @@ export interface AgentSession {
    * `escalationModel` (roadmap 2.3).
    */
   responseValidationFailed: boolean
+  /**
+   * When the reflective session-capture job ran for this session (roadmap 6.3),
+   * or NULL if it hasn't. CAS-set once so a re-delivered job is a no-op — see
+   * `setReflectiveCaptured`. Set even when the session left behind no memo, so a
+   * not-worthy session isn't re-classified on every redelivery.
+   */
+  reflectiveCapturedAt: Date | null
   createdAt: Date
   completedAt: Date | null
 }
@@ -223,6 +231,7 @@ function mapRowToSession(row: SessionRow): AgentSession {
     contextMessageIds: row.context_message_ids ?? [],
     episodeSummary: row.episode_summary,
     responseValidationFailed: row.response_validation_failed,
+    reflectiveCapturedAt: row.reflective_captured_at,
     createdAt: row.created_at,
     completedAt: row.completed_at,
   }
@@ -249,7 +258,8 @@ const SESSION_SELECT_FIELDS = `
   id, stream_id, persona_id, trigger_message_id, trigger_message_revision, supersedes_session_id,
   status, current_step, current_step_type, server_id, callback_token_hash, reply_key_generation, heartbeat_at,
   abort_requested_at, response_message_id, error, last_seen_sequence,
-  sent_message_ids, context_message_ids, episode_summary, response_validation_failed, created_at, completed_at
+  sent_message_ids, context_message_ids, episode_summary, response_validation_failed,
+  reflective_captured_at, created_at, completed_at
 `
 
 const STEP_SELECT_FIELDS = `
@@ -635,6 +645,42 @@ export const AgentSessionRepository = {
       `
     )
     return (result.rowCount ?? 0) > 0
+  },
+
+  /**
+   * Claim the reflective session-capture for this session (roadmap 6.3). CAS on
+   * `IS NULL` so a re-delivered job (or two racing captures) runs the classifier
+   * once — the first claim wins, later ones no-op (INV-20). Returns whether this
+   * call won the claim; the caller only does capture work when it did.
+   */
+  async setReflectiveCaptured(db: Querier, id: string, at: Date): Promise<boolean> {
+    const result = await db.query(
+      sql`
+        UPDATE agent_sessions
+        SET reflective_captured_at = ${at}
+        WHERE id = ${id} AND reflective_captured_at IS NULL
+      `
+    )
+    return (result.rowCount ?? 0) > 0
+  },
+
+  /**
+   * Release a reflective-capture claim (roadmap 6.3). The reflective job claims
+   * the CAS *before* the classifier/memorizer/embed/save run so a concurrent or
+   * re-delivered delivery can't double-capture; if that fallible AI+DB work then
+   * throws, the claim holder calls this to reset the marker to NULL so a retry can
+   * pick the session back up (the memo writes are transactional — a failure
+   * committed nothing). Only the delivery that won the claim calls this, so the
+   * reset can't stomp a peer's in-flight claim.
+   */
+  async clearReflectiveCaptured(db: Querier, id: string): Promise<void> {
+    await db.query(
+      sql`
+        UPDATE agent_sessions
+        SET reflective_captured_at = NULL
+        WHERE id = ${id}
+      `
+    )
   },
 
   /**

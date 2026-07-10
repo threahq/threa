@@ -72,6 +72,15 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
       await jobQueue.send(JobQueues.AGENT_EPISODE_SUMMARIZE, { workspaceId, sessionId: result.sessionId })
     }
 
+    // Reflective capture: distil a research-heavy session into agent memos so the
+    // research doesn't evaporate (roadmap 6.3). Enqueued for every completed
+    // session — including replyless research turns the episode gate above skips —
+    // and cheaply no-ops (no AI) inside the service for sessions with no tool work.
+    // Best-effort: a lost enqueue just drops one session from reflective memory.
+    if (result.status === "completed" && result.sessionId) {
+      await jobQueue.send(JobQueues.AGENT_REFLECTIVE_CAPTURE, { workspaceId, sessionId: result.sessionId })
+    }
+
     // Check for unseen messages that arrived while the session was running.
     // The companion listener skips dispatching jobs for messages when a session
     // is already active (RUNNING/PENDING), so we need to catch up here.

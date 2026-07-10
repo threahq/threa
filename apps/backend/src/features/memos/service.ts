@@ -28,6 +28,7 @@ import {
   MEMO_SINGLE_MESSAGE_AGE_GATE_MS,
   MEMO_DEDUP_DISTANCE,
   MEMO_SUPERSEDE_DISTANCE,
+  MEMO_REFLECTIVE_MAX_MEMOS,
 } from "./config"
 
 const MEMORY_CONTEXT_LIMIT = 20
@@ -126,9 +127,44 @@ export type SaveMemoResult =
   | { ok: true; memoId: string; title: string; deduped: boolean }
   | { ok: false; reason: "no_source_messages" }
 
+/**
+ * Reflective capture over a completed session's digest (roadmap 6.3). The
+ * classifier + memorizer run on the session's tool-work digest + reply (a second
+ * caller of the same pipeline, INV-35), and any resulting memos anchor to
+ * `anchorMessageId` — the session's own in-stream trigger/reply message — so they
+ * stay `memo_type: 'message'` and inherit that stream's retrieval access
+ * unchanged (INV-8/INV-62). `authored_by_kind: 'agent'` + `sessionId` mark the
+ * provenance. Idempotency is the caller's job (the `reflective_captured_at` CAS).
+ */
+export interface CaptureSessionReflectionParams {
+  workspaceId: string
+  streamId: string
+  sessionId: string
+  /** Labeled session digest (trigger + research findings + replies). */
+  digest: string
+  /** The session's own real in-stream message the memos anchor to. */
+  anchorMessageId: string
+  /** Human participants across the session (a memo's `participant_ids`). */
+  participantIds: string[]
+  authorTimezone?: string
+}
+
+/**
+ * `classified` is whether the classifier judged the digest knowledge-worthy and
+ * confident enough to memorize; when false, nothing was written. `captured` is
+ * memos inserted, `deduped` those dropped as near-duplicates of existing stream
+ * knowledge — the knowledge is retained either way.
+ */
+export interface CaptureSessionReflectionResult {
+  classified: boolean
+  captured: number
+  deduped: number
+}
+
 export interface MemoServiceLike {
   processBatch(workspaceId: string, streamId: string): Promise<ProcessResult>
   saveMemo(params: SaveMemoParams): Promise<SaveMemoResult>
+  captureSessionReflection(params: CaptureSessionReflectionParams): Promise<CaptureSessionReflectionResult>
 }
 
 /**
@@ -770,6 +806,170 @@ export class MemoService implements MemoServiceLike {
 
       logger.info({ streamId, memoId: newMemoId, sessionId }, "save_memo: agent memo created")
       return { ok: true, memoId: newMemoId, title, deduped: false }
+    })
+  }
+
+  /**
+   * Distil a completed session's digest into ≤{@link MEMO_REFLECTIVE_MAX_MEMOS}
+   * agent memos (roadmap 6.3). Same three-phase shape as the batch (read context /
+   * AI / save) so no connection is held across the classifier, memorizer, or
+   * embed calls (INV-41). Reuses the classifier + memorizer + dedup + capture
+   * machinery — a second caller, not a second pipeline (INV-35). The memos anchor
+   * to the session's own in-stream message, so they are message-sourced and their
+   * retrieval access is exactly the producing stream's (INV-8/INV-62), never wider.
+   */
+  async captureSessionReflection(params: CaptureSessionReflectionParams): Promise<CaptureSessionReflectionResult> {
+    const { workspaceId, streamId, sessionId, digest, anchorMessageId, participantIds, authorTimezone } = params
+    const none = { classified: false, captured: 0, deduped: 0 }
+
+    // Phase 1: read the stream's memo context (single connection, no AI held).
+    const context = await withClient(this.pool, async (client) => {
+      const existingMemos = await MemoRepository.findByStream(client, streamId, {
+        status: MemoStatuses.ACTIVE,
+        limit: MEMORY_CONTEXT_LIMIT,
+        orderBy: "createdAt",
+      })
+      const existingTags = await MemoRepository.getAllTags(client, workspaceId)
+      // Only the explicit workspace setting is honored here (no participant-locale
+      // fallback): a session's participants are usually just the invoking user, too
+      // thin a sample to infer a canonical language from.
+      const overrides = await WorkspaceSettingsRepository.findOverrides(client, workspaceId)
+      const settingLanguage = overrides.find((o) => o.key === "memoLanguage")?.value
+      const memoLanguage =
+        typeof settingLanguage === "string" && settingLanguage.trim().length > 0 ? settingLanguage.trim() : undefined
+      return { existingMemos, existingTags, memoLanguage }
+    })
+
+    // Phase 2: classify the digest. topicSummary is null — the digest's own
+    // "Trigger / researched / replied" sections carry the framing, and a session
+    // has no conversation topic.
+    const classification = await this.classifier.classifyConversation(
+      { id: sessionId, topicSummary: null, participantIds },
+      digest,
+      context.existingMemos,
+      { workspaceId, authorTimezone }
+    )
+    if (!classification.isKnowledgeWorthy) return none
+    if (classification.confidence != null && classification.confidence < MEMO_GEM_CONFIDENCE_FLOOR) {
+      logger.info(
+        { sessionId, streamId, confidence: classification.confidence, threshold: MEMO_GEM_CONFIDENCE_FLOOR },
+        "reflective capture skipped — low classifier confidence"
+      )
+      return none
+    }
+
+    // Phase 3: memorize. `content: []` — a reflective memo's source is the session
+    // anchor, not the digest's cited message ids, so no per-message resolution.
+    const contents = (
+      await this.memorizer.memorizeConversation(digest, {
+        memoryContext: context.existingMemos.map((m) => m.abstract),
+        content: [],
+        existingTags: context.existingTags,
+        workspaceId,
+        authorTimezone,
+        memoLanguage: context.memoLanguage,
+      })
+    ).slice(0, MEMO_REFLECTIVE_MAX_MEMOS)
+    if (contents.length === 0) {
+      logger.info({ sessionId, streamId }, "reflective capture — memorizer returned no memos")
+      return { classified: true, captured: 0, deduped: 0 }
+    }
+
+    const embeddings = await this.embeddingService.embedBatch(
+      contents.map((c) => c.abstract),
+      { workspaceId, functionId: "memo-embedding" }
+    )
+    if (embeddings.length !== contents.length) {
+      throw new Error(
+        `Embedding count mismatch for reflective capture ${sessionId}: expected ${contents.length}, got ${embeddings.length}`
+      )
+    }
+
+    // Phase 4: save under the same per-stream lock the batch/save_memo use, so
+    // the dedup gate can't be read stale (INV-20). Memo rows, their outbox
+    // events, and the memos:captured timeline event commit atomically (INV-7/62).
+    return withTransaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
+
+      const capturedMemos: MemosCapturedEventPayload["memos"] = []
+      let deduped = 0
+      for (let i = 0; i < contents.length; i++) {
+        const content = contents[i]
+        const embedding = embeddings[i]
+
+        // Dedup against committed stream memos AND survivors inserted earlier in
+        // this transaction (a second near-identical reflective memo is dropped).
+        const duplicate = await MemoRepository.findNearDuplicate(client, {
+          workspaceId,
+          streamId,
+          embedding,
+          maxDistance: MEMO_DEDUP_DISTANCE,
+        })
+        if (duplicate) {
+          deduped++
+          logger.info(
+            { sessionId, streamId, existingMemoId: duplicate.memo.id, distance: duplicate.distance },
+            "reflective capture — knowledge already captured in this stream"
+          )
+          continue
+        }
+
+        const newMemoId = memoId()
+        const inserted = await MemoRepository.insert(client, {
+          id: newMemoId,
+          workspaceId,
+          memoType: MemoTypes.MESSAGE,
+          sourceMessageId: anchorMessageId,
+          title: content.title,
+          abstract: content.abstract,
+          keyPoints: content.keyPoints,
+          sourceMessageIds: [anchorMessageId],
+          participantIds,
+          knowledgeType: content.knowledgeType,
+          tags: content.tags,
+          status: MemoStatuses.ACTIVE,
+          authoredByKind: AuthoredByKinds.AGENT,
+          sourceSessionId: sessionId,
+        })
+        await MemoRepository.updateEmbedding(client, newMemoId, embedding)
+        await OutboxRepository.insert(client, "memo:created", {
+          workspaceId,
+          memoId: newMemoId,
+          memo: this.toWireMemo(inserted),
+        })
+        capturedMemos.push({
+          memoId: newMemoId,
+          title: content.title,
+          knowledgeType: content.knowledgeType,
+          sourceMessageIds: [anchorMessageId],
+        })
+      }
+
+      if (capturedMemos.length > 0) {
+        // Visible in situ (INV-62): one broadcast timeline event on the session's
+        // stream. Message-sourced, so no conversationId — links via sourceMessageIds.
+        const [captureEvent] = await StreamEventRepository.insertMany(client, [
+          {
+            id: eventId(),
+            streamId,
+            eventType: "memos:captured" as const,
+            payload: { memos: capturedMemos } satisfies MemosCapturedEventPayload,
+            actorType: AuthorTypes.SYSTEM,
+          },
+        ])
+        await OutboxRepository.insertMany(client, [
+          {
+            eventType: "stream:memos_captured" as const,
+            payload: { workspaceId, streamId, event: captureEvent },
+          },
+        ])
+      }
+
+      logger.info(
+        { sessionId, streamId, captured: capturedMemos.length, deduped },
+        "reflective session capture complete"
+      )
+      return { classified: true, captured: capturedMemos.length, deduped }
     })
   }
 

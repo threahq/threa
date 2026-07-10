@@ -31,6 +31,7 @@ function makeSession(overrides?: Partial<AgentSession>): AgentSession {
     contextMessageIds: [],
     episodeSummary: null,
     responseValidationFailed: false,
+    reflectiveCapturedAt: null,
     createdAt: new Date("2026-06-10T09:00:00.000Z"),
     completedAt: new Date("2026-06-10T09:05:00.000Z"),
     ...overrides,
