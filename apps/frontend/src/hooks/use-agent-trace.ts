@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { useSocket } from "@/contexts"
+import { useSocket, useSocketReconnectCount } from "@/contexts"
 import { agentSessionsApi } from "@/api"
 import { debugBootstrap } from "@/lib/bootstrap-debug"
 import { joinRoomWithAck } from "@/lib/socket-room"
@@ -64,6 +64,12 @@ interface UseAgentTraceResult {
  */
 export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentTraceResult {
   const socket = useSocket()
+  // Socket.io reuses the same Socket instance across reconnects, but the server
+  // forgets room membership on every disconnect. Keying the subscribe effect on
+  // the reconnect counter re-joins the session room and re-runs the bootstrap
+  // fetch (INV-53) — without it a reconnect leaves the dialog subscribed to
+  // nothing: steps freeze and the terminal completed/failed events never arrive.
+  const reconnectCount = useSocketReconnectCount()
   const userId = useWorkspaceUserId(workspaceId)
 
   // Real-time state accumulated from socket events
@@ -75,6 +81,11 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
   // an older/equal timestamp belongs to that finished instance — dropping it stops
   // a late E2E decrypt from resurrecting a cleared step's phase timeline.
   const closedAtByTypeRef = useRef<Map<AgentStepType, string>>(new Map())
+  // Which session the accumulated terminalStatus belongs to. The subscribe
+  // effect also re-runs on reconnect (reconnectCount dep), and terminal status
+  // is monotonic per session — resetting it there would flash a completed
+  // dialog back to data.session.status ("running") until the refetch lands.
+  const terminalSessionKeyRef = useRef<string | null>(null)
   // Track if socket is subscribed (enables query after subscription)
   const [isSubscribed, setIsSubscribed] = useState(false)
   const [isSubscribing, setIsSubscribing] = useState(false)
@@ -224,18 +235,34 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
 
   // Subscribe to session room and listen for events
   // CRITICAL: Subscription must complete BEFORE query is enabled to avoid race conditions
+  // Re-runs on reconnect (reconnectCount): re-joins the room and, by toggling
+  // isSubscribed, re-enables the stale bootstrap query so the refetch closes the
+  // event gap the disconnect opened (INV-53).
   useEffect(() => {
     if (!socket || !workspaceId || !sessionId) return
 
     const room = `ws:${workspaceId}:agent_session:${sessionId}`
+    const sessionKey = `${workspaceId}:${sessionId}`
     const abortController = new AbortController()
 
-    // Reset state for new session
+    // Reset accumulated state — on session change AND on reconnect. The steps
+    // and streaming-text wipes are deliberate for reconnects: mergeSteps
+    // prefers realtime on id collision, so a stale realtime "started" step
+    // held across the gap would permanently mask the refetched "completed"
+    // row; the refetch rebuilds the slate. Streaming text is stale after a
+    // gap and each progress event carries full content, so it self-heals on
+    // the next tick.
     setRealtimeSteps(new Map())
     setStreamingContent({})
     setStreamingSubsteps({})
     closedAtByTypeRef.current = new Map()
-    setTerminalStatus(null)
+    // Terminal status is the exception: monotonic per session, so it only
+    // resets when the dialog actually switches sessions (see
+    // terminalSessionKeyRef above).
+    if (terminalSessionKeyRef.current !== sessionKey) {
+      terminalSessionKeyRef.current = sessionKey
+      setTerminalStatus(null)
+    }
     setIsSubscribed(false)
     setIsSubscribing(true)
     setSubscriptionError(null)
@@ -282,6 +309,7 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     }
   }, [
     socket,
+    reconnectCount,
     workspaceId,
     sessionId,
     handleStepStarted,
@@ -306,7 +334,12 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     relatedSessions: data?.relatedSessions ?? [],
     persona: data?.persona ?? null,
     status,
-    isLoading: isSubscribing || isQueryLoading,
+    // Gate the subscribing spinner on having no data yet: a reconnect re-arm
+    // flips isSubscribing while the dialog already shows steps, and surfacing
+    // it would swap the rendered list for skeletons (losing scroll) on every
+    // network blip. With data present the re-join + refetch heal in the
+    // background; skeletons appear only before the first bootstrap.
+    isLoading: (isSubscribing && !data) || isQueryLoading,
     error: (queryError as Error | null) ?? (data ? null : subscriptionError),
   }
 }

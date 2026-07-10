@@ -25,8 +25,19 @@ export class TraceEmitter {
     streamId: string
     triggerMessageId: string
     personaName: string
-    /** For channel mentions: the channel stream ID for inline indicator progress events */
-    channelStreamId?: string
+    /**
+     * When the session runs in a thread: the parent stream's id, so inline
+     * indicator events (activity/progress/substeps) also reach viewers of the
+     * parent timeline — the channel for channel mentions, the enclosing
+     * stream for mentions inside an existing thread.
+     */
+    parentStreamId?: string
+    /**
+     * The thread's parent message id. Parent-timeline viewers can't see the
+     * trigger message (it's inside the thread), so the frontend keys the
+     * indicator off this message instead.
+     */
+    parentMessageId?: string
   }): SessionTrace {
     return new SessionTrace(this.deps, params)
   }
@@ -41,7 +52,7 @@ export class SessionTrace {
   private messageCount = 0
   private readonly sessionRoom: string
   private readonly streamRoom: string
-  private readonly channelRoom: string | null
+  private readonly parentRoom: string | null
 
   constructor(
     private readonly deps: TraceEmitterDeps,
@@ -51,12 +62,13 @@ export class SessionTrace {
       streamId: string
       triggerMessageId: string
       personaName: string
-      channelStreamId?: string
+      parentStreamId?: string
+      parentMessageId?: string
     }
   ) {
     this.sessionRoom = `ws:${params.workspaceId}:agent_session:${params.sessionId}`
     this.streamRoom = `ws:${params.workspaceId}:stream:${params.streamId}`
-    this.channelRoom = params.channelStreamId ? `ws:${params.workspaceId}:stream:${params.channelStreamId}` : null
+    this.parentRoom = params.parentStreamId ? `ws:${params.workspaceId}:stream:${params.parentStreamId}` : null
   }
 
   /**
@@ -100,7 +112,7 @@ export class SessionTrace {
     })
 
     // Emit to stream room (lightweight, for timeline card + trigger message indicator)
-    // When channelRoom is set, also emit to the channel for the inline indicator
+    // When parentRoom is set, also emit to the parent stream for the inline indicator
     // Include threadStreamId so frontend can link directly to thread before stream:created arrives
     const progressPayload = {
       workspaceId: this.params.workspaceId,
@@ -111,11 +123,12 @@ export class SessionTrace {
       stepCount: stepNumber,
       messageCount: this.messageCount,
       currentStepType: stepType,
-      threadStreamId: this.params.channelStreamId ? this.params.streamId : undefined,
+      threadStreamId: this.params.parentStreamId ? this.params.streamId : undefined,
+      parentMessageId: this.params.parentMessageId,
     }
     let target = this.deps.io.to(this.streamRoom)
-    if (this.channelRoom) {
-      target = target.to(this.channelRoom)
+    if (this.parentRoom) {
+      target = target.to(this.parentRoom)
     }
     target.emit("agent_session:progress", progressPayload)
 
@@ -149,10 +162,10 @@ export class SessionTrace {
       substep: params.substep,
       updatedAt: new Date().toISOString(),
     }
-    // Stream room (timeline inline) — include channel room for channel-mention threads
+    // Stream room (timeline inline) — include the parent stream's room for thread sessions
     let target = this.deps.io.to(this.streamRoom)
-    if (this.channelRoom) {
-      target = target.to(this.channelRoom)
+    if (this.parentRoom) {
+      target = target.to(this.parentRoom)
     }
     target.emit("agent_session:substep", payload)
     // Session room (trace dialog live streaming)
@@ -173,23 +186,24 @@ export class SessionTrace {
     })
   }
 
-  /** Notify channel room that agent activity started. For immediate inline indicator. */
+  /** Notify the parent stream's room that agent activity started. For immediate inline indicator. */
   notifyActivityStarted(): void {
-    if (!this.channelRoom) return
+    if (!this.parentRoom) return
     // Include threadStreamId (which is this.params.streamId) so frontend can link
     // directly to the thread before the slower stream:created event arrives
-    this.deps.io.to(this.channelRoom).emit("agent_session:activity_started", {
+    this.deps.io.to(this.parentRoom).emit("agent_session:activity_started", {
       sessionId: this.params.sessionId,
       triggerMessageId: this.params.triggerMessageId,
       personaName: this.params.personaName,
       threadStreamId: this.params.streamId,
+      parentMessageId: this.params.parentMessageId,
     })
   }
 
-  /** Notify channel room that agent activity ended. For inline indicator cleanup. */
+  /** Notify the parent stream's room that agent activity ended. For inline indicator cleanup. */
   notifyActivityEnded(): void {
-    if (!this.channelRoom) return
-    this.deps.io.to(this.channelRoom).emit("agent_session:activity_ended", {
+    if (!this.parentRoom) return
+    this.deps.io.to(this.parentRoom).emit("agent_session:activity_ended", {
       sessionId: this.params.sessionId,
       triggerMessageId: this.params.triggerMessageId,
     })

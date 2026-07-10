@@ -1,8 +1,7 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { AgentSessionRepository } from "./session-repository"
-import { StreamRepository, StreamEventRepository } from "../streams"
-import { StreamMemberRepository } from "../streams"
+import { StreamEventRepository, checkStreamAccess } from "../streams"
 import { PersonaRepository } from "./persona-repository"
 import { BotRepository } from "../public-api"
 import type { AgentSessionWithSteps, AgentStepType } from "@threa/types"
@@ -34,19 +33,19 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
           return { error: "Session not found", status: 404 }
         }
 
-        const [stream, membership, persona, bot, steps] = await Promise.all([
-          StreamRepository.findById(pool, session.streamId),
-          StreamMemberRepository.findByStreamAndMember(pool, session.streamId, userId),
+        // Access resolves through the canonical thread→root predicate (INV-62):
+        // a session in a thread must be visible to anyone with access to the
+        // root stream — a direct `stream_members` check on the thread would 403
+        // DM/channel members who never got their own thread membership row.
+        const [stream, persona, bot, steps] = await Promise.all([
+          checkStreamAccess(pool, session.streamId, workspaceId, userId),
           PersonaRepository.findById(pool, session.personaId, workspaceId),
           BotRepository.findById(pool, workspaceId, session.personaId),
           AgentSessionRepository.findStepsBySession(pool, sessionId),
         ])
 
-        if (!stream || stream.workspaceId !== workspaceId) {
+        if (!stream) {
           return { error: "Session not found", status: 404 }
-        }
-        if (!membership) {
-          return { error: "Not authorized to view this session", status: 403 }
         }
         let actor: { id: string; name: string; avatarUrl: string | null; avatarEmoji?: string | null } | null = null
         if (persona) {

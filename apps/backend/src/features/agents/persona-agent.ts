@@ -367,7 +367,8 @@ export class PersonaAgent {
     // Create the thread eagerly so session events go there for channel mentions.
     const isChannelMention = purpose.kind === "mention" && stream.type === StreamTypes.CHANNEL
     let sessionStreamId = streamId
-    let channelStreamId: string | undefined
+    let parentStreamId: string | undefined
+    let parentMessageId: string | undefined
     if (isChannelMention) {
       const thread = await createThread({
         workspaceId,
@@ -376,8 +377,16 @@ export class PersonaAgent {
         createdBy: persona.id,
       })
       sessionStreamId = thread.id
-      channelStreamId = streamId
+      parentStreamId = streamId
+      parentMessageId = messageId
       logger.info({ threadId: thread.id, streamId, messageId }, "Created thread for channel mention (eager)")
+    } else if (stream.type === StreamTypes.THREAD && stream.parentStreamId && stream.parentMessageId) {
+      // Session in an existing thread: viewers of the parent timeline watch it
+      // through the thread slot on the parent message, so the inline indicator
+      // events must reach the parent stream's room too — the same wiring
+      // channel mentions get via their eagerly created thread.
+      parentStreamId = stream.parentStreamId
+      parentMessageId = stream.parentMessageId
     }
 
     const result = await withCompanionSession(
@@ -403,7 +412,8 @@ export class PersonaAgent {
           streamId: sessionStreamId,
           triggerMessageId: messageId,
           personaName: persona.name,
-          channelStreamId,
+          parentStreamId,
+          parentMessageId,
         })
         trace.notifyActivityStarted()
 
@@ -1151,7 +1161,8 @@ export class PersonaAgent {
         streamId: sessionStreamId,
         triggerMessageId: messageId,
         personaName: persona.name,
-        channelStreamId,
+        parentStreamId,
+        parentMessageId,
       })
       if (result.status === "completed") {
         trace.notifyCompleted()

@@ -1,8 +1,17 @@
-import { describe, expect, test } from "vitest"
+import { beforeEach, describe, expect, test, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
 import type { Socket } from "socket.io-client"
 import { AuthorTypes, type StreamEvent } from "@threa/types"
+import * as contextsModule from "@/contexts"
 import { useAgentActivity } from "./use-agent-activity"
+
+let reconnectCount = 0
+
+beforeEach(() => {
+  vi.restoreAllMocks()
+  reconnectCount = 0
+  vi.spyOn(contextsModule, "useSocketReconnectCount").mockImplementation(() => reconnectCount)
+})
 
 function streamEvent(payload: unknown): StreamEvent {
   return {
@@ -101,5 +110,80 @@ describe("useAgentActivity", () => {
       stepCount: 0,
       messageCount: 0,
     })
+  })
+
+  test("keys in-thread session activity under the thread's parent message for the parent view", () => {
+    const { socket, handlers } = fakeSocket()
+    // Parent stream view: no session lifecycle events in the events array —
+    // the session lives in the thread. Everything arrives via socket.
+    const { result } = renderHook(() => useAgentActivity([], socket, "ws_test", "usr_test"))
+
+    act(() => {
+      handlers.get("agent_session:activity_started")?.({
+        sessionId: "asess_1",
+        triggerMessageId: "msg_in_thread",
+        personaName: "Ariadne",
+        threadStreamId: "thread_1",
+        parentMessageId: "msg_parent",
+      })
+    })
+
+    // Both the trigger message (thread view) and the thread's parent message
+    // (parent stream view) resolve to the same activity.
+    expect(result.current.get("msg_parent")).toMatchObject({
+      sessionId: "asess_1",
+      personaName: "Ariadne",
+      threadStreamId: "thread_1",
+    })
+    expect(result.current.get("msg_in_thread")?.sessionId).toBe("asess_1")
+
+    act(() => {
+      handlers.get("agent_session:progress")?.({
+        workspaceId: "ws_test",
+        streamId: "thread_1",
+        sessionId: "asess_1",
+        triggerMessageId: "msg_in_thread",
+        personaName: "Ariadne",
+        stepCount: 2,
+        messageCount: 0,
+        currentStepType: "workspace_search",
+        threadStreamId: "thread_1",
+        parentMessageId: "msg_parent",
+      })
+    })
+    expect(result.current.get("msg_parent")).toMatchObject({ stepCount: 2, currentStepType: "workspace_search" })
+
+    act(() => {
+      handlers.get("agent_session:activity_ended")?.({
+        sessionId: "asess_1",
+        triggerMessageId: "msg_in_thread",
+      })
+    })
+    expect(result.current.get("msg_parent")).toBeUndefined()
+    expect(result.current.get("msg_in_thread")).toBeUndefined()
+  })
+
+  test("clears socket-only entries on reconnect so a swallowed activity_ended can't strand the indicator", () => {
+    const { socket, handlers } = fakeSocket()
+    const { result, rerender } = renderHook(() => useAgentActivity([], socket, "ws_test", "usr_test"))
+
+    act(() => {
+      handlers.get("agent_session:activity_started")?.({
+        sessionId: "asess_1",
+        triggerMessageId: "msg_in_thread",
+        personaName: "Ariadne",
+        threadStreamId: "thread_1",
+        parentMessageId: "msg_parent",
+      })
+    })
+    expect(result.current.get("msg_parent")).toBeDefined()
+
+    // Disconnect/reconnect: activity_ended may have been swallowed while the
+    // socket was down. The slate resets; a still-running session re-announces
+    // itself on its next progress emit.
+    reconnectCount = 1
+    rerender()
+    expect(result.current.get("msg_parent")).toBeUndefined()
+    expect(result.current.get("msg_in_thread")).toBeUndefined()
   })
 })
