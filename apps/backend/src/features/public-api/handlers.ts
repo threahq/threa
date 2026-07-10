@@ -1013,6 +1013,13 @@ export function createPublicApiHandlers({
             runtimeKind: data.runtimeKind,
           })
           if (revived) {
+            await withTransaction(pool, (client) =>
+              botRuntimeService.repairBotTraitsInTransaction(client, {
+                workspaceId: req.workspaceId!,
+                botId: bot.id,
+                traits: requiredRuntimeTraits,
+              })
+            )
             return res.json({
               data: {
                 linkId: revived.id,

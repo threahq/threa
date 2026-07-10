@@ -524,6 +524,31 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await session.shutdown()
   })
 
+  test("a restore whose re-link fails transiently keeps the detached state so the probe cadence survives", async () => {
+    let attempts = 0
+    const client = {
+      fail: async () => {},
+      createSession: async () => {
+        attempts += 1
+        throw new Error("threa unreachable")
+      },
+      claim: async () => null,
+    } as unknown as ThreaClient
+    const { transport } = makeFakeTransport()
+    const session = makeGraceSession({ client, transport, archiveGraceMs: 60_000 })
+
+    await asInternal(session).handleSessionArchived({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
+    await asInternal(session).handleSessionRestored({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
+
+    expect(attempts).toBe(1)
+    // Still detached-pending: probe cadence + claim suppression survive the
+    // transient failure instead of dropping to the 15-min backstop unlinked.
+    expect(asInternal(session).link).toBeUndefined()
+    expect(asInternal(session).archivePending).toBeDefined()
+    expect(asInternal(session).nextPollDelay(false)).toBe(15_000)
+    await session.shutdown()
+  })
+
   test("winds down (onArchived) when the grace expires without a restore", async () => {
     const client = { fail: async () => {} } as unknown as ThreaClient
     const { transport, presence } = makeFakeTransport()

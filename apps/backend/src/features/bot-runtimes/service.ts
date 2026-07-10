@@ -511,6 +511,14 @@ export class BotRuntimeService {
     return withTransaction(this.pool, async (db) => {
       const link = await BotRuntimeSessionLinkRepository.reactivateArchivedByRuntimeSession(db, params)
       if (!link) {
+        // A concurrent reattach/unarchive that already committed leaves the
+        // link 'active' (SKIP LOCKED skipped nothing; the CTE just found no
+        // 'archived' row) — report it as the reattach rather than
+        // misclassifying via the stale 'archived' read below. A racer that is
+        // still uncommitted can't be told apart without blocking; that case
+        // stays a transient archived_stream the client's probe absorbs.
+        const active = await BotRuntimeSessionLinkRepository.findActiveByRuntimeSession(db, params)
+        if (active) return { status: "reattached" as const, link: active }
         const archived = await BotRuntimeSessionLinkRepository.findArchivedByRuntimeSession(db, params)
         return { status: archived ? ("archived_stream" as const) : ("none" as const) }
       }

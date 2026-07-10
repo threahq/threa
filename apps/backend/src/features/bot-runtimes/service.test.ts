@@ -714,9 +714,32 @@ describe("BotRuntimeService outbox emission", () => {
       })
     })
 
+    it("reattachArchivedRuntimeSession reports a concurrently revived link as reattached, not archived_stream", async () => {
+      patchWithTransaction()
+      // SKIP LOCKED found no 'archived' row because a concurrent reattach (or
+      // the unarchive consumer) already committed the revival.
+      spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRuntimeSession").mockResolvedValue(null)
+      const active = makeLink({ status: "active" })
+      spyOn(BotRuntimeSessionLinkRepository, "findActiveByRuntimeSession").mockResolvedValue(active)
+      const findArchived = spyOn(BotRuntimeSessionLinkRepository, "findArchivedByRuntimeSession")
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const result = await service.reattachArchivedRuntimeSession({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        runtimeKind: "claude-code-channel",
+        instanceId: "inst_42",
+        runtimeSessionId: "sess_1",
+      })
+
+      expect(result).toEqual({ status: "reattached", link: active })
+      expect(findArchived).not.toHaveBeenCalled()
+    })
+
     it("reattachArchivedRuntimeSession reports archived_stream when the link exists but its stream is still archived", async () => {
       patchWithTransaction()
       spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRuntimeSession").mockResolvedValue(null)
+      spyOn(BotRuntimeSessionLinkRepository, "findActiveByRuntimeSession").mockResolvedValue(null)
       spyOn(BotRuntimeSessionLinkRepository, "findArchivedByRuntimeSession").mockResolvedValue(
         makeLink({ status: "archived" })
       )
@@ -736,6 +759,7 @@ describe("BotRuntimeService outbox emission", () => {
     it("reattachArchivedRuntimeSession reports none when no archived link exists for the runtime session", async () => {
       patchWithTransaction()
       spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRuntimeSession").mockResolvedValue(null)
+      spyOn(BotRuntimeSessionLinkRepository, "findActiveByRuntimeSession").mockResolvedValue(null)
       spyOn(BotRuntimeSessionLinkRepository, "findArchivedByRuntimeSession").mockResolvedValue(null)
 
       const service = new BotRuntimeService({ pool: fakePool })

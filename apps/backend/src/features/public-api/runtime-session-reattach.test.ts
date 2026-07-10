@@ -117,10 +117,13 @@ describe("createBotRuntimeSession reattach after unarchive", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(revivedLink as never)
     const uniqueViolation = Object.assign(new Error("duplicate key value"), { code: "23505" })
+    spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as never))
+    const repairBotTraitsInTransaction = mock(() => Promise.resolve())
     const handlers = createHandlers({
       findActivePiRemoteSession: findActive,
       reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "none" })),
       createLinkedScratchpadSession: mock(() => Promise.reject(uniqueViolation)),
+      repairBotTraitsInTransaction,
     })
     const cap = createResponse()
 
@@ -129,6 +132,9 @@ describe("createBotRuntimeSession reattach after unarchive", () => {
     expect(cap.body()).toMatchObject({
       data: { linkId: "brsl_1", rootStreamId: "stream_old", runtimeSessionId: "sess_1" },
     })
+    // The recovery path repairs runtime traits like the other resume paths, so
+    // the revived session can still receive active-scratchpad dispatches.
+    expect(repairBotTraitsInTransaction).toHaveBeenCalled()
   })
 
   it("falls through to scratchpad creation when the runtime session has no archived link", async () => {

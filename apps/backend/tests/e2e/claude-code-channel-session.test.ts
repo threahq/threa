@@ -179,6 +179,7 @@ describe("claude-code-channel runtime sessions", () => {
         // Outbox not processed yet: the still-active link is reused (same id).
         expect(whileArchived.status).toBe(200)
         expect(whileArchived.data.data!.linkId).toBe(first.data.data.linkId)
+        expect(whileArchived.data.data!.activeStreamId).toBe(first.data.data.activeStreamId)
         await new Promise((resolve) => setTimeout(resolve, 200))
       }
     }
@@ -203,6 +204,7 @@ describe("claude-code-channel runtime sessions", () => {
     expect(revived).not.toBeNull()
     expect(revived!.linkId).toBe(first.data.data.linkId)
     expect(revived!.rootStreamId).toBe(rootStreamId)
+    expect(revived!.activeStreamId).toBe(first.data.data.activeStreamId)
 
     // The revived link dispatches turns again.
     await sendMessage(client, workspace.id, rootStreamId, "Reply with exactly: back-from-archive")

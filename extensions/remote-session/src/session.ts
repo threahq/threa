@@ -1354,10 +1354,11 @@ export class RemoteSession {
     this.inflight.clear()
     this.activeTurnStream = undefined
     this.link = undefined
-    this.archivePending = {
+    const pending = {
       rootStreamId,
       deadline: setTimeout(() => void this.windDownAfterGrace(rootStreamId), this.archiveGraceMs),
     }
+    this.archivePending = pending
     // Pull the next poll tick onto the probe cadence NOW — the pending tick was
     // scheduled with the slow socket-backstop delay (15 min), which could land
     // zero probes inside the grace window if the restore push is then missed.
@@ -1371,6 +1372,9 @@ export class RemoteSession {
         })
       )
     )
+    // A restore can reattach and publish 'available' during the awaits above —
+    // don't overwrite it with a stale 'offline'.
+    if (this.stopped || this.archivePending !== pending) return
     await this.transport.updatePresence(this.presenceBody("offline")).catch(() => undefined)
   }
 
@@ -1398,9 +1402,19 @@ export class RemoteSession {
     if (typeof data.runtimeSessionId === "string" && data.runtimeSessionId !== this.config.runtimeSessionId) return
     if (this.stopped) return
     if (this.archivePending) {
+      // Don't clear the pending state yet — only ensureLink's confirmed link
+      // does that. If the createSession below fails transiently, the probe
+      // cadence and claim suppression must survive; clearing here would drop
+      // the session onto the 15-min backstop unlinked. The restore does cancel
+      // the CURRENT wind-down, but a fresh grace deadline re-arms so a
+      // reattach that never succeeds still winds down bounded.
       clearTimeout(this.archivePending.deadline)
-      this.archivePending = undefined
-      this.log(`scratchpad ${typeof data.rootStreamId === "string" ? data.rootStreamId : ""} restored — reattaching`)
+      const rootStreamId = this.archivePending.rootStreamId
+      this.archivePending = {
+        rootStreamId,
+        deadline: setTimeout(() => void this.windDownAfterGrace(rootStreamId), this.archiveGraceMs),
+      }
+      this.log(`scratchpad ${rootStreamId} restored — reattaching`)
     }
     if (!this.link) await this.ensureLink()
     else await this.syncPresence()
@@ -1441,6 +1455,7 @@ export class RemoteSession {
 
   /** (Re)arm the poll timer. Replaces any pending tick so a state change can pull the next tick closer. */
   private reschedulePoll(delayMs: number): void {
+    if (this.stopped) return
     if (this.pollTimer) clearTimeout(this.pollTimer)
     this.pollTimer = setTimeout(() => void this.pollTick(), delayMs)
   }
@@ -1450,7 +1465,9 @@ export class RemoteSession {
     if (!this.link) await this.ensureLink()
     if (!this.transport.socketConnected) await this.transport.connect()
     const claimed = await this.claimDrain()
-    this.reschedulePoll(this.nextPollDelay(claimed))
+    // shutdown() can land during the awaits above; re-arming then would leave
+    // a live timer past teardown.
+    if (!this.stopped) this.reschedulePoll(this.nextPollDelay(claimed))
   }
 
   /** Reattach-probe cadence while detached: scaled to the grace window so several probes always fit inside it. */
