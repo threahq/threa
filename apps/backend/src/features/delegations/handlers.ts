@@ -1,26 +1,63 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { AuthorTypes } from "@threa/types"
+import { z } from "zod"
+import { AuthorTypes, type DelegationSummary, type ListDelegationsResponse } from "@threa/types"
 import { HttpError } from "../../lib/errors"
+import { validateRequest } from "../../lib/validation"
 import { checkStreamAccess } from "../streams"
 import type { DelegationService } from "./service"
+import type { DelegatedTaskWithEvent } from "./repository"
 
 interface Dependencies {
   pool: Pool
   delegationService: DelegationService
 }
 
+const listDelegationsQuerySchema = z.object({
+  streamId: z.string().min(1),
+})
+
+function toSummary(delegation: DelegatedTaskWithEvent): DelegationSummary {
+  return {
+    id: delegation.id,
+    streamId: delegation.streamId,
+    title: delegation.title,
+    status: delegation.status,
+    claimedByLabel: delegation.claimedByLabel,
+    resultMessageId: delegation.resultMessageId,
+    statusNote: delegation.statusNote,
+    createdEventId: delegation.createdEventId,
+    createdAt: delegation.createdAt.toISOString(),
+    statusChangedAt: delegation.statusChangedAt.toISOString(),
+  }
+}
+
 /**
- * First-party HTTP surface for delegations (roadmap 5.2). Only cancel is
- * exposed — the timeline card's Cancel button; the card itself renders from
- * the `delegation:created` event payload with no fetch, and the local-agent
+ * First-party HTTP surface for delegations (roadmap 5.2): the timeline card's
+ * Cancel button and the "In this stream" panel's list. The card itself renders
+ * from the `delegation:created` event payload with no fetch; the local-agent
  * lifecycle (claim/heartbeat/complete/fail) is the 5.3 public API. Access is
- * gated on stream access, not ownership: the card is shared surface, so any
- * member who can see the stream can cancel (mirrors follow-up cancel; 404
- * hides existence from non-members).
+ * gated on stream access, not ownership: delegations are shared surface, so
+ * any member who can see the stream can list and cancel (mirrors follow-up
+ * cancel; 404 hides existence from non-members).
  */
 export function createDelegationHandlers({ pool, delegationService }: Dependencies) {
   return {
+    async list(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = validateRequest(listDelegationsQuerySchema, req.query)
+
+      const access = await checkStreamAccess(pool, streamId, workspaceId, userId)
+      if (!access) {
+        throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+      }
+
+      const delegations = await delegationService.listByStream({ workspaceId, streamId })
+      const response: ListDelegationsResponse = { delegations: delegations.map(toSummary) }
+      res.json(response)
+    },
+
     async cancel(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!

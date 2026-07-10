@@ -214,6 +214,30 @@ describe("DelegatedTaskRepository.markCancelled", () => {
   })
 })
 
+describe("DelegatedTaskRepository.listByStream", () => {
+  afterEach(() => mock.restore())
+
+  it("scopes to workspace + stream, orders newest first, and joins the created event id", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [
+      { ...makeRow({ id: "dlg_2" }), created_event_id: "event_2" },
+      { ...makeRow({ id: "dlg_1" }), created_event_id: null },
+    ])
+
+    const rows = await DelegatedTaskRepository.listByStream(db, "ws_1", "stream_1")
+
+    expect(captured.text).toContain("dt.workspace_id = $1")
+    expect(captured.text).toContain("dt.stream_id = $2")
+    expect(captured.text).toContain("ORDER BY dt.created_at DESC")
+    expect(captured.text).toContain("ce.event_type = 'delegation:created'")
+    expect(captured.text).toContain("ce.payload->>'delegationId' = dt.id")
+    expect(rows.map((d) => ({ id: d.id, createdEventId: d.createdEventId }))).toEqual([
+      { id: "dlg_2", createdEventId: "event_2" },
+      { id: "dlg_1", createdEventId: null },
+    ])
+  })
+})
+
 describe("DelegatedTaskRepository.expireLapsedClaims", () => {
   afterEach(() => mock.restore())
 

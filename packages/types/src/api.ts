@@ -1264,6 +1264,32 @@ export interface DelegationStatusChangedEventPayload {
 }
 
 /**
+ * A member-facing snapshot of a delegation for list surfaces (the "In this
+ * stream" panel). Statuses live in `delegation:status_changed` patch events, so
+ * a view derived from the loaded timeline window would freeze out-of-window
+ * delegations on stale status — this shape is served by the authoritative
+ * `GET /delegations?streamId=` read instead. Excludes the brief (the card
+ * carries it) and everything claim-related beyond the display label.
+ */
+export interface DelegationSummary {
+  id: string
+  streamId: string
+  title: string
+  status: DelegationStatus
+  claimedByLabel: string | null
+  resultMessageId: string | null
+  statusNote: string | null
+  /** The `delegation:created` timeline event, for deep-linking the card row. */
+  createdEventId: string | null
+  createdAt: string
+  statusChangedAt: string
+}
+
+export interface ListDelegationsResponse {
+  delegations: DelegationSummary[]
+}
+
+/**
  * Payload for `description_set` timeline events: appended to a stream when an
  * actor sets, changes, or clears its description, in the same transaction as the
  * description write. Carries the markdown snapshot at the time it was set so the

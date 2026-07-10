@@ -193,6 +193,17 @@ export function shouldStartHighlightClear(args: {
 }
 
 /**
+ * `?m=` deep-link targets are message ids or, for non-message rows (delegation
+ * cards), raw `event_…` ids — the prefixes never collide, so one matcher serves
+ * every deep-link path (mirrors findMessageItemIndex). Every in-window check a
+ * deep link flows through must use this, or an event-id target wedges that path
+ * on its give-up/timeout branch.
+ */
+export function matchesDeepLinkTarget(event: { id: string; payload: unknown }, target: string): boolean {
+  return (event.payload as { messageId?: string })?.messageId === target || event.id === target
+}
+
+/**
  * Max time the deep-link (?m=) mount hold may keep the skeleton up while the
  * jump window is fetched. The hold exists so a fast fetch mounts the list
  * already anchored on the target (no tail-paint-then-yank), and the push
@@ -1539,10 +1550,7 @@ export function StreamContent({
       // Fresh, explicit scroll intent — clear any prior manual-control stamp
       // so the refine loop is allowed to run for this jump.
       userInteractedAtRef.current = 0
-      const isInCurrentEvents = events.some((e) => {
-        const payload = e.payload as { messageId?: string }
-        return payload?.messageId === messageId
-      })
+      const isInCurrentEvents = events.some((e) => matchesDeepLinkTarget(e, messageId))
 
       if (isInCurrentEvents) {
         // Message is loaded — scroll to it (handles both in-DOM and virtualized-out items)
@@ -1655,7 +1663,7 @@ export function StreamContent({
         return
       }
 
-      const inEvents = events.some((e) => (e.payload as { messageId?: string })?.messageId === target)
+      const inEvents = events.some((e) => matchesDeepLinkTarget(e, target))
       if (inEvents && scrollToMessage(target)) {
         // scrollToMessage engaged its own resilient loop — it owns landing
         // + user-abort from here, so this driver is done.
@@ -1701,11 +1709,8 @@ export function StreamContent({
     // Disable auto-scroll so highlight scroll-into-view isn't overridden
     disableAutoScroll()
 
-    // Check if the message is already visible in current events
-    const isVisible = events.some((e) => {
-      const payload = e.payload as { messageId?: string }
-      return payload?.messageId === targetMessageId
-    })
+    // Check if the target is already visible in current events.
+    const isVisible = events.some((e) => matchesDeepLinkTarget(e, targetMessageId))
 
     if (isVisible) {
       deepLinkDebug("highlight: target already in window, scrolling directly", targetMessageId)
@@ -2022,9 +2027,7 @@ export function StreamContent({
   // reads worse than painting the cached window and snapping to the target
   // when the jump lands.
   const deepLinkTargetLoaded = useMemo(
-    () =>
-      !highlightMessageId ||
-      events.some((e) => (e.payload as { messageId?: string })?.messageId === highlightMessageId),
+    () => !highlightMessageId || events.some((e) => matchesDeepLinkTarget(e, highlightMessageId)),
     [events, highlightMessageId]
   )
   const holdForDeepLink = shouldHoldForDeepLink({

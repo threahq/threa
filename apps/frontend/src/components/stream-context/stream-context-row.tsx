@@ -10,12 +10,14 @@ import {
   Link2,
   MessagesSquare,
   Play,
+  TerminalSquare,
 } from "lucide-react"
 import { attachmentContentUrl } from "@/api"
 import { CATEGORY_META } from "@/components/attachment-explorer/category"
 import { useFormattedDate } from "@/hooks"
 import { formatFileSize } from "@/lib/file-size"
 import { getKnowledgeConfig, memoLabel } from "@/lib/memo-display"
+import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL, delegationStatusPillClass } from "@/lib/delegation-display"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { giphyGalleryId } from "@/components/gallery/giphy-gallery-id"
@@ -254,6 +256,48 @@ export function StreamContextRow({
           <span className="sr-only">Open memory {primaryText}</span>
         </button>
       )
+      break
+    }
+    case "delegation": {
+      const terminal = DELEGATION_TERMINAL.has(item.status)
+      leading = (
+        <div
+          className={cn(
+            "flex size-10 shrink-0 items-center justify-center rounded-md",
+            terminal ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary"
+          )}
+        >
+          <TerminalSquare className="size-4" />
+        </div>
+      )
+      primaryText = item.title
+      badge = (
+        <span
+          className={cn(
+            "shrink-0 rounded px-1 py-px text-[10px] font-semibold uppercase tracking-wide",
+            delegationStatusPillClass(item.status)
+          )}
+        >
+          {DELEGATION_STATUS_LABEL[item.status]}
+        </span>
+      )
+      secondaryText = [item.claimedByLabel, item.statusNote].filter(Boolean).join(" · ") || "Delegated task"
+      // Primary lands on the delegation card in the timeline (sourceMessageId
+      // carries the created event's id) — the card has the full prompt, Copy,
+      // Cancel, and the result link, so the panel row doesn't duplicate them.
+      // The join can come back null (event missing); render the row inert then
+      // rather than presenting a focusable button whose click silently no-ops.
+      const cardTarget = item.sourceMessageId
+      jumpTarget = null // primary already jumps to the card
+      primaryAction = cardTarget ? (
+        <button
+          type="button"
+          onClick={() => onJumpToMessage(cardTarget)}
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="sr-only">Go to delegation {primaryText}</span>
+        </button>
+      ) : null
       break
     }
     case "thread": {

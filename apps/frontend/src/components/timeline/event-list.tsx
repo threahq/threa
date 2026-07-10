@@ -403,8 +403,13 @@ export function collectDelegationStatusPatches(
  * must re-resolve and bounds-check before every imperative scroll.
  */
 export function findMessageItemIndex(items: TimelineItem[], messageId: string): number {
+  // Deep-link targets are usually message ids, but non-message rows (e.g. a
+  // delegation card) are addressed by their `event_…` id — the two prefixes
+  // never collide, so one lookup serves both.
   return items.findIndex(
-    (item) => item.type === "event" && (item.event.payload as { messageId?: string })?.messageId === messageId
+    (item) =>
+      item.type === "event" &&
+      ((item.event.payload as { messageId?: string })?.messageId === messageId || item.event.id === messageId)
   )
 }
 

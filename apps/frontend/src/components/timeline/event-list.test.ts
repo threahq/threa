@@ -522,6 +522,22 @@ describe("findMessageItemIndex", () => {
     ]
     expect(findMessageItemIndex(items, "msg_real")).toBe(1)
   })
+
+  it("resolves a raw event id, so non-message rows (delegation cards) are deep-linkable", () => {
+    const items: TimelineItem[] = [
+      eventItem("event_1", "msg_a"),
+      {
+        type: "event",
+        event: createEvent({
+          id: "event_dlg",
+          sequence: "2",
+          eventType: "delegation:created",
+          payload: { delegationId: "dlg_1" },
+        }),
+      },
+    ]
+    expect(findMessageItemIndex(items, "event_dlg")).toBe(1)
+  })
 })
 
 describe("findEventItemIndex", () => {
