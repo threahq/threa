@@ -65,7 +65,7 @@ export class LabelMessageService {
     ])
 
     return visible.map((message) => {
-      const attachments = (attachmentsByMessage.get(message.id) ?? []).map(toAttachmentSummary)
+      const attachments = (attachmentsByMessage.get(message.id) ?? []).map((a) => toAttachmentSummary(a))
       const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
         .filter((p) => p.status === "completed")
         .map((p, i) => toLinkPreviewSummary(p, i))

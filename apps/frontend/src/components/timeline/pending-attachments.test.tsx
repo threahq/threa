@@ -121,12 +121,50 @@ describe("PendingAttachments", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 
-  it("shows the preview while an image is still uploading (no remove control yet)", () => {
+  it("shows a Cancel control while an image is still uploading, so a stuck upload can be abandoned", () => {
     render(
-      <PendingAttachments attachments={[attachment({ status: "uploading" })]} onRemove={vi.fn()} workspaceId="ws_1" />
+      <PendingAttachments
+        attachments={[attachment({ status: "uploading" })]}
+        onRemove={vi.fn()}
+        onCancelUpload={vi.fn()}
+        workspaceId="ws_1"
+      />
     )
 
     expect(screen.getByRole("button", { name: "Preview screenshot.png" })).toBeInTheDocument()
+    // The × stays available during upload; it cancels the in-flight transfer
+    // instead of removing an already-settled chip.
+    expect(screen.getByRole("button", { name: "Cancel upload of screenshot.png" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Remove screenshot.png" })).not.toBeInTheDocument()
+  })
+
+  it("clicking the × during upload cancels the transfer, not the remove path", () => {
+    const onRemove = vi.fn()
+    const onCancelUpload = vi.fn()
+    render(
+      <PendingAttachments
+        attachments={[attachment({ status: "uploading" })]}
+        onRemove={onRemove}
+        onCancelUpload={onCancelUpload}
+        workspaceId="ws_1"
+      />
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel upload of screenshot.png" }))
+    expect(onCancelUpload).toHaveBeenCalledWith("attach_img")
+    expect(onRemove).not.toHaveBeenCalled()
+  })
+
+  it("shows live progress while uploading", () => {
+    render(
+      <PendingAttachments
+        attachments={[attachment({ status: "uploading", progress: 0.42 })]}
+        onRemove={vi.fn()}
+        onCancelUpload={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.getByText("42%")).toBeInTheDocument()
   })
 })

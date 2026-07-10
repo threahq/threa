@@ -4,6 +4,11 @@ export type { Attachment, InsertAttachmentParams, AttachmentWithExtraction } fro
 export { AttachmentReferenceRepository } from "./reference-repository"
 export type { AttachmentReference, InsertAttachmentReferenceParams } from "./reference-repository"
 
+export { AttachmentUploadRepository } from "./upload-repository"
+export type { AttachmentUpload, InsertAttachmentUploadParams } from "./upload-repository"
+
+export { createAttachmentUploadSweepWorker } from "./upload-sweep-worker"
+
 // Fallback access helper — `getDownloadUrl` and create-message validation
 // both walk share-grant + inline-reference after their stream-access fast
 // path fails. See `access.ts`.

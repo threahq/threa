@@ -2,7 +2,7 @@ import { sql, composeSql, type Querier } from "../../db"
 import { streamAccessPredicateSql } from "../streams"
 import {
   AttachmentSafetyStatuses,
-  SHAREABLE_SAFETY_STATUSES,
+  BINDABLE_ATTACHMENT_SAFETY_STATUSES,
   ProcessingStatuses,
   mimePrefixesForCategory,
   type StorageProvider,
@@ -241,15 +241,16 @@ export const AttachmentRepository = {
     streamId: string
   ): Promise<number> {
     if (attachmentIds.length === 0) return 0
-    // Link only shareable attachments: scanned-clean OR E2E ciphertext (which is
-    // unscannable but is the owner's own bytes). Reads the same allowlist as the
-    // `isAttachmentSafeForSharing` predicate so this race-safe filter (INV-20)
-    // and the service-layer gate can't drift (INV-33).
+    // Link bindable attachments: shareable (scanned-clean / E2E ciphertext)
+    // plus the author's own still-settling reservations — the service layer
+    // enforces the uploader==author rule for pending ones before calling this.
+    // Reads the shared allowlist so this race-safe filter (INV-20) and the
+    // service-layer gate can't drift (INV-33).
     const result = await client.query(sql`
       UPDATE attachments
       SET message_id = ${messageId}, stream_id = ${streamId}
       WHERE id = ANY(${attachmentIds}) AND message_id IS NULL
-        AND safety_status = ANY(${[...SHAREABLE_SAFETY_STATUSES]})
+        AND safety_status = ANY(${[...BINDABLE_ATTACHMENT_SAFETY_STATUSES]})
     `)
     return result.rowCount ?? 0
   },
@@ -259,6 +260,19 @@ export const AttachmentRepository = {
       DELETE FROM attachments WHERE id = ${id}
     `)
     return (result.rowCount ?? 0) > 0
+  },
+
+  /**
+   * Batch-delete rows that never bound to a message (abandoned-reservation
+   * sweep). The `message_id IS NULL` guard makes a race with a concurrent
+   * send lose cleanly: a just-bound row is skipped, not deleted.
+   */
+  async deleteUnattachedByIds(client: Querier, ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0
+    const result = await client.query(sql`
+      DELETE FROM attachments WHERE id = ANY(${ids}) AND message_id IS NULL
+    `)
+    return result.rowCount ?? 0
   },
 
   /**

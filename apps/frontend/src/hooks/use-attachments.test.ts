@@ -1,375 +1,328 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
+import type { ChangeEvent } from "react"
 import { useAttachments } from "./use-attachments"
 import { attachmentsApi } from "@/api"
+import { db } from "@/db"
+import * as xhrTransport from "@/lib/uploads/xhr-upload"
+import { resetUploadManager, findUploadJob } from "@/lib/uploads/upload-manager"
 
-const mockUpload = vi.fn()
-const mockDelete = vi.fn()
+const workspaceId = "ws_123"
+
+function createFile(name: string, type: string, content = "test content"): File {
+  return new File([content], name, { type })
+}
+
+function createChangeEvent(files: File[]): ChangeEvent<HTMLInputElement> {
+  return { target: { files, value: "" } } as unknown as ChangeEvent<HTMLInputElement>
+}
+
+/** Reservation ids assigned per filename so multi-file tests are deterministic. */
+const ID_BY_NAME: Record<string, string> = {
+  "test.txt": "attach_123",
+  "image1.png": "attach_1",
+  "image2.png": "attach_2",
+  "doc.pdf": "attach_3",
+  "pasted.png": "attach_456",
+}
+
+function mockReserve() {
+  return vi.spyOn(attachmentsApi, "reserve").mockImplementation(async (_ws, input) => {
+    const id = ID_BY_NAME[input.filename] ?? "attach_generic"
+    return {
+      attachment: { id, filename: input.filename, mimeType: input.mimeType, sizeBytes: input.sizeBytes } as never,
+      upload: { method: "POST" as const, url: `/x/${id}/content`, field: "file" as const },
+    }
+  })
+}
 
 describe("useAttachments", () => {
-  const workspaceId = "ws_123"
+  beforeEach(async () => {
+    resetUploadManager()
+    await db.uploadJobs.clear()
+  })
 
-  beforeEach(() => {
+  afterEach(() => {
     vi.restoreAllMocks()
-    mockUpload.mockReset()
-    mockDelete.mockReset()
-    vi.spyOn(attachmentsApi, "upload").mockImplementation((...args: Parameters<typeof attachmentsApi.upload>) =>
-      mockUpload(...args)
-    )
-    vi.spyOn(attachmentsApi, "delete").mockImplementation((...args: Parameters<typeof attachmentsApi.delete>) =>
-      mockDelete(...args)
-    )
   })
 
-  function createFile(name: string, type: string, size: number = 1024): File {
-    const content = new Array(size).fill("a").join("")
-    return new File([content], name, { type })
-  }
-
-  function createChangeEvent(files: File[]): React.ChangeEvent<HTMLInputElement> {
-    const fileList = {
-      length: files.length,
-      item: (index: number) => files[index] ?? null,
-      [Symbol.iterator]: function* () {
-        for (const file of files) yield file
-      },
-    } as FileList
-    files.forEach((file, i) => {
-      Object.defineProperty(fileList, i, { value: file, enumerable: true })
-    })
-
-    return {
-      target: {
-        files: fileList,
-        value: "",
-      },
-    } as unknown as React.ChangeEvent<HTMLInputElement>
-  }
-
-  describe("file upload", () => {
-    it("should add file as uploading then update to uploaded on success", async () => {
-      mockUpload.mockResolvedValue({
-        id: "attach_123",
-        filename: "test.txt",
-        mimeType: "text/plain",
-        sizeBytes: 1024,
-      })
+  describe("send-while-uploading", () => {
+    it("exposes the reserved id as attachable while the bytes are still streaming", async () => {
+      mockReserve()
+      let finishUpload!: () => void
+      vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(
+        () => new Promise((resolve) => (finishUpload = () => resolve({ status: 201, body: {} })))
+      )
 
       const { result } = renderHook(() => useAttachments(workspaceId))
 
-      const file = createFile("test.txt", "text/plain")
-
-      await act(async () => {
-        await result.current.handleFileSelect(createChangeEvent([file]))
+      act(() => {
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
       })
 
+      // Reservation lands: the chip flips temp→server id but stays uploading —
+      // and the id is ALREADY attachable (this is what send binds).
       await waitFor(() => {
-        expect(result.current.pendingAttachments).toHaveLength(1)
-        expect(result.current.pendingAttachments[0]).toMatchObject({
-          id: "attach_123",
-          filename: "test.txt",
-          status: "uploaded",
-        })
+        expect(result.current.pendingAttachments[0]?.id).toBe("attach_123")
+        expect(result.current.pendingAttachments[0]?.status).toBe("uploading")
+        expect(result.current.uploadedIds).toEqual(["attach_123"])
+        expect(result.current.isReserving).toBe(false)
       })
 
-      expect(result.current.uploadedIds).toContain("attach_123")
-      expect(result.current.isUploading).toBe(false)
-      expect(result.current.hasFailed).toBe(false)
+      finishUpload()
+      await waitFor(() => {
+        expect(result.current.pendingAttachments[0]?.status).toBe("uploaded")
+        expect(result.current.isUploading).toBe(false)
+      })
     })
 
-    it("should mark attachment as error on upload failure", async () => {
-      mockUpload.mockRejectedValue(new Error("Upload failed"))
+    it("clear() releases the composer's hold without aborting the transfer", async () => {
+      mockReserve()
+      let aborted = false
+      let finishUpload!: () => void
+      vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(
+        ({ signal }) =>
+          new Promise((resolve) => {
+            signal?.addEventListener("abort", () => (aborted = true))
+            finishUpload = () => resolve({ status: 201, body: {} })
+          })
+      )
 
       const { result } = renderHook(() => useAttachments(workspaceId))
+      act(() => {
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
+      })
+      await waitFor(() => expect(result.current.uploadedIds).toEqual(["attach_123"]))
 
-      const file = createFile("test.txt", "text/plain")
+      // Message sent — the composer clears, the upload must keep going.
+      act(() => result.current.clear())
+      expect(result.current.pendingAttachments).toHaveLength(0)
+      expect(aborted).toBe(false)
+      expect(findUploadJob("attach_123")?.status).toBe("uploading")
 
-      await act(async () => {
-        await result.current.handleFileSelect(createChangeEvent([file]))
+      // The released job settles and frees itself.
+      finishUpload()
+      await waitFor(() => expect(findUploadJob("attach_123")).toBeUndefined())
+    })
+
+    it("blocks send only during the reservation window", async () => {
+      let resolveReserve!: () => void
+      vi.spyOn(attachmentsApi, "reserve").mockImplementation(
+        (_ws, input) =>
+          new Promise((resolve) => {
+            resolveReserve = () =>
+              resolve({
+                attachment: { id: "attach_123", ...input } as never,
+                upload: { method: "POST", url: "/x", field: "file" },
+              })
+          })
+      )
+      vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
+      act(() => {
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
+      })
+
+      // No id yet — the file would be silently dropped from a send.
+      await waitFor(() => expect(result.current.isReserving).toBe(true))
+      expect(result.current.uploadedIds).toEqual([])
+
+      act(() => resolveReserve())
+      await waitFor(() => {
+        expect(result.current.isReserving).toBe(false)
+        expect(result.current.uploadedIds).toEqual(["attach_123"])
+      })
+    })
+  })
+
+  describe("failure handling", () => {
+    it("marks the chip failed when the reservation fails and excludes it from sends", async () => {
+      vi.spyOn(attachmentsApi, "reserve").mockRejectedValue(new Error("Network error"))
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
+      act(() => {
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
       })
 
       await waitFor(() => {
-        expect(result.current.pendingAttachments).toHaveLength(1)
-        expect(result.current.pendingAttachments[0].status).toBe("error")
-        expect(result.current.pendingAttachments[0].error).toBe("Upload failed")
+        expect(result.current.pendingAttachments[0]?.status).toBe("error")
+        expect(result.current.pendingAttachments[0]?.error).toBe("Network error")
       })
-
       expect(result.current.hasFailed).toBe(true)
-      expect(result.current.uploadedIds).toHaveLength(0)
+      expect(result.current.uploadedIds).toEqual([])
     })
 
-    it("should handle multiple files with mixed success/failure", async () => {
-      mockUpload
-        .mockResolvedValueOnce({
-          id: "attach_1",
-          filename: "success.txt",
-          mimeType: "text/plain",
-          sizeBytes: 100,
-        })
-        .mockRejectedValueOnce(new Error("Failed"))
+    it("removing a failed upload deletes its leaked reservation", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 422, body: { error: "nope" } })
+      vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+      const del = vi.spyOn(attachmentsApi, "delete").mockResolvedValue(undefined)
 
       const { result } = renderHook(() => useAttachments(workspaceId))
-
-      const file1 = createFile("success.txt", "text/plain", 100)
-      const file2 = createFile("fail.txt", "text/plain", 100)
-
-      await act(async () => {
-        await result.current.handleFileSelect(createChangeEvent([file1, file2]))
+      act(() => {
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
       })
+      await waitFor(() => expect(result.current.pendingAttachments[0]?.status).toBe("error"))
 
-      await waitFor(() => {
-        expect(result.current.pendingAttachments).toHaveLength(2)
-      })
-
-      const uploaded = result.current.pendingAttachments.find((a) => a.status === "uploaded")
-      const failed = result.current.pendingAttachments.find((a) => a.status === "error")
-
-      expect(uploaded?.filename).toBe("success.txt")
-      expect(failed?.filename).toBe("fail.txt")
-      expect(result.current.hasFailed).toBe(true)
-      expect(result.current.uploadedIds).toEqual(["attach_1"])
+      act(() => result.current.removeAttachment("attach_123"))
+      expect(result.current.pendingAttachments).toHaveLength(0)
+      await waitFor(() => expect(del).toHaveBeenCalledWith(workspaceId, "attach_123"))
     })
   })
 
-  describe("remove attachment", () => {
-    it("should remove attachment from pending list", async () => {
-      mockUpload.mockResolvedValue({
-        id: "attach_123",
-        filename: "test.txt",
-        mimeType: "text/plain",
-        sizeBytes: 1024,
-      })
+  describe("cancel upload", () => {
+    it("aborts an in-flight upload, drops the chip, and deletes the reservation", async () => {
+      mockReserve()
+      const del = vi.spyOn(attachmentsApi, "delete").mockResolvedValue(undefined)
+      let aborted = false
+      const xhr = vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(
+        ({ signal }) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () => {
+              aborted = true
+              reject(new DOMException("Aborted", "AbortError"))
+            })
+          })
+      )
 
       const { result } = renderHook(() => useAttachments(workspaceId))
-
-      await act(async () => {
-        await result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
-      })
-
-      await waitFor(() => {
-        expect(result.current.pendingAttachments).toHaveLength(1)
-      })
-
-      await act(async () => {
-        await result.current.removeAttachment("attach_123")
-      })
-
-      expect(result.current.pendingAttachments).toHaveLength(0)
-      expect(mockDelete).toHaveBeenCalledWith(workspaceId, "attach_123")
-    })
-
-    it("should not call delete API for failed uploads", async () => {
-      mockUpload.mockRejectedValue(new Error("Failed"))
-
-      const { result } = renderHook(() => useAttachments(workspaceId))
-
-      await act(async () => {
-        await result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
-      })
-
-      await waitFor(() => {
-        expect(result.current.pendingAttachments).toHaveLength(1)
-        expect(result.current.pendingAttachments[0].status).toBe("error")
-      })
-
-      const tempId = result.current.pendingAttachments[0].id
-
-      await act(async () => {
-        await result.current.removeAttachment(tempId)
-      })
-
-      expect(result.current.pendingAttachments).toHaveLength(0)
-      expect(mockDelete).not.toHaveBeenCalled()
-    })
-  })
-
-  describe("clear", () => {
-    it("should remove all pending attachments", async () => {
-      mockUpload.mockResolvedValue({
-        id: "attach_123",
-        filename: "test.txt",
-        mimeType: "text/plain",
-        sizeBytes: 1024,
-      })
-
-      const { result } = renderHook(() => useAttachments(workspaceId))
-
-      await act(async () => {
-        await result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
-      })
-
-      await waitFor(() => {
-        expect(result.current.pendingAttachments).toHaveLength(1)
-      })
-
       act(() => {
-        result.current.clear()
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
       })
+      await waitFor(() => expect(result.current.pendingAttachments[0]?.id).toBe("attach_123"))
+      await waitFor(() => expect(xhr).toHaveBeenCalled())
 
+      act(() => result.current.cancelUpload("attach_123"))
+
+      expect(aborted).toBe(true)
       expect(result.current.pendingAttachments).toHaveLength(0)
-    })
-  })
-
-  describe("restore", () => {
-    it("should populate attachments from saved state", () => {
-      const { result } = renderHook(() => useAttachments(workspaceId))
-
-      const savedAttachments = [
-        { id: "attach_1", filename: "file1.txt", mimeType: "text/plain", sizeBytes: 100 },
-        { id: "attach_2", filename: "file2.txt", mimeType: "text/plain", sizeBytes: 200 },
-      ]
-
-      act(() => {
-        result.current.restore(savedAttachments)
-      })
-
-      expect(result.current.pendingAttachments).toHaveLength(2)
-      expect(result.current.pendingAttachments[0]).toMatchObject({
-        id: "attach_1",
-        filename: "file1.txt",
-        status: "uploaded",
-      })
-      expect(result.current.pendingAttachments[1]).toMatchObject({
-        id: "attach_2",
-        filename: "file2.txt",
-        status: "uploaded",
-      })
-      expect(result.current.uploadedIds).toEqual(["attach_1", "attach_2"])
+      await waitFor(() => expect(del).toHaveBeenCalledWith(workspaceId, "attach_123"))
     })
 
-    it("should restore image count for proper numbering", () => {
+    it("is a no-op for a settled attachment", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
+      const del = vi.spyOn(attachmentsApi, "delete").mockResolvedValue(undefined)
+
       const { result } = renderHook(() => useAttachments(workspaceId))
-
-      const savedAttachments = [
-        { id: "attach_1", filename: "photo.jpg", mimeType: "image/jpeg", sizeBytes: 100 },
-        { id: "attach_2", filename: "doc.pdf", mimeType: "application/pdf", sizeBytes: 200 },
-        { id: "attach_3", filename: "screenshot.png", mimeType: "image/png", sizeBytes: 300 },
-      ]
-
       act(() => {
-        result.current.restore(savedAttachments)
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
       })
+      await waitFor(() => expect(result.current.pendingAttachments[0]?.status).toBe("uploaded"))
 
-      // Image count should be 2 (two images: photo.jpg and screenshot.png)
-      expect(result.current.imageCount).toBe(2)
+      act(() => result.current.cancelUpload("attach_123"))
+
+      // A settled attachment must not be silently dropped — removeAttachment is for that.
+      expect(result.current.pendingAttachments).toHaveLength(1)
+      expect(del).not.toHaveBeenCalled()
     })
   })
 
   describe("uploadFile (programmatic upload)", () => {
-    it("should upload a file and return result with tempId", async () => {
-      mockUpload.mockResolvedValue({
-        id: "attach_456",
-        filename: "pasted.png",
-        mimeType: "image/png",
-        sizeBytes: 2048,
-      })
+    it("returns as soon as the id is reserved, with a sequential image index", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(() => new Promise(() => {})) // bytes never finish
 
       const { result } = renderHook(() => useAttachments(workspaceId))
 
-      const file = createFile("pasted.png", "image/png", 2048)
-
       let uploadResult: Awaited<ReturnType<typeof result.current.uploadFile>>
-
       await act(async () => {
-        uploadResult = await result.current.uploadFile(file)
+        uploadResult = await result.current.uploadFile(createFile("pasted.png", "image/png"))
       })
 
       expect(uploadResult!.tempId).toMatch(/^temp_/)
-      expect(uploadResult!.attachment).toMatchObject({
-        id: "attach_456",
-        filename: "pasted.png",
-        status: "uploaded",
-      })
-      expect(uploadResult!.imageIndex).toBe(1) // First image
-
-      expect(result.current.pendingAttachments).toHaveLength(1)
-      expect(result.current.pendingAttachments[0].id).toBe("attach_456")
-      expect(result.current.getPendingAttachmentsSnapshot()).toEqual(result.current.pendingAttachments)
+      expect(uploadResult!.attachment).toMatchObject({ id: "attach_456", status: "uploading" })
+      expect(uploadResult!.imageIndex).toBe(1)
+      expect(result.current.uploadedIds).toEqual(["attach_456"])
     })
 
-    it("should assign sequential image indices for images", async () => {
-      mockUpload
-        .mockResolvedValueOnce({
-          id: "attach_1",
-          filename: "image1.png",
-          mimeType: "image/png",
-          sizeBytes: 1000,
-        })
-        .mockResolvedValueOnce({
-          id: "attach_2",
-          filename: "document.pdf",
-          mimeType: "application/pdf",
-          sizeBytes: 2000,
-        })
-        .mockResolvedValueOnce({
-          id: "attach_3",
-          filename: "image2.jpg",
-          mimeType: "image/jpeg",
-          sizeBytes: 3000,
-        })
+    it("returns an error attachment when the reservation fails", async () => {
+      vi.spyOn(attachmentsApi, "reserve").mockRejectedValue(new Error("Network error"))
 
       const { result } = renderHook(() => useAttachments(workspaceId))
-
-      let result1: Awaited<ReturnType<typeof result.current.uploadFile>>
-      let result2: Awaited<ReturnType<typeof result.current.uploadFile>>
-      let result3: Awaited<ReturnType<typeof result.current.uploadFile>>
-
-      await act(async () => {
-        result1 = await result.current.uploadFile(createFile("image1.png", "image/png", 1000))
-        result2 = await result.current.uploadFile(createFile("document.pdf", "application/pdf", 2000))
-        result3 = await result.current.uploadFile(createFile("image2.jpg", "image/jpeg", 3000))
-      })
-
-      // Images get sequential indices
-      expect(result1!.imageIndex).toBe(1)
-      expect(result2!.imageIndex).toBeNull() // PDF is not an image
-      expect(result3!.imageIndex).toBe(2) // Second image
-
-      expect(result.current.imageCount).toBe(2)
-    })
-
-    it("should return error result on upload failure", async () => {
-      mockUpload.mockRejectedValue(new Error("Network error"))
-
-      const { result } = renderHook(() => useAttachments(workspaceId))
-
-      const file = createFile("failed.png", "image/png")
-
       let uploadResult: Awaited<ReturnType<typeof result.current.uploadFile>>
-
       await act(async () => {
-        uploadResult = await result.current.uploadFile(file)
+        uploadResult = await result.current.uploadFile(createFile("pasted.png", "image/png"))
       })
 
       expect(uploadResult!.attachment.status).toBe("error")
-      expect(uploadResult!.attachment.error).toBe("Network error")
-      expect(uploadResult!.imageIndex).toBe(1) // Image index was still assigned
-
-      expect(result.current.hasFailed).toBe(true)
+      expect(uploadResult!.imageIndex).toBe(1) // index was still assigned
     })
 
-    it("should reset image count on clear", async () => {
-      mockUpload.mockResolvedValue({
-        id: "attach_1",
-        filename: "image.png",
-        mimeType: "image/png",
-        sizeBytes: 1000,
-      })
+    it("assigns sequential indices to images only", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
 
       const { result } = renderHook(() => useAttachments(workspaceId))
-
+      let first: Awaited<ReturnType<typeof result.current.uploadFile>>
+      let doc: Awaited<ReturnType<typeof result.current.uploadFile>>
+      let second: Awaited<ReturnType<typeof result.current.uploadFile>>
       await act(async () => {
-        await result.current.uploadFile(createFile("image.png", "image/png"))
+        first = await result.current.uploadFile(createFile("image1.png", "image/png"))
+        doc = await result.current.uploadFile(createFile("doc.pdf", "application/pdf"))
+        second = await result.current.uploadFile(createFile("image2.png", "image/png"))
       })
 
-      expect(result.current.imageCount).toBe(1)
+      expect(first!.imageIndex).toBe(1)
+      expect(doc!.imageIndex).toBeNull()
+      expect(second!.imageIndex).toBe(2)
+    })
+  })
 
+  describe("restore", () => {
+    it("re-claims a live upload job by id (draft rehydrate keeps the spinner)", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(() => new Promise(() => {}))
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
       act(() => {
-        result.current.clear()
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
+      })
+      await waitFor(() => expect(result.current.pendingAttachments[0]?.id).toBe("attach_123"))
+
+      // Rehydrate round-trip: the restore payload carries no upload state, but
+      // the live job does — the chip must stay "uploading", not flip to done.
+      act(() => {
+        result.current.restore([{ id: "attach_123", filename: "test.txt", mimeType: "text/plain", sizeBytes: 12 }])
+      })
+      expect(result.current.pendingAttachments[0]).toMatchObject({ id: "attach_123", status: "uploading" })
+    })
+
+    it("falls back to inert uploaded facts for ids with no live job (reload case)", () => {
+      const { result } = renderHook(() => useAttachments(workspaceId))
+      act(() => {
+        result.current.restore([
+          { id: "attach_old", filename: "old.png", mimeType: "image/png", sizeBytes: 42 },
+          { id: "attach_doc", filename: "doc.pdf", mimeType: "application/pdf", sizeBytes: 7 },
+        ])
       })
 
-      expect(result.current.imageCount).toBe(0)
-      expect(result.current.pendingAttachments).toHaveLength(0)
+      expect(result.current.pendingAttachments).toEqual([
+        { id: "attach_old", filename: "old.png", mimeType: "image/png", sizeBytes: 42, status: "uploaded" },
+        { id: "attach_doc", filename: "doc.pdf", mimeType: "application/pdf", sizeBytes: 7, status: "uploaded" },
+      ])
+      expect(result.current.uploadedIds).toEqual(["attach_old", "attach_doc"])
+      expect(result.current.imageCount).toBe(1)
+    })
+  })
+
+  describe("multiple files", () => {
+    it("tracks each file's chip independently", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
+      act(() => {
+        result.current.handleFileSelect(
+          createChangeEvent([createFile("image1.png", "image/png"), createFile("doc.pdf", "application/pdf")])
+        )
+      })
+
+      await waitFor(() => {
+        expect(result.current.pendingAttachments.map((a) => a.status)).toEqual(["uploaded", "uploaded"])
+      })
+      expect(result.current.uploadedIds).toEqual(["attach_1", "attach_3"])
     })
   })
 })

@@ -413,7 +413,7 @@ export class ConversationService {
     const attachmentsByMessage = await AttachmentRepository.findByMessageIds(this.pool, ids)
     const linkPreviewsByMessage = await LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids)
     for (const message of messages) {
-      const attachments = (attachmentsByMessage.get(message.id) ?? []).map(toAttachmentSummary)
+      const attachments = (attachmentsByMessage.get(message.id) ?? []).map((a) => toAttachmentSummary(a))
       const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
         .filter((p) => p.status === "completed")
         .map((p, i) => toLinkPreviewSummary(p, i))

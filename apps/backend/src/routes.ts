@@ -503,6 +503,23 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   // Attachments (workspace-scoped upload, stream assigned on message creation)
   app.post("/api/workspaces/:workspaceId/attachments", ...authed, rateLimits.upload, upload, attachment.upload)
+  // Reserved background uploads: id first, bytes later (send-while-uploading).
+  app.post("/api/workspaces/:workspaceId/attachments/reservations", ...authed, rateLimits.upload, attachment.reserve)
+  app.post(
+    "/api/workspaces/:workspaceId/attachments/:attachmentId/content",
+    ...authed,
+    rateLimits.upload,
+    // Must run before `upload`: multer-s3 streams bytes to the reserved key,
+    // so reservation ownership/state has to be checked before any byte lands.
+    attachment.validateReservedUpload,
+    upload,
+    attachment.completeReservedContent
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/attachments/:attachmentId/upload-failure",
+    ...authed,
+    attachment.reportUploadFailure
+  )
   app.post("/api/workspaces/:workspaceId/attachments/search", ...authed, rateLimits.search, attachment.search)
   app.get("/api/workspaces/:workspaceId/attachments/:attachmentId/url", ...authed, attachment.getDownloadUrl)
   app.get("/api/workspaces/:workspaceId/attachments/:attachmentId/content", ...authed, attachment.getContent)

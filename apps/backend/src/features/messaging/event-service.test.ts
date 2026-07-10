@@ -5,7 +5,7 @@ import { MessageRepository } from "./repository"
 import { SharedMessageRepository } from "./sharing/repository"
 import { MessageVersionRepository } from "./version-repository"
 import { StreamEventRepository, StreamMemberRepository, StreamRepository, type StreamEvent } from "../streams"
-import { AttachmentRepository, AttachmentReferenceRepository } from "../attachments"
+import { AttachmentRepository, AttachmentReferenceRepository, AttachmentUploadRepository } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
 import * as db from "../../db"
 import { messagesTotal } from "../../lib/observability"
@@ -204,6 +204,138 @@ describe("EventService attachment safety checks", () => {
       expect.stringMatching(/^msg_/),
       "stream_1"
     )
+  })
+
+  // Shared plumbing for the pending-reservation (send-while-uploading) cases.
+  const pendingRow = (overrides: Record<string, unknown> = {}) => ({
+    id: "attach_pending",
+    workspaceId: "ws_1",
+    streamId: null,
+    messageId: null,
+    uploadedBy: "usr_1",
+    safetyStatus: AttachmentSafetyStatuses.PENDING_UPLOAD,
+    e2eOnly: false,
+    filename: "large.mov",
+    mimeType: "video/quicktime",
+    sizeBytes: 1234,
+    ...overrides,
+  })
+
+  const mockCreateMessagePlumbing = () => {
+    const insertedEvents: any[] = []
+    spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => {
+      insertedEvents.push(params)
+      return {
+        id: "evt_1",
+        streamId: params.streamId,
+        sequence: 1n,
+        eventType: params.eventType,
+        payload: params.payload,
+        actorId: params.actorId,
+        actorType: params.actorType,
+        createdAt: new Date(),
+      }
+    }) as any)
+    spyOn(MessageRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: params.id,
+      streamId: params.streamId,
+      sequence: params.sequence,
+      authorId: params.authorId,
+      authorType: params.authorType,
+      contentJson: params.contentJson,
+      contentMarkdown: params.contentMarkdown,
+      replyCount: 0,
+      clientMessageId: null,
+      sentVia: null,
+      reactions: {},
+      metadata: {},
+      editedAt: null,
+      deletedAt: null,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
+    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(1)
+    return insertedEvents
+  }
+
+  const sendPending = (service: EventService) =>
+    service.createMessage({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "usr_1",
+      authorType: "user",
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "hello",
+      attachmentIds: ["attach_pending"],
+    })
+
+  it("binds the author's own pending reservation and stamps live upload state on the summary", async () => {
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([pendingRow()] as any)
+    spyOn(AttachmentUploadRepository, "findByAttachmentIds").mockResolvedValue(
+      new Map([["attach_pending", { attachmentId: "attach_pending", status: "uploading" } as any]])
+    )
+    const insertedEvents = mockCreateMessagePlumbing()
+
+    const service = new EventService({} as any)
+    await sendPending(service)
+
+    expect(AttachmentRepository.attachToMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      ["attach_pending"],
+      expect.stringMatching(/^msg_/),
+      "stream_1"
+    )
+    // The payload carries the pending state so viewers render an inert status
+    // chip, not a broken preview.
+    expect(insertedEvents[0].payload.attachments).toEqual([
+      expect.objectContaining({
+        id: "attach_pending",
+        safetyStatus: AttachmentSafetyStatuses.PENDING_UPLOAD,
+        uploadStatus: "uploading",
+      }),
+    ])
+  })
+
+  it("summaries reflect a settle that lands between validation and bind (re-read after attach)", async () => {
+    // First read (validation) sees pending; the re-read after attachToMessage
+    // sees the concurrently-committed settle. The payload must carry the
+    // settled state — that settle's status event was skipped (row was unbound).
+    spyOn(AttachmentRepository, "findByIds")
+      .mockResolvedValueOnce([pendingRow()] as any)
+      .mockResolvedValueOnce([pendingRow({ safetyStatus: AttachmentSafetyStatuses.CLEAN })] as any)
+    const findUploads = spyOn(AttachmentUploadRepository, "findByAttachmentIds").mockResolvedValue(new Map())
+    const insertedEvents = mockCreateMessagePlumbing()
+
+    const service = new EventService({} as any)
+    await sendPending(service)
+
+    const summary = insertedEvents[0].payload.attachments[0]
+    expect(summary.safetyStatus).toBeUndefined()
+    expect(summary.uploadStatus).toBeUndefined()
+    // The settled row no longer queries the tracking table for its status.
+    expect(findUploads).toHaveBeenCalledWith(expect.anything(), "ws_1", [])
+  })
+
+  it("rejects a pending reservation owned by another author", async () => {
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([pendingRow({ uploadedBy: "usr_other" })] as any)
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+
+    const service = new EventService({} as any)
+    await expect(sendPending(service)).rejects.toThrow("this author's own pending upload")
+    expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
+  })
+
+  it("rejects a pending attachment already bound to another message", async () => {
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([pendingRow({ messageId: "msg_other" })] as any)
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+
+    const service = new EventService({} as any)
+    await expect(sendPending(service)).rejects.toThrow("this author's own pending upload")
+    expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
   })
 
   it("allows re-referencing an attachment the author can already read and skips re-attach", async () => {

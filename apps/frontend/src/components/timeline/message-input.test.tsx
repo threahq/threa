@@ -1062,6 +1062,39 @@ describe("MessageInput", () => {
       ).toEqual(content)
     })
 
+    it("materializes a still-uploading reserved attachment with persisted status 'uploaded'", () => {
+      // Stored contentJson is never revisited when the bytes land, so the node
+      // must not freeze a transient "uploading" into the message (it would
+      // spin forever and be dropped from content_markdown — the serializer
+      // skips uploading nodes). Live upload state rides the attachment
+      // summaries + socket patches instead.
+      const materialized = materializePendingAttachmentReferences(EMPTY_DOC, [
+        {
+          id: "attach_pending",
+          filename: "large.mov",
+          mimeType: "video/quicktime",
+          sizeBytes: 1024,
+          status: "uploading" as const,
+        },
+      ])
+      expect(materialized).toMatchObject({
+        content: [
+          {},
+          {
+            content: [{ attrs: { id: "attach_pending", status: "uploaded" } }],
+          },
+        ],
+      })
+    })
+
+    it("excludes still-reserving (temp-id) and failed attachments from the message", () => {
+      const materialized = materializePendingAttachmentReferences(EMPTY_DOC, [
+        { id: "temp_1", filename: "a.png", mimeType: "image/png", sizeBytes: 1, status: "uploading" as const },
+        { id: "attach_err", filename: "b.png", mimeType: "image/png", sizeBytes: 1, status: "error" as const },
+      ])
+      expect(materialized).toEqual(EMPTY_DOC)
+    })
+
     it("should append uploaded attachments that are missing from the editor document", () => {
       expect(
         materializePendingAttachmentReferences(EMPTY_DOC, [

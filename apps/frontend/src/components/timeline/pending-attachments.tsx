@@ -75,6 +75,8 @@ interface ChipViewProps {
   /** True while an E2E file's bytes are still decrypting. */
   decrypting?: boolean
   onRemove: (id: string) => void
+  /** Abort an in-flight upload and drop the chip. Drives the × while uploading. */
+  onCancelUpload: (id: string) => void
   onOpen: (key: string) => void
   onResolveSrc: (key: string, src: string | null) => void
 }
@@ -86,6 +88,7 @@ function ChipView({
   fullSrc,
   decrypting,
   onRemove,
+  onCancelUpload,
   onOpen,
   onResolveSrc,
 }: ChipViewProps) {
@@ -100,6 +103,16 @@ function ChipView({
   const status = STATUS_MAP[attachment.status]
   const isUploading = attachment.status === "uploading"
   const isError = attachment.status === "error"
+  // The × stays available while uploading so a file stuck on a flaky link can
+  // be abandoned instead of holding the message hostage: it aborts the
+  // transfer, drops the chip, and deletes the reservation.
+  const removeHandler = isUploading ? () => onCancelUpload(attachment.id) : () => onRemove(attachment.id)
+  const removeLabel = isUploading ? `Cancel upload of ${attachment.filename}` : `Remove ${attachment.filename}`
+  let secondary = formatFileSize(attachment.sizeBytes)
+  if (isError) secondary = "Failed"
+  else if (isUploading && typeof attachment.progress === "number" && attachment.progress > 0) {
+    secondary = `${Math.min(99, Math.round(attachment.progress * 100))}%`
+  }
 
   const isGenericError =
     isError &&
@@ -120,11 +133,11 @@ function ChipView({
       thumbnailSrc={thumbnailSrc}
       spinning={isUploading || decrypting}
       label={attachment.filename}
-      secondary={isError ? "Failed" : formatFileSize(attachment.sizeBytes)}
+      secondary={secondary}
       status={status}
       tooltip={tooltip}
-      onRemove={isUploading ? undefined : () => onRemove(attachment.id)}
-      removeLabel={`Remove ${attachment.filename}`}
+      onRemove={removeHandler}
+      removeLabel={removeLabel}
       onActivate={canPreview ? () => onOpen(key) : undefined}
       activateLabel={`Preview ${attachment.filename}`}
       labelMaxWidth="max-w-[120px]"
@@ -137,6 +150,7 @@ function StaticChip(props: {
   attachment: PendingAttachment
   workspaceId: string | undefined
   onRemove: (id: string) => void
+  onCancelUpload: (id: string) => void
   onOpen: (key: string) => void
   onResolveSrc: (key: string, src: string | null) => void
 }) {
@@ -154,6 +168,7 @@ function E2eChip({
   attachmentRef: AttachmentRef
   workspaceId: string
   onRemove: (id: string) => void
+  onCancelUpload: (id: string) => void
   onOpen: (key: string) => void
   onResolveSrc: (key: string, src: string | null) => void
 }) {
@@ -174,6 +189,8 @@ function E2eChip({
 interface PendingAttachmentsProps {
   attachments: PendingAttachment[]
   onRemove: (id: string) => void
+  /** Abort an in-flight upload and drop its chip. */
+  onCancelUpload?: (id: string) => void
   /**
    * Pills rendered inside the same flex-wrap row before the file pills.
    * Used by the composer to fold context-ref chips into the same visual
@@ -200,7 +217,13 @@ interface PendingAttachmentsProps {
  * in-memory E2E decrypt). Non-previewable files keep a plain type-icon chip.
  * Renders nothing when both lists are empty.
  */
-export function PendingAttachments({ attachments, onRemove, beforePills, workspaceId }: PendingAttachmentsProps) {
+export function PendingAttachments({
+  attachments,
+  onRemove,
+  onCancelUpload,
+  beforePills,
+  workspaceId,
+}: PendingAttachmentsProps) {
   // Open lightbox tracked by the stable attachment key, not the id (which flips
   // temp→server on upload completion), so an open preview survives its upload.
   const [openKey, setOpenKey] = useState<string | null>(null)
@@ -247,7 +270,13 @@ export function PendingAttachments({ attachments, onRemove, beforePills, workspa
             workspaceId && !attachment.previewUrl && uploadGalleryType(attachment) != null
               ? getAttachmentRef(attachment.id)
               : undefined
-          const shared = { attachment, onRemove, onOpen: setOpenKey, onResolveSrc }
+          const shared = {
+            attachment,
+            onRemove,
+            onCancelUpload: onCancelUpload ?? onRemove,
+            onOpen: setOpenKey,
+            onResolveSrc,
+          }
           return ref && workspaceId ? (
             <E2eChip key={key} attachmentRef={ref} workspaceId={workspaceId} {...shared} />
           ) : (

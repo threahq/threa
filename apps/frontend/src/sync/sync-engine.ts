@@ -319,6 +319,12 @@ export class SyncEngine {
       if (this.isDestroyed) return
     }
 
+    // Resume persisted background uploads for this workspace (reload/PWA
+    // reopen). Fire-and-forget and idempotent per session — reconnects no-op.
+    void import("@/lib/uploads/upload-manager").then(({ resumeWorkspaceUploads }) =>
+      resumeWorkspaceUploads(this.deps.workspaceId)
+    )
+
     // Register workspace-level socket handlers (stream:created, stream:updated, etc.)
     this.workspaceHandlerCleanup = registerWorkspaceSocketHandlers(
       this.liveEventSource(socket),

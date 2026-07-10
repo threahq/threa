@@ -278,7 +278,7 @@ export async function hydrateSharedMessageIds(
       AttachmentRepository.findByMessageIds(db, [...okMessages.keys()]),
     ])
     for (const [id, source] of okMessages) {
-      const attachments = (attachmentsByMessageId.get(source.id) ?? []).map(toAttachmentSummary)
+      const attachments = (attachmentsByMessageId.get(source.id) ?? []).map((a) => toAttachmentSummary(a))
       result[id] = {
         state: "ok",
         messageId: source.id,

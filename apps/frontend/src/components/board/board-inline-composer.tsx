@@ -286,6 +286,7 @@ export function InlineComposerForm({
       onContentChange={composer.handleContentChange}
       pendingAttachments={composer.pendingAttachments}
       onRemoveAttachment={composer.handleRemoveAttachment}
+      onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
       workspaceId={workspaceId}
       streamId={hostStream?.id}
       memoAnchorStreamId={memoAnchorStreamId}

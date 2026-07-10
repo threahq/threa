@@ -48,7 +48,7 @@ import {
   createNamingWorker,
 } from "./features/streams"
 import { EventService } from "./features/messaging"
-import { AttachmentService } from "./features/attachments"
+import { AttachmentService, createAttachmentUploadSweepWorker } from "./features/attachments"
 import { MessageFormatter } from "./lib/ai/message-formatter"
 import { SearchService } from "./features/search"
 import {
@@ -941,6 +941,15 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
+  // Safety net for reserved background uploads whose client died without
+  // reporting failure: stale rows flip to failed/abandoned and never-bound
+  // zombies are deleted. Pure SQL + S3 deletes, no AI.
+  const attachmentUploadSweepWorker = createAttachmentUploadSweepWorker({ attachmentService })
+  jobQueue.registerHandler(JobQueues.ATTACHMENT_UPLOAD_SWEEP, attachmentUploadSweepWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
   // Memo (GAM) processing — batched extraction, heavy LLM work
   const memoService = config.useStubAI
     ? new StubMemoService()
@@ -1204,6 +1213,9 @@ export async function startServer(): Promise<ServerInstance> {
   if (!config.useStubAI) {
     await jobQueue.schedule(JobQueues.CONVERSATION_STALENESS_SWEEP, 600, { workspaceId: "system" }, null)
   }
+  // Stale-upload thresholds are hours/days, so this can't interfere with
+  // test fixtures — safe to run everywhere.
+  await jobQueue.schedule(JobQueues.ATTACHMENT_UPLOAD_SWEEP, 900, { workspaceId: "system" }, null)
 
   // Outbox dispatcher - single LISTEN connection fans out to all handlers
   const outboxDispatcher = new OutboxDispatcher({ listenPool: pools.listen })

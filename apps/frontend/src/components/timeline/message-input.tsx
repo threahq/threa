@@ -102,7 +102,15 @@ export function materializePendingAttachmentReferences(
 ): JSONContent {
   const uploadedQueues = new Map<string, PendingAttachment[]>()
   for (const attachment of pendingAttachments) {
-    if (attachment.status !== "uploaded") continue
+    // Reserved-but-still-uploading attachments materialize like uploaded ones
+    // (send-while-uploading): their id is real and the message binds it while
+    // the bytes finish. The node's persisted status is always "uploaded" —
+    // stored contentJson is never revisited when the upload settles, so a
+    // baked-in "uploading" would spin forever and be dropped from
+    // content_markdown (the serializer skips uploading nodes). Live upload
+    // state rides the message's attachment summaries instead. Errors and
+    // still-reserving (temp-id) files stay out of the message.
+    if (attachment.status === "error" || attachment.id.startsWith("temp_")) continue
     const key = attachmentMatchKey(attachment)
     const queue = uploadedQueues.get(key)
     if (queue) {
@@ -787,6 +795,7 @@ function MessageInputComponent({
     onContentChange: composer.handleContentChange,
     pendingAttachments: composer.pendingAttachments,
     onRemoveAttachment: composer.handleRemoveAttachment,
+    onCancelAttachmentUpload: composer.handleCancelAttachmentUpload,
     contextRefs: composer.contextRefs,
     streamId,
     workspaceId,

@@ -46,6 +46,8 @@ export interface DraftComposerState {
   fileInputRef: RefObject<HTMLInputElement | null>
   handleFileSelect: (e: ChangeEvent<HTMLInputElement>) => void
   handleRemoveAttachment: (id: string) => void
+  /** Abort an in-flight upload and drop its chip (the × during upload). */
+  handleCancelAttachmentUpload: (id: string) => void
   /** Upload a file programmatically (for paste/drop) */
   uploadFile: (file: File) => Promise<UploadResult>
   /** Current count of images (for sequential naming) */
@@ -125,8 +127,10 @@ export function useDraftComposer({
     handleFileSelect,
     uploadFile,
     removeAttachment,
+    cancelUpload,
     uploadedIds,
     isUploading,
+    isReserving,
     hasFailed,
     clear: clearAttachments,
     restore: restoreAttachments,
@@ -323,9 +327,11 @@ export function useDraftComposer({
     }
   }, [loadedDraftId, initialContent, clearAttachments])
 
-  // When attachments change, persist to draft storage
+  // When attachments change, persist to draft storage. Reserved-but-still-
+  // uploading attachments persist too: their id is already real, and a draft
+  // restore after a reload re-claims the resumed upload job by that id.
   useEffect(() => {
-    const uploaded = pendingAttachments.filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_"))
+    const uploaded = pendingAttachments.filter((a) => a.status !== "error" && !a.id.startsWith("temp_"))
 
     // After a scope change, keep skipping persistence until we have stopped
     // seeing any uploaded attachments that belonged to the previous scope.
@@ -378,11 +384,24 @@ export function useDraftComposer({
     [removeAttachment, removeDraftAttachment]
   )
 
+  // Cancel an in-flight upload: abort the transfer, drop the chip, delete the
+  // reservation — and remove it from the persisted draft so a rehydrate
+  // doesn't resurrect a file the user just abandoned.
+  const handleCancelAttachmentUpload = useCallback(
+    (id: string) => {
+      cancelUpload(id)
+      removeDraftAttachment(id)
+    },
+    [cancelUpload, removeDraftAttachment]
+  )
+
   // Check if document has actual content (not just empty paragraphs)
   const hasContent = hasDocContent(content)
 
-  // Sending while uploads are still in flight is not safe: the message would
-  // be created before attachment IDs exist, leaving uploaded files unattached.
+  // Send no longer waits for uploads: reserved ids bind to the message and the
+  // bytes finish in the background (send-while-uploading). The ONLY upload
+  // phase that gates send is the sub-second reservation window — an id-less
+  // file would be silently dropped from the message.
   // Failed uploads still don't block send; the user can send with whatever succeeded.
   //
   // Context-ref sidecar follows the same model: a `pending` ref means
@@ -399,7 +418,7 @@ export function useDraftComposer({
     (ref: DraftContextRef) => ref.status === "ready" || ref.status === "inline"
   )
   const hasPayload = hasContent || uploadedIds.length > 0 || savedContextRefs.length > 0
-  const canSend = hasPayload && !isSending && !isUploading && contextRefsReady
+  const canSend = hasPayload && !isSending && !isReserving && contextRefsReady
 
   return {
     // Content
@@ -416,6 +435,7 @@ export function useDraftComposer({
     fileInputRef,
     handleFileSelect,
     handleRemoveAttachment,
+    handleCancelAttachmentUpload,
     uploadFile,
     imageCount,
 

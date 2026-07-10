@@ -289,10 +289,22 @@ export const ProcessingStatuses = {
 } as const satisfies Record<string, ProcessingStatus>
 
 // Attachment malware safety status
-export const ATTACHMENT_SAFETY_STATUSES = ["pending_scan", "clean", "quarantined", "e2e_unscanned"] as const
+export const ATTACHMENT_SAFETY_STATUSES = [
+  "pending_upload",
+  "pending_scan",
+  "clean",
+  "quarantined",
+  "e2e_unscanned",
+] as const
 export type AttachmentSafetyStatus = (typeof ATTACHMENT_SAFETY_STATUSES)[number]
 
 export const AttachmentSafetyStatuses = {
+  /**
+   * Reserved row whose bytes haven't finished uploading. Distinct from
+   * `pending_scan` (bytes exist, scan pending) so the stale-scan quarantine
+   * sweep never eats a reservation that is legitimately hours old.
+   */
+  PENDING_UPLOAD: "pending_upload",
   PENDING_SCAN: "pending_scan",
   CLEAN: "clean",
   QUARANTINED: "quarantined",
@@ -314,6 +326,35 @@ export const SHAREABLE_SAFETY_STATUSES = [
   AttachmentSafetyStatuses.CLEAN,
   AttachmentSafetyStatuses.E2E_UNSCANNED,
 ] as const satisfies readonly AttachmentSafetyStatus[]
+
+/**
+ * Safety statuses a fresh send may BIND to a message: shareable, plus the
+ * author's own still-settling reservations (send-while-uploading). Bindable is
+ * deliberately wider than shareable — a pending attachment renders as an inert
+ * status chip and stays non-downloadable until it settles clean.
+ */
+export const BINDABLE_ATTACHMENT_SAFETY_STATUSES = [
+  AttachmentSafetyStatuses.PENDING_UPLOAD,
+  AttachmentSafetyStatuses.PENDING_SCAN,
+  ...SHAREABLE_SAFETY_STATUSES,
+] as const satisfies readonly AttachmentSafetyStatus[]
+
+/**
+ * Reserved-upload workflow state (the `attachment_uploads` tracking table,
+ * INV-57). Rows exist only while an upload is in flight or has failed —
+ * successful settles delete the row, so `uploaded` is a transient scan-window
+ * state and absence means "settled, trust `safetyStatus`".
+ */
+export const ATTACHMENT_UPLOAD_STATUSES = ["reserved", "uploading", "uploaded", "failed", "abandoned"] as const
+export type AttachmentUploadStatus = (typeof ATTACHMENT_UPLOAD_STATUSES)[number]
+
+export const AttachmentUploadStatuses = {
+  RESERVED: "reserved",
+  UPLOADING: "uploading",
+  UPLOADED: "uploaded",
+  FAILED: "failed",
+  ABANDONED: "abandoned",
+} as const satisfies Record<string, AttachmentUploadStatus>
 
 // Video transcode job status
 export const VIDEO_TRANSCODE_STATUSES = ["pending", "submitted", "completed", "failed"] as const

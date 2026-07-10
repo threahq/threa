@@ -57,6 +57,18 @@ export function createUploadMiddleware({ s3Config }: UploadMiddlewareConfig): Re
     contentType: multerS3.AUTO_CONTENT_TYPE,
     key: (req: Request, file: Express.Multer.File, cb) => {
       const { workspaceId } = req.params
+      // Reserved-content route: bytes MUST land at the storage_path fixed at
+      // reserve time — a caller-influenced key (fresh id or filename) would let
+      // the bytes and the row's storage_path diverge. The route's validation
+      // middleware authorized this id; fail loudly if it didn't run.
+      if (req.params.attachmentId) {
+        const reserved = req.reservedAttachment
+        if (!reserved) {
+          return cb(new Error("Reserved upload reached S3 middleware without validation"))
+        }
+        req.attachmentId = reserved.id
+        return cb(null, reserved.storagePath)
+      }
       const id = attachmentId()
       req.attachmentId = id
       // Workspace-scoped path (no streamId - set when attached to message)

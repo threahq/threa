@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { Request, Response } from "express"
+import type { NextFunction, Request, Response } from "express"
 import { z } from "zod"
 import type { Pool } from "pg"
 import { buildContentDisposition, buildUploadParams, parseE2eUploadFlag, type AttachmentService } from "./service"
@@ -10,12 +10,22 @@ import {
   type AttachmentSearchCursor,
   type AttachmentSearchRow,
 } from "./repository"
+import { AttachmentUploadRepository } from "./upload-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
 import type { StreamService } from "../streams"
 import { VideoTranscodeJobRepository } from "./video"
 import { isImageAttachment } from "./image-caption"
 import type { StorageProvider } from "../../lib/storage/s3-client"
+import { attachmentId as generateAttachmentId } from "../../lib/id"
+import { MAX_FILE_SIZE } from "../../middleware/upload"
 import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threa/types"
+
+declare module "express" {
+  interface Request {
+    /** Set by `validateReservedUpload` for the reserved-content route. */
+    reservedAttachment?: Attachment
+  }
+}
 
 interface Dependencies {
   attachmentService: AttachmentService
@@ -24,8 +34,132 @@ interface Dependencies {
   pool: Pool
 }
 
+const reserveAttachmentSchema = z.object({
+  filename: z.string().min(1).max(255),
+  mimeType: z.string().min(1).max(255).default("application/octet-stream"),
+  sizeBytes: z.number().int().positive().max(MAX_FILE_SIZE),
+  e2e: z.boolean().optional(),
+})
+
+const reportUploadFailureSchema = z.object({
+  errorMessage: z.string().max(500).optional(),
+})
+
 export function createAttachmentHandlers({ attachmentService, streamService, storage, pool }: Dependencies) {
   return {
+    /**
+     * Reserve an attachment id before its bytes exist. The returned id is
+     * immediately usable in a message send (send-while-uploading); bytes
+     * follow via POST .../attachments/:attachmentId/content.
+     */
+    async reserve(req: Request, res: Response) {
+      const parsed = reserveAttachmentSchema.safeParse(req.body)
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request body", details: parsed.error.format() })
+      }
+      const workspaceId = req.workspaceId!
+      const id = generateAttachmentId()
+      const attachment = await attachmentService.reserve({
+        id,
+        workspaceId,
+        uploadedBy: req.user!.id,
+        filename: parsed.data.filename,
+        mimeType: parsed.data.mimeType,
+        sizeBytes: parsed.data.sizeBytes,
+        e2e: parsed.data.e2e === true,
+      })
+      res.status(201).json({
+        attachment,
+        upload: { method: "POST", url: `/api/workspaces/${workspaceId}/attachments/${id}/content`, field: "file" },
+      })
+    },
+
+    /**
+     * Gate for the reserved-content route, mounted BEFORE the S3 upload
+     * middleware: multer-s3 streams bytes to the reserved key as they arrive,
+     * so ownership/state must be rejected here — after the middleware runs, a
+     * hostile POST would already have overwritten the object. Marks the
+     * tracking row `uploading` (also what lets a retry restart a failed or
+     * swept-abandoned transfer), and rejects settled uploads so nobody can
+     * swap bytes under an already-scanned attachment.
+     */
+    async validateReservedUpload(req: Request, res: Response, next: NextFunction) {
+      const workspaceId = req.workspaceId!
+      const { attachmentId } = req.params
+
+      const upload = await AttachmentUploadRepository.findByAttachmentId(pool, workspaceId, attachmentId)
+      if (!upload) {
+        return res.status(404).json({ error: "Attachment upload reservation not found" })
+      }
+      if (upload.uploadedBy !== req.user!.id) {
+        return res.status(403).json({ error: "Attachment upload reservation belongs to another user" })
+      }
+      const attachment = await AttachmentRepository.findById(pool, attachmentId)
+      if (!attachment || attachment.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Attachment not found" })
+      }
+      const marked = await AttachmentUploadRepository.markUploading(pool, workspaceId, attachmentId)
+      if (!marked) {
+        return res.status(409).json({ error: "Attachment upload is already complete" })
+      }
+      req.reservedAttachment = attachment
+      next()
+    },
+
+    /**
+     * Complete a reserved upload after multer streamed the bytes to the
+     * reserved storage path (scan + settle live in the service).
+     */
+    async completeReservedContent(req: Request, res: Response) {
+      const reserved = req.reservedAttachment
+      if (!reserved) {
+        // The route wires validateReservedUpload before this handler; reaching
+        // here without it is a wiring bug — fail loudly (INV-11).
+        return res.status(500).json({ error: "Reserved upload was not validated" })
+      }
+      const file = req.file
+      if (!file || !file.key) {
+        return res.status(400).json({ error: "No file provided" })
+      }
+
+      const result = await attachmentService.completeReservedUpload({
+        attachment: reserved,
+        receivedSizeBytes: file.size,
+      })
+
+      if (result.status === "size_mismatch") {
+        return res.status(400).json({
+          error: `Uploaded size ${result.receivedSizeBytes} does not match reserved size ${result.expectedSizeBytes}`,
+        })
+      }
+      if (result.status === "blocked") {
+        return res.status(400).json({ error: result.reason })
+      }
+      res.status(201).json({ attachment: result.attachment })
+    },
+
+    /**
+     * Uploader-reported terminal failure of a reserved upload (retries
+     * exhausted). Flips the tracking row to `failed` so every viewer's chip
+     * stops saying "Uploading…". Idempotent.
+     */
+    async reportUploadFailure(req: Request, res: Response) {
+      const parsed = reportUploadFailureSchema.safeParse(req.body ?? {})
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request body" })
+      }
+      const result = await attachmentService.reportUploadFailure({
+        workspaceId: req.workspaceId!,
+        attachmentId: req.params.attachmentId,
+        userId: req.user!.id,
+        errorMessage: parsed.data.errorMessage,
+      })
+      if (result === "not_found") return res.status(404).json({ error: "Attachment upload reservation not found" })
+      if (result === "forbidden") {
+        return res.status(403).json({ error: "Attachment upload reservation belongs to another user" })
+      }
+      res.status(204).send()
+    },
     /**
      * Upload a file to the workspace.
      * Files are uploaded to workspace-level (no stream) and attached to a stream when linked to a message.

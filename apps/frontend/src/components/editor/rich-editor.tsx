@@ -516,9 +516,14 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     try {
       const result = await uploadFn(file)
       if (!isStillTargeting()) return
+      // uploadFn resolves once the id is RESERVED — the bytes may still be
+      // streaming in the background. The node is a reference marker, so it
+      // settles to "uploaded" here (live transfer state renders on the chip
+      // row, and stored content never persists "uploading" — see
+      // materializePendingAttachmentReferences).
       editorInstance.commands.updateAttachmentReference(tempId, {
         id: result.attachment.id,
-        status: result.attachment.status,
+        status: result.attachment.status === "error" ? "error" : "uploaded",
         imageIndex: isImage ? result.imageIndex : null,
         error: result.attachment.error || null,
       })
