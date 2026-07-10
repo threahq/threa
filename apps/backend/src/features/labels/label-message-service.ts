@@ -8,7 +8,7 @@ import {
   type LinkPreviewSummary,
 } from "@threa/types"
 import { MessageRepository, type Message } from "../messaging"
-import { AttachmentRepository, toAttachmentSummary, fetchUploadStatuses } from "../attachments"
+import { AttachmentRepository, hydrateAttachmentSummaries } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { listAccessibleStreamIds } from "../streams"
 import type { BotChannelService } from "../api-keys"
@@ -64,11 +64,9 @@ export class LabelMessageService {
       LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids),
     ])
 
-    const uploadStatuses = await fetchUploadStatuses(this.pool, workspaceId, [...attachmentsByMessage.values()].flat())
+    const summariesByMessage = await hydrateAttachmentSummaries(this.pool, workspaceId, attachmentsByMessage)
     return visible.map((message) => {
-      const attachments = (attachmentsByMessage.get(message.id) ?? []).map((a) =>
-        toAttachmentSummary(a, uploadStatuses.get(a.id))
-      )
+      const attachments = summariesByMessage.get(message.id) ?? []
       const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
         .filter((p) => p.status === "completed")
         .map((p, i) => toLinkPreviewSummary(p, i))

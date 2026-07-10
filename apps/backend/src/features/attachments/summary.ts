@@ -25,6 +25,27 @@ export async function fetchUploadStatuses(
 }
 
 /**
+ * Hydrate a per-message attachment map into wire summaries in one pass:
+ * batch-fetches upload statuses for the whole map (INV-56), then maps each
+ * message's rows through {@link toAttachmentSummary}. Shared by the board and
+ * labeled-message read models so upload-state hydration can't drift between
+ * them.
+ */
+export async function hydrateAttachmentSummaries(
+  client: Querier,
+  workspaceId: string,
+  attachmentsByMessage: Map<string, Attachment[]>
+): Promise<Map<string, AttachmentSummary[]>> {
+  const uploadStatuses = await fetchUploadStatuses(client, workspaceId, [...attachmentsByMessage.values()].flat())
+  return new Map(
+    [...attachmentsByMessage].map(([messageId, rows]) => [
+      messageId,
+      rows.map((a) => toAttachmentSummary(a, uploadStatuses.get(a.id))),
+    ])
+  )
+}
+
+/**
  * Map a stored `Attachment` row to the lightweight `AttachmentSummary` wire
  * shape used in `message_created` event payloads and shared-message
  * hydration. The conditional carve-outs — `processingStatus` for videos,

@@ -14,7 +14,7 @@ export { createAttachmentUploadSweepWorker } from "./upload-sweep-worker"
 // path fails. See `access.ts`.
 export { isAttachmentReadableViaShareOrReference } from "./access"
 
-export { toAttachmentSummary, fetchUploadStatuses } from "./summary"
+export { toAttachmentSummary, fetchUploadStatuses, hydrateAttachmentSummaries } from "./summary"
 
 export { AttachmentExtractionRepository } from "./extraction-repository"
 export type {

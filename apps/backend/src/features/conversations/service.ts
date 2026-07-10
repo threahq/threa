@@ -5,7 +5,7 @@ import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository, applySparseRead, applySparseUnread, type ReadStateSnapshot } from "../streams"
 import { ActivityRepository } from "../activity"
-import { AttachmentRepository, toAttachmentSummary, fetchUploadStatuses } from "../attachments"
+import { AttachmentRepository, hydrateAttachmentSummaries } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { MemoRepository } from "../memos"
 import { OutboxRepository } from "../../lib/outbox"
@@ -412,11 +412,9 @@ export class ConversationService {
     if (ids.length === 0) return byId
     const attachmentsByMessage = await AttachmentRepository.findByMessageIds(this.pool, ids)
     const linkPreviewsByMessage = await LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids)
-    const uploadStatuses = await fetchUploadStatuses(this.pool, workspaceId, [...attachmentsByMessage.values()].flat())
+    const summariesByMessage = await hydrateAttachmentSummaries(this.pool, workspaceId, attachmentsByMessage)
     for (const message of messages) {
-      const attachments = (attachmentsByMessage.get(message.id) ?? []).map((a) =>
-        toAttachmentSummary(a, uploadStatuses.get(a.id))
-      )
+      const attachments = summariesByMessage.get(message.id) ?? []
       const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
         .filter((p) => p.status === "completed")
         .map((p, i) => toLinkPreviewSummary(p, i))
