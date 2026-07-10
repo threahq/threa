@@ -66,6 +66,15 @@ const COLUMNS = `
   result_message_id, status_note, created_at, updated_at, status_changed_at
 `
 
+const QUALIFIED_COLUMNS = COLUMNS.split(",")
+  .map((column) => `dt.${column.trim()}`)
+  .join(", ")
+
+/** A delegation plus its `delegation:created` timeline event id, for deep-linking the card. */
+export interface DelegatedTaskWithEvent extends DelegatedTask {
+  createdEventId: string | null
+}
+
 function mapRow(row: DelegatedTaskRow): DelegatedTask {
   return {
     id: row.id,
@@ -130,6 +139,34 @@ export const DelegatedTaskRepository = {
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRow)
+  },
+
+  /**
+   * A stream's delegations, newest first — the member-facing list surface (the
+   * "In this stream" panel). Statuses live in `delegation:status_changed`
+   * patches, so a timeline-derived view goes stale outside the loaded window;
+   * this read is the authority. Joins each row's `delegation:created` event so
+   * the panel can deep-link the card. Bounded: the panel is a recency-biased
+   * overview, not an archive.
+   */
+  async listByStream(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    { limit = 100 }: { limit?: number } = {}
+  ): Promise<DelegatedTaskWithEvent[]> {
+    const result = await db.query<DelegatedTaskRow & { created_event_id: string | null }>(sql`
+      SELECT ${sql.raw(QUALIFIED_COLUMNS)}, ce.id AS created_event_id
+      FROM delegated_tasks dt
+      LEFT JOIN stream_events ce
+        ON ce.stream_id = dt.stream_id
+        AND ce.event_type = 'delegation:created'
+        AND ce.payload->>'delegationId' = dt.id
+      WHERE dt.workspace_id = ${workspaceId} AND dt.stream_id = ${streamId}
+      ORDER BY dt.created_at DESC
+      LIMIT ${limit}
+    `)
+    return result.rows.map((row) => ({ ...mapRow(row), createdEventId: row.created_event_id }))
   },
 
   /**

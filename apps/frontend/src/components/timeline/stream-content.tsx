@@ -1701,10 +1701,12 @@ export function StreamContent({
     // Disable auto-scroll so highlight scroll-into-view isn't overridden
     disableAutoScroll()
 
-    // Check if the message is already visible in current events
+    // Check if the target is already visible in current events. `?m=` carries a
+    // message id or, for non-message rows (delegation cards), an `event_…` id —
+    // match both, mirroring findMessageItemIndex.
     const isVisible = events.some((e) => {
       const payload = e.payload as { messageId?: string }
-      return payload?.messageId === targetMessageId
+      return payload?.messageId === targetMessageId || e.id === targetMessageId
     })
 
     if (isVisible) {

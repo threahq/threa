@@ -506,6 +506,8 @@ export type {
   AgentFollowUpCancelledEventPayload,
   DelegationCreatedEventPayload,
   DelegationStatusChangedEventPayload,
+  DelegationSummary,
+  ListDelegationsResponse,
   DescriptionSetEventPayload,
   BriefUpdatedEventPayload,
   // Workspaces

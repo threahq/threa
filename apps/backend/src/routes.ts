@@ -657,6 +657,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Agent follow-ups — a stream member can cancel a follow-up they can see from
   // its timeline card (roadmap 1.3). Scheduling/listing stay agent-only tools.
   app.post("/api/workspaces/:workspaceId/agent-follow-ups/:id/cancel", ...authed, agentFollowUps.cancel)
+  app.get("/api/workspaces/:workspaceId/delegations", ...authed, delegations.list)
   app.post("/api/workspaces/:workspaceId/delegations/:id/cancel", ...authed, delegations.cancel)
 
   // Drafts — centralized, local-first composer payloads that roam across the

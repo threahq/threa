@@ -13,7 +13,7 @@ import {
 import { StreamEventRepository } from "../streams"
 import { hashCallbackToken } from "../agents"
 import { DELEGATION_CLAIM_TTL_SECONDS } from "./config"
-import { DelegatedTaskRepository, type DelegatedTask } from "./repository"
+import { DelegatedTaskRepository, type DelegatedTask, type DelegatedTaskWithEvent } from "./repository"
 
 /** The outbox event type that carries each delegation timeline event to the stream room. */
 const DELEGATION_OUTBOX_EVENT_TYPE = {
@@ -112,6 +112,11 @@ export class DelegationService {
   /** A workspace's claimable delegations, oldest first (the 5.3 list surface). */
   async listOpen(params: { workspaceId: string }): Promise<DelegatedTask[]> {
     return DelegatedTaskRepository.listOpen(this.pool, params.workspaceId)
+  }
+
+  /** A stream's delegations with live statuses, newest first (the "In this stream" panel). */
+  async listByStream(params: { workspaceId: string; streamId: string }): Promise<DelegatedTaskWithEvent[]> {
+    return DelegatedTaskRepository.listByStream(this.pool, params.workspaceId, params.streamId)
   }
 
   /**

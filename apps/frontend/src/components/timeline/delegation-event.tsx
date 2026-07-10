@@ -3,7 +3,6 @@ import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Check, ChevronDown, ChevronRight, Copy, Loader2, TerminalSquare } from "lucide-react"
 import {
-  DELEGATION_TERMINAL_STATUSES,
   DelegationStatuses,
   type DelegationCreatedEventPayload,
   type DelegationStatus,
@@ -12,6 +11,7 @@ import {
 } from "@threa/types"
 import { delegationsApi } from "@/api"
 import { useActors } from "@/hooks"
+import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL } from "@/lib/delegation-display"
 import { cn } from "@/lib/utils"
 
 interface DelegationEventProps {
@@ -26,18 +26,6 @@ interface DelegationEventProps {
    */
   statusPatch?: DelegationStatusChangedEventPayload
 }
-
-const STATUS_LABEL: Record<DelegationStatus, string> = {
-  open: "Open",
-  claimed: "Claimed",
-  running: "Running",
-  completed: "Completed",
-  failed: "Failed",
-  cancelled: "Cancelled",
-  expired: "Expired",
-}
-
-const TERMINAL: ReadonlySet<DelegationStatus> = new Set(DELEGATION_TERMINAL_STATUSES)
 
 /**
  * Compile the card's payload into one paste-ready prompt for a local agent —
@@ -79,10 +67,10 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
   const status: DelegationStatus = optimisticallyCancelled
     ? DelegationStatuses.CANCELLED
     : (statusPatch?.status ?? DelegationStatuses.OPEN)
-  const terminal = TERMINAL.has(status)
+  const terminal = DELEGATION_TERMINAL.has(status)
   const actorName = getActorName(event.actorId, event.actorType)
 
-  const metaParts = [`${actorName} · ${STATUS_LABEL[status]}`]
+  const metaParts = [`${actorName} · ${DELEGATION_STATUS_LABEL[status]}`]
   if (statusPatch?.claimedByLabel && !optimisticallyCancelled) metaParts.push(statusPatch.claimedByLabel)
   const statusNote = !optimisticallyCancelled ? statusPatch?.statusNote : null
   const resultMessageId =

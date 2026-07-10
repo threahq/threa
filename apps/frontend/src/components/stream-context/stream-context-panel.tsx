@@ -4,7 +4,9 @@ import { PanelRight, Sparkles } from "lucide-react"
 import { SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useStreamEvents } from "@/stores/stream-store"
+import { useStreamDelegations } from "@/hooks/use-stream-delegations"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
+import { delegationContextItems, withDelegations } from "@/lib/stream-context/delegations"
 import { groupItemsByDay } from "@/lib/stream-context/grouping"
 import { CONTEXT_CATEGORIES, type ContextCategory } from "@/lib/stream-context/types"
 import { cn } from "@/lib/utils"
@@ -17,6 +19,7 @@ const CATEGORY_LABELS: Record<ContextCategory, string> = {
   media: "Media",
   file: "Files",
   memo: "Memories",
+  delegation: "Delegations",
   thread: "Threads",
 }
 
@@ -59,7 +62,20 @@ export function StreamContextPanel({
 }: StreamContextPanelProps) {
   const events = useStreamEvents(streamId)
   const isLoading = events === undefined
-  const { items, counts, total } = useMemo(() => deriveStreamContext(events), [events])
+  // Delegations come from the authoritative list endpoint, not the loaded
+  // window (statuses live in patch events — see delegationContextItems); the
+  // query key is invalidated by stream-sync on delegation socket events, so an
+  // open panel tracks transitions live. The panel doesn't block on it — rows
+  // appear when the fetch lands.
+  const delegationsQuery = useStreamDelegations(workspaceId, streamId)
+  const delegationItems = useMemo(
+    () => delegationContextItems(delegationsQuery.data?.delegations ?? []),
+    [delegationsQuery.data]
+  )
+  const { items, counts, total } = useMemo(
+    () => withDelegations(deriveStreamContext(events), delegationItems),
+    [events, delegationItems]
+  )
 
   // The active filter lives in the URL (the `context` param doubles as the
   // open-state + the selected category), so a refresh or shared link lands on
@@ -116,7 +132,7 @@ export function StreamContextPanel({
         </div>
         <p className="mt-3 text-sm font-medium">Nothing here yet</p>
         <p className="mt-1 max-w-[16rem] text-xs text-muted-foreground">
-          Links, files, images and captured memories from this conversation collect here automatically.
+          Links, files, images, captured memories and delegated tasks from this conversation collect here automatically.
         </p>
       </div>
     )

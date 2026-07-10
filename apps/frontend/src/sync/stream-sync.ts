@@ -17,6 +17,7 @@ import type { SyncEventSource } from "./socket-event-gate"
 import { commandsApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
+import { delegationKeys } from "@/hooks/use-stream-delegations"
 import type { QueryClient } from "@tanstack/react-query"
 import { commitCounterMutation } from "./catch-up-batch"
 import {
@@ -1084,6 +1085,18 @@ export function registerStreamSocketHandlers(
     }
   }
 
+  // Delegation events append to the timeline like any broadcast/patch event,
+  // and additionally refresh the authoritative list behind the "In this
+  // stream" panel (statuses live in these patches, so the list query is the
+  // only view that stays correct outside the loaded window). Invalidation
+  // refetches only while the panel has the query mounted; otherwise it just
+  // marks stale.
+  const handleDelegationEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
+    if (payload.streamId !== streamId) return
+    await handleAppendEvent(payload)
+    await queryClient.invalidateQueries({ queryKey: delegationKeys.stream(workspaceId, streamId) })
+  }
+
   const handleLinkPreviewReady = async (payload: LinkPreviewReadyPayload) => {
     if (payload.streamId !== streamId) return
     await updateMessageEvent(streamId, payload.messageId, (p) => ({
@@ -1188,8 +1201,8 @@ export function registerStreamSocketHandlers(
   socket.on("stream:memos_captured", handleAppendEvent)
   socket.on("stream:agent_follow_up_scheduled", handleAppendEvent)
   socket.on("stream:agent_follow_up_cancelled", handleAppendEvent)
-  socket.on("stream:delegation_created", handleAppendEvent)
-  socket.on("stream:delegation_status_changed", handleAppendEvent)
+  socket.on("stream:delegation_created", handleDelegationEvent)
+  socket.on("stream:delegation_status_changed", handleDelegationEvent)
   socket.on("stream:brief_updated", handleAppendEvent)
   socket.on("stream:archived", handleAppendEvent)
   socket.on("stream:unarchived", handleAppendEvent)
@@ -1221,8 +1234,8 @@ export function registerStreamSocketHandlers(
     socket.off("stream:memos_captured", handleAppendEvent)
     socket.off("stream:agent_follow_up_scheduled", handleAppendEvent)
     socket.off("stream:agent_follow_up_cancelled", handleAppendEvent)
-    socket.off("stream:delegation_created", handleAppendEvent)
-    socket.off("stream:delegation_status_changed", handleAppendEvent)
+    socket.off("stream:delegation_created", handleDelegationEvent)
+    socket.off("stream:delegation_status_changed", handleDelegationEvent)
     socket.off("stream:brief_updated", handleAppendEvent)
     socket.off("stream:archived", handleAppendEvent)
     socket.off("stream:unarchived", handleAppendEvent)

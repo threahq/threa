@@ -4,7 +4,13 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { StreamContextRow } from "./stream-context-row"
 import * as hooks from "@/hooks"
-import type { ContextItem, FileContextItem, LinkContextItem, MediaContextItem } from "@/lib/stream-context/types"
+import type {
+  ContextItem,
+  DelegationContextItem,
+  FileContextItem,
+  LinkContextItem,
+  MediaContextItem,
+} from "@/lib/stream-context/types"
 
 beforeEach(() => {
   vi.restoreAllMocks()
@@ -84,6 +90,41 @@ function fileItem(overrides: Partial<FileContextItem> = {}): FileContextItem {
     ...overrides,
   }
 }
+
+function delegationItem(overrides: Partial<DelegationContextItem> = {}): DelegationContextItem {
+  return {
+    ...itemBase,
+    key: "delegation:dlg_1",
+    category: "delegation",
+    sourceMessageId: "event_created_1",
+    delegationId: "dlg_1",
+    title: "Add rate limiting",
+    status: "running",
+    claimedByLabel: "Kris's MacBook",
+    statusNote: "Installing dependencies",
+    resultMessageId: null,
+    ...overrides,
+  }
+}
+
+describe("StreamContextRow delegation", () => {
+  it("shows title, live status pill, and claim details; primary jumps to the card's event", async () => {
+    const { onJumpToMessage } = renderRow(delegationItem())
+
+    expect(screen.getByText("Add rate limiting")).toBeInTheDocument()
+    expect(screen.getByText("Running")).toBeInTheDocument()
+    expect(screen.getByText("Kris's MacBook · Installing dependencies")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /go to delegation add rate limiting/i }))
+    expect(onJumpToMessage).toHaveBeenCalledWith("event_created_1")
+  })
+
+  it("falls back to a generic secondary line when nothing has claimed it", () => {
+    renderRow(delegationItem({ status: "open", claimedByLabel: null, statusNote: null }))
+    expect(screen.getByText("Open")).toBeInTheDocument()
+    expect(screen.getByText("Delegated task")).toBeInTheDocument()
+  })
+})
 
 describe("StreamContextRow link", () => {
   const origin = window.location.origin
