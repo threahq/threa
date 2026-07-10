@@ -258,27 +258,31 @@ export class AttachmentService {
       mimeType: attachment.mimeType,
     })
 
+    // The scan read bytes at a PATH; verify the object is still the exact
+    // version this request validated (the entry stat's ETag) before blessing
+    // the verdict — a concurrent POST to the same reservation could otherwise
+    // land different bytes between the scan read and the verdict commit. The
+    // HEAD runs BEFORE the settle transaction (INV-41: no network I/O while
+    // holding a connection + row lock); the residual HEAD→commit window is a
+    // few milliseconds, versus the whole scan duration without the check.
+    const settleStat = await this.storage.getObjectStat(attachment.storagePath)
+    if (settleStat.etag !== storedStat.etag) {
+      await withTransaction(this.pool, async (client) => {
+        const failed = await AttachmentUploadRepository.markFailed(client, attachment.workspaceId, attachment.id, {
+          code: "concurrent_overwrite",
+          message: "Stored bytes changed while the scan ran",
+        })
+        if (failed) {
+          const row = await AttachmentRepository.findById(client, attachment.id)
+          if (row) await this.publishUploadStatusChanged(client, row, AttachmentUploadStatuses.FAILED)
+        }
+      })
+      return { status: "conflict", reason: "Stored bytes changed while the scan ran; retry the upload" }
+    }
+
     const settled = await withTransaction(this.pool, async (client) => {
       const current = await AttachmentRepository.findByIdForUpdate(client, attachment.id)
       if (!current) throw new Error(`Attachment ${attachment.id} was deleted before safety status could be updated`)
-
-      // The scan read bytes at a PATH; verify the object is still the exact
-      // version this request validated (the entry stat's ETag) before blessing
-      // the verdict. A concurrent POST to the same reservation could otherwise
-      // land different bytes between the scan read and this commit; a quick
-      // HEAD inside the short settle transaction shrinks that byte-swap window
-      // from the whole scan duration to milliseconds.
-      {
-        const settleStat = await this.storage.getObjectStat(attachment.storagePath)
-        if (settleStat.etag !== storedStat.etag) {
-          const failed = await AttachmentUploadRepository.markFailed(client, attachment.workspaceId, attachment.id, {
-            code: "concurrent_overwrite",
-            message: "Stored bytes changed while the scan ran",
-          })
-          if (failed) await this.publishUploadStatusChanged(client, current, AttachmentUploadStatuses.FAILED)
-          return null
-        }
-      }
 
       await this.transitionReservedSafety(client, current, scanResult.status)
 
@@ -307,10 +311,6 @@ export class AttachmentService {
       await this.publishUploadStatusChanged(client, updated, AttachmentUploadStatuses.UPLOADED)
       return updated
     })
-
-    if (!settled) {
-      return { status: "conflict", reason: "Stored bytes changed while the scan ran; retry the upload" }
-    }
 
     const blockReason = this.getSharingBlockReason(settled)
     if (!blockReason) return { status: "created", attachment: settled }

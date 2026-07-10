@@ -142,6 +142,35 @@ describe("upload-manager", () => {
     })
   })
 
+  it("cancel landing during the reserve/persist window leaves no orphaned reservation or IDB row", async () => {
+    const del = vi.spyOn(attachmentsApi, "delete").mockResolvedValue(undefined)
+    vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
+    let jobId!: string
+    vi.spyOn(attachmentsApi, "reserve").mockImplementation(async (_ws, input) => {
+      // The × lands while the reservation round-trip is still in flight — the
+      // job carries no attachmentId yet, so removeUpload can't clean up the
+      // durable bits; the in-flight flow must undo them itself. (The tick
+      // defer lets startUpload return first so the test knows the jobId.)
+      await new Promise((r) => setTimeout(r, 0))
+      removeUpload(jobId)
+      return {
+        attachment: { id: "attach_orphan", ...input } as never,
+        upload: { method: "POST" as const, url: "/x", field: "file" as const },
+      }
+    })
+
+    const job = startUpload(WS, makeFile())
+    jobId = job.jobId
+
+    await vi.waitFor(async () => {
+      expect(del).toHaveBeenCalledWith(WS, "attach_orphan")
+      expect(await db.uploadJobs.get("attach_orphan")).toBeUndefined()
+    })
+    // Nothing to resume: a reload must not resurrect the cancelled upload.
+    await resumeWorkspaceUploads(WS)
+    expect(getUploadJobByAttachmentId("attach_orphan")).toBeUndefined()
+  })
+
   it("a terminal rejection marks the job failed, persists it, and reports to the server", async () => {
     mockReserve("attach_fail")
     vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 400, body: { error: "size mismatch" } })

@@ -164,16 +164,32 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
 
   const getPendingAttachmentsSnapshot = useCallback(() => computePending(entriesRef.current), [])
 
-  // Claim/release pairing keyed on the held job set: while a composer holds a
-  // job the manager keeps its resources; on unmount (or when an entry leaves
-  // the set) the job is released — the transfer keeps running and frees itself
-  // when it settles. Symmetric, so StrictMode's mount→cleanup→mount is a no-op.
+  // Claim/release with per-id diffing: while a composer holds a job the
+  // manager keeps its resources; a job is released only when it LEAVES the
+  // held set (or the composer unmounts) — the transfer keeps running and
+  // frees itself when it settles. The diff matters: releasing the whole
+  // previous set on every entries change would free any already-settled job
+  // during an unrelated add/remove, silently dropping a finished attachment
+  // from the composer. Claims are idempotent, so re-claiming survivors (and
+  // StrictMode's cleanup→re-run) is safe.
   const heldJobIdsKey = entries.flatMap((e) => (e.kind === "job" ? [e.jobId] : [])).join(",")
+  const claimedJobIdsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    const ids = heldJobIdsKey ? heldJobIdsKey.split(",") : []
-    for (const id of ids) claimUpload(id)
-    return () => releaseUploads(ids)
+    const next = new Set(heldJobIdsKey ? heldJobIdsKey.split(",") : [])
+    for (const id of next) claimUpload(id)
+    const removed = [...claimedJobIdsRef.current].filter((id) => !next.has(id))
+    if (removed.length > 0) releaseUploads(removed)
+    claimedJobIdsRef.current = next
   }, [heldJobIdsKey])
+  // Unmount: release everything still held. StrictMode's simulated unmount
+  // runs this too, but the claim effect re-runs immediately after (same
+  // commit, nothing can settle in between) and re-claims the same set.
+  useEffect(
+    () => () => {
+      releaseUploads([...claimedJobIdsRef.current])
+    },
+    []
+  )
 
   const handleFileSelect = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {

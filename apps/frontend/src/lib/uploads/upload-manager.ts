@@ -342,6 +342,18 @@ async function runReserveAndUpload(jobId: string, file: File, signal: AbortSigna
       status: "pending",
       createdAt: Date.now(),
     })
+
+    // Cancelled while the reservation/persist was in flight: removeUpload
+    // couldn't clean up the durable bits (the job carried no attachmentId
+    // yet), so undo them here — otherwise the orphaned IDB row would silently
+    // resurrect a cancelled upload on the next resume.
+    if (signal.aborted || !state.jobs.has(jobId)) {
+      jobIdByAttachmentId.delete(attachmentId)
+      blobs.delete(jobId)
+      void db.uploadJobs.delete(attachmentId).catch(() => {})
+      attachmentsApi.delete(job.workspaceId, attachmentId).catch(() => {})
+      return
+    }
     patchJob(jobId, { attachmentId, status: "uploading" })
 
     await uploadBytes(jobId, signal)

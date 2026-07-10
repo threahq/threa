@@ -308,6 +308,33 @@ describe("useAttachments", () => {
   })
 
   describe("multiple files", () => {
+    it("keeps an already-settled attachment when another file is added later (claim/release diffing)", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
+
+      // File A: pick and let it fully settle.
+      act(() => {
+        result.current.handleFileSelect(createChangeEvent([createFile("image1.png", "image/png")]))
+      })
+      await waitFor(() => expect(result.current.pendingAttachments[0]?.status).toBe("uploaded"))
+
+      // File B arrives as a SEPARATE pick — the held-set change must not
+      // release (and thereby free) the settled job for A.
+      act(() => {
+        result.current.handleFileSelect(createChangeEvent([createFile("doc.pdf", "application/pdf")]))
+      })
+      await waitFor(() => expect(result.current.pendingAttachments).toHaveLength(2))
+      expect(result.current.pendingAttachments.map((a) => a.id)).toEqual(["attach_1", "attach_3"])
+      await waitFor(() => expect(result.current.uploadedIds).toEqual(["attach_1", "attach_3"]))
+
+      // And removing B must not drop A either.
+      act(() => result.current.removeAttachment("attach_3"))
+      expect(result.current.pendingAttachments.map((a) => a.id)).toEqual(["attach_1"])
+      expect(result.current.uploadedIds).toEqual(["attach_1"])
+    })
+
     it("tracks each file's chip independently", async () => {
       mockReserve()
       vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })

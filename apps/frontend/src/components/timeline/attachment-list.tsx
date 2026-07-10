@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExtern
 import { Download, FileText, File, Loader2, Copy, Play, Globe, Check, RotateCcw, ShieldAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PillProgressBar } from "@/components/composer/attachment-pill"
+import { attachmentPendingState, PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { useGalleryAttachmentUrls, type GalleryUrlKind } from "@/components/gallery/use-gallery-attachment-urls"
@@ -444,20 +445,7 @@ function OpenableFileChip({
   )
 }
 
-/**
- * A bound attachment whose bytes/scan haven't settled — or that failed or was
- * blocked. Messages are sent while uploads are still in flight, so the live
- * state rides the summary's safetyStatus/uploadStatus (patched by the
- * attachment:upload_status_changed socket event and refreshed by bootstrap
- * enrichment), never the frozen contentJson node attrs.
- */
-export function attachmentPendingState(a: AttachmentSummary): "uploading" | "scanning" | "failed" | "blocked" | null {
-  if (a.safetyStatus === "quarantined") return "blocked"
-  if (a.uploadStatus === "failed" || a.uploadStatus === "abandoned") return "failed"
-  if (a.safetyStatus === "pending_upload") return "uploading"
-  if (a.safetyStatus === "pending_scan") return "scanning"
-  return null
-}
+export { attachmentPendingState }
 
 export interface PendingChipInfo {
   attachment: AttachmentSummary
@@ -512,12 +500,6 @@ export function PendingAttachmentChip({ attachment, state, progress, canRetry }:
       </Button>
     )
   }
-  const LABELS = {
-    uploading: "Uploading…",
-    scanning: "Scanning…",
-    failed: "Upload failed",
-    blocked: "Blocked by malware scan",
-  }
   const ICONS = { uploading: Loader2, scanning: Loader2, failed: File, blocked: ShieldAlert }
   const Icon = ICONS[state]
   const showProgress = state === "uploading" && typeof progress === "number" && progress < 1
@@ -531,7 +513,7 @@ export function PendingAttachmentChip({ attachment, state, progress, canRetry }:
           state === "failed" || state === "blocked" ? "text-destructive" : "text-muted-foreground"
         )}
       >
-        {LABELS[state]}
+        {PENDING_STATE_LABELS[state]}
       </span>
       {showProgress && <PillProgressBar progress={progress} label={attachment.filename} />}
     </Button>
