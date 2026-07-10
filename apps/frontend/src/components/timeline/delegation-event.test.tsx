@@ -103,10 +103,18 @@ describe("DelegationEvent", () => {
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
   })
 
-  it.each(["failed", "cancelled", "expired"] as const)("%s is terminal: no Cancel, status in meta", (status) => {
+  it.each(["failed", "expired"] as const)("%s is terminal: no Cancel, status in meta", (status) => {
     renderCard({ delegationId: "dlg_1", status })
 
     expect(screen.getByText(new RegExp(`Ariadne · ${status}`, "i"))).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Cancel/ })).not.toBeInTheDocument()
+  })
+
+  it("cancelled keeps the relabeled button in place (follow-up card pattern: focus retained, announced)", () => {
+    renderCard({ delegationId: "dlg_1", status: "cancelled" })
+
+    const button = screen.getByRole("button", { name: "Cancelled" })
+    expect(button).toHaveAttribute("aria-disabled", "true")
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
   })
 
@@ -131,6 +139,9 @@ describe("DelegationEvent", () => {
 
     expect(cancel).toHaveBeenCalledWith("ws_1", "dlg_1")
     await waitFor(() => expect(screen.getByText(/Ariadne · Cancelled/)).toBeInTheDocument())
+    // Same element throughout — relabeled and aria-disabled, never unmounted,
+    // so the clicker's focus doesn't drop to <body>.
+    expect(screen.getByRole("button", { name: "Cancelled" })).toHaveAttribute("aria-disabled", "true")
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
   })
 

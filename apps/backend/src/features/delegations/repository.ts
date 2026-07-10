@@ -211,7 +211,12 @@ export const DelegatedTaskRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
-  /** CAS `claimed|running → completed`, token-guarded; links the result message when given. */
+  /**
+   * CAS `claimed|running → completed`, token-guarded; links the result message
+   * when given. Terminal transitions clear `status_note` (here, cancel, expire —
+   * `fail` overwrites it with the failure reason) so a stale progress note can
+   * never render under a terminal badge on the card.
+   */
   async complete(
     db: Querier,
     params: { workspaceId: string; id: string; claimTokenHash: string; resultMessageId: string | null }
@@ -220,6 +225,7 @@ export const DelegatedTaskRepository = {
       UPDATE delegated_tasks SET
         status = ${DelegationStatuses.COMPLETED},
         result_message_id = ${params.resultMessageId},
+        status_note = NULL,
         status_changed_at = NOW(),
         updated_at = NOW()
       WHERE id = ${params.id}
@@ -267,6 +273,7 @@ export const DelegatedTaskRepository = {
     const result = await db.query<DelegatedTaskRow>(sql`
       UPDATE delegated_tasks SET
         status = ${DelegationStatuses.CANCELLED},
+        status_note = NULL,
         status_changed_at = NOW(),
         updated_at = NOW()
       WHERE id = ${params.id}
@@ -288,6 +295,7 @@ export const DelegatedTaskRepository = {
     const result = await db.query<DelegatedTaskRow>(sql`
       UPDATE delegated_tasks SET
         status = ${DelegationStatuses.EXPIRED},
+        status_note = NULL,
         status_changed_at = NOW(),
         updated_at = NOW()
       WHERE status IN (${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING})

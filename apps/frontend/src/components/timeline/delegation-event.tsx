@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Check, ChevronDown, ChevronRight, Copy, Loader2, TerminalSquare } from "lucide-react"
 import {
+  DELEGATION_TERMINAL_STATUSES,
   DelegationStatuses,
   type DelegationCreatedEventPayload,
   type DelegationStatus,
@@ -36,12 +37,7 @@ const STATUS_LABEL: Record<DelegationStatus, string> = {
   expired: "Expired",
 }
 
-const TERMINAL: ReadonlySet<DelegationStatus> = new Set([
-  DelegationStatuses.COMPLETED,
-  DelegationStatuses.FAILED,
-  DelegationStatuses.CANCELLED,
-  DelegationStatuses.EXPIRED,
-])
+const TERMINAL: ReadonlySet<DelegationStatus> = new Set(DELEGATION_TERMINAL_STATUSES)
 
 /**
  * Compile the card's payload into one paste-ready prompt for a local agent —
@@ -126,8 +122,15 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
     }
   }
 
+  // Cancelled keeps the SAME button element relabeled (the follow-up card's
+  // pattern): the clicker's focus stays on it instead of dropping to <body>,
+  // and aria-live announces the flip. Other terminal statuses hide Cancel —
+  // a "Cancelled" label under a Completed/Failed/Expired card would lie.
+  const cancelled = status === DelegationStatuses.CANCELLED
+  const showCancelSlot = !terminal || cancelled
   let cancelIcon: ReactNode = null
   if (cancelling) cancelIcon = <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+  else if (cancelled) cancelIcon = <Check className="h-3 w-3" aria-hidden="true" />
 
   return (
     <div className="px-3 sm:px-6 py-1.5">
@@ -185,19 +188,20 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
               )}
               Copy prompt
             </button>
-            {!terminal && (
+            {showCancelSlot && (
               <button
                 type="button"
                 onClick={handleCancel}
-                aria-disabled={cancelling}
+                aria-disabled={cancelled || cancelling}
                 aria-busy={cancelling}
+                aria-live="polite"
                 className={cn(
                   "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors",
-                  cancelling ? "cursor-default" : "hover:bg-muted hover:text-foreground"
+                  cancelled || cancelling ? "cursor-default" : "hover:bg-muted hover:text-foreground"
                 )}
               >
                 {cancelIcon}
-                Cancel
+                {cancelled ? "Cancelled" : "Cancel"}
               </button>
             )}
           </div>

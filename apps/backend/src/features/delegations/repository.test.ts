@@ -203,6 +203,8 @@ describe("DelegatedTaskRepository.markCancelled", () => {
     expect(captured.values).toContain(DelegationStatuses.CLAIMED)
     expect(captured.values).toContain(DelegationStatuses.RUNNING)
     expect(captured.values).toContain("stream_1")
+    // Terminal transition: the stale progress note must not survive onto the card.
+    expect(captured.text).toContain("status_note = NULL")
   })
 
   it("returns null when the row already reached a terminal state", async () => {
@@ -225,6 +227,7 @@ describe("DelegatedTaskRepository.expireLapsedClaims", () => {
     const expired = await DelegatedTaskRepository.expireLapsedClaims(db)
 
     expect(captured.text).toContain("claim_expires_at <= NOW()")
+    expect(captured.text).toContain("status_note = NULL")
     expect(captured.values).toContain(DelegationStatuses.CLAIMED)
     expect(captured.values).toContain(DelegationStatuses.RUNNING)
     expect(expired.map((d) => d.id)).toEqual(["dlg_1", "dlg_2"])
