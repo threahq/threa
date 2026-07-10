@@ -456,7 +456,7 @@ function BoardLensMenu({
 }) {
   const [open, setOpen] = useState(false)
   const { search } = useLocation()
-  const { updatePreference } = usePreferences()
+  const { preferences, updatePreferences } = usePreferences()
   const current = BOARD_LENS_DEFS[lens]
   const CurrentIcon = current.icon
 
@@ -475,6 +475,11 @@ function BoardLensMenu({
   }
   const activeViewId = views?.find((view) => isViewActive(view, selection))?.id ?? null
 
+  // When a saved view is the board home (and still resolves), no plain lens is
+  // "home" — the pin fill belongs to that view's row, not a lens.
+  const homeViewId = preferences?.boardDefaultViewId ?? null
+  const homeViewActive = !!homeViewId && !!views?.some((view) => view.id === homeViewId)
+
   const content = (
     <>
       <nav aria-label="Board lens" className="py-1">
@@ -482,7 +487,7 @@ function BoardLensMenu({
           const def = BOARD_LENS_DEFS[value]
           const Icon = def.icon
           const selected = value === lens && activeViewId === null
-          const isHome = value === homeLens
+          const isHome = !homeViewActive && value === homeLens
           return (
             <div
               key={value}
@@ -504,12 +509,13 @@ function BoardLensMenu({
                 </span>
                 {selected && <Check className="mt-1 h-4 w-4 shrink-0" />}
               </Link>
-              {/* Pin this lens as the board home (bare `/board`) — the same write the
-                  appearance-settings radio does, placed where lenses are picked. Filled
-                  when it's the current home; silent per INV-63 (the fill is the signal). */}
+              {/* Pin this lens as the board home (bare `/board`) — mirrors the
+                  appearance-settings radio, placed where lenses are picked. Also
+                  clears any saved-view home so the landing actually lands here.
+                  Filled when current home; silent per INV-63 (the fill is the signal). */}
               <button
                 type="button"
-                onClick={() => void updatePreference("boardDefaultLens", value)}
+                onClick={() => void updatePreferences({ boardDefaultLens: value, boardDefaultViewId: null })}
                 aria-pressed={isHome}
                 aria-label={isHome ? `${def.label} is your board home` : `Set ${def.label} as board home`}
                 className={cn(

@@ -83,6 +83,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "boardCardCollapseToHeight",
     "boardCardCollapseThreshold",
     "boardDefaultLens",
+    "boardDefaultViewId",
     "voiceTranscriptionModel",
     "voicePolishLevel",
     "voiceSteeringWords",

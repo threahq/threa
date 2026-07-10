@@ -102,6 +102,9 @@ const updatePreferencesSchema = z.object({
     .max(BOARD_CARD_COLLAPSE_THRESHOLD_MAX)
     .optional(),
   boardDefaultLens: z.enum(BOARD_LENSES).optional(),
+  // A saved board view id (prefixed ULID) or null to clear. Existence isn't
+  // checked here — a stale id degrades to the default lens client-side.
+  boardDefaultViewId: z.string().max(64).nullable().optional(),
   // Model id like "elevenlabs:scribe-v2-realtime". Validated against the model
   // registry server-side when a session opens; this layer only bounds length.
   voiceTranscriptionModel: z.string().max(100).nullable().optional(),

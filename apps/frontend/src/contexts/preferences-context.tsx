@@ -51,6 +51,9 @@ interface PreferencesContextValue {
     key: K,
     value: UpdateUserPreferencesInput[K]
   ) => Promise<void>
+  /** Write several keys in one request — use when two fields must move together
+   *  (e.g. setting the board home lens must also clear `boardDefaultViewId`). */
+  updatePreferences: (input: UpdateUserPreferencesInput) => Promise<void>
   updateAccessibility: (updates: Partial<AccessibilityPreferences>) => Promise<void>
   updateKeyboardShortcut: (actionId: string, keyBinding: string) => Promise<void>
   resetKeyboardShortcut: (actionId: string) => Promise<void>
@@ -169,6 +172,13 @@ export function PreferencesProvider({ workspaceId, children }: PreferencesProvid
     [mutation]
   )
 
+  const updatePreferences = useCallback(
+    async (input: UpdateUserPreferencesInput) => {
+      await mutation.mutateAsync(input)
+    },
+    [mutation]
+  )
+
   const updateAccessibility = useCallback(
     async (updates: Partial<AccessibilityPreferences>) => {
       await mutation.mutateAsync({ accessibility: updates })
@@ -204,6 +214,7 @@ export function PreferencesProvider({ workspaceId, children }: PreferencesProvid
       resolvedTheme,
       isLoading: mutation.isPending,
       updatePreference,
+      updatePreferences,
       updateAccessibility,
       updateKeyboardShortcut,
       resetKeyboardShortcut,
@@ -214,6 +225,7 @@ export function PreferencesProvider({ workspaceId, children }: PreferencesProvid
       resolvedTheme,
       mutation.isPending,
       updatePreference,
+      updatePreferences,
       updateAccessibility,
       updateKeyboardShortcut,
       resetKeyboardShortcut,

@@ -69,6 +69,20 @@ describe("updatePreferencesSchema unreadOpenPosition", () => {
   })
 })
 
+describe("updatePreferencesSchema boardDefaultViewId", () => {
+  it("accepts a view id", () => {
+    expect(updatePreferencesSchema.parse({ boardDefaultViewId: "bview_1" }).boardDefaultViewId).toBe("bview_1")
+  })
+
+  it("accepts null to clear the default view", () => {
+    expect(updatePreferencesSchema.parse({ boardDefaultViewId: null }).boardDefaultViewId).toBeNull()
+  })
+
+  it("rejects an over-long id", () => {
+    expect(updatePreferencesSchema.safeParse({ boardDefaultViewId: "x".repeat(65) }).success).toBe(false)
+  })
+})
+
 describe("updatePreferencesSchema board card collapse settings", () => {
   it("accepts valid board card collapse settings", () => {
     const parsed = updatePreferencesSchema.parse({

@@ -38,6 +38,8 @@ import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardComposer } from "@/components/board/board-composer"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
+import { boardHomeRedirectHref } from "@/components/board/board-saved-views"
+import { useBoardViews } from "@/hooks/use-board-views"
 import { isBoardFiltered } from "@/lib/board/filter-state"
 import {
   BOARD_SCOPE_PARAM,
@@ -169,7 +171,18 @@ export function BoardPage() {
   const location = useLocation()
   const preferences = usePreferencesOptional()
   const homeLens = preferences?.preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
+  const defaultViewId = preferences?.preferences?.boardDefaultViewId ?? null
+  // Already mounted deeper (the lens menu), so this adds no fetch — it just lets
+  // the landing resolve a saved-view home before the page renders.
+  const { data: boardViews } = useBoardViews(workspaceId ?? "")
   if (!workspaceId) return null
+  // Board home is a saved view: only the untouched `/board` entry bounces to it
+  // (an explicit filtered deep-link is never hijacked); a stale/deleted id falls
+  // through to the plain home lens below.
+  if (lensParam === undefined && location.search === "") {
+    const redirect = boardHomeRedirectHref(workspaceId, defaultViewId, boardViews, homeLens)
+    if (redirect) return <Navigate to={redirect} replace />
+  }
   if (lensParam === homeLens || (lensParam !== undefined && !VALID_LENSES.has(lensParam))) {
     return <Navigate to={{ pathname: `/w/${workspaceId}/board`, search: location.search }} replace />
   }

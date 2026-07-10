@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react"
+import { useParams } from "react-router-dom"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
+import { useBoardViews } from "@/hooks/use-board-views"
+import { summarizeBoardView } from "@/components/board/board-saved-views"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import {
   THEME_OPTIONS,
@@ -76,8 +79,72 @@ const LABEL_REMOVE_DESCRIPTIONS: Record<LabelRemoveOnMove, string> = {
   never: "Leave labels alone — a moved stream keeps every label it had",
 }
 
+/**
+ * Board home: the lens or saved view the bare `/board` lands on. Selecting a lens
+ * clears any saved-view home (so the landing actually lands there); selecting a
+ * view leaves the lens as the fallback for a stale/deleted view. Mirrors the pins
+ * in the board's own lens menu.
+ */
+function BoardHomeSection({ workspaceId }: { workspaceId: string }) {
+  const { preferences, updatePreferences } = usePreferences()
+  const { data: views } = useBoardViews(workspaceId)
+  const savedViews = views ?? []
+  const boardDefaultLens = preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
+  const defaultViewId = preferences?.boardDefaultViewId ?? null
+  // A default-view id that no longer resolves reads as "no view" — land on the lens.
+  const activeViewId = defaultViewId && savedViews.some((v) => v.id === defaultViewId) ? defaultViewId : null
+  const value = activeViewId ? `view:${activeViewId}` : `lens:${boardDefaultLens}`
+
+  const onChange = (next: string) => {
+    if (next.startsWith("view:")) void updatePreferences({ boardDefaultViewId: next.slice("view:".length) })
+    else void updatePreferences({ boardDefaultLens: next.slice("lens:".length) as BoardLens, boardDefaultViewId: null })
+  }
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-medium">Board home</h3>
+        <p className="text-sm text-muted-foreground">
+          The lens or saved view the board opens on. Every lens and view still has its own URL — this only picks where
+          you land
+        </p>
+      </div>
+      <RadioGroup value={value} onValueChange={onChange} className="space-y-3">
+        {BOARD_LENSES.map((option) => (
+          <div key={option} className="flex items-start space-x-3">
+            <RadioGroupItem value={`lens:${option}`} id={`board-home-lens-${option}`} className="mt-1" />
+            <div className="grid gap-1">
+              <Label htmlFor={`board-home-lens-${option}`} className="cursor-pointer">
+                {BOARD_LENS_DEFS[option].label}
+              </Label>
+              <p className="text-sm text-muted-foreground">{BOARD_LENS_DEFS[option].description}</p>
+            </div>
+          </div>
+        ))}
+        {savedViews.length > 0 && (
+          <>
+            <p className="pt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Saved views</p>
+            {savedViews.map((view) => (
+              <div key={view.id} className="flex items-start space-x-3">
+                <RadioGroupItem value={`view:${view.id}`} id={`board-home-view-${view.id}`} className="mt-1" />
+                <div className="grid gap-1">
+                  <Label htmlFor={`board-home-view-${view.id}`} className="cursor-pointer">
+                    {view.name}
+                  </Label>
+                  <p className="text-sm text-muted-foreground">{summarizeBoardView(view)}</p>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </RadioGroup>
+    </section>
+  )
+}
+
 export function AppearanceSettings() {
   const { preferences, updatePreference } = usePreferences()
+  const { workspaceId } = useParams<{ workspaceId: string }>()
 
   const theme = preferences?.theme ?? "system"
   const messageDisplay = preferences?.messageDisplay ?? "comfortable"
@@ -91,7 +158,6 @@ export function AppearanceSettings() {
   const boardCardCollapseEnabled = preferences?.boardCardCollapseEnabled ?? false
   const boardCardCollapseAtHeight = preferences?.boardCardCollapseAtHeight ?? DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT
   const boardCardCollapseToHeight = preferences?.boardCardCollapseToHeight ?? DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT
-  const boardDefaultLens = preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
 
   // Local input state so users can type freely without each keystroke
   // hitting the preferences mutation. We commit on blur / Enter only.
@@ -545,31 +611,7 @@ export function AppearanceSettings() {
 
       <Separator />
 
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">Board home</h3>
-          <p className="text-sm text-muted-foreground">
-            The lens the board opens on. Every lens still has its own view — this only picks where you land
-          </p>
-        </div>
-        <RadioGroup
-          value={boardDefaultLens}
-          onValueChange={(value) => updatePreference("boardDefaultLens", value as BoardLens)}
-          className="space-y-3"
-        >
-          {BOARD_LENSES.map((option) => (
-            <div key={option} className="flex items-start space-x-3">
-              <RadioGroupItem value={option} id={`board-lens-${option}`} className="mt-1" />
-              <div className="grid gap-1">
-                <Label htmlFor={`board-lens-${option}`} className="cursor-pointer">
-                  {BOARD_LENS_DEFS[option].label}
-                </Label>
-                <p className="text-sm text-muted-foreground">{BOARD_LENS_DEFS[option].description}</p>
-              </div>
-            </div>
-          ))}
-        </RadioGroup>
-      </section>
+      {workspaceId && <BoardHomeSection workspaceId={workspaceId} />}
 
       <Separator />
 
