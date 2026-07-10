@@ -285,17 +285,19 @@ export function StreamContextRow({
       // Primary lands on the delegation card in the timeline (sourceMessageId
       // carries the created event's id) — the card has the full prompt, Copy,
       // Cancel, and the result link, so the panel row doesn't duplicate them.
+      // The join can come back null (event missing); render the row inert then
+      // rather than presenting a focusable button whose click silently no-ops.
       const cardTarget = item.sourceMessageId
       jumpTarget = null // primary already jumps to the card
-      primaryAction = (
+      primaryAction = cardTarget ? (
         <button
           type="button"
-          onClick={() => cardTarget && onJumpToMessage(cardTarget)}
+          onClick={() => onJumpToMessage(cardTarget)}
           className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="sr-only">Go to delegation {primaryText}</span>
         </button>
-      )
+      ) : null
       break
     }
     case "thread": {

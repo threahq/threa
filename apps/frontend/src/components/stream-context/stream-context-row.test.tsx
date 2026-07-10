@@ -124,6 +124,12 @@ describe("StreamContextRow delegation", () => {
     expect(screen.getByText("Open")).toBeInTheDocument()
     expect(screen.getByText("Delegated task")).toBeInTheDocument()
   })
+
+  it("renders inert (no dead-click button) when the created event id is missing", () => {
+    renderRow(delegationItem({ sourceMessageId: null }))
+    expect(screen.getByText("Add rate limiting")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /go to delegation/i })).not.toBeInTheDocument()
+  })
 })
 
 describe("StreamContextRow link", () => {

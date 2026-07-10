@@ -61,13 +61,14 @@ export function StreamContextPanel({
   onOpenGallery,
 }: StreamContextPanelProps) {
   const events = useStreamEvents(streamId)
-  const isLoading = events === undefined
   // Delegations come from the authoritative list endpoint, not the loaded
   // window (statuses live in patch events — see delegationContextItems); the
   // query key is invalidated by stream-sync on delegation socket events, so an
-  // open panel tracks transitions live. The panel doesn't block on it — rows
-  // appear when the fetch lands.
+  // open panel tracks transitions live. A populated feed doesn't block on the
+  // fetch (rows appear when it lands), but the empty/skeleton decision does —
+  // otherwise a delegations-only stream flashes "Nothing here yet" first.
   const delegationsQuery = useStreamDelegations(workspaceId, streamId)
+  const delegationsPending = delegationsQuery.isPending
   const delegationItems = useMemo(
     () => delegationContextItems(delegationsQuery.data?.delegations ?? []),
     [delegationsQuery.data]
@@ -96,9 +97,13 @@ export function StreamContextPanel({
 
   // A previously-selected filter can empty out as the live event set changes
   // (e.g. a thread's last reply scrolls out of the loaded window); fall back to
-  // "all" so the body never strands the user on an empty filter.
-  const effectiveFilter: Filter = filter !== "all" && counts[filter] === 0 ? "all" : filter
+  // "all" so the body never strands the user on an empty filter. The delegation
+  // count isn't known until its query settles, so a `?context=delegation` deep
+  // link holds the requested view instead of flickering All → Delegations.
+  const filterSettled = filter !== "delegation" || !delegationsPending
+  const effectiveFilter: Filter = filter !== "all" && filterSettled && counts[filter] === 0 ? "all" : filter
   const visible = effectiveFilter === "all" ? items : items.filter((i) => i.category === effectiveFilter)
+  const isLoading = events === undefined || (delegationsPending && visible.length === 0)
 
   const chips: Array<{ value: Filter; label: string; count: number }> = [
     { value: "all", label: "All", count: total },
