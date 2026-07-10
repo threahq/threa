@@ -61,7 +61,13 @@ export function parsePermissionVerdict(text: string): PermissionVerdict | null {
   }
 }
 
-export function buildInstructions(permissionRelay: boolean): string {
+export function buildInstructions(permissionRelay: boolean, channelActive = true): string {
+  if (!channelActive) {
+    return (
+      `This Threa channel server is loaded as a plain MCP server — the current Claude session was not launched as a "${CHANNEL_SOURCE}" channel and is not linked to a Threa scratchpad. ` +
+      "The send and reply tools are inactive; do not call them."
+    )
+  }
   const lines = [
     `You are linked to a Threa scratchpad through the "${CHANNEL_SOURCE}" channel.`,
     "",
@@ -194,11 +200,13 @@ export class ChannelServer {
   private readonly tracer: TranscriptTracer
   private readonly carryOn: CarryOnController | undefined
   private readonly openPermissions = new Map<string, { cleanup: ReturnType<typeof setTimeout> }>()
+  private started = false
 
   constructor(
     private readonly config: RemoteSessionConfig,
     client: ThreaClient,
-    transport?: BotRuntimeTransport
+    transport?: BotRuntimeTransport,
+    channelActive = true
   ) {
     const capabilities: Record<string, unknown> = {
       experimental: { "claude/channel": {} },
@@ -209,7 +217,7 @@ export class ChannelServer {
     }
     this.mcp = new Server(
       { name: CHANNEL_SOURCE, version: "0.1.0" },
-      { capabilities, instructions: buildInstructions(config.permissionRelay) }
+      { capabilities, instructions: buildInstructions(config.permissionRelay, channelActive) }
     )
     this.session = new RemoteSession({
       config,
@@ -263,6 +271,7 @@ export class ChannelServer {
   }
 
   async start(): Promise<void> {
+    this.started = true
     await this.session.start()
   }
 
@@ -271,7 +280,10 @@ export class ChannelServer {
     this.carryOn?.stop()
     for (const [, open] of this.openPermissions) clearTimeout(open.cleanup)
     this.openPermissions.clear()
-    await this.session.shutdown()
+    // A never-started session has nothing linked — skipping its shutdown keeps
+    // plain-MCP teardown from writing an offline-presence row for an instance
+    // that never existed on the Threa side.
+    if (this.started) await this.session.shutdown()
   }
 
   /**
