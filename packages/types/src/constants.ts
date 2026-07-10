@@ -791,13 +791,14 @@ export function isInAppLinkContentType(contentType: LinkPreviewContentType): con
 
 /**
  * In-app link kinds that render as an inline chip inside the message body
- * (replacing the URL text) rather than a card below it. Their below-message
- * preview card is suppressed — the inline chip is the single surface. Memo and
- * conversation links keep their metadata card, so they are excluded.
+ * (replacing the URL text). Message and conversation links pair the inline chip
+ * with a below-message card (the chip is a compact reference, the card the rich
+ * preview); a stream link's card is suppressed (the chip says it all). Only memo
+ * links have no inline chip — they are card-only — so they are excluded here.
  */
-export type InlineChipContentType = Exclude<InAppLinkContentType, "memo_link" | "conversation_link">
+export type InlineChipContentType = Exclude<InAppLinkContentType, "memo_link">
 export const INLINE_CHIP_CONTENT_TYPES = IN_APP_LINK_CONTENT_TYPES.filter(
-  (t): t is InlineChipContentType => t !== "memo_link" && t !== "conversation_link"
+  (t): t is InlineChipContentType => t !== "memo_link"
 )
 
 export function isInlineChipContentType(contentType: LinkPreviewContentType): contentType is InlineChipContentType {

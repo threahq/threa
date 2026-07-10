@@ -3,10 +3,14 @@ import { ReactNodeViewRenderer } from "@tiptap/react"
 import { InAppLinkView } from "./in-app-link-view"
 
 export interface InAppLinkAttrs {
-  /** Canonical in-app URL of the referenced stream or message. */
+  /** Canonical in-app URL of the referenced stream, message, or conversation. */
   url: string
-  /** Target stream id, parsed from the URL — the name-resolution key. */
-  streamId: string
+  /**
+   * Target stream id, parsed from the URL — the name-resolution key for
+   * stream/message links. Null for a conversation link (it has no `/s/:id`
+   * permalink); the node-view resolves a conversation by its URL instead.
+   */
+  streamId: string | null
   /** Target message id when the link points at a message, else null. */
   messageId: string | null
   /** Resolved name cached at insert time so the chip renders before hydration. */
@@ -16,10 +20,10 @@ export interface InAppLinkAttrs {
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     inAppLink: {
-      /** Insert an inline chip for an in-app stream/message link. */
+      /** Insert an inline chip for an in-app stream/message/conversation link. */
       insertInAppLink: (attrs: {
         url: string
-        streamId: string
+        streamId?: string | null
         messageId?: string | null
         name?: string
       }) => ReturnType
@@ -28,8 +32,8 @@ declare module "@tiptap/core" {
 }
 
 /**
- * Inline atom node that replaces an in-app stream/message URL with a compact
- * chip (the name instead of a raw link). Mirrors the inline-atom shape of
+ * Inline atom node that replaces an in-app stream/message/conversation URL with a
+ * compact chip (the name instead of a raw link). Mirrors the inline-atom shape of
  * `MemoEmbedExtension`. The wire format stays a normal markdown link
  * `[name](url)` (see `serializeToMarkdown`) so external/API consumers get a real
  * navigable URL and the timeline renders the same chip from the link alone —
@@ -99,7 +103,7 @@ export const InAppLinkExtension = Node.create({
                 type: this.name,
                 attrs: {
                   url: attrs.url,
-                  streamId: attrs.streamId,
+                  streamId: attrs.streamId ?? null,
                   messageId: attrs.messageId ?? null,
                   name: attrs.name ?? "",
                 },

@@ -126,6 +126,21 @@ describe("MarkdownContent — inline in-app link chip", () => {
     expect(resolve).not.toHaveBeenCalled()
   })
 
+  it("renders an in-app conversation link as an inline chip named by its topic, not the link text", async () => {
+    seedStreams([])
+    const resolve = vi
+      .spyOn(linkPreviewsApi, "resolveInAppLinkByUrl")
+      .mockResolvedValue({ kind: "conversation", accessTier: "full", topicSummary: "GPU budget for Q3" })
+
+    const url = `${origin}/w/ws_1/board?panel=conv:conv_1`
+    renderMarkdown(`see [whatever](${url}) here`)
+
+    await waitFor(() => expect(screen.getByRole("link", { name: "GPU budget for Q3" })).toBeInTheDocument())
+    expect(screen.getByRole("link", { name: "GPU budget for Q3" })).toHaveAttribute("href", url)
+    expect(screen.queryByText("whatever")).not.toBeInTheDocument()
+    expect(resolve).toHaveBeenCalledWith("ws_1", url)
+  })
+
   it("leaves a plain web link as an anchor showing its own link text", () => {
     seedStreams([])
     renderMarkdown("read [the blog](https://example.com/post)")

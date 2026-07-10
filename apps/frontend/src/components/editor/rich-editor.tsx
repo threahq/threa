@@ -193,17 +193,18 @@ function emojiAtomToEditableText(node: JSONContent, toEmoji?: (shortcode: string
 }
 
 /**
- * Convert a bare in-app stream/message URL into an inline chip, replacing the
- * link text. Shared by the clipboard `paste` path and the Gboard/SwiftKey
- * `beforeinput` path so mobile clipboard-bar pastes chip the same as desktop.
- * Returns whether a chip was inserted.
+ * Convert a bare in-app stream/message/conversation URL into an inline chip,
+ * replacing the link text. Shared by the clipboard `paste` path and the
+ * Gboard/SwiftKey `beforeinput` path so mobile clipboard-bar pastes chip the same
+ * as desktop. Returns whether a chip was inserted. A conversation link carries no
+ * streamId — the node-view resolves it by URL.
  */
 function tryInsertInAppLinkChip(editor: import("@tiptap/react").Editor, text: string): boolean {
   const ref = classifyDraftLink(text.trim())
-  if (!ref || (ref.kind !== "stream" && ref.kind !== "message")) return false
+  if (!ref || (ref.kind !== "stream" && ref.kind !== "message" && ref.kind !== "conversation")) return false
   editor.commands.insertInAppLink({
     url: ref.url,
-    streamId: ref.streamId,
+    streamId: ref.kind === "conversation" ? null : ref.streamId,
     messageId: ref.kind === "message" ? ref.messageId : null,
   })
   return true
