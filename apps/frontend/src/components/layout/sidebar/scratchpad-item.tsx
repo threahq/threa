@@ -169,8 +169,9 @@ export function ScratchpadItem({
             onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
             className={cn(
               "flex items-stretch rounded-lg text-sm transition-colors",
+              // The tinted background means exactly one thing: "you are here" —
+              // see StreamItem; unread is the bold title + urgency strip.
               isActive ? "bg-primary/10" : "hover:bg-muted/50",
-              hasUnread && !isActive && "bg-primary/5 hover:bg-primary/10",
               isTouchInput && actions.length > 0 && "select-none",
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
