@@ -355,7 +355,7 @@ const saveMemoInput = {
   workspaceId: WORKSPACE_ID,
   streamId: STREAM_ID,
   sessionId: "agsess_1",
-  accessibleStreamIds: [STREAM_ID],
+  sourceStreamIds: [STREAM_ID],
   title: "Deploys only on Fridays after the smoke suite",
   abstract: "The team deploys only on Fridays, and only after the smoke suite passes.",
   keyPoints: ["Smoke suite gates the deploy"],
@@ -444,29 +444,40 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
     expect(withTx).not.toHaveBeenCalled()
   })
 
-  it("drops a cited source id outside the invoking user's accessible streams (INV-8)", async () => {
+  it("scopes the source-message fetch to the turn's stream family (INV-8/INV-62)", async () => {
+    const { service } = setupSaveMemo()
+    const findByIdsInStreams = spyOn(MessageRepository, "findByIdsInStreams").mockResolvedValue(fakeMessages())
+
+    await service.saveMemo({ ...saveMemoInput, sourceStreamIds: [STREAM_ID], sourceMessageIds: ["msg_1", "msg_2"] })
+
+    // The fetch is bounded to the passed stream family, never the whole workspace.
+    expect(findByIdsInStreams).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, ["msg_1", "msg_2"], [STREAM_ID])
+  })
+
+  it("drops a cited source id outside the turn's stream family (INV-62 — no access widening)", async () => {
     const { service, insert } = setupSaveMemo()
-    // Only msg_1 resolves within the accessible streams; msg_evil (another
-    // workspace / inaccessible stream) is not returned by the scoped fetch.
+    // Only msg_1 belongs to the turn's stream; msg_wide (a broader stream the user
+    // can also see) is not returned by the stream-family-scoped fetch, so it can't
+    // widen the memo's inherited retrieval access.
     spyOn(MessageRepository, "findByIdsInStreams").mockResolvedValue(
       new Map([["msg_1", { id: "msg_1", authorId: "usr_1", authorType: "user" } as never]])
     )
 
-    const result = await service.saveMemo({ ...saveMemoInput, sourceMessageIds: ["msg_1", "msg_evil"] })
+    const result = await service.saveMemo({ ...saveMemoInput, sourceMessageIds: ["msg_1", "msg_wide"] })
 
     expect(result).toMatchObject({ ok: true, deduped: false })
-    // The foreign id is never persisted; only the resolved id anchors the memo.
+    // The out-of-family id is never persisted; only the in-stream id anchors the memo.
     expect(insert).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ sourceMessageId: "msg_1", sourceMessageIds: ["msg_1"], participantIds: ["usr_1"] })
     )
   })
 
-  it("rejects when none of the cited source messages are accessible (INV-8)", async () => {
+  it("rejects when no cited source message belongs to the turn's stream (INV-62)", async () => {
     const { service, insert } = setupSaveMemo()
     spyOn(MessageRepository, "findByIdsInStreams").mockResolvedValue(new Map())
 
-    const result = await service.saveMemo({ ...saveMemoInput, sourceMessageIds: ["msg_foreign"] })
+    const result = await service.saveMemo({ ...saveMemoInput, sourceMessageIds: ["msg_elsewhere"] })
 
     expect(result).toEqual({ ok: false, reason: "no_source_messages" })
     expect(insert).not.toHaveBeenCalled()

@@ -97,12 +97,17 @@ export interface SaveMemoParams {
   streamId: string
   sessionId: string | null
   /**
-   * The invoking user's accessible stream ids. `sourceMessageIds` is LLM-supplied
-   * (untrusted), so source messages are resolved scoped to these streams — a cited
-   * id from another workspace or an inaccessible stream is dropped, never persisted
-   * or folded into `participant_ids` (INV-8/INV-62, matching `react_to_message`).
+   * The turn's own stream family — the addressed stream and its effective root.
+   * `sourceMessageIds` is LLM-supplied, so source messages are resolved scoped to
+   * these streams: a cited id outside this family (another workspace, an
+   * inaccessible stream, or a *broader* stream than the one the agent is working
+   * in) is dropped. This binds the memo's retrieval access — which memos inherit
+   * from their source stream (INV-62) — to exactly the stream that produced it,
+   * so an agent memo is never visible to a wider audience than the passive
+   * pipeline would give the same conversation. Never persisted / folded into
+   * `participant_ids` when it fails the scope.
    */
-  accessibleStreamIds: string[]
+  sourceStreamIds: string[]
   title: string
   abstract: string
   keyPoints: string[]
@@ -643,7 +648,7 @@ export class MemoService implements MemoServiceLike {
       workspaceId,
       streamId,
       sessionId,
-      accessibleStreamIds,
+      sourceStreamIds,
       title,
       abstract,
       keyPoints,
@@ -672,22 +677,24 @@ export class MemoService implements MemoServiceLike {
     const newMemoId = memoId()
 
     return withTransaction(this.pool, async (client) => {
-      // Resolve the cited source messages scoped to the invoking user's accessible
-      // streams (INV-8/INV-62): `sourceMessageIds` is LLM-supplied, so an id from
-      // another workspace or a stream the user can't see must never be persisted
-      // as `source_message_id` or fold its author into `participant_ids`. Only the
-      // ids that actually resolve survive — matching `react_to_message`'s gate.
+      // Resolve the cited source messages scoped to the turn's own stream family
+      // (INV-8/INV-62): `sourceMessageIds` is LLM-supplied, so an id outside this
+      // family — another workspace, an inaccessible stream, or a broader stream
+      // than the one the agent is working in — must never be persisted as
+      // `source_message_id` (it would widen the memo's inherited retrieval access
+      // beyond the producing stream) or fold its author into `participant_ids`.
+      // Only the ids that resolve within the family survive.
       const sourceMessages = await MessageRepository.findByIdsInStreams(
         client,
         workspaceId,
         sourceMessageIds,
-        accessibleStreamIds
+        sourceStreamIds
       )
       const resolvedSourceIds = sourceMessageIds.filter((id) => sourceMessages.has(id))
       if (resolvedSourceIds.length === 0) {
-        // None of the cited ids are visible to this user — no valid anchor, so
-        // don't invent one (would violate the CHECK / persist a foreign id).
-        logger.info({ streamId, sourceMessageIds }, "save_memo: no accessible source messages — rejecting")
+        // No cited id belongs to the turn's stream — no valid anchor, so don't
+        // invent one (would violate the CHECK / mis-scope the memo).
+        logger.info({ streamId, sourceMessageIds }, "save_memo: no in-stream source messages — rejecting")
         return { ok: false, reason: "no_source_messages" }
       }
       const participantIds = Array.from(

@@ -86,12 +86,14 @@ export const TOOL_CATEGORIES_BY_NAME = {
   search_attachments: ["workspace"],
   read_attachment: ["workspace"],
   describe_memo: ["workspace"],
-  // Saving a memo promotes content the agent already sees into workspace-wide
-  // shared memory (retrievable outside this stream), so — unlike the stream-local
-  // brief/follow-up tools that ride `messaging` — it is a `workspace` operation:
-  // a scratchpad that denies workspace tools must not let its companion publish
-  // its content into cross-stream retrieval. (The passive GAM pipeline is gated
-  // separately by the stream's memory_mode.)
+  // Saving a memo is a write into the workspace knowledge layer — symmetric with
+  // `describe_memo`'s read of it — so it takes the `workspace` grant: a scratchpad
+  // that denies workspace tools opts out of the knowledge layer entirely (no memo
+  // reads, no memo writes). This gates tool AVAILABILITY, not memo visibility: a
+  // saved memo inherits its retrieval access from its source stream (INV-62) like
+  // every other memo, and `save_memo` anchors it to the turn's own stream family
+  // (service `sourceStreamIds`), so it is never retrievable wider than the stream
+  // that produced it. (Passive capture is gated separately by memory_mode.)
   save_memo: ["workspace"],
 
   // GitHub reads are public-web-class egress (a structured read_url), so they

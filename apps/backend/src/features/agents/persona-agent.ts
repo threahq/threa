@@ -236,7 +236,7 @@ export interface PersonaAgentDeps {
     workspaceId: string
     streamId: string
     sessionId: string | null
-    accessibleStreamIds: string[]
+    sourceStreamIds: string[]
     title: string
     abstract: string
     keyPoints: string[]
@@ -824,6 +824,12 @@ export class PersonaAgent {
         // Memo saving for the save_memo tool (roadmap 6.2), bound to this
         // persona's stream + session. The write scopes dedup and the capture
         // event to the addressed stream, and records the session as provenance.
+        // A saved memo may only anchor to messages in the turn's own stream
+        // family — the addressed stream and its effective root (threads inherit
+        // the root). This binds the memo's inherited retrieval access (INV-62) to
+        // the producing stream, so it can't be widened by citing a message in a
+        // broader stream the user also happens to see.
+        const saveMemoStreamIds = Array.from(new Set([session.streamId, resolveBriefStreamId(stream)]))
         const saveMemoDeps: import("./tools/tool-deps").SaveMemoToolDeps | undefined = saveMemo
           ? {
               saveMemo: (params) =>
@@ -831,7 +837,7 @@ export class PersonaAgent {
                   workspaceId,
                   streamId: session.streamId,
                   sessionId: session.id,
-                  accessibleStreamIds: agentContext.accessibleStreamIds ? [...agentContext.accessibleStreamIds] : [],
+                  sourceStreamIds: saveMemoStreamIds,
                   ...params,
                 }),
             }
