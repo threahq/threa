@@ -83,6 +83,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
       AgentToolNames.UPDATE_FOLLOW_UP,
       AgentToolNames.UPDATE_STREAM_BRIEF,
       AgentToolNames.DELEGATE_TASK,
+      AgentToolNames.SAVE_MEMO,
       AgentToolNames.SEARCH_ATTACHMENTS,
       AgentToolNames.READ_ATTACHMENT,
       AgentToolNames.GITHUB_REPOS,

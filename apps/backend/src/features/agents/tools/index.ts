@@ -12,6 +12,8 @@ export {
   type FollowUpSummary,
   type UpdateStreamBriefToolDeps,
   type UpdateStreamBriefToolResult,
+  type SaveMemoToolDeps,
+  type SaveMemoToolResult,
 } from "./tool-deps"
 // Web + send tools live in @threa/agent-runtime (shared with the enclave).
 // Re-exported here so backend imports (`../tools`) keep working.
@@ -55,6 +57,7 @@ export { createCancelFollowUpTool, type CancelFollowUpInput } from "./cancel-fol
 export { createUpdateFollowUpTool, type UpdateFollowUpInput } from "./update-follow-up-tool"
 export { createUpdateStreamBriefTool, type UpdateStreamBriefInput } from "./update-stream-brief-tool"
 export { createDelegateTaskTool, type DelegateTaskInput } from "./delegate-task-tool"
+export { createSaveMemoTool, type SaveMemoInput } from "./save-memo-tool"
 export {
   createWorkspaceResearchTool,
   WORKSPACE_RESEARCH_TOOL_NAME,

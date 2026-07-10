@@ -7,6 +7,7 @@ import type {
   DelegateTaskToolDeps,
   FollowUpToolDeps,
   ReactionToolDeps,
+  SaveMemoToolDeps,
   UpdateStreamBriefToolDeps,
   WorkspaceToolDeps,
 } from "../tools/tool-deps"
@@ -27,6 +28,7 @@ import {
   createUpdateFollowUpTool,
   createUpdateStreamBriefTool,
   createDelegateTaskTool,
+  createSaveMemoTool,
   createWorkspaceResearchTool,
   createGithubReposTool,
   createGithubCommitsTool,
@@ -83,6 +85,12 @@ export interface ToolSetConfig {
    * triggered the turn (the brief resolves against that user's access).
    */
   delegation?: DelegateTaskToolDeps
+  /**
+   * Memo-save callback bound to the running persona/stream/session, gating the
+   * `save_memo` tool. Present only on the live companion turn (not the researcher
+   * sub-agent — it reads/searches, it never writes durable memory).
+   */
+  saveMemo?: SaveMemoToolDeps
   github?: GitHubToolDeps
   linear?: LinearToolDeps
   supportsVision?: boolean
@@ -107,6 +115,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     brief,
     briefVersion,
     delegation,
+    saveMemo,
     github,
     linear,
     supportsVision,
@@ -186,6 +195,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       ? createUpdateStreamBriefTool(brief, { currentVersion: briefVersion ?? 0 })
       : null,
     delegation && isToolEnabled(enabledTools, AgentToolNames.DELEGATE_TASK) ? createDelegateTaskTool(delegation) : null,
+    saveMemo && isToolEnabled(enabledTools, AgentToolNames.SAVE_MEMO) ? createSaveMemoTool(saveMemo) : null,
 
     // GitHub tools (workspace-scoped via installed GitHub App; read-only)
     github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_REPOS) ? createGithubReposTool(github) : null,

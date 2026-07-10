@@ -1,6 +1,11 @@
 import { sql, type Querier } from "../../db"
-import type { MemoType, KnowledgeType, MemoStatus } from "@threa/types"
-import { MEMO_KNOWLEDGE_TYPE_BOOST, MEMO_STREAM_TYPE_BOOST, MEMO_BOOST_DEFAULT } from "./config"
+import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind } from "@threa/types"
+import {
+  MEMO_KNOWLEDGE_TYPE_BOOST,
+  MEMO_STREAM_TYPE_BOOST,
+  MEMO_AUTHORED_BY_KIND_BOOST,
+  MEMO_BOOST_DEFAULT,
+} from "./config"
 
 /**
  * B2 structural boost expression, generated from the config maps (single
@@ -22,7 +27,8 @@ function buildBoostExpression(apply: boolean): ReturnType<typeof sql.raw> {
 
   const knowledge = caseFor("m.knowledge_type", MEMO_KNOWLEDGE_TYPE_BOOST)
   const stream = caseFor("COALESCE(msg_stream.type, conv_stream.type)", MEMO_STREAM_TYPE_BOOST)
-  return sql.raw(`(${knowledge}) * (${stream})`)
+  const authorship = caseFor("m.authored_by_kind", MEMO_AUTHORED_BY_KIND_BOOST)
+  return sql.raw(`(${knowledge}) * (${stream}) * (${authorship})`)
 }
 
 interface MemoRow {
@@ -85,6 +91,10 @@ export interface InsertMemoParams {
   parentMemoId?: string
   status?: MemoStatus
   version?: number
+  /** Defaults to `'pipeline'` (the passive extractor); `save_memo` sets `'agent'`. */
+  authoredByKind?: AuthoredByKind
+  /** The agent session that wrote this memo (agent authorship only). */
+  sourceSessionId?: string
 }
 
 export interface UpdateMemoParams {
@@ -474,7 +484,8 @@ export const MemoRepository = {
       INSERT INTO memos (
         id, workspace_id, memo_type, source_message_id, source_conversation_id,
         title, abstract, key_points, source_message_ids, participant_ids,
-        knowledge_type, tags, parent_memo_id, status, version
+        knowledge_type, tags, parent_memo_id, status, version,
+        authored_by_kind, source_session_id
       )
       VALUES (
         ${params.id},
@@ -491,7 +502,9 @@ export const MemoRepository = {
         ${params.tags ?? []},
         ${params.parentMemoId ?? null},
         ${params.status ?? "active"},
-        ${params.version ?? 1}
+        ${params.version ?? 1},
+        ${params.authoredByKind ?? "pipeline"},
+        ${params.sourceSessionId ?? null}
       )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)

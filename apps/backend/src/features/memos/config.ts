@@ -10,6 +10,7 @@ import {
   MEMO_KEY_POINTS_MAX,
   MEMO_TAGS_MAX,
   MEMO_TITLE_MAX_CHARS,
+  type AuthoredByKind,
   type KnowledgeType,
   type StreamType,
 } from "@threa/types"
@@ -99,6 +100,19 @@ export const MEMO_STREAM_TYPE_BOOST: Record<StreamType, number> = {
   dm: 1.0,
   thread: 1.0,
   system: 0.9,
+}
+
+/**
+ * Authorship boost (roadmap 6.2). An agent-authored memo (`save_memo`) ranks
+ * below an equivalent conversation-sourced one to damp self-reinforcement — a
+ * persona should not be able to inflate its own recall by writing memos it then
+ * retrieves. Structural (who wrote it), not editorial; single source of truth
+ * for the SQL `CASE` (INV-33), applied in the same outer boost stage as the
+ * knowledge/stream factors.
+ */
+export const MEMO_AUTHORED_BY_KIND_BOOST: Record<AuthoredByKind, number> = {
+  pipeline: 1.0,
+  agent: 0.9,
 }
 
 /** Neutral factor for any type not present in the maps above. */

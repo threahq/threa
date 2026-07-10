@@ -14,7 +14,15 @@ import { MessageFormatter } from "../../lib/ai/message-formatter"
 import type { EmbeddingServiceLike } from "./embedding-service"
 import { memoId, eventId } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import { MemoTypes, MemoStatuses, AuthorTypes, type MemosCapturedEventPayload } from "@threa/types"
+import {
+  MemoTypes,
+  MemoStatuses,
+  AuthorTypes,
+  AuthoredByKinds,
+  type KnowledgeType,
+  type MemosCapturedEventPayload,
+  type Memo as WireMemo,
+} from "@threa/types"
 import {
   MEMO_GEM_CONFIDENCE_FLOOR,
   MEMO_SINGLE_MESSAGE_AGE_GATE_MS,
@@ -76,8 +84,51 @@ interface MemoToCreate {
   parentMemoId?: string
 }
 
+/**
+ * An explicit "remember this" from a persona via the `save_memo` tool (roadmap
+ * 6.2). `streamId` is the stream the turn runs in — it scopes dedup and where
+ * the capture event lands. `sessionId` is provenance (the writing session), null
+ * when a caller writes outside a session. `sourceMessageIds` (≥1) anchors the
+ * memo to real messages so it satisfies the `memo_type = 'message'` source
+ * constraint and can point back at what the knowledge came from.
+ */
+export interface SaveMemoParams {
+  workspaceId: string
+  streamId: string
+  sessionId: string | null
+  /**
+   * The turn's own stream family — the addressed stream and its effective root.
+   * `sourceMessageIds` is LLM-supplied, so source messages are resolved scoped to
+   * these streams: a cited id outside this family (another workspace, an
+   * inaccessible stream, or a *broader* stream than the one the agent is working
+   * in) is dropped. This binds the memo's retrieval access — which memos inherit
+   * from their source stream (INV-62) — to exactly the stream that produced it,
+   * so an agent memo is never visible to a wider audience than the passive
+   * pipeline would give the same conversation. Never persisted / folded into
+   * `participant_ids` when it fails the scope.
+   */
+  sourceStreamIds: string[]
+  title: string
+  abstract: string
+  keyPoints: string[]
+  tags: string[]
+  knowledgeType: KnowledgeType
+  sourceMessageIds: string[]
+}
+
+/**
+ * `deduped: true` means an equivalent memo was already captured in this stream,
+ * so `memoId` points at that existing row and nothing new was written — the
+ * knowledge is retained either way, and the tool tells the model it's already
+ * remembered rather than stacking a near-duplicate.
+ */
+export type SaveMemoResult =
+  | { ok: true; memoId: string; title: string; deduped: boolean }
+  | { ok: false; reason: "no_source_messages" }
+
 export interface MemoServiceLike {
   processBatch(workspaceId: string, streamId: string): Promise<ProcessResult>
+  saveMemo(params: SaveMemoParams): Promise<SaveMemoResult>
 }
 
 /**
@@ -583,8 +634,172 @@ export class MemoService implements MemoServiceLike {
     return { processed, memosCreated }
   }
 
+  /**
+   * Explicit persona memo write (`save_memo`, roadmap 6.2). Reuses the pipeline's
+   * embedding + dedup + capture-event machinery (INV-35, no parallel write path):
+   * embed the abstract, then in one transaction take the per-stream lock, drop a
+   * near-duplicate, insert the memo with `authored_by_kind: 'agent'` + session
+   * provenance, and append the `memos:captured` broadcast event (INV-62 — agent
+   * writes are visible in situ too). The embed runs before the transaction so no
+   * connection is held across the AI call (INV-41).
+   */
+  async saveMemo(params: SaveMemoParams): Promise<SaveMemoResult> {
+    const {
+      workspaceId,
+      streamId,
+      sessionId,
+      sourceStreamIds,
+      title,
+      abstract,
+      keyPoints,
+      tags,
+      knowledgeType,
+      sourceMessageIds,
+    } = params
+
+    // A message source is required so the row satisfies `memo_type_source`
+    // (memo_type 'message' ⇒ source_message_id NOT NULL). The tool enforces ≥1,
+    // but guard here too rather than let a constraint violation surface as a 500.
+    if (sourceMessageIds.length === 0) {
+      return { ok: false, reason: "no_source_messages" }
+    }
+
+    const [embedding] = await this.embeddingService.embedBatch([abstract], {
+      workspaceId,
+      functionId: "memo-embedding",
+    })
+    if (!embedding) {
+      // Fail loudly rather than store a memo with no embedding (INV-11) — it
+      // would be invisible to semantic retrieval.
+      throw new Error(`Embedding failed for save_memo in stream ${streamId}`)
+    }
+
+    const newMemoId = memoId()
+
+    return withTransaction(this.pool, async (client) => {
+      // Resolve the cited source messages scoped to the turn's own stream family
+      // (INV-8/INV-62): `sourceMessageIds` is LLM-supplied, so an id outside this
+      // family — another workspace, an inaccessible stream, or a broader stream
+      // than the one the agent is working in — must never be persisted as
+      // `source_message_id` (it would widen the memo's inherited retrieval access
+      // beyond the producing stream) or fold its author into `participant_ids`.
+      // Only the ids that resolve within the family survive.
+      const sourceMessages = await MessageRepository.findByIdsInStreams(
+        client,
+        workspaceId,
+        sourceMessageIds,
+        sourceStreamIds
+      )
+      const resolvedSourceIds = sourceMessageIds.filter((id) => sourceMessages.has(id))
+      if (resolvedSourceIds.length === 0) {
+        // No cited id belongs to the turn's stream — no valid anchor, so don't
+        // invent one (would violate the CHECK / mis-scope the memo).
+        logger.info({ streamId, sourceMessageIds }, "save_memo: no in-stream source messages — rejecting")
+        return { ok: false, reason: "no_source_messages" }
+      }
+      const participantIds = Array.from(
+        new Set(
+          resolvedSourceIds
+            .map((id) => sourceMessages.get(id))
+            .filter((m): m is Message => m !== undefined && m.authorType === AuthorTypes.USER)
+            .map((m) => m.authorId)
+        )
+      )
+
+      // Serialize against the passive batch and other save_memo calls for this
+      // stream (same lock key) so the dedup gate can't be read stale (INV-20).
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
+
+      const duplicate = await MemoRepository.findNearDuplicate(client, {
+        workspaceId,
+        streamId,
+        embedding,
+        maxDistance: MEMO_DEDUP_DISTANCE,
+      })
+      if (duplicate) {
+        logger.info(
+          { streamId, existingMemoId: duplicate.memo.id, distance: duplicate.distance },
+          "save_memo: knowledge already captured in this stream — returning existing memo"
+        )
+        return { ok: true, memoId: duplicate.memo.id, title: duplicate.memo.title, deduped: true }
+      }
+
+      const inserted = await MemoRepository.insert(client, {
+        id: newMemoId,
+        workspaceId,
+        memoType: MemoTypes.MESSAGE,
+        sourceMessageId: resolvedSourceIds[0],
+        title,
+        abstract,
+        keyPoints,
+        sourceMessageIds: resolvedSourceIds,
+        participantIds,
+        knowledgeType,
+        tags,
+        status: MemoStatuses.ACTIVE,
+        authoredByKind: AuthoredByKinds.AGENT,
+        sourceSessionId: sessionId ?? undefined,
+      })
+      await MemoRepository.updateEmbedding(client, newMemoId, embedding)
+      await OutboxRepository.insert(client, "memo:created", {
+        workspaceId,
+        memoId: newMemoId,
+        memo: this.toWireMemo(inserted),
+      })
+
+      // Visible in situ (INV-62): one broadcast timeline event on the stream the
+      // agent saved from, same transaction as the memo row. Message-sourced, so
+      // no conversationId — the row links back through sourceMessageIds.
+      const [captureEvent] = await StreamEventRepository.insertMany(client, [
+        {
+          id: eventId(),
+          streamId,
+          eventType: "memos:captured" as const,
+          payload: {
+            memos: [{ memoId: newMemoId, title, knowledgeType, sourceMessageIds: resolvedSourceIds }],
+          } satisfies MemosCapturedEventPayload,
+          actorType: AuthorTypes.SYSTEM,
+        },
+      ])
+      await OutboxRepository.insertMany(client, [
+        {
+          eventType: "stream:memos_captured" as const,
+          payload: { workspaceId, streamId, event: captureEvent },
+        },
+      ])
+
+      logger.info({ streamId, memoId: newMemoId, sessionId }, "save_memo: agent memo created")
+      return { ok: true, memoId: newMemoId, title, deduped: false }
+    })
+  }
+
+  /** Wire format for a persisted memo row (repository `Memo` → `@threa/types` `Memo`). */
+  private toWireMemo(memo: Memo): WireMemo {
+    return {
+      id: memo.id,
+      workspaceId: memo.workspaceId,
+      memoType: memo.memoType,
+      sourceMessageId: memo.sourceMessageId,
+      sourceConversationId: memo.sourceConversationId,
+      title: memo.title,
+      abstract: memo.abstract,
+      keyPoints: memo.keyPoints,
+      sourceMessageIds: memo.sourceMessageIds,
+      participantIds: memo.participantIds,
+      knowledgeType: memo.knowledgeType,
+      tags: memo.tags,
+      parentMemoId: memo.parentMemoId,
+      status: memo.status,
+      version: memo.version,
+      revisionReason: memo.revisionReason,
+      createdAt: memo.createdAt.toISOString(),
+      updatedAt: memo.updatedAt.toISOString(),
+      archivedAt: memo.archivedAt ? memo.archivedAt.toISOString() : null,
+    }
+  }
+
   /** Wire format for a memo not yet inserted, so timestamps are synthesized as now. */
-  private toWireMemoFromData(memoData: MemoToCreate): import("@threa/types").Memo {
+  private toWireMemoFromData(memoData: MemoToCreate): WireMemo {
     const now = new Date().toISOString()
     return {
       id: memoData.id,

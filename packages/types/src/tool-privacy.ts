@@ -86,6 +86,15 @@ export const TOOL_CATEGORIES_BY_NAME = {
   search_attachments: ["workspace"],
   read_attachment: ["workspace"],
   describe_memo: ["workspace"],
+  // Saving a memo is a write into the workspace knowledge layer — symmetric with
+  // `describe_memo`'s read of it — so it takes the `workspace` grant: a scratchpad
+  // that denies workspace tools opts out of the knowledge layer entirely (no memo
+  // reads, no memo writes). This gates tool AVAILABILITY, not memo visibility: a
+  // saved memo inherits its retrieval access from its source stream (INV-62) like
+  // every other memo, and `save_memo` anchors it to the turn's own stream family
+  // (service `sourceStreamIds`), so it is never retrievable wider than the stream
+  // that produced it. (Passive capture is gated separately by memory_mode.)
+  save_memo: ["workspace"],
 
   // GitHub reads are public-web-class egress (a structured read_url), so they
   // ride the `web` grant as well as `github`.
