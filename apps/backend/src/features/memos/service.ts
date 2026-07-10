@@ -555,13 +555,22 @@ export class MemoService implements MemoServiceLike {
         // subsumes the in-batch check. Same-conversation repeats are gated
         // here too — the revision prompt alone demonstrably re-emits
         // near-identical memos when a conversation is re-processed.
+        const explicitSupersedeIds = (memoData.supersedesMemoIds ?? []).filter(
+          (id) => !createdMemos.some((m) => m.id === id)
+        )
+
+        // A memo this one explicitly retires is never its dedup blocker: a
+        // correction of an inverted conclusion shares nearly all its text with
+        // the memo it corrects, so the pair can embed inside the dedup
+        // distance — dropping the correction would leave the wrong memo
+        // standing (the July 2026 incident shape).
         const duplicate = await MemoRepository.findNearDuplicate(client, {
           workspaceId,
           streamId,
           embedding: memoData.embedding,
           maxDistance: MEMO_DEDUP_DISTANCE,
         })
-        if (duplicate) {
+        if (duplicate && !explicitSupersedeIds.includes(duplicate.memo.id)) {
           memosDeduped++
           logger.info(
             { conversationId: memoData.sourceConversationId, title: memoData.title },
@@ -576,9 +585,6 @@ export class MemoService implements MemoServiceLike {
         // reversal — "chose X" and "chose Y" embed far apart — so the model's
         // citation is authoritative. The embedding check below still runs for
         // unflagged paraphrase re-captures.
-        const explicitSupersedeIds = (memoData.supersedesMemoIds ?? []).filter(
-          (id) => !createdMemos.some((m) => m.id === id)
-        )
         if (explicitSupersedeIds.length > 0) {
           memoData.parentMemoId = explicitSupersedeIds[0]
           await MemoRepository.markSuperseded(

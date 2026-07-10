@@ -365,6 +365,32 @@ describe("MemoService.processBatch — explicit supersession (reversed conclusio
     )
   })
 
+  it("inserts a correction even when it embeds as a near-duplicate of the memo it supersedes", async () => {
+    // The incident shape: a correction of an inverted conclusion shares nearly
+    // all its text with the wrong memo, so dedup sees it as a duplicate. The
+    // explicitly-superseded memo must never block its own correction.
+    const reversal: MemoContent = { ...memoContent, supersedesMemoIds: ["memo_wrong"] }
+    const { service } = setupService({ memoContents: [reversal] })
+    spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue({
+      memo: fakeMemoRow("memo_wrong"),
+      distance: 0.08,
+    })
+    const markSuperseded = spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
+    spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([])
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(1)
+    expect(markSuperseded).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+      ["memo_wrong"],
+      expect.stringContaining("Conclusion reversed or replaced")
+    )
+    expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_wrong" }))
+  })
+
   it("keeps the explicit parent when the embedding fallback also finds near memos", async () => {
     const reversal: MemoContent = { ...memoContent, supersedesMemoIds: ["memo_old_a"] }
     const { service } = setupService({ memoContents: [reversal] })

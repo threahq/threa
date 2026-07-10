@@ -926,13 +926,19 @@ export const ConversationRepository = {
    * faded by the staleness sweep. Conditional in SQL (INV-20), so it no-ops
    * for active conversations.
    */
-  /** Returns true when the conversation was actually reopened (was resolved/stalled). */
+  /**
+   * Returns true when the conversation was actually reopened (was
+   * resolved/stalled). A user-locked status is never undone here — the user's
+   * "Mark resolved" wins over the fact that a message arrived (same rule as
+   * applyExtractionUpdate's guard); messages still land in the conversation.
+   */
   async reactivateIfInactive(db: Querier, workspaceId: string, conversationId: string): Promise<boolean> {
     const result = await db.query(sql`
       UPDATE conversations
       SET status = ${ConversationStatuses.ACTIVE}, updated_at = NOW()
       WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
         AND status IN (${ConversationStatuses.RESOLVED}, ${ConversationStatuses.STALLED})
+        AND NOT status_locked_by_user
       RETURNING id
     `)
     return (result.rowCount ?? 0) > 0
