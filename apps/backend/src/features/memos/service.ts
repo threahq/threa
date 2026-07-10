@@ -571,6 +571,18 @@ export class MemoService implements MemoServiceLike {
           maxDistance: MEMO_DEDUP_DISTANCE,
         })
         if (duplicate && !explicitSupersedeIds.includes(duplicate.memo.id)) {
+          // The reversed memos still retire even though the correction itself
+          // is redundant — the duplicate already carries the corrected
+          // knowledge, so dropping the insert loses nothing, but leaving the
+          // cited memos active would keep a contradiction standing.
+          if (explicitSupersedeIds.length > 0) {
+            await MemoRepository.markSuperseded(
+              client,
+              workspaceId,
+              explicitSupersedeIds,
+              `Conclusion reversed; corrected knowledge already captured by ${duplicate.memo.id}`
+            )
+          }
           memosDeduped++
           logger.info(
             { conversationId: memoData.sourceConversationId, title: memoData.title },
