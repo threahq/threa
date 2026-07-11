@@ -40,7 +40,9 @@ interface Dependencies {
 const REVISION_LIST_LIMIT = 50
 
 export type SetPersonaOverrideResult =
-  | { outcome: "written"; persona: PersonaListItem; updatedAt: string }
+  // `updatedAt` is null when the write left no override row — a reset-to-default
+  // (empty patch), which returns the persona to its built-in config.
+  | { outcome: "written"; persona: PersonaListItem; updatedAt: string | null }
   | { outcome: "conflict"; current: AgentConfigOverrideDetail | null }
 
 function toPersonaListItem(config: PersonaResolvedConfig, isCustomized: boolean): PersonaListItem {
@@ -212,7 +214,34 @@ export class PersonaConfigService {
     }
     this.assertModelsAllowed(patch, base)
 
+    // An empty patch means "identical to the built-in defaults" — remove the
+    // override entirely (restore-to-default / the history's v0) rather than store
+    // an empty row that would read as customized. No revision is appended: the
+    // built-in baseline is the implicit v0, and the prior overrides stay in
+    // history. A save that resets every field to default lands here too.
+    const isReset = Object.keys(patch).length === 0
+
     const txnResult = await withTransaction(this.pool, async (client) => {
+      if (isReset) {
+        const result = await AgentConfigOverrideRepository.deleteActive(client, {
+          workspaceId,
+          agentId,
+          expectedUpdatedAt,
+        })
+        if (result.outcome === "conflict") {
+          return result
+        }
+        const deletedDraft = await PersonaConfigDraftRepository.deleteByOwner(client, workspaceId, agentId, callerId)
+        const persona = toPersonaListItem(base, false)
+        await OutboxRepository.insert(client, "agent_config:updated", { workspaceId, agentId, persona })
+        return {
+          outcome: "written" as const,
+          persona,
+          updatedAt: null,
+          testStreamId: deletedDraft?.testStreamId ?? null,
+        }
+      }
+
       const result = await AgentConfigOverrideRepository.upsertActive(client, {
         workspaceId,
         agentId,

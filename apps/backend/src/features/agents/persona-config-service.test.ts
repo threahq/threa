@@ -187,6 +187,65 @@ describe("PersonaConfigService.getConfig", () => {
 describe("PersonaConfigService.setOverride", () => {
   afterEach(() => mock.restore())
 
+  it("an empty patch removes the override (restore-to-default): deletes, no revision, default persona", async () => {
+    setupTransaction()
+    const del = spyOn(AgentConfigOverrideRepository, "deleteActive").mockResolvedValue({ outcome: "deleted" })
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive")
+    const deleteDraft = spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const revisionInsert = spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+
+    const result = await makeService().setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      {},
+      "2026-07-02T00:00:00.000Z",
+      CALLER_ID
+    )
+
+    expect(result).toMatchObject({
+      outcome: "written",
+      updatedAt: null,
+      persona: { isCustomized: false, name: "Ariadne" },
+    })
+    expect(del).toHaveBeenCalledWith(
+      {},
+      {
+        workspaceId: WORKSPACE_ID,
+        agentId: ARIADNE_AGENT_ID,
+        expectedUpdatedAt: "2026-07-02T00:00:00.000Z",
+      }
+    )
+    expect(upsert).not.toHaveBeenCalled()
+    expect(revisionInsert).not.toHaveBeenCalled()
+    expect(deleteDraft).toHaveBeenCalled()
+    expect(insert).toHaveBeenCalledWith(
+      {},
+      "agent_config:updated",
+      expect.objectContaining({ agentId: ARIADNE_AGENT_ID })
+    )
+  })
+
+  it("surfaces a conflict from deleteActive on an empty-patch reset without broadcasting", async () => {
+    setupTransaction()
+    spyOn(AgentConfigOverrideRepository, "deleteActive").mockResolvedValue({
+      outcome: "conflict",
+      current: { patch: { name: "Theirs" }, updatedAt: "2026-07-02T00:00:00.000Z" },
+    })
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await makeService().setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      {},
+      "2020-01-01T00:00:00.000Z",
+      CALLER_ID
+    )
+
+    expect(result.outcome).toBe("conflict")
+    expect(insert).not.toHaveBeenCalled()
+  })
+
   it("writes the override, drops the caller's draft, and broadcasts in the same transaction", async () => {
     setupTransaction()
     spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({

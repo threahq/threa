@@ -38,6 +38,11 @@ export type UpsertAgentConfigOverrideResult =
   | { outcome: "written"; updatedAt: string }
   | { outcome: "conflict"; current: AgentConfigOverrideDetail | null }
 
+export type DeleteAgentConfigOverrideResult =
+  // `deleted` = an active override was removed; `noop` = there was none (already
+  // at defaults). Both mean "now at defaults"; the caller treats them the same.
+  { outcome: "deleted" } | { outcome: "noop" } | { outcome: "conflict"; current: AgentConfigOverrideDetail | null }
+
 /**
  * Read helpers for `agent_config_overrides`. All methods filter to `status = 'active'`.
  */
@@ -164,5 +169,49 @@ export const AgentConfigOverrideRepository = {
     // Lost the insert race to a concurrent creator; report their row as current.
     const raced = await this.findActiveDetailByWorkspaceAndAgent(db, workspaceId, agentId)
     return { outcome: "conflict", current: raced }
+  },
+
+  /**
+   * Remove the active override with the same optimistic-concurrency guard as
+   * {@link upsertActive} (restore-to-default). MUST run in a transaction: the
+   * `FOR UPDATE` lock serializes against a concurrent save. `noop` means there
+   * was no active row (already at defaults) — idempotent when `expectedUpdatedAt`
+   * is `null`; a non-null token against a missing row is a `conflict` (someone
+   * else changed state), mirroring the upsert.
+   */
+  async deleteActive(
+    db: Querier,
+    params: { workspaceId: string; agentId: string; expectedUpdatedAt: string | null }
+  ): Promise<DeleteAgentConfigOverrideResult> {
+    const { workspaceId, agentId, expectedUpdatedAt } = params
+
+    const existing = await db.query<AgentConfigOverrideDetailRow>(sql`
+      SELECT patch, updated_at
+      FROM agent_config_overrides
+      WHERE workspace_id = ${workspaceId}
+        AND agent_id = ${agentId}
+        AND status = 'active'
+      FOR UPDATE
+    `)
+    const current = existing.rows[0]
+
+    if (current) {
+      const currentUpdatedAt = current.updated_at.toISOString()
+      if (expectedUpdatedAt !== currentUpdatedAt) {
+        return { outcome: "conflict", current: { patch: current.patch, updatedAt: currentUpdatedAt } }
+      }
+      await db.query(sql`
+        DELETE FROM agent_config_overrides
+        WHERE workspace_id = ${workspaceId}
+          AND agent_id = ${agentId}
+          AND status = 'active'
+      `)
+      return { outcome: "deleted" }
+    }
+
+    if (expectedUpdatedAt !== null) {
+      return { outcome: "conflict", current: null }
+    }
+    return { outcome: "noop" }
   },
 }

@@ -24,7 +24,7 @@ function applyCommittedOverride(
   queryClient: QueryClient,
   workspaceId: string,
   personaId: string,
-  committed: { patch: PersonaConfigPatch; updatedAt: string; persona: PersonaListItem }
+  committed: { patch: PersonaConfigPatch; updatedAt: string | null; persona: PersonaListItem }
 ) {
   queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
     old

@@ -46,8 +46,8 @@ export const personasApi = {
     workspaceId: string,
     personaId: string,
     input: { patch: PersonaConfigPatch; expectedUpdatedAt: string | null }
-  ): Promise<{ persona: PersonaListItem; updatedAt: string }> {
-    return api.put<{ persona: PersonaListItem; updatedAt: string }>(
+  ): Promise<{ persona: PersonaListItem; updatedAt: string | null }> {
+    return api.put<{ persona: PersonaListItem; updatedAt: string | null }>(
       `/api/workspaces/${workspaceId}/personas/${personaId}/override`,
       input
     )
@@ -78,8 +78,8 @@ export const personasApi = {
     personaId: string,
     revisionId: string,
     input: { expectedUpdatedAt: string | null }
-  ): Promise<{ persona: PersonaListItem; updatedAt: string }> {
-    return api.post<{ persona: PersonaListItem; updatedAt: string }>(
+  ): Promise<{ persona: PersonaListItem; updatedAt: string | null }> {
+    return api.post<{ persona: PersonaListItem; updatedAt: string | null }>(
       `/api/workspaces/${workspaceId}/personas/${personaId}/revisions/${revisionId}/restore`,
       input
     )

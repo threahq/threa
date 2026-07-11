@@ -195,7 +195,7 @@ describe("PersonaHistoryPanel", () => {
     expect(screen.getByLabelText("Name")).toHaveValue("V2 name")
 
     const dialog = await openHistory(user)
-    await user.click(within(dialog).getByRole("button", { name: /Restore/ }))
+    await user.click(within(dialog).getByRole("button", { name: "Restore version 1" }))
     const alert = await screen.findByRole("alertdialog")
     await user.click(within(alert).getByRole("button", { name: "Restore" }))
 
@@ -224,11 +224,34 @@ describe("PersonaHistoryPanel", () => {
     await user.type(name, "Mine")
 
     const dialog = await openHistory(user)
-    await user.click(within(dialog).getByRole("button", { name: /Restore/ }))
+    await user.click(within(dialog).getByRole("button", { name: "Restore version 1" }))
     const alert = await screen.findByRole("alertdialog")
     await user.click(within(alert).getByRole("button", { name: "Restore" }))
 
     expect(await screen.findByText(/Someone else updated this persona/)).toBeInTheDocument()
     expect(screen.getByLabelText("Name")).toHaveValue("Mine")
+  })
+
+  it("restore-to-default commits an empty patch and the form re-seeds to the built-in config", async () => {
+    vi.spyOn(personasApi, "getConfig").mockResolvedValue(config())
+    vi.spyOn(personasApi, "listRevisions").mockResolvedValue(revisions)
+    const putOverride = vi
+      .spyOn(personasApi, "putOverride")
+      .mockResolvedValue({ persona: { id: PERSONA } as never, updatedAt: null })
+    const user = userEvent.setup()
+    renderEditor(makeClient())
+
+    expect(screen.getByLabelText("Name")).toHaveValue("V2 name")
+
+    const dialog = await openHistory(user)
+    await user.click(within(dialog).getByRole("button", { name: "Restore built-in defaults" }))
+    const alert = await screen.findByRole("alertdialog")
+    await user.click(within(alert).getByRole("button", { name: "Restore defaults" }))
+
+    await waitFor(() =>
+      expect(putOverride).toHaveBeenCalledWith(WS, PERSONA, { patch: {}, expectedUpdatedAt: "2026-07-11T02:00:00Z" })
+    )
+    // Cache reconcile → the form re-seeds to the built-in default name.
+    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Ariadne"))
   })
 })
