@@ -2,6 +2,7 @@
  * Memorizer Evaluators
  */
 
+import { z } from "zod"
 import type { Evaluator, EvaluatorResult, RunEvaluator, CaseResult } from "../../framework/types"
 import type { MemorizerOutput, MemorizerExpected } from "./types"
 
@@ -75,6 +76,103 @@ export const exclusionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> =
       score: passed ? 1 : 0,
       passed,
       details: passed ? undefined : offenders.join("; "),
+    }
+  },
+}
+
+const conclusionJudgeSchema = z.object({
+  assertsConclusionA: z
+    .boolean()
+    .nullable()
+    .describe(
+      "true if at least one memo states conclusion A as the outcome; false if none does; null when A was not given"
+    ),
+  assertsConclusionB: z
+    .boolean()
+    .nullable()
+    .describe(
+      "true if at least one memo states conclusion B as the outcome; false if none does; null when B was not given"
+    ),
+  reasoning: z.string().describe("One brief sentence"),
+})
+
+/**
+ * Semantic direction check (LLM-judged). A decision memo can mention both sides
+ * of a choice, so keyword checks cannot tell "chose X over Y" from the inverted
+ * "chose Y over X" — the observed prod failure. The judge reads the memos and
+ * answers whether any memo asserts the required / forbidden conclusion.
+ */
+export const conclusionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> = {
+  name: "conclusion-direction",
+  evaluate: async (output, expected, ctx): Promise<EvaluatorResult> => {
+    if (!expected.conclusionMustState && !expected.conclusionMustNotState) {
+      return { name: "conclusion-direction", score: 1, passed: true, details: "No conclusion requirements" }
+    }
+    if (output.error) {
+      return { name: "conclusion-direction", score: 0, passed: false, details: `Error: ${output.error}` }
+    }
+    if (output.memos.length === 0) {
+      // No memos: a required conclusion is missing; a forbidden one is trivially absent.
+      const passed = !expected.conclusionMustState
+      return {
+        name: "conclusion-direction",
+        score: passed ? 1 : 0,
+        passed,
+        details: passed ? undefined : "No memos emitted, but a conclusion was required",
+      }
+    }
+
+    const memosRendered = output.memos
+      .map((m, i) => `${i + 1}. ${m.title}\n   ${m.abstract}\n   Key points: ${m.keyPoints.join("; ") || "—"}`)
+      .join("\n")
+    const { value } = await ctx.ai.generateObject({
+      model: "openrouter:openai/gpt-5.4-nano",
+      schema: conclusionJudgeSchema,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You read a set of memos and, for each candidate conclusion given, answer purely factually whether any memo states that conclusion as the outcome/decision. A memo asserts a conclusion only when it presents it as what was decided or what holds — mentioning a position as considered-and-rejected does not assert it. Do not judge whether asserting it is good or expected; only whether it is asserted.",
+        },
+        {
+          role: "user",
+          content: `## Memos\n${memosRendered}\n\n## Conclusion A\n${expected.conclusionMustState ?? "(not given — return null for assertsConclusionA)"}\n\n## Conclusion B\n${expected.conclusionMustNotState ?? "(not given — return null for assertsConclusionB)"}\n\nDoes any memo assert conclusion A? Does any memo assert conclusion B?`,
+        },
+      ],
+      temperature: 0,
+      telemetry: { functionId: "eval-conclusion-direction" },
+    })
+
+    const requiredOk = !expected.conclusionMustState || value.assertsConclusionA === true
+    const forbiddenOk = !expected.conclusionMustNotState || value.assertsConclusionB !== true
+    const passed = requiredOk && forbiddenOk
+    return {
+      name: "conclusion-direction",
+      score: passed ? 1 : 0,
+      passed,
+      details: passed
+        ? undefined
+        : `${!requiredOk ? "required conclusion not asserted" : ""}${!requiredOk && !forbiddenOk ? "; " : ""}${!forbiddenOk ? "forbidden conclusion asserted" : ""} — ${value.reasoning}`,
+    }
+  },
+}
+
+/** A reversal must retire the memo it contradicts via supersedesMemoIds. */
+export const supersessionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> = {
+  name: "supersession",
+  evaluate: (output, expected): EvaluatorResult => {
+    if (!expected.expectSupersedesExisting) {
+      return { name: "supersession", score: 1, passed: true, details: "No supersession requirements" }
+    }
+    if (output.error) {
+      return { name: "supersession", score: 0, passed: false, details: `Error: ${output.error}` }
+    }
+    const passed = output.memos.some((m) => m.supersedesMemoIds.length > 0)
+    return {
+      name: "supersession",
+      score: passed ? 1 : 0,
+      passed,
+      details: passed ? undefined : "No memo explicitly superseded an existing memo (reversal left both standing)",
     }
   },
 }

@@ -170,6 +170,26 @@ All models use `provider:modelPath` format:
 
 ---
 
+### openrouter:openai/gpt-5.6-luna
+
+**Name:** GPT-5.6 Luna
+
+**Description:** Fast, cost-efficient model in OpenAI's GPT-5.6 series (July 2026). Positioned for high-volume, latency-sensitive tasks — chat, classification, lightweight agentic workflows. 1M context window. Available EU-pinned. A `gpt-5.6-luna-pro` variant (same price) serves the same weights with `reasoning.mode: pro` for harder tasks at higher latency.
+
+**Typical cost:** ~$1.00 per 1M input tokens, ~$6.00 per 1M output tokens
+
+**When to use:**
+
+- Memo memorization (production choice since July 2026)
+- Extraction/summarization where small-model conclusion errors are costly
+- Classification workloads that mini gets almost-but-not-quite right
+
+**Eval history (July 2026, 6-run tallies vs gpt-5.4-mini):** memorizer 10/10 cases perfect vs mini's 8/10 — Luna never leaked the anti-gossip residuals (news-facts, transient-status) and never inverted a decision direction; boundary-extraction effectively tied (avg pass 0.996 vs 0.992); memo-classifier tied (11/11 both). ~40% slower per call than mini and +33% price, so mini keeps the high-volume per-message components (boundary extraction, classifier) and Luna runs the memorizer, where quality dominates and the settle gate keeps volume low.
+
+**July 2026 open-weight sweep (boundary-extraction, 3-run tallies, via OpenRouter):** all EU-pinnable candidates lost on latency, not price. `deepseek/deepseek-v4-pro` matched mini on quality (106/107 calls passing) at almost half mini's price, but averaged **15.9s/call** vs mini's ~2s — unusable for a per-message component on OpenRouter's provider backing; revisit if a direct/dedicated endpoint appears. `deepseek/deepseek-v4-flash` scored 0.976 (drops sandwich-split and gap-resume, the classic small-model boundary failures) at ~10.8s/call. `z-ai/glm-5.2` 0.919 — rejected. `qwen/qwen3.5-flash-02-23` 24% pass with calls up to 8.9 minutes — rejected. Same conclusion as the spring gpt-oss-120b removal: open-weight quality can be there, OpenRouter's patchwork provider latency is not.
+
+---
+
 ### openrouter:openai/gpt-5.4-nano
 
 **Name:** GPT-5.4 Nano

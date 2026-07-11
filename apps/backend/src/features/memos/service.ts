@@ -19,6 +19,7 @@ import {
   MemoStatuses,
   AuthorTypes,
   AuthoredByKinds,
+  ConversationStatuses,
   type KnowledgeType,
   type MemosCapturedEventPayload,
   type Memo as WireMemo,
@@ -26,6 +27,7 @@ import {
 import {
   MEMO_GEM_CONFIDENCE_FLOOR,
   MEMO_SINGLE_MESSAGE_AGE_GATE_MS,
+  MEMO_ACTIVE_CONVERSATION_QUIET_MS,
   MEMO_DEDUP_DISTANCE,
   MEMO_SUPERSEDE_DISTANCE,
   MEMO_REFLECTIVE_MAX_MEMOS,
@@ -83,6 +85,8 @@ interface MemoToCreate {
   embedding: number[]
   /** Set at save time when this memo supersedes a prior capture from its conversation. */
   parentMemoId?: string
+  /** Memos the memorizer explicitly retired (reversed/replaced conclusion), pre-validated. */
+  supersedesMemoIds?: string[]
 }
 
 /**
@@ -353,6 +357,23 @@ export class MemoService implements MemoServiceLike {
           }
         }
 
+        // Settle gate: an active conversation touched moments ago is mid-flight.
+        // Memorizing it snapshots a live debate — each swing of an unsettled
+        // decision becomes its own "decision" memo. Defer until the conversation
+        // resolves/stalls or goes quiet; the item retries each batch cycle, and
+        // resolution queues a fresh item, so settle-time capture is never missed.
+        if (conversation.status === ConversationStatuses.ACTIVE) {
+          const quietMs = Date.now() - new Date(conversation.lastActivityAt).getTime()
+          if (quietMs < MEMO_ACTIVE_CONVERSATION_QUIET_MS) {
+            deferredItemIds.add(item.id)
+            logger.debug(
+              { conversationId: conversation.id, quietMs, threshold: MEMO_ACTIVE_CONVERSATION_QUIET_MS },
+              "Deferring active conversation until it settles"
+            )
+            continue
+          }
+        }
+
         const messages = fetchedData.conversationMessages.get(item.itemId)
         if (!messages) {
           logger.warn({ conversationId: conversation.id }, "No messages found for conversation")
@@ -494,6 +515,7 @@ export class MemoService implements MemoServiceLike {
             tags: content.tags,
             status: MemoStatuses.ACTIVE,
             embedding: embeddings[i],
+            supersedesMemoIds: content.supersedesMemoIds,
           })
         }
 
@@ -533,19 +555,64 @@ export class MemoService implements MemoServiceLike {
         // subsumes the in-batch check. Same-conversation repeats are gated
         // here too — the revision prompt alone demonstrably re-emits
         // near-identical memos when a conversation is re-processed.
+        const explicitSupersedeIds = (memoData.supersedesMemoIds ?? []).filter(
+          (id) => !createdMemos.some((m) => m.id === id)
+        )
+
+        // A memo this one explicitly retires is never its dedup blocker: a
+        // correction of an inverted conclusion shares nearly all its text with
+        // the memo it corrects, so the pair can embed inside the dedup
+        // distance — dropping the correction would leave the wrong memo
+        // standing (the July 2026 incident shape).
         const duplicate = await MemoRepository.findNearDuplicate(client, {
           workspaceId,
           streamId,
           embedding: memoData.embedding,
           maxDistance: MEMO_DEDUP_DISTANCE,
         })
-        if (duplicate) {
+        if (duplicate && !explicitSupersedeIds.includes(duplicate.memo.id)) {
+          // The reversed memos still retire even though the correction itself
+          // is redundant — the duplicate already carries the corrected
+          // knowledge, so dropping the insert loses nothing, but leaving the
+          // cited memos active would keep a contradiction standing.
+          if (explicitSupersedeIds.length > 0) {
+            await MemoRepository.markSuperseded(
+              client,
+              workspaceId,
+              explicitSupersedeIds,
+              `Conclusion reversed; corrected knowledge already captured by ${duplicate.memo.id}`
+            )
+          }
           memosDeduped++
           logger.info(
             { conversationId: memoData.sourceConversationId, title: memoData.title },
             "Skipped duplicate memo (knowledge already captured in this stream)"
           )
           continue
+        }
+
+        // Explicit supersession first: the memorizer names the memos whose
+        // conclusion this one reverses or replaces (ids pre-validated against
+        // the conversation's own memos). Embedding distance cannot catch a
+        // reversal — "chose X" and "chose Y" embed far apart — so the model's
+        // citation is authoritative. The embedding check below still runs for
+        // unflagged paraphrase re-captures.
+        if (explicitSupersedeIds.length > 0) {
+          memoData.parentMemoId = explicitSupersedeIds[0]
+          await MemoRepository.markSuperseded(
+            client,
+            workspaceId,
+            explicitSupersedeIds,
+            `Conclusion reversed or replaced by revised capture ${memoData.id}`
+          )
+          logger.info(
+            {
+              conversationId: memoData.sourceConversationId,
+              memoId: memoData.id,
+              supersededIds: explicitSupersedeIds,
+            },
+            "Revised memo explicitly superseded reversed prior capture(s)"
+          )
         }
 
         // Same-conversation supersession: a revised capture of a topic
@@ -560,11 +627,11 @@ export class MemoService implements MemoServiceLike {
               conversationId: memoData.sourceConversationId,
               embedding: memoData.embedding,
               maxDistance: MEMO_SUPERSEDE_DISTANCE,
-              excludeIds: createdMemos.map((m) => m.id),
+              excludeIds: [...createdMemos.map((m) => m.id), ...explicitSupersedeIds],
             })
           : []
         if (toSupersede.length > 0) {
-          memoData.parentMemoId = toSupersede[0].memo.id
+          memoData.parentMemoId = memoData.parentMemoId ?? toSupersede[0].memo.id
           await MemoRepository.markSuperseded(
             client,
             workspaceId,

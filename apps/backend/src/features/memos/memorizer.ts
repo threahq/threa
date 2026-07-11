@@ -38,6 +38,13 @@ export interface MemoContent {
   keyPoints: string[]
   tags: string[]
   sourceMessageIds: string[]
+  /**
+   * Existing memos this revision explicitly retires (a reversed/replaced
+   * conclusion). Validated against the conversation's own memos — embedding
+   * distance can't catch a reversal ("chose X" vs "chose Y" embed far apart),
+   * so the model names the retired memo directly.
+   */
+  supersedesMemoIds: string[]
 }
 
 export interface MemorizerContext {
@@ -108,6 +115,7 @@ export class Memorizer {
     const config = await this.configResolver.resolve(COMPONENT_PATHS.MEMO_MEMORIZER)
     const messages = context.content as Message[]
     const messageCount = formattedMessages.split("<message").length - 1
+    const validSupersedeIds = new Set((context.existingMemos ?? []).map((m) => m.id))
 
     const { value } = await this.ai.generateObject({
       model: config.modelId,
@@ -131,6 +139,7 @@ export class Memorizer {
       keyPoints: memo.keyPoints,
       tags: memo.tags,
       sourceMessageIds: resolveSourceMessageIds(memo.sourceMessageIds, messages),
+      supersedesMemoIds: (memo.supersedesMemoIds ?? []).filter((id) => validSupersedeIds.has(id)),
     }))
   }
 
@@ -144,7 +153,8 @@ export class Memorizer {
     if (existingMemos.length === 0) {
       return "None."
     }
-    return existingMemos.map((m, i) => `${i + 1}. ${m.title}\n   ${m.abstract}`).join("\n")
+    // Ids are rendered so a reversal can name the memo it retires (supersedesMemoIds).
+    return existingMemos.map((m, i) => `${i + 1}. [${m.id}] ${m.title}\n   ${m.abstract}`).join("\n")
   }
 
   private formatExistingTags(context: MemorizerContext): string {

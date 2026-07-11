@@ -27,6 +27,8 @@ import {
   memoCountEvaluator,
   coverageEvaluator,
   exclusionEvaluator,
+  conclusionEvaluator,
+  supersessionEvaluator,
   accuracyEvaluator,
   overCaptureRateEvaluator,
 } from "./evaluators"
@@ -97,6 +99,7 @@ async function runMemorizerTask(input: MemorizerInput, ctx: EvalContext): Promis
         knowledgeType: m.knowledgeType,
         keyPoints: m.keyPoints,
         tags: m.tags,
+        supersedesMemoIds: m.supersedesMemoIds,
       })),
     }
   } catch (error) {
@@ -112,7 +115,7 @@ export const memorizerSuite: EvalSuite<MemorizerInput, MemorizerOutput, Memorize
 
   task: runMemorizerTask,
 
-  evaluators: [memoCountEvaluator, coverageEvaluator, exclusionEvaluator],
+  evaluators: [memoCountEvaluator, coverageEvaluator, exclusionEvaluator, conclusionEvaluator, supersessionEvaluator],
 
   runEvaluators: [accuracyEvaluator, overCaptureRateEvaluator],
 

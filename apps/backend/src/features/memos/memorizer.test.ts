@@ -61,6 +61,7 @@ describe("memoSetSchema", () => {
     keyPoints: [],
     tags: ["ids"],
     sourceMessageIds: ["msg_1"],
+    supersedesMemoIds: null,
   }
 
   it("accepts a set of single-topic memos", () => {

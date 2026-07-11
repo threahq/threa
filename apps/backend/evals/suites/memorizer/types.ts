@@ -19,6 +19,8 @@ export interface MemorizerOutputMemo {
   knowledgeType: string
   keyPoints: string[]
   tags: string[]
+  /** Existing-memo ids this memo explicitly retires (reversed/replaced conclusion). */
+  supersedesMemoIds: string[]
 }
 
 export interface MemorizerOutput {
@@ -39,4 +41,14 @@ export interface MemorizerExpected {
   mustCoverAny?: string[][]
   /** No memo's title or abstract may contain any of these words. */
   mustNotContain?: string[]
+  /**
+   * LLM-judged semantic direction check: some memo must assert this conclusion.
+   * Catches inversions that keyword checks can't (a memo can mention both sides
+   * of a decision; what matters is which side it says WON).
+   */
+  conclusionMustState?: string
+  /** LLM-judged: no memo may assert this conclusion (the abandoned/reversed side). */
+  conclusionMustNotState?: string
+  /** Some memo must explicitly retire at least one existing memo via supersedesMemoIds. */
+  expectSupersedesExisting?: boolean
 }

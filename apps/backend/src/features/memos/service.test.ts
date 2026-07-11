@@ -72,6 +72,7 @@ const memoContent: MemoContent = {
   keyPoints: ["Prefixed ULIDs everywhere"],
   tags: ["ids"],
   sourceMessageIds: ["msg_1", "msg_2"],
+  supersedesMemoIds: [],
 }
 
 const classification: ConversationClassification = {
@@ -286,6 +287,147 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-62)", 
       expect.stringContaining("Superseded by revised capture")
     )
     expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_nearest" }))
+  })
+})
+
+describe("MemoService.processBatch — settle gate (active conversations defer until they settle)", () => {
+  afterEach(() => mock.restore())
+
+  it("defers an active conversation touched moments ago instead of memorizing mid-debate", async () => {
+    const { service } = setupService({ memoContents: [memoContent] })
+    spyOn(ConversationRepository, "findById").mockResolvedValue({
+      ...fakeConversation(),
+      status: "active",
+      lastActivityAt: new Date(),
+    } as never)
+    const markProcessed = spyOn(PendingItemRepository, "markProcessed").mockResolvedValue(undefined as never)
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result).toEqual({ processed: 0, memosCreated: 0 })
+    expect(insert).not.toHaveBeenCalled()
+    // The deferred item stays unprocessed so the next batch cycle retries it.
+    expect(markProcessed).not.toHaveBeenCalled()
+  })
+
+  it("memorizes an active conversation once it has been quiet past the settle window", async () => {
+    const { service } = setupService({ memoContents: [memoContent] })
+    spyOn(ConversationRepository, "findById").mockResolvedValue({
+      ...fakeConversation(),
+      status: "active",
+      lastActivityAt: new Date(Date.now() - 31 * 60 * 1000),
+    } as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(1)
+  })
+
+  it("memorizes a resolved conversation immediately regardless of recency", async () => {
+    const { service } = setupService({ memoContents: [memoContent] })
+    spyOn(ConversationRepository, "findById").mockResolvedValue({
+      ...fakeConversation(),
+      status: "resolved",
+      lastActivityAt: new Date(),
+    } as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(1)
+  })
+})
+
+describe("MemoService.processBatch — explicit supersession (reversed conclusions retire their memo)", () => {
+  afterEach(() => mock.restore())
+
+  it("marks the memos named in supersedesMemoIds superseded and links the new memo to the first", async () => {
+    const reversal: MemoContent = { ...memoContent, supersedesMemoIds: ["memo_old_a", "memo_old_b"] }
+    const { service } = setupService({ memoContents: [reversal] })
+    const markSuperseded = spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
+    const findNear = spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([])
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(1)
+    expect(markSuperseded).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+      ["memo_old_a", "memo_old_b"],
+      expect.stringContaining("Conclusion reversed or replaced")
+    )
+    expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_old_a" }))
+    // The embedding fallback excludes the explicitly retired memos.
+    expect(findNear).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ excludeIds: ["memo_old_a", "memo_old_b"] })
+    )
+  })
+
+  it("inserts a correction even when it embeds as a near-duplicate of the memo it supersedes", async () => {
+    // The incident shape: a correction of an inverted conclusion shares nearly
+    // all its text with the wrong memo, so dedup sees it as a duplicate. The
+    // explicitly-superseded memo must never block its own correction.
+    const reversal: MemoContent = { ...memoContent, supersedesMemoIds: ["memo_wrong"] }
+    const { service } = setupService({ memoContents: [reversal] })
+    spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue({
+      memo: fakeMemoRow("memo_wrong"),
+      distance: 0.08,
+    })
+    const markSuperseded = spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
+    spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([])
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(1)
+    expect(markSuperseded).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+      ["memo_wrong"],
+      expect.stringContaining("Conclusion reversed or replaced")
+    )
+    expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_wrong" }))
+  })
+
+  it("retires the cited memos but drops the insert when an unrelated memo already covers the correction", async () => {
+    const reversal: MemoContent = { ...memoContent, supersedesMemoIds: ["memo_wrong"] }
+    const { service, streamEventInsertMany } = setupService({ memoContents: [reversal] })
+    spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue({
+      memo: fakeMemoRow("memo_unrelated_dupe"),
+      distance: 0.1,
+    })
+    const markSuperseded = spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    // The duplicate already carries the corrected knowledge: no new memo row,
+    // but the reversed memo must not stay active next to it.
+    expect(result.memosCreated).toBe(0)
+    expect(insert).not.toHaveBeenCalled()
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
+    expect(markSuperseded).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+      ["memo_wrong"],
+      expect.stringContaining("memo_unrelated_dupe")
+    )
+  })
+
+  it("keeps the explicit parent when the embedding fallback also finds near memos", async () => {
+    const reversal: MemoContent = { ...memoContent, supersedesMemoIds: ["memo_old_a"] }
+    const { service } = setupService({ memoContents: [reversal] })
+    spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
+    spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([
+      { memo: fakeMemoRow("memo_paraphrase"), distance: 0.2 },
+    ])
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_old_a" }))
   })
 })
 

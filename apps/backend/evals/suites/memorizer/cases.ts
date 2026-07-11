@@ -194,4 +194,106 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       mustCoverAny: [["lists", "ivfflat", "200"], ["recall"]],
     },
   },
+
+  // Derived from the July 2026 prod failure where one oscillating debate
+  // produced seven contradictory decision memos and the surviving memo stated
+  // the OPPOSITE of what was decided. Paraphrased structure, invented content.
+  {
+    id: "oscillating-debate-landing-001",
+    name: "Extraction: a debate that swings back and forth yields only where it landed",
+    input: {
+      category: "extraction",
+      messages: [
+        { ...PIERRE, contentMarkdown: "fan, vad ska jag cachea sessioner i? funderar på Redis", minutesAgo: 45 },
+        { ...KRIS, contentMarkdown: "kör Redis, standard", minutesAgo: 43 },
+        { ...PIERRE, contentMarkdown: "exakt, Redis kör vi", minutesAgo: 42 },
+        {
+          ...KRIS,
+          contentMarkdown: "fast vänta — vem driftar den? vi har ju ingen som vill äga en till burk",
+          minutesAgo: 38,
+        },
+        { ...PIERRE, contentMarkdown: "true. in-process LRU räcker kanske? vi har ju bara en nod", minutesAgo: 35 },
+        { ...KRIS, contentMarkdown: "men då tappar vi sessioner vid varje deploy, det suger", minutesAgo: 30 },
+        { ...PIERRE, contentMarkdown: "hmm, så Redis ändå?", minutesAgo: 28 },
+        {
+          ...KRIS,
+          contentMarkdown:
+            "kollade just — vår host har managed Redis för en hundring i månaden, ingen drift alls för oss",
+          minutesAgo: 15,
+        },
+        { ...PIERRE, contentMarkdown: "åh nice, då är driftargumentet dött. managed Redis, klart", minutesAgo: 12 },
+        { ...KRIS, contentMarkdown: "kör på det, jag sätter upp den ikväll", minutesAgo: 10 },
+      ],
+    },
+    expectedOutput: {
+      maxMemos: 2,
+      minMemos: 1,
+      conclusionMustState: "They chose (managed) Redis for session caching",
+      conclusionMustNotState: "They chose the in-process LRU cache / decided against Redis",
+    },
+  },
+
+  {
+    id: "fragment-pasted-answer-direction-001",
+    name: "Extraction: a fragment with a pasted assistant answer must not invert the adopted conclusion",
+    input: {
+      category: "extraction",
+      messages: [
+        { ...PIERRE, contentMarkdown: "här är svaret från assistenten", minutesAgo: 12 },
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "```plaintext\nGo with the managed queue. Self-hosting looks cheaper until you price the on-call burden — broker upgrades, disk pressure, partition rebalancing at 3am. A managed queue gives you DLQs and replay out of the box, and a two-person team should spend its hours on product, not broker ops. Self-hosting only wins under hard data-residency rules or extreme throughput, and you have neither.\n```",
+          minutesAgo: 11,
+        },
+        {
+          ...KRIS,
+          contentMarkdown:
+            "lol i princip mina argument men för managed. enda jag saknar är kostnadstaket, och det kan man ju larma på",
+          minutesAgo: 5,
+        },
+        { ...KRIS, contentMarkdown: "jag köper det faktiskt", minutesAgo: 5 },
+      ],
+    },
+    expectedOutput: {
+      maxMemos: 2,
+      conclusionMustNotState: "They chose to self-host the queue / decided against the managed queue",
+    },
+  },
+
+  {
+    id: "revision-reversal-supersedes-001",
+    name: "Revision: a reversed decision retires the existing memo via supersedesMemoIds",
+    input: {
+      category: "revision",
+      existingMemos: [
+        {
+          title: "Sessioner cachas i en in-process LRU",
+          abstract:
+            "De valde en in-process LRU för sessionscache i stället för Redis, för att slippa drifta en separat tjänst.",
+          createdDaysAgo: 1,
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown: "btw, LRU:n höll inte — sessionerna dör vid varje deploy och supporten märker det",
+          minutesAgo: 20,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "ja jag såg. vår host har managed Redis numera, hundring i månaden",
+          minutesAgo: 15,
+        },
+        { ...PIERRE, contentMarkdown: "då river vi LRU:n och kör managed Redis i stället, beslutat", minutesAgo: 10 },
+        { ...KRIS, contentMarkdown: "kör", minutesAgo: 8 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 2,
+      conclusionMustState: "They switched session caching to (managed) Redis, replacing the in-process LRU",
+      expectSupersedesExisting: true,
+    },
+  },
 ]

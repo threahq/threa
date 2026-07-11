@@ -1664,4 +1664,160 @@ Any ideas what's causing this?`,
       minConfidence: 0.6,
     },
   },
+
+  // Reopen cases: a conversation resolved MINUTES ago in the same live session
+  // is still the live exchange. The prod failure: quick agreement resolved a
+  // 90-second conversation at high confidence, the topic continued 42 seconds
+  // later, and the extractor spawned a new conversation instead of reopening —
+  // splitting one discussion across three conversations.
+  {
+    id: "reopen-just-resolved-continuation-001",
+    name: "Reopen: continuation seconds after a quick agreement resolved the conversation (Swedish)",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "fast känns som att det funkar riktigt bra ihop med vår k8s-setup också tbh",
+      },
+      activeConversations: [
+        {
+          id: "conv_cache01",
+          topicSummary: "Cacheval för sessioner",
+          summary: "Val av cache för sessionsdata; snabb enighet om Redis.",
+          messageCount: 4,
+          lastMessagePreview: "exakt, Redis kör vi",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 7,
+          status: "resolved",
+          lastActivityMinutesAgo: 1,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "fan, vad ska jag cachea sessioner i?",
+          minutesAgo: 3,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "funderar på Redis faktiskt.",
+          minutesAgo: 2,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Fuckit, kör Redis, minst att hålla i",
+          minutesAgo: 1,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "exakt, Redis kör vi",
+          minutesAgo: 1,
+        },
+      ],
+      streamType: "dm",
+      category: "continuity",
+    },
+    expectedOutput: {
+      // Assignment is the extractor's job; the reopen itself is code-enforced
+      // (reactivateIfInactive + same-pass status-echo suppression in the
+      // boundary-extraction service), so no status assertion here.
+      expectConversationId: "conv_cache01",
+      minConfidence: 0.6,
+    },
+  },
+
+  {
+    id: "show-and-tell-answers-live-question-001",
+    name: "Show-and-tell: pasted assistant answer to the live question stays in the debate (Swedish)",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown:
+          "```plaintext\nShort answer: go with the managed queue. Self-hosting looks cheaper until you price the on-call burden — broker upgrades, disk pressure, partition rebalancing. The managed option gives you DLQs and replay out of the box, and a team of two should spend its hours on product, not broker ops. There are edge cases where self-hosting wins (hard data-residency rules, extreme throughput), but nothing you've described puts you there.\n```",
+      },
+      activeConversations: [
+        {
+          id: "conv_queue01",
+          topicSummary: "Kö-val för bakgrundsjobb",
+          summary:
+            "Debatt om managed kö kontra self-hosted broker för bakgrundsjobb; kostnad mot driftbörda, inget avgjort.",
+          messageCount: 9,
+          lastMessagePreview: "jag frågar assistenten, sec",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 4,
+          lastActivityMinutesAgo: 2,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "self-hosted blir billigare på papper men vem tar 03-larmen?",
+          minutesAgo: 6,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "true, men managed låser in oss rejält",
+          minutesAgo: 4,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "jag frågar assistenten, sec",
+          minutesAgo: 2,
+        },
+      ],
+      streamType: "dm",
+      category: "continuity",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_queue01",
+      minConfidence: 0.6,
+    },
+  },
+
+  {
+    id: "same-question-new-alternative-001",
+    name: "Continuity: proposing another option in a live debate is not a new conversation (Swedish)",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown:
+          "tredje vägen då — kör SQS för jobben och en vanlig cron för schemaläggningen, så slipper vi brokern helt?",
+      },
+      activeConversations: [
+        {
+          id: "conv_queue02",
+          topicSummary: "Kö-val för bakgrundsjobb",
+          summary: "Debatt om managed kö kontra self-hosted broker; kostnad mot driftbörda.",
+          messageCount: 7,
+          lastMessagePreview: "managed känns dyrt för vår volym",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 4,
+          lastActivityMinutesAgo: 1,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "managed känns dyrt för vår volym",
+          minutesAgo: 1,
+        },
+      ],
+      streamType: "dm",
+      category: "continuity",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_queue02",
+      minConfidence: 0.6,
+    },
+  },
 ]
