@@ -34,8 +34,14 @@ test.describe("Persona editor", () => {
     // ──── Edit the system prompt and toggle a tool off ────
 
     const marker = `You are the E2E test persona ${testId}. Keep replies short.`
-    const systemPrompt = page.getByLabel("System prompt")
-    await systemPrompt.fill(marker)
+    // The system prompt is a RichEditor (contenteditable), not a plain textarea:
+    // click in, select-all, replace with the marker.
+    const systemPrompt = page.getByRole("textbox", { name: "Persona system prompt editor" })
+    await systemPrompt.click()
+    await page.keyboard.press("ControlOrMeta+A")
+    await page.keyboard.press("Delete")
+    await page.keyboard.type(marker)
+    await expect(systemPrompt).toContainText(marker)
 
     // Web search is enabled by default; unchecking it diverges the tool set.
     const webSearch = page.getByRole("checkbox", { name: "Web search" })
@@ -58,7 +64,7 @@ test.describe("Persona editor", () => {
 
     await page.reload()
     await expect(page.getByRole("heading", { name: "Edit Ariadne" })).toBeVisible({ timeout: 10000 })
-    await expect(page.getByLabel("System prompt")).toHaveValue(marker)
+    await expect(page.getByRole("textbox", { name: "Persona system prompt editor" })).toContainText(marker)
     await expect(page.getByRole("checkbox", { name: "Web search" })).not.toBeChecked()
     await expect(page.getByText("Customized").first()).toBeVisible()
 
