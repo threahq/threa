@@ -149,6 +149,11 @@ export type {
   PersonaConfigDraftIdentity,
   UpsertPersonaConfigDraftParams,
 } from "./persona-config-draft-repository"
+export { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
+export type {
+  PersonaConfigRevisionRecord,
+  InsertPersonaConfigRevisionParams,
+} from "./persona-config-revision-repository"
 
 export { hashCallbackToken } from "./callback-token"
 export { assertSessionRunning, verifyCallbackToken, assertReplyKeyGeneration } from "./sealed-session-guards"

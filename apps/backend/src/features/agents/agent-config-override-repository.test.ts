@@ -142,3 +142,45 @@ describe("AgentConfigOverrideRepository.findActiveDetailByWorkspaceAndAgent", ()
     expect(detail).toBeNull()
   })
 })
+
+describe("AgentConfigOverrideRepository.deleteActive", () => {
+  test("deletes the active override when the expected version matches", async () => {
+    const db = createDb([[{ patch: { name: "Old" }, updated_at: D1 }], []])
+    const result = await AgentConfigOverrideRepository.deleteActive(db, {
+      workspaceId: "workspace_1",
+      agentId: ARIADNE_AGENT_ID,
+      expectedUpdatedAt: D1.toISOString(),
+    })
+    expect(result).toEqual({ outcome: "deleted" })
+    expect(db.queries[1].text).toContain("DELETE FROM agent_config_overrides")
+  })
+
+  test("returns conflict when the expected version diverges (no delete)", async () => {
+    const db = createDb([[{ patch: { name: "Theirs" }, updated_at: D2 }]])
+    const result = await AgentConfigOverrideRepository.deleteActive(db, {
+      workspaceId: "workspace_1",
+      agentId: ARIADNE_AGENT_ID,
+      expectedUpdatedAt: D1.toISOString(),
+    })
+    expect(result).toEqual({ outcome: "conflict", current: { patch: { name: "Theirs" }, updatedAt: D2.toISOString() } })
+    expect(db.queries).toHaveLength(1)
+  })
+
+  test("no-ops when already at defaults and none was expected", async () => {
+    const result = await AgentConfigOverrideRepository.deleteActive(createDb([[]]), {
+      workspaceId: "workspace_1",
+      agentId: ARIADNE_AGENT_ID,
+      expectedUpdatedAt: null,
+    })
+    expect(result).toEqual({ outcome: "noop" })
+  })
+
+  test("conflicts when a version was expected but the row is gone", async () => {
+    const result = await AgentConfigOverrideRepository.deleteActive(createDb([[]]), {
+      workspaceId: "workspace_1",
+      agentId: ARIADNE_AGENT_ID,
+      expectedUpdatedAt: D1.toISOString(),
+    })
+    expect(result).toEqual({ outcome: "conflict", current: null })
+  })
+})

@@ -112,18 +112,43 @@ export function computeSparsePatch(values: PersonaFormValues, defaults: PersonaR
   return patch as PersonaConfigPatch
 }
 
-/** Whether the form matches the saved baseline (defaults + committed override). */
-export function patchesEqual(a: PersonaConfigPatch, b: PersonaConfigPatch): boolean {
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<PersonaFormField>
-  for (const key of keys) {
-    if (key === "enabledTools") {
-      const av = a.enabledTools
-      const bv = b.enabledTools
-      if ((av === undefined) !== (bv === undefined)) return false
-      if (av && bv && !toolsEqual([...av], bv)) return false
+/** Human labels for the editable fields — the revision history change summary
+ *  renders these (INV-46: the frontend owns display text). */
+export const PERSONA_FIELD_LABELS: Record<PersonaFormField, string> = {
+  name: "name",
+  description: "description",
+  avatarEmoji: "avatar",
+  systemPrompt: "system prompt",
+  model: "model",
+  escalationModel: "escalation model",
+  temperature: "temperature",
+  maxTokens: "max tokens",
+  enabledTools: "tools",
+}
+
+/**
+ * The editable fields whose value differs between two sparse patches (an absent
+ * field means "default"). Powers the revision history change summary — which
+ * fields a revision changed relative to the previous (older) one. Iterates the
+ * single field list so a new field is covered automatically.
+ */
+export function changedPatchFields(prev: PersonaConfigPatch, next: PersonaConfigPatch): PersonaFormField[] {
+  const changed: PersonaFormField[] = []
+  for (const field of PERSONA_FORM_FIELDS) {
+    if (field === "enabledTools") {
+      const a = prev.enabledTools
+      const b = next.enabledTools
+      if ((a === undefined) !== (b === undefined) || (a && b && !toolsEqual([...a], b))) changed.push(field)
       continue
     }
-    if (!Object.is(a[key], b[key])) return false
+    if (!Object.is(prev[field], next[field])) changed.push(field)
   }
-  return true
+  return changed
+}
+
+/** Whether the form matches the saved baseline (defaults + committed override).
+ *  Defined via {@link changedPatchFields} so the per-field equality rule (notably
+ *  the order-insensitive `enabledTools` compare) lives in exactly one place. */
+export function patchesEqual(a: PersonaConfigPatch, b: PersonaConfigPatch): boolean {
+  return changedPatchFields(a, b).length === 0
 }

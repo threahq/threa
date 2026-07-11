@@ -132,6 +132,36 @@ export interface PersonaConfigResponse {
   availableModels: PersonaModelOption[]
 }
 
+/** Who committed a persona config revision. The single home for this union — the
+ *  revision repository/table validate against it in app code (INV-3/33). */
+export const PERSONA_REVISION_AUTHOR_KINDS = ["user", "persona"] as const
+export type PersonaRevisionAuthorKind = (typeof PERSONA_REVISION_AUTHOR_KINDS)[number]
+
+/**
+ * One committed revision of a persona's override config (roadmap 7.1 history).
+ * Every accepted `setOverride` (including a restore) appends one, so the list is
+ * the append-only audit trail the editor renders and rolls back from. `patch` is
+ * the sparse override committed at that `version`; `createdById` is resolved to a
+ * display name on the frontend (INV-46). `version` is monotonic per persona.
+ */
+export interface PersonaConfigRevision {
+  id: string
+  version: number
+  patch: PersonaConfigPatch
+  createdByKind: PersonaRevisionAuthorKind
+  createdById: string
+  createdAt: string
+}
+
+/** Request body for POST restore-a-revision (same optimistic-concurrency guard as an override write). */
+export interface RestorePersonaRevisionInput {
+  /**
+   * The `overrideUpdatedAt` the caller last read; `null` asserts no override
+   * exists yet. A mismatch is a 409 so a concurrent admin edit isn't clobbered.
+   */
+  expectedUpdatedAt: string | null
+}
+
 /** Request body for PUT persona override. */
 export interface UpdatePersonaOverrideInput {
   patch: PersonaConfigPatch
