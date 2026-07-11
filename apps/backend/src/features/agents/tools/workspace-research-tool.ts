@@ -130,6 +130,7 @@ When you do call it, incorporate retrieved context naturally into your response.
             streamName: s.streamName,
             messageId: s.messageId,
             authorName: s.authorName,
+            authoredByKind: s.authoredByKind,
           }
         }),
     },

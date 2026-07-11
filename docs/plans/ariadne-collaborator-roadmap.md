@@ -32,39 +32,40 @@ Two concurrent efforts share primitives with this work; steps below reference th
 
 ## Status
 
-| Step | Deliverable                                           | Status | PR    |
-| ---- | ----------------------------------------------------- | ------ | ----- |
-| 1.1  | `schedule_follow_up` tool + follow-up infra           | ☑      | #1138 |
-| 1.2  | Follow-up turn invocation (context + prompt)          | ☑      | #1142 |
-| 1.3  | Follow-up visibility: timeline card + cancel          | ☑      | #1176 |
-| 1.4  | Configurable follow-up limits (workspace setting)     | ☑      | #1223 |
-| 1.5  | Turn-purpose consolidation (invocation variants)      | ☑      | #1155 |
-| 1.6  | Follow-up admin tools (list/cancel/update)            | ☑      | #1159 |
-| 2.1  | Generalized session abort                             | ☑      | #1177 |
-| 2.2  | Stop/Redirect affordances on the activity card        | ☑      | #1190 |
-| 2.3  | Per-turn model resolution + first escalation rule     | ☑      | #1202 |
-| 3.1  | Persisted episode summaries                           | ☑      | #1162 |
-| 3.2  | Per-thread session concurrency                        | ☑      | #1167 |
-| 3.3  | Conversation-anchored agent replies                   | ☑      | #1170 |
-| 4.1  | `stream_briefs` storage + endpoints + injection       | ☑      | #1214 |
-| 4.2  | `update_stream_brief` tool + timeline event           | ☑      | #1220 |
-| 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2) | ☑      | #1218 |
-| 4.4  | Brief correction eval                                 | ☐      |       |
-| 5.1  | `delegate_task` tool + delegation substrate + INV-65  | ☑      | #1261 |
-| 5.2  | Delegation card UI                                    | ☑      | #1261 |
-| 5.3  | Delegation public API (claim/status/complete)         | ☐      |       |
-| 5.4  | claude-code-remote delegation support                 | ☐      |       |
-| 5.5  | `@threa/mcp` server                                   | ☐      |       |
-| 6.1  | Memo edit/archive endpoints + explorer UI             | ☑      | #1246 |
-| 6.2  | `save_memo` tool                                      | ☑      | #1260 |
-| 6.3  | Reflective capture at session completion              | ☑      |       |
-| 6.4  | `memoScope` (user/stream/workspace)                   | ☐      |       |
-| 6.5  | Retrieval feedback decay                              | ☐      |       |
-| 7.1  | Workspace persona CRUD API                            | ☐      |       |
-| 7.2  | Persona picker UI                                     | ☐      |       |
-| 8.1  | Ambient classifier on settled conversations           | ☐      |       |
-| 8.2  | "Ariadne noticed" card + budget + toggle              | ☐      |       |
-| 8.3  | Ambient precision eval                                | ☐      |       |
+| Step | Deliverable                                              | Status | PR    |
+| ---- | -------------------------------------------------------- | ------ | ----- |
+| 1.1  | `schedule_follow_up` tool + follow-up infra              | ☑      | #1138 |
+| 1.2  | Follow-up turn invocation (context + prompt)             | ☑      | #1142 |
+| 1.3  | Follow-up visibility: timeline card + cancel             | ☑      | #1176 |
+| 1.4  | Configurable follow-up limits (workspace setting)        | ☑      | #1223 |
+| 1.5  | Turn-purpose consolidation (invocation variants)         | ☑      | #1155 |
+| 1.6  | Follow-up admin tools (list/cancel/update)               | ☑      | #1159 |
+| 2.1  | Generalized session abort                                | ☑      | #1177 |
+| 2.2  | Stop/Redirect affordances on the activity card           | ☑      | #1190 |
+| 2.3  | Per-turn model resolution + first escalation rule        | ☑      | #1202 |
+| 3.1  | Persisted episode summaries                              | ☑      | #1162 |
+| 3.2  | Per-thread session concurrency                           | ☑      | #1167 |
+| 3.3  | Conversation-anchored agent replies                      | ☑      | #1170 |
+| 4.1  | `stream_briefs` storage + endpoints + injection          | ☑      | #1214 |
+| 4.2  | `update_stream_brief` tool + timeline event              | ☑      | #1220 |
+| 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2)    | ☑      | #1218 |
+| 4.4  | Brief correction eval                                    | ☐      |       |
+| 5.1  | `delegate_task` tool + delegation substrate + INV-65     | ☑      | #1261 |
+| 5.2  | Delegation card UI                                       | ☑      | #1261 |
+| 5.3  | Delegation public API (claim/status/complete)            | ☐      |       |
+| 5.4  | claude-code-remote delegation support                    | ☐      |       |
+| 5.5  | `@threa/mcp` server                                      | ☐      |       |
+| 6.1  | Memo edit/archive endpoints + explorer UI                | ☑      | #1246 |
+| 6.2  | `save_memo` tool                                         | ☑      | #1260 |
+| 6.3  | Reflective capture at session completion                 | ☑      | #1273 |
+| 6.4  | `memoScope` (user/stream/workspace)                      | ☐      |       |
+| 6.5  | Retrieval feedback decay                                 | ☐      |       |
+| 6.6  | Agent-memo safety: read-time provenance + type allowlist | ☑      | #1277 |
+| 7.1  | Workspace persona CRUD API                               | ☐      |       |
+| 7.2  | Persona picker UI                                        | ☐      |       |
+| 8.1  | Ambient classifier on settled conversations              | ☐      |       |
+| 8.2  | "Ariadne noticed" card + budget + toggle                 | ☐      |       |
+| 8.3  | Ambient precision eval                                   | ☐      |       |
 
 Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and 8 strictly last (it depends on 1, 1.5, and 4). Pull **3.1 forward to right after Phase 1** — fired follow-up turns consume episode summaries (see 3.1), and until it lands the 1.2 prompt hint is compensating for their absence.
 
@@ -602,6 +603,21 @@ Completes GAM into the two-tier private/shared shape (Collaborative Memory, arXi
 **Tests:** decay ordering in hybrid search; idempotent per-user feedback (INV-20 upsert).
 
 **Done when:** a twice-downvoted memo demonstrably ranks below an equivalent un-downvoted one.
+
+### 6.6 Agent-memo safety contract: read-time provenance + knowledge-type allowlist
+
+**Goal:** close the two open items in the agent-memory co-storage ruling (recorded on merging #1273: one GAM pool, tiered by provenance — with visible capture, rank damping, and correctability already shipped). (a) `authored_by_kind` existed only as a DB column and boost input — invisible at read time; (b) `captureSessionReflection` had no knowledge-type restriction, so an agent could mint `decision` memos (the highest-boosted type) from its own research.
+
+**Shape (shipped):**
+
+- **Provenance threads the full read path.** `authoredByKind` + `sourceSessionId` join the memo SELECT/mapping (`memos/repository.ts`), the wire `Memo` (`packages/types/src/domain.ts`, both `toWireMemo` shapes), and the v1 public-api `memoSchema` (openapi regenerated). `MemoExplorerDetail` gains `capturedByPersonaName` — resolved in `buildDetail` via `sourceSessionId` → `AgentSessionRepository.findById` → `PersonaRepository` (detail-surface only; null for pipeline memos or when the session no longer resolves).
+- **Two read surfaces flag it.** `MemoDetailContent` (shared by the explorer and the in-stream preview dialog): a `Captured by <persona>` / `AI-captured` badge in the metadata row plus a Provenance-section line ("Written by <persona> from its own session work, not extracted from a team conversation"). Citations: `TraceSource`/`WorkspaceSourceItem` gain optional `authoredByKind` (set in the researcher's `buildSources`), and the trace dialog's memo source rows render "· AI-captured".
+- **Reflective capture is allowlisted.** `MEMO_REFLECTIVE_KNOWLEDGE_TYPES` (`learning|procedure|reference|context`) in `memos/config.ts`; a disallowed type (i.e. `decision`) is **coerced to `learning`** with a log rather than dropped — the finding survives under the honest label for a research conclusion, without decision-authority rank (decisions boost 1.3×, so even 0.9-damped an agent-minted decision would outrank pipeline learnings). `save_memo` is deliberately NOT gated: it acts on explicit in-conversation direction, and real decisions stated in conversation are the passive pipeline's to capture.
+- E2E/enclave sealed-source parity omitted, consistent with the roadmap-wide deferral.
+
+**Tests:** explorer-service persona resolution (agent memo → name; pipeline memo skips the lookup; vanished session → null); reflective coercion (disallowed → `learning`, allowed passes through); `MemoDetailContent` badge/provenance across authored kinds; trace source AI-captured flag.
+
+**Done when:** an agent-authored memo is legible as such in the explorer, the preview dialog, the public API, and reply citations — and no reflective capture can mint a `decision`.
 
 ---
 

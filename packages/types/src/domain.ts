@@ -35,6 +35,7 @@ import type {
   MemoType,
   KnowledgeType,
   MemoStatus,
+  AuthoredByKind,
   PendingItemType,
   SourceType,
   ExtractionContentType,
@@ -843,6 +844,10 @@ export interface Memo {
   status: MemoStatus
   version: number
   revisionReason: string | null
+  /** Who wrote the memo: the passive extraction pipeline, or an agent (`save_memo` / reflective capture). */
+  authoredByKind: AuthoredByKind
+  /** The agent session that wrote this memo (agent authorship only). */
+  sourceSessionId: string | null
   createdAt: string
   updatedAt: string
   archivedAt: string | null

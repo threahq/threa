@@ -449,6 +449,8 @@ function fakeMemoRow(id: string, overrides: Partial<import("./repository").Memo>
     status: "active",
     version: 1,
     revisionReason: null,
+    authoredByKind: "pipeline",
+    sourceSessionId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     archivedAt: null,
@@ -783,6 +785,28 @@ describe("MemoService.captureSessionReflection — reflective capture (roadmap 6
 
     expect(result.captured).toBe(MEMO_REFLECTIVE_MAX_MEMOS)
     expect(insert).toHaveBeenCalledTimes(MEMO_REFLECTIVE_MAX_MEMOS)
+  })
+
+  it("coerces a disallowed knowledge type to the fallback — agents don't mint decisions (roadmap 6.6)", async () => {
+    const { service, insert } = setupReflection({
+      memoContents: [
+        { ...memoContent, title: "Self-minted ruling", knowledgeType: "decision" },
+        { ...memoContent, title: "Genuine finding", abstract: "Distinct second finding.", knowledgeType: "procedure" },
+      ],
+    })
+
+    const result = await service.captureSessionReflection(reflectionInput)
+
+    expect(result.captured).toBe(2)
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ title: "Self-minted ruling", knowledgeType: "learning" })
+    )
+    // An allowed type passes through untouched.
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ title: "Genuine finding", knowledgeType: "procedure" })
+    )
   })
 
   it("dedups a reflective memo whose knowledge already exists in the stream", async () => {

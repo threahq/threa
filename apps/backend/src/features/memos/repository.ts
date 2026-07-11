@@ -48,6 +48,8 @@ interface MemoRow {
   status: string
   version: number
   revision_reason: string | null
+  authored_by_kind: string
+  source_session_id: string | null
   created_at: Date
   updated_at: Date
   archived_at: Date | null
@@ -70,6 +72,8 @@ export interface Memo {
   status: MemoStatus
   version: number
   revisionReason: string | null
+  authoredByKind: AuthoredByKind
+  sourceSessionId: string | null
   createdAt: Date
   updatedAt: Date
   archivedAt: Date | null
@@ -191,6 +195,8 @@ function mapRowToMemo(row: MemoRow): Memo {
     status: row.status as MemoStatus,
     version: row.version,
     revisionReason: row.revision_reason,
+    authoredByKind: row.authored_by_kind as AuthoredByKind,
+    sourceSessionId: row.source_session_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
@@ -201,6 +207,7 @@ const SELECT_FIELDS = `
   id, workspace_id, memo_type, source_message_id, source_conversation_id,
   title, abstract, key_points, source_message_ids, participant_ids,
   knowledge_type, tags, parent_memo_id, status, version, revision_reason,
+  authored_by_kind, source_session_id,
   created_at, updated_at, archived_at
 `
 
@@ -208,6 +215,7 @@ const SELECT_FIELDS_PREFIXED = `
   m.id, m.workspace_id, m.memo_type, m.source_message_id, m.source_conversation_id,
   m.title, m.abstract, m.key_points, m.source_message_ids, m.participant_ids,
   m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.revision_reason,
+  m.authored_by_kind, m.source_session_id,
   m.created_at, m.updated_at, m.archived_at
 `
 

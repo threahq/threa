@@ -1,4 +1,4 @@
-import type { AgentSessionStatus, AgentStepType } from "./constants"
+import type { AgentSessionStatus, AgentStepType, AuthoredByKind } from "./constants"
 
 export const TRACE_SOURCE_TYPES = ["web", "workspace", "workspace_message", "workspace_memo", "github"] as const
 export type TraceSourceType = (typeof TRACE_SOURCE_TYPES)[number]
@@ -15,6 +15,8 @@ export interface TraceSource {
   messageId?: string
   authorName?: string
   timestamp?: string
+  /** `workspace_memo` sources: who authored the cited memo, so citations can flag agent-captured knowledge. */
+  authoredByKind?: AuthoredByKind
 }
 
 /**

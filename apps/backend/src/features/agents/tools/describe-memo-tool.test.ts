@@ -42,6 +42,8 @@ describe("describe_memo tool", () => {
         status: "active",
         version: 1,
         revisionReason: null,
+        authoredByKind: "pipeline",
+        sourceSessionId: null,
         createdAt: new Date("2026-04-30T09:00:00Z"),
         updatedAt: new Date("2026-04-30T09:00:00Z"),
         archivedAt: null,
@@ -50,6 +52,7 @@ describe("describe_memo tool", () => {
       sourceStream: { id: "stream_1", type: "channel", name: "general" },
       rootStream: { id: "stream_1", type: "channel", name: "general" },
       successorMemoId: null,
+      capturedByPersonaName: null,
       sourceMessages: [
         {
           id: "msg_1",
@@ -144,6 +147,8 @@ describe("describe_memo tool", () => {
         status: "active",
         version: 1,
         revisionReason: null,
+        authoredByKind: "pipeline",
+        sourceSessionId: null,
         createdAt: new Date("2026-04-30T09:00:00Z"),
         updatedAt: new Date("2026-04-30T09:00:00Z"),
         archivedAt: null,
@@ -152,6 +157,7 @@ describe("describe_memo tool", () => {
       sourceStream: { id: "stream_1", type: "channel", name: "g" },
       rootStream: null,
       successorMemoId: null,
+      capturedByPersonaName: null,
       sourceMessages: [
         {
           id: "msg_1",

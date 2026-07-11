@@ -318,6 +318,37 @@ describe("TraceStep", () => {
     )
   })
 
+  it("flags an agent-captured memo source (roadmap 6.6)", async () => {
+    const user = userEvent.setup()
+
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "workspace_search",
+            content: JSON.stringify({ memoCount: 1, messageCount: 0 }),
+            sources: [
+              {
+                type: "workspace_memo",
+                title: "Agent research finding",
+                memoId: "memo_agent",
+                streamId: "stream_2",
+                streamName: "#launch",
+                authoredByKind: "agent",
+              },
+            ],
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    await user.click(screen.getByRole("button", { name: /sources/i }))
+
+    expect(screen.getByText(/from #launch · AI-captured/)).toBeInTheDocument()
+  })
+
   it("reveals the full research brief from a collapsed disclosure", async () => {
     const user = userEvent.setup()
 

@@ -72,6 +72,8 @@ export function toMemo(m: { title: string; abstract: string; createdDaysAgo?: nu
     status: MemoStatuses.ACTIVE,
     version: 1,
     revisionReason: null,
+    authoredByKind: "pipeline",
+    sourceSessionId: null,
     createdAt,
     updatedAt: createdAt,
     archivedAt: null,

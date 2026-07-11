@@ -10,7 +10,7 @@ import { resolveMemoSearchMode, DEFAULT_MEMO_SEARCH_MODE, MEMO_RERANKER_CANDIDAT
 import type { RerankerLike } from "./reranker"
 import type { EmbeddingServiceLike } from "./embedding-service"
 import { StreamRepository, type Stream } from "../streams"
-import { PersonaRepository } from "../agents"
+import { AgentSessionRepository, PersonaRepository } from "../agents"
 import { UserRepository } from "../workspaces"
 
 const DEFAULT_LIMIT = 30
@@ -73,6 +73,12 @@ export interface MemoExplorerDetail extends MemoExplorerResult {
   sourceMessages: MemoExplorerSourceMessage[]
   /** For a superseded memo, the id of the active memo that replaced it. */
   successorMemoId: string | null
+  /**
+   * For an agent-authored memo, the display name of the persona whose session
+   * wrote it (resolved via `sourceSessionId`) — null when unresolvable or when
+   * the memo is pipeline-authored.
+   */
+  capturedByPersonaName: string | null
 }
 
 export interface MemoExplorerServiceDeps {
@@ -318,6 +324,7 @@ export class MemoExplorerService {
     const sourceMessages = await this.loadSourceMessages(workspaceId, memo, permissions.accessibleStreamIds)
     const successor =
       memo.status === "superseded" ? await MemoRepository.findSupersededBy(this.pool, workspaceId, memo.id) : null
+    const capturedByPersonaName = await this.resolveCapturedByPersonaName(workspaceId, memo)
 
     return {
       memo,
@@ -326,7 +333,21 @@ export class MemoExplorerService {
       rootStream: this.toStreamRef(sourceContext.rootStream),
       sourceMessages,
       successorMemoId: successor?.id ?? null,
+      capturedByPersonaName,
     }
+  }
+
+  /** Agent provenance for the detail surface: `sourceSessionId` → session → persona name. */
+  private async resolveCapturedByPersonaName(workspaceId: string, memo: Memo): Promise<string | null> {
+    if (memo.authoredByKind !== "agent" || !memo.sourceSessionId) {
+      return null
+    }
+    const session = await AgentSessionRepository.findById(this.pool, memo.sourceSessionId)
+    if (!session) {
+      return null
+    }
+    const [persona] = await PersonaRepository.findByIds(this.pool, [session.personaId], workspaceId)
+    return persona?.name ?? null
   }
 
   private resolveStreamIds(accessibleStreamIds: string[], requestedStreamIds?: string[]): string[] {

@@ -31,6 +31,8 @@ import {
   MEMO_DEDUP_DISTANCE,
   MEMO_SUPERSEDE_DISTANCE,
   MEMO_REFLECTIVE_MAX_MEMOS,
+  MEMO_REFLECTIVE_KNOWLEDGE_TYPES,
+  MEMO_REFLECTIVE_FALLBACK_KNOWLEDGE_TYPE,
 } from "./config"
 
 const MEMORY_CONTEXT_LIMIT = 20
@@ -936,7 +938,20 @@ export class MemoService implements MemoServiceLike {
         authorTimezone,
         memoLanguage: context.memoLanguage,
       })
-    ).slice(0, MEMO_REFLECTIVE_MAX_MEMOS)
+    )
+      .slice(0, MEMO_REFLECTIVE_MAX_MEMOS)
+      .map((content) => {
+        // Allowlist gate (see MEMO_REFLECTIVE_KNOWLEDGE_TYPES): an agent must
+        // not mint decision-authority memos from its own reflection.
+        if (MEMO_REFLECTIVE_KNOWLEDGE_TYPES.includes(content.knowledgeType)) {
+          return content
+        }
+        logger.info(
+          { sessionId, streamId, title: content.title, knowledgeType: content.knowledgeType },
+          "reflective capture — disallowed knowledge type coerced"
+        )
+        return { ...content, knowledgeType: MEMO_REFLECTIVE_FALLBACK_KNOWLEDGE_TYPE }
+      })
     if (contents.length === 0) {
       logger.info({ sessionId, streamId }, "reflective capture — memorizer returned no memos")
       return { classified: true, captured: 0, deduped: 0 }
@@ -1059,6 +1074,8 @@ export class MemoService implements MemoServiceLike {
       status: memo.status,
       version: memo.version,
       revisionReason: memo.revisionReason,
+      authoredByKind: memo.authoredByKind,
+      sourceSessionId: memo.sourceSessionId,
       createdAt: memo.createdAt.toISOString(),
       updatedAt: memo.updatedAt.toISOString(),
       archivedAt: memo.archivedAt ? memo.archivedAt.toISOString() : null,
@@ -1085,6 +1102,8 @@ export class MemoService implements MemoServiceLike {
       status: memoData.status,
       version: 1,
       revisionReason: null,
+      authoredByKind: AuthoredByKinds.PIPELINE,
+      sourceSessionId: null,
       createdAt: now,
       updatedAt: now,
       archivedAt: null,

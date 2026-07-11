@@ -218,6 +218,8 @@
                                 "maximum": 9007199254740991
                               },
                               "revisionReason": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                              "authoredByKind": { "type": "string", "enum": ["pipeline", "agent"] },
+                              "sourceSessionId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                               "createdAt": { "type": "string", "format": "date-time" },
                               "updatedAt": { "type": "string", "format": "date-time" },
                               "archivedAt": {
@@ -241,6 +243,8 @@
                               "status",
                               "version",
                               "revisionReason",
+                              "authoredByKind",
+                              "sourceSessionId",
                               "createdAt",
                               "updatedAt",
                               "archivedAt"
@@ -373,6 +377,8 @@
                             "status": { "type": "string" },
                             "version": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
                             "revisionReason": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "authoredByKind": { "type": "string", "enum": ["pipeline", "agent"] },
+                            "sourceSessionId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                             "createdAt": { "type": "string", "format": "date-time" },
                             "updatedAt": { "type": "string", "format": "date-time" },
                             "archivedAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
@@ -394,6 +400,8 @@
                             "status",
                             "version",
                             "revisionReason",
+                            "authoredByKind",
+                            "sourceSessionId",
                             "createdAt",
                             "updatedAt",
                             "archivedAt"
@@ -458,7 +466,8 @@
                             "additionalProperties": false
                           }
                         },
-                        "successorMemoId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+                        "successorMemoId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "capturedByPersonaName": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
                       },
                       "required": [
                         "memo",
@@ -466,7 +475,8 @@
                         "sourceStream",
                         "rootStream",
                         "sourceMessages",
-                        "successorMemoId"
+                        "successorMemoId",
+                        "capturedByPersonaName"
                       ],
                       "additionalProperties": false
                     }

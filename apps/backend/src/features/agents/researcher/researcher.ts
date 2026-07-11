@@ -4,7 +4,7 @@ import { withClient } from "../../../db"
 import { composeAbortSignal, isAbortError, type AI } from "@threa/agent-runtime"
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
-import type { TraceSource } from "@threa/types"
+import type { AuthoredByKind, TraceSource } from "@threa/types"
 import type { EmbeddingServiceLike } from "../../memos"
 import { MessageRepository, type Message } from "../../messaging"
 import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
@@ -52,6 +52,8 @@ export interface WorkspaceSourceItem {
   streamName?: string
   messageId?: string
   authorName?: string
+  /** Memo sources: who authored the cited memo (agent-captured knowledge is flagged in citations). */
+  authoredByKind?: AuthoredByKind
 }
 
 /**
@@ -1329,6 +1331,7 @@ Each query must have:
         memoId: memo.id,
         streamId: sourceStream?.id,
         streamName: sourceStream?.name ?? sourceStream?.type,
+        authoredByKind: memo.authoredByKind,
       })
     }
 
