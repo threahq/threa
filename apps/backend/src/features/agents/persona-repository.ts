@@ -150,7 +150,14 @@ export function resolveDraftTestPersona(
   const base = getVisibleBuiltInAgentConfig(personaId)
   if (!base) return null
 
-  const resolved = applyBuiltInAgentPatch(base, draft.patch, { workspaceId, agentId: personaId })
+  let resolved: BuiltInAgentConfig
+  try {
+    resolved = applyBuiltInAgentPatch(base, draft.patch, { workspaceId, agentId: personaId })
+  } catch {
+    // A corrupt stored patch must degrade to the saved config, not abort the
+    // live turn — the null contract above is total, not just for gone rows.
+    return null
+  }
   const persona = mapBuiltInToPersona(resolved)
   return { ...persona, enabledTools: stripDraftTestExcludedTools(persona.enabledTools) }
 }

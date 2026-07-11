@@ -62,4 +62,12 @@ describe("resolveDraftTestPersona", () => {
     )
     expect(persona).toBeNull()
   })
+  test("returns null (not throw) when the stored draft patch is corrupt", () => {
+    const persona = resolveDraftTestPersona(
+      { workspaceId: WORKSPACE_ID, agentId: ARIADNE_AGENT_ID, patch: { model: 42, bogusKey: true } },
+      ARIADNE_AGENT_ID,
+      WORKSPACE_ID
+    )
+    expect(persona).toBeNull()
+  })
 })
