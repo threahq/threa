@@ -108,6 +108,9 @@ export {
   AUTHORED_BY_KINDS,
   type AuthoredByKind,
   AuthoredByKinds,
+  MEMO_SCOPES,
+  type MemoScope,
+  MemoScopes,
   PENDING_ITEM_TYPES,
   type PendingItemType,
   // Agent tools

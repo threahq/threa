@@ -1,4 +1,4 @@
-import type { AuthorType, KnowledgeType, Memo, MemoStatus, MemoType } from "@threa/types"
+import type { AuthorType, KnowledgeType, Memo, MemoScope, MemoStatus, MemoType } from "@threa/types"
 import api from "./client"
 
 export interface MemoExplorerStreamRef {
@@ -39,6 +39,8 @@ export interface MemoSearchFilters {
   knowledgeType?: KnowledgeType[]
   tags?: string[]
   status?: MemoStatus[]
+  /** Positive visibility filter (roadmap 6.4) — `'user'` is the "About you" view. */
+  scope?: MemoScope
   before?: string
   after?: string
 }
@@ -85,6 +87,7 @@ export async function searchMemos(workspaceId: string, request: MemoSearchReques
     knowledgeType: request.filters?.knowledgeType,
     tags: request.filters?.tags,
     status: request.filters?.status,
+    scope: request.filters?.scope,
     before: request.filters?.before,
     after: request.filters?.after,
   }
@@ -110,4 +113,9 @@ export async function archiveMemo(workspaceId: string, memoId: string): Promise<
 
 export async function unarchiveMemo(workspaceId: string, memoId: string): Promise<MemoDetailResponse> {
   return api.post<MemoDetailResponse>(`/api/workspaces/${workspaceId}/memos/${memoId}/unarchive`, {})
+}
+
+/** Hard-delete a user-scoped memo ("forget what you know about me", roadmap 6.4). */
+export async function deleteMemo(workspaceId: string, memoId: string): Promise<{ ok: true }> {
+  return api.delete<{ ok: true }>(`/api/workspaces/${workspaceId}/memos/${memoId}`)
 }

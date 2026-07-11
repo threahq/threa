@@ -3,6 +3,7 @@ import {
   AgentStepTypes,
   AgentToolNames,
   KNOWLEDGE_TYPES,
+  MemoScopes,
   MEMO_ABSTRACT_MAX_CHARS,
   MEMO_KEY_POINTS_MAX,
   MEMO_TAGS_MAX,
@@ -42,6 +43,12 @@ const SaveMemoSchema = z.object({
     .min(1)
     .describe(
       "The ids of the messages this knowledge comes from (at least one). Use ids from the conversation/context — they anchor the memo to its source."
+    ),
+  scope: z
+    .enum([MemoScopes.USER, MemoScopes.WORKSPACE])
+    .optional()
+    .describe(
+      'Visibility: "user" files it privately for the person you\'re helping (their "about you" tier — personal facts, preferences), "workspace" shares it. Omit to match where you are — a private scratchpad saves privately, a channel saves shared.'
     ),
 })
 
@@ -84,6 +91,7 @@ Use when the user asks you to remember something, or when something clearly wort
           tags: input.tags,
           knowledgeType: input.knowledgeType,
           sourceMessageIds: input.sourceMessageIds,
+          scope: input.scope,
         })
         if (!result.ok) {
           return { output: JSON.stringify({ ok: false, error: "Failed to save memo" }) }

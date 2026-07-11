@@ -5,7 +5,12 @@ export {
   type WorkspaceAgentDeps,
   type WorkspaceSourceItem,
 } from "./researcher"
-export { computeAgentAccessSpec, type AgentAccessSpec, type ComputeAccessSpecParams } from "./access-spec"
+export {
+  computeAgentAccessSpec,
+  resolveMemoViewer,
+  type AgentAccessSpec,
+  type ComputeAccessSpecParams,
+} from "./access-spec"
 export {
   formatRetrievedContext,
   enrichMessageSearchResults,

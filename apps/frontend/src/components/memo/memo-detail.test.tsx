@@ -26,6 +26,8 @@ function buildDetail(overrides: Partial<MemoExplorerDetail["memo"]> = {}): MemoE
       revisionReason: null,
       authoredByKind: "pipeline",
       sourceSessionId: null,
+      scope: "workspace",
+      scopeUserId: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: null,
@@ -184,5 +186,44 @@ describe("MemoDetailContent agent provenance (roadmap 6.6)", () => {
     renderDetail(<MemoDetailContent data={buildDetail()} workspaceId="ws_1" isLoading={false} />)
     expect(screen.queryByText(/AI-captured|Captured by/)).not.toBeInTheDocument()
     expect(screen.queryByText(/written by .* session work/i)).not.toBeInTheDocument()
+  })
+})
+
+describe("MemoDetailContent — user scope (roadmap 6.4)", () => {
+  beforeEach(() => {
+    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+  })
+
+  it("badges a user-scoped memo as 'About you' and offers Delete with a confirm", async () => {
+    const user = userEvent.setup()
+    const controls = buildControls({ onDelete: vi.fn().mockResolvedValue(undefined) })
+    renderDetail(
+      <MemoDetailContent
+        data={buildDetail({ scope: "user", scopeUserId: "usr_owner" })}
+        workspaceId="ws_1"
+        isLoading={false}
+        edit={controls}
+      />
+    )
+
+    expect(screen.getByText(/about you/i)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /delete/i }))
+    // Destructive + irreversible, so it confirms before deleting.
+    await user.click(screen.getByRole("button", { name: /^delete$/i }))
+    await waitFor(() => expect(controls.onDelete).toHaveBeenCalledTimes(1))
+  })
+
+  it("offers no Delete on a workspace-scoped memo (archive is the path there)", () => {
+    const controls = buildControls({ onDelete: vi.fn() })
+    renderDetail(
+      <MemoDetailContent
+        data={buildDetail({ scope: "workspace", scopeUserId: null })}
+        workspaceId="ws_1"
+        isLoading={false}
+        edit={controls}
+      />
+    )
+    expect(screen.queryByText(/about you/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument()
   })
 })

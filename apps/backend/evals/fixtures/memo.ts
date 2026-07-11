@@ -74,6 +74,8 @@ export function toMemo(m: { title: string; abstract: string; createdDaysAgo?: nu
     revisionReason: null,
     authoredByKind: "pipeline",
     sourceSessionId: null,
+    scope: "workspace",
+    scopeUserId: null,
     createdAt,
     updatedAt: createdAt,
     archivedAt: null,

@@ -557,6 +557,24 @@ export const AuthoredByKinds = {
   AGENT: "agent",
 } as const satisfies Record<string, AuthoredByKind>
 
+/**
+ * Visibility tier of a memo within its workspace (roadmap 6.4). `workspace` and
+ * `stream` memos are gated by the retriever's stream access (INV-62); `user`
+ * memos are additionally private to a single owner (`scope_user_id`) — the
+ * per-user "what Ariadne knows about you" tier, extracted from private
+ * scratchpads and set explicitly via `save_memo`. `workspace_id` is required for
+ * every scope (INV-8): `user` subdivides within the workspace, it is not a global
+ * private store.
+ */
+export const MEMO_SCOPES = ["user", "stream", "workspace"] as const
+export type MemoScope = (typeof MEMO_SCOPES)[number]
+
+export const MemoScopes = {
+  USER: "user",
+  STREAM: "stream",
+  WORKSPACE: "workspace",
+} as const satisfies Record<string, MemoScope>
+
 // Pending memo item types
 export const PENDING_ITEM_TYPES = ["message", "conversation"] as const
 export type PendingItemType = (typeof PENDING_ITEM_TYPES)[number]

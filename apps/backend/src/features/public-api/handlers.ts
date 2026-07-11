@@ -1832,7 +1832,7 @@ export function createPublicApiHandlers({
     async searchMemos(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const { query, exact, streams, memoType, knowledgeType, tags, before, after, limit } = validateRequest(
+      const { query, exact, streams, memoType, knowledgeType, tags, scope, before, after, limit } = validateRequest(
         searchMemosSchema,
         req.body
       )
@@ -1847,7 +1847,9 @@ export function createPublicApiHandlers({
 
       const results = await memoExplorerService.search({
         workspaceId,
-        permissions: { accessibleStreamIds },
+        // A user API key's principal owns its user-scoped memos; a bot key has no
+        // user, so user-scoped memos stay invisible to it (roadmap 6.4).
+        permissions: { accessibleStreamIds, userId: req.userApiKey ? req.user!.id : undefined },
         query: normalized.query,
         exact: normalized.exact,
         filters: {
@@ -1855,6 +1857,7 @@ export function createPublicApiHandlers({
           memoTypes: memoType,
           knowledgeTypes: knowledgeType,
           tags,
+          scope,
           before: before ? new Date(before) : undefined,
           after: after ? new Date(after) : undefined,
         },
@@ -1871,7 +1874,10 @@ export function createPublicApiHandlers({
         archiveStatus: ["active", "archived"],
       })
 
-      const memo = await memoExplorerService.getById(workspaceId, memoId, { accessibleStreamIds })
+      const memo = await memoExplorerService.getById(workspaceId, memoId, {
+        accessibleStreamIds,
+        userId: req.userApiKey ? req.user!.id : undefined,
+      })
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }

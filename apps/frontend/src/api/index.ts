@@ -28,6 +28,7 @@ export {
   updateMemo,
   archiveMemo,
   unarchiveMemo,
+  deleteMemo,
   type MemoExplorerStreamRef,
   type MemoExplorerResult,
   type MemoExplorerDetail,

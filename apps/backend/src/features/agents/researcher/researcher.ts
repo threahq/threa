@@ -11,7 +11,7 @@ import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
 import { SearchRepository } from "../../search"
 import { StreamRepository } from "../../streams"
 import { AttachmentRepository } from "../../attachments"
-import { computeAgentAccessSpec, type AgentAccessSpec } from "./access-spec"
+import { computeAgentAccessSpec, resolveMemoViewer, type AgentAccessSpec } from "./access-spec"
 import {
   formatRetrievedContext,
   enrichMessageSearchResults,
@@ -325,7 +325,14 @@ export class WorkspaceAgent {
     substeps: WorkspaceAgentSubstep[]
   ): Promise<WorkspaceAgentResult> {
     const { configResolver, embeddingService } = this.deps
-    const { workspaceId, query, conversationHistory, invokingUserId } = input
+    const { workspaceId, query, conversationHistory } = input
+
+    // User-scoped memos (roadmap 6.4) are private to one owner, and the
+    // researcher's reply + broadcast trace sources reach every participant of the
+    // invocation stream — so a private memo may only be retrieved when the audience
+    // is exactly that owner. `resolveMemoViewer` is the single authority for that
+    // gate (undefined ⇒ user-scoped memos excluded); see its doc for the rule.
+    const memoViewerUserId = resolveMemoViewer(accessSpec)
 
     // Resolve config for workspace agent
     const config = (await configResolver.resolve(COMPONENT_PATHS.COMPANION_RESEARCHER)) as ResearcherConfig
@@ -375,7 +382,7 @@ export class WorkspaceAgent {
                 workspaceId,
                 accessibleStreamIds,
                 embeddingService,
-                invokingUserId,
+                memoViewerUserId,
                 true,
                 excludedMessageIds
               )
@@ -437,7 +444,7 @@ export class WorkspaceAgent {
             workspaceId,
             accessibleStreamIds,
             embeddingService,
-            invokingUserId,
+            memoViewerUserId,
             true,
             excludedMessageIds
           )
@@ -568,7 +575,7 @@ export class WorkspaceAgent {
                 workspaceId,
                 accessibleStreamIds,
                 embeddingService,
-                invokingUserId,
+                memoViewerUserId,
                 true,
                 excludedMessageIds
               )
@@ -899,7 +906,7 @@ Each query must have:
     workspaceId: string,
     accessibleStreamIds: string[],
     embeddingService: EmbeddingServiceLike,
-    invokingUserId: string,
+    memoViewerUserId: string | undefined,
     includeSurroundingContext: boolean,
     excludedMessageIds: Set<string>
   ): Promise<{
@@ -931,6 +938,7 @@ Each query must have:
                 query,
                 workspaceId,
                 accessibleStreamIds,
+                memoViewerUserId,
                 embeddingService
               )
               return {
@@ -1023,8 +1031,14 @@ Each query must have:
     query: SearchQuery,
     workspaceId: string,
     accessibleStreamIds: string[],
+    memoViewerUserId: string | undefined,
     embeddingService: EmbeddingServiceLike
   ): Promise<EnrichedMemoResult[]> {
+    // Gates user-scoped memos (roadmap 6.4): set only when the invocation audience
+    // is exactly the invoking user (a private scratchpad), so a private-tier memo
+    // is never retrieved into — and thus cited/broadcast to — a shared room.
+    // Undefined ⇒ user-scoped memos excluded (fail closed).
+    const filterBase = { streamIds: accessibleStreamIds, viewerUserId: memoViewerUserId }
     // For semantic search, generate embedding (AI, no DB, ~200-500ms)
     if (query.type === "semantic") {
       try {
@@ -1045,7 +1059,7 @@ Each query must have:
           workspaceId,
           query: query.query,
           embedding,
-          filters: { streamIds: accessibleStreamIds },
+          filters: filterBase,
           limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
           keywordWeight: intent.keywordWeight,
           semanticWeight: intent.semanticWeight,
@@ -1058,7 +1072,7 @@ Each query must have:
             : await MemoRepository.fullTextSearch(pool, {
                 workspaceId,
                 query: query.query,
-                filters: { streamIds: accessibleStreamIds },
+                filters: filterBase,
                 limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
               })
 
@@ -1073,7 +1087,7 @@ Each query must have:
           const fallback = await MemoRepository.fullTextSearch(pool, {
             workspaceId,
             query: query.query,
-            filters: { streamIds: accessibleStreamIds },
+            filters: filterBase,
             limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
           })
           return fallback.map((r) => ({
@@ -1093,7 +1107,7 @@ Each query must have:
       const results = await MemoRepository.exactSearch(pool, {
         workspaceId,
         query: query.query,
-        filters: { streamIds: accessibleStreamIds },
+        filters: filterBase,
         limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
       })
 

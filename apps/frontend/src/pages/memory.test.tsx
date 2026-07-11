@@ -84,6 +84,9 @@ describe("MemoryPage", () => {
     vi.spyOn(hooksModule, "useUnarchiveMemo").mockReturnValue(
       stubMutation as unknown as ReturnType<typeof hooksModule.useUnarchiveMemo>
     )
+    vi.spyOn(hooksModule, "useDeleteMemo").mockReturnValue(
+      stubMutation as unknown as ReturnType<typeof hooksModule.useDeleteMemo>
+    )
 
     mockUseWorkspaceStreams.mockReset()
     mockUseMemoSearch.mockReset()

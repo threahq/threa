@@ -36,6 +36,7 @@ import type {
   KnowledgeType,
   MemoStatus,
   AuthoredByKind,
+  MemoScope,
   PendingItemType,
   SourceType,
   ExtractionContentType,
@@ -848,6 +849,10 @@ export interface Memo {
   authoredByKind: AuthoredByKind
   /** The agent session that wrote this memo (agent authorship only). */
   sourceSessionId: string | null
+  /** Visibility tier (roadmap 6.4): `user`-scoped memos are private to `scopeUserId`; `stream`/`workspace` are gated by stream access. */
+  scope: MemoScope
+  /** Owner of a `user`-scoped memo; null for `stream`/`workspace` scopes. */
+  scopeUserId: string | null
   createdAt: string
   updatedAt: string
   archivedAt: string | null
