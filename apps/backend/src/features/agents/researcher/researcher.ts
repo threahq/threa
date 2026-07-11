@@ -11,7 +11,7 @@ import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
 import { SearchRepository } from "../../search"
 import { StreamRepository } from "../../streams"
 import { AttachmentRepository } from "../../attachments"
-import { computeAgentAccessSpec, type AgentAccessSpec } from "./access-spec"
+import { computeAgentAccessSpec, resolveMemoViewer, type AgentAccessSpec } from "./access-spec"
 import {
   formatRetrievedContext,
   enrichMessageSearchResults,
@@ -327,15 +327,12 @@ export class WorkspaceAgent {
     const { configResolver, embeddingService } = this.deps
     const { workspaceId, query, conversationHistory } = input
 
-    // User-scoped memos (roadmap 6.4) are private to one owner. The researcher's
-    // output — the reply AND the broadcast trace sources (buildSources → the
-    // agent_session:step socket room, gated only by stream access) — reaches every
-    // participant of the invocation stream. So the invoking user's private-tier
-    // memos may only be retrieved when the audience IS that user: a private
-    // scratchpad (`user_full_access`). In shared channels/DMs the viewer stays
-    // undefined and user-scoped memos are excluded, so a private memo can never be
-    // cited into a room the owner doesn't exclusively occupy.
-    const memoViewerUserId = accessSpec.type === "user_full_access" ? accessSpec.userId : undefined
+    // User-scoped memos (roadmap 6.4) are private to one owner, and the
+    // researcher's reply + broadcast trace sources reach every participant of the
+    // invocation stream — so a private memo may only be retrieved when the audience
+    // is exactly that owner. `resolveMemoViewer` is the single authority for that
+    // gate (undefined ⇒ user-scoped memos excluded); see its doc for the rule.
+    const memoViewerUserId = resolveMemoViewer(accessSpec)
 
     // Resolve config for workspace agent
     const config = (await configResolver.resolve(COMPONENT_PATHS.COMPANION_RESEARCHER)) as ResearcherConfig

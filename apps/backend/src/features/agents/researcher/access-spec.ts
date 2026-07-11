@@ -82,6 +82,22 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
 }
 
 /**
+ * The user whose private, `user`-scoped memos (roadmap 6.4) this invocation may
+ * retrieve — or `undefined` when none may be. A user-scoped memo is visible only
+ * to its owner, and the researcher's output (its reply AND its broadcast trace
+ * sources) reaches every participant of the invocation stream. So a private memo
+ * may only be surfaced when the audience IS exactly that owner: a private
+ * scratchpad (`user_full_access`). Every other context — a public/private channel
+ * (`public_only`/`public_plus_stream`) or a two-party DM (`user_intersection`) —
+ * has additional participants, so it returns `undefined` and user-scoped memos are
+ * excluded from retrieval (fail closed). Keep this the single source of truth for
+ * "may this invocation read the invoking user's private tier".
+ */
+export function resolveMemoViewer(spec: AgentAccessSpec): string | undefined {
+  return spec.type === "user_full_access" ? spec.userId : undefined
+}
+
+/**
  * Get a human-readable description of the access spec for debugging.
  */
 export function describeAccessSpec(spec: AgentAccessSpec): string {
