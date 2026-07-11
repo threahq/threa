@@ -28,9 +28,10 @@ import {
   BoardSavedViews,
   isBoardAtHome,
   isViewActive,
+  savedViewHref,
   type BoardViewSelection,
 } from "@/components/board/board-saved-views"
-import { useBoardHomeView, useBoardViews } from "@/hooks/use-board-views"
+import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
 import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
 import { usePreferences } from "@/contexts"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
@@ -158,7 +159,7 @@ export function BoardFilterBar({
   // permanent "Clear filters" affordance on its own untouched landing. The home
   // is the plain home lens, or (when set) the saved view they home on, so resting
   // on that view must also read as unfiltered even though it carries scope.
-  const homeView = useBoardHomeView(workspaceId)
+  const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
   const isFiltered = !isBoardAtHome(homeLens, homeView, {
     lens,
     scopeStreamIds,
@@ -321,10 +322,16 @@ export function BoardFilterBar({
       ))}
       {isFiltered && (
         <Link
-          // Clear to the unfiltered home lens. When a saved-view home resolves,
-          // keep the explicit segment so this doesn't route through bare `/board`
-          // (which would hold-then-redirect to the view — a blank-flash detour).
-          to={lensHref(workspaceId, homeLens, clearedSearch, homeLens, homeView !== null)}
+          // Return to the viewer's home — the saved-view home when one resolves
+          // (navigated straight to its URL, so it doesn't detour through bare
+          // `/board` and blank-flash), else the plain home lens (explicit segment
+          // when a home view is configured-but-not-yet-loaded, so it stays
+          // reachable). An open panel — the only non-filter query — rides along.
+          to={
+            homeView
+              ? savedViewHref(workspaceId, homeView, homeLens)
+              : lensHref(workspaceId, homeLens, clearedSearch, homeLens, homeViewId !== null)
+          }
           className="shrink-0 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           Clear filters
@@ -473,7 +480,7 @@ function BoardLensMenu({
 }) {
   const [open, setOpen] = useState(false)
   const { search } = useLocation()
-  const { preferences, updatePreferences } = usePreferences()
+  const { updatePreferences } = usePreferences()
   const current = BOARD_LENS_DEFS[lens]
   const CurrentIcon = current.icon
 
@@ -498,8 +505,9 @@ function BoardLensMenu({
   // window emits bare `/board` and gets bounced to the saved view (unreachable
   // fallback lens). Whether it RESOLVES drives the pin fill: no lens reads as home
   // while a real saved-view home exists.
-  const hasConfiguredHomeView = (preferences?.boardDefaultViewId ?? null) !== null
-  const homeViewActive = useBoardHomeView(workspaceId) != null
+  const { view: homeMenuView, configuredId: homeMenuViewId } = useBoardHome(workspaceId)
+  const hasConfiguredHomeView = homeMenuViewId !== null
+  const homeViewActive = homeMenuView != null
 
   const content = (
     <>

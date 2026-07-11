@@ -39,22 +39,35 @@ export function useBoardViews(workspaceId: string) {
   })
 }
 
+export interface BoardHome {
+  /** The RESOLVED saved view the viewer homes on — `null` when the home is a plain
+   *  lens, the id no longer resolves, or the list is still loading. Use for the
+   *  "is this the home baseline" checks (isBoardAtHome), the pin fill, the settings
+   *  radio, and the direct "return to the saved-view home" navigation. */
+  view: BoardView | null
+  /** The CONFIGURED `boardDefaultViewId` — `null` only when the home is a plain
+   *  lens. Known from the preference BEFORE the list loads, so URL-building can keep
+   *  explicit lens segments during the load window (a bare `/board` would bounce to
+   *  the view once the list resolves, making the target unreachable). */
+  configuredId: string | null
+}
+
 /**
- * The RESOLVED saved view the viewer homes on (`boardDefaultViewId`), or `null`
- * when the home is a plain lens, the id no longer resolves, or the list is still
- * loading. One resolver for every surface that needs "is this the home baseline"
- * (the filter bar's "Clear filters", the empty-state CTA, the saved-views pin, the
- * settings radio) so they can't drift. `usePreferencesOptional` so it's safe in
- * surfaces mounted without the provider (e.g. the saved-views menu in isolation).
- * The bare-`/board` redirect in `board.tsx` deliberately does NOT use this — it
- * needs the raw `boardDefaultViewId` + list to tell "still loading" from "unset",
- * a distinction this hook collapses to `null`.
+ * The viewer's board home — the resolved saved view and the raw configured id. One
+ * resolver for every surface that needs it (the filter bar, the empty-state CTA,
+ * the saved-views pin, the settings radio, the "escape to everything" links) so
+ * they can't drift. `usePreferencesOptional` so it's safe in surfaces mounted
+ * without the provider (e.g. the saved-views menu in isolation). The bare-`/board`
+ * redirect in `board.tsx` deliberately keeps its own raw `boardDefaultViewId` +
+ * list access — it must tell "still loading" from "unset" to gate the redirect,
+ * a distinction the resolved `view` collapses to `null`.
  */
-export function useBoardHomeView(workspaceId: string): BoardView | null {
+export function useBoardHome(workspaceId: string): BoardHome {
   const preferences = usePreferencesOptional()?.preferences ?? null
   const { data: views } = useBoardViews(workspaceId)
-  const homeViewId = preferences?.boardDefaultViewId ?? null
-  return views?.find((view) => view.id === homeViewId) ?? null
+  const configuredId = preferences?.boardDefaultViewId ?? null
+  const view = views?.find((v) => v.id === configuredId) ?? null
+  return { view, configuredId }
 }
 
 /**

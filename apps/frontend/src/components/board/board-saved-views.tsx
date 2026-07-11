@@ -21,7 +21,7 @@ import {
 import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts"
 import {
-  useBoardHomeView,
+  useBoardHome,
   useBoardViews,
   useSaveBoardView,
   useUpdateBoardView,
@@ -171,7 +171,7 @@ export function BoardSavedViews({
 }: BoardSavedViewsProps) {
   const { data: views } = useBoardViews(workspaceId)
   const prefs = usePreferencesOptional()
-  const homeView = useBoardHomeView(workspaceId)
+  const { view: homeView } = useBoardHome(workspaceId)
   const save = useSaveBoardView(workspaceId)
   const update = useUpdateBoardView(workspaceId)
   const remove = useDeleteBoardView(workspaceId)

@@ -39,7 +39,7 @@ import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardComposer } from "@/components/board/board-composer"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
 import { boardHomeRedirectHref, isBoardAtHome } from "@/components/board/board-saved-views"
-import { useBoardViews, useBoardHomeView } from "@/hooks/use-board-views"
+import { useBoardViews, useBoardHome } from "@/hooks/use-board-views"
 import {
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
@@ -544,13 +544,14 @@ function BoardPageInner({
   // `?panel=`) rides along so it survives clearing filters.
   // The viewer's home baseline (plain home lens, or the saved view they home on)
   // reads as unfiltered, so an empty home landing doesn't offer "Show everything".
-  const homeView = useBoardHomeView(workspaceId)
+  const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
   // "Show everything" / the own-post-must-surface bounce target the truly
-  // unfiltered All lens. When a saved-view home resolves, bare `/board` bounces to
-  // that view, so All must take its explicit `/board/all` segment or these escapes
-  // land back on the (filtered) saved view instead of everything.
+  // unfiltered All lens. When a saved-view home is CONFIGURED, bare `/board` bounces
+  // to that view once the list resolves, so All must take its explicit `/board/all`
+  // segment (keyed on the configured id, not the resolved view, so the escape is
+  // reachable even during the load window) or these land back on the saved view.
   const allPathname =
-    homeLens === DEFAULT_BOARD_LENS && homeView === null
+    homeLens === DEFAULT_BOARD_LENS && homeViewId === null
       ? `/w/${workspaceId}/board`
       : `/w/${workspaceId}/board/${DEFAULT_BOARD_LENS}`
   const boardHome = { pathname: allPathname, search: boardHomeSearch(searchParams.toString()) }
