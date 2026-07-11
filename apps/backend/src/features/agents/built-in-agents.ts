@@ -1,54 +1,28 @@
 import { z } from "zod"
-import { AGENT_TOOL_NAMES, AgentToolNames } from "@threa/types"
-
-const agentToolNameSchema = z.enum(AGENT_TOOL_NAMES)
+import {
+  AgentToolNames,
+  personaConfigPatchSchema,
+  personaConfigStatusSchema,
+  personaResolvedConfigSchema,
+} from "@threa/types"
 
 export const ARIADNE_AGENT_ID = "persona_system_ariadne"
 export const EMPTY_AGENT_ID = "persona_system_empty"
 
-const agentVisibilitySchema = z.enum(["visible", "internal"])
-const agentStatusSchema = z.enum(["active", "disabled", "archived"])
+// The full built-in agent config shape is single-sourced in `@threa/types`
+// (INV-31) so the wire type (`PersonaResolvedConfig`) and this backend type
+// cannot drift. `escalationModel` is the stronger model for per-turn escalation
+// (roadmap 2.3, documented in docs/model-reference.md per INV-16); `e2eCapable`
+// gates whether the enclave may run the persona inside an E2E scratchpad.
+export const builtInAgentConfigSchema = personaResolvedConfigSchema
 
-export const builtInAgentConfigSchema = z.object({
-  id: z.string(),
-  workspaceId: z.null(),
-  slug: z.string(),
-  name: z.string(),
-  description: z.string().nullable(),
-  avatarEmoji: z.string().nullable(),
-  systemPrompt: z.string().min(1),
-  model: z.string().min(1),
-  // Stronger model for per-turn escalation (roadmap 2.3): a supersede rerun
-  // whose previous attempt failed the response validator runs on this instead
-  // of `model`. Null disables escalation. Must be documented in
-  // docs/model-reference.md (INV-16).
-  escalationModel: z.string().min(1).nullable(),
-  temperature: z.number().nullable(),
-  maxTokens: z.number().int().positive().nullable(),
-  enabledTools: z.array(agentToolNameSchema),
-  managedBy: z.literal("system"),
-  status: agentStatusSchema,
-  visibility: agentVisibilitySchema,
-  // Whether this persona may run inside an E2E scratchpad — served by the
-  // enclave, which decrypts in isolation. Only e2e-capable personas can be the
-  // enclave actor; the dispatch path refuses to forward to a non-capable one.
-  e2eCapable: z.boolean(),
-})
-
-export const builtInAgentConfigPatchSchema = builtInAgentConfigSchema
-  .pick({
-    name: true,
-    description: true,
-    avatarEmoji: true,
-    systemPrompt: true,
-    model: true,
-    escalationModel: true,
-    temperature: true,
-    maxTokens: true,
-    enabledTools: true,
-    status: true,
-  })
-  .partial()
+// The internal override-resolution schema: the shared editable-field patch
+// (INV-31, one definition) plus `status`, which the API surface withholds but
+// stored overrides may carry (e.g. a workspace disabling Ariadne). Unlike the
+// API write schema this does NOT enforce the model allowlist — resolution must
+// accept whatever is already stored, including built-in default models.
+export const builtInAgentConfigPatchSchema = personaConfigPatchSchema
+  .extend({ status: personaConfigStatusSchema.optional() })
   .strict()
 
 export type BuiltInAgentConfig = z.infer<typeof builtInAgentConfigSchema>
@@ -130,6 +104,16 @@ const BUILT_IN_AGENT_CONFIGS: Record<string, BuiltInAgentConfig> = BUILT_IN_AGEN
  */
 export function getBuiltInAgentConfig(agentId: string): BuiltInAgentConfig | null {
   return BUILT_IN_AGENT_CONFIGS[agentId] ?? null
+}
+
+/**
+ * Return the built-in config for `agentId` only if it is product-visible, else
+ * `null`. The persona editor gates every read/write on this: an unknown id or an
+ * internal-only shell (e.g. `EMPTY_AGENT_ID`) is a 404, never editable.
+ */
+export function getVisibleBuiltInAgentConfig(agentId: string): BuiltInAgentConfig | null {
+  const config = BUILT_IN_AGENT_CONFIGS[agentId]
+  return config && config.visibility === "visible" ? config : null
 }
 
 /**

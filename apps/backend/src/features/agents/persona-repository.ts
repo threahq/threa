@@ -5,9 +5,11 @@ import {
   ARIADNE_AGENT_ID,
   applyBuiltInAgentPatch,
   getBuiltInAgentConfig,
+  getVisibleBuiltInAgentConfig,
   listVisibleBuiltInAgentConfigs,
   type BuiltInAgentConfig,
 } from "./built-in-agents"
+import { stripDraftTestExcludedTools } from "./config"
 
 interface PersonaRow {
   id: string
@@ -125,6 +127,32 @@ function resolveBuiltInPersonaWithOverrides(
   const patch = overridesByAgentId.get(base.id)
   const resolved = patch ? applyBuiltInAgentPatch(base, patch, { workspaceId, agentId: base.id }) : base
   return mapBuiltInToPersona(resolved)
+}
+
+/**
+ * Resolve the persona a `draft_test` turn should run: the built-in base merged
+ * with the editor's unsaved draft patch (NOT the stored override), with
+ * durable-write tools stripped for test safety (roadmap 7.1). Pure — no DB read;
+ * the caller supplies the loaded draft row.
+ *
+ * Returns `null` to signal the turn must fall back to normal resolution: the
+ * draft row is gone (committed/discarded mid-chat), belongs to another
+ * workspace/agent, or the id is not an editable visible built-in. Callers must
+ * treat `null` as "continue as catch_up", never as an error (INV-11 fail-loud
+ * would wrongly abort a live test chat here).
+ */
+export function resolveDraftTestPersona(
+  draft: { workspaceId: string; agentId: string; patch: unknown } | null,
+  personaId: string,
+  workspaceId: string
+): Persona | null {
+  if (!draft || draft.workspaceId !== workspaceId || draft.agentId !== personaId) return null
+  const base = getVisibleBuiltInAgentConfig(personaId)
+  if (!base) return null
+
+  const resolved = applyBuiltInAgentPatch(base, draft.patch, { workspaceId, agentId: personaId })
+  const persona = mapBuiltInToPersona(resolved)
+  return { ...persona, enabledTools: stripDraftTestExcludedTools(persona.enabledTools) }
 }
 
 const SELECT_FIELDS = `

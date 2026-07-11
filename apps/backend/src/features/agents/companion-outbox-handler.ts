@@ -3,6 +3,7 @@ import { StreamRepository } from "../streams"
 import { resolveDeliveryVerdict, TrustTiers } from "@threa/agent-runtime"
 import { resolveSealingContext } from "../e2e-streams"
 import { PersonaRepository } from "./persona-repository"
+import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { parseMessagePayload } from "../../lib/outbox"
 import { AuthorTypes, CompanionModes, StreamTypes } from "@threa/types"
@@ -144,8 +145,18 @@ export class CompanionHandler extends DebouncedOutboxHandler {
       }
     }
 
+    // A message in a persona editor's test-drive scratchpad runs the editor's
+    // candidate config, not the saved override (roadmap 7.1). Look the draft up
+    // by the companion root (a thread rooted in the test scratchpad inherits it);
+    // carrying `personaDraftId` makes the worker resolve `draft_test`.
+    const testDraft = await PersonaConfigDraftRepository.findByTestStreamId(
+      this.db,
+      companionSource.workspaceId,
+      companionSource.id
+    )
+
     logger.info(
-      { streamId, messageId: messageEvent.payload.messageId, personaId: persona.id },
+      { streamId, messageId: messageEvent.payload.messageId, personaId: persona.id, personaDraftId: testDraft?.id },
       "Persona agent job dispatched (companion mode)"
     )
 
@@ -155,6 +166,7 @@ export class CompanionHandler extends DebouncedOutboxHandler {
       messageId: messageEvent.payload.messageId,
       personaId: persona.id,
       triggeredBy,
+      ...(testDraft ? { personaDraftId: testDraft.id } : {}),
     })
   }
 }

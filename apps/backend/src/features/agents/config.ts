@@ -1,3 +1,5 @@
+import { AgentToolNames, type AgentToolName } from "@threa/types"
+
 /**
  * Persona agent supersede rerun response validation config (INV-44).
  * Shared between production code and any future evals.
@@ -30,3 +32,45 @@ export const TURN_DIGEST_MODEL_ID = "openrouter:anthropic/claude-haiku-4.5"
  */
 export { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "@threa/types"
 export const MAX_FOLLOW_UP_HORIZON_DAYS = 30
+
+/**
+ * Tools stripped from a `draft_test` turn (persona editor test-drive, roadmap
+ * 7.1). A test chat runs the candidate persona verbatim so the admin judges its
+ * real behavior — but its scratchpad is ephemeral (archived on discard, memory
+ * off), so a tool that writes durable state OUTSIDE that scratchpad would
+ * outlive the test and leak into the workspace. Those are excluded; everything
+ * else the persona has stays.
+ *
+ * Checked against the full `AGENT_TOOL_NAMES` catalog (packages/types constants):
+ * - Excluded — durable writes beyond the test chat:
+ *   `schedule_follow_up` / `cancel_follow_up` / `update_follow_up` mutate
+ *   `agent_follow_ups` + the queue (a scheduled wake-up would fire after the test
+ *   is over); `update_stream_brief` persists a brief; `delegate_task` creates a
+ *   `delegated_tasks` row and hands work to the user's real local agent;
+ *   `save_memo` writes a GAM memo (memory_mode off stops auto-capture, this stops
+ *   the explicit tool write).
+ * - Kept — read-only or in-stream-only, so effects die with the scratchpad:
+ *   `send_message` / `react_to_message` (the point of the test chat);
+ *   `list_follow_ups` / `describe_memo` (reads); all web/search/attachment tools
+ *   (`web_search`, `read_url`, `general_research`, `search_messages`,
+ *   `search_streams`, `search_users`, `get_stream_messages`, `search_attachments`,
+ *   `read_attachment`); all GitHub + Linear tools (read-only queries).
+ */
+export const DRAFT_TEST_EXCLUDED_TOOLS: ReadonlySet<AgentToolName> = new Set<AgentToolName>([
+  AgentToolNames.SCHEDULE_FOLLOW_UP,
+  AgentToolNames.CANCEL_FOLLOW_UP,
+  AgentToolNames.UPDATE_FOLLOW_UP,
+  AgentToolNames.UPDATE_STREAM_BRIEF,
+  AgentToolNames.DELEGATE_TASK,
+  AgentToolNames.SAVE_MEMO,
+])
+
+/**
+ * Strip {@link DRAFT_TEST_EXCLUDED_TOOLS} from a resolved persona's
+ * `enabledTools` for a draft-test turn. `null` (no explicit tool set) passes
+ * through unchanged.
+ */
+export function stripDraftTestExcludedTools(enabledTools: string[] | null): string[] | null {
+  if (enabledTools === null) return null
+  return enabledTools.filter((tool) => !DRAFT_TEST_EXCLUDED_TOOLS.has(tool as AgentToolName))
+}

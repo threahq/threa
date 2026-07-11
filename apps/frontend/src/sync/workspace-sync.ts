@@ -36,9 +36,11 @@ import type {
   LabelUnassignedPayload,
   DraftUpsertedPayload,
   DraftDeletedPayload,
+  PersonaListItem,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { conversationKeys } from "@/hooks/use-conversations"
+import { personaKeys } from "@/hooks/use-personas"
 import { mergeBoardConversation, addBoardConversationStream } from "@/stores/board-store"
 import { putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
 import { activityKeys } from "@/hooks/use-activity"
@@ -1408,6 +1410,30 @@ export function registerWorkspaceSocketHandlers(
     db.bots.put({ ...payload.bot, _cachedAt: Date.now() })
   }
 
+  // An admin committed a persona (built-in agent) config override. Workspace-
+  // scoped — every member inherits the built-in — carrying the resolved light
+  // persona so display-name/avatar caches update without a refetch. The light
+  // payload lacks systemPrompt/tools/etc., so merge its fields onto the existing
+  // rows rather than replacing them: the timeline reads name/avatar from
+  // `db.personas` via `useWorkspacePersonas`, and the bootstrap cache keeps the
+  // list in sync for the next seed. The editor's own config query is refetched
+  // so a concurrent admin's change is reflected.
+  const handleAgentConfigUpdated = (payload: { workspaceId: string; agentId: string; persona: PersonaListItem }) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    const { id, name, description, avatarEmoji, model } = payload.persona
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
+      ...old,
+      personas: (old.personas ?? []).map((persona) =>
+        persona.id === id ? { ...persona, name, description, avatarEmoji, model } : persona
+      ),
+    }))
+    db.personas.update(id, { name, description, avatarEmoji, model, _cachedAt: Date.now() })
+
+    queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, payload.agentId) })
+    queryClient.invalidateQueries({ queryKey: personaKeys.list(workspaceId) })
+  }
+
   // Handle activity created (mentions, notification-level activities, reactions, self rows)
   const handleActivityCreated = (payload: ActivityCreatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
@@ -1825,6 +1851,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("feature_flags:updated", handleFeatureFlagsUpdated)
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
+  socket.on("agent_config:updated", handleAgentConfigUpdated)
   socket.on("activity:created", handleActivityCreated)
   socket.on("memo:created", handleMemoCreated)
   socket.on("invitation:sent", handleInvitationChanged)
@@ -1881,6 +1908,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("feature_flags:updated", handleFeatureFlagsUpdated)
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
+    socket.off("agent_config:updated", handleAgentConfigUpdated)
     socket.off("activity:created", handleActivityCreated)
     socket.off("memo:created", handleMemoCreated)
     socket.off("invitation:sent", handleInvitationChanged)

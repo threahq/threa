@@ -436,6 +436,7 @@ export { ATTACHMENT_CATEGORIES, categoryFromMime, mimePrefixesForCategory } from
 export type { AttachmentCategory } from "./attachment-categories"
 export {
   TOOL_PRIVACY_CATEGORIES,
+  TOOL_PRIVACY_CATEGORY_LABELS,
   ToolPrivacyCategories,
   TOOL_CATEGORIES_BY_NAME,
   isToolCategoryAllowed,
@@ -813,12 +814,23 @@ export {
   type WorkspaceSettingKey,
 } from "./workspace-settings"
 
-// Built-in persona workspace configuration (roadmap 7.1 subset)
+// Persona config editing (INV-31: shared editable-field patch schema + model allowlist)
 export {
-  type WorkspacePersonaSummary,
-  type AvailablePersonaModel,
-  type ListWorkspacePersonasResponse,
-  type UpdatePersonaConfigInput,
+  PERSONA_MODEL_OPTIONS,
+  type PersonaModelOption,
+  PERSONA_SYSTEM_PROMPT_MAX_CHARS,
+  PERSONA_MODEL_OPTION_IDS,
+  isPersonaModelId,
+  personaConfigPatchSchema,
+  type PersonaConfigPatch,
+  personaConfigWritePatchSchema,
+  personaConfigStatusSchema,
+  personaResolvedConfigSchema,
+  type PersonaResolvedConfig,
+  type PersonaListItem,
+  type PersonaDraftState,
+  type PersonaConfigResponse,
+  type UpdatePersonaOverrideInput,
 } from "./persona-config"
 
 // Feature flags (per-user rollout switches, managed from the backoffice)

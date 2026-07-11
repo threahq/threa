@@ -1,0 +1,171 @@
+import { afterEach, describe, expect, it, mock } from "bun:test"
+import type { Request, Response } from "express"
+import { createPersonaConfigHandlers } from "./persona-config-handlers"
+import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID } from "./built-in-agents"
+import type { PersonaConfigService } from "./persona-config-service"
+
+function fakeReq(overrides: Partial<{ params: object; body: object }> = {}): Request {
+  return {
+    user: { id: "usr_1" },
+    workspaceId: "workspace_1",
+    params: { personaId: ARIADNE_AGENT_ID },
+    body: {},
+    ...overrides,
+  } as unknown as Request
+}
+
+function fakeRes() {
+  const res = {
+    statusCode: 200,
+    body: null as unknown,
+    status(code: number) {
+      this.statusCode = code
+      return this
+    },
+    json(payload: unknown) {
+      this.body = payload
+      return this
+    },
+    end() {
+      return this
+    },
+  }
+  return res as typeof res & Response
+}
+
+function makeHandlers(service: Partial<PersonaConfigService>) {
+  return createPersonaConfigHandlers({ personaConfigService: service as PersonaConfigService })
+}
+
+describe("persona config handlers", () => {
+  afterEach(() => mock.restore())
+
+  it("GET list returns the service's persona list", async () => {
+    const personas = [{ id: ARIADNE_AGENT_ID, slug: "ariadne", name: "Ariadne", isCustomized: false }]
+    const listVisible = mock(async () => personas)
+    const res = fakeRes()
+
+    await makeHandlers({ listVisible } as unknown as Partial<PersonaConfigService>).list(fakeReq(), res)
+
+    expect(res.body).toEqual({ personas })
+  })
+
+  it("GET config 404s for an id that is not an editable visible built-in", async () => {
+    const getConfig = mock(async () => null)
+    const handlers = makeHandlers({ getConfig } as unknown as Partial<PersonaConfigService>)
+
+    await expect(handlers.getConfig(fakeReq({ params: { personaId: "persona_x" } }), fakeRes())).rejects.toMatchObject({
+      status: 404,
+      code: "PERSONA_NOT_FOUND",
+    })
+  })
+
+  it("GET config returns the service payload verbatim", async () => {
+    const payload = { defaults: {}, overridePatch: null, overrideUpdatedAt: null, resolved: {}, draft: null }
+    const getConfig = mock(async () => payload)
+    const res = fakeRes()
+
+    await makeHandlers({ getConfig } as unknown as Partial<PersonaConfigService>).getConfig(fakeReq(), res)
+
+    expect(res.body).toBe(payload)
+  })
+
+  it("PUT override 404s for the internal empty shell before touching the body", async () => {
+    const handlers = makeHandlers({})
+
+    await expect(
+      handlers.putOverride(fakeReq({ params: { personaId: EMPTY_AGENT_ID }, body: {} }), fakeRes())
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
+  })
+
+  it("PUT override rejects a patch carrying a status key (v1 can't disable Ariadne)", async () => {
+    const handlers = makeHandlers({})
+
+    const req = fakeReq({ body: { patch: { status: "disabled" }, expectedUpdatedAt: null } })
+    await expect(handlers.putOverride(req, fakeRes())).rejects.toMatchObject({ status: 400 })
+  })
+
+  it("PUT override rejects a model outside the allowlist", async () => {
+    const handlers = makeHandlers({})
+
+    const req = fakeReq({ body: { patch: { model: "openrouter:acme/not-allowed" }, expectedUpdatedAt: null } })
+    await expect(handlers.putOverride(req, fakeRes())).rejects.toMatchObject({ status: 400 })
+  })
+
+  it("PUT override surfaces an optimistic-concurrency conflict as 409 with details.current", async () => {
+    const current = { patch: { name: "Theirs" }, updatedAt: "2026-07-02T00:00:00.000Z" }
+    const setOverride = mock(async () => ({ outcome: "conflict" as const, current }))
+    const handlers = makeHandlers({ setOverride } as unknown as Partial<PersonaConfigService>)
+
+    const req = fakeReq({ body: { patch: { name: "Mine" }, expectedUpdatedAt: "2026-07-01T00:00:00.000Z" } })
+    await expect(handlers.putOverride(req, fakeRes())).rejects.toMatchObject({
+      status: 409,
+      code: "PERSONA_OVERRIDE_CONFLICT",
+      details: { current },
+    })
+  })
+
+  it("PUT override returns the persona and fresh updatedAt on success", async () => {
+    const persona = { id: ARIADNE_AGENT_ID, slug: "ariadne", name: "Renamed", isCustomized: true }
+    const setOverride = mock(async () => ({
+      outcome: "written" as const,
+      persona,
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    }))
+    const handlers = makeHandlers({ setOverride } as unknown as Partial<PersonaConfigService>)
+    const res = fakeRes()
+
+    await handlers.putOverride(fakeReq({ body: { patch: { name: "Renamed" }, expectedUpdatedAt: null } }), res)
+
+    expect(res.body).toEqual({ persona, updatedAt: "2026-07-02T00:00:00.000Z" })
+  })
+
+  it("PUT draft 404s for the internal empty shell", async () => {
+    const handlers = makeHandlers({})
+    await expect(
+      handlers.putDraft(fakeReq({ params: { personaId: EMPTY_AGENT_ID }, body: { patch: {} } }), fakeRes())
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
+  })
+
+  it("PUT draft rejects a model outside the allowlist", async () => {
+    const handlers = makeHandlers({})
+    const req = fakeReq({ body: { patch: { model: "openrouter:acme/not-allowed" } } })
+    await expect(handlers.putDraft(req, fakeRes())).rejects.toMatchObject({ status: 400 })
+  })
+
+  it("PUT draft returns the saved draft state", async () => {
+    const draft = { patch: { name: "Draft" }, testStreamId: null, updatedAt: "2026-07-04T00:00:00.000Z" }
+    const saveDraft = mock(async () => draft)
+    const res = fakeRes()
+
+    await makeHandlers({ saveDraft } as unknown as Partial<PersonaConfigService>).putDraft(
+      fakeReq({ body: { patch: { name: "Draft" } } }),
+      res
+    )
+
+    expect(res.body).toEqual({ draft })
+  })
+
+  it("DELETE draft discards and 204s", async () => {
+    const discardDraft = mock(async () => undefined)
+    const res = fakeRes()
+
+    await makeHandlers({ discardDraft } as unknown as Partial<PersonaConfigService>).deleteDraft(fakeReq(), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(discardDraft).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "usr_1")
+  })
+
+  it("POST test-stream returns the ensured stream id", async () => {
+    const ensureTestStream = mock(async () => ({ streamId: "stream_test" }))
+    const res = fakeRes()
+
+    await makeHandlers({ ensureTestStream } as unknown as Partial<PersonaConfigService>).createTestStream(
+      fakeReq(),
+      res
+    )
+
+    expect(res.body).toEqual({ streamId: "stream_test" })
+    expect(ensureTestStream).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "usr_1")
+  })
+})

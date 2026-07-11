@@ -13,6 +13,19 @@ import type { AgentToolName } from "./constants"
 export const TOOL_PRIVACY_CATEGORIES = ["messaging", "web", "workspace", "github", "linear"] as const
 export type ToolPrivacyCategory = (typeof TOOL_PRIVACY_CATEGORIES)[number]
 
+/**
+ * Display labels for each privacy category — the single home for this copy so the
+ * per-tool checklist and the per-category policy picker can't drift (INV-33). The
+ * picker keeps its own per-category `description`; the label lives here.
+ */
+export const TOOL_PRIVACY_CATEGORY_LABELS: Record<ToolPrivacyCategory, string> = {
+  messaging: "Messaging & participation",
+  web: "Web",
+  workspace: "Workspace",
+  github: "GitHub",
+  linear: "Linear",
+}
+
 export const ToolPrivacyCategories = {
   /** The agent's own reply tool (`send_message`). Always allowed. */
   MESSAGING: "messaging",

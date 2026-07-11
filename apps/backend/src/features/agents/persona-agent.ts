@@ -17,7 +17,8 @@ import { StreamPoliciesRepository, StreamRepository, resolveBriefStreamId } from
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { resolveEligibleConversation } from "./companion/conversation-highlight"
-import { PersonaRepository } from "./persona-repository"
+import { PersonaRepository, resolveDraftTestPersona, type Persona } from "./persona-repository"
+import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 import { StreamEventRepository } from "../streams"
 import { AttachmentRepository } from "../attachments"
@@ -342,7 +343,17 @@ export class PersonaAgent {
     const rerunContext = purpose.kind === "supersede_rerun" ? purpose.rerunContext : undefined
 
     const precheck = await withClient(pool, async (client) => {
-      const persona = await PersonaRepository.findById(client, personaId, workspaceId)
+      // Test-drive turns run the editor's unsaved draft, not the saved override
+      // (roadmap 7.1). A gone/mismatched draft resolves to null and falls through
+      // to normal resolution — a mid-chat commit/discard must never fail the turn.
+      let persona: Persona | null = null
+      if (purpose.kind === "draft_test") {
+        const draft = await PersonaConfigDraftRepository.findById(client, workspaceId, purpose.draftId)
+        persona = resolveDraftTestPersona(draft, personaId, workspaceId)
+      }
+      if (!persona) {
+        persona = await PersonaRepository.findById(client, personaId, workspaceId)
+      }
       if (!persona || persona.status !== "active") {
         return { skip: true as const, reason: "persona not found or inactive" }
       }

@@ -1,115 +1,271 @@
 import type { Pool } from "pg"
-import type { ModelRegistry } from "@threa/agent-runtime"
-import type { AvailablePersonaModel, ListWorkspacePersonasResponse, WorkspacePersonaSummary } from "@threa/types"
-import { HttpError } from "../../lib/errors"
+import {
+  personaConfigPatchSchema,
+  CompanionModes,
+  MemoryModes,
+  type PersonaConfigPatch,
+  type PersonaConfigResponse,
+  type PersonaDraftState,
+  type PersonaListItem,
+  type PersonaResolvedConfig,
+} from "@threa/types"
+import { withTransaction } from "../../db"
+import { logger } from "../../lib/logger"
+import { OutboxRepository } from "../../lib/outbox"
+import type { StreamService } from "../streams"
+import { AgentConfigOverrideRepository, type AgentConfigOverrideDetail } from "./agent-config-override-repository"
+import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import {
   applyBuiltInAgentPatch,
   builtInAgentConfigPatchSchema,
-  getBuiltInAgentConfig,
+  getVisibleBuiltInAgentConfig,
   listVisibleBuiltInAgentConfigs,
   type BuiltInAgentConfig,
 } from "./built-in-agents"
-import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
 
 interface Dependencies {
   pool: Pool
-  modelRegistry: ModelRegistry
+  streamService: StreamService
+}
+
+export type SetPersonaOverrideResult =
+  | { outcome: "written"; persona: PersonaListItem; updatedAt: string }
+  | { outcome: "conflict"; current: AgentConfigOverrideDetail | null }
+
+function toPersonaListItem(config: PersonaResolvedConfig, isCustomized: boolean): PersonaListItem {
+  return {
+    id: config.id,
+    slug: config.slug,
+    name: config.name,
+    description: config.description,
+    avatarEmoji: config.avatarEmoji,
+    model: config.model,
+    isCustomized,
+  }
 }
 
 /**
- * Workspace-facing configuration of code-backed built-in personas (roadmap 7.1 subset).
- *
- * Today the only writable field is `model` — a temporary control until the full persona
- * editor ships. Writes land in `agent_config_overrides` and take effect on the persona's
- * next turn via `resolveBuiltInPersona`; no cache invalidation is needed.
+ * Reads and writes for editable persona (built-in agent) config, layered over
+ * the sparse `agent_config_overrides` store. v1 edits code-backed built-ins
+ * (Ariadne) only; a workspace override patches the built-in defaults additively.
+ * The service owns the commit transaction so the override write and its
+ * `agent_config:updated` broadcast land together (INV-7).
  */
 export class PersonaConfigService {
-  private readonly pool: Pool
-  private readonly modelRegistry: ModelRegistry
+  constructor(private deps: Dependencies) {}
 
-  constructor({ pool, modelRegistry }: Dependencies) {
-    this.pool = pool
-    this.modelRegistry = modelRegistry
+  private get pool(): Pool {
+    return this.deps.pool
   }
 
-  async listWorkspacePersonas(workspaceId: string): Promise<ListWorkspacePersonasResponse> {
+  private get streamService(): StreamService {
+    return this.deps.streamService
+  }
+
+  /** The bound test stream id when it still exists and is unarchived, else null. */
+  private async resolveActiveTestStreamId(testStreamId: string | null): Promise<string | null> {
+    if (!testStreamId) return null
+    const stream = await this.streamService.getStreamById(testStreamId)
+    return stream && !stream.archivedAt ? stream.id : null
+  }
+
+  /** Member-visible list: every editable built-in, resolved and flagged customized. */
+  async listVisible(workspaceId: string): Promise<PersonaListItem[]> {
     const overrides = await AgentConfigOverrideRepository.listActiveByWorkspace(this.pool, workspaceId)
-    const patchByAgentId = new Map(overrides.map((o) => [o.agentId, o.patch]))
-
-    const personas = listVisibleBuiltInAgentConfigs().map((base) =>
-      this.buildSummary(base, patchByAgentId.get(base.id), workspaceId)
-    )
-
-    return { personas, availableModels: this.listAssignableModels() }
+    const overridesByAgentId = new Map(overrides.map((override) => [override.agentId, override.patch]))
+    return listVisibleBuiltInAgentConfigs().map((base) => {
+      const patch = overridesByAgentId.get(base.id)
+      const resolved = patch ? applyBuiltInAgentPatch(base, patch, { workspaceId, agentId: base.id }) : base
+      return toPersonaListItem(resolved, patch !== undefined)
+    })
   }
 
   /**
-   * Set or clear the workspace's model override for a built-in persona.
-   * `model: null` resets to the code-backed default.
+   * Admin config detail for one persona, or `null` when the id is not an
+   * editable visible built-in (the handler maps null → 404, covering unknown
+   * ids and the internal empty shell). `draft` is the CALLER's own unsaved draft
+   * (per `(workspace, agent, caller)`), or null if they have none.
    */
-  async updatePersonaModel(
-    workspaceId: string,
-    personaId: string,
-    model: string | null
-  ): Promise<WorkspacePersonaSummary> {
-    const base = getBuiltInAgentConfig(personaId)
-    if (!base || base.visibility !== "visible") {
-      throw new HttpError("Persona not found", { status: 404, code: "PERSONA_NOT_FOUND" })
-    }
+  async getConfig(workspaceId: string, personaId: string, callerId: string): Promise<PersonaConfigResponse | null> {
+    const base = getVisibleBuiltInAgentConfig(personaId)
+    if (!base) return null
 
-    if (model === null) {
-      await AgentConfigOverrideRepository.removePatchKeys(this.pool, workspaceId, personaId, ["model"])
-    } else {
-      const capabilities = this.modelRegistry.getCapabilities(model)
-      if (!capabilities || !isChatModel(capabilities)) {
-        throw new HttpError(`Model "${model}" is not an assignable chat model`, {
-          status: 400,
-          code: "UNSUPPORTED_PERSONA_MODEL",
-        })
-      }
-      // Validates the merged end state loudly before persisting (same gate the read path uses).
-      applyBuiltInAgentPatch(base, { model }, { workspaceId, agentId: personaId })
-      await AgentConfigOverrideRepository.mergePatch(this.pool, workspaceId, personaId, { model })
-    }
-
-    const override = await AgentConfigOverrideRepository.findActiveByWorkspaceAndAgent(
+    const detail = await AgentConfigOverrideRepository.findActiveDetailByWorkspaceAndAgent(
       this.pool,
       workspaceId,
       personaId
     )
-    return this.buildSummary(base, override?.patch, workspaceId)
-  }
+    const resolved: BuiltInAgentConfig = detail
+      ? applyBuiltInAgentPatch(base, detail.patch, { workspaceId, agentId: personaId })
+      : base
 
-  private buildSummary(base: BuiltInAgentConfig, patch: unknown, workspaceId: string): WorkspacePersonaSummary {
-    const resolved = patch ? applyBuiltInAgentPatch(base, patch, { workspaceId, agentId: base.id }) : base
-    const parsedPatch = patch ? builtInAgentConfigPatchSchema.safeParse(patch) : null
-    const overriddenFields = parsedPatch?.success ? Object.keys(parsedPatch.data) : []
+    let overridePatch: PersonaConfigPatch | null = null
+    if (detail) {
+      // Re-validate the opaque JSONB through the shared schema (fail loud on a
+      // corrupt/hand-edited row per INV-11) and drop the API-withheld `status`
+      // so the editor only ever sees editable fields.
+      const parsed = builtInAgentConfigPatchSchema.parse(detail.patch)
+      delete parsed.status
+      overridePatch = parsed
+    }
+
+    const draftDetail = await PersonaConfigDraftRepository.findByOwner(this.pool, workspaceId, personaId, callerId)
+    let draft: PersonaDraftState | null = null
+    if (draftDetail) {
+      // Stored via the write schema (no status); re-validate the opaque JSONB.
+      const parsed = personaConfigPatchSchema.parse(draftDetail.patch)
+      // "End test chat" only archives the scratchpad — the pointer on the draft
+      // row outlives the session — so an archived (or vanished) bound stream reads
+      // as no active test chat. Without this a reload would remount the turn-dead
+      // scratchpad as an active-looking test chat with no way back to the empty
+      // state. `ensureTestStream` mints a fresh stream on the next Start and
+      // overwrites the stale pointer then.
+      const testStreamId = await this.resolveActiveTestStreamId(draftDetail.testStreamId)
+      draft = { patch: parsed, testStreamId, updatedAt: draftDetail.updatedAt }
+    }
 
     return {
-      id: base.id,
-      slug: resolved.slug,
-      name: resolved.name,
-      description: resolved.description,
-      avatarEmoji: resolved.avatarEmoji,
-      model: resolved.model,
-      defaultModel: base.model,
-      status: resolved.status,
-      overriddenFields,
+      defaults: base,
+      overridePatch,
+      overrideUpdatedAt: detail?.updatedAt ?? null,
+      resolved,
+      draft,
     }
   }
 
-  private listAssignableModels(): AvailablePersonaModel[] {
-    return this.modelRegistry
-      .getModelIds()
-      .filter((id) => {
-        const caps = this.modelRegistry.getCapabilities(id)
-        return caps !== undefined && isChatModel(caps)
-      })
-      .map((id) => ({ id, name: this.modelRegistry.getCapabilities(id)!.name }))
-  }
-}
+  /**
+   * Upsert the workspace override for a persona with optimistic concurrency,
+   * broadcasting the resolved light persona in the same transaction. Caller
+   * must have already confirmed `agentId` is an editable visible built-in.
+   */
+  async setOverride(
+    workspaceId: string,
+    agentId: string,
+    patch: PersonaConfigPatch,
+    expectedUpdatedAt: string | null,
+    callerId: string
+  ): Promise<SetPersonaOverrideResult> {
+    const base = getVisibleBuiltInAgentConfig(agentId)
+    if (!base) {
+      throw new Error(`setOverride called for non-editable persona ${agentId}`)
+    }
 
-/** Text-in/text-out request-response models; excludes embeddings and realtime STT. */
-function isChatModel(caps: { inputModalities: string[]; outputModalities: string[]; streaming?: string }): boolean {
-  return caps.inputModalities.includes("text") && caps.outputModalities.includes("text") && caps.streaming === undefined
+    const txnResult = await withTransaction(this.pool, async (client) => {
+      const result = await AgentConfigOverrideRepository.upsertActive(client, {
+        workspaceId,
+        agentId,
+        patch,
+        expectedUpdatedAt,
+      })
+      if (result.outcome === "conflict") {
+        return result
+      }
+
+      // The caller's draft is now committed — drop it in the same txn so it can't
+      // resurface as a stale test config (D1).
+      const deletedDraft = await PersonaConfigDraftRepository.deleteByOwner(client, workspaceId, agentId, callerId)
+
+      const resolved = applyBuiltInAgentPatch(base, patch, { workspaceId, agentId })
+      const persona = toPersonaListItem(resolved, true)
+      await OutboxRepository.insert(client, "agent_config:updated", { workspaceId, agentId, persona })
+      return {
+        outcome: "written" as const,
+        persona,
+        updatedAt: result.updatedAt,
+        testStreamId: deletedDraft?.testStreamId ?? null,
+      }
+    })
+
+    if (txnResult.outcome === "written" && txnResult.testStreamId) {
+      // Save completes the test session: archive the bound scratchpad like discard
+      // does, or every save cycle would strand another active test stream. Only
+      // after commit — a 409 must never kill the chat — and best-effort: the
+      // override is already committed, so a failed archive leaves an archivable
+      // scratchpad, not corrupt state.
+      try {
+        await this.streamService.archiveStream(txnResult.testStreamId, callerId)
+      } catch (error) {
+        logger.warn(
+          { error, workspaceId, agentId, testStreamId: txnResult.testStreamId },
+          "persona override saved but archiving the test stream failed"
+        )
+      }
+    }
+
+    if (txnResult.outcome === "written") {
+      const { testStreamId: _testStreamId, ...written } = txnResult
+      return written
+    }
+    return txnResult
+  }
+
+  /** Upsert the caller's draft patch (race-safe, INV-20). Returns its saved state. */
+  async saveDraft(
+    workspaceId: string,
+    agentId: string,
+    callerId: string,
+    patch: PersonaConfigPatch
+  ): Promise<PersonaDraftState> {
+    const detail = await PersonaConfigDraftRepository.upsert(this.pool, {
+      workspaceId,
+      agentId,
+      createdBy: callerId,
+      patch,
+    })
+    return { patch, testStreamId: detail.testStreamId, updatedAt: detail.updatedAt }
+  }
+
+  /**
+   * Discard the caller's draft and archive its bound test stream. Idempotent: a
+   * missing draft is a no-op.
+   */
+  async discardDraft(workspaceId: string, agentId: string, callerId: string): Promise<void> {
+    const draft = await PersonaConfigDraftRepository.findByOwner(this.pool, workspaceId, agentId, callerId)
+    if (!draft) return
+    // Archive the bound test stream BEFORE deleting the draft row (the row is the
+    // only pointer to that stream): a failed archive then leaves the pointer intact
+    // to retry rather than orphaning an active scratchpad. archiveStream owns its
+    // own txn, so this is two statements, not one — ordering, not atomicity, is what
+    // prevents the orphan. Re-archiving an already-archived stream is a no-op, so a
+    // delete that fails after a successful archive self-heals on the next discard.
+    if (draft.testStreamId) {
+      await this.streamService.archiveStream(draft.testStreamId, callerId)
+    }
+    await PersonaConfigDraftRepository.deleteByOwner(this.pool, workspaceId, agentId, callerId)
+  }
+
+  /**
+   * Idempotently create-or-return the caller's bound test scratchpad (D1): a real
+   * private scratchpad, companion mode on, persona = the agent, memory OFF (test
+   * chats must not feed GAM). Returns the existing bound stream when it's still
+   * active; otherwise creates one and binds it. `bindTestStream` upserts the draft
+   * row (empty patch when the editor hasn't saved yet) without touching an existing
+   * patch, so no separate read-then-write of the draft is needed here (INV-20).
+   */
+  async ensureTestStream(workspaceId: string, agentId: string, callerId: string): Promise<{ streamId: string }> {
+    const base = getVisibleBuiltInAgentConfig(agentId)
+    if (!base) {
+      throw new Error(`ensureTestStream called for non-editable persona ${agentId}`)
+    }
+
+    const draft = await PersonaConfigDraftRepository.findByOwner(this.pool, workspaceId, agentId, callerId)
+    const activeStreamId = await this.resolveActiveTestStreamId(draft?.testStreamId ?? null)
+    if (activeStreamId) return { streamId: activeStreamId }
+
+    const stream = await this.streamService.createScratchpad({
+      workspaceId,
+      displayName: `${base.name} draft test`,
+      companionMode: CompanionModes.ON,
+      companionPersonaId: agentId,
+      memoryMode: MemoryModes.OFF,
+      createdBy: callerId,
+    })
+    await PersonaConfigDraftRepository.bindTestStream(this.pool, {
+      workspaceId,
+      agentId,
+      createdBy: callerId,
+      testStreamId: stream.id,
+    })
+    return { streamId: stream.id }
+  }
 }

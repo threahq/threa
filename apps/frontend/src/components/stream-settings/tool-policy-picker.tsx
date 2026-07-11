@@ -5,25 +5,26 @@ import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { useUpdateToolPolicy } from "@/hooks/use-streams"
-import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
+import { TOOL_PRIVACY_CATEGORY_LABELS, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
 
 // `messaging` is intentionally excluded: the agent's own reply tool is always
-// allowed, so it is never offered as a toggle. The copy is keyed by a `Record`
-// over every *other* category, so adding a new `ToolPrivacyCategory` is a
+// allowed, so it is never offered as a toggle. The description is keyed by a
+// `Record` over every *other* category, so adding a new `ToolPrivacyCategory` is a
 // compile error here until it's given picker copy (or excluded) — the picker can
-// never silently drop a category the backend reports as configured.
+// never silently drop a category the backend reports as configured. Labels come
+// from the shared `TOOL_PRIVACY_CATEGORY_LABELS` (INV-33).
 type GateableCategory = Exclude<ToolPrivacyCategory, "messaging">
 
-const CATEGORY_META: Record<GateableCategory, { label: string; description: string }> = {
-  web: { label: "Web", description: "Web search and fetching public URLs." },
-  workspace: { label: "Workspace", description: "Search this workspace's messages, streams, and memos." },
-  github: { label: "GitHub", description: "Read from connected GitHub." },
-  linear: { label: "Linear", description: "Read from connected Linear." },
+const CATEGORY_META: Record<GateableCategory, { description: string }> = {
+  web: { description: "Web search and fetching public URLs." },
+  workspace: { description: "Search this workspace's messages, streams, and memos." },
+  github: { description: "Read from connected GitHub." },
+  linear: { description: "Read from connected Linear." },
 }
 
 const CATEGORY_OPTIONS: { value: GateableCategory; label: string; description: string }[] = (
   Object.keys(CATEGORY_META) as GateableCategory[]
-).map((value) => ({ value, ...CATEGORY_META[value] }))
+).map((value) => ({ value, label: TOOL_PRIVACY_CATEGORY_LABELS[value], ...CATEGORY_META[value] }))
 
 const ALL_GATEABLE: ToolPrivacyCategory[] = CATEGORY_OPTIONS.map((option) => option.value)
 

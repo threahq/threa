@@ -15,8 +15,12 @@ import {
   WS_SETTINGS_PARAM,
   type WorkspaceSettingsTab,
 } from "./tab-config"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { useOverriddenFeatureFlags } from "@/hooks/use-feature-flags"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { hasPermission } from "@/lib/permissions"
 import { GeneralTab } from "./general-tab"
+import { PersonasTab } from "./personas-tab"
 import { FeatureFlagsTab } from "./feature-flags-tab"
 import { UsersTab } from "./users-tab"
 import { ApiKeysTab } from "./api-keys-tab"
@@ -25,7 +29,6 @@ import { IntegrationsTab } from "./integrations-tab"
 import { ScheduleTab } from "./schedule-tab"
 import { StatusesTab } from "./statuses-tab"
 import { DictationTab } from "./dictation-tab"
-import { AgentsTab } from "./agents-tab"
 
 interface WorkspaceSettingsDialogProps {
   workspaceId: string
@@ -39,8 +42,13 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
   // deep link) when the viewer has no non-default flags, so flag state is
   // never surfaced beyond what is actually set for them.
   const overriddenFlags = useOverriddenFeatureFlags(workspaceId)
-  const visibleTabs: readonly WorkspaceSettingsTab[] =
-    overriddenFlags.length > 0 ? WORKSPACE_SETTINGS_TABS : WORKSPACE_SETTINGS_TABS.filter((t) => t !== "feature-flags")
+  const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
+  const isAdmin = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+  // Personas editing is admin-only (the config read/write routes are admin-gated
+  // server-side); feature flags stay hidden unless the viewer actually has one.
+  const visibleTabs: readonly WorkspaceSettingsTab[] = WORKSPACE_SETTINGS_TABS.filter(
+    (t) => (t !== "feature-flags" || overriddenFlags.length > 0) && (t !== "personas" || isAdmin)
+  )
 
   const settingsParam = searchParams.get(WS_SETTINGS_PARAM)
   const normalizedSettingsParam = settingsParam === "members" ? "users" : settingsParam
@@ -109,12 +117,14 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
               <TabsContent value="dictation" className="mt-0">
                 <DictationTab workspaceId={workspaceId} />
               </TabsContent>
-              <TabsContent value="agents" className="mt-0">
-                <AgentsTab workspaceId={workspaceId} />
-              </TabsContent>
               <TabsContent value="users" className="mt-0">
                 <UsersTab workspaceId={workspaceId} />
               </TabsContent>
+              {isAdmin && (
+                <TabsContent value="personas" className="mt-0">
+                  <PersonasTab workspaceId={workspaceId} />
+                </TabsContent>
+              )}
               <TabsContent value="integrations" className="mt-0">
                 <IntegrationsTab workspaceId={workspaceId} />
               </TabsContent>

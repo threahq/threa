@@ -31,6 +31,10 @@ export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurpose
       return ctx.followUp ? buildFollowUpSection(ctx.context, ctx.followUp) : ""
     case "catch_up":
     case "supersede_rerun":
+    // A draft-test turn adds no section on purpose: the editor is judging the
+    // candidate persona's real behaviour, so its prompt must run verbatim with
+    // no "this is a test" framing (roadmap 7.1 fidelity rule).
+    case "draft_test":
       return ""
   }
 }

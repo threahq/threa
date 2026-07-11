@@ -314,9 +314,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
   const drafts = createDraftsHandlers({ draftsService })
   const label = createLabelHandlers({ labelService, labelAssignmentService, labelMessageService })
+  const persona = createPersonaConfigHandlers({ personaConfigService })
   const agentSession = createAgentSessionHandlers({ pool })
   const agentFollowUps = createAgentFollowUpHandlers({ pool, agentFollowUpService })
-  const personaConfig = createPersonaConfigHandlers({ personaConfigService })
   const delegations = createDelegationHandlers({ pool, delegationService })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
@@ -431,6 +431,44 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
     workspaceSettings.update
+  )
+
+  // Personas (built-in agent config editing; roadmap 7.1/7.2). List is
+  // member-visible; reading a persona's full config and writing its override
+  // are workspace-admin only. Gate at the route layer (not the handler).
+  app.get("/api/workspaces/:workspaceId/personas", ...authed, persona.list)
+  app.get(
+    "/api/workspaces/:workspaceId/personas/:personaId/config",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.getConfig
+  )
+  app.put(
+    "/api/workspaces/:workspaceId/personas/:personaId/override",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.putOverride
+  )
+  // Draft lifecycle (test-drive substrate, per caller): upsert own draft,
+  // discard (archives the bound test stream), and idempotently create-or-return
+  // the bound test scratchpad. All workspace-admin only.
+  app.put(
+    "/api/workspaces/:workspaceId/personas/:personaId/draft",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.putDraft
+  )
+  app.delete(
+    "/api/workspaces/:workspaceId/personas/:personaId/draft",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.deleteDraft
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/personas/:personaId/draft/test-stream",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.createTestStream
   )
 
   // Sidebar config (per-user, per-workspace layout)
@@ -683,15 +721,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // its timeline card (roadmap 1.3). Scheduling/listing stay agent-only tools.
   app.post("/api/workspaces/:workspaceId/agent-follow-ups/:id/cancel", ...authed, agentFollowUps.cancel)
 
-  // Built-in persona configuration (roadmap 7.1 subset) — workspace model override
-  // for Ariadne until the persona editor ships. Writes are admin-only.
-  app.get("/api/workspaces/:workspaceId/personas", ...authed, personaConfig.list)
-  app.patch(
-    "/api/workspaces/:workspaceId/personas/:personaId/config",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    personaConfig.updateConfig
-  )
   app.get("/api/workspaces/:workspaceId/delegations", ...authed, delegations.list)
   app.post("/api/workspaces/:workspaceId/delegations/:id/cancel", ...authed, delegations.cancel)
 
