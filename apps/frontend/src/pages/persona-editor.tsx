@@ -97,11 +97,11 @@ export function PersonaEditorPage() {
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
-        <h1 className="font-semibold">{config ? `Edit ${config.resolved.name}` : "Edit persona"}</h1>
-        {/* Mobile: the test chat opens from an always-visible header action rather
-            than a button buried at the bottom of the form. */}
+        <h1 className="min-w-0 flex-1 truncate font-semibold">
+          {config ? `Edit ${config.resolved.name}` : "Edit persona"}
+        </h1>
         {!splitCapable && config && !notFound && (
-          <div className="ml-auto">
+          <div className="shrink-0">
             <PersonaTestChatDrawer
               workspaceId={workspaceId}
               personaId={personaId}

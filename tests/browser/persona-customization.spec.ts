@@ -69,7 +69,8 @@ test.describe("Persona editor", () => {
     await expect(page.getByText("Customized").first()).toBeVisible()
 
     // The list row reflects the override too (isCustomized from GET /personas).
-    await page.goto(`/w/${workspaceId}?ws-settings=ai-agents`)
+    // Navigate via the legacy `personas` alias to confirm it still resolves to the tab.
+    await page.goto(`/w/${workspaceId}?ws-settings=personas`)
     await expect(page.getByRole("dialog").getByText("Customized")).toBeVisible({ timeout: 10000 })
   })
 })

@@ -106,7 +106,7 @@ export function ToolChecklist({ value, defaults, onChange, disabled }: ToolCheck
                             type="button"
                             className="shrink-0 text-muted-foreground/70 hover:text-foreground"
                             aria-label={`About ${humanizeTool(tool)}`}
-                            onClick={(e) => e.preventDefault()}
+                            onClick={(event) => event.preventDefault()}
                           >
                             <Info className="h-3.5 w-3.5" />
                           </button>

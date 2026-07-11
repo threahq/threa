@@ -355,7 +355,7 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
                   View default
                 </button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="max-h-80 w-96 overflow-y-auto">
+              <PopoverContent align="end" className="max-h-80 w-[min(24rem,90vw)] overflow-y-auto">
                 <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                   Built-in default prompt
                 </p>
