@@ -1,7 +1,6 @@
 import { useFormattedDate } from "@/hooks"
 import { useWorkspaceFromStore } from "@/stores/workspace-store"
 import { formatRegion } from "@/lib/regions"
-import { FollowUpLimitSection } from "./follow-up-limit-section"
 
 interface GeneralTabProps {
   workspaceId: string
@@ -32,8 +31,6 @@ export function GeneralTab({ workspaceId }: GeneralTabProps) {
           {workspace?.createdAt ? formatDate(new Date(workspace.createdAt)) : "—"}
         </p>
       </div>
-
-      <FollowUpLimitSection workspaceId={workspaceId} />
     </div>
   )
 }

@@ -2,6 +2,7 @@ import type { NavigateFunction } from "react-router-dom"
 import {
   Bell,
   Bookmark,
+  Bot,
   Brain,
   CalendarClock,
   FileText,
@@ -340,6 +341,16 @@ export const commands: Command[] = [
     action: ({ closeDialog, openWorkspaceSettings }) => {
       closeDialog()
       openWorkspaceSettings("users")
+    },
+  },
+  {
+    id: "open-ai-agents",
+    label: "AI Agents settings",
+    icon: Bot,
+    keywords: ["personas", "ariadne", "assistant", "companion", "agent", "prompt", "model", "tools", "follow-up"],
+    action: ({ closeDialog, openWorkspaceSettings }) => {
+      closeDialog()
+      openWorkspaceSettings("ai-agents")
     },
   },
 ]

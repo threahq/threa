@@ -19,9 +19,9 @@ test.describe("Persona editor", () => {
     const { testId } = await loginAndCreateWorkspace(page, "persona-e2e")
     const workspaceId = page.url().match(/\/w\/(ws_[^/]+)/)![1]
 
-    // ──── Open the Personas settings tab and enter the editor ────
+    // ──── Open the AI Agents settings tab and enter the editor ────
 
-    await page.goto(`/w/${workspaceId}?ws-settings=personas`)
+    await page.goto(`/w/${workspaceId}?ws-settings=ai-agents`)
     const settingsDialog = page.getByRole("dialog")
     await expect(settingsDialog.getByText("Ariadne", { exact: true })).toBeVisible({ timeout: 10000 })
     // Fresh workspace — Ariadne has no override yet.
@@ -69,7 +69,7 @@ test.describe("Persona editor", () => {
     await expect(page.getByText("Customized").first()).toBeVisible()
 
     // The list row reflects the override too (isCustomized from GET /personas).
-    await page.goto(`/w/${workspaceId}?ws-settings=personas`)
+    await page.goto(`/w/${workspaceId}?ws-settings=ai-agents`)
     await expect(page.getByRole("dialog").getByText("Customized")).toBeVisible({ timeout: 10000 })
   })
 })

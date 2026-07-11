@@ -1,6 +1,9 @@
 import { useMemo } from "react"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { isDraftId } from "@/hooks"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { hasPermission } from "@/lib/permissions"
 import { rankMatches } from "@/lib/match-score"
 import { commands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
@@ -29,6 +32,10 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
   // The "View Board" command is gated behind the board-view flag, matching the
   // route + sidebar gates.
   const boardEnabled = useFeatureFlag(commandContext.workspaceId, "board-view") === "on"
+  // AI Agents settings is admin-only (the tab itself is admin-gated), so the
+  // command hides for non-admins rather than opening settings to a fallback tab.
+  const bootstrap = useCachedWorkspaceBootstrap(commandContext.workspaceId)
+  const isAdmin = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   const items = useMemo(() => {
     const { currentStreamId, currentStreamName } = commandContext
 
@@ -55,11 +62,13 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     // cross-group ordering is the section order, not match quality.
     const contextualItems = rankCommands(contextualCommands, query).map((c) => toItem(c, contextualGroup))
 
-    const globalCommands = boardEnabled ? commands : commands.filter((c) => c.id !== "view-board")
+    const globalCommands = commands.filter(
+      (c) => (c.id !== "view-board" || boardEnabled) && (c.id !== "open-ai-agents" || isAdmin)
+    )
     const globalItems = rankCommands(globalCommands, query).map((c) => toItem(c, "Commands"))
 
     return [...contextualItems, ...globalItems]
-  }, [query, commandContext, boardEnabled])
+  }, [query, commandContext, boardEnabled, isAdmin])
 
   return {
     items,
