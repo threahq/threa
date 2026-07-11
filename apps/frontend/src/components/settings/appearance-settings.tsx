@@ -9,6 +9,7 @@ import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import {
   THEME_OPTIONS,
   MESSAGE_DISPLAY_OPTIONS,
+  UNREAD_OPEN_POSITION_OPTIONS,
   LABEL_REMOVE_ON_MOVE_OPTIONS,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MIN,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
@@ -32,6 +33,7 @@ import {
   DEFAULT_BOARD_LENS,
   type Theme,
   type MessageDisplay,
+  type UnreadOpenPosition,
   type LabelRemoveOnMove,
   type BoardLens,
 } from "@threa/types"
@@ -52,6 +54,16 @@ const MESSAGE_DISPLAY_DESCRIPTIONS: Record<MessageDisplay, string> = {
   comfortable: "More spacing between messages",
 }
 
+const UNREAD_OPEN_LABELS: Record<UnreadOpenPosition, string> = {
+  latest: "At the latest message",
+  marker: "At the first unread",
+}
+
+const UNREAD_OPEN_DESCRIPTIONS: Record<UnreadOpenPosition, string> = {
+  latest: "Land at the bottom; a “N new messages” button jumps up to where you left off",
+  marker: "Land where you left off; a “Jump to latest” button gets you back to the bottom",
+}
+
 const LABEL_REMOVE_LABELS: Record<LabelRemoveOnMove, string> = {
   ask: "Ask each time",
   always: "Remove the old label",
@@ -70,6 +82,7 @@ export function AppearanceSettings() {
   const theme = preferences?.theme ?? "system"
   const messageDisplay = preferences?.messageDisplay ?? "comfortable"
   const labelRemoveOnMove = preferences?.labelRemoveOnMove ?? "ask"
+  const unreadOpenPosition = preferences?.unreadOpenPosition ?? "latest"
   const codeBlockThreshold = preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
   const blockquoteThreshold = preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
   const messageCollapseEnabled = preferences?.messageCollapseEnabled ?? false
@@ -256,6 +269,32 @@ export function AppearanceSettings() {
                   {MESSAGE_DISPLAY_LABELS[option]}
                 </Label>
                 <p className="text-sm text-muted-foreground">{MESSAGE_DISPLAY_DESCRIPTIONS[option]}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Opening unread streams</h3>
+          <p className="text-sm text-muted-foreground">Where a stream opens when it has unread messages</p>
+        </div>
+        <RadioGroup
+          value={unreadOpenPosition}
+          onValueChange={(value) => updatePreference("unreadOpenPosition", value as UnreadOpenPosition)}
+          className="space-y-3"
+        >
+          {UNREAD_OPEN_POSITION_OPTIONS.map((option) => (
+            <div key={option} className="flex items-start space-x-3">
+              <RadioGroupItem value={option} id={`unread-open-${option}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`unread-open-${option}`} className="cursor-pointer">
+                  {UNREAD_OPEN_LABELS[option]}
+                </Label>
+                <p className="text-sm text-muted-foreground">{UNREAD_OPEN_DESCRIPTIONS[option]}</p>
               </div>
             </div>
           ))}

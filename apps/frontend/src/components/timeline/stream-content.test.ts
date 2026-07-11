@@ -10,6 +10,7 @@ import {
   shouldShowOlderSkeletons,
   resolveDateJumpAnchor,
   remapSuppressedWatermark,
+  resolveUnreadMarkerOpen,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
 import type { StreamEvent } from "@threa/types"
@@ -506,5 +507,58 @@ describe("remapSuppressedWatermark", () => {
   it("passes null/undefined (nothing read / still hydrating) through unchanged", () => {
     expect(remapSuppressedWatermark(null, events, displayEvents)).toBeNull()
     expect(remapSuppressedWatermark(undefined, events, displayEvents)).toBeUndefined()
+  })
+})
+
+describe("resolveUnreadMarkerOpen", () => {
+  const base = {
+    unreadOpenPosition: "marker" as const,
+    alreadyDecided: false,
+    isLoading: false,
+    isSettling: false,
+    readStateResolved: true,
+    isJumpMode: false,
+    hasDeepLink: false,
+    userInteractedAt: 0,
+    dividerEventId: "event_5" as string | undefined,
+  }
+
+  it("scrolls to the marker once loading, settle, and read state have all resolved", () => {
+    expect(resolveUnreadMarkerOpen(base)).toBe("scroll")
+  })
+
+  it("waits (without consuming the decision) while the window is loading, the cold-load settle is masking, or the read position is unresolved", () => {
+    expect(resolveUnreadMarkerOpen({ ...base, isLoading: true })).toBe("wait")
+    expect(resolveUnreadMarkerOpen({ ...base, isSettling: true })).toBe("wait")
+    expect(resolveUnreadMarkerOpen({ ...base, readStateResolved: false })).toBe("wait")
+  })
+
+  it("skips in latest mode — the default open-at-bottom behaviour is untouched", () => {
+    expect(resolveUnreadMarkerOpen({ ...base, unreadOpenPosition: "latest" })).toBe("skip")
+  })
+
+  it("waits while the preference itself has not hydrated (null), so a marker user's cold boot still lands right", () => {
+    expect(resolveUnreadMarkerOpen({ ...base, unreadOpenPosition: null })).toBe("wait")
+  })
+
+  it("skips when there is nothing unread (no divider latched)", () => {
+    expect(resolveUnreadMarkerOpen({ ...base, dividerEventId: undefined })).toBe("skip")
+  })
+
+  it("skips when a deep-link or jump owns the scroll position", () => {
+    expect(resolveUnreadMarkerOpen({ ...base, hasDeepLink: true })).toBe("skip")
+    expect(resolveUnreadMarkerOpen({ ...base, isJumpMode: true })).toBe("skip")
+  })
+
+  it("skips once the user has scrolled — a late-resolving divider must not yank a position they chose", () => {
+    expect(resolveUnreadMarkerOpen({ ...base, userInteractedAt: 123.4 })).toBe("skip")
+  })
+
+  it("decides at most once per stream open — a live message latching a new divider later must not re-scroll", () => {
+    expect(resolveUnreadMarkerOpen({ ...base, alreadyDecided: true })).toBe("skip")
+  })
+
+  it("consumes the decision as skip (not wait) for a deep-link even while still loading — a deep-linked stream never marker-scrolls", () => {
+    expect(resolveUnreadMarkerOpen({ ...base, hasDeepLink: true, isLoading: true })).toBe("skip")
   })
 })

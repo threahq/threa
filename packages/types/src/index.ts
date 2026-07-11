@@ -729,6 +729,10 @@ export {
   LABEL_REMOVE_ON_MOVE_OPTIONS,
   type LabelRemoveOnMove,
   LabelRemoveOnMoveOptions,
+  // Unread open position
+  UNREAD_OPEN_POSITION_OPTIONS,
+  type UnreadOpenPosition,
+  UnreadOpenPositions,
   // Code block collapse threshold
   CODE_BLOCK_COLLAPSE_THRESHOLD_MIN,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
