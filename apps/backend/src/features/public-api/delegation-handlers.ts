@@ -102,6 +102,27 @@ export function createDelegationPublicApiHandlers({
     return botChannelService.isStreamAccessibleForBot(workspaceId, identity.botId, streamId)
   }
 
+  /**
+   * Load a delegation the key may act on, or 404. Every lifecycle op gates on
+   * CURRENT stream access, not just claim time: a key that loses access
+   * mid-claim (revoked channel grant, removed member) can no longer drive the
+   * card — its status notes stop landing and its heartbeats lapse the claim to
+   * the visible `expired` instead of renewing a zombie it can never finish.
+   * 404 (not 403) so a non-member probing ids can't tell an existing
+   * delegation from a missing one, mirroring the first-party cancel handler.
+   */
+  async function resolveAccessibleDelegation(
+    identity: KeyIdentity,
+    workspaceId: string,
+    id: string
+  ): Promise<DelegatedTask> {
+    const delegation = await delegationService.getById({ workspaceId, id })
+    if (!delegation || !(await streamAccessibleFor(identity, workspaceId, delegation.streamId))) {
+      throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
+    }
+    return delegation
+  }
+
   function requireCallbackToken(req: Request): string {
     const token = req.header(THREA_CALLBACK_TOKEN_HEADER)
     if (!token) {
@@ -142,10 +163,7 @@ export function createDelegationPublicApiHandlers({
       const id = req.params.delegationId!
       const { claimedByLabel } = validateRequest(claimDelegationSchema, req.body)
 
-      const delegation = await delegationService.getById({ workspaceId, id })
-      if (!delegation || !(await streamAccessibleFor(identity, workspaceId, delegation.streamId))) {
-        throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
-      }
+      await resolveAccessibleDelegation(identity, workspaceId, id)
 
       const result = await delegationService.claim({ workspaceId, id, claimedByLabel })
       if (!result.ok) {
@@ -168,8 +186,9 @@ export function createDelegationPublicApiHandlers({
 
     /** Push the claim TTL forward. Liveness only — no status change, no card event. */
     async heartbeatDelegation(req: Request, res: Response) {
-      resolveKeyIdentity(req)
+      const identity = resolveKeyIdentity(req)
       const claimToken = requireCallbackToken(req)
+      await resolveAccessibleDelegation(identity, req.workspaceId!, req.params.delegationId!)
 
       const claimExpiresAt = await delegationService.heartbeat({
         workspaceId: req.workspaceId!,
@@ -184,9 +203,10 @@ export function createDelegationPublicApiHandlers({
 
     /** Progress report: `claimed|running → running`, note lands on the card, TTL renews. */
     async reportDelegationStatus(req: Request, res: Response) {
-      resolveKeyIdentity(req)
+      const identity = resolveKeyIdentity(req)
       const claimToken = requireCallbackToken(req)
       const { statusNote } = validateRequest(reportDelegationStatusSchema, req.body)
+      await resolveAccessibleDelegation(identity, req.workspaceId!, req.params.delegationId!)
 
       const running = await delegationService.markRunning({
         workspaceId: req.workspaceId!,
@@ -212,12 +232,9 @@ export function createDelegationPublicApiHandlers({
       const workspaceId = req.workspaceId!
       const id = req.params.delegationId!
       const claimToken = requireCallbackToken(req)
-      const { resultMarkdown } = validateRequest(completeDelegationSchema, req.body)
+      const { resultMarkdown, metadata } = validateRequest(completeDelegationSchema, req.body)
 
-      const delegation = await delegationService.getById({ workspaceId, id })
-      if (!delegation) {
-        throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
-      }
+      const delegation = await resolveAccessibleDelegation(identity, workspaceId, id)
 
       // Idempotent retry: a completion can commit and then lose its response
       // in transit. The terminal row keeps the claim token hash, so a retry
@@ -235,13 +252,6 @@ export function createDelegationPublicApiHandlers({
 
       let author: { authorId: string; authorType: AuthorType; sentVia?: string } | null = null
       if (resultMarkdown) {
-        // Access can be revoked between claim and complete (a bot's channel
-        // grant pulled, a user removed from the stream); posting is a fresh
-        // write into the stream, so re-check like recordSteps does — token
-        // possession alone must not smuggle a message past a revocation.
-        if (!(await streamAccessibleFor(identity, workspaceId, delegation.streamId))) {
-          throw new HttpError("Stream not accessible", { status: 403, code: "FORBIDDEN" })
-        }
         // Defensive: delegations are never created on sealed streams (the tool
         // is absent there), but a plaintext write into an E2E stream would
         // break the sealed timeline — fail before any insert.
@@ -270,6 +280,13 @@ export function createDelegationPublicApiHandlers({
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
 
       const { completed, resultMessageId } = await withTransaction(pool, async (client: PoolClient) => {
+        // Validate the claim BEFORE any write (FOR UPDATE, token-guarded): an
+        // invalid or lapsed token does no work, and the row lock serializes
+        // complete-vs-cancel — the findActiveClaimForUpdate shape.
+        const claim = await delegationService.findClaimedForUpdate(client, { workspaceId, id, claimToken })
+        if (!claim) {
+          throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+        }
         let resultMessageId: string | undefined
         if (contentMarkdown && contentJson && author) {
           const { message } = await eventService.createMessageInTransaction(client, {
@@ -282,6 +299,7 @@ export function createDelegationPublicApiHandlers({
             attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
             clientMessageId: `delegation:${delegation.id}`,
             sentVia: author.sentVia,
+            metadata,
           })
           resultMessageId = message.id
         }
@@ -302,9 +320,10 @@ export function createDelegationPublicApiHandlers({
 
     /** Terminal failure: records why on the card. */
     async failDelegation(req: Request, res: Response) {
-      resolveKeyIdentity(req)
+      const identity = resolveKeyIdentity(req)
       const claimToken = requireCallbackToken(req)
       const { errorMessage } = validateRequest(failDelegationSchema, req.body)
+      await resolveAccessibleDelegation(identity, req.workspaceId!, req.params.delegationId!)
 
       const failed = await delegationService.fail({
         workspaceId: req.workspaceId!,

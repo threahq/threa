@@ -228,6 +228,7 @@ describe("heartbeat / status / fail — token-guarded transitions", () => {
         // Non-terminal row: the fail path's idempotent-retry check falls through.
         getById: mock(async () => makeDelegation()),
       },
+      streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
     })
     const { res } = createResponse()
     const req = makeRequest({ token: "tok", body: { errorMessage: "boom" } })
@@ -236,9 +237,26 @@ describe("heartbeat / status / fail — token-guarded transitions", () => {
     await expect(handlers.failDelegation(req, res)).rejects.toMatchObject({ status: 404 })
   })
 
+  it("404s every claim-authenticated op once stream access is revoked (heartbeats stop renewing)", async () => {
+    const heartbeat = mock(async () => new Date())
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => makeDelegation()), heartbeat },
+      streamService: { tryAccess: mock(async () => null) },
+    })
+    const { res } = createResponse()
+
+    await expect(handlers.heartbeatDelegation(makeRequest({ token: "tok" }), res)).rejects.toMatchObject({
+      status: 404,
+    })
+    expect(heartbeat).not.toHaveBeenCalled()
+  })
+
   it("passes the header token and note through to markRunning", async () => {
     const markRunning = mock(async () => makeDelegation({ status: DelegationStatuses.RUNNING, statusNote: "halfway" }))
-    const handlers = makeHandlers({ delegationService: { markRunning } })
+    const handlers = makeHandlers({
+      delegationService: { markRunning, getById: mock(async () => makeDelegation()) },
+      streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
+    })
     const { res, payloads } = createResponse()
 
     await handlers.reportDelegationStatus(makeRequest({ token: "tok", body: { statusNote: "halfway" } }), res)
@@ -254,7 +272,10 @@ describe("heartbeat / status / fail — token-guarded transitions", () => {
 
   it("records the failure reason as the card's status note", async () => {
     const fail = mock(async () => makeDelegation({ status: DelegationStatuses.FAILED, statusNote: "boom" }))
-    const handlers = makeHandlers({ delegationService: { fail } })
+    const handlers = makeHandlers({
+      delegationService: { fail, getById: mock(async () => makeDelegation()) },
+      streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
+    })
     const { res } = createResponse()
 
     await handlers.failDelegation(makeRequest({ token: "tok", body: { errorMessage: "boom" } }), res)
@@ -267,6 +288,7 @@ describe("completeDelegation", () => {
   function transactionalHandlers(overrides: {
     completeInTransaction?: DelegationService["completeInTransaction"]
     createMessageInTransaction?: EventService["createMessageInTransaction"]
+    findClaimedForUpdate?: DelegationService["findClaimedForUpdate"]
     isE2e?: boolean
   }) {
     spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as PoolClient))
@@ -279,15 +301,21 @@ describe("completeDelegation", () => {
       (mock(async () =>
         makeDelegation({ status: DelegationStatuses.COMPLETED, resultMessageId: "msg_result" })
       ) as DelegationService["completeInTransaction"])
+    const findClaimedForUpdate =
+      overrides.findClaimedForUpdate ??
+      (mock(async () =>
+        makeDelegation({ status: DelegationStatuses.CLAIMED })
+      ) as DelegationService["findClaimedForUpdate"])
     return {
       handlers: makeHandlers({
-        delegationService: { getById: mock(async () => makeDelegation()), completeInTransaction },
+        delegationService: { getById: mock(async () => makeDelegation()), completeInTransaction, findClaimedForUpdate },
         streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
         botChannelService: { isStreamAccessibleForBot: mock(async () => true) },
         eventService: { createMessageInTransaction },
       }),
       createMessageInTransaction,
       completeInTransaction,
+      findClaimedForUpdate,
     }
   }
 
@@ -295,7 +323,10 @@ describe("completeDelegation", () => {
     const { handlers, createMessageInTransaction, completeInTransaction } = transactionalHandlers({})
     const { res, payloads } = createResponse()
 
-    await handlers.completeDelegation(makeRequest({ token: "tok", body: { resultMarkdown: "All done." } }), res)
+    await handlers.completeDelegation(
+      makeRequest({ token: "tok", body: { resultMarkdown: "All done.", metadata: { "github.pr": "https://x/1" } } }),
+      res
+    )
 
     const messageParams = (createMessageInTransaction as ReturnType<typeof mock>).mock.calls[0][1]
     expect(messageParams).toMatchObject({
@@ -305,6 +336,7 @@ describe("completeDelegation", () => {
       contentMarkdown: "All done.",
       clientMessageId: "delegation:dlg_1",
       sentVia: "api_key:uak_1",
+      metadata: { "github.pr": "https://x/1" },
     })
     expect((completeInTransaction as ReturnType<typeof mock>).mock.calls[0][1]).toMatchObject({
       claimToken: "tok",
@@ -357,7 +389,7 @@ describe("completeDelegation", () => {
     ).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED" })
   })
 
-  it("403s a result whose stream access was revoked between claim and complete", async () => {
+  it("404s (existence-hiding) a completion whose stream access was revoked between claim and complete", async () => {
     spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as PoolClient))
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => makeDelegation({ status: DelegationStatuses.RUNNING })) },
@@ -366,7 +398,21 @@ describe("completeDelegation", () => {
     const { res } = createResponse()
     await expect(
       handlers.completeDelegation(makeRequest({ token: "tok", body: { resultMarkdown: "All done." } }), res)
-    ).rejects.toMatchObject({ status: 403 })
+    ).rejects.toMatchObject({ status: 404 })
+  })
+
+  it("does no work when the claim lock finds no live holder (validate before write)", async () => {
+    const createMessageInTransaction = mock(async () => ({ message: { id: "msg_x" } }))
+    const { handlers } = transactionalHandlers({
+      findClaimedForUpdate: mock(async () => null) as DelegationService["findClaimedForUpdate"],
+      createMessageInTransaction: createMessageInTransaction as unknown as EventService["createMessageInTransaction"],
+    })
+    const { res } = createResponse()
+
+    await expect(
+      handlers.completeDelegation(makeRequest({ token: "tok", body: { resultMarkdown: "All done." } }), res)
+    ).rejects.toMatchObject({ status: 404 })
+    expect(createMessageInTransaction).not.toHaveBeenCalled()
   })
 
   it("answers a retried completion idempotently instead of a false 404", async () => {
@@ -378,6 +424,7 @@ describe("completeDelegation", () => {
     const completeInTransaction = mock(async () => null)
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => committed), completeInTransaction },
+      streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
     })
     const { res, payloads } = createResponse()
 
@@ -398,7 +445,11 @@ describe("completeDelegation", () => {
       claimTokenHash: hashCallbackToken("the-real-token"),
     })
     const handlers = makeHandlers({
-      delegationService: { getById: mock(async () => committed), completeInTransaction: mock(async () => null) },
+      delegationService: {
+        getById: mock(async () => committed),
+        completeInTransaction: mock(async () => null),
+        findClaimedForUpdate: mock(async () => null),
+      },
       eventService: { createMessageInTransaction: mock(async () => ({ message: { id: "msg_x" } })) as never },
       streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
     })
@@ -418,6 +469,7 @@ describe("failDelegation retry", () => {
     })
     const handlers = makeHandlers({
       delegationService: { fail: mock(async () => null), getById: mock(async () => failedRow) },
+      streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
     })
     const { res, payloads } = createResponse()
 

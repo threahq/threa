@@ -414,8 +414,10 @@ export const reportDelegationStatusSchema = z.object({
 })
 
 export const completeDelegationSchema = z.object({
-  /** Result message (markdown) posted to the delegation's stream as the key owner. Omit to complete without a message. */
+  /** Result message (markdown) posted to the delegation's stream as the key's identity. Omit to complete without a message. */
   resultMarkdown: z.string().min(1).max(50000).optional(),
+  /** External references stamped on the result message (sendMessage parity) — e.g. `{"github.pr": "…"}`, queryable via find-by-metadata. */
+  metadata: messageMetadataSchema.optional(),
 })
 
 export const failDelegationSchema = z.object({

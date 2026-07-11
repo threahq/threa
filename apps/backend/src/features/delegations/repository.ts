@@ -249,6 +249,30 @@ export const DelegatedTaskRepository = {
   },
 
   /**
+   * Lock a live-claimed row for the completion flow (FOR UPDATE, same
+   * live-holder guard as the transitions): the completion posts a message and
+   * then CASes to `completed` in one transaction, so it validates the claim
+   * BEFORE writing the message — an invalid or lapsed token does no work at
+   * all, and the lock serializes complete-vs-cancel on the row. Mirrors
+   * bot-invocations' `findActiveClaimForUpdate`.
+   */
+  async findClaimedForUpdate(
+    db: Querier,
+    params: { workspaceId: string; id: string; claimTokenHash: string }
+  ): Promise<DelegatedTask | null> {
+    const result = await db.query<DelegatedTaskRow>(sql`
+      SELECT ${sql.raw(COLUMNS)} FROM delegated_tasks
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND status IN (${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING})
+        AND claim_token_hash = ${params.claimTokenHash}
+        AND claim_expires_at > NOW()
+      FOR UPDATE
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
    * CAS `claimed|running → completed`, token-guarded; links the result message
    * when given. Terminal transitions clear `status_note` (here, cancel, expire —
    * `fail` overwrites it with the failure reason) so a stale progress note can

@@ -3335,7 +3335,19 @@
               "schema": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
-                "properties": { "resultMarkdown": { "type": "string", "minLength": 1, "maxLength": 50000 } },
+                "properties": {
+                  "resultMarkdown": { "type": "string", "minLength": 1, "maxLength": 50000 },
+                  "metadata": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-zA-Z0-9_.\\-:]+$"
+                    },
+                    "additionalProperties": { "type": "string", "maxLength": 256 }
+                  }
+                },
                 "additionalProperties": false
               }
             }
