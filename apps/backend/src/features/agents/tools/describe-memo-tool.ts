@@ -23,7 +23,7 @@ export type DescribeMemoInput = z.infer<typeof DescribeMemoSchema>
  * does not widen the access surface.
  */
 export function createDescribeMemoTool(deps: WorkspaceToolDeps) {
-  const { workspaceId, accessibleStreamIds, memoExplorer } = deps
+  const { workspaceId, accessibleStreamIds, invokingUserId, memoExplorer } = deps
 
   return defineAgentTool({
     name: "describe_memo",
@@ -50,7 +50,10 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
 
     execute: async (input): Promise<AgentToolResult> => {
       try {
-        const detail = await memoExplorer.getById(workspaceId, input.memoId, { accessibleStreamIds })
+        const detail = await memoExplorer.getById(workspaceId, input.memoId, {
+          accessibleStreamIds,
+          userId: invokingUserId,
+        })
         if (!detail) {
           return {
             output: JSON.stringify({

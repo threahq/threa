@@ -8,6 +8,7 @@ import {
   updateMemo,
   type MemoDetailResponse,
   type MemoSearchRequest,
+  type MemoSearchResponse,
   type MemoUpdateRequest,
 } from "@/api"
 
@@ -86,6 +87,12 @@ export function useDeleteMemo(workspaceId: string) {
     mutationFn: (memoId: string) => deleteMemo(workspaceId, memoId),
     onSuccess: (_result, memoId) => {
       queryClient.removeQueries({ queryKey: memoKeys.detail(workspaceId, memoId) })
+      // Drop the deleted memo from cached search lists synchronously so the
+      // explorer never re-selects a now-gone id off a stale list (a 404 refetch +
+      // skeleton flash) before the invalidated search refetch lands.
+      queryClient.setQueriesData<MemoSearchResponse>({ queryKey: memoKeys.searches(workspaceId) }, (old) =>
+        old ? { ...old, results: old.results.filter((r) => r.memo.id !== memoId) } : old
+      )
       void queryClient.invalidateQueries({ queryKey: memoKeys.searches(workspaceId) })
     },
   })

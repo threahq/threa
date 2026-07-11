@@ -325,7 +325,17 @@ export class WorkspaceAgent {
     substeps: WorkspaceAgentSubstep[]
   ): Promise<WorkspaceAgentResult> {
     const { configResolver, embeddingService } = this.deps
-    const { workspaceId, query, conversationHistory, invokingUserId } = input
+    const { workspaceId, query, conversationHistory } = input
+
+    // User-scoped memos (roadmap 6.4) are private to one owner. The researcher's
+    // output — the reply AND the broadcast trace sources (buildSources → the
+    // agent_session:step socket room, gated only by stream access) — reaches every
+    // participant of the invocation stream. So the invoking user's private-tier
+    // memos may only be retrieved when the audience IS that user: a private
+    // scratchpad (`user_full_access`). In shared channels/DMs the viewer stays
+    // undefined and user-scoped memos are excluded, so a private memo can never be
+    // cited into a room the owner doesn't exclusively occupy.
+    const memoViewerUserId = accessSpec.type === "user_full_access" ? accessSpec.userId : undefined
 
     // Resolve config for workspace agent
     const config = (await configResolver.resolve(COMPONENT_PATHS.COMPANION_RESEARCHER)) as ResearcherConfig
@@ -375,7 +385,7 @@ export class WorkspaceAgent {
                 workspaceId,
                 accessibleStreamIds,
                 embeddingService,
-                invokingUserId,
+                memoViewerUserId,
                 true,
                 excludedMessageIds
               )
@@ -437,7 +447,7 @@ export class WorkspaceAgent {
             workspaceId,
             accessibleStreamIds,
             embeddingService,
-            invokingUserId,
+            memoViewerUserId,
             true,
             excludedMessageIds
           )
@@ -568,7 +578,7 @@ export class WorkspaceAgent {
                 workspaceId,
                 accessibleStreamIds,
                 embeddingService,
-                invokingUserId,
+                memoViewerUserId,
                 true,
                 excludedMessageIds
               )
@@ -899,7 +909,7 @@ Each query must have:
     workspaceId: string,
     accessibleStreamIds: string[],
     embeddingService: EmbeddingServiceLike,
-    invokingUserId: string,
+    memoViewerUserId: string | undefined,
     includeSurroundingContext: boolean,
     excludedMessageIds: Set<string>
   ): Promise<{
@@ -931,7 +941,7 @@ Each query must have:
                 query,
                 workspaceId,
                 accessibleStreamIds,
-                invokingUserId,
+                memoViewerUserId,
                 embeddingService
               )
               return {
@@ -1024,13 +1034,14 @@ Each query must have:
     query: SearchQuery,
     workspaceId: string,
     accessibleStreamIds: string[],
-    invokingUserId: string,
+    memoViewerUserId: string | undefined,
     embeddingService: EmbeddingServiceLike
   ): Promise<EnrichedMemoResult[]> {
-    // The invoking user gates user-scoped memos (roadmap 6.4): a private-tier memo
-    // surfaces only for its owner. Threaded into every memo search path below so
-    // another user's "about you" memo can never leak into this turn's retrieval.
-    const filterBase = { streamIds: accessibleStreamIds, viewerUserId: invokingUserId }
+    // Gates user-scoped memos (roadmap 6.4): set only when the invocation audience
+    // is exactly the invoking user (a private scratchpad), so a private-tier memo
+    // is never retrieved into — and thus cited/broadcast to — a shared room.
+    // Undefined ⇒ user-scoped memos excluded (fail closed).
+    const filterBase = { streamIds: accessibleStreamIds, viewerUserId: memoViewerUserId }
     // For semantic search, generate embedding (AI, no DB, ~200-500ms)
     if (query.type === "semantic") {
       try {

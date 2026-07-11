@@ -18,16 +18,15 @@ import { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS, MemoScopes, type StreamT
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
+  ResponsiveAlertDialog,
+  ResponsiveAlertDialogAction,
+  ResponsiveAlertDialogCancel,
+  ResponsiveAlertDialogContent,
+  ResponsiveAlertDialogDescription,
+  ResponsiveAlertDialogFooter,
+  ResponsiveAlertDialogHeader,
+  ResponsiveAlertDialogTitle,
+} from "@/components/ui/responsive-alert-dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -330,12 +329,14 @@ export function MemoDetailContent({
   edit?: MemoEditControls
 }) {
   const [isEditing, setIsEditing] = useState(false)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
   // Leave edit mode when the selected memo changes so a fresh memo never opens
   // pre-populated with the previous one's draft.
   const memoId = data?.memo.id ?? null
   useEffect(() => {
     setIsEditing(false)
+    setConfirmDeleteOpen(false)
   }, [memoId])
 
   if (isLoading) {
@@ -432,36 +433,38 @@ export function MemoDetailContent({
                     </Button>
                   )}
                   {edit.onDelete && data.memo.scope === MemoScopes.USER && (
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 gap-1.5 px-2 text-xs text-destructive hover:text-destructive"
-                          disabled={edit.isMutating}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                          Delete
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete this memo?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This permanently removes what Ariadne remembers here about you. It can&apos;t be undone.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            onClick={() => void edit.onDelete?.()}
-                          >
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                    <>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1.5 px-2 text-xs text-destructive hover:text-destructive"
+                        disabled={edit.isMutating}
+                        onClick={() => setConfirmDeleteOpen(true)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Delete
+                      </Button>
+                      <ResponsiveAlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+                        <ResponsiveAlertDialogContent>
+                          <ResponsiveAlertDialogHeader>
+                            <ResponsiveAlertDialogTitle>Delete this memo?</ResponsiveAlertDialogTitle>
+                            <ResponsiveAlertDialogDescription>
+                              This permanently removes what Ariadne remembers here about you. It can&apos;t be undone.
+                            </ResponsiveAlertDialogDescription>
+                          </ResponsiveAlertDialogHeader>
+                          <ResponsiveAlertDialogFooter>
+                            <ResponsiveAlertDialogCancel disabled={edit.isMutating}>Cancel</ResponsiveAlertDialogCancel>
+                            <ResponsiveAlertDialogAction
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              disabled={edit.isMutating}
+                              onClick={() => void edit.onDelete?.()}
+                            >
+                              Delete
+                            </ResponsiveAlertDialogAction>
+                          </ResponsiveAlertDialogFooter>
+                        </ResponsiveAlertDialogContent>
+                      </ResponsiveAlertDialog>
+                    </>
                   )}
                 </>
               )}

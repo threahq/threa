@@ -19,12 +19,17 @@ ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'workspace';
 ALTER TABLE memos
 ADD COLUMN IF NOT EXISTS scope_user_id TEXT;
 
+-- NOT VALID skips the validating table scan at ADD time (only a brief catalog
+-- lock), then VALIDATE re-checks existing rows under a weaker ShareUpdateExclusive
+-- lock that does not block writes — the standard no-downtime pattern for adding a
+-- CHECK to a populated table. Every existing row (scope 'workspace', owner NULL)
+-- already satisfies it, so the validation is a formality. The owner-index build is
+-- deferred to the companion CONCURRENTLY migration (CONCURRENTLY cannot run inside
+-- this file's implicit multi-statement transaction).
 ALTER TABLE memos
 ADD CONSTRAINT memo_scope_owner CHECK (
     (scope = 'user' AND scope_user_id IS NOT NULL) OR
     (scope <> 'user' AND scope_user_id IS NULL)
-);
+) NOT VALID;
 
--- Drives the "About you" explorer filter and the per-owner retrieval gate:
--- both look up a user's own private-tier memos.
-CREATE INDEX idx_memos_scope_user ON memos (workspace_id, scope_user_id) WHERE scope = 'user';
+ALTER TABLE memos VALIDATE CONSTRAINT memo_scope_owner;

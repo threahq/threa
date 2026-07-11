@@ -3,6 +3,7 @@ import { toast } from "sonner"
 import { ArrowLeft, Search, RefreshCw, Hash, MessageSquareQuote, Check, ChevronsUpDown } from "lucide-react"
 import {
   KNOWLEDGE_TYPES,
+  MEMO_SCOPES,
   MEMO_TYPES,
   MemoScopes,
   type KnowledgeType,
@@ -248,9 +249,12 @@ export function MemoryPage() {
   const [selectedStatus, setSelectedStatus] = useState<MemoStatus>(
     () => (searchParams.get("status") as MemoStatus | null) ?? "active"
   )
-  const [selectedScope, setSelectedScope] = useState<MemoScope | null>(
-    () => searchParams.get("scope") as MemoScope | null
-  )
+  const [selectedScope, setSelectedScope] = useState<MemoScope | null>(() => {
+    // Validate the URL param so a hand-crafted `?scope=garbage` can't reach the
+    // backend search (which Zod-rejects an unknown scope with a 400).
+    const raw = searchParams.get("scope")
+    return raw && (MEMO_SCOPES as readonly string[]).includes(raw) ? (raw as MemoScope) : null
+  })
 
   // Debounced query for the API — updates 300ms after the user stops typing
   const [debouncedQuery, setDebouncedQuery] = useState(localQuery)

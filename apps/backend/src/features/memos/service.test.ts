@@ -395,6 +395,30 @@ describe("MemoService.processBatch — memo scope write policy (roadmap 6.4)", (
       expect.objectContaining({ scope: "workspace", scopeUserId: null })
     )
   })
+
+  it("resolves the root stream so a thread inside a private scratchpad inherits user scope", async () => {
+    const { service } = setupService({ memoContents: [memoContent] })
+    // The batch's stream is a thread; its root is the owner's private scratchpad.
+    // Without root resolution the thread's own type (not SCRATCHPAD) would fall
+    // through to workspace scope, leaking the private memo.
+    spyOn(StreamRepository, "findById").mockImplementation((async (_db: unknown, id: string) =>
+      id === STREAM_ID
+        ? fakeStream({ type: "thread", rootStreamId: "stream_root" })
+        : fakeStream({
+            id: "stream_root",
+            type: "scratchpad",
+            visibility: "private",
+            createdBy: "usr_owner",
+          })) as typeof StreamRepository.findById)
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "user", scopeUserId: "usr_owner" })
+    )
+  })
 })
 
 describe("MemoService.processBatch — explicit supersession (reversed conclusions retire their memo)", () => {
@@ -661,6 +685,35 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
       expect.anything(),
       expect.objectContaining({ scope: "workspace", scopeUserId: null })
     )
+  })
+
+  it("suppresses the capture broadcast for a private save into a shared stream (no title leak)", async () => {
+    // Default fakeStream() is a public channel (natural tier workspace); an
+    // explicit user-scope override there must NOT broadcast the memo title to the
+    // channel via the per-stream memos:captured event (roadmap 6.4 privacy).
+    const { service, streamEventInsertMany, outboxInsertMany, insert } = setupSaveMemo()
+
+    const result = await service.saveMemo({ ...saveMemoInput, scope: "user", invokingUserId: "usr_human" })
+
+    expect(result).toMatchObject({ ok: true })
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "user", scopeUserId: "usr_human" })
+    )
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
+    expect(outboxInsertMany).not.toHaveBeenCalled()
+  })
+
+  it("still broadcasts the capture for a user-scope save in the owner's own private scratchpad", async () => {
+    const { service, streamEventInsertMany } = setupSaveMemo()
+    // Audience == owner, so the capture is visible in situ (INV-62) as normal.
+    spyOn(StreamRepository, "findById").mockResolvedValue(
+      fakeStream({ type: "scratchpad", visibility: "private", createdBy: "usr_owner" })
+    )
+
+    await service.saveMemo({ ...saveMemoInput, scope: "user", invokingUserId: "usr_owner" })
+
+    expect(streamEventInsertMany).toHaveBeenCalled()
   })
 
   it("inherits the private-scratchpad owner tier when no scope is passed", async () => {

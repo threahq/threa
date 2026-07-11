@@ -1832,7 +1832,7 @@ export function createPublicApiHandlers({
     async searchMemos(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const { query, exact, streams, memoType, knowledgeType, tags, before, after, limit } = validateRequest(
+      const { query, exact, streams, memoType, knowledgeType, tags, scope, before, after, limit } = validateRequest(
         searchMemosSchema,
         req.body
       )
@@ -1857,6 +1857,7 @@ export function createPublicApiHandlers({
           memoTypes: memoType,
           knowledgeTypes: knowledgeType,
           tags,
+          scope,
           before: before ? new Date(before) : undefined,
           after: after ? new Date(after) : undefined,
         },

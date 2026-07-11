@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg"
-import { withTransaction, withClient } from "../../db"
+import { withTransaction, withClient, type Querier } from "../../db"
 import { StreamStateRepository, StreamEventRepository, StreamRepository, type Stream } from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository, type Message } from "../messaging"
@@ -82,6 +82,23 @@ function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; s
     return { scope: MemoScopes.USER, scopeUserId: stream.createdBy }
   }
   return { scope: MemoScopes.WORKSPACE, scopeUserId: null }
+}
+
+/**
+ * Load `streamId`'s effective root (a thread carries no type/visibility of its
+ * own — INV-62) and derive the extracted-memo tier from it. `save_memo` and
+ * reflective capture bind to `session.streamId`, which can be a thread inside a
+ * private scratchpad; resolving to the root first keeps their memos in the
+ * owner's private tier instead of silently falling through to `workspace`. The
+ * batch path already passes a top-level stream, so this is a no-op there.
+ */
+async function resolveMemoScopeForStreamId(
+  db: Querier,
+  streamId: string
+): Promise<{ scope: MemoScope; scopeUserId: string | null }> {
+  const stream = await StreamRepository.findById(db, streamId)
+  const root = stream?.rootStreamId ? await StreamRepository.findById(db, stream.rootStreamId) : stream
+  return resolveExtractedMemoScope(root)
 }
 
 export interface ProcessResult {
@@ -282,8 +299,7 @@ export class MemoService implements MemoServiceLike {
       // The visibility tier for everything extracted this batch depends only on
       // the (top-level) stream — memos from a private scratchpad are the owner's
       // private tier (roadmap 6.4).
-      const stream = await StreamRepository.findById(client, streamId)
-      const memoScope = resolveExtractedMemoScope(stream)
+      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
 
       const existingTags = await MemoRepository.getAllTags(client, workspaceId)
 
@@ -866,8 +882,8 @@ export class MemoService implements MemoServiceLike {
       // matching passive extraction; an explicit tool `scope` overrides. A `user`
       // override needs an invoking human to own it — with none, fall back to the
       // natural tier rather than mint an ownerless (CHECK-violating) user memo.
-      const saveStream = await StreamRepository.findById(client, streamId)
-      const natural = resolveExtractedMemoScope(saveStream)
+      // Resolves the root so a thread-backed save inherits the scratchpad tier.
+      const natural = await resolveMemoScopeForStreamId(client, streamId)
       let resolvedScope = natural.scope
       let resolvedScopeUserId = natural.scopeUserId
       if (scopeOverride === MemoScopes.WORKSPACE) {
@@ -877,6 +893,16 @@ export class MemoService implements MemoServiceLike {
         resolvedScope = MemoScopes.USER
         resolvedScopeUserId = invokingUserId
       }
+
+      // A `user`-scoped memo is private to one owner, but the `memos:captured`
+      // timeline event is a per-stream broadcast to every member (STREAM_SCOPED_EVENTS),
+      // carrying the memo title. When save_memo files privately (`user`) into a
+      // stream whose audience is WIDER than that owner — i.e. the stream's natural
+      // tier isn't itself owner-private — broadcasting would announce the private
+      // memo's title to the whole channel, defeating the tier. Suppress the capture
+      // event there. Passive/reflective capture never hit this: they only produce
+      // `user` scope in a private scratchpad, whose audience already equals the owner.
+      const captureLeaksToStream = resolvedScope === MemoScopes.USER && natural.scope !== MemoScopes.USER
 
       // Serialize against the passive batch and other save_memo calls for this
       // stream (same lock key) so the dedup gate can't be read stale (INV-20).
@@ -925,26 +951,29 @@ export class MemoService implements MemoServiceLike {
 
       // Visible in situ (INV-62): one broadcast timeline event on the stream the
       // agent saved from, same transaction as the memo row. Message-sourced, so
-      // no conversationId — the row links back through sourceMessageIds.
-      const [captureEvent] = await StreamEventRepository.insertMany(client, [
-        {
-          id: eventId(),
-          streamId,
-          eventType: "memos:captured" as const,
-          payload: {
-            memos: [{ memoId: newMemoId, title, knowledgeType, sourceMessageIds: resolvedSourceIds }],
-          } satisfies MemosCapturedEventPayload,
-          actorType: AuthorTypes.SYSTEM,
-        },
-      ])
-      await OutboxRepository.insertMany(client, [
-        {
-          eventType: "stream:memos_captured" as const,
-          payload: { workspaceId, streamId, event: captureEvent },
-        },
-      ])
+      // no conversationId — the row links back through sourceMessageIds. Skipped
+      // for a private save into a shared stream (would leak the title, see above).
+      if (!captureLeaksToStream) {
+        const [captureEvent] = await StreamEventRepository.insertMany(client, [
+          {
+            id: eventId(),
+            streamId,
+            eventType: "memos:captured" as const,
+            payload: {
+              memos: [{ memoId: newMemoId, title, knowledgeType, sourceMessageIds: resolvedSourceIds }],
+            } satisfies MemosCapturedEventPayload,
+            actorType: AuthorTypes.SYSTEM,
+          },
+        ])
+        await OutboxRepository.insertMany(client, [
+          {
+            eventType: "stream:memos_captured" as const,
+            payload: { workspaceId, streamId, event: captureEvent },
+          },
+        ])
+      }
 
-      logger.info({ streamId, memoId: newMemoId, sessionId }, "save_memo: agent memo created")
+      logger.info({ streamId, memoId: newMemoId, sessionId, scope: resolvedScope }, "save_memo: agent memo created")
       return { ok: true, memoId: newMemoId, title, deduped: false }
     })
   }
@@ -979,9 +1008,9 @@ export class MemoService implements MemoServiceLike {
         typeof settingLanguage === "string" && settingLanguage.trim().length > 0 ? settingLanguage.trim() : undefined
       // A reflective memo inherits the session stream's visibility tier — research
       // residue in a private scratchpad is the owner's private tier (roadmap 6.4),
-      // consistent with the passive extractor.
-      const stream = await StreamRepository.findById(client, streamId)
-      const memoScope = resolveExtractedMemoScope(stream)
+      // consistent with the passive extractor. Resolves the root first so a
+      // thread-backed session still inherits the scratchpad tier.
+      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
       return { existingMemos, existingTags, memoLanguage, memoScope }
     })
 

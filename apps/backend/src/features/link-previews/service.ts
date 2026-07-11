@@ -533,7 +533,7 @@ export class LinkPreviewService {
     if (accessibleStreamIds.length === 0) {
       return { kind: "memo", accessTier: "private" }
     }
-    const memo = await this.deps.memoExplorerService.getById(workspaceId, targetMemoId, { accessibleStreamIds })
+    const memo = await this.deps.memoExplorerService.getById(workspaceId, targetMemoId, { accessibleStreamIds, userId })
     if (!memo) {
       return { kind: "memo", accessTier: "private" }
     }
