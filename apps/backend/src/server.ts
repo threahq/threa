@@ -102,6 +102,7 @@ import {
   createPersonaAgentWorker,
   AgentFollowUpService,
   AgentFollowUpRepository,
+  PersonaConfigService,
   createAgentFollowUpFireWorker,
   EpisodeSummaryService,
   createEpisodeSummarizeWorker,
@@ -518,6 +519,7 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
   const agentFollowUpService = new AgentFollowUpService({ pool, workspaceSettingsService })
+  const personaConfigService = new PersonaConfigService({ pool, modelRegistry })
   const streamBriefService = new StreamBriefService({ pool })
   const delegationService = new DelegationService({ pool })
   const draftsService = new DraftsService({ pool })
@@ -689,6 +691,7 @@ export async function startServer(): Promise<ServerInstance> {
     savedSuggestionsService,
     scheduledMessagesService,
     agentFollowUpService,
+    personaConfigService,
     delegationService,
     draftsService,
     labelService,

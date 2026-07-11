@@ -1,0 +1,33 @@
+# Companion model comparison: Sonnet 4.6 (production) vs Sonnet 5 vs GPT-5.6 Luna.
+#
+# Uses per-component config so ONLY the companion persona's model varies —
+# ConfigResolver-backed sub-agents (workspace retrieval, researcher) stay on
+# production models. The `-m` flag would steamroll those too, which both skews
+# the comparison and breaks providers with stricter structured-output rules
+# (Luna via OpenAI rejects the retrieval agent's zod schema in strict mode).
+#
+# Run (needs OPENROUTER_API_KEY with credit headroom + TAVILY_API_KEY):
+#   bun run eval -- --config evals/companion-model-comparison.yaml -r 3 -p 4 \
+#     --min-pass-rate 0.67 --json /tmp/companion-comparison.json --no-langfuse
+
+suites:
+  - name: companion
+    title: claude-sonnet-4.6 (production)
+    components:
+      companion:
+        model: openrouter:anthropic/claude-sonnet-4.6
+        temperature: 0.7
+
+  - name: companion
+    title: claude-sonnet-5
+    components:
+      companion:
+        model: openrouter:anthropic/claude-sonnet-5
+        temperature: 0.7
+
+  - name: companion
+    title: gpt-5.6-luna
+    components:
+      companion:
+        model: openrouter:openai/gpt-5.6-luna
+        temperature: 0.7

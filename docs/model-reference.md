@@ -1,12 +1,12 @@
 # AI Model Reference
 
-**Last updated:** 2026-07-05
+**Last updated:** 2026-07-11
 
 This document provides a comprehensive reference for AI models including capabilities, pricing, and usage guidelines. Always verify against this file when working with AI integration.
 
 ## Model Capabilities Registry
 
-The source of truth for model input/output modalities is `apps/backend/src/lib/ai/models.yaml`. This file defines which models support vision, text, and other modalities. The `ModelRegistry` class loads this at startup and provides capability checks:
+The source of truth for model input/output modalities is `packages/agent-runtime/src/ai/models.yaml`. This file defines which models support vision, text, and other modalities. The `ModelRegistry` class loads this at startup and provides capability checks:
 
 ```typescript
 import { createModelRegistry } from "./lib/ai/model-registry"
@@ -32,6 +32,24 @@ All models use `provider:modelPath` format:
 
 ## Inference Models
 
+### openrouter:anthropic/claude-sonnet-5
+
+**Name:** Claude Sonnet 5
+
+**Description:** Anthropic's Claude 5-generation Sonnet (July 2026). Near-Opus quality on agentic and coding work at Sonnet cost. Adaptive thinking on by default; new tokenizer produces ~30% more tokens for the same text vs Sonnet 4.6 (per-token price is lower, so equivalent-request cost is roughly a wash during intro pricing). 1M context window.
+
+**Typical cost:** ~$2.00 per 1M input tokens, ~$10.00 per 1M output tokens (introductory pricing through 2026-08-31; $3.00/$15.00 after)
+
+**When to use:**
+
+- Default Ariadne companion persona model (since 2026-07-11; won the July 2026 companion eval vs 4.6 — 51/84 vs 46/84 case-runs, best judge quality — at ~34% higher per-conversation cost and ~30% higher latency)
+- Complex reasoning and multi-turn agent conversations
+- Tasks where quality justifies Sonnet-tier cost
+
+**Use instead of:** `claude-sonnet-4.6`
+
+---
+
 ### openrouter:anthropic/claude-sonnet-4.6
 
 **Name:** Claude Sonnet 4.6
@@ -45,7 +63,6 @@ All models use `provider:modelPath` format:
 - Complex reasoning and generation
 - Multi-turn agent conversations
 - Nuanced text generation requiring high quality
-- Default Ariadne companion persona model
 - Tasks where quality justifies higher cost
 
 **Use instead of:** `claude-sonnet-4.5` for improved quality

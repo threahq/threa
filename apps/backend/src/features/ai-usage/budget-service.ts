@@ -11,6 +11,7 @@ const SOFT_LIMIT_THRESHOLD = 0.8 // 80% - start degrading models
 
 /** Full model IDs with provider prefix to match the format used in AI calls. */
 const MODEL_DEGRADATION_MAP: Record<string, string> = {
+  "openrouter:anthropic/claude-sonnet-5": "openrouter:anthropic/claude-haiku-4.5",
   "openrouter:anthropic/claude-sonnet-4.6": "openrouter:anthropic/claude-haiku-4.5",
   "openrouter:anthropic/claude-sonnet-4-20250514": "openrouter:anthropic/claude-haiku-4.5",
   "openrouter:anthropic/claude-sonnet-4.5": "openrouter:anthropic/claude-haiku-4.5",

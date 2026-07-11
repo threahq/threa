@@ -107,6 +107,8 @@ export type { ScheduleFollowUpParams, ScheduleFollowUpResult } from "./follow-up
 export { createAgentFollowUpFireWorker } from "./follow-up-worker"
 export { AgentFollowUpRepository } from "./follow-up-repository"
 export type { AgentFollowUp } from "./follow-up-repository"
+export { PersonaConfigService } from "./persona-config-service"
+export { createPersonaConfigHandlers } from "./persona-config-handlers"
 export { EpisodeSummaryService } from "./episode-summary-service"
 export type { EpisodeSummaryServiceDeps } from "./episode-summary-service"
 export { createEpisodeSummarizeWorker } from "./episode-summary-worker"
