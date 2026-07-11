@@ -84,9 +84,10 @@ function arrange(delegationOverrides: Partial<Record<string, unknown>> = {}) {
   } as unknown as PublicApiDeps["delegationService"]
 
   // User-scoped key: access gate resolves via streamService.tryAccess; the
-  // completion message is authored by the key owner.
+  // completion message is authored by the key owner. `streamAccessible: false`
+  // makes tryAccess return null (non-member) so the gate must 404.
   const streamService = {
-    tryAccess: mock(async () => ({ id: "stream_1" })),
+    tryAccess: mock(async () => (delegationOverrides.streamAccessible === false ? null : { id: "stream_1" })),
   } as unknown as PublicApiDeps["streamService"]
 
   const handlers = createPublicApiHandlers({
@@ -143,6 +144,13 @@ describe("claimDelegation", () => {
 
   it("404s when the delegation does not exist (access gate)", async () => {
     const { handlers, req } = arrange({ getById: mock(async () => null) })
+    await expect(handlers.claimDelegation(req({ claimedByLabel: "x" }), createResponse())).rejects.toMatchObject({
+      status: 404,
+    })
+  })
+
+  it("404s (not 403) when the stream is inaccessible — hides existence from a non-member", async () => {
+    const { handlers, req } = arrange({ streamAccessible: false })
     await expect(handlers.claimDelegation(req({ claimedByLabel: "x" }), createResponse())).rejects.toMatchObject({
       status: 404,
     })

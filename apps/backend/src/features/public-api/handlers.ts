@@ -874,7 +874,18 @@ export function createPublicApiHandlers({
   async function resolveAccessibleDelegation(req: Request, id: string): Promise<DelegatedTask> {
     const delegation = await delegationService.getById({ workspaceId: req.workspaceId!, id })
     if (!delegation) throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
-    await assertStreamAccessible(req, delegation.streamId)
+    // Reuse the stream-access predicate (INV-35) but present its 403 as a 404 so
+    // a non-member probing ids can't tell an existing delegation from a missing
+    // one (existence-hiding, like the first-party cancel handler). A 401 (no key)
+    // still propagates.
+    try {
+      await assertStreamAccessible(req, delegation.streamId)
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 403) {
+        throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
+      }
+      throw err
+    }
     return delegation
   }
 

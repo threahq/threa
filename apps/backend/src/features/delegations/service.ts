@@ -267,8 +267,9 @@ export class DelegationService {
         attachmentIds: params.result.attachmentIds?.length ? params.result.attachmentIds : undefined,
         sources: params.result.sources,
         metadata: params.result.metadata,
-        // Idempotency: a retried complete returns the already-posted message
-        // instead of a duplicate row.
+        // Stable provenance id tying the result message to its delegation. (Not
+        // a dedup guard on this path — a retried complete already 404s on the
+        // now-`completed` status before reaching this write.)
         clientMessageId: `delegation:${locked.id}`,
       })
 
