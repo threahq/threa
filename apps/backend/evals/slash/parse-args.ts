@@ -18,6 +18,7 @@ export const EVAL_SUITES = [
   "multimodal-vision",
   "memo-classifier",
   "memorizer",
+  "brief-correction",
 ] as const
 
 /** Default suite when the command names none — the cheap, high-signal one. */

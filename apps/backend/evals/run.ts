@@ -19,6 +19,7 @@ import { boundaryExtractionSuite } from "./suites/boundary-extraction/suite"
 import { multimodalVisionSuite } from "./suites/multimodal-vision/suite"
 import { memoClassifierSuite } from "./suites/memo-classifier/suite"
 import { memorizerSuite } from "./suites/memorizer/suite"
+import { briefCorrectionSuite } from "./suites/brief-correction/suite"
 import { isConfigFilePath } from "./framework/config-loader"
 
 // All available suites
@@ -29,6 +30,7 @@ const allSuites = [
   multimodalVisionSuite,
   memoClassifierSuite,
   memorizerSuite,
+  briefCorrectionSuite,
 ]
 
 function printHelp(): void {
