@@ -54,6 +54,7 @@ import {
   NotificationLevels,
   SHAREABLE_SAFETY_STATUSES,
   StreamTypes,
+  StreamPurposes,
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
@@ -565,6 +566,13 @@ export function registerWorkspaceSocketHandlers(
   // `scheduledKeys` invalidation is needed here.
 
   const handleStreamCreated = (payload: StreamPayload) => {
+    // A system-purpose stream (e.g. a persona-editor test scratchpad) is a real,
+    // fully-functional stream, but not a sidebar entry: the editor mounts it
+    // directly (StreamContent runs its own subscribe+bootstrap), so the workspace
+    // layer must neither list it in the sidebar cache nor persist it to IDB. The
+    // bootstrap query applies the same exclusion; both must agree (D6 revision).
+    if (payload.stream.purpose === StreamPurposes.PERSONA_TEST) return
+
     let shouldJoinStreamRoom = false
     let shouldCacheStream = payload.stream.visibility !== Visibilities.PRIVATE
     let shouldAddMembership = false
@@ -1183,6 +1191,10 @@ export function registerWorkspaceSocketHandlers(
     event: StreamEvent
   }) => {
     if (payload.workspaceId !== workspaceId) return
+    // Same exclusion as handleStreamCreated: the creator's own member_added for a
+    // system-purpose stream must not add it to the sidebar/IDB either — this was
+    // the second add path and the one that leaked the test scratchpad.
+    if (payload.stream.purpose === StreamPurposes.PERSONA_TEST) return
     let shouldSubscribeStream = false
 
     // Update stream bootstrap members list (humans) or botMemberIds (bots)

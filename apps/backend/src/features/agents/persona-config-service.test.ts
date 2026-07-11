@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
 import type { ModelCapabilities, ModelRegistry } from "@threa/agent-runtime"
-import { AgentToolNames, CompanionModes, MemoryModes } from "@threa/types"
+import { AgentToolNames, CompanionModes, MemoryModes, StreamPurposes } from "@threa/types"
 import { PersonaConfigService } from "./persona-config-service"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
@@ -445,6 +445,8 @@ describe("PersonaConfigService draft lifecycle", () => {
         companionMode: CompanionModes.ON,
         companionPersonaId: ARIADNE_AGENT_ID,
         memoryMode: MemoryModes.OFF,
+        // Marked as a workbench so it never enters the sidebar/workspace lists.
+        purpose: StreamPurposes.PERSONA_TEST,
         createdBy: CALLER_ID,
         displayName: "Ariadne draft test",
       })

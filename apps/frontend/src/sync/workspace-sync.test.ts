@@ -1226,6 +1226,111 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("excludes a persona-test scratchpad from the sidebar cache and IDB on live create", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ users: [makeWorkspaceUser()], streams: [], streamMemberships: [] })
+    )
+
+    const subscribeStream = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream,
+    })
+
+    emit("stream:created", {
+      workspaceId: "ws_1",
+      streamId: "stream_persona_test",
+      stream: {
+        id: "stream_persona_test",
+        workspaceId: "ws_1",
+        type: "scratchpad",
+        displayName: "Ariadne draft test",
+        slug: null,
+        description: null,
+        visibility: "private",
+        parentStreamId: null,
+        parentMessageId: null,
+        rootStreamId: null,
+        companionMode: "on",
+        companionPersonaId: "persona_system_ariadne",
+        // The workbench marker — the creator would otherwise get it in the sidebar.
+        purpose: "persona_test",
+        createdBy: "member_1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        archivedAt: null,
+      },
+    })
+
+    await Promise.resolve()
+
+    // Not listed, not persisted, not subscribed — it is mounted directly by the
+    // editor, which runs its own subscribe+bootstrap.
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached?.streams.some((s) => s.id === "stream_persona_test")).toBe(false)
+    expect(await db.streamMemberships.get("ws_1:stream_persona_test")).toBeUndefined()
+    expect(await db.streams.get("stream_persona_test")).toBeUndefined()
+    expect(subscribeStream).not.toHaveBeenCalledWith("stream_persona_test")
+
+    cleanup()
+  })
+
+  it("ignores the creator's own stream:member_added for a persona-test stream (the second sidebar-add path)", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ users: [makeWorkspaceUser()], streams: [], streamMemberships: [] })
+    )
+
+    const subscribeStream = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream,
+    })
+
+    emit("stream:member_added", {
+      workspaceId: "ws_1",
+      streamId: "stream_persona_test",
+      memberId: "member_1",
+      stream: {
+        id: "stream_persona_test",
+        workspaceId: "ws_1",
+        type: "scratchpad",
+        displayName: "Ariadne draft test",
+        slug: null,
+        description: null,
+        visibility: "private",
+        parentStreamId: null,
+        parentMessageId: null,
+        rootStreamId: null,
+        companionMode: "on",
+        companionPersonaId: "persona_system_ariadne",
+        purpose: "persona_test",
+        createdBy: "member_1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        archivedAt: null,
+      },
+      event: { id: "evt_1", streamId: "stream_persona_test", eventType: "member_added" },
+    })
+
+    await Promise.resolve()
+
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached?.streams.some((s) => s.id === "stream_persona_test")).toBe(false)
+    expect(cached?.streamMemberships.some((m) => m.streamId === "stream_persona_test")).toBe(false)
+    expect(await db.streams.get("stream_persona_test")).toBeUndefined()
+    expect(subscribeStream).not.toHaveBeenCalledWith("stream_persona_test")
+
+    cleanup()
+  })
+
   it("applies feature_flags:updated to the bootstrap cache", () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())

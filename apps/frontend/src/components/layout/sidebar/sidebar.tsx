@@ -50,7 +50,7 @@ import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
 import { calculateUrgency, categorizeStream, isSidebarStreamVisible, isUnreadStream } from "./utils"
 import type { StreamItemData } from "./types"
-import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
+import { isUtilityStream, resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { StreamTypes, Visibilities, LabelableResourceTypes, type SidebarQuickLinkKey } from "@threa/types"
 
@@ -86,7 +86,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const workspace = useWorkspaceFromStore(workspaceId)
   const unreadState = useWorkspaceUnreadState(workspaceId)
   const workspaceUsers = useWorkspaceUsers(workspaceId)
-  const idbStreams = useWorkspaceStreams(workspaceId)
+  const allIdbStreams = useWorkspaceStreams(workspaceId)
+  // System-purpose streams (persona test scratchpads) never list in the sidebar.
+  const idbStreams = useMemo(() => allIdbStreams.filter((s) => !isUtilityStream(s)), [allIdbStreams])
   const idbStreamMemberships = useWorkspaceStreamMemberships(workspaceId)
   const idbDmPeers = useWorkspaceDmPeers(workspaceId)
   const labels = useWorkspaceLabels(workspaceId)

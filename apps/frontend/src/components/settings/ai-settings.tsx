@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { serializeToMarkdown, parseMarkdown } from "@/components/editor/editor-markdown"
+import { serializeToMarkdown, parsePromptMarkdown } from "@/components/editor/editor-markdown"
 import { EditorActionBar, RichEditor, type RichEditorHandle } from "@/components/editor"
 import { EncryptedScratchpadsSection } from "@/components/encryption"
 import { Button } from "@/components/ui/button"
@@ -11,15 +11,6 @@ import { type JSONContent } from "@threa/types"
 const MODIFIER_LABEL =
   typeof navigator !== "undefined" && navigator.platform?.toLowerCase().includes("mac") ? "Cmd" : "Ctrl"
 
-function parsePrompt(markdown: string): JSONContent {
-  return parseMarkdown(markdown, undefined, undefined, {
-    enableMentions: false,
-    enableChannels: false,
-    enableSlashCommands: false,
-    enableEmoji: false,
-  })
-}
-
 export function AISettings() {
   const { preferences, updatePreference, isLoading } = usePreferences()
   // Selection toolbar is a hover/mouse affordance — suppress it only when a
@@ -28,11 +19,11 @@ export function AISettings() {
   const editorRef = useRef<RichEditorHandle>(null)
   const savedPrompt = preferences?.scratchpadCustomPrompt ?? ""
   const normalizedSavedPrompt = savedPrompt.trim()
-  const [contentJson, setContentJson] = useState<JSONContent>(() => parsePrompt(savedPrompt))
+  const [contentJson, setContentJson] = useState<JSONContent>(() => parsePromptMarkdown(savedPrompt))
   const [formatOpen, setFormatOpen] = useState(false)
 
   useEffect(() => {
-    setContentJson(parsePrompt(savedPrompt))
+    setContentJson(parsePromptMarkdown(savedPrompt))
     setFormatOpen(false)
   }, [savedPrompt])
 
@@ -48,7 +39,7 @@ export function AISettings() {
   }
 
   const handleReset = () => {
-    setContentJson(parsePrompt(savedPrompt))
+    setContentJson(parsePromptMarkdown(savedPrompt))
     setFormatOpen(false)
   }
 

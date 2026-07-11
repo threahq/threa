@@ -4,6 +4,7 @@ import {
   personaConfigPatchSchema,
   CompanionModes,
   MemoryModes,
+  StreamPurposes,
   type PersonaConfigPatch,
   type PersonaConfigResponse,
   type PersonaDraftState,
@@ -309,6 +310,10 @@ export class PersonaConfigService {
       companionMode: CompanionModes.ON,
       companionPersonaId: agentId,
       memoryMode: MemoryModes.OFF,
+      // A workbench, not a channel: the marker keeps it out of the creator's
+      // sidebar and workspace stream lists (bootstrap query + live socket add),
+      // while it stays fully functional when mounted directly (D6 revision).
+      purpose: StreamPurposes.PERSONA_TEST,
       createdBy: callerId,
     })
     await PersonaConfigDraftRepository.bindTestStream(this.pool, {

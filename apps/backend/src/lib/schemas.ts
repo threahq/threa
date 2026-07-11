@@ -1,6 +1,7 @@
 import { z } from "zod"
 import {
   STREAM_TYPES,
+  STREAM_PURPOSES,
   VISIBILITY_OPTIONS,
   COMPANION_MODES,
   MEMORY_MODES,
@@ -14,6 +15,7 @@ import {
 } from "@threa/types"
 
 export const streamTypeSchema = z.enum(STREAM_TYPES)
+export const streamPurposeSchema = z.enum(STREAM_PURPOSES)
 export const visibilitySchema = z.enum(VISIBILITY_OPTIONS)
 export const companionModeSchema = z.enum(COMPANION_MODES)
 export const memoryModeSchema = z.enum(MEMORY_MODES)

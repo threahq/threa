@@ -17,6 +17,7 @@ import type {
   LabelActorType,
   CompanionMode,
   MemoryMode,
+  StreamPurpose,
   AuthorType,
   ConversationIntent,
   EventType,
@@ -202,6 +203,15 @@ export interface Stream {
    * `NOT NULL DEFAULT 'auto'`, so a freshly-fetched stream always carries it).
    */
   memoryMode?: MemoryMode
+  /**
+   * System purpose of the stream (`StreamPurposes`), or `null`/absent for an
+   * ordinary user-facing stream. `persona_test` marks the ephemeral scratchpad
+   * bound to a persona-editor draft — a real stream that mounts and runs turns,
+   * but is excluded from the sidebar and workspace stream lists (it's a
+   * workbench, not a channel). Absent on legacy cached rows synced before this
+   * shipped — treat a missing value as `null`.
+   */
+  purpose?: StreamPurpose | null
   createdBy: string
   createdAt: string
   updatedAt: string

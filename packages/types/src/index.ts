@@ -10,6 +10,10 @@ export {
   DM_PARTICIPANT_COUNT,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
   STREAM_BRIEF_MAX_CHARS,
+  // Stream purpose (system-purpose marker; NULL = ordinary stream)
+  STREAM_PURPOSES,
+  type StreamPurpose,
+  StreamPurposes,
   // Visibility
   VISIBILITY_OPTIONS,
   type Visibility,

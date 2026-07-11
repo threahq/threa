@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import {
   PERSONA_SYSTEM_PROMPT_MAX_CHARS,
   type AgentToolName,
+  type JSONContent,
   type PersonaConfigPatch,
   type PersonaConfigResponse,
   type PersonaModelOption,
@@ -14,6 +15,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { EditorActionBar, RichEditor, type RichEditorHandle } from "@/components/editor"
+import { parsePromptMarkdown, serializeToMarkdown } from "@/components/editor/editor-markdown"
+import { useInputMode } from "@/hooks/use-input-mode"
+import { cn } from "@/lib/utils"
 import { EmojiField } from "@/components/labels/label-edit-form"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import {
@@ -76,6 +81,10 @@ interface PersonaEditorFormProps {
 export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateChange }: PersonaEditorFormProps) {
   const queryClient = useQueryClient()
   const { toEmoji, toShortcode } = useWorkspaceEmoji(workspaceId)
+  // Selection toolbar is a hover/mouse affordance; suppress it on touch.
+  const disableSelectionToolbar = useInputMode() === "touch"
+  const promptEditorRef = useRef<RichEditorHandle>(null)
+  const [promptFormatOpen, setPromptFormatOpen] = useState(false)
 
   const defaults = config.defaults
   const savedValues = useMemo(() => applyPatch(defaults, config.overridePatch), [defaults, config.overridePatch])
@@ -83,6 +92,14 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
   const [values, setValues] = useState<PersonaFormValues>(() =>
     config.draft ? applyPatch(defaults, config.draft.patch) : savedValues
   )
+  // The RichEditor's doc for the system prompt. `values.systemPrompt` (markdown)
+  // stays the single source of truth for the patch/dirty/counter machinery; this
+  // is only the editor's view of it. `lastSerializedRef` records the markdown the
+  // editor itself last produced, so the re-seed effect below can tell an external
+  // baseline change (reset / discard / adopt-theirs / broadcast) from the user's
+  // own typing and only reset the doc for the former — no cursor churn, no loop.
+  const [promptJson, setPromptJson] = useState<JSONContent>(() => parsePromptMarkdown(values.systemPrompt))
+  const lastSerializedPromptRef = useRef(values.systemPrompt)
   const [conflict, setConflict] = useState(false)
   const [sync, setSync] = useState<SyncState>("idle")
   // Set the local sync state AND mirror it to the parent (the pane's indicator).
@@ -109,6 +126,9 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
   const sparsePatch = useMemo(() => computeSparsePatch(values, defaults), [values, defaults])
   const savedPatch = config.overridePatch ?? {}
   const isDirty = !patchesEqual(sparsePatch, savedPatch)
+  // The backend rejects an over-length prompt (400); block the commit locally so
+  // the counter's over-limit state is the only signal the user needs to act on.
+  const promptOverLimit = values.systemPrompt.length > PERSONA_SYSTEM_PROMPT_MAX_CHARS
 
   const saveDraft = useSavePersonaDraft(workspaceId, personaId)
   const updateOverride = useUpdatePersonaOverride(workspaceId, personaId)
@@ -151,9 +171,29 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
     setConflict(false)
   }, [config.overrideUpdatedAt, config.overridePatch, defaults, values])
 
+  // Re-seed the prompt editor when `values.systemPrompt` changes to something the
+  // editor did not just type — i.e. an external baseline swap (per-field reset,
+  // discard, adopt-theirs, or a broadcast-driven config refetch). Skipped for the
+  // user's own keystrokes because `handleSystemPromptChange` advances the ref
+  // first, so the incoming value matches and this no-ops (no cursor jump / loop).
+  useEffect(() => {
+    if (values.systemPrompt === lastSerializedPromptRef.current) return
+    lastSerializedPromptRef.current = values.systemPrompt
+    setPromptJson(parsePromptMarkdown(values.systemPrompt))
+  }, [values.systemPrompt])
+
   const setField = <K extends keyof PersonaFormValues>(field: K, value: PersonaFormValues[K]) => {
     editedRef.current = true
     setValues((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const handleSystemPromptChange = (json: JSONContent) => {
+    const markdown = serializeToMarkdown(json).trim()
+    // Record what the editor produced before the state change re-runs the re-seed
+    // effect, so it recognises this as the user's own edit and leaves the doc be.
+    lastSerializedPromptRef.current = markdown
+    setPromptJson(json)
+    setField("systemPrompt", markdown)
   }
 
   const resetField = <K extends keyof PersonaFormValues>(field: K) => {
@@ -162,7 +202,10 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
   }
 
   const handleSave = () => {
-    if (updateOverride.isPending) return
+    // Mirror the Save button's disabled guard so the RichEditor's Cmd/Ctrl+Enter
+    // (onSubmit) can't commit a save the button would have blocked — an
+    // over-limit prompt (400 on the wire) or a no-op write with no dirty changes.
+    if (updateOverride.isPending || !isDirty || promptOverLimit) return
     updateOverride.mutate(
       { patch: sparsePatch, expectedUpdatedAt: config.overrideUpdatedAt },
       {
@@ -282,21 +325,50 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
 
       <FieldRow
         label="System prompt"
-        htmlFor="persona-system-prompt"
         description="The standing instructions the persona runs on every turn."
         overridden={isFieldOverridden(values, defaults, "systemPrompt")}
         onReset={() => resetField("systemPrompt")}
       >
-        <Textarea
-          id="persona-system-prompt"
-          value={values.systemPrompt}
-          onChange={(event) => setField("systemPrompt", event.target.value)}
-          maxLength={PERSONA_SYSTEM_PROMPT_MAX_CHARS}
-          className="min-h-[200px] font-mono text-xs"
-        />
-        <span className="text-[11px] text-muted-foreground">
-          {values.systemPrompt.length}/{PERSONA_SYSTEM_PROMPT_MAX_CHARS}
-        </span>
+        <div
+          className="rounded-lg border border-input bg-card p-3"
+          onClick={(event) => {
+            if ((event.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
+              return
+            promptEditorRef.current?.focus()
+          }}
+        >
+          <RichEditor
+            ref={promptEditorRef}
+            value={promptJson}
+            onChange={handleSystemPromptChange}
+            onSubmit={handleSave}
+            placeholder="How should this persona think and respond?"
+            messageSendMode="cmdEnter"
+            staticToolbarOpen={promptFormatOpen}
+            disableSelectionToolbar={disableSelectionToolbar}
+            ariaLabel="Persona system prompt editor"
+            className="min-h-0 [&_.tiptap]:min-h-[200px] [&_.tiptap]:max-h-[420px]"
+            enableMentions={false}
+            enableChannels={false}
+            enableCommands={false}
+            enableEmoji={false}
+          />
+          <div className="mt-2 border-t pt-2" onMouseDown={(event) => event.preventDefault()}>
+            <EditorActionBar
+              editorHandle={promptEditorRef.current}
+              formatOpen={promptFormatOpen}
+              onFormatOpenChange={setPromptFormatOpen}
+              showAttach={false}
+              showMention={false}
+              showEmoji={false}
+              trailingContent={
+                <span className={cn("text-[11px] text-muted-foreground", promptOverLimit && "text-destructive")}>
+                  {values.systemPrompt.length}/{PERSONA_SYSTEM_PROMPT_MAX_CHARS}
+                </span>
+              }
+            />
+          </div>
+        </div>
       </FieldRow>
 
       <FieldRow
@@ -408,7 +480,12 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
           >
             Discard
           </Button>
-          <Button type="button" size="sm" onClick={handleSave} disabled={updateOverride.isPending || !isDirty}>
+          <Button
+            type="button"
+            size="sm"
+            onClick={handleSave}
+            disabled={updateOverride.isPending || !isDirty || promptOverLimit}
+          >
             {updateOverride.isPending ? "Saving…" : "Save"}
           </Button>
         </div>

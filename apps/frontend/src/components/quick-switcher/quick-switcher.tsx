@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { isUtilityStream } from "@/lib/streams"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { Terminal, FileText } from "lucide-react"
 import { toast } from "sonner"
@@ -104,7 +105,9 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   } | null>(null)
   const [labelPickerStreamId, setLabelPickerStreamId] = useState<string | null>(null)
 
-  const streams = useWorkspaceStreams(workspaceId)
+  const allStreams = useWorkspaceStreams(workspaceId)
+  // System-purpose streams (persona test scratchpads) are not navigable targets.
+  const streams = useMemo(() => allStreams.filter((s) => !isUtilityStream(s)), [allStreams])
   const streamMemberships = useWorkspaceStreamMemberships(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)

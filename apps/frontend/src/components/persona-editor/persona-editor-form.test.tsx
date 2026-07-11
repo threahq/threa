@@ -1,11 +1,67 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { forwardRef, useImperativeHandle } from "react"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { PersonaConfigResponse, PersonaResolvedConfig } from "@threa/types"
+import type { JSONContent, PersonaConfigResponse, PersonaResolvedConfig } from "@threa/types"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"
+import { spyOnExport } from "@/test/spy"
+import * as editorModule from "@/components/editor"
 import { PersonaEditorForm } from "./persona-editor-form"
+
+function extractText(node: JSONContent | undefined): string {
+  if (!node) return ""
+  if (node.type === "text") return node.text ?? ""
+  return (node.content ?? []).map((child) => extractText(child)).join("")
+}
+
+function createDoc(text: string): JSONContent {
+  return { type: "doc", content: [{ type: "paragraph", content: text ? [{ type: "text", text }] : undefined }] }
+}
+
+// The system-prompt field mounts a RichEditor; stub it as a plain textarea (the
+// established pattern in ai-settings.test) so tests exercise the markdown
+// round-trip and per-field reset without a real TipTap instance in jsdom.
+beforeEach(() => {
+  const MockRichEditor = forwardRef<
+    {
+      focus: () => void
+      insertMention: () => void
+      insertSlash: () => void
+      insertEmoji: () => void
+      getEditor: () => null
+    },
+    { value: JSONContent; onChange: (v: JSONContent) => void; onSubmit?: () => void; ariaLabel?: string }
+  >(function MockRichEditor({ value, onChange, onSubmit, ariaLabel }, ref) {
+    useImperativeHandle(ref, () => ({
+      focus: () => undefined,
+      insertMention: () => undefined,
+      insertSlash: () => undefined,
+      insertEmoji: () => undefined,
+      getEditor: () => null,
+    }))
+    return (
+      <textarea
+        aria-label={ariaLabel}
+        value={extractText(value)}
+        onChange={(event) => onChange(createDoc(event.target.value))}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && event.metaKey) {
+            event.preventDefault()
+            onSubmit?.()
+          }
+        }}
+      />
+    )
+  })
+  spyOnExport(editorModule, "RichEditor").mockReturnValue(MockRichEditor as unknown as typeof editorModule.RichEditor)
+
+  const MockEditorActionBar = (({ trailingContent }: Record<string, unknown>) => (
+    <div>{trailingContent as React.ReactNode}</div>
+  )) as unknown as typeof editorModule.EditorActionBar
+  spyOnExport(editorModule, "EditorActionBar").mockReturnValue(MockEditorActionBar)
+})
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -158,6 +214,42 @@ describe("PersonaEditorForm", () => {
 
     expect(await screen.findByText(/Someone else updated this persona/)).toBeInTheDocument()
     expect(screen.getByLabelText("Name")).toHaveValue("Mine")
+  })
+
+  it("saves a system-prompt edit as serialized markdown in the sparse patch", async () => {
+    const put = vi
+      .spyOn(personasApi, "putOverride")
+      .mockResolvedValue({ persona: { id: "persona_system_ariadne" } as never, updatedAt: "2026-07-11T00:00:00Z" })
+    const user = userEvent.setup()
+    renderForm()
+
+    const prompt = screen.getByLabelText("Persona system prompt editor")
+    await user.clear(prompt)
+    await user.type(prompt, "Be terse.")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith("ws_1", "persona_system_ariadne", {
+        patch: { systemPrompt: "Be terse." },
+        expectedUpdatedAt: null,
+      })
+    )
+  })
+
+  it("resets the system prompt back to its default, clearing the pending change", async () => {
+    const user = userEvent.setup()
+    renderForm()
+
+    const prompt = screen.getByLabelText("Persona system prompt editor")
+    await user.clear(prompt)
+    await user.type(prompt, "Draft prompt")
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+
+    // System prompt is the fourth field (Name, Description, Avatar, System prompt).
+    await user.click(screen.getAllByRole("button", { name: "Reset" })[3])
+
+    expect(screen.getByLabelText("Persona system prompt editor")).toHaveValue("You are Ariadne.")
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
   })
 
   it("debounces edits into a draft write", async () => {

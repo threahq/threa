@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act } from "react"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, useLocation } from "react-router-dom"
+import { MemoryRouter } from "react-router-dom"
 import { toast } from "sonner"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { PersonaConfigResponse, PersonaResolvedConfig } from "@threa/types"
@@ -11,7 +11,8 @@ import { ServicesProvider } from "@/contexts"
 import { spyOnExport } from "@/test"
 import * as streamContentModule from "@/components/timeline"
 import { personaKeys, usePersonaConfig } from "@/hooks/use-personas"
-import { PersonaTestChatPane, PersonaTestDraftButton } from "./persona-test-chat"
+import * as drawerModule from "@/components/ui/drawer"
+import { PersonaTestChatDrawer, PersonaTestChatPane } from "./persona-test-chat"
 
 const WS = "ws_1"
 const PERSONA = "persona_system_ariadne"
@@ -156,29 +157,109 @@ describe("PersonaTestChatPane", () => {
   })
 })
 
-function LocationProbe() {
-  const location = useLocation()
-  return <div data-testid="location">{location.pathname}</div>
+/** Drives `testStreamId` off the config cache exactly like the page does. */
+function DrawerHarness() {
+  const { data } = usePersonaConfig(WS, PERSONA)
+  return (
+    <PersonaTestChatDrawer
+      workspaceId={WS}
+      personaId={PERSONA}
+      testStreamId={data?.draft?.testStreamId ?? null}
+      syncState="synced"
+    />
+  )
 }
 
-describe("PersonaTestDraftButton (mobile)", () => {
-  it("ensures the test stream then navigates to it as a normal stream", async () => {
-    const create = vi.spyOn(personasApi, "createTestStream").mockResolvedValue({ streamId: "stream_test_9" })
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const user = userEvent.setup()
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/w/${WS}/settings/personas/${PERSONA}`]}>
-          <PersonaTestDraftButton workspaceId={WS} personaId={PERSONA} />
-          <LocationProbe />
+function renderDrawer(queryClient: QueryClient) {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ServicesProvider>
+        <MemoryRouter>
+          <DrawerHarness />
         </MemoryRouter>
-      </QueryClientProvider>
-    )
+      </ServicesProvider>
+    </QueryClientProvider>
+  )
+}
 
+describe("PersonaTestChatDrawer (mobile)", () => {
+  beforeEach(() => {
+    // Render the vaul Drawer as a plain open/closed container (the established
+    // stream-sheet pattern) so the test exercises open/close + mount without a
+    // real drawer in jsdom. The stub also exposes an explicit close control.
+    spyOnExport(drawerModule, "Drawer").mockReturnValue((({
+      open,
+      onOpenChange,
+      children,
+    }: {
+      open: boolean
+      onOpenChange?: (open: boolean) => void
+      children: React.ReactNode
+    }) => (
+      <div data-state={open ? "open" : "closed"}>
+        {open && (
+          <button type="button" onClick={() => onOpenChange?.(false)}>
+            close-drawer
+          </button>
+        )}
+        {open ? children : null}
+      </div>
+    )) as unknown as typeof drawerModule.Drawer)
+    spyOnExport(drawerModule, "DrawerContent").mockReturnValue((({ children }: { children: React.ReactNode }) => (
+      <div>{children}</div>
+    )) as unknown as typeof drawerModule.DrawerContent)
+    spyOnExport(drawerModule, "DrawerTitle").mockReturnValue((({ children }: { children: React.ReactNode }) => (
+      <div>{children}</div>
+    )) as unknown as typeof drawerModule.DrawerTitle)
+  })
+
+  it("opens the drawer, starts the session, and mounts the chat", async () => {
+    const create = vi.spyOn(personasApi, "createTestStream").mockResolvedValue({ streamId: "stream_test_9" })
+    vi.spyOn(personasApi, "getConfig").mockResolvedValue(config(null))
+    const user = userEvent.setup()
+    renderDrawer(makeClient(config(null)))
+
+    expect(screen.queryByTestId("test-chat-surface")).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Test draft" }))
 
     expect(create).toHaveBeenCalledWith(WS, PERSONA)
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(`/w/${WS}/s/stream_test_9`))
+    await waitFor(() => expect(screen.getByTestId("test-chat-surface")).toBeInTheDocument())
+    expect(streamContentProps).toMatchObject({ workspaceId: WS, streamId: "stream_test_9", autoFocus: true })
+  })
+
+  it("closing the drawer keeps the session — close is not End", async () => {
+    const archive = vi.spyOn(streamsApi, "archive").mockResolvedValue(undefined)
+    vi.spyOn(personasApi, "getConfig").mockResolvedValue(config("stream_test_1"))
+    const user = userEvent.setup()
+    renderDrawer(makeClient(config("stream_test_1")))
+
+    await user.click(screen.getByRole("button", { name: "Test draft" }))
+    await waitFor(() => expect(screen.getByTestId("test-chat-surface")).toBeInTheDocument())
+
+    await user.click(screen.getByRole("button", { name: "close-drawer" }))
+    // Closing tears down the drawer content but must not archive the stream or
+    // drop the draft — the bound session survives so a reopen resumes it.
+    expect(screen.queryByTestId("test-chat-surface")).not.toBeInTheDocument()
+    expect(archive).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Test draft" }))
+    await waitFor(() => expect(screen.getByTestId("test-chat-surface")).toBeInTheDocument())
+    expect(archive).not.toHaveBeenCalled()
+  })
+
+  it("ends the test chat inside the drawer, archiving and returning to the empty state", async () => {
+    const archive = vi.spyOn(streamsApi, "archive").mockResolvedValue(undefined)
+    vi.spyOn(personasApi, "getConfig").mockResolvedValue(config("stream_test_1"))
+    const user = userEvent.setup()
+    renderDrawer(makeClient(config("stream_test_1")))
+
+    await user.click(screen.getByRole("button", { name: "Test draft" }))
+    expect(screen.getByTestId("test-chat-surface")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "End test chat" }))
+
+    expect(archive).toHaveBeenCalledWith(WS, "stream_test_1")
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start test chat" })).toBeInTheDocument())
+    expect(screen.queryByTestId("test-chat-surface")).not.toBeInTheDocument()
   })
 })

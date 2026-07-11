@@ -61,6 +61,12 @@ export function ToolChecklist({ value, defaults, onChange, disabled }: ToolCheck
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {TOOL_PRIVACY_CATEGORY_LABELS[group.category]}
           </p>
+          {group.category === "workspace" && (
+            <p className="text-xs text-muted-foreground">
+              Deep retrieval runs through General research and memory even when the search tools here are off — these
+              grant the persona direct, per-turn lookups.
+            </p>
+          )}
           <div className="grid gap-1.5 sm:grid-cols-2">
             {group.tools.map((tool) => {
               const isEnabled = enabled.has(tool)

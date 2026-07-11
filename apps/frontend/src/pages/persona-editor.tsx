@@ -10,7 +10,7 @@ import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { usePersonaConfig } from "@/hooks/use-personas"
 import { usePanelLayout, useIsMobile } from "@/hooks"
 import { PersonaEditorForm } from "@/components/persona-editor/persona-editor-form"
-import { PersonaTestChatPane, PersonaTestDraftButton } from "@/components/persona-editor/persona-test-chat"
+import { PersonaTestChatDrawer, PersonaTestChatPane } from "@/components/persona-editor/persona-test-chat"
 import type { SyncState } from "@/components/persona-editor/persona-form"
 import { ApiError } from "@/api/client"
 
@@ -88,7 +88,12 @@ export function PersonaEditorPage() {
             {body}
             {isMobile && config && !notFound && (
               <div className="mt-6">
-                <PersonaTestDraftButton workspaceId={workspaceId} personaId={personaId} />
+                <PersonaTestChatDrawer
+                  workspaceId={workspaceId}
+                  personaId={personaId}
+                  testStreamId={config.draft?.testStreamId ?? null}
+                  syncState={syncState}
+                />
               </div>
             )}
           </div>

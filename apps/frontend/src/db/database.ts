@@ -11,6 +11,7 @@ import type {
   NotificationLevel,
   SidebarConfig,
   StreamContextBagPayload,
+  StreamPurpose,
   StreamType,
   ThreaDocument,
   ToolPrivacyCategory,
@@ -85,6 +86,11 @@ export interface CachedStream {
   companionMode: "off" | "on"
   companionPersonaId: string | null
   memoryMode?: "auto" | "off"
+  /**
+   * System-purpose marker (e.g. "persona_test"). Listing surfaces filter these
+   * via `isUtilityStream`; optional so older cached rows still parse.
+   */
+  purpose?: StreamPurpose | null
   createdBy: string
   createdAt: string
   updatedAt: string
