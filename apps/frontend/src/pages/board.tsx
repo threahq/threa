@@ -173,21 +173,38 @@ export function BoardPage() {
   const homeLens = preferences?.preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
   const defaultViewId = preferences?.preferences?.boardDefaultViewId ?? null
   // Already mounted deeper (the lens menu), so this adds no fetch — it just lets
-  // the landing resolve a saved-view home before the page renders.
+  // the landing resolve a saved-view home.
   const { data: boardViews } = useBoardViews(workspaceId ?? "")
   if (!workspaceId) return null
-  // Board home is a saved view: only the untouched `/board` entry bounces to it
-  // (an explicit filtered deep-link is never hijacked); a stale/deleted id falls
-  // through to the plain home lens below.
-  if (lensParam === undefined && location.search === "") {
-    const redirect = boardHomeRedirectHref(workspaceId, defaultViewId, boardViews, homeLens)
-    if (redirect) return <Navigate to={redirect} replace />
-  }
-  if (lensParam === homeLens || (lensParam !== undefined && !VALID_LENSES.has(lensParam))) {
+  // A saved view is the board home iff its id still resolves; a stale/deleted id
+  // falls back to the plain home lens. When a view is home, `/board/<homeLens>` is
+  // a real destination reachable from the lens menu, NOT the canonical bare URL —
+  // so the home lens is not collapsed to bare here (which would just bounce back
+  // to the saved view). `savedViewReady` distinguishes "still loading" from
+  // "no home view" so a cold load isn't misread as unset.
+  const savedViewReady = preferences != null && boardViews !== undefined
+  const homeViewActive = !!defaultViewId && !!boardViews?.some((view) => view.id === defaultViewId)
+  const bareBoard = lensParam === undefined && location.search === ""
+  // The bounce target for a bare `/board` arrival with a saved-view home. Resolved
+  // here but NAVIGATED inside BoardPageGate — only once the board-view flag is on
+  // and at most once per navigation — so it never fires ahead of the flag gate and
+  // pinning a view as home while sitting on `/board` (a same-URL preference change)
+  // can't yank the user off the page.
+  const savedViewTarget =
+    bareBoard && savedViewReady ? boardHomeRedirectHref(workspaceId, defaultViewId, boardViews, homeLens) : null
+  if ((!homeViewActive && lensParam === homeLens) || (lensParam !== undefined && !VALID_LENSES.has(lensParam))) {
     return <Navigate to={{ pathname: `/w/${workspaceId}/board`, search: location.search }} replace />
   }
   const lens: BoardLens = (lensParam as BoardLens | undefined) ?? homeLens
-  return <BoardPageGate workspaceId={workspaceId} lens={lens} homeLens={homeLens} />
+  return (
+    <BoardPageGate
+      workspaceId={workspaceId}
+      lens={lens}
+      homeLens={homeLens}
+      savedViewTarget={savedViewTarget}
+      savedViewReady={savedViewReady}
+    />
+  )
 }
 
 /**
@@ -197,8 +214,33 @@ export function BoardPage() {
  * refreshes on /board before the bootstrap cache is populated. The backend
  * endpoint 404s without the flag too, so this is the UX half of the gate.
  */
-function BoardPageGate({ workspaceId, lens, homeLens }: { workspaceId: string; lens: BoardLens; homeLens: BoardLens }) {
+function BoardPageGate({
+  workspaceId,
+  lens,
+  homeLens,
+  savedViewTarget,
+  savedViewReady,
+}: {
+  workspaceId: string
+  lens: BoardLens
+  homeLens: BoardLens
+  savedViewTarget: string | null
+  savedViewReady: boolean
+}) {
   const boardFlag = useFeatureFlagWhenKnown(workspaceId, "board-view")
+  const navigate = useNavigate()
+  const location = useLocation()
+  // Bounce a bare `/board` arrival to the saved-view home, but only once the flag
+  // is on and at most once per navigation (`location.key`): a later same-URL
+  // re-render from pinning a view as home must not re-trigger it, so the redirect
+  // follows navigation, not the live preference.
+  const handledKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (boardFlag !== "on" || !savedViewReady) return
+    if (handledKeyRef.current === location.key) return
+    handledKeyRef.current = location.key
+    if (savedViewTarget) navigate(savedViewTarget, { replace: true })
+  }, [boardFlag, savedViewReady, savedViewTarget, location.key, navigate])
   if (boardFlag === null) return null
   if (boardFlag !== "on") return <Navigate to={`/w/${workspaceId}`} replace />
   return <BoardPageInner workspaceId={workspaceId} lens={lens} homeLens={homeLens} />

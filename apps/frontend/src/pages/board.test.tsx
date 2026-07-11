@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { Fragment, createElement } from "react"
 import * as boardFeedListModule from "@/components/board/board-feed-list"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
+import type { BoardPost, BoardPostMessage, BoardView, ConversationWithStaleness } from "@threa/types"
 import { BoardPage } from "./board"
 import * as boardStoreModule from "@/stores/board-store"
 import { ServicesProvider, SidebarProvider, PanelProvider } from "@/contexts"
@@ -90,15 +90,39 @@ function makePost(
   }
 }
 
+function makeBoardView(overrides: Partial<BoardView> = {}): BoardView {
+  return {
+    id: "boardview_1",
+    name: "Channels, active",
+    baseLens: "active",
+    scopeStreamIds: [],
+    scopeStreamTypes: ["channel"],
+    scopeLabelIds: [],
+    excludeStreamIds: [],
+    excludeStreamTypes: [],
+    excludeLabelIds: [],
+    sortOrder: 0,
+    ...overrides,
+  }
+}
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{`${location.pathname}${location.search}`}</div>
+}
+
 function mountBoard(
   posts: BoardPost[],
   opts: {
     nextCursor?: string | null
     fail?: boolean
-    boardFlag?: "on" | "off"
+    /** "unknown" leaves the flag absent from the bootstrap (still-resolving state). */
+    boardFlag?: "on" | "off" | "unknown"
     failMessages?: boolean
     /** URL to mount at — set `/w/<ws>/board/<lens>` to exercise a lens segment. */
     entry?: string
+    /** Seeds the saved-view list into the bootstrap cache (what `useBoardViews` reads). */
+    boardViews?: BoardView[]
   } = {}
 ) {
   const {
@@ -107,6 +131,7 @@ function mountBoard(
     boardFlag = "on",
     failMessages = false,
     entry = `/w/${WORKSPACE_ID}/board`,
+    boardViews,
   } = opts
   const listByWorkspace = vi.fn(async () => {
     if (fail) throw new Error("boom")
@@ -122,8 +147,12 @@ function mountBoard(
   // pagination/loading/error, so `listByWorkspace` is exercised as before.
   vi.spyOn(boardStoreModule, "useBoardPosts").mockReturnValue(posts as never)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  // The board is gated behind the board-view flag, read from the bootstrap cache.
-  queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), { featureFlags: { "board-view": boardFlag } })
+  // The board is gated behind the board-view flag, read from the bootstrap cache;
+  // `boardViews` seeds the saved-view list `useBoardViews` reads from bootstrap.
+  queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), {
+    featureFlags: boardFlag === "unknown" ? {} : { "board-view": boardFlag },
+    boardViews: boardViews ?? [],
+  })
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -131,6 +160,7 @@ function mountBoard(
           <SidebarProvider>
             <MemoryRouter initialEntries={[entry]}>
               <PanelProvider>
+                <LocationProbe />
                 <Routes>
                   <Route path="/w/:workspaceId/board/:lens?" element={<BoardPage />} />
                 </Routes>
@@ -232,6 +262,40 @@ describe("BoardPage", () => {
 
     expect(await screen.findByText("My own topic.")).toBeTruthy()
     expect(screen.queryByText("Someone else's topic.")).toBeNull()
+  })
+
+  it("bounces bare `/board` to the saved-view home when one is set", async () => {
+    // boardDefaultViewId names a saved view; the bare `/board` resolves it to the
+    // view's canonical filtered URL (base lens segment + `?is=channel`).
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    mountBoard([], { boardViews: [makeBoardView()] })
+    const probe = await screen.findByTestId("location")
+    await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board/active?is=channel`))
+  })
+
+  it("does not bounce to the saved-view home while the board-view flag is unknown", async () => {
+    // The redirect is gated behind the resolved flag (like the rest of the board),
+    // so a still-loading flag never bounces through the saved-view URL first.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    mountBoard([], { boardFlag: "unknown", boardViews: [makeBoardView()] })
+    const probe = await screen.findByTestId("location")
+    // Stays put on bare `/board`; never navigates to the view URL.
+    expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board`)
+  })
+
+  it("does not bounce to the saved-view home when the board-view flag is off", async () => {
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    mountBoard([], { boardFlag: "off", boardViews: [makeBoardView()] })
+    const probe = await screen.findByTestId("location")
+    // Flag-off leaves the board route (to the workspace), never through the view URL.
+    await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}`))
+    expect(probe.textContent).not.toContain("is=channel")
   })
 
   it("shows no 'Clear filters' on the plain home lens (home is the baseline)", async () => {

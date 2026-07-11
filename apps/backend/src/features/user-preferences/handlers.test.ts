@@ -81,6 +81,10 @@ describe("updatePreferencesSchema boardDefaultViewId", () => {
   it("rejects an over-long id", () => {
     expect(updatePreferencesSchema.safeParse({ boardDefaultViewId: "x".repeat(65) }).success).toBe(false)
   })
+
+  it("rejects an empty id", () => {
+    expect(updatePreferencesSchema.safeParse({ boardDefaultViewId: "" }).success).toBe(false)
+  })
 })
 
 describe("updatePreferencesSchema board card collapse settings", () => {
