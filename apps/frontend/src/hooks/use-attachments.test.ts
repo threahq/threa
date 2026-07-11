@@ -325,8 +325,7 @@ describe("useAttachments", () => {
       act(() => {
         result.current.handleFileSelect(createChangeEvent([createFile("doc.pdf", "application/pdf")]))
       })
-      await waitFor(() => expect(result.current.pendingAttachments).toHaveLength(2))
-      expect(result.current.pendingAttachments.map((a) => a.id)).toEqual(["attach_1", "attach_3"])
+      await waitFor(() => expect(result.current.pendingAttachments.map((a) => a.id)).toEqual(["attach_1", "attach_3"]))
       await waitFor(() => expect(result.current.uploadedIds).toEqual(["attach_1", "attach_3"]))
 
       // And removing B must not drop A either.
