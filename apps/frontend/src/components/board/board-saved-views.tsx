@@ -78,11 +78,21 @@ export function isViewActive(view: BoardView, selection: BoardViewSelection): bo
 }
 
 /**
- * Whether the live selection is the viewer's untouched home baseline — the plain
- * home lens with no narrowing, OR (when a saved view is the home) exactly that
- * view. "Clear filters" / "Save current view" hide at home; a saved-view home is
- * itself a filtered selection, so `isBoardFiltered` alone would wrongly read it as
- * narrowed and offer a "Clear filters" that just bounces back to the same view.
+ * Whether the live selection is a baseline state where "Clear filters" / "Save
+ * current view" / "Show everything" would be no-ops and should stay hidden. Two
+ * such states, and the branch order is load-bearing:
+ *   1. The plain unfiltered home lens (nothing narrowed → nothing to clear, save,
+ *      or show-more), even when a saved view is the configured home. This lens is
+ *      reachable explicitly (bare `/board` redirects to the view, but `/board/all`
+ *      does not), and on it those three affordances are all meaningless.
+ *   2. Exactly the saved-view home — itself a filtered selection, so
+ *      `isBoardFiltered` alone would wrongly read it as narrowed and offer a
+ *      "Clear filters" that just bounces back to the same view.
+ * Checking the unfiltered case first is intentional: flipping to "resolve the
+ * view first" would report the plain All lens as narrowed and wrongly surface
+ * "Show everything" (on the everything lens) and "Save current view" (on an
+ * unfiltered selection). Any genuinely narrowed selection makes `isBoardFiltered`
+ * true and falls through to `isViewActive`, which is where the real work happens.
  */
 export function isBoardAtHome(homeLens: BoardLens, homeView: BoardView | null, selection: BoardViewSelection): boolean {
   if (!isBoardFiltered(homeLens, selection)) return true
