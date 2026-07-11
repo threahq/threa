@@ -61,7 +61,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 6.4  | `memoScope` (user/stream/workspace)                      | ☐      |       |
 | 6.5  | Retrieval feedback decay                                 | ☐      |       |
 | 6.6  | Agent-memo safety: read-time provenance + type allowlist | ☑      | #1277 |
-| 7.1  | Workspace persona CRUD API                               | ☑      | #TBD  |
+| 7.1  | Workspace persona CRUD API                               | ☑      | #1285 |
 | 7.2  | Persona picker UI                                        | ☐      |       |
 | 8.1  | Ambient classifier on settled conversations              | ☐      |       |
 | 8.2  | "Ariadne noticed" card + budget + toggle                 | ☐      |       |
@@ -653,7 +653,7 @@ Code-complete backend machinery (`applyBuiltInAgentPatch`, `agent_config_overrid
 
 **Goal:** choose the companion per stream; make first-party personas and external bots legible in one place.
 
-> The **workspace persona editor** half of this phase (the settings-page editor linked from the companion tab) shipped early with 7.1 (#TBD) — see its Deviations block. What remains here is the per-stream persona _picker_ in `companion-tab.tsx`.
+> The **workspace persona editor** half of this phase (the settings-page editor linked from the companion tab) shipped early with 7.1 (#1285) — see its Deviations block. What remains here is the per-stream persona _picker_ in `companion-tab.tsx`.
 
 **Shape:** `companion-tab.tsx` gains a persona select (streams already carry `companionPersonaId`) listing built-ins + workspace personas, plus a link to a small workspace-settings persona editor (create/edit per 7.1). External bots noted in the same tab via the existing `ExternalAgentIndicator` — one mental model: "who works in this stream."
 
