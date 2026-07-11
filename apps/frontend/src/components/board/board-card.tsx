@@ -72,6 +72,13 @@ const TYPE_GLYPH: Record<string, LucideIcon> = {
  *  hidden rest sits behind an "N more replies" link into the child's panel. */
 const BRANCH_PREVIEW_CAP = 2
 
+// Softens the collapsed card's raw `max-height` clip so it doesn't slice a
+// message mid-line/mid-image. Masks the content transparent at the cut (like
+// CollapsibleBody) rather than painting a colored gradient — the rows carry the
+// actor accent, so any fixed target color would band wrong on some surface; a
+// mask lets whatever is behind show through, correct everywhere.
+const COLLAPSED_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 2rem), transparent)"
+
 /**
  * One board post: a conversation rendered as a feed post that reads like the
  * stream timeline. Messages use the same primitives (`ActorAvatar`,
@@ -504,8 +511,8 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
               the elevation never shifts layout (INV-21). */}
           <div
             className={cn(
-              "sticky top-0 z-10 -mx-3 -mt-3 rounded-t-xl border-b border-transparent bg-card px-3 pt-3 pb-2 transition-[box-shadow,border-color] duration-200 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4",
-              headerStuck && "border-border/60 shadow-[0_4px_12px_-6px_rgb(0_0_0/0.4)]"
+              "z-10 -mx-3 -mt-3 rounded-t-xl border-b border-transparent bg-card px-3 pt-3 pb-2 transition-[box-shadow,border-color] duration-200 sm:sticky sm:top-0 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4",
+              headerStuck && "sm:border-border/60 sm:shadow-[0_4px_12px_-6px_rgb(0_0_0/0.4)]"
             )}
           >
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -579,7 +586,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
                 <span
                   className={cn(
                     "truncate text-sm font-medium",
-                    conversation.status === "resolved" && "text-muted-foreground line-through decoration-1"
+                    conversation.status === "resolved" && "text-muted-foreground"
                   )}
                 >
                   {conversation.topicSummary}
@@ -601,7 +608,11 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
 
           <div
             className={cn(bodyCollapsed && "overflow-hidden")}
-            style={bodyCollapsed ? { maxHeight: collapseToHeight } : undefined}
+            style={
+              bodyCollapsed
+                ? { maxHeight: collapseToHeight, maskImage: COLLAPSED_FADE_MASK, WebkitMaskImage: COLLAPSED_FADE_MASK }
+                : undefined
+            }
           >
             <div ref={bodyRef}>
               {provenance && (

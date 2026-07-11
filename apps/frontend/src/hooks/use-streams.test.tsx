@@ -91,6 +91,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       boardCardCollapseToHeight: 320,
       boardCardCollapseThreshold: 600,
       boardDefaultLens: "all",
+      boardDefaultViewId: null,
       voiceTranscriptionModel: null,
       voicePolishLevel: "opinionated",
       voiceSteeringWords: [],

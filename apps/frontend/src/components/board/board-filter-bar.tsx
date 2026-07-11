@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { Archive, Ban, Bell, BellOff, Check, ChevronDown, Hash, Layers, Tag, X } from "lucide-react"
+import { Archive, Ban, Bell, BellOff, Check, ChevronDown, Hash, Layers, Pin, Tag, X } from "lucide-react"
 import {
   BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
@@ -24,11 +24,17 @@ import {
 } from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks/use-labels"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
-import { BoardSavedViews, isViewActive, type BoardViewSelection } from "@/components/board/board-saved-views"
-import { useBoardViews } from "@/hooks/use-board-views"
+import {
+  BoardSavedViews,
+  isBoardAtHome,
+  isViewActive,
+  savedViewHref,
+  type BoardViewSelection,
+} from "@/components/board/board-saved-views"
+import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
 import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
+import { usePreferences } from "@/contexts"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
-import { isBoardFiltered } from "@/lib/board/filter-state"
 import { cn } from "@/lib/utils"
 
 /** Stream types offered in the pickers: the board's root-stream grains (shared
@@ -46,9 +52,17 @@ const TYPE_LABELS: Record<BoardScopeStreamType, string> = {
 /** The lens's URL (INV-59): the viewer's home lens rests at the bare `/board`,
  *  every other lens takes a segment (so `all` gets `/board/all` when it isn't
  *  home). `search` rides along so switching lens keeps the scope (and an open
- *  panel). */
-function lensHref(workspaceId: string, lens: BoardLens, search: string, homeLens: BoardLens): string {
-  const base = lens === homeLens ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${lens}`
+ *  panel). When a saved view is the home, the bare `/board` bounces to that view,
+ *  so the home lens must keep its explicit segment or it'd be unreachable from the
+ *  menu — omit the segment only when no saved-view home is active. */
+function lensHref(
+  workspaceId: string,
+  lens: BoardLens,
+  search: string,
+  homeLens: BoardLens,
+  hasSavedViewHome: boolean
+): string {
+  const base = !hasSavedViewHome && lens === homeLens ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${lens}`
   return `${base}${search}`
 }
 
@@ -141,10 +155,12 @@ export function BoardFilterBar({
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
   const labelById = useMemo(() => new Map(myLabels.map((l) => [l.id, l])), [myLabels])
 
-  // The viewer's home lens is their baseline, so being on it (with no scope
-  // narrowing) is NOT "filtered" — otherwise a non-All home shows a permanent
-  // "Clear filters" affordance on its own untouched landing view.
-  const isFiltered = isBoardFiltered(homeLens, {
+  // The viewer's home baseline is NOT "filtered" — otherwise the home shows a
+  // permanent "Clear filters" affordance on its own untouched landing. The home
+  // is the plain home lens, or (when set) the saved view they home on, so resting
+  // on that view must also read as unfiltered even though it carries scope.
+  const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
+  const isFiltered = !isBoardAtHome(homeLens, homeView, {
     lens,
     scopeStreamIds,
     scopeStreamTypes,
@@ -154,6 +170,19 @@ export function BoardFilterBar({
     excludeLabelIds,
   })
   const clearedSearch = useMemo(() => boardHomeSearch(location.search), [location.search])
+  // "Clear filters" returns to the viewer's home: the saved-view home when one
+  // resolves (straight to its URL — no bare `/board` detour that would blank-flash
+  // through the redirect), else the plain home lens (explicit segment while a home
+  // view is configured-but-still-loading, so it stays reachable). Either way the
+  // surviving non-filter query — an open `?panel=` — rides along, per the
+  // `boardHomeSearch` contract, so clearing filters never drops the open thread.
+  const clearFiltersTo = useMemo(() => {
+    if (!homeView) return lensHref(workspaceId, homeLens, clearedSearch, homeLens, homeViewId !== null)
+    const href = savedViewHref(workspaceId, homeView, homeLens)
+    const extra = clearedSearch.replace(/^\?/, "")
+    if (!extra) return href
+    return href.includes("?") ? `${href}&${extra}` : `${href}?${extra}`
+  }, [homeView, homeViewId, workspaceId, homeLens, clearedSearch])
 
   const labelFor = (streamId: string) =>
     resolveStreamName(streamId, { streams, users, dmPeers }, "generic") ?? "Unknown stream"
@@ -306,7 +335,7 @@ export function BoardFilterBar({
       ))}
       {isFiltered && (
         <Link
-          to={lensHref(workspaceId, homeLens, clearedSearch, homeLens)}
+          to={clearFiltersTo}
           className="shrink-0 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           Clear filters
@@ -455,6 +484,7 @@ function BoardLensMenu({
 }) {
   const [open, setOpen] = useState(false)
   const { search } = useLocation()
+  const { updatePreferences } = usePreferences()
   const current = BOARD_LENS_DEFS[lens]
   const CurrentIcon = current.icon
 
@@ -473,6 +503,16 @@ function BoardLensMenu({
   }
   const activeViewId = views?.find((view) => isViewActive(view, selection))?.id ?? null
 
+  // Two distinct signals: whether a saved-view home is CONFIGURED (known from the
+  // preference before the list loads) drives the lens links — the home lens must
+  // keep its explicit segment as soon as a view is set, or a click during the load
+  // window emits bare `/board` and gets bounced to the saved view (unreachable
+  // fallback lens). Whether it RESOLVES drives the pin fill: no lens reads as home
+  // while a real saved-view home exists.
+  const { view: homeMenuView, configuredId: homeMenuViewId } = useBoardHome(workspaceId)
+  const hasConfiguredHomeView = homeMenuViewId !== null
+  const homeViewActive = homeMenuView != null
+
   const content = (
     <>
       <nav aria-label="Board lens" className="py-1">
@@ -480,24 +520,45 @@ function BoardLensMenu({
           const def = BOARD_LENS_DEFS[value]
           const Icon = def.icon
           const selected = value === lens && activeViewId === null
+          const isHome = !homeViewActive && value === homeLens
           return (
-            <Link
+            <div
               key={value}
-              to={lensHref(workspaceId, value, search, homeLens)}
-              onClick={() => setOpen(false)}
-              aria-current={selected ? "true" : undefined}
               className={cn(
-                "mx-1 flex items-start gap-2.5 rounded-item px-2.5 py-2 transition-colors hover:bg-muted",
+                "mx-1 flex items-center rounded-item transition-colors hover:bg-muted",
                 selected && "bg-muted/60"
               )}
             >
-              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{def.label}</span>
-                <span className="block text-xs text-muted-foreground">{def.description}</span>
-              </span>
-              {selected && <Check className="mt-1 h-4 w-4 shrink-0" />}
-            </Link>
+              <Link
+                to={lensHref(workspaceId, value, search, homeLens, hasConfiguredHomeView)}
+                onClick={() => setOpen(false)}
+                aria-current={selected ? "true" : undefined}
+                className="flex min-w-0 flex-1 items-start gap-2.5 rounded-item px-2.5 py-2"
+              >
+                <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">{def.label}</span>
+                  <span className="block text-xs text-muted-foreground">{def.description}</span>
+                </span>
+                {selected && <Check className="mt-1 h-4 w-4 shrink-0" />}
+              </Link>
+              {/* Pin this lens as the board home (bare `/board`) — mirrors the
+                  appearance-settings radio, placed where lenses are picked. Also
+                  clears any saved-view home so the landing actually lands here.
+                  Filled when current home; silent per INV-63 (the fill is the signal). */}
+              <button
+                type="button"
+                onClick={() => void updatePreferences({ boardDefaultLens: value, boardDefaultViewId: null })}
+                aria-pressed={isHome}
+                aria-label={isHome ? `${def.label} is your board home` : `Set ${def.label} as board home`}
+                className={cn(
+                  "mr-1 shrink-0 rounded p-1.5 transition-colors",
+                  isHome ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground"
+                )}
+              >
+                <Pin className={cn("h-3.5 w-3.5", isHome && "fill-current")} />
+              </button>
+            </div>
           )
         })}
       </nav>

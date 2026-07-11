@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { Fragment, createElement } from "react"
 import * as boardFeedListModule from "@/components/board/board-feed-list"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
+import type { BoardPost, BoardPostMessage, BoardView, ConversationWithStaleness } from "@threa/types"
 import { BoardPage } from "./board"
 import * as boardStoreModule from "@/stores/board-store"
 import { ServicesProvider, SidebarProvider, PanelProvider } from "@/contexts"
@@ -90,15 +90,39 @@ function makePost(
   }
 }
 
+function makeBoardView(overrides: Partial<BoardView> = {}): BoardView {
+  return {
+    id: "boardview_1",
+    name: "Channels, active",
+    baseLens: "active",
+    scopeStreamIds: [],
+    scopeStreamTypes: ["channel"],
+    scopeLabelIds: [],
+    excludeStreamIds: [],
+    excludeStreamTypes: [],
+    excludeLabelIds: [],
+    sortOrder: 0,
+    ...overrides,
+  }
+}
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{`${location.pathname}${location.search}`}</div>
+}
+
 function mountBoard(
   posts: BoardPost[],
   opts: {
     nextCursor?: string | null
     fail?: boolean
-    boardFlag?: "on" | "off"
+    /** "unknown" leaves the flag absent from the bootstrap (still-resolving state). */
+    boardFlag?: "on" | "off" | "unknown"
     failMessages?: boolean
     /** URL to mount at — set `/w/<ws>/board/<lens>` to exercise a lens segment. */
     entry?: string
+    /** Seeds the saved-view list into the bootstrap cache (what `useBoardViews` reads). */
+    boardViews?: BoardView[]
   } = {}
 ) {
   const {
@@ -107,6 +131,7 @@ function mountBoard(
     boardFlag = "on",
     failMessages = false,
     entry = `/w/${WORKSPACE_ID}/board`,
+    boardViews,
   } = opts
   const listByWorkspace = vi.fn(async () => {
     if (fail) throw new Error("boom")
@@ -122,15 +147,20 @@ function mountBoard(
   // pagination/loading/error, so `listByWorkspace` is exercised as before.
   vi.spyOn(boardStoreModule, "useBoardPosts").mockReturnValue(posts as never)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  // The board is gated behind the board-view flag, read from the bootstrap cache.
-  queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), { featureFlags: { "board-view": boardFlag } })
-  render(
+  // The board is gated behind the board-view flag, read from the bootstrap cache;
+  // `boardViews` seeds the saved-view list `useBoardViews` reads from bootstrap.
+  queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), {
+    featureFlags: boardFlag === "unknown" ? {} : { "board-view": boardFlag },
+    boardViews: boardViews ?? [],
+  })
+  const tree = (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ServicesProvider services={{ conversations: { listByWorkspace, getBoardMessages } as never }}>
           <SidebarProvider>
             <MemoryRouter initialEntries={[entry]}>
               <PanelProvider>
+                <LocationProbe />
                 <Routes>
                   <Route path="/w/:workspaceId/board/:lens?" element={<BoardPage />} />
                 </Routes>
@@ -141,7 +171,8 @@ function mountBoard(
       </TooltipProvider>
     </QueryClientProvider>
   )
-  return { listByWorkspace }
+  const { rerender } = render(tree)
+  return { listByWorkspace, tree, rerender }
 }
 
 beforeEach(() => {
@@ -180,6 +211,7 @@ beforeEach(() => {
   // live; the engine isn't wired in this harness, so stub the hook.
   vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
     setBoardStreamIds: vi.fn(),
+    setPanelStreamIds: vi.fn(),
   } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
   // Author names open the profile via UserProfileProvider, not mounted here.
   vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn() })
@@ -232,6 +264,115 @@ describe("BoardPage", () => {
 
     expect(await screen.findByText("My own topic.")).toBeTruthy()
     expect(screen.queryByText("Someone else's topic.")).toBeNull()
+  })
+
+  it("bounces bare `/board` to the saved-view home when one is set", async () => {
+    // boardDefaultViewId names a saved view; the bare `/board` resolves it to the
+    // view's canonical filtered URL (base lens segment + `?is=channel`).
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    mountBoard([], { boardViews: [makeBoardView()] })
+    const probe = await screen.findByTestId("location")
+    await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board/active?is=channel`))
+  })
+
+  it("does not bounce to the saved-view home while the board-view flag is unknown", async () => {
+    // The redirect is gated behind the resolved flag (like the rest of the board),
+    // so a still-loading flag never bounces through the saved-view URL first.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    mountBoard([], { boardFlag: "unknown", boardViews: [makeBoardView()] })
+    const probe = await screen.findByTestId("location")
+    // Stays put on bare `/board`; never navigates to the view URL.
+    expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board`)
+  })
+
+  it("does not bounce to the saved-view home when the board-view flag is off", async () => {
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    mountBoard([], { boardFlag: "off", boardViews: [makeBoardView()] })
+    const probe = await screen.findByTestId("location")
+    // Flag-off leaves the board route (to the workspace), never through the view URL.
+    await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}`))
+    expect(probe.textContent).not.toContain("is=channel")
+  })
+
+  it("hides 'Show everything' on an empty saved-view home landing", async () => {
+    // The viewer homes on a saved view; sitting on that view's own (empty) URL is
+    // their baseline, so no "Show everything" CTA — the empty-state resolves the
+    // baseline through isBoardAtHome, not raw isBoardFiltered.
+    vi.mocked(contextsModule.usePreferences).mockReturnValue({
+      preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    // The saved view's own URL (`makeBoardView` → active + `?is=channel`).
+    mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board/active?is=channel` })
+    expect(await screen.findByText("Nothing here right now")).toBeTruthy()
+    expect(screen.queryByText("Show everything")).toBeNull()
+  })
+
+  it("points 'Show everything' at the explicit All lens for a saved-view-home viewer", async () => {
+    // With a saved-view home, bare `/board` bounces to the view — so the escape to
+    // "everything" must use the explicit `/board/all` segment, not bare `/board`.
+    vi.mocked(contextsModule.usePreferences).mockReturnValue({
+      preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    // A narrowed, empty lens (not the saved-view home) → "Show everything" offered.
+    mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board/decisions` })
+    const cta = await screen.findByRole("link", { name: "Show everything" })
+    expect(cta.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/board/all`)
+  })
+
+  it("preserves an open panel when clearing filters back to a saved-view home", async () => {
+    // Clearing filters returns to the saved-view home directly (no bare detour),
+    // and the surviving non-filter query — an open `?panel=` thread — rides along.
+    vi.mocked(contextsModule.usePreferences).mockReturnValue({
+      preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    // Narrowed off the saved-view home (extra `in=`), with an open panel.
+    mountBoard([], {
+      boardViews: [makeBoardView()],
+      entry: `/w/${WORKSPACE_ID}/board/active?is=channel&in=stream_x&panel=conv%3Aabc`,
+    })
+    const clear = await screen.findByRole("link", { name: "Clear filters" })
+    const href = clear.getAttribute("href") ?? ""
+    expect(href).toContain("is=channel") // the saved view's own scope
+    expect(href).toContain("panel=conv") // the open thread survives
+    expect(href).not.toContain("in=stream_x") // the extra narrowing is cleared
+  })
+
+  it("keeps the board rendered when a saved view is pinned as home while resting on bare `/board`", async () => {
+    // Regression: pinning a view as home is a same-URL preference change. The
+    // redirect effect (once per `location.key`) correctly declines to navigate, so
+    // the render must keep the board visible rather than blank it waiting for a
+    // redirect that never comes.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: null },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    const post = makePost({ id: "conv_x" }, { contentMarkdown: "Board still here." })
+    const { tree, rerender } = mountBoard([post], { boardViews: [makeBoardView()] })
+    expect(await screen.findByText("Board still here.")).toBeTruthy()
+
+    // Pin a saved view as home — same URL, no navigation.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    rerender(tree)
+
+    // Still on bare `/board`, board still rendered — not blanked, not navigated.
+    expect(screen.getByTestId("location").textContent).toBe(`/w/${WORKSPACE_ID}/board`)
+    expect(screen.getByText("Board still here.")).toBeTruthy()
   })
 
   it("shows no 'Clear filters' on the plain home lens (home is the baseline)", async () => {

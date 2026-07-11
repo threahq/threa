@@ -312,6 +312,13 @@ export interface UserPreferences {
    */
   boardDefaultLens: BoardLens
   /**
+   * A saved board view (by id) that overrides `boardDefaultLens` as the landing:
+   * the bare `/board` bounces to this view's filtered URL. `null` means land on
+   * `boardDefaultLens`. A deleted/unresolved id falls back to `boardDefaultLens`,
+   * so a stale pointer degrades quietly instead of dead-ending.
+   */
+  boardDefaultViewId: string | null
+  /**
    * Preferred voice dictation model id (e.g. "elevenlabs:scribe-v2-realtime",
    * "deepgram:nova-3"). When null, the backend falls back to the configured
    * default. The string is validated server-side against the model registry.
@@ -383,6 +390,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   boardCardCollapseToHeight: DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
   boardCardCollapseThreshold: DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
   boardDefaultLens: DEFAULT_BOARD_LENS,
+  boardDefaultViewId: null,
   voiceTranscriptionModel: null,
   voicePolishLevel: "opinionated",
   voiceSteeringWords: [],
@@ -421,6 +429,7 @@ export interface UpdateUserPreferencesInput {
   boardCardCollapseToHeight?: number
   boardCardCollapseThreshold?: number
   boardDefaultLens?: BoardLens
+  boardDefaultViewId?: string | null
   voiceTranscriptionModel?: string | null
   voicePolishLevel?: VoicePolishLevel
   voiceSteeringWords?: string[]

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import { Bookmark, Check, Pencil, Plus, Trash2 } from "lucide-react"
+import { Bookmark, Check, Pencil, Pin, Plus, Trash2 } from "lucide-react"
 import {
   DEFAULT_BOARD_LENS,
   MAX_BOARD_VIEW_NAME_LENGTH,
@@ -19,7 +19,14 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
-import { useBoardViews, useSaveBoardView, useUpdateBoardView, useDeleteBoardView } from "@/hooks/use-board-views"
+import { usePreferencesOptional } from "@/contexts"
+import {
+  useBoardHome,
+  useBoardViews,
+  useSaveBoardView,
+  useUpdateBoardView,
+  useDeleteBoardView,
+} from "@/hooks/use-board-views"
 import {
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
@@ -70,13 +77,56 @@ export function isViewActive(view: BoardView, selection: BoardViewSelection): bo
   )
 }
 
+/**
+ * Whether the live selection is a baseline state where "Clear filters" / "Save
+ * current view" / "Show everything" would be no-ops and should stay hidden. Two
+ * such states, and the branch order is load-bearing:
+ *   1. The plain unfiltered home lens (nothing narrowed → nothing to clear, save,
+ *      or show-more), even when a saved view is the configured home. This lens is
+ *      reachable explicitly (bare `/board` redirects to the view, but `/board/all`
+ *      does not), and on it those three affordances are all meaningless.
+ *   2. Exactly the saved-view home — itself a filtered selection, so
+ *      `isBoardFiltered` alone would wrongly read it as narrowed and offer a
+ *      "Clear filters" that just bounces back to the same view.
+ * Checking the unfiltered case first is intentional: flipping to "resolve the
+ * view first" would report the plain All lens as narrowed and wrongly surface
+ * "Show everything" (on the everything lens) and "Save current view" (on an
+ * unfiltered selection). Any genuinely narrowed selection makes `isBoardFiltered`
+ * true and falls through to `isViewActive`, which is where the real work happens.
+ */
+export function isBoardAtHome(homeLens: BoardLens, homeView: BoardView | null, selection: BoardViewSelection): boolean {
+  if (!isBoardFiltered(homeLens, selection)) return true
+  return homeView != null && isViewActive(homeView, selection)
+}
+
 /** Count phrase: `3 streams`, `1 label`. */
 function countOf(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`
 }
 
+/**
+ * The URL the bare `/board` should bounce to for a viewer whose board home is a
+ * saved view (`boardDefaultViewId`) rather than a plain lens. `null` when there's
+ * nothing to redirect to: no default view, views not yet loaded, the id no longer
+ * resolves (deleted view — degrade to the home lens), or the view expands to the
+ * bare home URL anyway (guards against a redirect loop). Pure so the landing
+ * decision is unit-testable without mounting the page.
+ */
+export function boardHomeRedirectHref(
+  workspaceId: string,
+  defaultViewId: string | null,
+  views: BoardView[] | undefined,
+  homeLens: BoardLens
+): string | null {
+  if (!defaultViewId || !views) return null
+  const view = views.find((v) => v.id === defaultViewId)
+  if (!view) return null
+  const href = savedViewHref(workspaceId, view, homeLens)
+  return href === `/w/${workspaceId}/board` ? null : href
+}
+
 /** A one-line summary of what a view filters to, under its name. */
-function summarize(view: BoardView): string {
+export function summarizeBoardView(view: BoardView): string {
   const parts: string[] = []
   if (view.baseLens !== DEFAULT_BOARD_LENS) parts.push(view.baseLens.replace("-", " "))
   if (view.scopeStreamIds.length > 0) parts.push(countOf(view.scopeStreamIds.length, "stream"))
@@ -130,6 +180,8 @@ export function BoardSavedViews({
   onNavigate,
 }: BoardSavedViewsProps) {
   const { data: views } = useBoardViews(workspaceId)
+  const prefs = usePreferencesOptional()
+  const { view: homeView } = useBoardHome(workspaceId)
   const save = useSaveBoardView(workspaceId)
   const update = useUpdateBoardView(workspaceId)
   const remove = useDeleteBoardView(workspaceId)
@@ -138,8 +190,9 @@ export function BoardSavedViews({
   const [editing, setEditing] = useState<{ id: string | null; name: string } | null>(null)
 
   // Only offer "save current view" when there's actually a narrowing to bookmark
-  // — the viewer's plain home lens is nothing worth saving.
-  const isFiltered = isBoardFiltered(homeLens, {
+  // — the viewer's home baseline (the plain home lens, or the saved view that is
+  // their home) is nothing worth saving.
+  const isFiltered = !isBoardAtHome(homeLens, homeView, {
     lens,
     scopeStreamIds,
     scopeStreamTypes,
@@ -191,9 +244,25 @@ export function BoardSavedViews({
                   <Bookmark className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{view.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">{summarize(view)}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{summarizeBoardView(view)}</span>
                   </span>
                 </Link>
+                {/* Pin this saved view as the board home (bare `/board` bounces to
+                    it). Filled when it's the current home; silent per INV-63. */}
+                <button
+                  type="button"
+                  onClick={() => void prefs?.updatePreferences({ boardDefaultViewId: view.id })}
+                  aria-pressed={view.id === homeView?.id}
+                  aria-label={
+                    view.id === homeView?.id ? `${view.name} is your board home` : `Set ${view.name} as board home`
+                  }
+                  className={cn(
+                    "mt-0.5 shrink-0 rounded p-1 transition-colors",
+                    view.id === homeView?.id ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground"
+                  )}
+                >
+                  <Pin className={cn("h-3.5 w-3.5", view.id === homeView?.id && "fill-current")} />
+                </button>
                 {/* Right slot: the active check sits at the row's right edge (same
                     column as the lens list's check) and fades to the rename/delete
                     actions on hover/focus — one indicator, never both. */}

@@ -38,7 +38,8 @@ import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardComposer } from "@/components/board/board-composer"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
-import { isBoardFiltered } from "@/lib/board/filter-state"
+import { boardHomeRedirectHref, isBoardAtHome } from "@/components/board/board-saved-views"
+import { useBoardViews, useBoardHome } from "@/hooks/use-board-views"
 import {
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
@@ -169,12 +170,59 @@ export function BoardPage() {
   const location = useLocation()
   const preferences = usePreferencesOptional()
   const homeLens = preferences?.preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
+  const defaultViewId = preferences?.preferences?.boardDefaultViewId ?? null
+  // Already mounted deeper (the lens menu), so this adds no fetch — it just lets
+  // the landing resolve a saved-view home.
+  const { data: boardViews, isError: boardViewsFailed } = useBoardViews(workspaceId ?? "")
   if (!workspaceId) return null
-  if (lensParam === homeLens || (lensParam !== undefined && !VALID_LENSES.has(lensParam))) {
+  // A saved view is the board home iff its id still resolves; a stale/deleted id
+  // falls back to the plain home lens. When a view is home, `/board/<homeLens>` is
+  // a real destination reachable from the lens menu, NOT the canonical bare URL —
+  // so the home lens is not collapsed to bare here (which would just bounce back
+  // to the saved view). `savedViewReady` gates every home-resolution decision on
+  // the sources it needs: `usePreferencesOptional()` returns its context object as
+  // soon as the provider mounts, so read `.preferences` (the IDB data, null until
+  // it hydrates) — otherwise a cold load misreads a saved-view home as unset and
+  // never redirects. The saved-view LIST is only needed when a default view id is
+  // actually set, so a plain-lens landing (no `boardDefaultViewId`) doesn't block
+  // on the board-views query. A FAILED list also counts as "ready": the id can't
+  // resolve, so fall back to the lens and render rather than hold `/board` blank
+  // forever on a network blip.
+  const savedViewReady =
+    preferences?.preferences != null && (defaultViewId === null || boardViews !== undefined || boardViewsFailed)
+  const homeViewActive = !!defaultViewId && !!boardViews?.some((view) => view.id === defaultViewId)
+  const bareBoard = lensParam === undefined && location.search === ""
+  // Bare `/board` is a "resolve where home is" route: hold (render nothing) until
+  // the home is knowable, rather than paint the plain-lens board and then bounce
+  // to a saved-view home a frame later (mirrors the flag gate below).
+  if (bareBoard && !savedViewReady) return null
+  // The bounce target for a bare `/board` arrival with a saved-view home. Resolved
+  // here but NAVIGATED inside BoardPageGate — only once the board-view flag is on
+  // and at most once per navigation — so it never fires ahead of the flag gate and
+  // pinning a view as home while sitting on `/board` (a same-URL preference change)
+  // can't yank the user off the page.
+  const savedViewTarget =
+    bareBoard && savedViewReady ? boardHomeRedirectHref(workspaceId, defaultViewId, boardViews, homeLens) : null
+  // Collapse `/board/<homeLens>` to bare only once we know it isn't a saved-view
+  // home (else the home lens, a legitimate destination, would bounce to the view).
+  // Gate on `savedViewReady` so a stale `homeViewActive: false` during load can't
+  // fire the bounce prematurely.
+  if (
+    (savedViewReady && !homeViewActive && lensParam === homeLens) ||
+    (lensParam !== undefined && !VALID_LENSES.has(lensParam))
+  ) {
     return <Navigate to={{ pathname: `/w/${workspaceId}/board`, search: location.search }} replace />
   }
   const lens: BoardLens = (lensParam as BoardLens | undefined) ?? homeLens
-  return <BoardPageGate workspaceId={workspaceId} lens={lens} homeLens={homeLens} />
+  return (
+    <BoardPageGate
+      workspaceId={workspaceId}
+      lens={lens}
+      homeLens={homeLens}
+      savedViewTarget={savedViewTarget}
+      savedViewReady={savedViewReady}
+    />
+  )
 }
 
 /**
@@ -184,10 +232,43 @@ export function BoardPage() {
  * refreshes on /board before the bootstrap cache is populated. The backend
  * endpoint 404s without the flag too, so this is the UX half of the gate.
  */
-function BoardPageGate({ workspaceId, lens, homeLens }: { workspaceId: string; lens: BoardLens; homeLens: BoardLens }) {
+function BoardPageGate({
+  workspaceId,
+  lens,
+  homeLens,
+  savedViewTarget,
+  savedViewReady,
+}: {
+  workspaceId: string
+  lens: BoardLens
+  homeLens: BoardLens
+  savedViewTarget: string | null
+  savedViewReady: boolean
+}) {
   const boardFlag = useFeatureFlagWhenKnown(workspaceId, "board-view")
+  const navigate = useNavigate()
+  const location = useLocation()
+  // Bounce a bare `/board` arrival to the saved-view home, but only once the flag
+  // is on and at most once per navigation (`location.key`): a later same-URL
+  // re-render from pinning a view as home must not re-trigger it, so the redirect
+  // follows navigation, not the live preference.
+  const handledKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (boardFlag !== "on" || !savedViewReady) return
+    if (handledKeyRef.current === location.key) return
+    handledKeyRef.current = location.key
+    if (savedViewTarget) navigate(savedViewTarget, { replace: true })
+  }, [boardFlag, savedViewReady, savedViewTarget, location.key, navigate])
   if (boardFlag === null) return null
   if (boardFlag !== "on") return <Navigate to={`/w/${workspaceId}`} replace />
+  // A saved-view home is about to redirect (the effect above fires post-commit) —
+  // render nothing rather than paint one frame of the wrong lens board first,
+  // mirroring the flag gate's "render nothing rather than redirect". Gate this on
+  // the SAME "not yet handled this navigation" condition the effect uses: when the
+  // target only appears because the viewer pinned a view as home while sitting on
+  // `/board` (same `location.key`, already handled), the effect deliberately won't
+  // navigate — so blanking here would strand the board. Render it instead.
+  if (savedViewTarget && handledKeyRef.current !== location.key) return null
   return <BoardPageInner workspaceId={workspaceId} lens={lens} homeLens={homeLens} />
 }
 
@@ -461,8 +542,18 @@ function BoardPageInner({
   // rests at bare `/board` unless the viewer's home is another lens, in which
   // case All takes the `/board/all` segment. The non-filter query state (an open
   // `?panel=`) rides along so it survives clearing filters.
+  // The viewer's home baseline (plain home lens, or the saved view they home on)
+  // reads as unfiltered, so an empty home landing doesn't offer "Show everything".
+  const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
+  // "Show everything" / the own-post-must-surface bounce target the truly
+  // unfiltered All lens. When a saved-view home is CONFIGURED, bare `/board` bounces
+  // to that view once the list resolves, so All must take its explicit `/board/all`
+  // segment (keyed on the configured id, not the resolved view, so the escape is
+  // reachable even during the load window) or these land back on the saved view.
   const allPathname =
-    homeLens === DEFAULT_BOARD_LENS ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${DEFAULT_BOARD_LENS}`
+    homeLens === DEFAULT_BOARD_LENS && homeViewId === null
+      ? `/w/${workspaceId}/board`
+      : `/w/${workspaceId}/board/${DEFAULT_BOARD_LENS}`
   const boardHome = { pathname: allPathname, search: boardHomeSearch(searchParams.toString()) }
   const hasFilterParams =
     scopeStreamIds.length > 0 ||
@@ -630,7 +721,7 @@ function BoardPageInner({
       // own empty landing view shows the empty copy without a "Show everything"
       // CTA (it's already at baseline).
       const scoped = hasFilterParams
-      const isFiltered = isBoardFiltered(homeLens, {
+      const isFiltered = !isBoardAtHome(homeLens, homeView, {
         lens,
         scopeStreamIds,
         scopeStreamTypes,
