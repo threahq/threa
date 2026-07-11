@@ -30,7 +30,7 @@ import {
   isViewActive,
   type BoardViewSelection,
 } from "@/components/board/board-saved-views"
-import { useBoardViews } from "@/hooks/use-board-views"
+import { useBoardHomeView, useBoardViews } from "@/hooks/use-board-views"
 import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
 import { usePreferences } from "@/contexts"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
@@ -158,9 +158,7 @@ export function BoardFilterBar({
   // permanent "Clear filters" affordance on its own untouched landing. The home
   // is the plain home lens, or (when set) the saved view they home on, so resting
   // on that view must also read as unfiltered even though it carries scope.
-  const { preferences } = usePreferences()
-  const { data: savedViews } = useBoardViews(workspaceId)
-  const homeView = savedViews?.find((view) => view.id === (preferences?.boardDefaultViewId ?? null)) ?? null
+  const homeView = useBoardHomeView(workspaceId)
   const isFiltered = !isBoardAtHome(homeLens, homeView, {
     lens,
     scopeStreamIds,

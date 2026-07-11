@@ -38,9 +38,8 @@ import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardComposer } from "@/components/board/board-composer"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
-import { boardHomeRedirectHref } from "@/components/board/board-saved-views"
-import { useBoardViews } from "@/hooks/use-board-views"
-import { isBoardFiltered } from "@/lib/board/filter-state"
+import { boardHomeRedirectHref, isBoardAtHome } from "@/components/board/board-saved-views"
+import { useBoardViews, useBoardHomeView } from "@/hooks/use-board-views"
 import {
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
@@ -181,11 +180,13 @@ export function BoardPage() {
   // a real destination reachable from the lens menu, NOT the canonical bare URL —
   // so the home lens is not collapsed to bare here (which would just bounce back
   // to the saved view). `savedViewReady` gates every home-resolution decision on
-  // BOTH sources being loaded: `usePreferencesOptional()` returns its context
-  // object as soon as the provider mounts, so read `.preferences` (the IDB data,
-  // null until it hydrates) — otherwise a cold load misreads a saved-view home as
-  // unset and never redirects.
-  const savedViewReady = preferences?.preferences != null && boardViews !== undefined
+  // the sources it needs: `usePreferencesOptional()` returns its context object as
+  // soon as the provider mounts, so read `.preferences` (the IDB data, null until
+  // it hydrates) — otherwise a cold load misreads a saved-view home as unset and
+  // never redirects. The saved-view LIST is only needed when a default view id is
+  // actually set, so a plain-lens landing (no `boardDefaultViewId`) doesn't block
+  // on the board-views query.
+  const savedViewReady = preferences?.preferences != null && (defaultViewId === null || boardViews !== undefined)
   const homeViewActive = !!defaultViewId && !!boardViews?.some((view) => view.id === defaultViewId)
   const bareBoard = lensParam === undefined && location.search === ""
   // Bare `/board` is a "resolve where home is" route: hold (render nothing) until
@@ -548,6 +549,9 @@ function BoardPageInner({
     excludeStreamTypes.length > 0 ||
     scopeLabelIds.length > 0 ||
     excludeLabelIds.length > 0
+  // The viewer's home baseline (plain home lens, or the saved view they home on)
+  // reads as unfiltered, so an empty home landing doesn't offer "Show everything".
+  const homeView = useBoardHomeView(workspaceId)
   const handlePosted = () => {
     // The viewer's own post must ALWAYS surface. It already shows where the
     // current view can contain it — an unfiltered `all`/`mine` lens — so stay
@@ -707,7 +711,7 @@ function BoardPageInner({
       // own empty landing view shows the empty copy without a "Show everything"
       // CTA (it's already at baseline).
       const scoped = hasFilterParams
-      const isFiltered = isBoardFiltered(homeLens, {
+      const isFiltered = !isBoardAtHome(homeLens, homeView, {
         lens,
         scopeStreamIds,
         scopeStreamTypes,

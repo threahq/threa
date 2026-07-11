@@ -299,6 +299,22 @@ describe("BoardPage", () => {
     expect(probe.textContent).not.toContain("is=channel")
   })
 
+  it("hides 'Show everything' on an empty saved-view home landing", async () => {
+    // The viewer homes on a saved view; sitting on that view's own (empty) URL is
+    // their baseline, so no "Show everything" CTA — the empty-state resolves the
+    // baseline through isBoardAtHome, not raw isBoardFiltered.
+    vi.mocked(contextsModule.usePreferences).mockReturnValue({
+      preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    // The saved view's own URL (`makeBoardView` → active + `?is=channel`).
+    mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board/active?is=channel` })
+    expect(await screen.findByText("Nothing here right now")).toBeTruthy()
+    expect(screen.queryByText("Show everything")).toBeNull()
+  })
+
   it("keeps the board rendered when a saved view is pinned as home while resting on bare `/board`", async () => {
     // Regression: pinning a view as home is a same-URL preference change. The
     // redirect effect (once per `location.key`) correctly declines to navigate, so

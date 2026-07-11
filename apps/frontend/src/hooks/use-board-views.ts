@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import type { WorkspaceBootstrap } from "@threa/types"
-import { useBoardViewService } from "@/contexts"
+import type { BoardView, WorkspaceBootstrap } from "@threa/types"
+import { useBoardViewService, usePreferences } from "@/contexts"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import type { SaveBoardViewInput, UpdateBoardViewInput } from "@/api"
 
@@ -37,6 +37,19 @@ export function useBoardViews(workspaceId: string) {
     staleTime: 60_000,
     refetchOnReconnect: true,
   })
+}
+
+/**
+ * The saved view the viewer homes on (`boardDefaultViewId`), or `null` when the
+ * home is a plain lens or the id no longer resolves. One resolver for every
+ * surface that needs "is this the home baseline" (the bare-`/board` redirect, the
+ * filter bar's "Clear filters", the empty-state CTA) so they can't drift.
+ */
+export function useBoardHomeView(workspaceId: string): BoardView | null {
+  const { preferences } = usePreferences()
+  const { data: views } = useBoardViews(workspaceId)
+  const homeViewId = preferences?.boardDefaultViewId ?? null
+  return views?.find((view) => view.id === homeViewId) ?? null
 }
 
 /**
