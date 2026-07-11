@@ -211,6 +211,7 @@ beforeEach(() => {
   // live; the engine isn't wired in this harness, so stub the hook.
   vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
     setBoardStreamIds: vi.fn(),
+    setPanelStreamIds: vi.fn(),
   } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
   // Author names open the profile via UserProfileProvider, not mounted here.
   vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn() })
@@ -328,6 +329,27 @@ describe("BoardPage", () => {
     mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board/decisions` })
     const cta = await screen.findByRole("link", { name: "Show everything" })
     expect(cta.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/board/all`)
+  })
+
+  it("preserves an open panel when clearing filters back to a saved-view home", async () => {
+    // Clearing filters returns to the saved-view home directly (no bare detour),
+    // and the surviving non-filter query — an open `?panel=` thread — rides along.
+    vi.mocked(contextsModule.usePreferences).mockReturnValue({
+      preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    // Narrowed off the saved-view home (extra `in=`), with an open panel.
+    mountBoard([], {
+      boardViews: [makeBoardView()],
+      entry: `/w/${WORKSPACE_ID}/board/active?is=channel&in=stream_x&panel=conv%3Aabc`,
+    })
+    const clear = await screen.findByRole("link", { name: "Clear filters" })
+    const href = clear.getAttribute("href") ?? ""
+    expect(href).toContain("is=channel") // the saved view's own scope
+    expect(href).toContain("panel=conv") // the open thread survives
+    expect(href).not.toContain("in=stream_x") // the extra narrowing is cleared
   })
 
   it("keeps the board rendered when a saved view is pinned as home while resting on bare `/board`", async () => {

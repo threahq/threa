@@ -170,6 +170,19 @@ export function BoardFilterBar({
     excludeLabelIds,
   })
   const clearedSearch = useMemo(() => boardHomeSearch(location.search), [location.search])
+  // "Clear filters" returns to the viewer's home: the saved-view home when one
+  // resolves (straight to its URL — no bare `/board` detour that would blank-flash
+  // through the redirect), else the plain home lens (explicit segment while a home
+  // view is configured-but-still-loading, so it stays reachable). Either way the
+  // surviving non-filter query — an open `?panel=` — rides along, per the
+  // `boardHomeSearch` contract, so clearing filters never drops the open thread.
+  const clearFiltersTo = useMemo(() => {
+    if (!homeView) return lensHref(workspaceId, homeLens, clearedSearch, homeLens, homeViewId !== null)
+    const href = savedViewHref(workspaceId, homeView, homeLens)
+    const extra = clearedSearch.replace(/^\?/, "")
+    if (!extra) return href
+    return href.includes("?") ? `${href}&${extra}` : `${href}?${extra}`
+  }, [homeView, homeViewId, workspaceId, homeLens, clearedSearch])
 
   const labelFor = (streamId: string) =>
     resolveStreamName(streamId, { streams, users, dmPeers }, "generic") ?? "Unknown stream"
@@ -322,16 +335,7 @@ export function BoardFilterBar({
       ))}
       {isFiltered && (
         <Link
-          // Return to the viewer's home — the saved-view home when one resolves
-          // (navigated straight to its URL, so it doesn't detour through bare
-          // `/board` and blank-flash), else the plain home lens (explicit segment
-          // when a home view is configured-but-not-yet-loaded, so it stays
-          // reachable). An open panel — the only non-filter query — rides along.
-          to={
-            homeView
-              ? savedViewHref(workspaceId, homeView, homeLens)
-              : lensHref(workspaceId, homeLens, clearedSearch, homeLens, homeViewId !== null)
-          }
+          to={clearFiltersTo}
           className="shrink-0 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           Clear filters
