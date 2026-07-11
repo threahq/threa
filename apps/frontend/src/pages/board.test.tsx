@@ -153,7 +153,7 @@ function mountBoard(
     featureFlags: boardFlag === "unknown" ? {} : { "board-view": boardFlag },
     boardViews: boardViews ?? [],
   })
-  render(
+  const tree = (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ServicesProvider services={{ conversations: { listByWorkspace, getBoardMessages } as never }}>
@@ -171,7 +171,8 @@ function mountBoard(
       </TooltipProvider>
     </QueryClientProvider>
   )
-  return { listByWorkspace }
+  const { rerender } = render(tree)
+  return { listByWorkspace, tree, rerender }
 }
 
 beforeEach(() => {
@@ -296,6 +297,29 @@ describe("BoardPage", () => {
     // Flag-off leaves the board route (to the workspace), never through the view URL.
     await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}`))
     expect(probe.textContent).not.toContain("is=channel")
+  })
+
+  it("keeps the board rendered when a saved view is pinned as home while resting on bare `/board`", async () => {
+    // Regression: pinning a view as home is a same-URL preference change. The
+    // redirect effect (once per `location.key`) correctly declines to navigate, so
+    // the render must keep the board visible rather than blank it waiting for a
+    // redirect that never comes.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: null },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    const post = makePost({ id: "conv_x" }, { contentMarkdown: "Board still here." })
+    const { tree, rerender } = mountBoard([post], { boardViews: [makeBoardView()] })
+    expect(await screen.findByText("Board still here.")).toBeTruthy()
+
+    // Pin a saved view as home — same URL, no navigation.
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    rerender(tree)
+
+    // Still on bare `/board`, board still rendered — not blanked, not navigated.
+    expect(screen.getByTestId("location").textContent).toBe(`/w/${WORKSPACE_ID}/board`)
+    expect(screen.getByText("Board still here.")).toBeTruthy()
   })
 
   it("shows no 'Clear filters' on the plain home lens (home is the baseline)", async () => {

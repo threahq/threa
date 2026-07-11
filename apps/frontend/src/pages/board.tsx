@@ -259,8 +259,12 @@ function BoardPageGate({
   if (boardFlag !== "on") return <Navigate to={`/w/${workspaceId}`} replace />
   // A saved-view home is about to redirect (the effect above fires post-commit) —
   // render nothing rather than paint one frame of the wrong lens board first,
-  // mirroring the flag gate's "render nothing rather than redirect".
-  if (savedViewTarget) return null
+  // mirroring the flag gate's "render nothing rather than redirect". Gate this on
+  // the SAME "not yet handled this navigation" condition the effect uses: when the
+  // target only appears because the viewer pinned a view as home while sitting on
+  // `/board` (same `location.key`, already handled), the effect deliberately won't
+  // navigate — so blanking here would strand the board. Render it instead.
+  if (savedViewTarget && handledKeyRef.current !== location.key) return null
   return <BoardPageInner workspaceId={workspaceId} lens={lens} homeLens={homeLens} />
 }
 
