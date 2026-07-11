@@ -61,7 +61,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 6.4  | `memoScope` (user/stream/workspace)                      | ☐      |       |
 | 6.5  | Retrieval feedback decay                                 | ☐      |       |
 | 6.6  | Agent-memo safety: read-time provenance + type allowlist | ☑      | #1277 |
-| 7.1  | Workspace persona CRUD API                               | ☑      | #1285 |
+| 7.1  | Workspace persona config API + editor (partial: Ariadne) | ☑      | #1285 |
 | 7.2  | Persona picker UI                                        | ☐      |       |
 | 8.1  | Ambient classifier on settled conversations              | ☐      |       |
 | 8.2  | "Ariadne noticed" card + budget + toggle                 | ☐      |       |

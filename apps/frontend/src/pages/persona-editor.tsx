@@ -8,7 +8,7 @@ import { ThreadPanelSlot } from "@/components/layout/thread-panel-slot"
 import { hasPermission } from "@/lib/permissions"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { usePersonaConfig } from "@/hooks/use-personas"
-import { usePanelLayout, useIsMobile } from "@/hooks"
+import { usePanelLayout, useIsSplitCapable } from "@/hooks"
 import { PersonaEditorForm } from "@/components/persona-editor/persona-editor-form"
 import { PersonaTestChatDrawer, PersonaTestChatPane } from "@/components/persona-editor/persona-test-chat"
 import type { SyncState } from "@/components/persona-editor/persona-form"
@@ -26,15 +26,23 @@ export function PersonaEditorPage() {
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
   const isAdmin = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
 
-  const { data: config, isLoading, error } = usePersonaConfig(workspaceId ?? "", personaId ?? "", { enabled: isAdmin })
+  const {
+    data: config,
+    isLoading,
+    error,
+    refetch,
+  } = usePersonaConfig(workspaceId ?? "", personaId ?? "", { enabled: isAdmin })
 
   const notFound = ApiError.isApiError(error) && error.code === "PERSONA_NOT_FOUND"
-  const isMobile = useIsMobile()
+  // The split needs ~MIN_MAIN_WIDTH + MIN_PANEL_WIDTH + sidebar of room; below
+  // SPLIT_VIEW_BREAKPOINT (phone landscape, small tablets, narrow windows) the
+  // drawer layout is strictly better than two crushed panes.
+  const splitCapable = useIsSplitCapable()
   // Mirrored from the form so the pane can show the same "saving/saved" indicator;
   // the debounce itself stays owned by the form (deliverable 5).
   const [syncState, setSyncState] = useState<SyncState>("idle")
   // The test pane only exists once there is an editable persona to test against.
-  const showTestPane = !isMobile && !!config && !notFound
+  const showTestPane = splitCapable && !!config && !notFound
   const {
     containerRef,
     panelWidth,
@@ -57,6 +65,16 @@ export function PersonaEditorPage() {
   let body: ReactNode
   if (notFound) {
     body = <p className="text-sm text-muted-foreground">This persona can&apos;t be edited.</p>
+  } else if (error) {
+    // Any non-404 failure (network, 500) must not read as an endless load.
+    body = (
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">Couldn&apos;t load this persona&apos;s configuration.</p>
+        <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
+          Retry
+        </Button>
+      </div>
+    )
   } else if (isLoading || !config) {
     body = <p className="text-sm text-muted-foreground">Loading persona…</p>
   } else {
@@ -74,11 +92,11 @@ export function PersonaEditorPage() {
     <div className="flex h-full flex-col">
       <header className="flex h-12 items-center gap-2 border-b px-4">
         <SidebarToggle location="page" />
-        <Link to={`/w/${workspaceId}?ws-settings=personas`}>
-          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Back to personas">
+        <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+          <Link to={`/w/${workspaceId}?ws-settings=personas`} aria-label="Back to personas">
             <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
+          </Link>
+        </Button>
         <h1 className="font-semibold">{config ? `Edit ${config.resolved.name}` : "Edit persona"}</h1>
       </header>
 
@@ -86,7 +104,7 @@ export function PersonaEditorPage() {
         <main className="min-w-0 flex-1 overflow-auto">
           <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
             {body}
-            {isMobile && config && !notFound && (
+            {!splitCapable && config && !notFound && (
               <div className="mt-6">
                 <PersonaTestChatDrawer
                   workspaceId={workspaceId}

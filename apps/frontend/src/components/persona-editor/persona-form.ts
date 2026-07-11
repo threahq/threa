@@ -21,6 +21,27 @@ export interface PersonaFormValues {
 export type PersonaFormField = keyof PersonaFormValues
 
 /**
+ * The single field list every helper below iterates — add a field here (and on
+ * {@link PersonaFormValues}) and seeding, patch application, and sparse-diffing
+ * all pick it up; the `_exhaustive` guard makes a missed entry a compile error.
+ */
+export const PERSONA_FORM_FIELDS = [
+  "name",
+  "description",
+  "avatarEmoji",
+  "systemPrompt",
+  "model",
+  "escalationModel",
+  "temperature",
+  "maxTokens",
+  "enabledTools",
+] as const satisfies readonly PersonaFormField[]
+
+// Compile error if PersonaFormValues gains a field the list above lacks.
+const _exhaustive: PersonaFormField extends (typeof PERSONA_FORM_FIELDS)[number] ? true : never = true
+void _exhaustive
+
+/**
  * Draft-sync lifecycle shared by the editor form (which owns the debounce and
  * drives it) and the test-chat pane (which mirrors it as a "saving/saved"
  * indicator so the tester sees the chat is running the latest edits).
@@ -30,47 +51,37 @@ export type SyncState = "idle" | "syncing" | "synced" | "error"
 export function syncHintText(sync: SyncState): string {
   switch (sync) {
     case "syncing":
-      return "Saving draft…"
+      return "Syncing draft…"
     case "synced":
-      return "Draft saved"
+      return "Draft synced — Save applies it"
     case "error":
-      return "Draft not saved"
+      return "Draft not synced"
     default:
       return ""
   }
 }
 
+/** Clone a field value so arrays never share identity with their source. */
+function cloneField(value: unknown): unknown {
+  return Array.isArray(value) ? [...value] : value
+}
+
 /** The editable slice of the resolved config (defaults or resolved). */
 export function toFormValues(config: PersonaResolvedConfig): PersonaFormValues {
-  return {
-    name: config.name,
-    description: config.description,
-    avatarEmoji: config.avatarEmoji,
-    systemPrompt: config.systemPrompt,
-    model: config.model,
-    escalationModel: config.escalationModel,
-    temperature: config.temperature,
-    maxTokens: config.maxTokens,
-    enabledTools: [...config.enabledTools],
-  }
+  const values = {} as Record<PersonaFormField, unknown>
+  for (const field of PERSONA_FORM_FIELDS) values[field] = cloneField(config[field])
+  return values as PersonaFormValues
 }
 
 /** Defaults with a sparse patch (draft or override) applied over them. */
 export function applyPatch(defaults: PersonaResolvedConfig, patch: PersonaConfigPatch | null): PersonaFormValues {
-  const base = toFormValues(defaults)
-  if (!patch) return base
-  return {
-    ...base,
-    ...(patch.name !== undefined ? { name: patch.name } : {}),
-    ...(patch.description !== undefined ? { description: patch.description } : {}),
-    ...(patch.avatarEmoji !== undefined ? { avatarEmoji: patch.avatarEmoji } : {}),
-    ...(patch.systemPrompt !== undefined ? { systemPrompt: patch.systemPrompt } : {}),
-    ...(patch.model !== undefined ? { model: patch.model } : {}),
-    ...(patch.escalationModel !== undefined ? { escalationModel: patch.escalationModel } : {}),
-    ...(patch.temperature !== undefined ? { temperature: patch.temperature } : {}),
-    ...(patch.maxTokens !== undefined ? { maxTokens: patch.maxTokens } : {}),
-    ...(patch.enabledTools !== undefined ? { enabledTools: [...patch.enabledTools] } : {}),
+  const base = toFormValues(defaults) as Record<PersonaFormField, unknown>
+  if (!patch) return base as PersonaFormValues
+  for (const field of PERSONA_FORM_FIELDS) {
+    const value = patch[field]
+    if (value !== undefined) base[field] = cloneField(value)
   }
+  return base as PersonaFormValues
 }
 
 function toolsEqual(a: AgentToolName[], b: readonly AgentToolName[]): boolean {
@@ -94,17 +105,11 @@ export function isFieldOverridden(
  * built-in defaults. An empty object means "identical to defaults" (no override).
  */
 export function computeSparsePatch(values: PersonaFormValues, defaults: PersonaResolvedConfig): PersonaConfigPatch {
-  const patch: PersonaConfigPatch = {}
-  if (isFieldOverridden(values, defaults, "name")) patch.name = values.name
-  if (isFieldOverridden(values, defaults, "description")) patch.description = values.description
-  if (isFieldOverridden(values, defaults, "avatarEmoji")) patch.avatarEmoji = values.avatarEmoji
-  if (isFieldOverridden(values, defaults, "systemPrompt")) patch.systemPrompt = values.systemPrompt
-  if (isFieldOverridden(values, defaults, "model")) patch.model = values.model
-  if (isFieldOverridden(values, defaults, "escalationModel")) patch.escalationModel = values.escalationModel
-  if (isFieldOverridden(values, defaults, "temperature")) patch.temperature = values.temperature
-  if (isFieldOverridden(values, defaults, "maxTokens")) patch.maxTokens = values.maxTokens
-  if (isFieldOverridden(values, defaults, "enabledTools")) patch.enabledTools = [...values.enabledTools]
-  return patch
+  const patch = {} as Record<PersonaFormField, unknown>
+  for (const field of PERSONA_FORM_FIELDS) {
+    if (isFieldOverridden(values, defaults, field)) patch[field] = cloneField(values[field])
+  }
+  return patch as PersonaConfigPatch
 }
 
 /** Whether the form matches the saved baseline (defaults + committed override). */

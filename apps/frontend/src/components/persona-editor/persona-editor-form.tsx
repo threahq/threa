@@ -11,6 +11,17 @@ import {
 } from "@threa/types"
 import { ApiError } from "@/api/client"
 import type { PersonaOverrideConflict } from "@/api"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -143,6 +154,12 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
     if (!editedRef.current) return
     notifySync("syncing")
     const timer = setTimeout(() => {
+      // Save/Discard may have landed while this timer was pending (both reset
+      // editedRef); firing then would re-insert a ghost draft row right after
+      // the commit transaction deleted it, resurrecting Discard and surviving
+      // reload. The at-fire re-check makes the "commit leaves no draft"
+      // invariant hold under any edit/Save interleaving.
+      if (!editedRef.current) return
       saveDraft.mutate(patchRef.current, {
         onSuccess: () => notifySync("synced"),
         onError: () => notifySync("error"),
@@ -471,15 +488,31 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
           {syncHint}
         </span>
         <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={handleDiscard}
-            disabled={discardDraft.isPending || (!config.draft && !isDirty)}
-          >
-            Discard
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={discardDraft.isPending || (!config.draft && !isDirty)}
+              >
+                Discard
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Discard draft changes?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  All unsaved edits revert to the last saved configuration, and any open test chat ends. This cannot be
+                  undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Keep editing</AlertDialogCancel>
+                <AlertDialogAction onClick={handleDiscard}>Discard</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <Button
             type="button"
             size="sm"

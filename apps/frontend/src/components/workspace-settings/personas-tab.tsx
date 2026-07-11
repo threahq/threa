@@ -17,12 +17,22 @@ interface PersonasTabProps {
  * button); the tab itself is admin-gated by the dialog's `visibleTabs` filter.
  */
 export function PersonasTab({ workspaceId }: PersonasTabProps) {
-  const { data: personas, isLoading } = usePersonas(workspaceId)
+  const { data: personas, isLoading, isError, refetch } = usePersonas(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
 
   let body: ReactNode
   if (isLoading) {
     body = <p className="text-xs text-muted-foreground">Loading personas…</p>
+  } else if (isError) {
+    // A failed fetch must not read as "no personas".
+    body = (
+      <p className="text-xs text-muted-foreground">
+        Couldn&apos;t load personas.{" "}
+        <button type="button" className="underline underline-offset-2" onClick={() => void refetch()}>
+          Retry
+        </button>
+      </p>
+    )
   } else if (personas && personas.length > 0) {
     body = (
       <ul className="space-y-2">

@@ -148,8 +148,7 @@ describe("PersonaEditorForm", () => {
     await user.type(name, "Ari")
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
 
-    // Name is the first field; its reset control is the first "Reset" button.
-    await user.click(screen.getAllByRole("button", { name: "Reset" })[0])
+    await user.click(screen.getByRole("button", { name: "Reset Name" }))
 
     expect(screen.getByLabelText("Name")).toHaveValue("Ariadne")
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
@@ -246,7 +245,7 @@ describe("PersonaEditorForm", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
 
     // System prompt is the fourth field (Name, Description, Avatar, System prompt).
-    await user.click(screen.getAllByRole("button", { name: "Reset" })[3])
+    await user.click(screen.getByRole("button", { name: "Reset System prompt" }))
 
     expect(screen.getByLabelText("Persona system prompt editor")).toHaveValue("You are Ariadne.")
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
@@ -266,5 +265,28 @@ describe("PersonaEditorForm", () => {
     await waitFor(() => expect(putDraft).toHaveBeenCalledWith("ws_1", "persona_system_ariadne", { name: "Ari" }), {
       timeout: 2000,
     })
+  })
+
+  it("a pending debounce does not resurrect the draft after Save (ghost-draft regression)", async () => {
+    const putDraft = vi
+      .spyOn(personasApi, "putDraft")
+      .mockResolvedValue({ patch: { name: "Ari" }, testStreamId: null, updatedAt: "2026-07-11T00:00:00Z" })
+    const putOverride = vi
+      .spyOn(personasApi, "putOverride")
+      .mockResolvedValue({ persona: { id: "persona_system_ariadne" }, updatedAt: "2026-07-11T00:00:01Z" } as never)
+    const user = userEvent.setup()
+    renderForm()
+
+    const name = screen.getByLabelText("Name")
+    await user.clear(name)
+    await user.type(name, "Ari")
+    // Save inside the 700ms debounce window: the armed timer must observe the
+    // save (editedRef reset) and skip its draft write, or a ghost draft row
+    // reappears right after the commit transaction deleted it.
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(putOverride).toHaveBeenCalled())
+
+    await new Promise((resolve) => setTimeout(resolve, 900))
+    expect(putDraft).not.toHaveBeenCalled()
   })
 })

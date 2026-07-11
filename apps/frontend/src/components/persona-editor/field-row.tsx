@@ -41,6 +41,7 @@ export function FieldRow({ label, htmlFor, description, overridden, onReset, dis
           className="h-7 shrink-0 px-2 text-xs text-muted-foreground"
           onClick={onReset}
           disabled={disabled || !overridden}
+          aria-label={`Reset ${label}`}
         >
           <RotateCcw className="mr-1 h-3 w-3" />
           Reset

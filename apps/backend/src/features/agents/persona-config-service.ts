@@ -119,8 +119,18 @@ export class PersonaConfigService {
     const overridesByAgentId = new Map(overrides.map((override) => [override.agentId, override.patch]))
     return listVisibleBuiltInAgentConfigs().map((base) => {
       const patch = overridesByAgentId.get(base.id)
-      const resolved = patch ? applyBuiltInAgentPatch(base, patch, { workspaceId, agentId: base.id }) : base
-      return toPersonaListItem(resolved, patch !== undefined)
+      if (patch === undefined) return toPersonaListItem(base, false)
+      // Member-visible surface: one corrupt/schema-incompatible override row
+      // must not take the whole persona list down for the workspace. Degrade
+      // that persona to its code defaults and log; the admin config endpoint
+      // stays fail-loud (INV-11) so the bad row still surfaces somewhere.
+      try {
+        const resolved = applyBuiltInAgentPatch(base, patch, { workspaceId, agentId: base.id })
+        return toPersonaListItem(resolved, true)
+      } catch (error) {
+        logger.warn({ error, workspaceId, agentId: base.id }, "invalid persona override patch; listing code defaults")
+        return toPersonaListItem(base, true)
+      }
     })
   }
 

@@ -35,7 +35,10 @@ function usePersonaTestSession(workspaceId: string, personaId: string, testStrea
   const archiveStream = useArchiveStream(workspaceId)
 
   const start = () => {
-    if (!createTestStream.isPending) createTestStream.mutate()
+    if (createTestStream.isPending) return
+    createTestStream.mutate(undefined, {
+      onError: () => toast.error("Failed to start the test chat"),
+    })
   }
 
   const end = () => {
@@ -63,7 +66,7 @@ function PersonaTestChatEmptyState({ onStart, isStarting }: { onStart: () => voi
       <MessageSquare className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
       <p className="max-w-xs text-sm text-muted-foreground">
         Talk to the candidate persona before you commit. Turns run against your draft config, and nothing here is saved
-        to memory.
+        to memory. Saving or discarding the draft ends the test chat.
       </p>
       <Button type="button" size="sm" onClick={onStart} disabled={isStarting}>
         {isStarting ? "Starting…" : "Start test chat"}

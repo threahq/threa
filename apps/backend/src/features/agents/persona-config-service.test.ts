@@ -82,6 +82,16 @@ describe("PersonaConfigService.listVisible", () => {
 
     expect(personas[0]).toMatchObject({ id: ARIADNE_AGENT_ID, name: "Custom Ariadne", isCustomized: true })
   })
+
+  it("degrades a corrupt override to code defaults instead of failing the whole list", async () => {
+    spyOn(AgentConfigOverrideRepository, "listActiveByWorkspace").mockResolvedValue([
+      { agentId: ARIADNE_AGENT_ID, patch: { model: 42, bogus: true } },
+    ])
+
+    const personas = await makeService().listVisible(WORKSPACE_ID)
+
+    expect(personas[0]).toMatchObject({ id: ARIADNE_AGENT_ID, name: "Ariadne", isCustomized: true })
+  })
 })
 
 describe("PersonaConfigService.getConfig", () => {
@@ -93,12 +103,12 @@ describe("PersonaConfigService.getConfig", () => {
 
     const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
 
-    expect(config).not.toBeNull()
-    expect(config!.overridePatch).toBeNull()
-    expect(config!.overrideUpdatedAt).toBeNull()
-    expect(config!.draft).toBeNull()
-    expect(config!.defaults.model).toBe(config!.resolved.model)
-    expect(config!.resolved.id).toBe(ARIADNE_AGENT_ID)
+    expect(config).toMatchObject({
+      overridePatch: null,
+      overrideUpdatedAt: null,
+      draft: null,
+      resolved: { id: ARIADNE_AGENT_ID, model: config!.defaults.model },
+    })
   })
 
   it("applies the override patch to the resolved config", async () => {
@@ -462,7 +472,7 @@ describe("PersonaConfigService draft lifecycle", () => {
     )
   })
 
-  it("ensureTestStream binds via the upsert with no separate draft write when the editor hasn't saved yet", async () => {
+  it("ensureTestStream binds via the single-statement bindTestStream, never touching the patch", async () => {
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
     const upsert = spyOn(PersonaConfigDraftRepository, "upsert").mockResolvedValue({
       patch: {},
