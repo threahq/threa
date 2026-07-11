@@ -130,6 +130,23 @@ describe("MemoDetailContent edit controls (roadmap 6.1)", () => {
     expect(screen.queryByRole("button", { name: /restore/i })).not.toBeInTheDocument()
   })
 
+  it("copies the memo's resource URL and confirms in place with a checkmark (INV-63/21: no toast, same footprint)", async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } })
+
+    renderDetail(<MemoDetailContent data={buildDetail()} workspaceId="ws_1" isLoading={false} />)
+
+    // Accessible name is the visible label until it confirms — a superset on
+    // copy keeps voice control / WCAG 2.5.3 intact.
+    await user.click(screen.getByRole("button", { name: "Copy link" }))
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(writeText.mock.calls[0][0]).toContain("/w/ws_1/memory?memo=memo_1")
+    // Same button, relabeled — the checkmark confirmation replaces the toast.
+    await screen.findByRole("button", { name: "Copy link, copied" })
+  })
+
   it("links a superseded memo to its successor", () => {
     const detail = { ...buildDetail({ status: "superseded" }), successorMemoId: "memo_2" }
     renderDetail(<MemoDetailContent data={detail} workspaceId="ws_1" isLoading={false} />)

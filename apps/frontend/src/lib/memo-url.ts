@@ -7,6 +7,15 @@ export function memoDeepLink(workspaceId: string, memoId: string): string {
 }
 
 /**
+ * Absolute, shareable URL to a memo — `memoDeepLink` prefixed with the current
+ * origin. Copy-link affordances use this so the pasted link round-trips back
+ * through `parseMemoUrl` into a memo embed.
+ */
+export function buildMemoLink(workspaceId: string, memoId: string): string {
+  return `${window.location.origin}${memoDeepLink(workspaceId, memoId)}`
+}
+
+/**
  * Extract a memo id from an in-app memory-explorer link
  * (`…/w/{workspaceId}/memory?memo=memo_xxx`). Returns `null` for any other
  * URL, off-origin link, or unparseable text. Used by the composer to turn a
