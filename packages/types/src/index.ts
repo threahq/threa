@@ -813,6 +813,14 @@ export {
   type WorkspaceSettingKey,
 } from "./workspace-settings"
 
+// Built-in persona workspace configuration (roadmap 7.1 subset)
+export {
+  type WorkspacePersonaSummary,
+  type AvailablePersonaModel,
+  type ListWorkspacePersonasResponse,
+  type UpdatePersonaConfigInput,
+} from "./persona-config"
+
 // Feature flags (per-user rollout switches, managed from the backoffice)
 export {
   FEATURE_FLAGS,

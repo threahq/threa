@@ -25,6 +25,7 @@ import { IntegrationsTab } from "./integrations-tab"
 import { ScheduleTab } from "./schedule-tab"
 import { StatusesTab } from "./statuses-tab"
 import { DictationTab } from "./dictation-tab"
+import { AgentsTab } from "./agents-tab"
 
 interface WorkspaceSettingsDialogProps {
   workspaceId: string
@@ -107,6 +108,9 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
               </TabsContent>
               <TabsContent value="dictation" className="mt-0">
                 <DictationTab workspaceId={workspaceId} />
+              </TabsContent>
+              <TabsContent value="agents" className="mt-0">
+                <AgentsTab workspaceId={workspaceId} />
               </TabsContent>
               <TabsContent value="users" className="mt-0">
                 <UsersTab workspaceId={workspaceId} />

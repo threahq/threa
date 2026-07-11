@@ -43,7 +43,12 @@ import { createPushHandlers } from "./features/push"
 import { createDebugHandlers } from "./handlers/debug-handlers"
 import { createInternalHandlers } from "./handlers/internal-handlers"
 import { createAuthStubHandlers } from "./auth/auth-stub-handlers"
-import { createAgentSessionHandlers, createContextBagHandlers, createAgentFollowUpHandlers } from "./features/agents"
+import {
+  createAgentSessionHandlers,
+  createContextBagHandlers,
+  createAgentFollowUpHandlers,
+  createPersonaConfigHandlers,
+} from "./features/agents"
 import { createLinkPreviewHandlers } from "./features/link-previews"
 import { createGiphyHandlers } from "./features/giphy"
 import { createWorkspaceIntegrationHandlers } from "./features/workspace-integrations"
@@ -80,7 +85,7 @@ import type { SyncService } from "./features/sync"
 import type { SavedMessagesService } from "./features/saved-messages"
 import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
-import type { AgentFollowUpService } from "./features/agents"
+import type { AgentFollowUpService, PersonaConfigService } from "./features/agents"
 import { createDelegationHandlers, type DelegationService } from "./features/delegations"
 import type { DraftsService } from "./features/drafts"
 import type { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
@@ -128,6 +133,7 @@ interface Dependencies {
   savedSuggestionsService: SavedSuggestionsService
   scheduledMessagesService: ScheduledMessagesService
   agentFollowUpService: AgentFollowUpService
+  personaConfigService: PersonaConfigService
   delegationService: DelegationService
   draftsService: DraftsService
   labelService: LabelService
@@ -190,6 +196,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     savedSuggestionsService,
     scheduledMessagesService,
     agentFollowUpService,
+    personaConfigService,
     delegationService,
     draftsService,
     labelService,
@@ -309,6 +316,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const label = createLabelHandlers({ labelService, labelAssignmentService, labelMessageService })
   const agentSession = createAgentSessionHandlers({ pool })
   const agentFollowUps = createAgentFollowUpHandlers({ pool, agentFollowUpService })
+  const personaConfig = createPersonaConfigHandlers({ personaConfigService })
   const delegations = createDelegationHandlers({ pool, delegationService })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
@@ -674,6 +682,16 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Agent follow-ups — a stream member can cancel a follow-up they can see from
   // its timeline card (roadmap 1.3). Scheduling/listing stay agent-only tools.
   app.post("/api/workspaces/:workspaceId/agent-follow-ups/:id/cancel", ...authed, agentFollowUps.cancel)
+
+  // Built-in persona configuration (roadmap 7.1 subset) — workspace model override
+  // for Ariadne until the persona editor ships. Writes are admin-only.
+  app.get("/api/workspaces/:workspaceId/personas", ...authed, personaConfig.list)
+  app.patch(
+    "/api/workspaces/:workspaceId/personas/:personaId/config",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    personaConfig.updateConfig
+  )
   app.get("/api/workspaces/:workspaceId/delegations", ...authed, delegations.list)
   app.post("/api/workspaces/:workspaceId/delegations/:id/cancel", ...authed, delegations.cancel)
 
