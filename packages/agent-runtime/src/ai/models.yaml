@@ -7,6 +7,11 @@
 
 models:
   # Anthropic Claude models
+  openrouter:anthropic/claude-sonnet-5:
+    name: Claude Sonnet 5
+    inputModalities: [text, image]
+    outputModalities: [text]
+
   openrouter:anthropic/claude-sonnet-4.6:
     name: Claude Sonnet 4.6
     inputModalities: [text, image]

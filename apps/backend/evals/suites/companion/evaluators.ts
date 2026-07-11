@@ -8,6 +8,11 @@ import type { Evaluator, EvalContext, EvaluatorResult, RunEvaluator, CaseResult 
 import { llmJudgeEvaluator } from "../../framework/evaluators/llm-judge"
 import type { CompanionOutput, CompanionExpected } from "./types"
 
+// The judge receives the case's expected-behavior descriptor as "Expected Output" and the
+// runner's raw record as "Actual Output"; without this it docks points for the two JSON
+// shapes not matching, which is noise, not a quality signal.
+const JUDGE_SHAPE_CONTEXT = `The "Expected Output" block is a behavioral specification (shouldRespond, responseCharacteristics, reason), NOT a literal JSON shape the output must match. The "Actual Output" block is the eval runner's raw record; the assistant's reply is the "messages" array's content. Judge only whether the reply's content satisfies the criteria and the behavioral specification. Never penalize structural or field-name differences between the two JSON objects.`
+
 // =============================================================================
 // Case-Level Evaluators
 // =============================================================================
@@ -163,6 +168,7 @@ export function createResponseQualityEvaluator(): Evaluator<CompanionOutput, Com
 - Is concise without being unhelpfully brief
 - Considers conversation context when available`,
     passThreshold: 0.7,
+    context: JUDGE_SHAPE_CONTEXT,
   })
 
   return {
@@ -220,6 +226,7 @@ export function createToneEvaluator(): Evaluator<CompanionOutput, CompanionExpec
 
 The response should clearly match the ${expectedTone} tone definition.`,
         passThreshold: 0.7,
+        context: JUDGE_SHAPE_CONTEXT,
       })
 
       return toneJudge.evaluate(output, expected, ctx)

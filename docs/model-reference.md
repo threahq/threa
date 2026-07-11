@@ -1,12 +1,12 @@
 # AI Model Reference
 
-**Last updated:** 2026-07-05
+**Last updated:** 2026-07-11
 
 This document provides a comprehensive reference for AI models including capabilities, pricing, and usage guidelines. Always verify against this file when working with AI integration.
 
 ## Model Capabilities Registry
 
-The source of truth for model input/output modalities is `apps/backend/src/lib/ai/models.yaml`. This file defines which models support vision, text, and other modalities. The `ModelRegistry` class loads this at startup and provides capability checks:
+The source of truth for model input/output modalities is `packages/agent-runtime/src/ai/models.yaml`. This file defines which models support vision, text, and other modalities. The `ModelRegistry` class loads this at startup and provides capability checks:
 
 ```typescript
 import { createModelRegistry } from "./lib/ai/model-registry"
@@ -31,6 +31,24 @@ All models use `provider:modelPath` format:
 **Note:** OpenRouter uses version numbers (e.g., `claude-sonnet-4.5`), not date-suffixed versions (e.g., `claude-sonnet-4-20250514`). Don't use date suffixes - they don't exist on OpenRouter.
 
 ## Inference Models
+
+### openrouter:anthropic/claude-sonnet-5
+
+**Name:** Claude Sonnet 5
+
+**Description:** Anthropic's Claude 5-generation Sonnet (July 2026). Near-Opus quality on agentic and coding work at Sonnet cost. Adaptive thinking on by default; new tokenizer produces ~30% more tokens for the same text vs Sonnet 4.6 (per-token price is lower, so equivalent-request cost is roughly a wash during intro pricing). 1M context window.
+
+**Typical cost:** ~$2.00 per 1M input tokens, ~$10.00 per 1M output tokens (introductory pricing through 2026-08-31; $3.00/$15.00 after)
+
+**When to use:**
+
+- Candidate successor to `claude-sonnet-4.6` for the Ariadne companion persona (eval comparison pending)
+- Complex reasoning and multi-turn agent conversations
+- Tasks where quality justifies Sonnet-tier cost
+
+**Use instead of:** `claude-sonnet-4.6` once evals confirm parity or better
+
+---
 
 ### openrouter:anthropic/claude-sonnet-4.6
 

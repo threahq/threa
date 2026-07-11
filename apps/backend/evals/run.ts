@@ -193,10 +193,17 @@ async function main(): Promise<void> {
         noLangfuse: options.noLangfuse,
         verbose: options.verbose,
         parallel: options.parallel,
+        runs: options.runs,
       })
 
+      if (options.jsonOutput) {
+        await Bun.write(options.jsonOutput, JSON.stringify(toJsonReport(results), null, 2))
+        console.log(`\nResults written to ${options.jsonOutput}`)
+      }
+
+      const minPassRate = options.minPassRate ?? 1
       const hasFailures = results.some((r) =>
-        r.permutations.some((p) => p.cases.some((c) => c.error || c.evaluations.some((e) => !e.passed)))
+        r.permutations.some((p) => aggregateCases(p).some((c) => c.passes / c.total < minPassRate))
       )
       process.exit(hasFailures ? 1 : 0)
     } catch (error) {
