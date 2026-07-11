@@ -20,7 +20,13 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts"
-import { useBoardViews, useSaveBoardView, useUpdateBoardView, useDeleteBoardView } from "@/hooks/use-board-views"
+import {
+  useBoardHomeView,
+  useBoardViews,
+  useSaveBoardView,
+  useUpdateBoardView,
+  useDeleteBoardView,
+} from "@/hooks/use-board-views"
 import {
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
@@ -165,7 +171,7 @@ export function BoardSavedViews({
 }: BoardSavedViewsProps) {
   const { data: views } = useBoardViews(workspaceId)
   const prefs = usePreferencesOptional()
-  const homeViewId = prefs?.preferences?.boardDefaultViewId ?? null
+  const homeView = useBoardHomeView(workspaceId)
   const save = useSaveBoardView(workspaceId)
   const update = useUpdateBoardView(workspaceId)
   const remove = useDeleteBoardView(workspaceId)
@@ -176,7 +182,6 @@ export function BoardSavedViews({
   // Only offer "save current view" when there's actually a narrowing to bookmark
   // — the viewer's home baseline (the plain home lens, or the saved view that is
   // their home) is nothing worth saving.
-  const homeView = views?.find((view) => view.id === homeViewId) ?? null
   const isFiltered = !isBoardAtHome(homeLens, homeView, {
     lens,
     scopeStreamIds,
@@ -237,16 +242,16 @@ export function BoardSavedViews({
                 <button
                   type="button"
                   onClick={() => void prefs?.updatePreferences({ boardDefaultViewId: view.id })}
-                  aria-pressed={view.id === homeViewId}
+                  aria-pressed={view.id === homeView?.id}
                   aria-label={
-                    view.id === homeViewId ? `${view.name} is your board home` : `Set ${view.name} as board home`
+                    view.id === homeView?.id ? `${view.name} is your board home` : `Set ${view.name} as board home`
                   }
                   className={cn(
                     "mt-0.5 shrink-0 rounded p-1 transition-colors",
-                    view.id === homeViewId ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground"
+                    view.id === homeView?.id ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground"
                   )}
                 >
-                  <Pin className={cn("h-3.5 w-3.5", view.id === homeViewId && "fill-current")} />
+                  <Pin className={cn("h-3.5 w-3.5", view.id === homeView?.id && "fill-current")} />
                 </button>
                 {/* Right slot: the active check sits at the row's right edge (same
                     column as the lens list's check) and fades to the rename/delete

@@ -6,7 +6,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
-import { useBoardViews } from "@/hooks/use-board-views"
+import { useBoardHomeView, useBoardViews } from "@/hooks/use-board-views"
 import { summarizeBoardView } from "@/components/board/board-saved-views"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import {
@@ -90,9 +90,9 @@ function BoardHomeSection({ workspaceId }: { workspaceId: string }) {
   const { data: views } = useBoardViews(workspaceId)
   const savedViews = views ?? []
   const boardDefaultLens = preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
-  const defaultViewId = preferences?.boardDefaultViewId ?? null
-  // A default-view id that no longer resolves reads as "no view" — land on the lens.
-  const activeViewId = defaultViewId && savedViews.some((v) => v.id === defaultViewId) ? defaultViewId : null
+  // The resolved home view's id, or null when the home is a lens (or the stored id
+  // no longer resolves) — land on the lens then.
+  const activeViewId = useBoardHomeView(workspaceId)?.id ?? null
   const value = activeViewId ? `view:${activeViewId}` : `lens:${boardDefaultLens}`
 
   const onChange = (next: string) => {

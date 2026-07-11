@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import type { BoardView, WorkspaceBootstrap } from "@threa/types"
-import { useBoardViewService, usePreferences } from "@/contexts"
+import { useBoardViewService, usePreferencesOptional } from "@/contexts"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import type { SaveBoardViewInput, UpdateBoardViewInput } from "@/api"
 
@@ -40,13 +40,18 @@ export function useBoardViews(workspaceId: string) {
 }
 
 /**
- * The saved view the viewer homes on (`boardDefaultViewId`), or `null` when the
- * home is a plain lens or the id no longer resolves. One resolver for every
- * surface that needs "is this the home baseline" (the bare-`/board` redirect, the
- * filter bar's "Clear filters", the empty-state CTA) so they can't drift.
+ * The RESOLVED saved view the viewer homes on (`boardDefaultViewId`), or `null`
+ * when the home is a plain lens, the id no longer resolves, or the list is still
+ * loading. One resolver for every surface that needs "is this the home baseline"
+ * (the filter bar's "Clear filters", the empty-state CTA, the saved-views pin, the
+ * settings radio) so they can't drift. `usePreferencesOptional` so it's safe in
+ * surfaces mounted without the provider (e.g. the saved-views menu in isolation).
+ * The bare-`/board` redirect in `board.tsx` deliberately does NOT use this — it
+ * needs the raw `boardDefaultViewId` + list to tell "still loading" from "unset",
+ * a distinction this hook collapses to `null`.
  */
 export function useBoardHomeView(workspaceId: string): BoardView | null {
-  const { preferences } = usePreferences()
+  const preferences = usePreferencesOptional()?.preferences ?? null
   const { data: views } = useBoardViews(workspaceId)
   const homeViewId = preferences?.boardDefaultViewId ?? null
   return views?.find((view) => view.id === homeViewId) ?? null

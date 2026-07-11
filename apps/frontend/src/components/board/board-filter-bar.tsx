@@ -321,9 +321,10 @@ export function BoardFilterBar({
       ))}
       {isFiltered && (
         <Link
-          // Return to the home baseline: bare `/board`, which the page then
-          // resolves to a saved-view home if one is set (hence `false` here).
-          to={lensHref(workspaceId, homeLens, clearedSearch, homeLens, false)}
+          // Clear to the unfiltered home lens. When a saved-view home resolves,
+          // keep the explicit segment so this doesn't route through bare `/board`
+          // (which would hold-then-redirect to the view — a blank-flash detour).
+          to={lensHref(workspaceId, homeLens, clearedSearch, homeLens, homeView !== null)}
           className="shrink-0 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           Clear filters
@@ -491,10 +492,14 @@ function BoardLensMenu({
   }
   const activeViewId = views?.find((view) => isViewActive(view, selection))?.id ?? null
 
-  // When a saved view is the board home (and still resolves), no plain lens is
-  // "home" — the pin fill belongs to that view's row, not a lens.
-  const homeViewId = preferences?.boardDefaultViewId ?? null
-  const homeViewActive = !!homeViewId && !!views?.some((view) => view.id === homeViewId)
+  // Two distinct signals: whether a saved-view home is CONFIGURED (known from the
+  // preference before the list loads) drives the lens links — the home lens must
+  // keep its explicit segment as soon as a view is set, or a click during the load
+  // window emits bare `/board` and gets bounced to the saved view (unreachable
+  // fallback lens). Whether it RESOLVES drives the pin fill: no lens reads as home
+  // while a real saved-view home exists.
+  const hasConfiguredHomeView = (preferences?.boardDefaultViewId ?? null) !== null
+  const homeViewActive = useBoardHomeView(workspaceId) != null
 
   const content = (
     <>
@@ -513,7 +518,7 @@ function BoardLensMenu({
               )}
             >
               <Link
-                to={lensHref(workspaceId, value, search, homeLens, homeViewActive)}
+                to={lensHref(workspaceId, value, search, homeLens, hasConfiguredHomeView)}
                 onClick={() => setOpen(false)}
                 aria-current={selected ? "true" : undefined}
                 className="flex min-w-0 flex-1 items-start gap-2.5 rounded-item px-2.5 py-2"

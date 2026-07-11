@@ -315,6 +315,21 @@ describe("BoardPage", () => {
     expect(screen.queryByText("Show everything")).toBeNull()
   })
 
+  it("points 'Show everything' at the explicit All lens for a saved-view-home viewer", async () => {
+    // With a saved-view home, bare `/board` bounces to the view — so the escape to
+    // "everything" must use the explicit `/board/all` segment, not bare `/board`.
+    vi.mocked(contextsModule.usePreferences).mockReturnValue({
+      preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
+      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
+    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+    // A narrowed, empty lens (not the saved-view home) → "Show everything" offered.
+    mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board/decisions` })
+    const cta = await screen.findByRole("link", { name: "Show everything" })
+    expect(cta.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/board/all`)
+  })
+
   it("keeps the board rendered when a saved view is pinned as home while resting on bare `/board`", async () => {
     // Regression: pinning a view as home is a same-URL preference change. The
     // redirect effect (once per `location.key`) correctly declines to navigate, so

@@ -173,7 +173,7 @@ export function BoardPage() {
   const defaultViewId = preferences?.preferences?.boardDefaultViewId ?? null
   // Already mounted deeper (the lens menu), so this adds no fetch — it just lets
   // the landing resolve a saved-view home.
-  const { data: boardViews } = useBoardViews(workspaceId ?? "")
+  const { data: boardViews, isError: boardViewsFailed } = useBoardViews(workspaceId ?? "")
   if (!workspaceId) return null
   // A saved view is the board home iff its id still resolves; a stale/deleted id
   // falls back to the plain home lens. When a view is home, `/board/<homeLens>` is
@@ -185,8 +185,11 @@ export function BoardPage() {
   // it hydrates) — otherwise a cold load misreads a saved-view home as unset and
   // never redirects. The saved-view LIST is only needed when a default view id is
   // actually set, so a plain-lens landing (no `boardDefaultViewId`) doesn't block
-  // on the board-views query.
-  const savedViewReady = preferences?.preferences != null && (defaultViewId === null || boardViews !== undefined)
+  // on the board-views query. A FAILED list also counts as "ready": the id can't
+  // resolve, so fall back to the lens and render rather than hold `/board` blank
+  // forever on a network blip.
+  const savedViewReady =
+    preferences?.preferences != null && (defaultViewId === null || boardViews !== undefined || boardViewsFailed)
   const homeViewActive = !!defaultViewId && !!boardViews?.some((view) => view.id === defaultViewId)
   const bareBoard = lensParam === undefined && location.search === ""
   // Bare `/board` is a "resolve where home is" route: hold (render nothing) until
@@ -539,8 +542,17 @@ function BoardPageInner({
   // rests at bare `/board` unless the viewer's home is another lens, in which
   // case All takes the `/board/all` segment. The non-filter query state (an open
   // `?panel=`) rides along so it survives clearing filters.
+  // The viewer's home baseline (plain home lens, or the saved view they home on)
+  // reads as unfiltered, so an empty home landing doesn't offer "Show everything".
+  const homeView = useBoardHomeView(workspaceId)
+  // "Show everything" / the own-post-must-surface bounce target the truly
+  // unfiltered All lens. When a saved-view home resolves, bare `/board` bounces to
+  // that view, so All must take its explicit `/board/all` segment or these escapes
+  // land back on the (filtered) saved view instead of everything.
   const allPathname =
-    homeLens === DEFAULT_BOARD_LENS ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${DEFAULT_BOARD_LENS}`
+    homeLens === DEFAULT_BOARD_LENS && homeView === null
+      ? `/w/${workspaceId}/board`
+      : `/w/${workspaceId}/board/${DEFAULT_BOARD_LENS}`
   const boardHome = { pathname: allPathname, search: boardHomeSearch(searchParams.toString()) }
   const hasFilterParams =
     scopeStreamIds.length > 0 ||
@@ -549,9 +561,6 @@ function BoardPageInner({
     excludeStreamTypes.length > 0 ||
     scopeLabelIds.length > 0 ||
     excludeLabelIds.length > 0
-  // The viewer's home baseline (plain home lens, or the saved view they home on)
-  // reads as unfiltered, so an empty home landing doesn't offer "Show everything".
-  const homeView = useBoardHomeView(workspaceId)
   const handlePosted = () => {
     // The viewer's own post must ALWAYS surface. It already shows where the
     // current view can contain it — an unfiltered `all`/`mine` lens — so stay
