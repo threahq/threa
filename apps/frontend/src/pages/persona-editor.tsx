@@ -93,28 +93,28 @@ export function PersonaEditorPage() {
       <header className="flex h-12 items-center gap-2 border-b px-4">
         <SidebarToggle location="page" />
         <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-          <Link to={`/w/${workspaceId}?ws-settings=personas`} aria-label="Back to personas">
+          <Link to={`/w/${workspaceId}?ws-settings=ai-agents`} aria-label="Back to AI Agents">
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
-        <h1 className="font-semibold">{config ? `Edit ${config.resolved.name}` : "Edit persona"}</h1>
+        <h1 className="min-w-0 flex-1 truncate font-semibold">
+          {config ? `Edit ${config.resolved.name}` : "Edit persona"}
+        </h1>
+        {!splitCapable && config && !notFound && (
+          <div className="shrink-0">
+            <PersonaTestChatDrawer
+              workspaceId={workspaceId}
+              personaId={personaId}
+              testStreamId={config.draft?.testStreamId ?? null}
+              syncState={syncState}
+            />
+          </div>
+        )}
       </header>
 
       <div ref={containerRef} className="flex min-h-0 flex-1">
         <main className="min-w-0 flex-1 overflow-auto">
-          <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
-            {body}
-            {!splitCapable && config && !notFound && (
-              <div className="mt-6">
-                <PersonaTestChatDrawer
-                  workspaceId={workspaceId}
-                  personaId={personaId}
-                  testStreamId={config.draft?.testStreamId ?? null}
-                  syncState={syncState}
-                />
-              </div>
-            )}
-          </div>
+          <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6">{body}</div>
         </main>
 
         {showTestPane && (

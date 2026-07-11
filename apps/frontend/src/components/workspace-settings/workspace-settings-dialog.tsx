@@ -47,11 +47,14 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
   // Personas editing is admin-only (the config read/write routes are admin-gated
   // server-side); feature flags stay hidden unless the viewer actually has one.
   const visibleTabs: readonly WorkspaceSettingsTab[] = WORKSPACE_SETTINGS_TABS.filter(
-    (t) => (t !== "feature-flags" || overriddenFlags.length > 0) && (t !== "personas" || isAdmin)
+    (t) => (t !== "feature-flags" || overriddenFlags.length > 0) && (t !== "ai-agents" || isAdmin)
   )
 
   const settingsParam = searchParams.get(WS_SETTINGS_PARAM)
-  const normalizedSettingsParam = settingsParam === "members" ? "users" : settingsParam
+  // Back-compat aliases for renamed tab ids so old deep links / bookmarks resolve
+  // (mirrors the members→users rename).
+  const settingsParamAliases: Record<string, WorkspaceSettingsTab> = { members: "users", personas: "ai-agents" }
+  const normalizedSettingsParam = settingsParam ? (settingsParamAliases[settingsParam] ?? settingsParam) : settingsParam
   const isOpen = settingsParam !== null
   const activeTab: WorkspaceSettingsTab =
     normalizedSettingsParam && visibleTabs.includes(normalizedSettingsParam as WorkspaceSettingsTab)
@@ -121,7 +124,7 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
                 <UsersTab workspaceId={workspaceId} />
               </TabsContent>
               {isAdmin && (
-                <TabsContent value="personas" className="mt-0">
+                <TabsContent value="ai-agents" className="mt-0">
                   <PersonasTab workspaceId={workspaceId} />
                 </TabsContent>
               )}

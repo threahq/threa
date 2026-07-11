@@ -140,7 +140,8 @@ export function PersonaTestChatDrawer({ workspaceId, personaId, testStreamId, sy
 
   return (
     <>
-      <Button type="button" variant="outline" className="w-full" onClick={handleOpen} disabled={isStarting}>
+      <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={handleOpen} disabled={isStarting}>
+        <MessageSquare className="mr-1 h-3.5 w-3.5" />
         {isStarting ? "Starting…" : "Test draft"}
       </Button>
       <Drawer open={open} onOpenChange={setOpen}>

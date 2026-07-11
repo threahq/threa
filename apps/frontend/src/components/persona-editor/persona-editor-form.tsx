@@ -26,6 +26,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { MarkdownContent } from "@/components/ui/markdown-content"
 import { EditorActionBar, RichEditor, type RichEditorHandle } from "@/components/editor"
 import { parsePromptMarkdown, serializeToMarkdown } from "@/components/editor/editor-markdown"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -345,6 +347,23 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
         description="The standing instructions the persona runs on every turn."
         overridden={isFieldOverridden(values, defaults, "systemPrompt")}
         onReset={() => resetField("systemPrompt")}
+        headerAction={
+          isFieldOverridden(values, defaults, "systemPrompt") ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button type="button" className="text-xs text-muted-foreground underline underline-offset-2">
+                  View default
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="max-h-80 w-[min(24rem,90vw)] overflow-y-auto">
+                <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Built-in default prompt
+                </p>
+                <MarkdownContent content={defaults.systemPrompt} className="text-xs" />
+              </PopoverContent>
+            </Popover>
+          ) : undefined
+        }
       >
         <div
           className="rounded-lg border border-input bg-card p-3"
