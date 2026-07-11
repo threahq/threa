@@ -52,7 +52,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 4.4  | Brief correction eval                                    | ☐      |       |
 | 5.1  | `delegate_task` tool + delegation substrate + INV-65     | ☑      | #1261 |
 | 5.2  | Delegation card UI                                       | ☑      | #1261 |
-| 5.3  | Delegation public API (claim/status/complete)            | ☑      | #TBD  |
+| 5.3  | Delegation public API (claim/status/complete)            | ☑      | #1284 |
 | 5.4  | claude-code-remote delegation support                    | ☐      |       |
 | 5.5  | `@threa/mcp` server                                      | ☐      |       |
 | 6.1  | Memo edit/archive endpoints + explorer UI                | ☑      | #1246 |
