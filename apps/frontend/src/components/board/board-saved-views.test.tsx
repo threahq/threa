@@ -5,7 +5,13 @@ import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardView } from "@threa/types"
 import { ServicesProvider } from "@/contexts"
-import { BoardSavedViews, savedViewHref, isViewActive, type BoardViewSelection } from "./board-saved-views"
+import {
+  BoardSavedViews,
+  savedViewHref,
+  isViewActive,
+  isBoardAtHome,
+  type BoardViewSelection,
+} from "./board-saved-views"
 
 const view = (over: Partial<BoardView> = {}): BoardView => ({
   id: "boardview_1",
@@ -72,6 +78,37 @@ describe("isViewActive", () => {
   it("is inactive when a filter axis differs", () => {
     expect(isViewActive(view(), selection({ scopeStreamIds: ["stream_2"] }))).toBe(false)
     expect(isViewActive(view(), selection({ excludeStreamTypes: ["system"] }))).toBe(false)
+  })
+})
+
+describe("isBoardAtHome", () => {
+  const selection = (over: Partial<BoardViewSelection> = {}): BoardViewSelection => ({
+    lens: "all",
+    scopeStreamIds: [],
+    scopeStreamTypes: [],
+    scopeLabelIds: [],
+    excludeStreamIds: [],
+    excludeStreamTypes: [],
+    excludeLabelIds: [],
+    ...over,
+  })
+
+  it("is home on the plain home lens with no narrowing", () => {
+    expect(isBoardAtHome("all", null, selection())).toBe(true)
+  })
+
+  it("is home when the selection exactly matches the saved-view home (though filtered)", () => {
+    const homeView = view({ baseLens: "mine", scopeStreamIds: ["stream_1"] })
+    expect(isBoardAtHome("all", homeView, selection({ lens: "mine", scopeStreamIds: ["stream_1"] }))).toBe(true)
+  })
+
+  it("is not home when narrowed off the saved-view home", () => {
+    const homeView = view({ baseLens: "mine", scopeStreamIds: ["stream_1"] })
+    expect(isBoardAtHome("all", homeView, selection({ lens: "mine", scopeStreamIds: ["stream_2"] }))).toBe(false)
+  })
+
+  it("is not home when narrowed off the plain home lens with no saved-view home", () => {
+    expect(isBoardAtHome("all", null, selection({ lens: "active" }))).toBe(false)
   })
 })
 

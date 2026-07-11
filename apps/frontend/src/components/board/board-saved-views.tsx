@@ -71,6 +71,18 @@ export function isViewActive(view: BoardView, selection: BoardViewSelection): bo
   )
 }
 
+/**
+ * Whether the live selection is the viewer's untouched home baseline — the plain
+ * home lens with no narrowing, OR (when a saved view is the home) exactly that
+ * view. "Clear filters" / "Save current view" hide at home; a saved-view home is
+ * itself a filtered selection, so `isBoardFiltered` alone would wrongly read it as
+ * narrowed and offer a "Clear filters" that just bounces back to the same view.
+ */
+export function isBoardAtHome(homeLens: BoardLens, homeView: BoardView | null, selection: BoardViewSelection): boolean {
+  if (!isBoardFiltered(homeLens, selection)) return true
+  return homeView != null && isViewActive(homeView, selection)
+}
+
 /** Count phrase: `3 streams`, `1 label`. */
 function countOf(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`
@@ -162,8 +174,10 @@ export function BoardSavedViews({
   const [editing, setEditing] = useState<{ id: string | null; name: string } | null>(null)
 
   // Only offer "save current view" when there's actually a narrowing to bookmark
-  // — the viewer's plain home lens is nothing worth saving.
-  const isFiltered = isBoardFiltered(homeLens, {
+  // — the viewer's home baseline (the plain home lens, or the saved view that is
+  // their home) is nothing worth saving.
+  const homeView = views?.find((view) => view.id === homeViewId) ?? null
+  const isFiltered = !isBoardAtHome(homeLens, homeView, {
     lens,
     scopeStreamIds,
     scopeStreamTypes,

@@ -24,12 +24,16 @@ import {
 } from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks/use-labels"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
-import { BoardSavedViews, isViewActive, type BoardViewSelection } from "@/components/board/board-saved-views"
+import {
+  BoardSavedViews,
+  isBoardAtHome,
+  isViewActive,
+  type BoardViewSelection,
+} from "@/components/board/board-saved-views"
 import { useBoardViews } from "@/hooks/use-board-views"
 import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
 import { usePreferences } from "@/contexts"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
-import { isBoardFiltered } from "@/lib/board/filter-state"
 import { cn } from "@/lib/utils"
 
 /** Stream types offered in the pickers: the board's root-stream grains (shared
@@ -150,10 +154,14 @@ export function BoardFilterBar({
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
   const labelById = useMemo(() => new Map(myLabels.map((l) => [l.id, l])), [myLabels])
 
-  // The viewer's home lens is their baseline, so being on it (with no scope
-  // narrowing) is NOT "filtered" — otherwise a non-All home shows a permanent
-  // "Clear filters" affordance on its own untouched landing view.
-  const isFiltered = isBoardFiltered(homeLens, {
+  // The viewer's home baseline is NOT "filtered" — otherwise the home shows a
+  // permanent "Clear filters" affordance on its own untouched landing. The home
+  // is the plain home lens, or (when set) the saved view they home on, so resting
+  // on that view must also read as unfiltered even though it carries scope.
+  const { preferences } = usePreferences()
+  const { data: savedViews } = useBoardViews(workspaceId)
+  const homeView = savedViews?.find((view) => view.id === (preferences?.boardDefaultViewId ?? null)) ?? null
+  const isFiltered = !isBoardAtHome(homeLens, homeView, {
     lens,
     scopeStreamIds,
     scopeStreamTypes,

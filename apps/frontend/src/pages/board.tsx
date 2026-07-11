@@ -180,11 +180,18 @@ export function BoardPage() {
   // falls back to the plain home lens. When a view is home, `/board/<homeLens>` is
   // a real destination reachable from the lens menu, NOT the canonical bare URL —
   // so the home lens is not collapsed to bare here (which would just bounce back
-  // to the saved view). `savedViewReady` distinguishes "still loading" from
-  // "no home view" so a cold load isn't misread as unset.
-  const savedViewReady = preferences != null && boardViews !== undefined
+  // to the saved view). `savedViewReady` gates every home-resolution decision on
+  // BOTH sources being loaded: `usePreferencesOptional()` returns its context
+  // object as soon as the provider mounts, so read `.preferences` (the IDB data,
+  // null until it hydrates) — otherwise a cold load misreads a saved-view home as
+  // unset and never redirects.
+  const savedViewReady = preferences?.preferences != null && boardViews !== undefined
   const homeViewActive = !!defaultViewId && !!boardViews?.some((view) => view.id === defaultViewId)
   const bareBoard = lensParam === undefined && location.search === ""
+  // Bare `/board` is a "resolve where home is" route: hold (render nothing) until
+  // the home is knowable, rather than paint the plain-lens board and then bounce
+  // to a saved-view home a frame later (mirrors the flag gate below).
+  if (bareBoard && !savedViewReady) return null
   // The bounce target for a bare `/board` arrival with a saved-view home. Resolved
   // here but NAVIGATED inside BoardPageGate — only once the board-view flag is on
   // and at most once per navigation — so it never fires ahead of the flag gate and
@@ -192,7 +199,14 @@ export function BoardPage() {
   // can't yank the user off the page.
   const savedViewTarget =
     bareBoard && savedViewReady ? boardHomeRedirectHref(workspaceId, defaultViewId, boardViews, homeLens) : null
-  if ((!homeViewActive && lensParam === homeLens) || (lensParam !== undefined && !VALID_LENSES.has(lensParam))) {
+  // Collapse `/board/<homeLens>` to bare only once we know it isn't a saved-view
+  // home (else the home lens, a legitimate destination, would bounce to the view).
+  // Gate on `savedViewReady` so a stale `homeViewActive: false` during load can't
+  // fire the bounce prematurely.
+  if (
+    (savedViewReady && !homeViewActive && lensParam === homeLens) ||
+    (lensParam !== undefined && !VALID_LENSES.has(lensParam))
+  ) {
     return <Navigate to={{ pathname: `/w/${workspaceId}/board`, search: location.search }} replace />
   }
   const lens: BoardLens = (lensParam as BoardLens | undefined) ?? homeLens
@@ -243,6 +257,10 @@ function BoardPageGate({
   }, [boardFlag, savedViewReady, savedViewTarget, location.key, navigate])
   if (boardFlag === null) return null
   if (boardFlag !== "on") return <Navigate to={`/w/${workspaceId}`} replace />
+  // A saved-view home is about to redirect (the effect above fires post-commit) —
+  // render nothing rather than paint one frame of the wrong lens board first,
+  // mirroring the flag gate's "render nothing rather than redirect".
+  if (savedViewTarget) return null
   return <BoardPageInner workspaceId={workspaceId} lens={lens} homeLens={homeLens} />
 }
 
