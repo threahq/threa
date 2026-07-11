@@ -7,6 +7,7 @@ import { StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { CompanionHandler } from "./companion-outbox-handler"
 import { PersonaRepository } from "./persona-repository"
+import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository } from "./session-repository"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
@@ -90,6 +91,8 @@ async function waitForDebounce(): Promise<void> {
 describe("CompanionHandler", () => {
   beforeEach(() => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    // Default: no stream is a draft test stream. Overridden in the draft-test case.
+    spyOn(PersonaConfigDraftRepository, "findByTestStreamId").mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -225,6 +228,38 @@ describe("CompanionHandler", () => {
 
     expect(streamSpy).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
+  })
+
+  it("carries personaDraftId when the message lands in a bound test scratchpad", async () => {
+    mockUserMessageEvent("stream_test")
+
+    const testScratchpad = makeStream({
+      id: "stream_test",
+      type: StreamTypes.SCRATCHPAD,
+      companionMode: CompanionModes.ON,
+      companionPersonaId: "persona_system_ariadne",
+    })
+    spyOn(StreamRepository, "findById").mockResolvedValue(testScratchpad)
+    spyOn(PersonaRepository, "findById").mockResolvedValue({ id: "persona_system_ariadne", status: "active" } as any)
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+    spyOn(PersonaConfigDraftRepository, "findByTestStreamId").mockResolvedValue({
+      id: "pcd_1",
+      workspaceId: "ws_1",
+      agentId: "persona_system_ariadne",
+    })
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.agent",
+      expect.objectContaining({
+        streamId: "stream_test",
+        personaId: "persona_system_ariadne",
+        personaDraftId: "pcd_1",
+      })
+    )
   })
 
   it("does not dispatch for threads under a scratchpad whose companion mode is off", async () => {

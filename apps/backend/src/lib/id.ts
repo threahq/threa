@@ -74,4 +74,5 @@ export {
   streamBriefRevisionId,
   delegationId,
   agentConfigOverrideId,
+  personaConfigDraftId,
 } from "@threa/backend-common"

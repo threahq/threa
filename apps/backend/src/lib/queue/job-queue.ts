@@ -69,6 +69,13 @@ export interface PersonaAgentJobData {
    * scheduled check-in firing (roadmap 1.2).
    */
   followUpId?: string
+  /**
+   * Set when the trigger message landed in a persona editor's test-drive
+   * scratchpad (roadmap 7.1). `resolveTurnPurpose` maps it to a `draft_test`
+   * turn; the precheck loads this draft and runs its candidate config instead of
+   * the saved override, so the admin talks to the persona they're editing.
+   */
+  personaDraftId?: string
 }
 
 /**

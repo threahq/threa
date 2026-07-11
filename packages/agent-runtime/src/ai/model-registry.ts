@@ -64,6 +64,12 @@ export interface ModelRegistry {
   getAudioPricePerHour(modelId: string): number | undefined
 
   /**
+   * Check if a model is a plain chat model: text in, text out, and not a
+   * realtime/streaming-transcription model. Returns false for unknown models.
+   */
+  isChatModel(modelId: string): boolean
+
+  /**
    * Get all registered model IDs.
    */
   getModelIds(): string[]
@@ -106,6 +112,16 @@ export function createModelRegistry(): ModelRegistry {
 
     getAudioPricePerHour(modelId: string): number | undefined {
       return models.get(modelId)?.audioPricePerHour
+    },
+
+    isChatModel(modelId: string): boolean {
+      const caps = models.get(modelId)
+      if (!caps) return false
+      // `streaming` is set only on realtime STT models — its absence is what
+      // marks a plain request/response chat model.
+      return (
+        caps.inputModalities.includes("text") && caps.outputModalities.includes("text") && caps.streaming === undefined
+      )
     },
 
     getModelIds(): string[] {

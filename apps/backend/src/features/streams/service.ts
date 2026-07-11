@@ -61,7 +61,13 @@ import { EnclaveRuntimesRepository, ENCLAVE_RUNTIME_STALENESS_MS } from "../encl
 // leaves (db + types only). Same lesson as the BIK schema in lib/schemas.
 import { BotRuntimeInstanceRepository, BOT_RUNTIME_BIK_STALENESS_MS } from "../bot-runtimes/repository"
 import { BotRepository } from "../public-api/bot-repository"
-import { streamTypeSchema, visibilitySchema, companionModeSchema, memoryModeSchema } from "../../lib/schemas"
+import {
+  streamTypeSchema,
+  streamPurposeSchema,
+  visibilitySchema,
+  companionModeSchema,
+  memoryModeSchema,
+} from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
 import { StreamPoliciesRepository } from "./policy-repository"
 import { normalizeStreamDescription } from "./description"
@@ -76,6 +82,9 @@ const createScratchpadParamsSchema = z.object({
   companionMode: companionModeSchema.optional(),
   companionPersonaId: z.string().optional(),
   memoryMode: memoryModeSchema.optional(),
+  // System-purpose marker for non-user-facing scratchpads (e.g. a persona-editor
+  // test workbench). Omitted for ordinary scratchpads.
+  purpose: streamPurposeSchema.optional(),
 })
 
 /**
@@ -466,6 +475,7 @@ export class StreamService {
       companionMode: params.companionMode ?? CompanionModes.OFF,
       companionPersonaId: params.companionPersonaId,
       memoryMode,
+      purpose: params.purpose,
       createdBy: params.createdBy,
     })
 

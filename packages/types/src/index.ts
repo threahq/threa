@@ -10,6 +10,10 @@ export {
   DM_PARTICIPANT_COUNT,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
   STREAM_BRIEF_MAX_CHARS,
+  // Stream purpose (system-purpose marker; NULL = ordinary stream)
+  STREAM_PURPOSES,
+  type StreamPurpose,
+  StreamPurposes,
   // Visibility
   VISIBILITY_OPTIONS,
   type Visibility,
@@ -439,6 +443,7 @@ export { ATTACHMENT_CATEGORIES, categoryFromMime, mimePrefixesForCategory } from
 export type { AttachmentCategory } from "./attachment-categories"
 export {
   TOOL_PRIVACY_CATEGORIES,
+  TOOL_PRIVACY_CATEGORY_LABELS,
   ToolPrivacyCategories,
   TOOL_CATEGORIES_BY_NAME,
   isToolCategoryAllowed,
@@ -820,12 +825,20 @@ export {
   type WorkspaceSettingKey,
 } from "./workspace-settings"
 
-// Built-in persona workspace configuration (roadmap 7.1 subset)
+// Persona config editing (INV-31: shared editable-field patch schema; model
+// allowlist is registry-derived server-side and rides on the config response)
 export {
-  type WorkspacePersonaSummary,
-  type AvailablePersonaModel,
-  type ListWorkspacePersonasResponse,
-  type UpdatePersonaConfigInput,
+  type PersonaModelOption,
+  PERSONA_SYSTEM_PROMPT_MAX_CHARS,
+  personaConfigPatchSchema,
+  type PersonaConfigPatch,
+  personaConfigStatusSchema,
+  personaResolvedConfigSchema,
+  type PersonaResolvedConfig,
+  type PersonaListItem,
+  type PersonaDraftState,
+  type PersonaConfigResponse,
+  type UpdatePersonaOverrideInput,
 } from "./persona-config"
 
 // Feature flags (per-user rollout switches, managed from the backoffice)

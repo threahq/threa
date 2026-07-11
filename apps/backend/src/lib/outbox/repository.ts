@@ -26,6 +26,7 @@ import type {
   NotificationLevel,
   AttachmentSafetyStatus,
   AttachmentUploadStatus,
+  PersonaListItem,
 } from "@threa/types"
 
 export type OutboxEventType =
@@ -71,6 +72,7 @@ export type OutboxEventType =
   | "sidebar_config:updated"
   | "workspace_settings:updated"
   | "feature_flags:updated"
+  | "agent_config:updated"
   | "budget:alert"
   | "stream:member_joined"
   | "stream:member_added"
@@ -169,6 +171,7 @@ export type WorkspaceScopedEventType =
   | "attachment:transcoded"
   | "attachment:thumbnailed"
   | "attachment:upload_status_changed"
+  | "agent_config:updated"
 
 interface StreamScopedPayload {
   workspaceId: string
@@ -667,6 +670,15 @@ export interface WorkspaceSettingsUpdatedOutboxPayload extends WorkspaceScopedPa
   settings: WorkspaceSettings
 }
 
+// Persona config override event payload (workspace-scoped — every member
+// inherits the built-in persona, so a config change falls through to the
+// workspace room; carries the resolved light persona so display name/avatar
+// caches update without a refetch).
+export interface AgentConfigUpdatedOutboxPayload extends WorkspaceScopedPayload {
+  agentId: string
+  persona: PersonaListItem
+}
+
 // Feature flags event payload (user-scoped — flags are per user). Carries the
 // full resolved map so the frontend replaces its bootstrap field wholesale.
 export interface FeatureFlagsUpdatedOutboxPayload extends WorkspaceScopedPayload {
@@ -1012,6 +1024,7 @@ export interface OutboxEventPayloadMap {
   "sidebar_config:updated": SidebarConfigUpdatedOutboxPayload
   "workspace_settings:updated": WorkspaceSettingsUpdatedOutboxPayload
   "feature_flags:updated": FeatureFlagsUpdatedOutboxPayload
+  "agent_config:updated": AgentConfigUpdatedOutboxPayload
   "budget:alert": BudgetAlertOutboxPayload
   "invitation:sent": InvitationSentOutboxPayload
   "invitation:link-created": InvitationLinkCreatedOutboxPayload

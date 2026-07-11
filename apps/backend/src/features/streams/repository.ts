@@ -3,6 +3,7 @@ import { sql } from "../../db"
 import type {
   AuthorType,
   StreamType,
+  StreamPurpose,
   Visibility,
   CompanionMode,
   MemoryMode,
@@ -30,6 +31,7 @@ interface StreamRow {
   companion_mode: string
   companion_persona_id: string | null
   memory_mode: string
+  purpose: string | null
   created_by: string
   created_at: Date
   updated_at: Date
@@ -107,6 +109,13 @@ export interface Stream {
   companionMode: CompanionMode
   companionPersonaId: string | null
   /**
+   * System purpose of the stream (`StreamPurposes`) or `null` for an ordinary
+   * stream. `mapRowToStream` always sets it from the nullable column, so it is
+   * present on every stream read from the DB; optional only so test fixtures
+   * that predate it still typecheck. Readers treat an absent value as `null`.
+   */
+  purpose?: StreamPurpose | null
+  /**
    * GAM memory automation gate. `mapRowToStream` always sets it from the
    * `NOT NULL DEFAULT 'auto'` column, so it is present on every stream read
    * from the DB; optional only so test fixtures that predate it still typecheck.
@@ -150,6 +159,8 @@ export interface InsertStreamParams {
   companionMode?: CompanionMode
   companionPersonaId?: string
   memoryMode?: MemoryMode
+  /** System-purpose marker (`StreamPurposes`); omit/null for an ordinary stream. */
+  purpose?: StreamPurpose | null
   uniquenessKey?: string
   createdBy: string
 }
@@ -204,6 +215,7 @@ function mapRowToStream(row: StreamRow): Stream {
     companionMode: row.companion_mode as CompanionMode,
     companionPersonaId: row.companion_persona_id,
     memoryMode: row.memory_mode as MemoryMode,
+    purpose: (row.purpose as StreamPurpose | null) ?? null,
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -252,7 +264,7 @@ function mapRowToStreamWithPreview(row: StreamWithPreviewRow): StreamWithPreview
 const SELECT_FIELDS = `
   id, workspace_id, type, display_name, slug, description, description_json, visibility,
   parent_stream_id, parent_message_id, root_stream_id,
-  companion_mode, companion_persona_id, memory_mode,
+  companion_mode, companion_persona_id, memory_mode, purpose,
   created_by, created_at, updated_at, archived_at, display_name_generated_at
 `
 
@@ -262,7 +274,7 @@ const SELECT_FIELDS = `
 const SELECT_FIELDS_WITH_E2E = `
   s.id, s.workspace_id, s.type, s.display_name, s.slug, s.description, s.description_json, s.visibility,
   s.parent_stream_id, s.parent_message_id, s.root_stream_id,
-  s.companion_mode, s.companion_persona_id, s.memory_mode,
+  s.companion_mode, s.companion_persona_id, s.memory_mode, s.purpose,
   s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
   e.name_ciphertext AS e2e_name_ciphertext,
@@ -275,6 +287,17 @@ const SELECT_FIELDS_WITH_E2E = `
 `
 
 const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_streams e ON e.stream_id = s.id`
+
+/**
+ * System-purpose streams (e.g. a persona-editor test scratchpad) are real,
+ * fully-functional streams but not user-facing channels — every workspace
+ * stream-list path must exclude them so the workbench never leaks into the
+ * sidebar, the Cmd-K archived list, or the public API. The live `stream:created`
+ * socket path applies the same exclusion off the payload's `purpose` field
+ * (workspace-sync), so client and server agree. Single predicate so the list
+ * paths can't drift; `alias` prefixes it for joined queries (`s.purpose`).
+ */
+const purposeIsNull = (alias?: string) => `${alias ? `${alias}.` : ""}purpose IS NULL`
 
 export const StreamRepository = {
   async findById(db: Querier, id: string): Promise<Stream | null> {
@@ -393,7 +416,7 @@ export const StreamRepository = {
     if (ids.length === 0) return []
 
     const limit = filters?.limit ?? 50
-    const conditions = [`id = ANY($1)`, `workspace_id = $2`, `archived_at IS NULL`]
+    const conditions = [`id = ANY($1)`, `workspace_id = $2`, `archived_at IS NULL`, purposeIsNull()]
     const values: unknown[] = [ids, workspaceId]
     let paramIndex = 3
 
@@ -525,6 +548,7 @@ export const StreamRepository = {
             WHERE workspace_id = ${workspaceId}
               AND parent_stream_id = ${parentStreamId}
               AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
+              AND ${sql.raw(purposeIsNull())}
             ORDER BY created_at DESC`
       )
       return result.rows.map(mapRowToStream)
@@ -538,6 +562,7 @@ export const StreamRepository = {
                 AND type = ANY(${types})
                 AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
                 AND (visibility = 'public' OR id = ANY(${userMembershipStreamIds}))
+                AND ${sql.raw(purposeIsNull())}
               ORDER BY created_at DESC`
         )
         return result.rows.map(mapRowToStream)
@@ -548,6 +573,7 @@ export const StreamRepository = {
             WHERE workspace_id = ${workspaceId}
               AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
               AND (visibility = 'public' OR id = ANY(${userMembershipStreamIds}))
+              AND ${sql.raw(purposeIsNull())}
             ORDER BY created_at DESC`
       )
       return result.rows.map(mapRowToStream)
@@ -559,6 +585,7 @@ export const StreamRepository = {
             WHERE workspace_id = ${workspaceId}
               AND type = ANY(${types})
               AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
+              AND ${sql.raw(purposeIsNull())}
             ORDER BY created_at DESC`
       )
       return result.rows.map(mapRowToStream)
@@ -568,6 +595,7 @@ export const StreamRepository = {
       sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
           WHERE workspace_id = ${workspaceId}
             AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
+            AND ${sql.raw(purposeIsNull())}
           ORDER BY created_at DESC`
     )
     return result.rows.map(mapRowToStream)
@@ -606,6 +634,8 @@ export const StreamRepository = {
         AND s.root_stream_id IS NOT NULL
         AND EXISTS (SELECT 1 FROM streams root WHERE root.id = s.root_stream_id AND root.archived_at IS NOT NULL)
       )`
+
+    const EXCLUDE_PURPOSED_STREAMS = `AND ${purposeIsNull("s")}`
 
     // CTE to get last message per stream. LEFT JOIN against
     // `e2e_streams` so the workspace bootstrap surfaces the E2E flag
@@ -657,6 +687,7 @@ export const StreamRepository = {
                 AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
                 AND (s.visibility = 'public' OR s.id = ANY(${userMembershipStreamIds}))
                 ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
+              ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
               ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
         )
         return result.rows.map(mapRowToStreamWithPreview)
@@ -668,6 +699,7 @@ export const StreamRepository = {
               AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
               AND (s.visibility = 'public' OR s.id = ANY(${userMembershipStreamIds}))
               ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
+              ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
       )
       return result.rows.map(mapRowToStreamWithPreview)
@@ -680,6 +712,7 @@ export const StreamRepository = {
               AND s.type = ANY(${types})
               AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
               ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
+              ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
       )
       return result.rows.map(mapRowToStreamWithPreview)
@@ -690,6 +723,7 @@ export const StreamRepository = {
           WHERE s.workspace_id = ${workspaceId}
             AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
             ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
+              ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
           ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
     )
     return result.rows.map(mapRowToStreamWithPreview)
@@ -700,7 +734,7 @@ export const StreamRepository = {
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, description_json, visibility,
         parent_stream_id, parent_message_id, root_stream_id,
-        companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
+        companion_mode, companion_persona_id, memory_mode, purpose, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
@@ -716,6 +750,7 @@ export const StreamRepository = {
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
         ${params.memoryMode ?? "auto"},
+        ${params.purpose ?? null},
         ${params.uniquenessKey ?? null},
         ${params.createdBy}
       )
@@ -1240,6 +1275,7 @@ export const StreamRepository = {
         FROM streams
         WHERE id = ANY(${streamIds})
           AND type = ANY(${types})
+          AND ${sql.raw(purposeIsNull())}
           AND (
             display_name % ${query}
             OR slug % ${query}
@@ -1260,6 +1296,7 @@ export const StreamRepository = {
         ) AS sim_score
       FROM streams
       WHERE id = ANY(${streamIds})
+        AND ${sql.raw(purposeIsNull())}
         AND (
           display_name % ${query}
           OR slug % ${query}

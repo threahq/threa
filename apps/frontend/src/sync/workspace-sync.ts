@@ -36,9 +36,11 @@ import type {
   LabelUnassignedPayload,
   DraftUpsertedPayload,
   DraftDeletedPayload,
+  PersonaListItem,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { conversationKeys } from "@/hooks/use-conversations"
+import { personaKeys } from "@/hooks/use-personas"
 import { mergeBoardConversation, addBoardConversationStream } from "@/stores/board-store"
 import { putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
 import { activityKeys } from "@/hooks/use-activity"
@@ -52,6 +54,7 @@ import {
   NotificationLevels,
   SHAREABLE_SAFETY_STATUSES,
   StreamTypes,
+  StreamPurposes,
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
@@ -563,6 +566,13 @@ export function registerWorkspaceSocketHandlers(
   // `scheduledKeys` invalidation is needed here.
 
   const handleStreamCreated = (payload: StreamPayload) => {
+    // A system-purpose stream (e.g. a persona-editor test scratchpad) is a real,
+    // fully-functional stream, but not a sidebar entry: the editor mounts it
+    // directly (StreamContent runs its own subscribe+bootstrap), so the workspace
+    // layer must neither list it in the sidebar cache nor persist it to IDB. The
+    // bootstrap query applies the same exclusion; both must agree (D6 revision).
+    if (payload.stream.purpose === StreamPurposes.PERSONA_TEST) return
+
     let shouldJoinStreamRoom = false
     let shouldCacheStream = payload.stream.visibility !== Visibilities.PRIVATE
     let shouldAddMembership = false
@@ -1181,6 +1191,10 @@ export function registerWorkspaceSocketHandlers(
     event: StreamEvent
   }) => {
     if (payload.workspaceId !== workspaceId) return
+    // Same exclusion as handleStreamCreated: the creator's own member_added for a
+    // system-purpose stream must not add it to the sidebar/IDB either — this was
+    // the second add path and the one that leaked the test scratchpad.
+    if (payload.stream.purpose === StreamPurposes.PERSONA_TEST) return
     let shouldSubscribeStream = false
 
     // Update stream bootstrap members list (humans) or botMemberIds (bots)
@@ -1406,6 +1420,30 @@ export function registerWorkspaceSocketHandlers(
     })
 
     db.bots.put({ ...payload.bot, _cachedAt: Date.now() })
+  }
+
+  // An admin committed a persona (built-in agent) config override. Workspace-
+  // scoped — every member inherits the built-in — carrying the resolved light
+  // persona so display-name/avatar caches update without a refetch. The light
+  // payload lacks systemPrompt/tools/etc., so merge its fields onto the existing
+  // rows rather than replacing them: the timeline reads name/avatar from
+  // `db.personas` via `useWorkspacePersonas`, and the bootstrap cache keeps the
+  // list in sync for the next seed. The editor's own config query is refetched
+  // so a concurrent admin's change is reflected.
+  const handleAgentConfigUpdated = (payload: { workspaceId: string; agentId: string; persona: PersonaListItem }) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    const { id, name, description, avatarEmoji, model } = payload.persona
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
+      ...old,
+      personas: (old.personas ?? []).map((persona) =>
+        persona.id === id ? { ...persona, name, description, avatarEmoji, model } : persona
+      ),
+    }))
+    db.personas.update(id, { name, description, avatarEmoji, model, _cachedAt: Date.now() })
+
+    queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, payload.agentId) })
+    queryClient.invalidateQueries({ queryKey: personaKeys.list(workspaceId) })
   }
 
   // Handle activity created (mentions, notification-level activities, reactions, self rows)
@@ -1825,6 +1863,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("feature_flags:updated", handleFeatureFlagsUpdated)
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
+  socket.on("agent_config:updated", handleAgentConfigUpdated)
   socket.on("activity:created", handleActivityCreated)
   socket.on("memo:created", handleMemoCreated)
   socket.on("invitation:sent", handleInvitationChanged)
@@ -1881,6 +1920,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("feature_flags:updated", handleFeatureFlagsUpdated)
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
+    socket.off("agent_config:updated", handleAgentConfigUpdated)
     socket.off("activity:created", handleActivityCreated)
     socket.off("memo:created", handleMemoCreated)
     socket.off("invitation:sent", handleInvitationChanged)

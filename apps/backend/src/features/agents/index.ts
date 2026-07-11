@@ -107,8 +107,6 @@ export type { ScheduleFollowUpParams, ScheduleFollowUpResult } from "./follow-up
 export { createAgentFollowUpFireWorker } from "./follow-up-worker"
 export { AgentFollowUpRepository } from "./follow-up-repository"
 export type { AgentFollowUp } from "./follow-up-repository"
-export { PersonaConfigService } from "./persona-config-service"
-export { createPersonaConfigHandlers } from "./persona-config-handlers"
 export { EpisodeSummaryService } from "./episode-summary-service"
 export type { EpisodeSummaryServiceDeps } from "./episode-summary-service"
 export { createEpisodeSummarizeWorker } from "./episode-summary-worker"
@@ -127,6 +125,7 @@ export {
   EMPTY_AGENT_ID,
   BUILT_IN_AGENTS,
   getBuiltInAgentConfig,
+  getVisibleBuiltInAgentConfig,
   isE2eCapablePersona,
   listVisibleBuiltInAgentConfigs,
   applyBuiltInAgentPatch,
@@ -135,7 +134,21 @@ export {
 } from "./built-in-agents"
 export type { BuiltInAgentConfig, BuiltInAgentConfigPatch } from "./built-in-agents"
 export { AgentConfigOverrideRepository } from "./agent-config-override-repository"
-export type { AgentConfigOverride } from "./agent-config-override-repository"
+export type {
+  AgentConfigOverride,
+  AgentConfigOverrideDetail,
+  UpsertAgentConfigOverrideParams,
+  UpsertAgentConfigOverrideResult,
+} from "./agent-config-override-repository"
+export { PersonaConfigService } from "./persona-config-service"
+export type { SetPersonaOverrideResult } from "./persona-config-service"
+export { createPersonaConfigHandlers } from "./persona-config-handlers"
+export { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
+export type {
+  PersonaConfigDraftDetail,
+  PersonaConfigDraftIdentity,
+  UpsertPersonaConfigDraftParams,
+} from "./persona-config-draft-repository"
 
 export { hashCallbackToken } from "./callback-token"
 export { assertSessionRunning, verifyCallbackToken, assertReplyKeyGeneration } from "./sealed-session-guards"

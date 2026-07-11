@@ -11,6 +11,19 @@ export const StreamTypes = {
 
 export const DM_PARTICIPANT_COUNT = 2
 
+// A stream's system purpose, when it exists to power a feature rather than to be
+// a user-facing chat. NULL (the common case) is an ordinary stream. `persona_test`
+// marks the ephemeral scratchpad bound to a persona-editor draft: it is a real,
+// fully-functional stream (so it mounts and runs turns), but it is a workbench,
+// not a channel, so the sidebar and workspace stream lists exclude it. No DB enum
+// (INV-3) — TEXT validated in app code.
+export const STREAM_PURPOSES = ["persona_test"] as const
+export type StreamPurpose = (typeof STREAM_PURPOSES)[number]
+
+export const StreamPurposes = {
+  PERSONA_TEST: "persona_test",
+} as const satisfies Record<string, StreamPurpose>
+
 /**
  * Upper bound on the markdown projection of a stream description. Generous enough
  * for a rich multi-paragraph note (descriptions collapse in the UI past a few

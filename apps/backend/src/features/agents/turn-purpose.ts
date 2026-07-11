@@ -17,6 +17,11 @@ export type TurnPurpose =
   | { kind: "mention" }
   | { kind: "follow_up"; followUpId: string }
   | { kind: "supersede_rerun"; supersedesSessionId: string; rerunContext?: AgentSessionRerunContext }
+  // A companion turn in a persona editor's test-drive scratchpad (roadmap 7.1):
+  // the precheck loads `draftId` and runs the candidate config instead of the
+  // saved override. Behaviourally identical to `catch_up` otherwise — no prompt
+  // section (the draft prompt must run verbatim), default flags.
+  | { kind: "draft_test"; draftId: string }
 
 export type TurnPurposeKind = TurnPurpose["kind"]
 
@@ -34,12 +39,24 @@ export function resolveTurnPurpose(payload: {
   supersedesSessionId?: string
   rerunContext?: AgentSessionRerunContext
   followUpId?: string
+  personaDraftId?: string
 }): TurnPurpose {
   if (payload.followUpId) {
     return { kind: "follow_up", followUpId: payload.followUpId }
   }
   if (payload.supersedesSessionId) {
-    return { kind: "supersede_rerun", supersedesSessionId: payload.supersedesSessionId, rerunContext: payload.rerunContext }
+    return {
+      kind: "supersede_rerun",
+      supersedesSessionId: payload.supersedesSessionId,
+      rerunContext: payload.rerunContext,
+    }
+  }
+  // Above mention/catch_up, below follow_up/supersede: a follow-up firing or a
+  // supersede rerun in a test stream is still that first-class thing; a plain
+  // companion message in a test stream runs the draft. The fields never co-occur
+  // at the companion enqueue site (it sets only `personaDraftId`).
+  if (payload.personaDraftId) {
+    return { kind: "draft_test", draftId: payload.personaDraftId }
   }
   if (payload.trigger === AgentTriggers.MENTION) {
     return { kind: "mention" }

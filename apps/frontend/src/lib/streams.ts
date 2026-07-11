@@ -16,6 +16,18 @@ export const STREAM_ICONS: Record<StreamType, ComponentType<{ className?: string
   [StreamTypes.SYSTEM]: Bell,
 }
 
+/**
+ * A system-purpose stream (e.g. the persona editor's test scratchpad) is fully
+ * functional when mounted directly but must not appear in user-facing stream
+ * LISTS (sidebar, quick switcher). Multiple code paths legitimately persist
+ * such a stream to IDB (any detail fetch does), so listing surfaces filter at
+ * read time with this predicate rather than every writer guarding — and name
+ * resolution (`useStreamName`) stays unfiltered so labels still resolve.
+ */
+export function isUtilityStream(stream: { purpose?: string | null }): boolean {
+  return stream.purpose != null
+}
+
 /** Human-readable label for a stream type ("Scratchpad", "Channel", …). */
 export function getStreamTypeLabel(type: StreamType): string {
   switch (type) {
