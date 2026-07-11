@@ -71,6 +71,11 @@ const TAG_DEFS: { name: string; description: string }[] = [
     name: "Bot invocations",
     description: "Claim, renew, step through, complete, or fail the work a bot is summoned to do.",
   },
+  {
+    name: "Delegations",
+    description:
+      "List, claim, report progress on, and complete or fail delegated tasks handed off to a local agent; the result posts back into the stream.",
+  },
 ]
 
 function buildTags() {

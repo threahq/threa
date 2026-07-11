@@ -190,6 +190,36 @@ describe("claim-authenticated transitions carry the live-holder guard", () => {
   }
 })
 
+describe("DelegatedTaskRepository.findClaimedForUpdate", () => {
+  afterEach(() => mock.restore())
+
+  it("locks a live-claimed row under the same holder guard, FOR UPDATE", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeRow({ status: DelegationStatuses.RUNNING })])
+
+    const row = await DelegatedTaskRepository.findClaimedForUpdate(db, {
+      workspaceId: "ws_1",
+      id: "dlg_1",
+      claimTokenHash: "hash_1",
+    })
+
+    expect(captured.text).toContain("FOR UPDATE")
+    expect(captured.text).toContain("claim_expires_at > NOW()")
+    expect(captured.values).toContain(DelegationStatuses.CLAIMED)
+    expect(captured.values).toContain(DelegationStatuses.RUNNING)
+    expect(captured.values).toContain("hash_1")
+    expect(row?.id).toBe("dlg_1")
+  })
+
+  it("returns null when no live claim matches (invalid/lapsed token)", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [])
+    expect(
+      await DelegatedTaskRepository.findClaimedForUpdate(db, { workspaceId: "ws_1", id: "dlg_1", claimTokenHash: "x" })
+    ).toBeNull()
+  })
+})
+
 describe("DelegatedTaskRepository.markCancelled", () => {
   afterEach(() => mock.restore())
 

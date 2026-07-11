@@ -24,6 +24,7 @@ import {
   PROCESSING_STATUSES,
   EXTRACTION_CONTENT_TYPES,
   THREA_CALLBACK_TOKEN_HEADER,
+  DELEGATION_STATUSES,
 } from "@threa/types"
 import type { WorkspacePermissionSlug } from "@threa/types"
 import {
@@ -57,6 +58,11 @@ import {
   updateLabelSchema,
   assignLabelByNameSchema,
   unassignLabelByNameSchema,
+  claimDelegationSchema,
+  heartbeatDelegationSchema,
+  reportDelegationProgressSchema,
+  completeDelegationSchema,
+  failDelegationSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -477,6 +483,44 @@ const sealedCompletedInvocationSchema = z.object({
 })
 const sealedInterimMessageSchema = z.object({ messageId: z.string() })
 
+// A delegated task on the wire (roadmap 5.3). The lifecycle a local agent drives
+// via the claim/status/complete endpoints; `claimToken`/`claimExpiresAt` are
+// present only on the claim response (the claiming agent's secret), never on the
+// list or status shapes.
+const delegationSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  streamId: z.string(),
+  sourceConversationId: z.string().nullable(),
+  title: z.string(),
+  brief: z.string().describe("The self-contained hand-off prompt (markdown)."),
+  contextRefs: z.array(z.string()).describe("Pointer URLs to source material: shared-message:/memo:/attachment:."),
+  status: z.enum(DELEGATION_STATUSES),
+  claimedByLabel: z.string().nullable(),
+  statusNote: z.string().nullable(),
+  resultMessageId: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  statusChangedAt: z.string().datetime(),
+})
+
+const claimedDelegationSchema = delegationSchema.extend({
+  claimToken: z
+    .string()
+    .describe("Per-claim secret authenticating every later call. Returned once, never re-fetchable."),
+  claimExpiresAt: z.string().datetime().describe("Heartbeat before this or the claim lapses to `expired`."),
+})
+
+const delegationClaimRenewalSchema = z.object({
+  id: z.string(),
+  status: z.enum(DELEGATION_STATUSES),
+  claimExpiresAt: z.string().datetime().nullable(),
+})
+
+const completedDelegationSchema = z.object({
+  delegation: delegationSchema,
+  message: messageSchema.describe("The result message posted into the stream, authored by the claiming principal."),
+})
+
 const errorSchema = z.object({
   error: z.string(),
   details: z.record(z.string(), z.array(z.string())).optional(),
@@ -536,6 +580,14 @@ const attachmentIdParam = {
   required: true,
   schema: { type: "string" as const },
   description: "Attachment ID (prefixed ULID)",
+}
+
+const delegationIdParam = {
+  name: "delegationId",
+  in: "path" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Delegation ID (prefixed ULID)",
 }
 
 const labelIdParam = {
@@ -908,6 +960,94 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
 
   {
     method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/delegations",
+    operationId: "listOpenDelegations",
+    summary: "List open delegations",
+    description:
+      "List delegated tasks awaiting a claimer, oldest first — the discovery surface for a local agent. Each carries the self-contained brief and context refs so the agent can decide whether to claim it.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ],
+    parameters: [workspaceIdParam],
+    responseSchema: dataArrayEnvelope(delegationSchema),
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/claim",
+    operationId: "claimDelegation",
+    summary: "Claim an open delegation",
+    description:
+      "Claim an open delegated task for a local agent. Returns the brief, context refs, a per-claim `claimToken` (returned once), and the claim expiry. CAS `open → claimed`; a second claimer gets 409.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam],
+    requestSchema: claimDelegationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(claimedDelegationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/heartbeat",
+    operationId: "heartbeatDelegation",
+    summary: "Heartbeat a claimed delegation",
+    description:
+      "Push the claim's expiry forward so a long-running local task is not reaped by the expiry sweep. No card-visible change.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam],
+    requestSchema: heartbeatDelegationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(delegationClaimRenewalSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/status",
+    operationId: "reportDelegationProgress",
+    summary: "Report delegation progress",
+    description:
+      "Report progress on a claimed delegation: transitions it to `running` and attaches an optional free-text note that renders on the card. Also renews the claim TTL.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam],
+    requestSchema: reportDelegationProgressSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(delegationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/complete",
+    operationId: "completeDelegation",
+    summary: "Complete a claimed delegation",
+    description:
+      "Complete a claimed delegation with a result. The result markdown is posted as a message into the delegation's stream authored by the claiming principal (so GAM memorizes the outcome), linked as the delegation's result, and the task CASes to `completed`.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam],
+    requestSchema: completeDelegationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(completedDelegationSchema),
+    successStatus: 201,
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/fail",
+    operationId: "failDelegation",
+    summary: "Fail a claimed delegation",
+    description: "Fail a claimed delegation, recording why on the card. CAS `claimed|running → failed`.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam],
+    requestSchema: failDelegationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(delegationSchema),
+    canReturn404: true,
+  },
+
+  {
+    method: "get",
     path: "/api/v1/workspaces/{workspaceId}/streams",
     operationId: "listStreams",
     summary: "List streams",
@@ -1185,6 +1325,9 @@ export {
   labelAssignmentResponseSchema,
   labelAssignmentResultSchema,
   labelCatalogSchema,
+  delegationSchema,
+  claimedDelegationSchema,
+  completedDelegationSchema,
   errorSchema,
 }
 
@@ -1205,3 +1348,5 @@ export type WireAttachmentUrl = z.infer<typeof attachmentUrlSchema>
 export type WireLabel = z.infer<typeof labelSchema>
 export type WireLabelAssignment = z.infer<typeof labelAssignmentResponseSchema>
 export type WireLabelCatalog = z.infer<typeof labelCatalogSchema>
+export type WireDelegation = z.infer<typeof delegationSchema>
+export type WireClaimedDelegation = z.infer<typeof claimedDelegationSchema>

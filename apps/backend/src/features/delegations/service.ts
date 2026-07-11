@@ -9,8 +9,11 @@ import {
   type AuthorType,
   type DelegationCreatedEventPayload,
   type DelegationStatusChangedEventPayload,
+  type JSONContent,
+  type SourceItem,
 } from "@threa/types"
 import { StreamEventRepository } from "../streams"
+import type { EventService, Message } from "../messaging"
 import { hashCallbackToken } from "../agents"
 import { DELEGATION_CLAIM_TTL_SECONDS } from "./config"
 import { DelegatedTaskRepository, type DelegatedTask, type DelegatedTaskWithEvent } from "./repository"
@@ -23,8 +26,25 @@ const DELEGATION_OUTBOX_EVENT_TYPE = {
 
 interface DelegationServiceDeps {
   pool: Pool
+  /** Posts the completion result message inside the complete transaction (INV-7). */
+  eventService: EventService
   /** Claim TTL override for tests; production uses the config default. */
   claimTtlSeconds?: number
+}
+
+/** The completion result content, pre-parsed at the wire boundary (INV-58). */
+export interface DelegationResultContent {
+  author: { actorId: string; actorType: AuthorType }
+  contentJson: JSONContent
+  contentMarkdown: string
+  attachmentIds?: string[]
+  sources?: SourceItem[]
+  metadata?: Record<string, string>
+}
+
+export interface CompleteDelegationResult {
+  delegation: DelegatedTask
+  message: Message
 }
 
 export interface CreateDelegationParams {
@@ -62,10 +82,12 @@ export type ClaimDelegationResult =
  */
 export class DelegationService {
   private readonly pool: Pool
+  private readonly eventService: EventService
   private readonly claimTtlSeconds: number
 
   constructor(deps: DelegationServiceDeps) {
     this.pool = deps.pool
+    this.eventService = deps.eventService
     this.claimTtlSeconds = deps.claimTtlSeconds ?? DELEGATION_CLAIM_TTL_SECONDS
   }
 
@@ -210,23 +232,56 @@ export class DelegationService {
     })
   }
 
-  /** Terminal success: `claimed|running → completed`, linking the result message when given. */
+  /**
+   * Terminal success: post the local agent's result into the stream, link it as
+   * `result_message_id`, and CAS `claimed|running → completed` — all in one
+   * transaction (INV-7). The completion message enters the normal pipeline as a
+   * real message authored by the claiming principal, so GAM memorizes the
+   * outcome (the whole point of the loop). The claim is validated under a
+   * `FOR UPDATE` lock BEFORE the message is written, so an invalid/lapsed token
+   * returns `null` without stranding an orphan message. `null` is 404 at the
+   * handler.
+   */
   async complete(params: {
     workspaceId: string
     id: string
     claimToken: string
-    resultMessageId?: string
-  }): Promise<DelegatedTask | null> {
+    result: DelegationResultContent
+  }): Promise<CompleteDelegationResult | null> {
     return withTransaction(this.pool, async (client) => {
+      const claimTokenHash = hashCallbackToken(params.claimToken)
+      const locked = await DelegatedTaskRepository.findClaimedForUpdate(client, {
+        workspaceId: params.workspaceId,
+        id: params.id,
+        claimTokenHash,
+      })
+      if (!locked) return null
+
+      const { message } = await this.eventService.createMessageInTransaction(client, {
+        workspaceId: params.workspaceId,
+        streamId: locked.streamId,
+        authorId: params.result.author.actorId,
+        authorType: params.result.author.actorType,
+        contentJson: params.result.contentJson,
+        contentMarkdown: params.result.contentMarkdown,
+        attachmentIds: params.result.attachmentIds?.length ? params.result.attachmentIds : undefined,
+        sources: params.result.sources,
+        metadata: params.result.metadata,
+        // Idempotency: a retried complete returns the already-posted message
+        // instead of a duplicate row.
+        clientMessageId: `delegation:${locked.id}`,
+      })
+
+      // The row is locked with a live claim, so the CAS cannot miss here.
       const completed = await DelegatedTaskRepository.complete(client, {
         workspaceId: params.workspaceId,
         id: params.id,
-        claimTokenHash: hashCallbackToken(params.claimToken),
-        resultMessageId: params.resultMessageId ?? null,
+        claimTokenHash,
+        resultMessageId: message.id,
       })
       if (!completed) return null
       await this.appendStatusEvent(client, completed, SYSTEM_ACTOR)
-      return completed
+      return { delegation: completed, message }
     })
   }
 

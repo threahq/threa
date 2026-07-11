@@ -395,3 +395,36 @@ export const listMyBotsSchema = z.object({
   /** Optional capability filter — currently only `interactive` is defined. */
   traits: z.enum(BOT_TRAITS).optional(),
 })
+
+// Delegation lifecycle (roadmap 5.3). A local agent claims an open delegated
+// task, reports progress, then completes or fails it. The claim token minted at
+// claim time (never persisted in cleartext) authenticates every later call —
+// no instanceId, since a claim is bound to the token, not a runtime slot.
+const delegationClaimTokenSchema = z.string().min(1).max(256)
+
+export const claimDelegationSchema = z.object({
+  // Human-readable identity of the claiming agent ("Kris's MacBook / Claude
+  // Code") — shown on the card; not an authenticated actor.
+  claimedByLabel: z.string().min(1).max(200),
+})
+
+export const heartbeatDelegationSchema = z.object({
+  claimToken: delegationClaimTokenSchema,
+})
+
+export const reportDelegationProgressSchema = z.object({
+  claimToken: delegationClaimTokenSchema,
+  statusNote: z.string().min(1).max(2000).optional(),
+})
+
+export const completeDelegationSchema = z.object({
+  claimToken: delegationClaimTokenSchema,
+  resultMarkdown: z.string().min(1).max(50_000),
+  sources: z.array(sourceItemSchema).max(50).optional(),
+  metadata: messageMetadataSchema.optional(),
+})
+
+export const failDelegationSchema = z.object({
+  claimToken: delegationClaimTokenSchema,
+  errorMessage: z.string().min(1).max(1000),
+})

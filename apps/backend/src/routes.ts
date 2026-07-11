@@ -857,6 +857,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     eventService,
     labelService,
     labelAssignmentService,
+    delegationService,
     pool,
     io: deps.io,
   })
@@ -996,6 +997,43 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
     publicApi.failBotInvocation
+  )
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/delegations",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ),
+    publicApi.listOpenDelegations
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/claim",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    publicApi.claimDelegation
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/heartbeat",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    publicApi.heartbeatDelegation
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/status",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    publicApi.reportDelegationProgress
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/complete",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    publicApi.completeDelegation
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/fail",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    publicApi.failDelegation
   )
 
   app.get(

@@ -519,7 +519,7 @@ export async function startServer(): Promise<ServerInstance> {
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
   const agentFollowUpService = new AgentFollowUpService({ pool, workspaceSettingsService })
   const streamBriefService = new StreamBriefService({ pool })
-  const delegationService = new DelegationService({ pool })
+  const delegationService = new DelegationService({ pool, eventService })
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
   // PushService runs on pools.realtime so push delivery (outbox hot path) has

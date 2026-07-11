@@ -5,6 +5,7 @@ import { DelegationService } from "./service"
 import { DelegatedTaskRepository, type DelegatedTask } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamEventRepository } from "../streams"
+import type { EventService, Message } from "../messaging"
 import { hashCallbackToken } from "../agents"
 import * as dbModule from "../../db"
 
@@ -46,8 +47,20 @@ function stubTransaction() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
 }
 
-function makeService() {
-  return new DelegationService({ pool: {} as Pool, claimTtlSeconds: 900 })
+function fakeMessage(overrides: Partial<Message> = {}): Message {
+  return { id: "msg_result", ...overrides } as Message
+}
+
+/** An EventService whose only exercised method is the in-tx message create. */
+function stubEventService(message: Message = fakeMessage()) {
+  const createMessageInTransaction = mock(async () => ({ message }))
+  return { createMessageInTransaction } as unknown as EventService & {
+    createMessageInTransaction: ReturnType<typeof mock>
+  }
+}
+
+function makeService(eventService: EventService = stubEventService()) {
+  return new DelegationService({ pool: {} as Pool, eventService, claimTtlSeconds: 900 })
 }
 
 describe("DelegationService.create", () => {
@@ -211,26 +224,72 @@ describe("DelegationService.heartbeat", () => {
 describe("DelegationService.complete / fail / markRunning", () => {
   afterEach(() => mock.restore())
 
-  it("complete appends the completed patch carrying the result message id", async () => {
+  it("complete posts the result message as the claiming principal, links it, and appends the completed patch", async () => {
     stubTransaction()
-    spyOn(DelegatedTaskRepository, "complete").mockResolvedValue(
+    spyOn(DelegatedTaskRepository, "findClaimedForUpdate").mockResolvedValue(
+      fakeDelegation({ status: DelegationStatuses.RUNNING, claimTokenHash: hashCallbackToken("tok_1") })
+    )
+    const complete = spyOn(DelegatedTaskRepository, "complete").mockResolvedValue(
       fakeDelegation({ status: DelegationStatuses.COMPLETED, resultMessageId: "msg_result" })
     )
     const { insertEvent } = stubEventAppend()
+    const eventService = stubEventService(fakeMessage({ id: "msg_result" }))
 
-    await makeService().complete({
+    const result = await makeService(eventService).complete({
       workspaceId: "ws_1",
       id: "dlg_1",
       claimToken: "tok_1",
-      resultMessageId: "msg_result",
+      result: {
+        author: { actorId: "usr_kris", actorType: AuthorTypes.USER },
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "Shipped it.",
+      },
     })
 
+    expect(result?.message.id).toBe("msg_result")
+    // The message is authored by the principal, in the delegation's stream.
+    expect((eventService as any).createMessageInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        streamId: "stream_1",
+        authorId: "usr_kris",
+        authorType: AuthorTypes.USER,
+        contentMarkdown: "Shipped it.",
+      })
+    )
+    // The CAS links the posted message id.
+    expect((complete.mock.calls[0]?.[1] as { resultMessageId: string }).resultMessageId).toBe("msg_result")
     expect(insertEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         payload: expect.objectContaining({ status: DelegationStatuses.COMPLETED, resultMessageId: "msg_result" }),
       })
     )
+  })
+
+  it("complete returns null and posts no message when the claim is invalid/lapsed", async () => {
+    stubTransaction()
+    const findLocked = spyOn(DelegatedTaskRepository, "findClaimedForUpdate").mockResolvedValue(null)
+    const complete = spyOn(DelegatedTaskRepository, "complete").mockResolvedValue(null)
+    const { insertEvent } = stubEventAppend()
+    const eventService = stubEventService()
+
+    const result = await makeService(eventService).complete({
+      workspaceId: "ws_1",
+      id: "dlg_1",
+      claimToken: "tok_stale",
+      result: {
+        author: { actorId: "usr_kris", actorType: AuthorTypes.USER },
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "nope",
+      },
+    })
+
+    expect(result).toBeNull()
+    expect(findLocked).toHaveBeenCalled()
+    expect((eventService as any).createMessageInTransaction).not.toHaveBeenCalled()
+    expect(complete).not.toHaveBeenCalled()
+    expect(insertEvent).not.toHaveBeenCalled()
   })
 
   it("fail appends the failed patch carrying the note", async () => {

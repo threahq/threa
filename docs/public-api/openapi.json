@@ -2890,6 +2890,819 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/delegations": {
+      "get": {
+        "operationId": "listOpenDelegations",
+        "summary": "List open delegations",
+        "tags": ["Delegations"],
+        "description": "List delegated tasks awaiting a claimer, oldest first — the discovery surface for a local agent. Each carries the self-contained brief and context refs so the agent can decide whether to claim it.",
+        "security": [{ "apiKey": ["delegations:read"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "workspaceId": { "type": "string" },
+                          "streamId": { "type": "string" },
+                          "sourceConversationId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                          "title": { "type": "string" },
+                          "brief": {
+                            "type": "string",
+                            "description": "The self-contained hand-off prompt (markdown)."
+                          },
+                          "contextRefs": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Pointer URLs to source material: shared-message:/memo:/attachment:."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                          },
+                          "claimedByLabel": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                          "statusNote": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                          "resultMessageId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "statusChangedAt": { "type": "string", "format": "date-time" }
+                        },
+                        "required": [
+                          "id",
+                          "workspaceId",
+                          "streamId",
+                          "sourceConversationId",
+                          "title",
+                          "brief",
+                          "contextRefs",
+                          "status",
+                          "claimedByLabel",
+                          "statusNote",
+                          "resultMessageId",
+                          "createdAt",
+                          "statusChangedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/claim": {
+      "post": {
+        "operationId": "claimDelegation",
+        "summary": "Claim an open delegation",
+        "tags": ["Delegations"],
+        "description": "Claim an open delegated task for a local agent. Returns the brief, context refs, a per-claim `claimToken` (returned once), and the claim expiry. CAS `open → claimed`; a second claimer gets 409.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": { "claimedByLabel": { "type": "string", "minLength": 1, "maxLength": 200 } },
+                "required": ["claimedByLabel"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "workspaceId": { "type": "string" },
+                        "streamId": { "type": "string" },
+                        "sourceConversationId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "title": { "type": "string" },
+                        "brief": { "type": "string", "description": "The self-contained hand-off prompt (markdown)." },
+                        "contextRefs": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "Pointer URLs to source material: shared-message:/memo:/attachment:."
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimedByLabel": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "statusNote": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "resultMessageId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "statusChangedAt": { "type": "string", "format": "date-time" },
+                        "claimToken": {
+                          "type": "string",
+                          "description": "Per-claim secret authenticating every later call. Returned once, never re-fetchable."
+                        },
+                        "claimExpiresAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "Heartbeat before this or the claim lapses to `expired`."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "workspaceId",
+                        "streamId",
+                        "sourceConversationId",
+                        "title",
+                        "brief",
+                        "contextRefs",
+                        "status",
+                        "claimedByLabel",
+                        "statusNote",
+                        "resultMessageId",
+                        "createdAt",
+                        "statusChangedAt",
+                        "claimToken",
+                        "claimExpiresAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/heartbeat": {
+      "post": {
+        "operationId": "heartbeatDelegation",
+        "summary": "Heartbeat a claimed delegation",
+        "tags": ["Delegations"],
+        "description": "Push the claim's expiry forward so a long-running local task is not reaped by the expiry sweep. No card-visible change.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": { "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 } },
+                "required": ["claimToken"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimExpiresAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+                      },
+                      "required": ["id", "status", "claimExpiresAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/status": {
+      "post": {
+        "operationId": "reportDelegationProgress",
+        "summary": "Report delegation progress",
+        "tags": ["Delegations"],
+        "description": "Report progress on a claimed delegation: transitions it to `running` and attaches an optional free-text note that renders on the card. Also renews the claim TTL.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "statusNote": { "type": "string", "minLength": 1, "maxLength": 2000 }
+                },
+                "required": ["claimToken"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "workspaceId": { "type": "string" },
+                        "streamId": { "type": "string" },
+                        "sourceConversationId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "title": { "type": "string" },
+                        "brief": { "type": "string", "description": "The self-contained hand-off prompt (markdown)." },
+                        "contextRefs": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "Pointer URLs to source material: shared-message:/memo:/attachment:."
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimedByLabel": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "statusNote": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "resultMessageId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "statusChangedAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": [
+                        "id",
+                        "workspaceId",
+                        "streamId",
+                        "sourceConversationId",
+                        "title",
+                        "brief",
+                        "contextRefs",
+                        "status",
+                        "claimedByLabel",
+                        "statusNote",
+                        "resultMessageId",
+                        "createdAt",
+                        "statusChangedAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/complete": {
+      "post": {
+        "operationId": "completeDelegation",
+        "summary": "Complete a claimed delegation",
+        "tags": ["Delegations"],
+        "description": "Complete a claimed delegation with a result. The result markdown is posted as a message into the delegation's stream authored by the claiming principal (so GAM memorizes the outcome), linked as the delegation's result, and the task CASes to `completed`.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "resultMarkdown": { "type": "string", "minLength": 1, "maxLength": 50000 },
+                  "sources": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": { "type": "string", "enum": ["web", "workspace", "github"] },
+                        "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+                        "url": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                        "snippet": { "type": "string", "maxLength": 2000 }
+                      },
+                      "required": ["title", "url"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-zA-Z0-9_.\\-:]+$"
+                    },
+                    "additionalProperties": { "type": "string", "maxLength": 256 }
+                  }
+                },
+                "required": ["claimToken", "resultMarkdown"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "delegation": {
+                          "type": "object",
+                          "properties": {
+                            "id": { "type": "string" },
+                            "workspaceId": { "type": "string" },
+                            "streamId": { "type": "string" },
+                            "sourceConversationId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "title": { "type": "string" },
+                            "brief": {
+                              "type": "string",
+                              "description": "The self-contained hand-off prompt (markdown)."
+                            },
+                            "contextRefs": {
+                              "type": "array",
+                              "items": { "type": "string" },
+                              "description": "Pointer URLs to source material: shared-message:/memo:/attachment:."
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                            },
+                            "claimedByLabel": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "statusNote": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "resultMessageId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "createdAt": { "type": "string", "format": "date-time" },
+                            "statusChangedAt": { "type": "string", "format": "date-time" }
+                          },
+                          "required": [
+                            "id",
+                            "workspaceId",
+                            "streamId",
+                            "sourceConversationId",
+                            "title",
+                            "brief",
+                            "contextRefs",
+                            "status",
+                            "claimedByLabel",
+                            "statusNote",
+                            "resultMessageId",
+                            "createdAt",
+                            "statusChangedAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "message": {
+                          "type": "object",
+                          "properties": {
+                            "id": { "type": "string" },
+                            "streamId": { "type": "string" },
+                            "sequence": { "type": "string", "description": "Numeric sequence as string" },
+                            "authorId": { "type": "string" },
+                            "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                            "authorDisplayName": { "type": "string" },
+                            "content": { "type": "string" },
+                            "replyCount": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "threadStreamId": { "type": "string" },
+                            "clientMessageId": { "type": "string" },
+                            "sentVia": {
+                              "description": "Present when message was sent via API on behalf of a user",
+                              "type": "string"
+                            },
+                            "metadata": {
+                              "type": "object",
+                              "propertyNames": { "type": "string" },
+                              "additionalProperties": { "type": "string" },
+                              "description": "External references attached by the sender. Always present; empty when unset."
+                            },
+                            "attachments": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": { "type": "string" },
+                                  "filename": { "type": "string" },
+                                  "mimeType": { "type": "string" },
+                                  "sizeBytes": {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "processingStatus": {
+                                    "type": "string",
+                                    "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                  },
+                                  "width": {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "height": {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                "additionalProperties": false
+                              }
+                            },
+                            "editedAt": { "type": "string", "format": "date-time" },
+                            "createdAt": { "type": "string", "format": "date-time" }
+                          },
+                          "required": [
+                            "id",
+                            "streamId",
+                            "sequence",
+                            "authorId",
+                            "authorType",
+                            "content",
+                            "replyCount",
+                            "metadata",
+                            "createdAt"
+                          ],
+                          "additionalProperties": false,
+                          "description": "The result message posted into the stream, authored by the claiming principal."
+                        }
+                      },
+                      "required": ["delegation", "message"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/fail": {
+      "post": {
+        "operationId": "failDelegation",
+        "summary": "Fail a claimed delegation",
+        "tags": ["Delegations"],
+        "description": "Fail a claimed delegation, recording why on the card. CAS `claimed|running → failed`.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "errorMessage": { "type": "string", "minLength": 1, "maxLength": 1000 }
+                },
+                "required": ["claimToken", "errorMessage"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "workspaceId": { "type": "string" },
+                        "streamId": { "type": "string" },
+                        "sourceConversationId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "title": { "type": "string" },
+                        "brief": { "type": "string", "description": "The self-contained hand-off prompt (markdown)." },
+                        "contextRefs": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "Pointer URLs to source material: shared-message:/memo:/attachment:."
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimedByLabel": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "statusNote": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "resultMessageId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "statusChangedAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": [
+                        "id",
+                        "workspaceId",
+                        "streamId",
+                        "sourceConversationId",
+                        "title",
+                        "brief",
+                        "contextRefs",
+                        "status",
+                        "claimedByLabel",
+                        "statusNote",
+                        "resultMessageId",
+                        "createdAt",
+                        "statusChangedAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/streams": {
       "get": {
         "operationId": "listStreams",
@@ -4842,6 +5655,10 @@
     {
       "name": "Bot invocations",
       "description": "Claim, renew, step through, complete, or fail the work a bot is summoned to do."
+    },
+    {
+      "name": "Delegations",
+      "description": "List, claim, report progress on, and complete or fail delegated tasks handed off to a local agent; the result posts back into the stream."
     }
   ]
 }

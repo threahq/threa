@@ -1,7 +1,12 @@
 export { DelegatedTaskRepository } from "./repository"
 export type { DelegatedTask, DelegatedTaskWithEvent, InsertDelegatedTaskParams } from "./repository"
 export { DelegationService } from "./service"
-export type { CreateDelegationParams, ClaimDelegationResult } from "./service"
+export type {
+  CreateDelegationParams,
+  ClaimDelegationResult,
+  DelegationResultContent,
+  CompleteDelegationResult,
+} from "./service"
 export { validateDelegationContextRefs } from "./context-refs"
 export type {
   DroppedContextRef,

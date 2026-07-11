@@ -52,7 +52,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 4.4  | Brief correction eval                                    | ☐      |       |
 | 5.1  | `delegate_task` tool + delegation substrate + INV-65     | ☑      | #1261 |
 | 5.2  | Delegation card UI                                       | ☑      | #1261 |
-| 5.3  | Delegation public API (claim/status/complete)            | ☐      |       |
+| 5.3  | Delegation public API (claim/status/complete)            | ☑      | #TBD  |
 | 5.4  | claude-code-remote delegation support                    | ☐      |       |
 | 5.5  | `@threa/mcp` server                                      | ☐      |       |
 | 6.1  | Memo edit/archive endpoints + explorer UI                | ☑      | #1246 |
@@ -484,6 +484,17 @@ The strategic bet: Threa is the shared-memory/coordination plane; the user's loc
 **Tests:** follow the sealed-claim test suite shape: claim races, token binding, expiry, complete-posts-message.
 
 **Done when:** a curl script can claim, report progress, and complete a delegation, with each transition visible on the card.
+
+**Deviations (shipped):**
+
+- **Completion authorship = the API-key principal, mirroring bot-invocations.** "Authored by the claiming identity" resolves to the authenticated principal: a user-scoped key posts the result as the key owner, a bot-scoped key as the bot — the same `resolvePrincipalActor` shape as `resolveOwnedMessage`. The claiming local agent's free-text `claimedByLabel` ("Kris's MacBook / Claude Code") stays separate card provenance, not an actor (there is no workspace actor for it). The completion message enters the normal pipeline (GAM memorizes it) exactly like any other reply.
+- **Message-posting lives in `DelegationService.complete` (INV-7), not the handler.** The service gained an `eventService` dep; the handler parses the wire `resultMarkdown` → `contentJson` at the boundary (INV-58, reusing `normalizeMessage`/`parseMarkdown`/`collectAttachmentReferenceIds`) and passes pre-parsed `DelegationResultContent` in. A new `DelegatedTaskRepository.findClaimedForUpdate` locks the live-claimed row `FOR UPDATE` and validates the token BEFORE the message write, so an invalid/lapsed claim returns `null` (404) without stranding an orphan message; the CAS then can't miss. `clientMessageId: delegation:<id>` dedupes a retried complete. Complete returns **201** with `{ delegation, message }`.
+- **New `delegations:read` + `delegations:write` scopes (not `bot-invocations:write`).** A delegation is claimed by a member's _own_ local agent (solo-first), so both scopes land in `READ_AND_SELF_SERVE` (member-grantable), unlike the admin-only bot-invocations scopes. Added to the `@threa/types` catalog + role definitions (the WorkOS-sync source of truth); the permissions test's absolute counts moved to member=14/admin=22/owner=23/catalog=23.
+- **A discovery list endpoint was added:** `GET /api/v1/workspaces/{wid}/delegations` (open, oldest-first, `DELEGATIONS_READ`). The Files list named only claim/status/complete/fail, but a curl script needs to find a delegation's id before it can claim it (and it is the MCP `list_delegations` backing, 5.5). Its results are filtered to the key's accessible streams (a brief can carry stream-scoped context — INV-62), mirroring search's gate.
+- **`heartbeat`/`status`/`complete`/`fail` bodies carry only `claimToken`** — no `instanceId`. A delegation claim is bound to the token, not a runtime slot (unlike bot-invocations, where one instance drains many invocations).
+- **Endpoints: `claim` / `heartbeat` / `status` (progress→`running`) / `complete` / `fail`,** all `DELEGATIONS_WRITE`, access-gated on the delegation's stream (404 hides existence). The service methods `claim`/`heartbeat`/`markRunning`/`fail` shipped in 5.1 anticipating this and needed no change; only `complete` gained the message-posting.
+- **E2E parity omitted:** creation from E2E streams is disabled at 5.1, and `complete` defensively `assertNotE2eStream`s the plaintext result message — consistent with the roadmap-wide sealed deferral.
+- **Client-side decision (for 5.4/5.5): `ThreaClient` in `@threa/remote-session` grows delegation methods; no sibling client.** The delegation loop (list→claim→heartbeat→complete/fail) is the same API-key auth + workspace base-URL + claim/renew/complete shape `ThreaClient` already wraps for bot-runtime claims; a sibling client would duplicate transport and auth for no gain. The endpoints are a _distinct surface_ (different paths, token-in-body vs. instance binding) but the same HTTP client carries both.
 
 ### 5.4 Connector-SDK delegation support (`@threa/remote-session`)
 

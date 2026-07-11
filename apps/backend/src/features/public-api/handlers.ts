@@ -43,6 +43,7 @@ import {
   toAttachmentSummary,
 } from "../attachments"
 import type { LabelService, LabelAssignmentService } from "../labels"
+import { DelegationService, type DelegatedTask } from "../delegations"
 import { BotRepository, type Bot } from "./bot-repository"
 import {
   AgentSessionStatuses,
@@ -114,6 +115,8 @@ import type {
   WireAttachmentUpload,
   WireLabel,
   WireLabelAssignment,
+  WireDelegation,
+  WireClaimedDelegation,
 } from "./routes"
 import {
   publicSearchSchema,
@@ -146,6 +149,11 @@ import {
   assignLabelByNameSchema,
   unassignLabelByNameSchema,
   labelIdParamSchema,
+  claimDelegationSchema,
+  heartbeatDelegationSchema,
+  reportDelegationProgressSchema,
+  completeDelegationSchema,
+  failDelegationSchema,
 } from "./schemas"
 
 // Same opaque placeholder the enclave reply path and the user-send path store for
@@ -211,6 +219,36 @@ function serializeMessage(
       opts.attachments.length > 0 && { attachments: opts.attachments.map((a) => toAttachmentSummary(a)) }),
     ...(message.editedAt != null && { editedAt: message.editedAt.toISOString() }),
     createdAt: message.createdAt.toISOString(),
+  }
+}
+
+// A delegated task on the public wire (roadmap 5.3). `brief`/`contextRefs` are
+// the hand-off material a claimer needs; the claim secret is layered on top by
+// `serializeClaimedDelegation`, never on the plain shape.
+function serializeDelegation(delegation: DelegatedTask): WireDelegation {
+  return {
+    id: delegation.id,
+    workspaceId: delegation.workspaceId,
+    streamId: delegation.streamId,
+    sourceConversationId: delegation.sourceConversationId,
+    title: delegation.title,
+    brief: delegation.brief,
+    contextRefs: delegation.contextRefs,
+    status: delegation.status,
+    claimedByLabel: delegation.claimedByLabel,
+    statusNote: delegation.statusNote,
+    resultMessageId: delegation.resultMessageId,
+    createdAt: delegation.createdAt.toISOString(),
+    statusChangedAt: delegation.statusChangedAt.toISOString(),
+  }
+}
+
+function serializeClaimedDelegation(delegation: DelegatedTask, claimToken: string): WireClaimedDelegation {
+  return {
+    ...serializeDelegation(delegation),
+    claimToken,
+    // `claim` returns a live claim, so `claimExpiresAt` is always set here.
+    claimExpiresAt: delegation.claimExpiresAt!.toISOString(),
   }
 }
 
@@ -674,6 +712,13 @@ export interface PublicApiDeps {
   eventService: EventService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
+  /**
+   * Delegation lifecycle owner for the 5.3 public endpoints. Production wires
+   * the single shared instance (INV-13); when omitted (tests, standalone
+   * construction) it is built from `pool` + `eventService` so the handlers
+   * behave identically, mirroring `botRuntimeWriteOps` above.
+   */
+  delegationService?: DelegationService
   pool: Pool
   io: Server
 }
@@ -689,11 +734,13 @@ export function createPublicApiHandlers({
   eventService,
   labelService,
   labelAssignmentService,
+  delegationService: providedDelegationService,
   pool,
   io,
 }: PublicApiDeps) {
   const botRuntimeWriteOps =
     providedWriteOps ?? createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
+  const delegationService = providedDelegationService ?? new DelegationService({ pool, eventService })
   /** Resolve accessible stream IDs for the current key (user-scoped or bot) */
   async function getAccessibleStreamIds(req: Request, filters: SearchFilters = {}): Promise<string[]> {
     if (req.userApiKey) {
@@ -796,6 +843,39 @@ export function createPublicApiHandlers({
     }
 
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  /**
+   * The workspace actor the API key authenticates as — the identity a delegation
+   * completion message is authored by ("the claiming identity", 5.3). A
+   * user-scoped key is the key owner; a bot-scoped key is the bot. The claiming
+   * local agent's free-text label is separate card provenance, not an actor.
+   */
+  async function resolvePrincipalActor(
+    req: Request
+  ): Promise<{ actorId: string; actorType: AuthorType; displayName: string }> {
+    if (req.userApiKey) {
+      return { actorId: req.user!.id, actorType: AuthorTypes.USER, displayName: req.user!.name }
+    }
+    if (req.botApiKey) {
+      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+      return { actorId: bot.id, actorType: AuthorTypes.BOT, displayName: bot.name }
+    }
+    throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  /**
+   * Load a delegation the current key may act on, or throw 404. Access is gated
+   * on the delegation's stream (any key that can see the stream can run its
+   * delegations); a 404 hides existence from a non-member, mirroring the
+   * first-party cancel handler.
+   */
+  async function resolveAccessibleDelegation(req: Request, id: string): Promise<DelegatedTask> {
+    const delegation = await delegationService.getById({ workspaceId: req.workspaceId!, id })
+    if (!delegation) throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
+    await assertStreamAccessible(req, delegation.streamId)
+    return delegation
   }
 
   async function resolveAccessibleAttachment(req: Request, attachmentId: string): Promise<Attachment> {
@@ -1785,6 +1865,109 @@ export function createPublicApiHandlers({
         return failed
       })
       res.json({ data: { invocationId: failed.id, status: failed.status } })
+    },
+
+    // ── Delegations (roadmap 5.3) ───────────────────────────────────────────
+    // A local agent claims an open delegated task, reports progress, then
+    // completes it (posting the result into the stream) or fails it. Every
+    // transition after the claim is authenticated by the per-claim token; access
+    // is gated on the delegation's stream (404 hides existence).
+
+    async listOpenDelegations(req: Request, res: Response) {
+      const open = await delegationService.listOpen({ workspaceId: req.workspaceId! })
+      if (open.length === 0) return res.json({ data: [] })
+      // A brief may carry stream-scoped context, so only surface delegations
+      // whose stream this key can access (INV-62), mirroring search's gate.
+      const accessible = new Set(await getAccessibleStreamIds(req))
+      const visible = open.filter((d) => accessible.has(d.streamId))
+      res.json({ data: visible.map(serializeDelegation) })
+    },
+
+    async claimDelegation(req: Request, res: Response) {
+      const data = validateRequest(claimDelegationSchema, req.body)
+      const delegation = await resolveAccessibleDelegation(req, req.params.delegationId!)
+      const result = await delegationService.claim({
+        workspaceId: req.workspaceId!,
+        id: delegation.id,
+        claimedByLabel: data.claimedByLabel,
+      })
+      if (!result.ok) {
+        if (result.reason === "not_found") {
+          throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
+        }
+        throw new HttpError("Delegation is not open for claiming", { status: 409, code: "DELEGATION_NOT_OPEN" })
+      }
+      res.json({ data: serializeClaimedDelegation(result.delegation, result.claimToken) })
+    },
+
+    async heartbeatDelegation(req: Request, res: Response) {
+      const data = validateRequest(heartbeatDelegationSchema, req.body)
+      const delegation = await resolveAccessibleDelegation(req, req.params.delegationId!)
+      const claimExpiresAt = await delegationService.heartbeat({
+        workspaceId: req.workspaceId!,
+        id: delegation.id,
+        claimToken: data.claimToken,
+      })
+      if (!claimExpiresAt) throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+      res.json({ data: { id: delegation.id, status: delegation.status, claimExpiresAt: claimExpiresAt.toISOString() } })
+    },
+
+    async reportDelegationProgress(req: Request, res: Response) {
+      const data = validateRequest(reportDelegationProgressSchema, req.body)
+      const delegation = await resolveAccessibleDelegation(req, req.params.delegationId!)
+      const running = await delegationService.markRunning({
+        workspaceId: req.workspaceId!,
+        id: delegation.id,
+        claimToken: data.claimToken,
+        statusNote: data.statusNote,
+      })
+      if (!running) throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+      res.json({ data: serializeDelegation(running) })
+    },
+
+    async completeDelegation(req: Request, res: Response) {
+      const data = validateRequest(completeDelegationSchema, req.body)
+      const delegation = await resolveAccessibleDelegation(req, req.params.delegationId!)
+      // Delegation creation from E2E streams is disabled (5.1); guard the
+      // plaintext completion message defensively so it never lands in one.
+      await assertNotE2eStream(req.workspaceId!, delegation.streamId)
+      const author = await resolvePrincipalActor(req)
+      const contentMarkdown = normalizeMessage(data.resultMarkdown)
+      const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
+      const attachmentIds = collectAttachmentReferenceIds(contentJson)
+      const completed = await delegationService.complete({
+        workspaceId: req.workspaceId!,
+        id: delegation.id,
+        claimToken: data.claimToken,
+        result: {
+          author: { actorId: author.actorId, actorType: author.actorType },
+          contentJson,
+          contentMarkdown,
+          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+          sources: data.sources,
+          metadata: data.metadata,
+        },
+      })
+      if (!completed) throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+      res.status(201).json({
+        data: {
+          delegation: serializeDelegation(completed.delegation),
+          message: serializeMessage(completed.message, { authorDisplayName: author.displayName }),
+        },
+      })
+    },
+
+    async failDelegation(req: Request, res: Response) {
+      const data = validateRequest(failDelegationSchema, req.body)
+      const delegation = await resolveAccessibleDelegation(req, req.params.delegationId!)
+      const failed = await delegationService.fail({
+        workspaceId: req.workspaceId!,
+        id: delegation.id,
+        claimToken: data.claimToken,
+        statusNote: data.errorMessage,
+      })
+      if (!failed) throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+      res.json({ data: serializeDelegation(failed) })
     },
 
     async searchMessages(req: Request, res: Response) {
