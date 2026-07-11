@@ -31,7 +31,7 @@ So Claude Code wants to _receive pushes_, and Threa wants to _be pulled from_. T
 
 ## What runs where
 
-The extension is a single MCP server (`src/index.ts` → `ChannelServer`). Claude Code spawns it with `bun src/index.ts` when you start with `--dangerously-load-development-channels server:threa`. Inside that one process:
+The extension is a single MCP server (`src/index.ts` → `ChannelServer`). Claude Code spawns it with `bun src/index.ts` when you start with `--dangerously-load-development-channels server:threa`. Scratchpad linking is gated on that flag: `channel-detect.ts` reads the parent Claude process's command line, and without `--dangerously-load-development-channels server:threa` the server serves as a plain idle MCP (no scratchpad, no Threa traffic). Claude Code negotiates identical MCP client capabilities in channel and plain mode, so the launch flag is the only observable channel signal — and it makes a global user-scope registration safe. Inside that one process:
 
 - `ThreaClient` (`src/threa-client.ts`) is a thin HTTP client for the Threa bot-runtime API plus a websocket-hint resolver.
 - `ChannelServer` (`src/channel-server.ts`) owns the MCP `Server`, a socket.io connection to the `/bot` namespace, and the bridge logic.
@@ -43,10 +43,11 @@ It talks to Threa over HTTPS and a websocket, reusing the public bot-runtime API
 
 When the process starts it:
 
-1. Reads `THREA_WORKSPACE_ID` / `THREA_API_KEY` (env or `~/.claude/threa-channel/config.json`) and derives an `instanceId` and `runtimeSessionId` by hashing `hostname + cwd`. Deriving them from the directory means relaunching Claude Code in the same project reuses the same scratchpad instead of spawning a new one each time.
-2. `POST /bot-runtime/sessions`, which **creates a scratchpad**, sets the bot as that scratchpad's **active actor**, registers presence, and returns the session link (and the scratchpad URL, which it logs).
-3. Resolves the region websocket URL (`GET /api/workspaces/:ws/config`) and connects the `/bot` socket, sending `bot:hello`.
-4. Marks presence `available` and starts a backstop claim poll.
+1. Checks the parent Claude process's command line for `--dangerously-load-development-channels server:threa` (`channel-detect.ts`). Absent — a plain Claude session that merely has the `threa` MCP server registered — it stops here and idles; nothing below runs.
+2. Reads `THREA_WORKSPACE_ID` / `THREA_API_KEY` (env or `~/.claude/threa-channel/config.json`) and derives an `instanceId` and `runtimeSessionId` by hashing `hostname + cwd`. Deriving them from the directory means relaunching Claude Code in the same project reuses the same scratchpad instead of spawning a new one each time.
+3. `POST /bot-runtime/sessions`, which **creates a scratchpad**, sets the bot as that scratchpad's **active actor**, registers presence, and returns the session link (and the scratchpad URL, which it logs).
+4. Resolves the region websocket URL (`GET /api/workspaces/:ws/config`) and connects the `/bot` socket, sending `bot:hello`.
+5. Marks presence `available` and starts a backstop claim poll.
 
 ### A first-class runtime kind
 

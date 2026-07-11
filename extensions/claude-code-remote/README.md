@@ -103,6 +103,8 @@ claude --dangerously-load-development-channels server:threa
 
 A dim line under the banner confirms the channel registered. The channel logs the scratchpad URL to stderr on startup (see `~/.claude/debug/<session-id>.txt`); the scratchpad also appears in the Threa sidebar as `Claude Code - <project>`.
 
+The flag is required for the scratchpad to link at all: the server checks its parent Claude process's command line for `--dangerously-load-development-channels server:threa` and, when absent, serves as a plain (idle) MCP server without creating anything. This makes a global (user-scope) registration safe — a bare `claude` session loads the server but links no scratchpad. Two consequences: the launch command must reference the server by the name `threa`, and the registration must run `bun` directly (a shell wrapper that doesn't `exec` would hide the Claude process's command line from the gate).
+
 ### 6. Drive it from Threa
 
 Open the scratchpad in Threa and type a message. No `@`-mention needed: the bot is the scratchpad's active actor, so every message you post is forwarded to your Claude Code session. The presence pill shows **Available** / **Working**. Claude's answer posts back as a `BOT` message.
