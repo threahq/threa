@@ -7,11 +7,13 @@ import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID, BUILT_IN_AGENTS } from "./built-in-ag
 
 const WORKSPACE_ID = "ws_01"
 const DEFAULT_MODEL = BUILT_IN_AGENTS[ARIADNE_AGENT_ID].model
-const OVERRIDE_MODEL = "openrouter:anthropic/claude-sonnet-5"
+// Must differ from DEFAULT_MODEL whatever the current built-in default is,
+// or the fake registry collapses and override assertions test nothing.
+const OVERRIDE_MODEL = "openrouter:anthropic/claude-haiku-4.5"
 
 const REGISTRY_MODELS: Record<string, ModelCapabilities> = {
-  [DEFAULT_MODEL]: { name: "Claude Sonnet 4.6", inputModalities: ["text", "image"], outputModalities: ["text"] },
-  [OVERRIDE_MODEL]: { name: "Claude Sonnet 5", inputModalities: ["text", "image"], outputModalities: ["text"] },
+  [DEFAULT_MODEL]: { name: "Default Chat Model", inputModalities: ["text", "image"], outputModalities: ["text"] },
+  [OVERRIDE_MODEL]: { name: "Claude Haiku 4.5", inputModalities: ["text", "image"], outputModalities: ["text"] },
   "openrouter:openai/text-embedding-3-small": {
     name: "Text Embedding 3 Small",
     inputModalities: ["text"],

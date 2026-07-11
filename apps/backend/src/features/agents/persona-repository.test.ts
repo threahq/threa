@@ -40,7 +40,7 @@ describe("PersonaRepository built-in agent config", () => {
       id: ARIADNE_AGENT_ID,
       slug: "ariadne",
       name: "Ariadne",
-      model: "openrouter:anthropic/claude-sonnet-4.6",
+      model: "openrouter:anthropic/claude-sonnet-5",
       managedBy: "system",
       status: "active",
     })
