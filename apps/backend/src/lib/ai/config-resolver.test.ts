@@ -24,7 +24,7 @@ describe("StaticConfigResolver", () => {
     expect(memoMemorizerConfig.temperature).toBe(0.3)
 
     const companionConfig = await resolver.resolve(COMPONENT_PATHS.COMPANION_AGENT)
-    expect(companionConfig.modelId).toBe("openrouter:anthropic/claude-sonnet-4.6")
+    expect(companionConfig.modelId).toBe("openrouter:anthropic/claude-sonnet-5")
     expect(companionConfig.temperature).toBe(0.7)
 
     const researcherConfig = await resolver.resolve(COMPONENT_PATHS.COMPANION_RESEARCHER)
