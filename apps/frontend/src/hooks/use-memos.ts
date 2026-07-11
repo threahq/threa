@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   archiveMemo,
+  deleteMemo,
   getMemo,
   searchMemos,
   unarchiveMemo,
@@ -71,5 +72,21 @@ export function useUnarchiveMemo(workspaceId: string) {
   return useMutation({
     mutationFn: (memoId: string) => unarchiveMemo(workspaceId, memoId),
     onSuccess,
+  })
+}
+
+/**
+ * Hard-delete a user-scoped memo (roadmap 6.4). Unlike the other mutations there
+ * is no detail response to seed — the row is gone — so drop its detail cache and
+ * invalidate the search lists to remove it from view.
+ */
+export function useDeleteMemo(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (memoId: string) => deleteMemo(workspaceId, memoId),
+    onSuccess: (_result, memoId) => {
+      queryClient.removeQueries({ queryKey: memoKeys.detail(workspaceId, memoId) })
+      void queryClient.invalidateQueries({ queryKey: memoKeys.searches(workspaceId) })
+    },
   })
 }

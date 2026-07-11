@@ -493,6 +493,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.patch("/api/workspaces/:workspaceId/memos/:memoId", ...authed, memo.update)
   app.post("/api/workspaces/:workspaceId/memos/:memoId/archive", ...authed, memo.archive)
   app.post("/api/workspaces/:workspaceId/memos/:memoId/unarchive", ...authed, memo.unarchive)
+  app.delete("/api/workspaces/:workspaceId/memos/:memoId", ...authed, memo.delete)
 
   app.post("/api/workspaces/:workspaceId/messages", ...authed, rateLimits.messageCreate, message.create)
   app.post(

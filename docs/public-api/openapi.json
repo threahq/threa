@@ -220,6 +220,8 @@
                               "revisionReason": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                               "authoredByKind": { "type": "string", "enum": ["pipeline", "agent"] },
                               "sourceSessionId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                              "scope": { "type": "string", "enum": ["user", "stream", "workspace"] },
+                              "scopeUserId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                               "createdAt": { "type": "string", "format": "date-time" },
                               "updatedAt": { "type": "string", "format": "date-time" },
                               "archivedAt": {
@@ -245,6 +247,8 @@
                               "revisionReason",
                               "authoredByKind",
                               "sourceSessionId",
+                              "scope",
+                              "scopeUserId",
                               "createdAt",
                               "updatedAt",
                               "archivedAt"
@@ -379,6 +383,8 @@
                             "revisionReason": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                             "authoredByKind": { "type": "string", "enum": ["pipeline", "agent"] },
                             "sourceSessionId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "scope": { "type": "string", "enum": ["user", "stream", "workspace"] },
+                            "scopeUserId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                             "createdAt": { "type": "string", "format": "date-time" },
                             "updatedAt": { "type": "string", "format": "date-time" },
                             "archivedAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
@@ -402,6 +408,8 @@
                             "revisionReason",
                             "authoredByKind",
                             "sourceSessionId",
+                            "scope",
+                            "scopeUserId",
                             "createdAt",
                             "updatedAt",
                             "archivedAt"

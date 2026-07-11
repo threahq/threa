@@ -931,6 +931,7 @@ Each query must have:
                 query,
                 workspaceId,
                 accessibleStreamIds,
+                invokingUserId,
                 embeddingService
               )
               return {
@@ -1023,8 +1024,13 @@ Each query must have:
     query: SearchQuery,
     workspaceId: string,
     accessibleStreamIds: string[],
+    invokingUserId: string,
     embeddingService: EmbeddingServiceLike
   ): Promise<EnrichedMemoResult[]> {
+    // The invoking user gates user-scoped memos (roadmap 6.4): a private-tier memo
+    // surfaces only for its owner. Threaded into every memo search path below so
+    // another user's "about you" memo can never leak into this turn's retrieval.
+    const filterBase = { streamIds: accessibleStreamIds, viewerUserId: invokingUserId }
     // For semantic search, generate embedding (AI, no DB, ~200-500ms)
     if (query.type === "semantic") {
       try {
@@ -1045,7 +1051,7 @@ Each query must have:
           workspaceId,
           query: query.query,
           embedding,
-          filters: { streamIds: accessibleStreamIds },
+          filters: filterBase,
           limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
           keywordWeight: intent.keywordWeight,
           semanticWeight: intent.semanticWeight,
@@ -1058,7 +1064,7 @@ Each query must have:
             : await MemoRepository.fullTextSearch(pool, {
                 workspaceId,
                 query: query.query,
-                filters: { streamIds: accessibleStreamIds },
+                filters: filterBase,
                 limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
               })
 
@@ -1073,7 +1079,7 @@ Each query must have:
           const fallback = await MemoRepository.fullTextSearch(pool, {
             workspaceId,
             query: query.query,
-            filters: { streamIds: accessibleStreamIds },
+            filters: filterBase,
             limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
           })
           return fallback.map((r) => ({
@@ -1093,7 +1099,7 @@ Each query must have:
       const results = await MemoRepository.exactSearch(pool, {
         workspaceId,
         query: query.query,
-        filters: { streamIds: accessibleStreamIds },
+        filters: filterBase,
         limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
       })
 

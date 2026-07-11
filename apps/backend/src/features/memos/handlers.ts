@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { KNOWLEDGE_TYPES, MEMO_STATUSES, MEMO_TYPES } from "@threa/types"
+import { KNOWLEDGE_TYPES, MEMO_SCOPES, MEMO_STATUSES, MEMO_TYPES } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE_MAX_CHARS } from "./config"
 import { resolveUserAccessibleStreamIds, SearchRepository } from "../search"
@@ -18,6 +18,7 @@ const memoSearchSchema = z.object({
   knowledgeType: z.array(z.enum(KNOWLEDGE_TYPES)).optional(),
   tags: z.array(z.string()).optional(),
   status: z.array(z.enum(MEMO_STATUSES)).optional(),
+  scope: z.enum(MEMO_SCOPES).optional(),
   before: z.string().datetime().optional(),
   after: z.string().datetime().optional(),
   exact: z.boolean().optional(),
@@ -151,6 +152,7 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         knowledgeType,
         tags,
         status,
+        scope,
         before,
         after,
         limit,
@@ -161,7 +163,7 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
 
       const results = await memoExplorerService.search({
         workspaceId,
-        permissions: { accessibleStreamIds },
+        permissions: { accessibleStreamIds, userId },
         query: normalized.query,
         exact: normalized.exact,
         filters: {
@@ -170,6 +172,7 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
           knowledgeTypes: knowledgeType,
           tags,
           statuses: status,
+          scope,
           before: before ? new Date(before) : undefined,
           after: after ? new Date(after) : undefined,
         },
@@ -190,6 +193,7 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
 
       const memo = await memoExplorerService.getById(workspaceId, memoId, {
         accessibleStreamIds,
+        userId,
       })
 
       if (!memo) {
@@ -213,7 +217,7 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         archiveStatus: ["active", "archived"],
       })
 
-      const memo = await memoExplorerService.update(workspaceId, memoId, { accessibleStreamIds }, parsed.data)
+      const memo = await memoExplorerService.update(workspaceId, memoId, { accessibleStreamIds, userId }, parsed.data)
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }
@@ -230,7 +234,7 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         archiveStatus: ["active", "archived"],
       })
 
-      const memo = await memoExplorerService.archive(workspaceId, memoId, { accessibleStreamIds })
+      const memo = await memoExplorerService.archive(workspaceId, memoId, { accessibleStreamIds, userId })
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }
@@ -247,12 +251,37 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         archiveStatus: ["active", "archived"],
       })
 
-      const memo = await memoExplorerService.unarchive(workspaceId, memoId, { accessibleStreamIds })
+      const memo = await memoExplorerService.unarchive(workspaceId, memoId, { accessibleStreamIds, userId })
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }
 
       res.json({ memo: serializeMemoDetail(memo) })
+    },
+
+    async delete(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const memoId = z.string().min(1).parse(req.params.memoId)
+
+      const accessibleStreamIds = await resolveUserAccessibleStreamIds(pool, workspaceId, userId, {
+        archiveStatus: ["active", "archived"],
+      })
+
+      const outcome = await memoExplorerService.delete(workspaceId, memoId, { accessibleStreamIds, userId })
+      if (outcome === "not_found") {
+        throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
+      }
+      // Deleting shared knowledge is archive's job — only a private-tier memo is
+      // the caller's to remove outright (roadmap 6.4).
+      if (outcome === "forbidden") {
+        throw new HttpError("Only your private-tier memos can be deleted; archive shared memos instead", {
+          status: 403,
+          code: "FORBIDDEN",
+        })
+      }
+
+      res.json({ ok: true })
     },
   }
 }

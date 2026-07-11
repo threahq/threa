@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../db"
-import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind } from "@threa/types"
+import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind, MemoScope } from "@threa/types"
 import {
   MEMO_KNOWLEDGE_TYPE_BOOST,
   MEMO_STREAM_TYPE_BOOST,
@@ -50,6 +50,8 @@ interface MemoRow {
   revision_reason: string | null
   authored_by_kind: string
   source_session_id: string | null
+  scope: string
+  scope_user_id: string | null
   created_at: Date
   updated_at: Date
   archived_at: Date | null
@@ -74,6 +76,8 @@ export interface Memo {
   revisionReason: string | null
   authoredByKind: AuthoredByKind
   sourceSessionId: string | null
+  scope: MemoScope
+  scopeUserId: string | null
   createdAt: Date
   updatedAt: Date
   archivedAt: Date | null
@@ -99,6 +103,10 @@ export interface InsertMemoParams {
   authoredByKind?: AuthoredByKind
   /** The agent session that wrote this memo (agent authorship only). */
   sourceSessionId?: string
+  /** Visibility tier (roadmap 6.4); defaults to `'workspace'`. */
+  scope?: MemoScope
+  /** Owner for `'user'` scope; must be set iff `scope === 'user'` (DB CHECK). */
+  scopeUserId?: string | null
 }
 
 export interface UpdateMemoParams {
@@ -144,6 +152,42 @@ export interface MemoSearchFilters {
    * let a user browse and un-archive them.
    */
   statuses?: MemoStatus[]
+  /**
+   * The user retrieving these memos (roadmap 6.4). A `user`-scoped memo surfaces
+   * only when its `scope_user_id` matches this id; omit it and user-scoped memos
+   * are excluded entirely (fail closed). `stream`/`workspace` memos are
+   * unaffected — their visibility is the `streamIds` access filter above. This is
+   * a visibility GATE, always safe to apply; it is not the `scope` positive
+   * filter below.
+   */
+  viewerUserId?: string
+  /**
+   * Positive filter to one visibility tier (roadmap 6.4) — the explorer's "About
+   * you" view passes `'user'` to list only the viewer's private-tier memos.
+   * Independent of `viewerUserId`: the gate still applies, so `scope: 'user'`
+   * without a matching `viewerUserId` returns nothing.
+   */
+  scope?: MemoScope
+}
+
+/**
+ * The 6.4 scope predicate, shared by every memo search path (INV-35). Two guards:
+ * the optional positive `scope` filter, and the always-safe user-scope
+ * visibility gate (a `user` memo is visible only to its owner; no viewer ⇒ no
+ * user memos). Emitted with the same boolean-guard interpolation the other
+ * filters use — squid `sql` renders a JS boolean as a SQL literal, so a disabled
+ * guard collapses to `TRUE`/`FALSE` at plan time. `m` is the memo table alias
+ * every search CTE uses.
+ */
+function scopeConditions(filters: MemoSearchFilters | undefined) {
+  const hasScopeFilter = filters?.scope !== undefined
+  const hasViewer = filters?.viewerUserId !== undefined
+  return {
+    hasScopeFilter,
+    scope: filters?.scope ?? "workspace",
+    hasViewer,
+    viewerUserId: filters?.viewerUserId ?? "",
+  }
 }
 
 const DEFAULT_SEARCH_STATUSES: MemoStatus[] = ["active"]
@@ -197,6 +241,8 @@ function mapRowToMemo(row: MemoRow): Memo {
     revisionReason: row.revision_reason,
     authoredByKind: row.authored_by_kind as AuthoredByKind,
     sourceSessionId: row.source_session_id,
+    scope: row.scope as MemoScope,
+    scopeUserId: row.scope_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
@@ -207,7 +253,7 @@ const SELECT_FIELDS = `
   id, workspace_id, memo_type, source_message_id, source_conversation_id,
   title, abstract, key_points, source_message_ids, participant_ids,
   knowledge_type, tags, parent_memo_id, status, version, revision_reason,
-  authored_by_kind, source_session_id,
+  authored_by_kind, source_session_id, scope, scope_user_id,
   created_at, updated_at, archived_at
 `
 
@@ -215,7 +261,7 @@ const SELECT_FIELDS_PREFIXED = `
   m.id, m.workspace_id, m.memo_type, m.source_message_id, m.source_conversation_id,
   m.title, m.abstract, m.key_points, m.source_message_ids, m.participant_ids,
   m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.revision_reason,
-  m.authored_by_kind, m.source_session_id,
+  m.authored_by_kind, m.source_session_id, m.scope, m.scope_user_id,
   m.created_at, m.updated_at, m.archived_at
 `
 
@@ -399,6 +445,12 @@ export const MemoRepository = {
    * practice it re-emits near-identical rewordings on every re-processing of a
    * long conversation, so the embedding gate — not the prompt — is the
    * authoritative guard. Returns null when nothing is close enough.
+   *
+   * Dedup is scoped to the candidate's own visibility tier (roadmap 6.4): a
+   * `user`-scoped candidate only dedups against the same owner's memos, and a
+   * non-`user` candidate only against non-`user` memos. Otherwise a private memo
+   * could be silently dropped as a "duplicate" of a shared one (or vice versa),
+   * collapsing the tier split the scope exists to enforce.
    */
   async findNearDuplicate(
     db: Querier,
@@ -407,9 +459,11 @@ export const MemoRepository = {
       streamId: string
       embedding: number[]
       maxDistance: number
+      scope?: MemoScope
+      scopeUserId?: string | null
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
-    const { workspaceId, streamId, embedding, maxDistance } = params
+    const { workspaceId, streamId, embedding, maxDistance, scope = "workspace", scopeUserId = null } = params
     const embeddingLiteral = `[${embedding.join(",")}]`
 
     const result = await db.query<MemoRow & { distance: number }>(sql`
@@ -421,6 +475,8 @@ export const MemoRepository = {
         WHERE c.stream_id = ${streamId}
           AND m.workspace_id = ${workspaceId}
           AND m.status = 'active'
+          AND m.scope = ${scope}
+          AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
         UNION
@@ -431,6 +487,8 @@ export const MemoRepository = {
         WHERE msg.stream_id = ${streamId}
           AND m.workspace_id = ${workspaceId}
           AND m.status = 'active'
+          AND m.scope = ${scope}
+          AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
       )
@@ -493,7 +551,7 @@ export const MemoRepository = {
         id, workspace_id, memo_type, source_message_id, source_conversation_id,
         title, abstract, key_points, source_message_ids, participant_ids,
         knowledge_type, tags, parent_memo_id, status, version,
-        authored_by_kind, source_session_id
+        authored_by_kind, source_session_id, scope, scope_user_id
       )
       VALUES (
         ${params.id},
@@ -512,7 +570,9 @@ export const MemoRepository = {
         ${params.status ?? "active"},
         ${params.version ?? 1},
         ${params.authoredByKind ?? "pipeline"},
-        ${params.sourceSessionId ?? null}
+        ${params.sourceSessionId ?? null},
+        ${params.scope ?? "workspace"},
+        ${params.scopeUserId ?? null}
       )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
@@ -636,6 +696,20 @@ export const MemoRepository = {
     return mapRowToMemo(result.rows[0])
   },
 
+  /**
+   * Hard-delete a memo, workspace-scoped (INV-8). Used by the explorer's "forget
+   * what you know about me" action on a user-scoped memo (roadmap 6.4) — unlike
+   * archive this removes the row and its embedding outright. The caller is
+   * responsible for the ownership gate; the `workspace_id` filter here is the
+   * tenancy backstop. Returns true when a row was deleted.
+   */
+  async delete(db: Querier, workspaceId: string, id: string): Promise<boolean> {
+    const result = await db.query(sql`
+      DELETE FROM memos WHERE id = ${id} AND workspace_id = ${workspaceId}
+    `)
+    return (result.rowCount ?? 0) > 0
+  },
+
   /** The active memo that superseded `memoId`, if any (reverse of parent_memo_id). */
   async findSupersededBy(db: Querier, workspaceId: string, memoId: string): Promise<Memo | null> {
     const result = await db.query<MemoRow>(sql`
@@ -667,6 +741,7 @@ export const MemoRepository = {
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
+    const scopeCond = scopeConditions(filters)
 
     const embeddingLiteral = `[${embedding.join(",")}]`
 
@@ -694,6 +769,8 @@ export const MemoRepository = {
           AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
           AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
+          AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
+          AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
       )
@@ -714,6 +791,7 @@ export const MemoRepository = {
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
+    const scopeCond = scopeConditions(filters)
     const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
 
     if (!query.trim()) {
@@ -738,6 +816,8 @@ export const MemoRepository = {
             AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
             AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
             AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
+            AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
+            AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
             AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
             AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
         )
@@ -776,6 +856,8 @@ export const MemoRepository = {
           AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
           AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
+          AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
+          AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
           AND to_tsvector('english', m.title || ' ' || m.abstract || ' ' || array_to_string(m.key_points, ' '))
@@ -826,6 +908,7 @@ export const MemoRepository = {
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
+    const scopeCond = scopeConditions(filters)
     const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
 
     const embeddingLiteral = `[${embedding.join(",")}]`
@@ -867,6 +950,8 @@ export const MemoRepository = {
           AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
           AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
+          AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
+          AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
           AND ${tsvector} @@ websearch_to_tsquery('english', ${query})
@@ -890,6 +975,8 @@ export const MemoRepository = {
           AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
           AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
+          AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
+          AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
         LIMIT ${internalLimit}
@@ -928,6 +1015,7 @@ export const MemoRepository = {
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
+    const scopeCond = scopeConditions(filters)
     const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
 
     if (!query.trim()) {
@@ -957,6 +1045,8 @@ export const MemoRepository = {
           AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
           AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
+          AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
+          AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
           AND (

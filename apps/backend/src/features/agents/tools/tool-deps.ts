@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import type { KnowledgeType } from "@threa/types"
+import type { KnowledgeType, MemoScope } from "@threa/types"
 import type { AttachmentService } from "../../attachments"
 import type { MemoExplorerService } from "../../memos"
 import type { SearchService } from "../../search"
@@ -167,5 +167,7 @@ export interface SaveMemoToolDeps {
     tags: string[]
     knowledgeType: KnowledgeType
     sourceMessageIds: string[]
+    /** Visibility override; omitted ⇒ the memo inherits the save stream's natural tier (roadmap 6.4). */
+    scope?: MemoScope
   }) => Promise<SaveMemoToolResult>
 }

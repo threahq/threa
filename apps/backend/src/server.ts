@@ -949,6 +949,8 @@ export async function startServer(): Promise<ServerInstance> {
       tags,
       knowledgeType,
       sourceMessageIds,
+      invokingUserId,
+      scope,
     }) => {
       const result = await memoService.saveMemo({
         workspaceId,
@@ -961,6 +963,8 @@ export async function startServer(): Promise<ServerInstance> {
         tags,
         knowledgeType,
         sourceMessageIds,
+        invokingUserId,
+        scope,
       })
       return result.ok
         ? { ok: true, memoId: result.memoId, title: result.title, deduped: result.deduped }

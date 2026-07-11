@@ -1,9 +1,17 @@
 import { startTransition, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { ArrowLeft, Search, RefreshCw, Hash, MessageSquareQuote, Check, ChevronsUpDown } from "lucide-react"
-import { KNOWLEDGE_TYPES, MEMO_TYPES, type KnowledgeType, type MemoStatus, type MemoType } from "@threa/types"
+import {
+  KNOWLEDGE_TYPES,
+  MEMO_TYPES,
+  MemoScopes,
+  type KnowledgeType,
+  type MemoScope,
+  type MemoStatus,
+  type MemoType,
+} from "@threa/types"
 import { Link, useParams, useSearchParams } from "react-router-dom"
-import { useArchiveMemo, useMemoDetail, useMemoSearch, useUnarchiveMemo, useUpdateMemo } from "@/hooks"
+import { useArchiveMemo, useDeleteMemo, useMemoDetail, useMemoSearch, useUnarchiveMemo, useUpdateMemo } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { Button } from "@/components/ui/button"
@@ -29,6 +37,7 @@ import type { MemoExplorerResult, MemoUpdateRequest } from "@/api"
 
 const ALL_MEMO_TYPES = "all-memo-types"
 const ALL_KNOWLEDGE_TYPES = "all-knowledge-types"
+const ALL_SCOPES = "all-scopes"
 
 // Drafts are never user-facing; the explorer browses these three lifecycle states.
 const EXPLORER_STATUSES: { value: MemoStatus; label: string }[] = [
@@ -239,6 +248,9 @@ export function MemoryPage() {
   const [selectedStatus, setSelectedStatus] = useState<MemoStatus>(
     () => (searchParams.get("status") as MemoStatus | null) ?? "active"
   )
+  const [selectedScope, setSelectedScope] = useState<MemoScope | null>(
+    () => searchParams.get("scope") as MemoScope | null
+  )
 
   // Debounced query for the API — updates 300ms after the user stops typing
   const [debouncedQuery, setDebouncedQuery] = useState(localQuery)
@@ -273,17 +285,20 @@ export function MemoryPage() {
     memoType?: MemoType | null
     knowledgeType?: KnowledgeType | null
     status?: MemoStatus
+    scope?: MemoScope | null
   }) {
     if ("stream" in updates) setSelectedStreamId(updates.stream ?? null)
     if ("memoType" in updates) setSelectedMemoType(updates.memoType ?? null)
     if ("knowledgeType" in updates) setSelectedKnowledgeType(updates.knowledgeType ?? null)
     if (updates.status) setSelectedStatus(updates.status)
+    if ("scope" in updates) setSelectedScope(updates.scope ?? null)
     syncToUrl({
       ...("stream" in updates && { stream: updates.stream }),
       ...("memoType" in updates && { memoType: updates.memoType }),
       ...("knowledgeType" in updates && { knowledgeType: updates.knowledgeType }),
       // "active" is the default view, so keep it out of the URL.
       ...(updates.status && { status: updates.status === "active" ? null : updates.status }),
+      ...("scope" in updates && { scope: updates.scope }),
       memo: null,
     })
   }
@@ -293,7 +308,8 @@ export function MemoryPage() {
     setSelectedMemoType(null)
     setSelectedKnowledgeType(null)
     setSelectedStatus("active")
-    syncToUrl({ stream: null, memoType: null, knowledgeType: null, status: null, memo: null })
+    setSelectedScope(null)
+    syncToUrl({ stream: null, memoType: null, knowledgeType: null, status: null, scope: null, memo: null })
   }
 
   const searchResponse = useMemoSearch(workspaceId ?? "", {
@@ -304,6 +320,7 @@ export function MemoryPage() {
       memoType: selectedMemoType ? [selectedMemoType] : undefined,
       knowledgeType: selectedKnowledgeType ? [selectedKnowledgeType] : undefined,
       status: [selectedStatus],
+      scope: selectedScope ?? undefined,
     },
   })
 
@@ -330,12 +347,14 @@ export function MemoryPage() {
   }
 
   const selectedMemoData = selectedMemo.data?.memo ?? null
-  const hasActiveFilters = selectedStreamId || selectedMemoType || selectedKnowledgeType || selectedStatus !== "active"
+  const hasActiveFilters =
+    selectedStreamId || selectedMemoType || selectedKnowledgeType || selectedStatus !== "active" || selectedScope
 
   const updateMemo = useUpdateMemo(workspaceId ?? "")
   const archiveMemo = useArchiveMemo(workspaceId ?? "")
   const unarchiveMemo = useUnarchiveMemo(workspaceId ?? "")
-  const isMutating = updateMemo.isPending || archiveMemo.isPending || unarchiveMemo.isPending
+  const deleteMemo = useDeleteMemo(workspaceId ?? "")
+  const isMutating = updateMemo.isPending || archiveMemo.isPending || unarchiveMemo.isPending || deleteMemo.isPending
 
   const editControls: MemoEditControls | undefined = selectedMemoId
     ? {
@@ -371,6 +390,16 @@ export function MemoryPage() {
             await unarchiveMemo.mutateAsync(selectedMemoId)
           } catch {
             toast.error("Couldn't restore the memo — try again")
+          }
+        },
+        onDelete: async () => {
+          try {
+            await deleteMemo.mutateAsync(selectedMemoId)
+            // The memo is gone; clear the pinned selection so the pane falls back
+            // to the list instead of 404-fetching the deleted id.
+            syncToUrl({ memo: null })
+          } catch {
+            toast.error("Couldn't delete the memo — try again")
           }
         },
       }
@@ -509,6 +538,24 @@ export function MemoryPage() {
                   {status.label}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={selectedScope ?? ALL_SCOPES}
+            onValueChange={(value) => setFilter({ scope: value === ALL_SCOPES ? null : (value as MemoScope) })}
+          >
+            <SelectTrigger
+              className={cn(
+                "h-7 w-auto gap-1.5 rounded-md border-border/50 bg-background/60 px-2.5 text-xs",
+                selectedScope && "border-primary/40 bg-primary/5"
+              )}
+            >
+              <SelectValue placeholder="All memory" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_SCOPES}>All memory</SelectItem>
+              <SelectItem value={MemoScopes.USER}>About you</SelectItem>
             </SelectContent>
           </Select>
 

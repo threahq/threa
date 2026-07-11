@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
-import type { AuthorType, KnowledgeType, MemoStatus, MemoType } from "@threa/types"
+import type { AuthorType, KnowledgeType, MemoScope, MemoStatus, MemoType } from "@threa/types"
+import { MemoScopes } from "@threa/types"
 import { withTransaction } from "../../db"
 import { logger } from "../../lib/logger"
 import { ConversationRepository } from "../conversations"
@@ -23,6 +24,8 @@ export interface MemoExplorerFilters {
   before?: Date
   after?: Date
   statuses?: MemoStatus[]
+  /** Positive visibility filter (roadmap 6.4) — `'user'` drives the "About you" view. */
+  scope?: MemoScope
 }
 
 export interface MemoUpdateFields {
@@ -34,6 +37,13 @@ export interface MemoUpdateFields {
 
 export interface MemoExplorerPermissions {
   accessibleStreamIds: string[]
+  /**
+   * The user browsing (roadmap 6.4). Gates user-scoped memos to their owner —
+   * a `user`-scoped memo is visible/editable/deletable only by this user, even
+   * with source-stream access. Omitted (e.g. a bot API key) ⇒ no user-scoped
+   * memos are visible.
+   */
+  userId?: string
 }
 
 export interface MemoExplorerSearchParams {
@@ -119,6 +129,8 @@ export class MemoExplorerService {
       before: filters.before,
       after: filters.after,
       statuses: filters.statuses,
+      viewerUserId: permissions.userId,
+      scope: filters.scope,
     }
 
     if (!query.trim()) {
@@ -291,6 +303,30 @@ export class MemoExplorerService {
   }
 
   /**
+   * Hard-delete a memo the caller owns (roadmap 6.4 — "forget what you know about
+   * me"). Restricted to `user`-scoped memos: those are the caller's own private
+   * tier, safe to remove outright. Shared (`stream`/`workspace`) knowledge is
+   * archived, not deleted, so this rejects it — `archive` is the path there.
+   * Returns "not_found" when the memo is missing/inaccessible/not owned,
+   * "forbidden" when it exists but isn't user-scoped, "deleted" on success.
+   */
+  async delete(
+    workspaceId: string,
+    memoId: string,
+    permissions: MemoExplorerPermissions
+  ): Promise<"deleted" | "forbidden" | "not_found"> {
+    const resolved = await this.resolveAccessibleMemo(workspaceId, memoId, permissions)
+    if (!resolved) {
+      return "not_found"
+    }
+    if (resolved.memo.scope !== MemoScopes.USER) {
+      return "forbidden"
+    }
+    const deleted = await MemoRepository.delete(this.pool, workspaceId, memoId)
+    return deleted ? "deleted" : "not_found"
+  }
+
+  /**
    * Load a memo and confirm the caller can access its source stream — the same
    * gate `getById` applies. Unlike search/retrieval this does NOT filter on
    * status, so archived and superseded memos resolve (the explorer browses and
@@ -304,6 +340,13 @@ export class MemoExplorerService {
   ): Promise<{ memo: Memo; sourceContext: MemoSourceContext } | null> {
     const memo = await MemoRepository.findById(this.pool, memoId)
     if (!memo || memo.workspaceId !== workspaceId) {
+      return null
+    }
+
+    // A user-scoped memo is private to its owner (roadmap 6.4): even a caller with
+    // source-stream access can't view/edit/archive/delete another user's private
+    // memo. No caller identity ⇒ no user-scoped access at all.
+    if (memo.scope === MemoScopes.USER && memo.scopeUserId !== permissions.userId) {
       return null
     }
 

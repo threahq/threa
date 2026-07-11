@@ -33,6 +33,8 @@ function fakeMemo(overrides: Partial<Memo> = {}): Memo {
     revisionReason: null,
     authoredByKind: "pipeline",
     sourceSessionId: null,
+    scope: "workspace",
+    scopeUserId: null,
     createdAt: new Date("2026-05-01T00:00:00Z"),
     updatedAt: new Date("2026-05-01T00:00:00Z"),
     archivedAt: null,
@@ -235,5 +237,79 @@ describe("MemoExplorerService.getById — agent provenance (roadmap 6.6)", () =>
     const result = await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)
 
     expect(result?.capturedByPersonaName).toBeNull()
+  })
+})
+
+describe("MemoExplorerService — user-scope owner gate (roadmap 6.4)", () => {
+  const OWNER = { accessibleStreamIds: [STREAM_ID], userId: "usr_owner" }
+  const OTHER_USER = { accessibleStreamIds: [STREAM_ID], userId: "usr_other" }
+  const NO_USER = { accessibleStreamIds: [STREAM_ID] }
+  const userMemo = () => fakeMemo({ scope: "user", scopeUserId: "usr_owner" })
+
+  it("resolves a user-scoped memo for its owner", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(userMemo())
+
+    const result = await service.getById(WORKSPACE_ID, MEMO_ID, OWNER)
+
+    expect(result?.memo.id).toBe(MEMO_ID)
+  })
+
+  it("hides another user's private memo even with source-stream access (the footgun)", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(userMemo())
+
+    expect(await service.getById(WORKSPACE_ID, MEMO_ID, OTHER_USER)).toBeNull()
+    expect(await service.getById(WORKSPACE_ID, MEMO_ID, NO_USER)).toBeNull()
+  })
+
+  it("forwards the viewer and scope filter to the repository on search", async () => {
+    const { service } = buildService()
+    const hybrid = spyOn(MemoRepository, "hybridSearch").mockResolvedValue([])
+    spyOn(MemoRepository, "fullTextSearch").mockResolvedValue([])
+
+    await service.search({
+      workspaceId: WORKSPACE_ID,
+      permissions: OWNER,
+      query: "prefs",
+      filters: { scope: "user" },
+    })
+
+    expect(hybrid).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ filters: expect.objectContaining({ viewerUserId: "usr_owner", scope: "user" }) })
+    )
+  })
+
+  it("deletes a user-scoped memo the caller owns", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(userMemo())
+    const del = spyOn(MemoRepository, "delete").mockResolvedValue(true)
+
+    expect(await service.delete(WORKSPACE_ID, MEMO_ID, OWNER)).toBe("deleted")
+    expect(del).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, MEMO_ID)
+  })
+
+  it("refuses to delete a shared (workspace-scoped) memo — archive is the path there", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo({ scope: "workspace", scopeUserId: null }))
+    const del = spyOn(MemoRepository, "delete").mockResolvedValue(true)
+
+    expect(await service.delete(WORKSPACE_ID, MEMO_ID, OWNER)).toBe("forbidden")
+    expect(del).not.toHaveBeenCalled()
+  })
+
+  it("reports not_found when deleting another user's private memo", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(userMemo())
+    const del = spyOn(MemoRepository, "delete").mockResolvedValue(true)
+
+    expect(await service.delete(WORKSPACE_ID, MEMO_ID, OTHER_USER)).toBe("not_found")
+    expect(del).not.toHaveBeenCalled()
   })
 })

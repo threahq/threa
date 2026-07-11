@@ -8,13 +8,26 @@ import {
   Copy,
   ExternalLink,
   Hash,
+  Lock,
   MessageSquareQuote,
   Pencil,
+  Trash2,
 } from "lucide-react"
 import { Link } from "react-router-dom"
-import { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS, type StreamType } from "@threa/types"
+import { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS, MemoScopes, type StreamType } from "@threa/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -42,6 +55,8 @@ export interface MemoEditControls {
   onSave: (fields: MemoUpdateRequest) => Promise<void>
   onArchive: () => Promise<void>
   onUnarchive: () => Promise<void>
+  /** Hard-delete, offered only for a user-scoped ("About you") memo the caller owns (roadmap 6.4). */
+  onDelete?: () => Promise<void>
   isMutating: boolean
 }
 
@@ -366,6 +381,12 @@ export function MemoDetailContent({
               {memoLabel(data.memo.memoType)}
             </Badge>
             <MemoStatusBadge status={data.memo.status} />
+            {data.memo.scope === MemoScopes.USER && (
+              <Badge variant="outline" className="gap-1 text-[10px] font-medium">
+                <Lock className="h-2.5 w-2.5" />
+                About you
+              </Badge>
+            )}
             {data.memo.authoredByKind === "agent" && <AgentAuthoredBadge personaName={data.capturedByPersonaName} />}
             <span className="text-[11px] tabular-nums text-muted-foreground/50">v{data.memo.version}</span>
             <span className="text-muted-foreground/30">&middot;</span>
@@ -409,6 +430,38 @@ export function MemoDetailContent({
                       <Archive className="h-3 w-3" />
                       Archive
                     </Button>
+                  )}
+                  {edit.onDelete && data.memo.scope === MemoScopes.USER && (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 gap-1.5 px-2 text-xs text-destructive hover:text-destructive"
+                          disabled={edit.isMutating}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Delete
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete this memo?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This permanently removes what Ariadne remembers here about you. It can&apos;t be undone.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            onClick={() => void edit.onDelete?.()}
+                          >
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   )}
                 </>
               )}

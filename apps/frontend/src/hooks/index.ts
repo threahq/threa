@@ -79,7 +79,15 @@ export { useScrollBehavior } from "./use-scroll-behavior"
 export { useTimelineScroll } from "./use-timeline-scroll"
 
 export { useStreamSearch } from "./use-stream-search"
-export { useMemoSearch, useMemoDetail, useUpdateMemo, useArchiveMemo, useUnarchiveMemo, memoKeys } from "./use-memos"
+export {
+  useMemoSearch,
+  useMemoDetail,
+  useUpdateMemo,
+  useArchiveMemo,
+  useUnarchiveMemo,
+  useDeleteMemo,
+  memoKeys,
+} from "./use-memos"
 export { useStreamDelegations, delegationKeys } from "./use-stream-delegations"
 
 export {

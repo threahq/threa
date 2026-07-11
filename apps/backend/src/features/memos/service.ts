@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient } from "../../db"
-import { StreamStateRepository, StreamEventRepository } from "../streams"
+import { StreamStateRepository, StreamEventRepository, StreamRepository, type Stream } from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository, type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
@@ -17,10 +17,14 @@ import { logger } from "../../lib/logger"
 import {
   MemoTypes,
   MemoStatuses,
+  MemoScopes,
+  StreamTypes,
+  Visibilities,
   AuthorTypes,
   AuthoredByKinds,
   ConversationStatuses,
   type KnowledgeType,
+  type MemoScope,
   type MemosCapturedEventPayload,
   type Memo as WireMemo,
 } from "@threa/types"
@@ -65,6 +69,21 @@ function localeToLanguageName(locale: string): string {
   }
 }
 
+/**
+ * Visibility tier for memos the passive pipeline extracts from `stream` (roadmap
+ * 6.4). A private scratchpad is the solo-first "about you" surface — a single
+ * unambiguous owner (`created_by`), so its knowledge is that user's private tier.
+ * Everything else (channels, public scratchpads, and DMs — two participants with
+ * no single owner) stays `workspace`-scoped and is gated by stream access
+ * (INV-62); `save_memo` can still opt an individual memo into `user` scope.
+ */
+function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; scopeUserId: string | null } {
+  if (stream && stream.type === StreamTypes.SCRATCHPAD && stream.visibility === Visibilities.PRIVATE) {
+    return { scope: MemoScopes.USER, scopeUserId: stream.createdBy }
+  }
+  return { scope: MemoScopes.WORKSPACE, scopeUserId: null }
+}
+
 export interface ProcessResult {
   processed: number
   memosCreated: number
@@ -85,6 +104,10 @@ interface MemoToCreate {
   tags: string[]
   status: import("@threa/types").MemoStatus
   embedding: number[]
+  /** Visibility tier (roadmap 6.4): `user` for a private scratchpad's owner, else `workspace`. */
+  scope: import("@threa/types").MemoScope
+  /** Owner for `user` scope; null otherwise (DB CHECK enforces the pairing). */
+  scopeUserId: string | null
   /** Set at save time when this memo supersedes a prior capture from its conversation. */
   parentMemoId?: string
   /** Memos the memorizer explicitly retired (reversed/replaced conclusion), pre-validated. */
@@ -121,6 +144,20 @@ export interface SaveMemoParams {
   tags: string[]
   knowledgeType: KnowledgeType
   sourceMessageIds: string[]
+  /**
+   * The human the agent is serving (roadmap 6.4) — the owner of a `user`-scoped
+   * save. Null for system-triggered turns; a `user`-scope request without it
+   * falls back to the stream's natural tier (an ownerless `user` memo is
+   * impossible per the DB CHECK).
+   */
+  invokingUserId?: string | null
+  /**
+   * Explicit visibility override from the tool: `'user'` files the memo in the
+   * invoking user's private tier, `'workspace'` shares it. Omitted ⇒ the memo
+   * inherits the save stream's natural tier (a private scratchpad → the owner's
+   * private tier), matching passive extraction.
+   */
+  scope?: MemoScope
 }
 
 /**
@@ -242,6 +279,12 @@ export class MemoService implements MemoServiceLike {
         orderBy: "createdAt",
       })
 
+      // The visibility tier for everything extracted this batch depends only on
+      // the (top-level) stream — memos from a private scratchpad are the owner's
+      // private tier (roadmap 6.4).
+      const stream = await StreamRepository.findById(client, streamId)
+      const memoScope = resolveExtractedMemoScope(stream)
+
       const existingTags = await MemoRepository.getAllTags(client, workspaceId)
 
       const conversationItemIds = pending.filter((p) => p.itemType === "conversation").map((p) => p.itemId)
@@ -319,6 +362,7 @@ export class MemoService implements MemoServiceLike {
         formattedConversations,
         authorTimezones,
         memoLanguage,
+        memoScope,
       }
     })
 
@@ -517,6 +561,8 @@ export class MemoService implements MemoServiceLike {
             tags: content.tags,
             status: MemoStatuses.ACTIVE,
             embedding: embeddings[i],
+            scope: fetchedData.memoScope.scope,
+            scopeUserId: fetchedData.memoScope.scopeUserId,
             supersedesMemoIds: content.supersedesMemoIds,
           })
         }
@@ -571,6 +617,8 @@ export class MemoService implements MemoServiceLike {
           streamId,
           embedding: memoData.embedding,
           maxDistance: MEMO_DEDUP_DISTANCE,
+          scope: memoData.scope,
+          scopeUserId: memoData.scopeUserId,
         })
         if (duplicate && !explicitSupersedeIds.includes(duplicate.memo.id)) {
           // The reversed memos still retire even though the correction itself
@@ -760,6 +808,8 @@ export class MemoService implements MemoServiceLike {
       tags,
       knowledgeType,
       sourceMessageIds,
+      invokingUserId,
+      scope: scopeOverride,
     } = params
 
     // A message source is required so the row satisfies `memo_type_source`
@@ -811,6 +861,23 @@ export class MemoService implements MemoServiceLike {
         )
       )
 
+      // Resolve the memo's visibility tier (roadmap 6.4). Default to the save
+      // stream's natural tier (private scratchpad → the owner's private tier),
+      // matching passive extraction; an explicit tool `scope` overrides. A `user`
+      // override needs an invoking human to own it — with none, fall back to the
+      // natural tier rather than mint an ownerless (CHECK-violating) user memo.
+      const saveStream = await StreamRepository.findById(client, streamId)
+      const natural = resolveExtractedMemoScope(saveStream)
+      let resolvedScope = natural.scope
+      let resolvedScopeUserId = natural.scopeUserId
+      if (scopeOverride === MemoScopes.WORKSPACE) {
+        resolvedScope = MemoScopes.WORKSPACE
+        resolvedScopeUserId = null
+      } else if (scopeOverride === MemoScopes.USER && invokingUserId) {
+        resolvedScope = MemoScopes.USER
+        resolvedScopeUserId = invokingUserId
+      }
+
       // Serialize against the passive batch and other save_memo calls for this
       // stream (same lock key) so the dedup gate can't be read stale (INV-20).
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
@@ -820,6 +887,8 @@ export class MemoService implements MemoServiceLike {
         streamId,
         embedding,
         maxDistance: MEMO_DEDUP_DISTANCE,
+        scope: resolvedScope,
+        scopeUserId: resolvedScopeUserId,
       })
       if (duplicate) {
         logger.info(
@@ -844,6 +913,8 @@ export class MemoService implements MemoServiceLike {
         status: MemoStatuses.ACTIVE,
         authoredByKind: AuthoredByKinds.AGENT,
         sourceSessionId: sessionId ?? undefined,
+        scope: resolvedScope,
+        scopeUserId: resolvedScopeUserId,
       })
       await MemoRepository.updateEmbedding(client, newMemoId, embedding)
       await OutboxRepository.insert(client, "memo:created", {
@@ -906,7 +977,12 @@ export class MemoService implements MemoServiceLike {
       const settingLanguage = overrides.find((o) => o.key === "memoLanguage")?.value
       const memoLanguage =
         typeof settingLanguage === "string" && settingLanguage.trim().length > 0 ? settingLanguage.trim() : undefined
-      return { existingMemos, existingTags, memoLanguage }
+      // A reflective memo inherits the session stream's visibility tier — research
+      // residue in a private scratchpad is the owner's private tier (roadmap 6.4),
+      // consistent with the passive extractor.
+      const stream = await StreamRepository.findById(client, streamId)
+      const memoScope = resolveExtractedMemoScope(stream)
+      return { existingMemos, existingTags, memoLanguage, memoScope }
     })
 
     // Phase 2: classify the digest. topicSummary is null — the digest's own
@@ -986,6 +1062,8 @@ export class MemoService implements MemoServiceLike {
           streamId,
           embedding,
           maxDistance: MEMO_DEDUP_DISTANCE,
+          scope: context.memoScope.scope,
+          scopeUserId: context.memoScope.scopeUserId,
         })
         if (duplicate) {
           deduped++
@@ -1012,6 +1090,8 @@ export class MemoService implements MemoServiceLike {
           status: MemoStatuses.ACTIVE,
           authoredByKind: AuthoredByKinds.AGENT,
           sourceSessionId: sessionId,
+          scope: context.memoScope.scope,
+          scopeUserId: context.memoScope.scopeUserId,
         })
         await MemoRepository.updateEmbedding(client, newMemoId, embedding)
         await OutboxRepository.insert(client, "memo:created", {
@@ -1076,6 +1156,8 @@ export class MemoService implements MemoServiceLike {
       revisionReason: memo.revisionReason,
       authoredByKind: memo.authoredByKind,
       sourceSessionId: memo.sourceSessionId,
+      scope: memo.scope,
+      scopeUserId: memo.scopeUserId,
       createdAt: memo.createdAt.toISOString(),
       updatedAt: memo.updatedAt.toISOString(),
       archivedAt: memo.archivedAt ? memo.archivedAt.toISOString() : null,
@@ -1104,6 +1186,8 @@ export class MemoService implements MemoServiceLike {
       revisionReason: null,
       authoredByKind: AuthoredByKinds.PIPELINE,
       sourceSessionId: null,
+      scope: memoData.scope,
+      scopeUserId: memoData.scopeUserId,
       createdAt: now,
       updatedAt: now,
       archivedAt: null,

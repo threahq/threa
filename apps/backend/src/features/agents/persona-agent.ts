@@ -243,6 +243,8 @@ export interface PersonaAgentDeps {
     tags: string[]
     knowledgeType: import("@threa/types").KnowledgeType
     sourceMessageIds: string[]
+    invokingUserId?: string | null
+    scope?: import("@threa/types").MemoScope
   }) => Promise<import("./tools/tool-deps").SaveMemoToolResult>
 }
 
@@ -838,6 +840,8 @@ export class PersonaAgent {
                   streamId: session.streamId,
                   sessionId: session.id,
                   sourceStreamIds: saveMemoStreamIds,
+                  // The human the agent serves owns a `user`-scoped save (roadmap 6.4).
+                  invokingUserId: agentContext.invokingUserId,
                   ...params,
                 }),
             }

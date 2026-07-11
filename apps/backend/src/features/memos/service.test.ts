@@ -9,7 +9,7 @@ import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repo
 import type { MemoContent } from "./memorizer"
 import type { ConversationClassification } from "./classifier"
 import { OutboxRepository } from "../../lib/outbox"
-import { StreamEventRepository, StreamStateRepository } from "../streams"
+import { StreamEventRepository, StreamStateRepository, StreamRepository, type Stream } from "../streams"
 import type { StreamEvent } from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository } from "../messaging"
@@ -50,6 +50,23 @@ function fakeConversation(): Conversation {
     participantIds: ["usr_1"],
     secondaryMessageIds: [],
   } as unknown as Conversation
+}
+
+function fakeStream(overrides: Partial<Stream> = {}): Stream {
+  return {
+    id: STREAM_ID,
+    workspaceId: WORKSPACE_ID,
+    type: "channel",
+    slug: "general",
+    displayName: "general",
+    visibility: "public",
+    createdBy: "usr_owner",
+    rootStreamId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    archivedAt: null,
+    ...overrides,
+  } as unknown as Stream
 }
 
 function fakeMessages(): Map<string, Message> {
@@ -94,6 +111,7 @@ function setupService(options: { memoContents: MemoContent[] }) {
   spyOn(PendingItemRepository, "findUnprocessed").mockResolvedValue([fakePendingItem()])
   spyOn(PendingItemRepository, "markProcessed").mockResolvedValue(undefined as never)
   spyOn(MemoRepository, "findByStream").mockResolvedValue([])
+  spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
   spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
   spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
@@ -223,12 +241,15 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-62)", 
     expect(insert).not.toHaveBeenCalled()
     expect(streamEventInsertMany).not.toHaveBeenCalled()
     // The gate is stream-wide: no conversation is excluded from the search.
-    expect(findNearDuplicate).toHaveBeenCalledWith(expect.anything(), {
-      workspaceId: WORKSPACE_ID,
-      streamId: STREAM_ID,
-      embedding: expect.any(Array),
-      maxDistance: expect.any(Number),
-    })
+    expect(findNearDuplicate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: WORKSPACE_ID,
+        streamId: STREAM_ID,
+        embedding: expect.any(Array),
+        maxDistance: expect.any(Number),
+      })
+    )
   })
 
   it("supersedes the conversation's prior memo when a revised capture lands near it", async () => {
@@ -335,6 +356,44 @@ describe("MemoService.processBatch — settle gate (active conversations defer u
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(result.memosCreated).toBe(1)
+  })
+})
+
+describe("MemoService.processBatch — memo scope write policy (roadmap 6.4)", () => {
+  afterEach(() => mock.restore())
+
+  it("extracts private-scratchpad memos into the owner's user tier", async () => {
+    const { service } = setupService({ memoContents: [memoContent] })
+    spyOn(StreamRepository, "findById").mockResolvedValue(
+      fakeStream({ type: "scratchpad", visibility: "private", createdBy: "usr_owner" })
+    )
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+    const findNearDuplicate = spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "user", scopeUserId: "usr_owner" })
+    )
+    // Dedup is scoped to the same tier so a private memo can't dedup against a shared one.
+    expect(findNearDuplicate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "user", scopeUserId: "usr_owner" })
+    )
+  })
+
+  it("keeps channel and public-scratchpad memos workspace-scoped", async () => {
+    const { service } = setupService({ memoContents: [memoContent] })
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ type: "channel", visibility: "public" }))
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "workspace", scopeUserId: null })
+    )
   })
 })
 
@@ -451,6 +510,8 @@ function fakeMemoRow(id: string, overrides: Partial<import("./repository").Memo>
     revisionReason: null,
     authoredByKind: "pipeline",
     sourceSessionId: null,
+    scope: "workspace",
+    scopeUserId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     archivedAt: null,
@@ -465,6 +526,7 @@ function setupSaveMemo() {
     fn(fakeClient)) as typeof dbModule.withTransaction)
 
   spyOn(MessageRepository, "findByIdsInStreams").mockResolvedValue(fakeMessages())
+  spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
   const findNearDuplicate = spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
   const insert = spyOn(MemoRepository, "insert").mockImplementation(
     async (_db, params) => fakeMemoRow(params.id, { title: params.title }) as never
@@ -561,6 +623,58 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
     expect(outboxInsertMany).toHaveBeenCalledWith(expect.anything(), [
       { eventType: "stream:memos_captured", payload: expect.objectContaining({ streamId: STREAM_ID }) },
     ])
+  })
+
+  it("defaults a save in a shared stream to workspace scope (roadmap 6.4)", async () => {
+    const { service, insert } = setupSaveMemo()
+
+    await service.saveMemo(saveMemoInput)
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "workspace", scopeUserId: null })
+    )
+  })
+
+  it("files an explicit user-scope save under the invoking user (roadmap 6.4)", async () => {
+    const { service, insert, findNearDuplicate } = setupSaveMemo()
+
+    await service.saveMemo({ ...saveMemoInput, scope: "user", invokingUserId: "usr_human" })
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "user", scopeUserId: "usr_human" })
+    )
+    // Dedup runs in the same tier so a private save can't dedup against a shared memo.
+    expect(findNearDuplicate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "user", scopeUserId: "usr_human" })
+    )
+  })
+
+  it("falls back to workspace scope when a user-scope save has no invoking user", async () => {
+    const { service, insert } = setupSaveMemo()
+
+    await service.saveMemo({ ...saveMemoInput, scope: "user", invokingUserId: null })
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "workspace", scopeUserId: null })
+    )
+  })
+
+  it("inherits the private-scratchpad owner tier when no scope is passed", async () => {
+    const { service, insert } = setupSaveMemo()
+    spyOn(StreamRepository, "findById").mockResolvedValue(
+      fakeStream({ type: "scratchpad", visibility: "private", createdBy: "usr_owner" })
+    )
+
+    await service.saveMemo(saveMemoInput)
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: "user", scopeUserId: "usr_owner" })
+    )
   })
 
   it("returns the existing memo without inserting when the knowledge is already captured", async () => {
