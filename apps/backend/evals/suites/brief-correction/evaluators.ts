@@ -102,26 +102,39 @@ export const briefContentEvaluator: Evaluator<BriefCorrectionOutput, BriefCorrec
       }
     }
 
-    const { value } = await ctx.ai.generateObject({
-      model: BRIEF_JUDGE_MODEL,
-      schema: briefJudgeSchema,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You read a stream's brief (a durable working document) and, for each candidate fact given, answer purely factually whether the brief states that fact as currently true. A fact is asserted only when the brief presents it as what currently holds — a struck-through or explicitly-past note ('was MySQL, now Postgres') does not assert the past value as current. Only report what the brief says, not whether it is good.",
-        },
-        {
-          role: "user",
-          content: `## Brief\n${output.briefContent}\n\n## Required fact\n${expected.briefMustState ?? "(none — return null for assertsRequired)"}\n\n## Forbidden (old/contradicted) fact\n${expected.briefMustNotState ?? "(none — return null for stillAssertsForbidden)"}\n\nDoes the brief assert the required fact as current? Does it still assert the forbidden fact as current?`,
-        },
-      ],
-      temperature: 0,
-      telemetry: { functionId: "eval-brief-content" },
-    })
+    let value: z.infer<typeof briefJudgeSchema>
+    try {
+      ;({ value } = await ctx.ai.generateObject({
+        model: BRIEF_JUDGE_MODEL,
+        schema: briefJudgeSchema,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You read a stream's brief (a durable working document) and, for each candidate fact given, answer purely factually whether the brief states that fact as currently true. A fact is asserted only when the brief presents it as what currently holds — a struck-through or explicitly-past note ('was MySQL, now Postgres') does not assert the past value as current. Only report what the brief says, not whether it is good.",
+          },
+          {
+            role: "user",
+            content: `## Brief\n${output.briefContent}\n\n## Required fact\n${expected.briefMustState ?? "(none — return null for assertsRequired)"}\n\n## Forbidden (old/contradicted) fact\n${expected.briefMustNotState ?? "(none — return null for stillAssertsForbidden)"}\n\nDoes the brief assert the required fact as current? Does it still assert the forbidden fact as current?`,
+          },
+        ],
+        temperature: 0,
+        telemetry: { functionId: "eval-brief-content" },
+      }))
+    } catch (error) {
+      // A judge failure fails this case's evaluator, not the whole run.
+      return {
+        name: "brief-content",
+        score: 0,
+        passed: false,
+        details: `Judge error: ${error instanceof Error ? error.message : String(error)}`,
+      }
+    }
 
     const requiredOk = !expected.briefMustState || value.assertsRequired === true
-    const forbiddenOk = !expected.briefMustNotState || value.stillAssertsForbidden !== true
+    // Fail closed: an indeterminate (null) judgment on the forbidden fact must
+    // not pass the append-vs-replace gate — only an explicit `false` clears it.
+    const forbiddenOk = !expected.briefMustNotState || value.stillAssertsForbidden === false
     const passed = requiredOk && forbiddenOk
     return {
       name: "brief-content",

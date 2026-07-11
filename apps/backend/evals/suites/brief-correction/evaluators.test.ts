@@ -3,6 +3,7 @@ import type { EvalContext, CaseResult, EvaluatorResult } from "../../framework/t
 import {
   writeDecisionEvaluator,
   singleRevisionEvaluator,
+  briefContentEvaluator,
   accuracyEvaluator,
   chitchatNoWriteRateEvaluator,
 } from "./evaluators"
@@ -13,6 +14,27 @@ import type { BriefCorrectionInput, BriefCorrectionOutput, BriefCorrectionExpect
 // evaluator needs a real ctx.ai and is exercised by the `/eval` run.
 
 const ctx = {} as EvalContext
+
+type JudgeVerdict = { assertsRequired: boolean | null; stillAssertsForbidden: boolean | null }
+
+/**
+ * An EvalContext whose `ai.generateObject` returns a fixed judge verdict (or
+ * throws), so briefContentEvaluator's requiredOk/forbiddenOk logic is testable
+ * without a live model. Throwing when a verdict isn't expected proves the early
+ * returns don't reach the model.
+ */
+function judgeCtx(verdict: JudgeVerdict | Error): EvalContext {
+  return {
+    ai: {
+      generateObject: async () => {
+        if (verdict instanceof Error) throw verdict
+        return { value: { ...verdict, reasoning: "stub" } }
+      },
+    },
+  } as unknown as EvalContext
+}
+
+const NEVER_CALLED = judgeCtx(new Error("judge should not be called"))
 
 function output(over: Partial<BriefCorrectionOutput>): BriefCorrectionOutput {
   return {
@@ -90,6 +112,83 @@ describe("singleRevisionEvaluator", () => {
       { shouldWrite: true },
       ctx
     ) as EvaluatorResult
+    expect(r.passed).toBe(false)
+  })
+})
+
+describe("briefContentEvaluator", () => {
+  const withBrief = (over: Partial<BriefCorrectionOutput> = {}) =>
+    output({ wrote: true, briefContent: "# Brief\n\n- a fact", revisionCount: 1, ...over })
+
+  it("passes without calling the judge when there are no content requirements", async () => {
+    const r = (await briefContentEvaluator.evaluate(
+      withBrief(),
+      { shouldWrite: true },
+      NEVER_CALLED
+    )) as EvaluatorResult
+    expect(r.passed).toBe(true)
+  })
+
+  it("passes when the required fact is asserted", async () => {
+    const r = (await briefContentEvaluator.evaluate(
+      withBrief(),
+      { shouldWrite: true, briefMustState: "a fact" },
+      judgeCtx({ assertsRequired: true, stillAssertsForbidden: null })
+    )) as EvaluatorResult
+    expect(r.passed).toBe(true)
+  })
+
+  it("fails when the required fact is not asserted", async () => {
+    const r = (await briefContentEvaluator.evaluate(
+      withBrief(),
+      { shouldWrite: true, briefMustState: "a fact" },
+      judgeCtx({ assertsRequired: false, stillAssertsForbidden: null })
+    )) as EvaluatorResult
+    expect(r.passed).toBe(false)
+  })
+
+  it("passes a reversal when the old fact is dropped", async () => {
+    const r = (await briefContentEvaluator.evaluate(
+      withBrief(),
+      { shouldWrite: true, briefMustState: "Postgres", briefMustNotState: "MySQL" },
+      judgeCtx({ assertsRequired: true, stillAssertsForbidden: false })
+    )) as EvaluatorResult
+    expect(r.passed).toBe(true)
+  })
+
+  it("fails a reversal when the old fact is still asserted (appended, not replaced)", async () => {
+    const r = (await briefContentEvaluator.evaluate(
+      withBrief(),
+      { shouldWrite: true, briefMustState: "Postgres", briefMustNotState: "MySQL" },
+      judgeCtx({ assertsRequired: true, stillAssertsForbidden: true })
+    )) as EvaluatorResult
+    expect(r.passed).toBe(false)
+  })
+
+  it("fails closed when the forbidden-fact verdict is indeterminate (null)", async () => {
+    const r = (await briefContentEvaluator.evaluate(
+      withBrief(),
+      { shouldWrite: true, briefMustState: "Postgres", briefMustNotState: "MySQL" },
+      judgeCtx({ assertsRequired: true, stillAssertsForbidden: null })
+    )) as EvaluatorResult
+    expect(r.passed).toBe(false)
+  })
+
+  it("fails on a judge generation error", async () => {
+    const r = (await briefContentEvaluator.evaluate(
+      withBrief(),
+      { shouldWrite: true, briefMustState: "a fact" },
+      judgeCtx(new Error("boom"))
+    )) as EvaluatorResult
+    expect(r.passed).toBe(false)
+  })
+
+  it("fails when a fact was required but the brief is empty", async () => {
+    const r = (await briefContentEvaluator.evaluate(
+      output({ wrote: false, briefContent: null }),
+      { shouldWrite: true, briefMustState: "a fact" },
+      NEVER_CALLED
+    )) as EvaluatorResult
     expect(r.passed).toBe(false)
   })
 })

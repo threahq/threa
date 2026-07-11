@@ -65,6 +65,9 @@ import { parseMarkdown } from "@threa/prosemirror"
 import { AuthorTypes, StreamTypes } from "@threa/types"
 import { personaId as generatePersonaId, streamId as generateStreamId } from "../../../src/lib/id"
 
+/** Fixed clock for the agent's temporal grounding so a run is reproducible. */
+const EVAL_CLOCK = new Date("2026-07-01T12:00:00Z")
+
 function getModelConfig(ctx: EvalContext): { model: string; temperature: number } {
   const override = ctx.componentOverrides?.["companion"]
   return {
@@ -75,8 +78,8 @@ function getModelConfig(ctx: EvalContext): { model: string; temperature: number 
 
 async function countRevisions(ctx: EvalContext, streamId: string): Promise<number> {
   const { rows } = await ctx.pool.query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM stream_brief_revisions WHERE stream_id = $1`,
-    [streamId]
+    `SELECT COUNT(*)::text AS count FROM stream_brief_revisions WHERE workspace_id = $1 AND stream_id = $2`,
+    [ctx.workspaceId, streamId]
   )
   return Number(rows[0]?.count ?? "0")
 }
@@ -300,6 +303,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
       personaId,
       serverId: `eval-server-${ulid()}`,
       purpose: { kind: "catch_up" },
+      currentTime: EVAL_CLOCK,
     }
     await personaAgent.run(agentInput)
 
