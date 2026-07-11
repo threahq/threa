@@ -120,6 +120,7 @@ export {
   delegationId,
   agentConfigOverrideId,
   personaConfigDraftId,
+  personaConfigRevisionId,
 } from "./id"
 export {
   parseCookies,

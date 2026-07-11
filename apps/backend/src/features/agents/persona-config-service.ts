@@ -2,11 +2,13 @@ import type { Pool } from "pg"
 import type { ModelRegistry } from "@threa/agent-runtime"
 import {
   personaConfigPatchSchema,
+  AuthorTypes,
   CompanionModes,
   MemoryModes,
   StreamPurposes,
   type PersonaConfigPatch,
   type PersonaConfigResponse,
+  type PersonaConfigRevision,
   type PersonaDraftState,
   type PersonaListItem,
   type PersonaModelOption,
@@ -19,6 +21,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import type { StreamService } from "../streams"
 import { AgentConfigOverrideRepository, type AgentConfigOverrideDetail } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
+import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
 import {
   applyBuiltInAgentPatch,
   builtInAgentConfigPatchSchema,
@@ -32,6 +35,9 @@ interface Dependencies {
   streamService: StreamService
   modelRegistry: ModelRegistry
 }
+
+/** Cap on the revision history list; older revisions are omitted (and logged) past this. */
+const REVISION_LIST_LIMIT = 50
 
 export type SetPersonaOverrideResult =
   | { outcome: "written"; persona: PersonaListItem; updatedAt: string }
@@ -224,6 +230,17 @@ export class PersonaConfigService {
       const resolved = applyBuiltInAgentPatch(base, patch, { workspaceId, agentId })
       const persona = toPersonaListItem(resolved, true)
       await OutboxRepository.insert(client, "agent_config:updated", { workspaceId, agentId, persona })
+      // Append the revision in the same txn as the override + outbox (INV-7): the
+      // audit trail can't miss an accepted write. Version is MAX+1, race-safe
+      // under the upsert's row lock (INV-20). A restore lands here too, so it
+      // records a new revision rather than mutating history.
+      await PersonaConfigRevisionRepository.insert(client, {
+        workspaceId,
+        agentId,
+        patch,
+        createdByKind: AuthorTypes.USER,
+        createdById: callerId,
+      })
       return {
         outcome: "written" as const,
         persona,
@@ -253,6 +270,64 @@ export class PersonaConfigService {
       return written
     }
     return txnResult
+  }
+
+  /**
+   * The persona's committed revisions, newest-first, capped at
+   * {@link REVISION_LIST_LIMIT}. Caller must have confirmed `agentId` is an
+   * editable visible built-in. `patch`/`createdById` are returned raw for the
+   * frontend to render and resolve (INV-46).
+   */
+  async listRevisions(workspaceId: string, agentId: string): Promise<PersonaConfigRevision[]> {
+    // Fetch one past the cap so "were older revisions omitted?" is exact rather
+    // than a false positive at exactly REVISION_LIST_LIMIT rows.
+    const records = await PersonaConfigRevisionRepository.listByWorkspaceAndAgent(
+      this.pool,
+      workspaceId,
+      agentId,
+      REVISION_LIST_LIMIT + 1
+    )
+    if (records.length > REVISION_LIST_LIMIT) {
+      logger.warn(
+        { workspaceId, agentId, limit: REVISION_LIST_LIMIT },
+        "persona revision list hit cap; older revisions omitted"
+      )
+    }
+    return records.slice(0, REVISION_LIST_LIMIT).map(({ agentId: _agentId, ...revision }) => revision)
+  }
+
+  /**
+   * Restore a prior revision by re-committing its `patch` as the current
+   * override (D4). Reuses `setOverride` whole — so a restore takes the same
+   * optimistic-concurrency guard (409 on `expectedUpdatedAt` mismatch) and
+   * appends a NEW revision, keeping history append-only. A revision foreign to
+   * `(workspace, agent)` is a 404. Caller must have confirmed `personaId` is an
+   * editable visible built-in.
+   */
+  async restoreRevision(
+    workspaceId: string,
+    personaId: string,
+    revisionId: string,
+    expectedUpdatedAt: string | null,
+    callerId: string
+  ): Promise<SetPersonaOverrideResult> {
+    const revision = await PersonaConfigRevisionRepository.findById(this.pool, workspaceId, revisionId)
+    if (!revision || revision.agentId !== personaId) {
+      throw new HttpError("Persona revision not found", { status: 404, code: "PERSONA_REVISION_NOT_FOUND" })
+    }
+    // The stored JSONB is opaque; re-validate through the shared schema before
+    // re-committing. A revision predates schema changes, so an incompatible
+    // field (e.g. an enabledTools entry since retired from AGENT_TOOL_NAMES)
+    // means the revision is simply un-restorable — surface a clean 4xx, not a
+    // bare ZodError → 500 (INV-32).
+    const parsed = personaConfigPatchSchema.safeParse(revision.patch)
+    if (!parsed.success) {
+      throw new HttpError("This revision can no longer be restored — its configuration is out of date", {
+        status: 422,
+        code: "PERSONA_REVISION_INCOMPATIBLE",
+      })
+    }
+    return this.setOverride(workspaceId, personaId, parsed.data, expectedUpdatedAt, callerId)
   }
 
   /** Upsert the caller's draft patch (race-safe, INV-20). Returns its saved state. */

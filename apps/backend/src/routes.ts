@@ -449,6 +449,21 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
     persona.putOverride
   )
+  // Revision history (roadmap 7.1): list a persona's committed override
+  // revisions and restore one (re-commits an old patch as a new revision). Both
+  // workspace-admin only.
+  app.get(
+    "/api/workspaces/:workspaceId/personas/:personaId/revisions",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.listRevisions
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/personas/:personaId/revisions/:revisionId/restore",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.restoreRevision
+  )
   // Draft lifecycle (test-drive substrate, per caller): upsert own draft,
   // discard (archives the bound test stream), and idempotently create-or-return
   // the bound test scratchpad. All workspace-admin only.

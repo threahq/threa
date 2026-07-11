@@ -75,4 +75,5 @@ export {
   delegationId,
   agentConfigOverrideId,
   personaConfigDraftId,
+  personaConfigRevisionId,
 } from "@threa/backend-common"

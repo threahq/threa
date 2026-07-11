@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
 import type { ModelCapabilities, ModelRegistry } from "@threa/agent-runtime"
-import { AgentToolNames, CompanionModes, MemoryModes, StreamPurposes } from "@threa/types"
+import { AgentToolNames, CompanionModes, MemoryModes, StreamPurposes, type PersonaConfigPatch } from "@threa/types"
 import { PersonaConfigService } from "./persona-config-service"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
+import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID } from "./built-in-agents"
 import * as dbModule from "../../db"
@@ -194,6 +195,7 @@ describe("PersonaConfigService.setOverride", () => {
     })
     const deleteDraft = spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const revisionInsert = spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
 
     const result = await makeService().setOverride(
       WORKSPACE_ID,
@@ -223,6 +225,17 @@ describe("PersonaConfigService.setOverride", () => {
       agentId: ARIADNE_AGENT_ID,
       persona: result.outcome === "written" ? result.persona : undefined,
     })
+    // A revision is appended on the same txn client (INV-7) capturing the committed patch.
+    expect(revisionInsert).toHaveBeenCalledWith(
+      {},
+      {
+        workspaceId: WORKSPACE_ID,
+        agentId: ARIADNE_AGENT_ID,
+        patch: { name: "Renamed", enabledTools: [AgentToolNames.SEND_MESSAGE] },
+        createdByKind: "user",
+        createdById: CALLER_ID,
+      }
+    )
   })
 
   it("archives the bound test stream after a successful save (session complete), tolerating archive failure", async () => {
@@ -233,6 +246,7 @@ describe("PersonaConfigService.setOverride", () => {
     })
     spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue({ testStreamId: "stream_test" })
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
     const archiveStream = mock(async () => null)
     const service = new PersonaConfigService({
       pool: {} as any,
@@ -299,6 +313,7 @@ describe("PersonaConfigService.setOverride", () => {
     })
     spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
 
     // Ariadne's default escalationModel (opus-4.8) is absent from FAKE_MODEL_REGISTRY.
     const result = await makeService().setOverride(
@@ -310,6 +325,172 @@ describe("PersonaConfigService.setOverride", () => {
     )
 
     expect(result.outcome).toBe("written")
+  })
+})
+
+describe("PersonaConfigService.listRevisions", () => {
+  afterEach(() => mock.restore())
+
+  it("returns the persona's revisions newest-first, stripping the internal agentId", async () => {
+    const list = spyOn(PersonaConfigRevisionRepository, "listByWorkspaceAndAgent").mockResolvedValue([
+      {
+        id: "acrev_2",
+        agentId: ARIADNE_AGENT_ID,
+        version: 2,
+        patch: { name: "V2" },
+        createdByKind: "user",
+        createdById: "usr_1",
+        createdAt: "2026-07-05T00:00:00.000Z",
+      },
+    ])
+
+    const revisions = await makeService().listRevisions(WORKSPACE_ID, ARIADNE_AGENT_ID)
+
+    // Fetches cap+1 to detect exact truncation.
+    expect(list).toHaveBeenCalledWith({}, WORKSPACE_ID, ARIADNE_AGENT_ID, 51)
+    expect(revisions).toEqual([
+      {
+        id: "acrev_2",
+        version: 2,
+        patch: { name: "V2" },
+        createdByKind: "user",
+        createdById: "usr_1",
+        createdAt: "2026-07-05T00:00:00.000Z",
+      },
+    ])
+  })
+})
+
+describe("PersonaConfigService.restoreRevision", () => {
+  afterEach(() => mock.restore())
+
+  it("re-commits the revision's patch through setOverride, writing a NEW revision", async () => {
+    setupTransaction()
+    spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
+      id: "acrev_1",
+      agentId: ARIADNE_AGENT_ID,
+      version: 1,
+      patch: { name: "Original" },
+      createdByKind: "user",
+      createdById: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const revisionInsert = spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 5 })
+
+    const result = await makeService().restoreRevision(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      "acrev_1",
+      "2026-07-05T00:00:00.000Z",
+      CALLER_ID
+    )
+
+    expect(result).toMatchObject({ outcome: "written", updatedAt: "2026-07-06T00:00:00.000Z" })
+    // setOverride ran with the revision's patch and the caller's optimistic token.
+    expect(upsert).toHaveBeenCalledWith(
+      {},
+      {
+        workspaceId: WORKSPACE_ID,
+        agentId: ARIADNE_AGENT_ID,
+        patch: { name: "Original" },
+        expectedUpdatedAt: "2026-07-05T00:00:00.000Z",
+      }
+    )
+    // Restore appends its own revision — history stays append-only.
+    expect(revisionInsert).toHaveBeenCalledWith(
+      {},
+      {
+        workspaceId: WORKSPACE_ID,
+        agentId: ARIADNE_AGENT_ID,
+        patch: { name: "Original" },
+        createdByKind: "user",
+        createdById: CALLER_ID,
+      }
+    )
+  })
+
+  it("404s a revision foreign to the persona (belongs to another agent)", async () => {
+    spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
+      id: "acrev_9",
+      agentId: "persona_system_other",
+      version: 1,
+      patch: { name: "Foreign" },
+      createdByKind: "user",
+      createdById: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive")
+
+    await expect(
+      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_9", null, CALLER_ID)
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_REVISION_NOT_FOUND" })
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("404s a revision absent from the workspace", async () => {
+    spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue(null)
+
+    await expect(
+      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_missing", null, CALLER_ID)
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_REVISION_NOT_FOUND" })
+  })
+
+  it("422s a revision whose stored patch no longer validates (schema drift) instead of a raw 500", async () => {
+    spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
+      id: "acrev_old",
+      agentId: ARIADNE_AGENT_ID,
+      version: 1,
+      // enabledTools carrying a since-retired tool name — the stored JSONB is
+      // opaque, so this models a revision written before the enum changed.
+      patch: { enabledTools: ["a_tool_that_was_removed"] } as unknown as PersonaConfigPatch,
+      createdByKind: "user",
+      createdById: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive")
+
+    await expect(
+      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_old", null, CALLER_ID)
+    ).rejects.toMatchObject({ status: 422, code: "PERSONA_REVISION_INCOMPATIBLE" })
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("surfaces a 409 conflict from the underlying setOverride without writing a revision", async () => {
+    setupTransaction()
+    spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
+      id: "acrev_1",
+      agentId: ARIADNE_AGENT_ID,
+      version: 1,
+      patch: { name: "Original" },
+      createdByKind: "user",
+      createdById: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })
+    spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "conflict",
+      current: { patch: { name: "Theirs" }, updatedAt: "2026-07-06T00:00:00.000Z" },
+    })
+    const revisionInsert = spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 5 })
+
+    const result = await makeService().restoreRevision(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      "acrev_1",
+      "2026-07-05T00:00:00.000Z",
+      CALLER_ID
+    )
+
+    expect(result).toEqual({
+      outcome: "conflict",
+      current: { patch: { name: "Theirs" }, updatedAt: "2026-07-06T00:00:00.000Z" },
+    })
+    expect(revisionInsert).not.toHaveBeenCalled()
   })
 })
 

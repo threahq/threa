@@ -19,6 +19,10 @@ const putDraftSchema = z.object({
   patch: personaConfigPatchSchema,
 })
 
+const restoreRevisionSchema = z.object({
+  expectedUpdatedAt: z.string().nullable(),
+})
+
 function personaNotFound(): HttpError {
   return new HttpError("Persona not found", { status: 404, code: "PERSONA_NOT_FOUND" })
 }
@@ -57,6 +61,44 @@ export function createPersonaConfigHandlers({ personaConfigService }: Dependenci
       const { patch, expectedUpdatedAt } = validateRequest(putOverrideSchema, req.body)
 
       const result = await personaConfigService.setOverride(workspaceId, personaId, patch, expectedUpdatedAt, callerId)
+      if (result.outcome === "conflict") {
+        throw new HttpError("Persona override was modified by someone else", {
+          status: 409,
+          code: "PERSONA_OVERRIDE_CONFLICT",
+          details: { current: result.current },
+        })
+      }
+
+      res.json({ persona: result.persona, updatedAt: result.updatedAt })
+    },
+
+    async listRevisions(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const personaId = req.params.personaId!
+
+      if (!getVisibleBuiltInAgentConfig(personaId)) throw personaNotFound()
+
+      const revisions = await personaConfigService.listRevisions(workspaceId, personaId)
+      res.json({ revisions })
+    },
+
+    async restoreRevision(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const personaId = req.params.personaId!
+      const revisionId = req.params.revisionId!
+      const callerId = req.user!.id
+
+      if (!getVisibleBuiltInAgentConfig(personaId)) throw personaNotFound()
+
+      const { expectedUpdatedAt } = validateRequest(restoreRevisionSchema, req.body)
+
+      const result = await personaConfigService.restoreRevision(
+        workspaceId,
+        personaId,
+        revisionId,
+        expectedUpdatedAt,
+        callerId
+      )
       if (result.outcome === "conflict") {
         throw new HttpError("Persona override was modified by someone else", {
           status: 409,

@@ -838,6 +838,10 @@ export {
   type PersonaListItem,
   type PersonaDraftState,
   type PersonaConfigResponse,
+  type PersonaConfigRevision,
+  PERSONA_REVISION_AUTHOR_KINDS,
+  type PersonaRevisionAuthorKind,
+  type RestorePersonaRevisionInput,
   type UpdatePersonaOverrideInput,
 } from "./persona-config"
 
