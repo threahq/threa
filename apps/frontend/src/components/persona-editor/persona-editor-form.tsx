@@ -50,6 +50,7 @@ import {
   type SyncState,
 } from "./persona-form"
 import { FieldRow } from "./field-row"
+import { PersonaHistoryPanel } from "./persona-history-panel"
 import { ToolChecklist } from "./tool-checklist"
 
 const ESCALATION_NONE = "__none__"
@@ -220,6 +221,27 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
     setValues((prev) => ({ ...prev, [field]: defaults[field] as PersonaFormValues[K] }))
   }
 
+  // Adopt another admin's committed override as the known baseline so the next
+  // Save/restore asserts against it (overwrites) — the local edits stay, nothing
+  // is lost silently (INV-63). Shared by Save's 409 branch and a restore 409 from
+  // the history panel, which both surface the same amber banner.
+  const applyOverrideConflict = useCallback(
+    (current: PersonaOverrideConflict | null) => {
+      queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
+        old
+          ? {
+              ...old,
+              overridePatch: current?.patch ?? null,
+              overrideUpdatedAt: current?.updatedAt ?? null,
+              resolved: { ...old.defaults, ...(current?.patch ?? {}) },
+            }
+          : old
+      )
+      setConflict(true)
+    },
+    [queryClient, workspaceId, personaId]
+  )
+
   const handleSave = () => {
     // Mirror the Save button's disabled guard so the RichEditor's Cmd/Ctrl+Enter
     // (onSubmit) can't commit a save the button would have blocked — an
@@ -238,21 +260,7 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
         },
         onError: (error) => {
           if (ApiError.isApiError(error) && error.code === "PERSONA_OVERRIDE_CONFLICT") {
-            // Refresh the known override to the other admin's version so the next
-            // save asserts against it (overwrites), keeping the local edits intact
-            // — nothing is lost silently (INV-63).
-            const current = (error.details?.current ?? null) as PersonaOverrideConflict | null
-            queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
-              old
-                ? {
-                    ...old,
-                    overridePatch: current?.patch ?? null,
-                    overrideUpdatedAt: current?.updatedAt ?? null,
-                    resolved: { ...old.defaults, ...(current?.patch ?? {}) },
-                  }
-                : old
-            )
-            setConflict(true)
+            applyOverrideConflict((error.details?.current ?? null) as PersonaOverrideConflict | null)
             return
           }
           toast.error(error instanceof Error ? error.message : "Failed to save persona")
@@ -503,9 +511,17 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
       </FieldRow>
 
       <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t bg-background py-3">
-        <span className="text-[11px] text-muted-foreground" aria-live="polite">
-          {syncHint}
-        </span>
+        <div className="flex items-center gap-3">
+          <PersonaHistoryPanel
+            workspaceId={workspaceId}
+            personaId={personaId}
+            expectedUpdatedAt={config.overrideUpdatedAt}
+            onOverrideConflict={applyOverrideConflict}
+          />
+          <span className="text-[11px] text-muted-foreground" aria-live="polite">
+            {syncHint}
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <AlertDialog>
             <AlertDialogTrigger asChild>

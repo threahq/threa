@@ -1,5 +1,11 @@
 import { api } from "./client"
-import type { PersonaConfigPatch, PersonaConfigResponse, PersonaDraftState, PersonaListItem } from "@threa/types"
+import type {
+  PersonaConfigPatch,
+  PersonaConfigResponse,
+  PersonaConfigRevision,
+  PersonaDraftState,
+  PersonaListItem,
+} from "@threa/types"
 
 /**
  * The stored override as it rides on a `PERSONA_OVERRIDE_CONFLICT` (409)
@@ -43,6 +49,38 @@ export const personasApi = {
   ): Promise<{ persona: PersonaListItem; updatedAt: string }> {
     return api.put<{ persona: PersonaListItem; updatedAt: string }>(
       `/api/workspaces/${workspaceId}/personas/${personaId}/override`,
+      input
+    )
+  },
+
+  /**
+   * The persona's committed override revisions, newest-first (admin-gated). Each
+   * carries the sparse `patch` at that version plus `createdBy*` ids the editor
+   * resolves to a display name (INV-46).
+   */
+  async listRevisions(workspaceId: string, personaId: string): Promise<PersonaConfigRevision[]> {
+    const { revisions } = await api.get<{ revisions: PersonaConfigRevision[] }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}/revisions`
+    )
+    return revisions
+  },
+
+  /**
+   * Re-commit an older revision's patch as the current override (a new revision;
+   * never destructive). `expectedUpdatedAt` is the same optimistic-concurrency
+   * token as {@link putOverride}: a mismatch throws an `ApiError`
+   * (`PERSONA_OVERRIDE_CONFLICT`, `details.current` a {@link PersonaOverrideConflict}).
+   * A revision that no longer parses against the current schema is a 422
+   * (`PERSONA_REVISION_INCOMPATIBLE`); a foreign revision is a 404.
+   */
+  restoreRevision(
+    workspaceId: string,
+    personaId: string,
+    revisionId: string,
+    input: { expectedUpdatedAt: string | null }
+  ): Promise<{ persona: PersonaListItem; updatedAt: string }> {
+    return api.post<{ persona: PersonaListItem; updatedAt: string }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}/revisions/${revisionId}/restore`,
       input
     )
   },
