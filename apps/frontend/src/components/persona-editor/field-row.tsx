@@ -10,6 +10,8 @@ interface FieldRowProps {
   overridden: boolean
   onReset: () => void
   disabled?: boolean
+  /** Optional control shown left of the Reset button (e.g. "View default"). */
+  headerAction?: ReactNode
   children: ReactNode
 }
 
@@ -19,7 +21,16 @@ interface FieldRowProps {
  * the field is overridden (INV-21 — no layout shift) and is disabled when the
  * value already matches the default.
  */
-export function FieldRow({ label, htmlFor, description, overridden, onReset, disabled, children }: FieldRowProps) {
+export function FieldRow({
+  label,
+  htmlFor,
+  description,
+  overridden,
+  onReset,
+  disabled,
+  headerAction,
+  children,
+}: FieldRowProps) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
@@ -34,18 +45,21 @@ export function FieldRow({ label, htmlFor, description, overridden, onReset, dis
           </div>
           {description && <p className="text-xs text-muted-foreground">{description}</p>}
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 shrink-0 px-2 text-xs text-muted-foreground"
-          onClick={onReset}
-          disabled={disabled || !overridden}
-          aria-label={`Reset ${label}`}
-        >
-          <RotateCcw className="mr-1 h-3 w-3" />
-          Reset
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {headerAction}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 px-2 text-xs text-muted-foreground"
+            onClick={onReset}
+            disabled={disabled || !overridden}
+            aria-label={`Reset ${label}`}
+          >
+            <RotateCcw className="mr-1 h-3 w-3" />
+            Reset
+          </Button>
+        </div>
       </div>
       {children}
     </div>
