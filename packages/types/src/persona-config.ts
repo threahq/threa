@@ -2,31 +2,23 @@
 // config additively over code defaults; only diverging fields are stored in
 // `agent_config_overrides`. This module is the single source of truth (INV-31)
 // for the editable-field patch schema shared by backend validation and the
-// frontend editor, plus the curated model allowlist (INV-16 enforced for
-// overrides — built-in defaults stay legal even if not listed).
+// frontend editor. The model allowlist is derived server-side from the model
+// registry (INV-16 enforced for overrides) and rides on the config response as
+// `availableModels`; built-in defaults stay legal even if the registry lacks them.
 
 import { z } from "zod"
 import { AGENT_TOOL_NAMES } from "./constants"
 
 /**
- * Curated chat models offered in the persona editor's model / escalation-model
- * pickers. Drawn from the inference models in `docs/model-reference.md`
- * (embeddings, speech-to-text, and deprecated generations excluded). A
- * built-in default model outside this list is still legal — the allowlist gates
- * only what an admin may newly select.
+ * One selectable chat model for the persona editor's model / escalation-model
+ * pickers. The list is derived server-side from the model registry (the
+ * text-in/text-out chat models) and delivered on the config response — the
+ * client never hardcodes it. `label` is the registry's display name.
  */
-export const PERSONA_MODEL_OPTIONS = [
-  { id: "openrouter:anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
-  { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
-  { id: "openrouter:anthropic/claude-opus-4.8", label: "Claude Opus 4.8" },
-  { id: "openrouter:anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5" },
-  { id: "openrouter:anthropic/claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
-  { id: "openrouter:openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
-  { id: "openrouter:openai/gpt-5.6-luna", label: "GPT-5.6 Luna" },
-  { id: "openrouter:openai/gpt-5.4-nano", label: "GPT-5.4 Nano" },
-] as const satisfies readonly { id: string; label: string }[]
-
-export type PersonaModelOption = (typeof PERSONA_MODEL_OPTIONS)[number]
+export interface PersonaModelOption {
+  id: string
+  label: string
+}
 
 /**
  * Upper bound on an edited persona system prompt. Generous — a persona's
@@ -37,12 +29,6 @@ export type PersonaModelOption = (typeof PERSONA_MODEL_OPTIONS)[number]
  * is never submitted as a patch.
  */
 export const PERSONA_SYSTEM_PROMPT_MAX_CHARS = 8000
-
-export const PERSONA_MODEL_OPTION_IDS: ReadonlySet<string> = new Set(PERSONA_MODEL_OPTIONS.map((option) => option.id))
-
-export function isPersonaModelId(id: string): boolean {
-  return PERSONA_MODEL_OPTION_IDS.has(id)
-}
 
 /**
  * The editable fields of a persona config, as a sparse patch. Field types
@@ -71,25 +57,6 @@ export const personaConfigPatchSchema = z
   .strict()
 
 export type PersonaConfigPatch = z.infer<typeof personaConfigPatchSchema>
-
-/**
- * The write-path variant used to validate an override/draft patch from the API:
- * identical to {@link personaConfigPatchSchema} plus enforcement that any
- * selected `model` / `escalationModel` is in {@link PERSONA_MODEL_OPTIONS}. A
- * null `escalationModel` (escalation disabled) is always allowed.
- */
-export const personaConfigWritePatchSchema = personaConfigPatchSchema.superRefine((patch, ctx) => {
-  if (patch.model !== undefined && !isPersonaModelId(patch.model)) {
-    ctx.addIssue({ code: "custom", path: ["model"], message: "Model is not an allowed persona model" })
-  }
-  if (patch.escalationModel != null && !isPersonaModelId(patch.escalationModel)) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["escalationModel"],
-      message: "Escalation model is not an allowed persona model",
-    })
-  }
-})
 
 /**
  * Status a stored built-in override may carry. Narrower than the workspace-wide
@@ -157,6 +124,12 @@ export interface PersonaConfigResponse {
   overrideUpdatedAt: string | null
   resolved: PersonaResolvedConfig
   draft: PersonaDraftState | null
+  /**
+   * Registry-derived chat models an admin may assign (INV-16). The editor's
+   * model pickers render these; the currently-resolved model is folded in
+   * client-side even when it is not itself assignable (a built-in default).
+   */
+  availableModels: PersonaModelOption[]
 }
 
 /** Request body for PUT persona override. */

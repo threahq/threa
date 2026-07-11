@@ -814,16 +814,13 @@ export {
   type WorkspaceSettingKey,
 } from "./workspace-settings"
 
-// Persona config editing (INV-31: shared editable-field patch schema + model allowlist)
+// Persona config editing (INV-31: shared editable-field patch schema; model
+// allowlist is registry-derived server-side and rides on the config response)
 export {
-  PERSONA_MODEL_OPTIONS,
   type PersonaModelOption,
   PERSONA_SYSTEM_PROMPT_MAX_CHARS,
-  PERSONA_MODEL_OPTION_IDS,
-  isPersonaModelId,
   personaConfigPatchSchema,
   type PersonaConfigPatch,
-  personaConfigWritePatchSchema,
   personaConfigStatusSchema,
   personaResolvedConfigSchema,
   type PersonaResolvedConfig,

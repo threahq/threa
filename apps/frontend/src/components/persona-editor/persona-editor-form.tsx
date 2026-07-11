@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
-  PERSONA_MODEL_OPTIONS,
   PERSONA_SYSTEM_PROMPT_MAX_CHARS,
   type AgentToolName,
   type PersonaConfigPatch,
   type PersonaConfigResponse,
+  type PersonaModelOption,
 } from "@threa/types"
 import { ApiError } from "@/api/client"
 import type { PersonaOverrideConflict } from "@/api"
@@ -37,16 +37,17 @@ import { ToolChecklist } from "./tool-checklist"
 const ESCALATION_NONE = "__none__"
 
 /**
- * Curated model options with any off-allowlist ids (a built-in default or the
- * current value) folded in so a legal-but-unlisted model still renders as a
- * labelled item instead of a blank Select trigger. Both the main and escalation
- * model selects go through this — an unlisted escalation default must render too.
+ * The registry-derived assignable models with any off-allowlist ids (a built-in
+ * default or the current value) folded in so a legal-but-unlisted model still
+ * renders as an item instead of a blank Select trigger. Both the main and
+ * escalation model selects go through this — an unlisted escalation default must
+ * render too. A folded-in id has no registry label, so it renders as its raw id.
  */
-function buildModelOptions(extras: (string | null | undefined)[]): { id: string; label: string }[] {
-  const options: { id: string; label: string }[] = PERSONA_MODEL_OPTIONS.map((option) => ({
-    id: option.id,
-    label: option.label,
-  }))
+function buildModelOptions(
+  available: PersonaModelOption[],
+  extras: (string | null | undefined)[]
+): PersonaModelOption[] {
+  const options: PersonaModelOption[] = available.map((option) => ({ id: option.id, label: option.label }))
   for (const id of extras) {
     if (id && !options.some((option) => option.id === id)) options.unshift({ id, label: id })
   }
@@ -224,10 +225,14 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
     setField("avatarEmoji", shortcode ? `:${shortcode}:` : raw)
   }
 
-  const modelOptions = useMemo(() => buildModelOptions([values.model, defaults.model]), [values.model, defaults.model])
+  const availableModels = config.availableModels
+  const modelOptions = useMemo(
+    () => buildModelOptions(availableModels, [values.model, defaults.model]),
+    [availableModels, values.model, defaults.model]
+  )
   const escalationModelOptions = useMemo(
-    () => buildModelOptions([values.escalationModel, defaults.escalationModel]),
-    [values.escalationModel, defaults.escalationModel]
+    () => buildModelOptions(availableModels, [values.escalationModel, defaults.escalationModel]),
+    [availableModels, values.escalationModel, defaults.escalationModel]
   )
 
   const syncHint = syncHintText(sync)

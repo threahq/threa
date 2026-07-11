@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import { personaConfigWritePatchSchema } from "@threa/types"
+import { personaConfigPatchSchema } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { getVisibleBuiltInAgentConfig } from "./built-in-agents"
@@ -11,12 +11,12 @@ interface Dependencies {
 }
 
 const putOverrideSchema = z.object({
-  patch: personaConfigWritePatchSchema,
+  patch: personaConfigPatchSchema,
   expectedUpdatedAt: z.string().nullable(),
 })
 
 const putDraftSchema = z.object({
-  patch: personaConfigWritePatchSchema,
+  patch: personaConfigPatchSchema,
 })
 
 function personaNotFound(): HttpError {

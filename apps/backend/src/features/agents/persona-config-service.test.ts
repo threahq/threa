@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
+import type { ModelCapabilities, ModelRegistry } from "@threa/agent-runtime"
 import { AgentToolNames, CompanionModes, MemoryModes } from "@threa/types"
 import { PersonaConfigService } from "./persona-config-service"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
@@ -11,12 +12,52 @@ import * as dbModule from "../../db"
 const WORKSPACE_ID = "workspace_1"
 const CALLER_ID = "usr_1"
 
+// Minimal registry: two assignable chat models, plus an embedding and a realtime
+// STT model that isChatModel must exclude from `availableModels` and assignment.
+const FAKE_MODEL_CAPS: Record<string, ModelCapabilities> = {
+  "openrouter:anthropic/claude-sonnet-5": {
+    name: "Claude Sonnet 5",
+    inputModalities: ["text", "image"],
+    outputModalities: ["text"],
+  },
+  "openrouter:anthropic/claude-haiku-4.5": {
+    name: "Claude Haiku 4.5",
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+  },
+  "openrouter:openai/text-embedding-3-small": {
+    name: "Text Embedding 3 Small",
+    inputModalities: ["text"],
+    outputModalities: ["embedding"],
+  },
+  "openrouter:elevenlabs/scribe": {
+    name: "Scribe",
+    inputModalities: ["audio"],
+    outputModalities: ["text"],
+    streaming: "realtime",
+  },
+}
+
+const FAKE_MODEL_REGISTRY = {
+  getModelIds: () => Object.keys(FAKE_MODEL_CAPS),
+  getCapabilities: (id: string) => FAKE_MODEL_CAPS[id],
+  isChatModel: (id: string) => {
+    const caps = FAKE_MODEL_CAPS[id]
+    return (
+      caps !== undefined &&
+      caps.inputModalities.includes("text") &&
+      caps.outputModalities.includes("text") &&
+      caps.streaming === undefined
+    )
+  },
+} as unknown as ModelRegistry
+
 function setupTransaction() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
 }
 
 function makeService(streamService: any = { getStreamById: mock(async (id: string) => ({ id, archivedAt: null })) }) {
-  return new PersonaConfigService({ pool: {} as any, streamService })
+  return new PersonaConfigService({ pool: {} as any, streamService, modelRegistry: FAKE_MODEL_REGISTRY })
 }
 
 describe("PersonaConfigService.listVisible", () => {
@@ -118,6 +159,18 @@ describe("PersonaConfigService.getConfig", () => {
     expect(await service.getConfig(WORKSPACE_ID, EMPTY_AGENT_ID, CALLER_ID)).toBeNull()
     expect(await service.getConfig(WORKSPACE_ID, "persona_system_missing", CALLER_ID)).toBeNull()
   })
+
+  it("returns registry-derived chat models as availableModels (excludes embeddings and realtime STT)", async () => {
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
+    spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
+
+    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+
+    expect(config!.availableModels).toEqual([
+      { id: "openrouter:anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
+      { id: "openrouter:anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5" },
+    ])
+  })
 })
 
 describe("PersonaConfigService.setOverride", () => {
@@ -171,7 +224,11 @@ describe("PersonaConfigService.setOverride", () => {
     spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue({ testStreamId: "stream_test" })
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
     const archiveStream = mock(async () => null)
-    const service = new PersonaConfigService({ pool: {} as any, streamService: { archiveStream } as any })
+    const service = new PersonaConfigService({
+      pool: {} as any,
+      streamService: { archiveStream } as any,
+      modelRegistry: FAKE_MODEL_REGISTRY,
+    })
 
     const result = await service.setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { name: "Renamed" }, null, CALLER_ID)
 
@@ -205,6 +262,45 @@ describe("PersonaConfigService.setOverride", () => {
     expect(deleteDraft).not.toHaveBeenCalled()
     expect(insert).not.toHaveBeenCalled()
   })
+
+  it("rejects a model outside the registry chat set with a 400 before opening a transaction", async () => {
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+
+    await expect(
+      makeService().setOverride(
+        WORKSPACE_ID,
+        ARIADNE_AGENT_ID,
+        { model: "openrouter:openai/text-embedding-3-small" },
+        null,
+        CALLER_ID
+      )
+    ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("accepts the built-in default model even when the registry lacks it (a code default stays assignable)", async () => {
+    setupTransaction()
+    spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    // Ariadne's default escalationModel (opus-4.8) is absent from FAKE_MODEL_REGISTRY.
+    const result = await makeService().setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      { escalationModel: "openrouter:anthropic/claude-opus-4.8" },
+      null,
+      CALLER_ID
+    )
+
+    expect(result.outcome).toBe("written")
+  })
 })
 
 describe("PersonaConfigService draft lifecycle", () => {
@@ -226,6 +322,21 @@ describe("PersonaConfigService draft lifecycle", () => {
     })
   })
 
+  it("saveDraft rejects a model outside the registry chat set (same gate as the override)", async () => {
+    const upsert = spyOn(PersonaConfigDraftRepository, "upsert").mockResolvedValue({
+      patch: {},
+      testStreamId: null,
+      updatedAt: "2026-07-04T00:00:00.000Z",
+    })
+
+    await expect(
+      makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID, {
+        model: "openrouter:elevenlabs/scribe",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
   it("discardDraft archives the bound test stream before deleting the draft row", async () => {
     const order: string[] = []
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue({
@@ -241,7 +352,11 @@ describe("PersonaConfigService draft lifecycle", () => {
       order.push("archive")
       return null
     })
-    const service = new PersonaConfigService({ pool: {} as any, streamService: { archiveStream } as any })
+    const service = new PersonaConfigService({
+      pool: {} as any,
+      streamService: { archiveStream } as any,
+      modelRegistry: FAKE_MODEL_REGISTRY,
+    })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
 
@@ -255,7 +370,11 @@ describe("PersonaConfigService draft lifecycle", () => {
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
     const deleteByOwner = spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
     const archiveStream = mock(async () => null)
-    const service = new PersonaConfigService({ pool: {} as any, streamService: { archiveStream } as any })
+    const service = new PersonaConfigService({
+      pool: {} as any,
+      streamService: { archiveStream } as any,
+      modelRegistry: FAKE_MODEL_REGISTRY,
+    })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
 
@@ -271,7 +390,11 @@ describe("PersonaConfigService draft lifecycle", () => {
     })
     const deleteByOwner = spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue({ testStreamId: null })
     const archiveStream = mock(async () => null)
-    const service = new PersonaConfigService({ pool: {} as any, streamService: { archiveStream } as any })
+    const service = new PersonaConfigService({
+      pool: {} as any,
+      streamService: { archiveStream } as any,
+      modelRegistry: FAKE_MODEL_REGISTRY,
+    })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
 
@@ -290,6 +413,7 @@ describe("PersonaConfigService draft lifecycle", () => {
     const service = new PersonaConfigService({
       pool: {} as any,
       streamService: { getStreamById, createScratchpad } as any,
+      modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
@@ -309,6 +433,7 @@ describe("PersonaConfigService draft lifecycle", () => {
     const service = new PersonaConfigService({
       pool: {} as any,
       streamService: { getStreamById: mock(async () => null), createScratchpad } as any,
+      modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
@@ -347,6 +472,7 @@ describe("PersonaConfigService draft lifecycle", () => {
     const service = new PersonaConfigService({
       pool: {} as any,
       streamService: { getStreamById: mock(async () => null), createScratchpad } as any,
+      modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)

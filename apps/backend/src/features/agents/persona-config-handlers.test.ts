@@ -85,13 +85,6 @@ describe("persona config handlers", () => {
     await expect(handlers.putOverride(req, fakeRes())).rejects.toMatchObject({ status: 400 })
   })
 
-  it("PUT override rejects a model outside the allowlist", async () => {
-    const handlers = makeHandlers({})
-
-    const req = fakeReq({ body: { patch: { model: "openrouter:acme/not-allowed" }, expectedUpdatedAt: null } })
-    await expect(handlers.putOverride(req, fakeRes())).rejects.toMatchObject({ status: 400 })
-  })
-
   it("PUT override surfaces an optimistic-concurrency conflict as 409 with details.current", async () => {
     const current = { patch: { name: "Theirs" }, updatedAt: "2026-07-02T00:00:00.000Z" }
     const setOverride = mock(async () => ({ outcome: "conflict" as const, current }))
@@ -125,12 +118,6 @@ describe("persona config handlers", () => {
     await expect(
       handlers.putDraft(fakeReq({ params: { personaId: EMPTY_AGENT_ID }, body: { patch: {} } }), fakeRes())
     ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
-  })
-
-  it("PUT draft rejects a model outside the allowlist", async () => {
-    const handlers = makeHandlers({})
-    const req = fakeReq({ body: { patch: { model: "openrouter:acme/not-allowed" } } })
-    await expect(handlers.putDraft(req, fakeRes())).rejects.toMatchObject({ status: 400 })
   })
 
   it("PUT draft returns the saved draft state", async () => {

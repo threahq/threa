@@ -18,9 +18,10 @@ export const builtInAgentConfigSchema = personaResolvedConfigSchema
 
 // The internal override-resolution schema: the shared editable-field patch
 // (INV-31, one definition) plus `status`, which the API surface withholds but
-// stored overrides may carry (e.g. a workspace disabling Ariadne). Unlike the
-// API write schema this does NOT enforce the model allowlist — resolution must
-// accept whatever is already stored, including built-in default models.
+// stored overrides may carry (e.g. a workspace disabling Ariadne). It does NOT
+// enforce the model allowlist — that gate is registry-derived and lives in
+// PersonaConfigService (INV-16); resolution must accept whatever is already
+// stored, including built-in default models.
 export const builtInAgentConfigPatchSchema = personaConfigPatchSchema
   .extend({ status: personaConfigStatusSchema.optional() })
   .strict()

@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import type { ModelRegistry } from "@threa/agent-runtime"
 import {
   personaConfigPatchSchema,
   CompanionModes,
@@ -7,9 +8,11 @@ import {
   type PersonaConfigResponse,
   type PersonaDraftState,
   type PersonaListItem,
+  type PersonaModelOption,
   type PersonaResolvedConfig,
 } from "@threa/types"
 import { withTransaction } from "../../db"
+import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
 import type { StreamService } from "../streams"
@@ -26,6 +29,7 @@ import {
 interface Dependencies {
   pool: Pool
   streamService: StreamService
+  modelRegistry: ModelRegistry
 }
 
 export type SetPersonaOverrideResult =
@@ -60,6 +64,45 @@ export class PersonaConfigService {
 
   private get streamService(): StreamService {
     return this.deps.streamService
+  }
+
+  private get modelRegistry(): ModelRegistry {
+    return this.deps.modelRegistry
+  }
+
+  /** Registry-derived chat models an admin may assign (INV-16), labelled by the registry name. */
+  private listAvailableModels(): PersonaModelOption[] {
+    return this.modelRegistry
+      .getModelIds()
+      .filter((id) => this.modelRegistry.isChatModel(id))
+      .map((id) => ({ id, label: this.modelRegistry.getCapabilities(id)!.name }))
+  }
+
+  /**
+   * Whether `model` is legal for this persona: any registry chat model, or the
+   * persona's own built-in defaults (which stay assignable even if the registry
+   * lacks them — a code default is authoritative). Escalation-disabled (`null`)
+   * is validated by the caller before reaching here.
+   */
+  private isModelAssignable(model: string, base: BuiltInAgentConfig): boolean {
+    if (model === base.model || model === base.escalationModel) return true
+    return this.modelRegistry.isChatModel(model)
+  }
+
+  /** Reject an override/draft patch selecting a model outside the assignable set (INV-16). */
+  private assertModelsAllowed(patch: PersonaConfigPatch, base: BuiltInAgentConfig): void {
+    if (patch.model !== undefined && !this.isModelAssignable(patch.model, base)) {
+      throw new HttpError(`Model "${patch.model}" is not an assignable persona model`, {
+        status: 400,
+        code: "UNSUPPORTED_PERSONA_MODEL",
+      })
+    }
+    if (patch.escalationModel != null && !this.isModelAssignable(patch.escalationModel, base)) {
+      throw new HttpError(`Escalation model "${patch.escalationModel}" is not an assignable persona model`, {
+        status: 400,
+        code: "UNSUPPORTED_PERSONA_MODEL",
+      })
+    }
   }
 
   /** The bound test stream id when it still exists and is unarchived, else null. */
@@ -130,6 +173,7 @@ export class PersonaConfigService {
       overrideUpdatedAt: detail?.updatedAt ?? null,
       resolved,
       draft,
+      availableModels: this.listAvailableModels(),
     }
   }
 
@@ -149,6 +193,7 @@ export class PersonaConfigService {
     if (!base) {
       throw new Error(`setOverride called for non-editable persona ${agentId}`)
     }
+    this.assertModelsAllowed(patch, base)
 
     const txnResult = await withTransaction(this.pool, async (client) => {
       const result = await AgentConfigOverrideRepository.upsertActive(client, {
@@ -206,6 +251,12 @@ export class PersonaConfigService {
     callerId: string,
     patch: PersonaConfigPatch
   ): Promise<PersonaDraftState> {
+    const base = getVisibleBuiltInAgentConfig(agentId)
+    if (!base) {
+      throw new Error(`saveDraft called for non-editable persona ${agentId}`)
+    }
+    this.assertModelsAllowed(patch, base)
+
     const detail = await PersonaConfigDraftRepository.upsert(this.pool, {
       workspaceId,
       agentId,

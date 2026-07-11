@@ -32,7 +32,18 @@ function defaults(): PersonaResolvedConfig {
 
 function config(overrides: Partial<PersonaConfigResponse> = {}): PersonaConfigResponse {
   const d = defaults()
-  return { defaults: d, overridePatch: null, overrideUpdatedAt: null, resolved: d, draft: null, ...overrides }
+  return {
+    defaults: d,
+    overridePatch: null,
+    overrideUpdatedAt: null,
+    resolved: d,
+    draft: null,
+    availableModels: [
+      { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
+      { id: "openrouter:anthropic/claude-opus-4.8", label: "Claude Opus 4.8" },
+    ],
+    ...overrides,
+  }
 }
 
 function renderForm(cfg: PersonaConfigResponse = config()) {
