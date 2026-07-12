@@ -769,14 +769,14 @@ function BoardPageInner({
         excludeLabelIds,
       })
       const copy = scoped ? SCOPED_EMPTY_COPY : LENS_EMPTY_COPY[lens]
-      // A genuinely empty board invites authoring (pen); a filtered-empty view is
-      // the filters coming up short (grid), so it keeps the neutral glyph + its
-      // "Show everything" escape. Warm gold tile either way — the Ariadne thread.
-      const EmptyGlyph = scoped ? LayoutGrid : PenLine
       stateContent = (
         <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+          {/* The board's own emblem in a warm gold tile — deliberately NOT the
+              FAB's PenLine: a same-size gold `PenLine` square reads as the compose
+              button, and the FAB is on screen at once, so a decorative copy would
+              invite a dead tap. Warmth comes from the tile, not a fake control. */}
           <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary dark:bg-primary/15">
-            <EmptyGlyph className="h-6 w-6" />
+            <LayoutGrid className="h-6 w-6" />
           </div>
           <p className="text-sm font-medium">{copy.title}</p>
           <p className="max-w-sm text-sm text-muted-foreground">{copy.body}</p>
