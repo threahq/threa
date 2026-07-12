@@ -11,7 +11,7 @@ import { useUser } from "@/auth"
 import { rankMatches } from "@/lib/match-score"
 import { useStreamBootstrap } from "./use-streams"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
-import { StreamTypes, type StreamType } from "@threa/types"
+import { getPersonaAvatarUrl, StreamTypes, type StreamType } from "@threa/types"
 
 /**
  * Stream context for filtering which broadcast mentions are available.
@@ -187,6 +187,7 @@ export function useMentionables(streamContext?: MentionStreamContext) {
         name: persona.name,
         type: "persona",
         avatarEmoji: emoji ?? undefined,
+        avatarUrl: getPersonaAvatarUrl(workspaceId ?? "", persona.avatarUrl, 64),
       }
     })
 
@@ -217,7 +218,7 @@ export function useMentionables(streamContext?: MentionStreamContext) {
     const memberBots = streamContext?.botMemberIds ? bots.filter((b) => streamContext.botMemberIds!.has(b.id)) : bots
 
     return [...users, ...personas, ...memberBots, ...broadcasts]
-  }, [workspaceUsers, workspacePersonas, workspaceBots, currentUser?.id, toEmoji, streamContext])
+  }, [workspaceUsers, workspacePersonas, workspaceBots, currentUser?.id, toEmoji, streamContext, workspaceId])
 
   return {
     mentionables,

@@ -44,7 +44,7 @@ function MentionItem({ item }: { item: Mentionable }) {
   return (
     <>
       {item.type === "persona" ? (
-        <PersonaAvatar slug={item.slug} fallback={fallback} size="sm" />
+        <PersonaAvatar slug={item.slug} avatarUrl={item.avatarUrl} fallback={fallback} size="sm" />
       ) : (
         <Avatar className="h-7 w-7 shrink-0">
           <AvatarFallback className={cn("text-xs font-semibold", avatarStyles[item.type])}>{fallback}</AvatarFallback>
