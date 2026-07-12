@@ -3,9 +3,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
 import {
+  DelegationClient,
+  DelegationRunner,
   RemoteSession,
   ThreaClient,
+  type ClaimedDelegation,
   type ClaimedInvocation,
+  type DelegationExecutorContext,
   type DeliveredTurn,
   type RemoteSessionConfig,
   type SendResult,
@@ -36,6 +40,30 @@ const MODEL_SUGGESTIONS = modelSuggestions()
 
 /** "y abcde" / "yes abcde" / "n abcde" / "no abcde". The id alphabet skips 'l' (Claude Code's convention). */
 export const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
+
+// Delegation-queue backstop poll. The /bot socket pushes delegation:available,
+// so like WS_BACKSTOP_POLL_MS in the SDK this is only insurance against a
+// dropped push — every tick is a billed edge request.
+const DELEGATION_BACKSTOP_POLL_MS = 15 * 60 * 1000
+
+/**
+ * The delegation brief as delivered into the Claude session. The event carries
+ * its own send/reply protocol note because the server's static instructions
+ * were written at connect time, before any delegation existed.
+ */
+export function formatDelegationContent(task: ClaimedDelegation): string {
+  const refs = task.contextRefs.length > 0 ? ["", "Context references:", ...task.contextRefs.map((r) => `- ${r}`)] : []
+  return [
+    `<delegation source="${CHANNEL_SOURCE}" delegation_id="${task.id}" title=${JSON.stringify(task.title)}>`,
+    task.brief.trim(),
+    `</delegation>`,
+    ...refs,
+    "",
+    "This is a Threa delegation this channel claimed — a self-contained task, separate from the scratchpad conversation. Do the work in this session against the real files.",
+    `- Post progress with the \`send\` tool using invocation_id "${task.id}" — each send replaces the progress note on the delegation card.`,
+    `- When finished, call \`reply\` exactly once with invocation_id "${task.id}" — the reply text is posted to the Threa stream as the delegation's result and completes it. If you are blocked, reply with a short account of what you tried and what blocked you.`,
+  ].join("\n")
+}
 
 const PermissionRequestSchema = z.object({
   method: z.literal("notifications/claude/channel/permission_request"),
@@ -200,13 +228,26 @@ export class ChannelServer {
   private readonly tracer: TranscriptTracer
   private readonly carryOn: CarryOnController | undefined
   private readonly openPermissions = new Map<string, { cleanup: ReturnType<typeof setTimeout> }>()
+  private readonly delegations: DelegationRunner | undefined
+  /** Delegation turns awaiting Claude's reply, keyed by delegation id (the tool-call invocation_id). */
+  private readonly openDelegations = new Map<
+    string,
+    {
+      resolve: (resultMarkdown: string) => void
+      reject: (error: Error) => void
+      ctx: DelegationExecutorContext
+      keepAlive: () => void
+      clear: () => void
+    }
+  >()
   private started = false
 
   constructor(
     private readonly config: RemoteSessionConfig,
     client: ThreaClient,
     transport?: BotRuntimeTransport,
-    channelActive = true
+    channelActive = true,
+    delegationClient?: DelegationClient
   ) {
     const capabilities: Record<string, unknown> = {
       experimental: { "claude/channel": {} },
@@ -219,10 +260,22 @@ export class ChannelServer {
       { name: CHANNEL_SOURCE, version: "0.1.0" },
       { capabilities, instructions: buildInstructions(config.permissionRelay, channelActive) }
     )
+    // The runner races other connectors for workspace-wide tasks, so only an
+    // explicitly opted-in channel runs one; the queue is claim-CAS-safe either way.
+    if (config.delegations && channelActive) {
+      this.delegations = new DelegationRunner({
+        client: delegationClient ?? new DelegationClient(config),
+        executor: (task, ctx) => this.runDelegationThroughClaude(task, ctx),
+        claimedByLabel: config.displayName,
+        pollMs: DELEGATION_BACKSTOP_POLL_MS,
+        log,
+      })
+    }
     this.session = new RemoteSession({
       config,
       client,
       transport,
+      onDelegationAvailable: () => this.delegations?.notifyAvailable(),
       log,
       runtime: {
         kind: RUNTIME_KIND,
@@ -273,11 +326,17 @@ export class ChannelServer {
   async start(): Promise<void> {
     this.started = true
     await this.session.start()
+    this.delegations?.start()
   }
 
   async shutdown(): Promise<void> {
     this.tracer.stop()
     this.carryOn?.stop()
+    // Fail an in-flight delegation loudly (its executor promise rejects →
+    // the runner posts the failure) rather than stranding the claim until the
+    // 15-minute lease sweep. stop() resolves after that fail report lands.
+    this.failOpenDelegations("Claude Code channel shut down mid-delegation")
+    await this.delegations?.stop()
     for (const [, open] of this.openPermissions) clearTimeout(open.cleanup)
     this.openPermissions.clear()
     // A never-started session has nothing linked — skipping its shutdown keeps
@@ -301,6 +360,61 @@ export class ChannelServer {
         (report.reason ? ` (${report.reason})` : "")
     )
     if (!killOwnWindow()) process.exit(0)
+  }
+
+  // --- Delegations ------------------------------------------------------------
+
+  /**
+   * The deliver-to-Claude actuator for the SDK's DelegationRunner: push the
+   * brief into the live session as a channel event and resolve with whatever
+   * Claude passes to `reply`. All delegation lifecycle (claim, heartbeat,
+   * complete/fail) lives in the runner — this method only bridges brief → Claude
+   * → result text.
+   */
+  private async runDelegationThroughClaude(
+    task: ClaimedDelegation,
+    ctx: DelegationExecutorContext
+  ): Promise<{ resultMarkdown: string }> {
+    try {
+      const resultMarkdown = await new Promise<string>((resolve, reject) => {
+        // Same wedged-turn safety net as scratchpad turns: reap only after
+        // idleTimeoutMs of SILENCE — every send (progress note) re-arms it.
+        let deadline: ReturnType<typeof setTimeout> | undefined
+        const arm = () => {
+          clearTimeout(deadline)
+          deadline = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Delegation went silent in Claude Code for ${Math.round(this.config.idleTimeoutMs / 60_000)} minutes without a reply`
+                )
+              ),
+            this.config.idleTimeoutMs
+          )
+        }
+        arm()
+        this.openDelegations.set(task.id, {
+          resolve,
+          reject,
+          ctx,
+          keepAlive: arm,
+          clear: () => clearTimeout(deadline),
+        })
+        void this.notify("notifications/claude/channel", {
+          content: formatDelegationContent(task),
+          meta: { invocation_id: task.id, stream_id: task.streamId },
+        })
+      })
+      return { resultMarkdown }
+    } finally {
+      this.openDelegations.get(task.id)?.clear()
+      this.openDelegations.delete(task.id)
+    }
+  }
+
+  private failOpenDelegations(reason: string): void {
+    // Entries remove themselves via each executor's finally.
+    for (const [, open] of this.openDelegations) open.reject(new Error(reason))
   }
 
   // --- Turn delivery ----------------------------------------------------------
@@ -375,15 +489,7 @@ export class ChannelServer {
           content: [{ type: "text", text: `${req.params.name} requires a non-empty invocation_id and text.` }],
         }
       }
-      const result =
-        req.params.name === "send"
-          ? await this.session.sendInterim(invocationId, text)
-          : await this.session.reply(invocationId, text)
-      if (req.params.name === "reply" && result.ok) {
-        this.tracer.endTurn(invocationId)
-        this.carryOn?.onTurnClosed(invocationId)
-      }
-      return toToolResult(result)
+      return toToolResult(await this.handleToolCall(req.params.name, invocationId, text))
     })
 
     if (this.config.permissionRelay) {
@@ -391,6 +497,33 @@ export class ChannelServer {
         await this.handlePermissionRequest(params)
       })
     }
+  }
+
+  /**
+   * The send/reply dispatch behind the MCP tool handler (public for tests).
+   * A delegation id routes to its waiting executor — send becomes the card's
+   * progress note, reply resolves it — everything else is a scratchpad turn.
+   */
+  async handleToolCall(name: "send" | "reply", invocationId: string, text: string): Promise<SendResult> {
+    const delegation = this.openDelegations.get(invocationId)
+    if (delegation) {
+      delegation.keepAlive()
+      if (name === "send") {
+        await delegation.ctx.reportStatus(text)
+        return { ok: true, message: "Progress noted on the delegation card." }
+      }
+      delegation.resolve(text)
+      return { ok: true, message: "Delegation result posted to the Threa stream; the request is closed." }
+    }
+    const result =
+      name === "send"
+        ? await this.session.sendInterim(invocationId, text)
+        : await this.session.reply(invocationId, text)
+    if (name === "reply" && result.ok) {
+      this.tracer.endTurn(invocationId)
+      this.carryOn?.onTurnClosed(invocationId)
+    }
+    return result
   }
 
   // --- Permission relay -----------------------------------------------------

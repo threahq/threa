@@ -7,6 +7,7 @@ import { buildBotSocketUrl, isObject, parseWsHint, type WsHint } from "./ws-hint
 import type {
   BotHelloBootstrap,
   BotRuntimeTransportCallbacks,
+  DelegationAvailableNudge,
   BotRuntimeTransportOptions,
   BotWriteAck,
   StepFrame,
@@ -150,6 +151,9 @@ export class BotRuntimeTransport {
       this.logFn(`socket connect_error: ${summarize(error)}`)
     })
     socket.on("bot_invocation:available", () => this.callbacks.onInvocationAvailable?.())
+    socket.on("delegation:available", (payload: unknown) =>
+      this.callbacks.onDelegationAvailable?.(payload as DelegationAvailableNudge)
+    )
     socket.on("bot_invocation:claimed", (payload: unknown) => this.callbacks.onInvocationClaimed?.(payload))
     socket.on("bot:active_actor_changed", (payload: unknown) => this.callbacks.onActiveActorChanged?.(payload))
     socket.on("bot:session_archived", (payload: unknown) => this.callbacks.onSessionArchived?.(payload))

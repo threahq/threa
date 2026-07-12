@@ -78,6 +78,7 @@ describe("loadConfig", () => {
       expect(result.config.instanceId).toMatch(ID_CHARSET)
       expect(result.config.runtimeSessionId).toMatch(ID_CHARSET)
       expect(result.config.permissionRelay).toBe(true)
+      expect(result.config.delegations).toBe(false)
       // Same host+cwd resolves to the same scratchpad on the next launch.
       const again = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } }, IDENTITY)
       if ("config" in again) expect(again.config.instanceId).toBe(result.config.instanceId)
@@ -154,6 +155,20 @@ describe("loadConfig", () => {
       expect(result.config.permissionRelay).toBe(false)
       expect(result.config.pollMs).toBe(1000)
     }
+  })
+
+  test("delegations opt-in via env or file", () => {
+    const fromEnv = loadConfig(
+      { ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x", THREA_DELEGATIONS: "1" } },
+      IDENTITY
+    )
+    if ("config" in fromEnv) expect(fromEnv.config.delegations).toBe(true)
+
+    const fromFile = loadConfig(
+      { ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" }, file: { delegations: true } },
+      IDENTITY
+    )
+    if ("config" in fromFile) expect(fromFile.config.delegations).toBe(true)
   })
 
   test("honors explicit instanceId / runtimeSessionId overrides", () => {

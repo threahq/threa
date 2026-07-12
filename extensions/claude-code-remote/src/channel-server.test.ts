@@ -1,7 +1,12 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
-import { ThreaClient, type RemoteSessionConfig } from "@threa/remote-session"
-import { ChannelServer, buildInstructions, parsePermissionVerdict } from "./channel-server"
+import {
+  ThreaClient,
+  type ClaimedDelegation,
+  type DelegationClient,
+  type RemoteSessionConfig,
+} from "@threa/remote-session"
+import { ChannelServer, buildInstructions, formatDelegationContent, parsePermissionVerdict } from "./channel-server"
 
 describe("parsePermissionVerdict", () => {
   test("parses allow/deny in long and short forms", () => {
@@ -78,6 +83,118 @@ function makeFakeTransport(): BotRuntimeTransport {
     updatePresence: async () => {},
   } as unknown as BotRuntimeTransport
 }
+
+function claimedDelegation(id: string): ClaimedDelegation {
+  return {
+    id,
+    streamId: "stream_1",
+    title: "Fix the flaky test",
+    status: "claimed",
+    brief: "The suite is flaky in CI. Find and fix the race.",
+    contextRefs: ["memo:memo_1"],
+    claimToken: `token-${id}`,
+    claimExpiresAt: "2026-07-12T10:15:00.000Z",
+    createdAt: "2026-07-12T10:00:00.000Z",
+    statusChangedAt: "2026-07-12T10:00:00.000Z",
+  }
+}
+
+interface DelegationCalls {
+  statuses: string[]
+  completes: Array<{ id: string; resultMarkdown?: string }>
+  fails: Array<{ id: string; errorMessage: string }>
+}
+
+/** One open delegation, then an empty queue — the runner claims it and waits on the executor. */
+function stubDelegationClient(id: string): { client: DelegationClient; calls: DelegationCalls } {
+  const calls: DelegationCalls = { statuses: [], completes: [], fails: [] }
+  let listed = false
+  const client = {
+    listOpen: async () => {
+      if (listed) return []
+      listed = true
+      return [claimedDelegation(id)]
+    },
+    claim: async () => claimedDelegation(id),
+    heartbeat: async () => ({ claimExpiresAt: "2026-07-12T10:30:00.000Z" }),
+    reportStatus: async (_id: string, _token: string, note: string) => {
+      calls.statuses.push(note)
+      return claimedDelegation(id)
+    },
+    complete: async (completedId: string, _token: string, body: { resultMarkdown?: string }) => {
+      calls.completes.push({ id: completedId, resultMarkdown: body.resultMarkdown })
+      return claimedDelegation(id)
+    },
+    fail: async (failedId: string, _token: string, errorMessage: string) => {
+      calls.fails.push({ id: failedId, errorMessage })
+      return claimedDelegation(id)
+    },
+  } as unknown as DelegationClient
+  return { client, calls }
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 20))
+
+async function startDelegatingServer(id: string) {
+  const config = { ...makeConfig(), delegations: true }
+  const { client, calls } = stubDelegationClient(id)
+  const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport(), true, client)
+  spyOn(server.session, "start").mockResolvedValue()
+  spyOn(server.session, "shutdown").mockResolvedValue()
+  await server.start()
+  await flush()
+  return { server, calls }
+}
+
+describe("ChannelServer delegations", () => {
+  test("formatDelegationContent carries the brief, the id-addressed protocol, and context refs", () => {
+    const text = formatDelegationContent(claimedDelegation("dlg_1"))
+    expect(text).toContain('delegation_id="dlg_1"')
+    expect(text).toContain("Find and fix the race.")
+    expect(text).toContain("memo:memo_1")
+    expect(text).toContain('`reply` exactly once with invocation_id "dlg_1"')
+  })
+
+  test("claims on start, routes send to the card's progress note, and completes with the reply text", async () => {
+    const { server, calls } = await startDelegatingServer("dlg_1")
+
+    const sent = await server.handleToolCall("send", "dlg_1", "Reproduced it; fixing.")
+    expect(sent.ok).toBe(true)
+    expect(calls.statuses).toEqual(["Reproduced it; fixing."])
+
+    const replied = await server.handleToolCall("reply", "dlg_1", "Fixed in abc123.")
+    expect(replied.ok).toBe(true)
+    await flush()
+    expect(calls.completes).toEqual([{ id: "dlg_1", resultMarkdown: "Fixed in abc123." }])
+    expect(calls.fails).toHaveLength(0)
+
+    await server.shutdown()
+  })
+
+  test("a delegation reply never touches the scratchpad session's reply path", async () => {
+    const { server } = await startDelegatingServer("dlg_1")
+    const sessionReply = spyOn(server.session, "reply")
+    await server.handleToolCall("reply", "dlg_1", "Done.")
+    expect(sessionReply).not.toHaveBeenCalled()
+    await server.shutdown()
+  })
+
+  test("shutdown fails an in-flight delegation instead of stranding its claim", async () => {
+    const { server, calls } = await startDelegatingServer("dlg_1")
+    await server.shutdown()
+    expect(calls.fails).toEqual([{ id: "dlg_1", errorMessage: "Claude Code channel shut down mid-delegation" }])
+    expect(calls.completes).toHaveLength(0)
+  })
+
+  test("without the delegations flag no runner exists and delegation ids fall through to the session", async () => {
+    const config = makeConfig()
+    const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+    const sessionReply = spyOn(server.session, "reply").mockResolvedValue({ ok: false, message: "unknown invocation" })
+    const result = await server.handleToolCall("reply", "dlg_1", "Done.")
+    expect(result.ok).toBe(false)
+    expect(sessionReply).toHaveBeenCalled()
+  })
+})
 
 describe("ChannelServer lifecycle gating", () => {
   test("shutdown before start never touches the Threa session", async () => {

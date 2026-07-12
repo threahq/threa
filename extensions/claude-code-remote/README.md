@@ -140,6 +140,14 @@ THREA_ATTACH: ./reports/out.png
 
 The channel uploads the file (one per `THREA_ATTACH:` line; paths resolve against the working directory) and rewrites the line into an `[out.png](attachment:…)` link the reply carries into the scratchpad. An upload that fails is reported inline rather than dropping the reply.
 
+## Delegations
+
+With `THREA_DELEGATIONS=1` (off by default), this channel also runs the workspace delegation queue: when a Threa persona hands off a task (`delegated_tasks`), a `delegation:available` nudge arrives over the already-open `/bot` socket, the channel claims it, and the brief lands in the live Claude session as a `<delegation …>` event — no polling, no copy-paste. Claude posts progress with `send` (each one becomes the card's progress note), and its `reply` is posted to the Threa stream as the delegation's result, completing the card. The claim heartbeats while Claude works; a delegation that goes silent past `THREA_IDLE_TIMEOUT_MS` is failed rather than left stranded, and a graceful shutdown fails an in-flight one the same way.
+
+Delegations are workspace-wide and claimed first-come-first-served (a lost race is silent — another runner won). Enable the flag on the one channel you want acting as your delegation worker; leave it off elsewhere.
+
+Push delivery needs `THREA_BASE_URL` to be the app origin — the workspace router serves the websocket hint (`/api/workspaces/:id/config`). Pointed directly at a regional backend, the socket never dials and pickup degrades to the 15-minute backstop poll.
+
 ## Configuration reference
 
 | Env var                    | Config key         | Default                | Meaning                                                                                 |
@@ -152,6 +160,7 @@ The channel uploads the file (one per `THREA_ATTACH:` line; paths resolve agains
 | `THREA_PERMISSION_RELAY`   | `permissionRelay`  | `true`                 | Relay tool-approval prompts into the scratchpad                                         |
 | `THREA_POLL_MS`            | `pollMs`           | `3000`                 | Backstop claim poll (the socket pushes faster)                                          |
 | `THREA_IDLE_TIMEOUT_MS`    | `idleTimeoutMs`    | `3600000`              | Force-close a turn after this much inactivity (each `send` / approval resets it)        |
+| `THREA_DELEGATIONS`        | `delegations`      | `false`                | Run the workspace delegation queue in this session (see Delegations)                    |
 | `THREA_INSTANCE_ID`        | `instanceId`       | derived                | Override the per-directory instance id                                                  |
 | `THREA_RUNTIME_SESSION_ID` | `runtimeSessionId` | derived                | Override the per-directory session id                                                   |
 
