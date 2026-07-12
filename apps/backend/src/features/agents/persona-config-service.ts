@@ -28,7 +28,7 @@ import { AgentConfigOverrideRepository, type AgentConfigOverrideDetail } from ".
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
 import { PersonaRepository, type EditablePersona, type Persona } from "./persona-repository"
-import { resolvePersonaStyleSlots } from "./companion/config"
+import { COMPANION_MODEL_ID, resolvePersonaStyleSlots } from "./companion/config"
 import {
   applyBuiltInAgentPatch,
   builtInAgentConfigPatchSchema,
@@ -122,6 +122,27 @@ function customRowToConfig(row: Persona): PersonaCustomConfig {
 }
 
 /** Light list item for a custom persona row (roster tail + outbox payload). */
+/**
+ * The "start from scratch" fork source: a minimal starter prompt (the config
+ * schema requires a non-empty one), the companion default model, and nothing
+ * else — no tools, slots, or identity to unlearn.
+ */
+function blankPersonaConfig(name: string): PersonaCustomConfig {
+  return {
+    name,
+    description: null,
+    avatarEmoji: null,
+    systemPrompt: `You are ${name}.`,
+    model: COMPANION_MODEL_ID,
+    escalationModel: null,
+    temperature: null,
+    maxTokens: null,
+    enabledTools: [],
+    tonePrompt: null,
+    brevityPrompt: null,
+  }
+}
+
 function customRowToListItem(row: Persona): PersonaListItem {
   return {
     id: row.id,
@@ -689,7 +710,7 @@ export class PersonaConfigService {
    */
   async forkPersona(
     workspaceId: string,
-    sourcePersonaId: string,
+    sourcePersonaId: string | null,
     name: string,
     callerId: string
   ): Promise<PersonaListItem> {
@@ -698,25 +719,9 @@ export class PersonaConfigService {
       throw new HttpError("Persona name is required", { status: 400, code: "VALIDATION_ERROR" })
     }
 
-    const source = await PersonaRepository.findById(this.pool, sourcePersonaId, workspaceId)
-    if (!source) {
-      throw new HttpError("Source persona not found", { status: 404, code: "PERSONA_SOURCE_NOT_FOUND" })
-    }
-
-    const slots = resolvePersonaStyleSlots(source)
-    const config: PersonaCustomConfig = {
-      name: trimmedName,
-      description: source.description,
-      avatarEmoji: source.avatarEmoji,
-      systemPrompt: source.systemPrompt ?? "",
-      model: source.model,
-      escalationModel: source.escalationModel,
-      temperature: source.temperature,
-      maxTokens: source.maxTokens,
-      enabledTools: (source.enabledTools ?? []) as PersonaCustomConfig["enabledTools"],
-      tonePrompt: slots.tone ?? null,
-      brevityPrompt: slots.brevity ?? null,
-    }
+    const config = sourcePersonaId
+      ? await this.forkConfigFromSource(workspaceId, sourcePersonaId, trimmedName)
+      : blankPersonaConfig(trimmedName)
     const baseSlug = generateSlug(trimmedName) || "persona"
 
     for (let attempt = 0; attempt < MAX_FORK_SLUG_ATTEMPTS; attempt++) {
@@ -743,6 +748,32 @@ export class PersonaConfigService {
       }
     }
     throw new HttpError("Could not generate a unique persona slug", { status: 409, code: "PERSONA_SLUG_CONFLICT" })
+  }
+
+  /** A fork's starting config: the source's full config with its presets materialized into free-text slots. */
+  private async forkConfigFromSource(
+    workspaceId: string,
+    sourcePersonaId: string,
+    name: string
+  ): Promise<PersonaCustomConfig> {
+    const source = await PersonaRepository.findById(this.pool, sourcePersonaId, workspaceId)
+    if (!source) {
+      throw new HttpError("Source persona not found", { status: 404, code: "PERSONA_SOURCE_NOT_FOUND" })
+    }
+    const slots = resolvePersonaStyleSlots(source)
+    return {
+      name,
+      description: source.description,
+      avatarEmoji: source.avatarEmoji,
+      systemPrompt: source.systemPrompt ?? "",
+      model: source.model,
+      escalationModel: source.escalationModel,
+      temperature: source.temperature,
+      maxTokens: source.maxTokens,
+      enabledTools: (source.enabledTools ?? []) as PersonaCustomConfig["enabledTools"],
+      tonePrompt: slots.tone ?? null,
+      brevityPrompt: slots.brevity ?? null,
+    }
   }
 
   /**

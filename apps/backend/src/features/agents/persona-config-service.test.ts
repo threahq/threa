@@ -7,7 +7,7 @@ import { AgentConfigOverrideRepository } from "./agent-config-override-repositor
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
 import { PersonaRepository, type Persona } from "./persona-repository"
-import { TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS } from "./companion/config"
+import { COMPANION_MODEL_ID, TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS } from "./companion/config"
 import { OutboxRepository } from "../../lib/outbox"
 import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID, getVisibleBuiltInAgentConfig } from "./built-in-agents"
 import * as dbModule from "../../db"
@@ -952,6 +952,31 @@ describe("PersonaConfigService.forkPersona", () => {
       "agent_config:updated",
       expect.objectContaining({ agentId: "persona_custom_new" })
     )
+  })
+
+  it("creates a blank agent (starter prompt, companion default model, no tools) when sourcePersonaId is null", async () => {
+    setupTransaction()
+    const findById = spyOn(PersonaRepository, "findById").mockResolvedValue(null)
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(
+      customPersona({ id: "persona_custom_blank", slug: "scribe", name: "Scribe" })
+    )
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const persona = await makeService().forkPersona(WORKSPACE_ID, null, "Scribe", CALLER_ID)
+
+    expect(persona).toMatchObject({ id: "persona_custom_blank", kind: "custom" })
+    expect(findById).not.toHaveBeenCalled()
+    const insertArg = insert.mock.calls[0]![1] as { config: Record<string, unknown> }
+    expect(insertArg.config).toMatchObject({
+      name: "Scribe",
+      systemPrompt: "You are Scribe.",
+      model: COMPANION_MODEL_ID,
+      enabledTools: [],
+      tonePrompt: null,
+      brevityPrompt: null,
+      description: null,
+    })
   })
 
   it("copies a custom source's free-text slots verbatim", async () => {

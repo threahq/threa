@@ -57,8 +57,8 @@ export const personasApi = {
     return api.get<PersonaConfigResponse>(`/api/workspaces/${workspaceId}/personas/${personaId}/config`)
   },
 
-  /** Fork a source persona (built-in or custom) into a new workspace custom (admin). Returns the new list item. */
-  async fork(workspaceId: string, input: { sourcePersonaId: string; name: string }): Promise<PersonaListItem> {
+  /** Fork a source persona (built-in or custom; null = blank agent) into a new workspace custom (admin). */
+  async fork(workspaceId: string, input: { sourcePersonaId: string | null; name: string }): Promise<PersonaListItem> {
     const { persona } = await api.post<{ persona: PersonaListItem }>(`/api/workspaces/${workspaceId}/personas`, input)
     return persona
   },

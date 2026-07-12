@@ -26,7 +26,7 @@ const restoreRevisionSchema = z.object({
 })
 
 const forkPersonaSchema = z.object({
-  sourcePersonaId: z.string().min(1),
+  sourcePersonaId: z.string().min(1).nullable(),
   name: z.string().min(1).max(PERSONA_NAME_MAX_CHARS),
 })
 

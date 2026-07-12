@@ -27,9 +27,11 @@ interface PersonaForkDialogProps {
 
 /**
  * "New agent" — fork a source persona (built-in or custom) into a new workspace
- * custom, then navigate to its editor. Create = copy-then-edit (there is no
- * blank-persona path). The name seeds a workspace-scoped slug server-side.
+ * custom, then navigate to its editor. Create = copy-then-edit, or start from a
+ * blank agent (starter prompt, default model, no tools). The name seeds a
+ * workspace-scoped slug server-side.
  */
+const BLANK_SOURCE = "blank"
 export function PersonaForkDialog({ workspaceId, sources }: PersonaForkDialogProps) {
   const navigate = useNavigate()
   const fork = useForkPersona(workspaceId)
@@ -42,7 +44,7 @@ export function PersonaForkDialog({ workspaceId, sources }: PersonaForkDialogPro
   const handleCreate = () => {
     if (!canCreate) return
     fork.mutate(
-      { sourcePersonaId: sourceId, name: name.trim() },
+      { sourcePersonaId: sourceId === BLANK_SOURCE ? null : sourceId, name: name.trim() },
       {
         onSuccess: (persona) => {
           setOpen(false)
@@ -66,7 +68,8 @@ export function PersonaForkDialog({ workspaceId, sources }: PersonaForkDialogPro
         <DialogHeader>
           <DialogTitle>New agent</DialogTitle>
           <DialogDescription>
-            Fork an existing agent into an editable copy — its prompt, tools, model, and style carry over.
+            Fork an existing agent into an editable copy — its prompt, tools, model, and style carry over. Or start from
+            a blank agent and write your own.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
@@ -82,6 +85,10 @@ export function PersonaForkDialog({ workspaceId, sources }: PersonaForkDialogPro
                     {source.name}
                   </SelectItem>
                 ))}
+                <SelectItem value={BLANK_SOURCE}>
+                  <span>Blank agent</span>
+                  <span className="block text-xs text-muted-foreground">Empty prompt, no tools — write your own</span>
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>

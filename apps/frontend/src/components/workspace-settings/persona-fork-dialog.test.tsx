@@ -55,6 +55,22 @@ describe("PersonaForkDialog", () => {
     expect(await screen.findByText("Editor for new agent")).toBeInTheDocument()
   })
 
+  it("sends a null source when Blank agent is picked (start from scratch)", async () => {
+    const fork = vi
+      .spyOn(personasApi, "fork")
+      .mockResolvedValue({ id: "persona_blank", slug: "scribe" } as unknown as PersonaListItem)
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.click(screen.getByRole("button", { name: /New agent/ }))
+    await user.click(screen.getByLabelText("Copy from"))
+    await user.click(await screen.findByRole("option", { name: /Blank agent/ }))
+    await user.type(await screen.findByLabelText("Name"), "Scribe")
+    await user.click(screen.getByRole("button", { name: "Create" }))
+
+    await waitFor(() => expect(fork).toHaveBeenCalledWith("ws_1", { sourcePersonaId: null, name: "Scribe" }))
+  })
+
   it("disables Create until a name is entered", async () => {
     const user = userEvent.setup()
     renderDialog()

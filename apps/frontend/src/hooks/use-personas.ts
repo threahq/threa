@@ -278,7 +278,7 @@ export function useDiscardPersonaDraft(workspaceId: string, personaId: string) {
 export function useForkPersona(workspaceId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: { sourcePersonaId: string; name: string }) => personasApi.fork(workspaceId, input),
+    mutationFn: (input: { sourcePersonaId: string | null; name: string }) => personasApi.fork(workspaceId, input),
     onSuccess: (persona) => {
       upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)
     },

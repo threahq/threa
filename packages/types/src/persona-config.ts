@@ -288,8 +288,12 @@ export interface UpdatePersonaOverrideInput {
 
 /** Request body for POST create-a-custom-persona (fork). `name` seeds a workspace-scoped slug. */
 export interface ForkPersonaInput {
-  /** The built-in or custom persona to copy config (and materialized style slots) from. */
-  sourcePersonaId: string
+  /**
+   * The built-in or custom persona to copy config (and materialized style slots)
+   * from; `null` starts from a blank agent (starter prompt, default model, no
+   * tools) instead of copying anything.
+   */
+  sourcePersonaId: string | null
   name: string
 }
 
