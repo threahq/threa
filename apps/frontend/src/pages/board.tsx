@@ -36,7 +36,7 @@ import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/
 import { BoardCard } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
-import { BoardOverlayComposer } from "@/components/board/board-overlay-composer"
+import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
 import { boardHomeRedirectHref, isBoardAtHome } from "@/components/board/board-saved-views"
 import { useBoardViews, useBoardHome } from "@/hooks/use-board-views"
@@ -510,7 +510,6 @@ function BoardPageInner({
   // mount-once effect would leave the observer bound to the dead node — freezing
   // `startMargin` so virtua's offsets drift once the new composer resizes.
   const [composerEl, setComposerEl] = useState<HTMLDivElement | null>(null)
-  const [composerOpen, setComposerOpen] = useState(false)
   const [startMargin, setStartMargin] = useState(0)
   useLayoutEffect(() => {
     if (!composerEl) return
@@ -577,6 +576,14 @@ function BoardPageInner({
       navigate(boardHome)
     }
   }
+
+  // Register the board's post-reveal with the single app-level compose overlay so
+  // a post surfaces here whichever entry point opened it (board button, command)
+  // — while the board is mounted. A stable wrapper reads the latest handler via a
+  // ref so it re-registers once, not every render.
+  const handlePostedRef = useRef(handlePosted)
+  handlePostedRef.current = handlePosted
+  useEffect(() => registerComposeOnPosted(() => handlePostedRef.current()), [])
 
   // Where the post lives — the stream's own name (channel #slug, DM peer,
   // scratchpad name), used as the card's locator. The glyph follows the type.
@@ -818,19 +825,13 @@ function BoardPageInner({
               <div ref={setComposerEl} className="pt-3">
                 <button
                   type="button"
-                  onClick={() => setComposerOpen(true)}
+                  onClick={() => openCompose()}
                   className="mb-3 flex w-full items-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
                 >
                   <PenSquare className="h-4 w-4 shrink-0" />
                   Write a post…
                 </button>
               </div>
-              <BoardOverlayComposer
-                workspaceId={workspaceId}
-                open={composerOpen}
-                onOpenChange={setComposerOpen}
-                onPosted={handlePosted}
-              />
               {showFeed ? (
                 <BoardFeedList scrollRef={scrollerRef} listRef={listRef} startMargin={startMargin}>
                   {renderedRows}
