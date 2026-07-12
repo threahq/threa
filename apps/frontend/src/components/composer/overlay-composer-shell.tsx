@@ -37,6 +37,18 @@ export function OverlayComposerShell({ open, onOpenChange, title, header, childr
           // (@mention / emoji / slash) that portals outside the dialog.
           if ((e.target as HTMLElement).closest('[role="listbox"]')) e.preventDefault()
         }}
+        onEscapeKeyDown={(e) => {
+          // Radix dismisses on a capture-phase keydown, which would preempt the
+          // editor's own Escape (dismiss an open @mention/emoji/slash popup, then
+          // blur). Let the editor handle Escape first while it's focused (or a
+          // suggestion list is open); a later Escape with focus back on the shell
+          // falls through to Radix and closes the overlay — the two-step the
+          // fullscreen editor announces.
+          const active = document.activeElement as HTMLElement | null
+          if (document.querySelector('[role="listbox"]') || active?.closest('[contenteditable="true"]')) {
+            e.preventDefault()
+          }
+        }}
       >
         <ResponsiveDialogTitle className="sr-only">{title}</ResponsiveDialogTitle>
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 sm:px-4">
