@@ -258,8 +258,7 @@ export function PersonaHistoryPanel({
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Revision history</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
-            Every saved configuration, newest first. Restoring makes an earlier version current and keeps the rest in
-            history.
+            Earlier versions, newest first. Restoring makes one current and keeps the rest in history.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
         <ResponsiveDialogBody className="py-2">
