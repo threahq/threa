@@ -3030,7 +3030,8 @@
             "in": "query",
             "required": false,
             "schema": { "default": "open", "type": "string", "const": "open" }
-          }
+          },
+          { "name": "since", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } }
         ],
         "responses": {
           "200": {
@@ -3132,7 +3133,10 @@
               "schema": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
-                "properties": { "claimedByLabel": { "type": "string", "minLength": 1, "maxLength": 200 } },
+                "properties": {
+                  "claimedByLabel": { "type": "string", "minLength": 1, "maxLength": 200 },
+                  "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 128 }
+                },
                 "required": ["claimedByLabel"],
                 "additionalProperties": false
               }

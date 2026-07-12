@@ -10,6 +10,7 @@ import {
   type BotResyncOutboxPayload,
   type BotSessionArchivedOutboxPayload,
   type BotSessionRestoredOutboxPayload,
+  type StreamDelegationCreatedOutboxPayload,
 } from "./repository"
 import { resolveDeliveryGroups, emitToGroups } from "./delivery-groups"
 import { logger } from "../logger"
@@ -206,6 +207,22 @@ export class BroadcastHandler implements OutboxHandler {
     }
 
     emitToGroups(this.io, event, groups, routedEvent?.syncId)
+
+    // A new delegation additionally nudges every connected runtime in the
+    // workspace (roadmap 5.4: push delivery; polling is the headless
+    // fallback). Workspace-wide, not a bot room: delegations are claimable by
+    // any key with stream access, and the claim CAS keeps the fan-out race
+    // safe — one claimer wins, the rest get 409.
+    if (isOutboxEventType(event, "stream:delegation_created")) {
+      const payload = event.payload as StreamDelegationCreatedOutboxPayload
+      const created = payload.event.payload as { delegationId?: string; title?: string }
+      this.botNamespace.to(`bot:${payload.workspaceId}`).emit("delegation:available", {
+        workspaceId: payload.workspaceId,
+        streamId: payload.streamId,
+        delegationId: created.delegationId,
+        title: created.title,
+      })
+    }
   }
 
   /**

@@ -403,11 +403,18 @@ export const listMyBotsSchema = z.object({
 export const listDelegationsQuerySchema = z.object({
   /** Only the claimable queue is listed today; the enum grows when a real consumer needs more (INV-36). */
   status: z.literal("open").optional().default("open"),
+  /** Only delegations created after this instant — a polling runner's cheap delta. */
+  since: z.string().datetime().optional(),
 })
 
 export const claimDelegationSchema = z.object({
   /** Human-readable identity of the claiming agent, shown on the card (e.g. "Kris's MacBook / Claude Code"). */
   claimedByLabel: z.string().min(1).max(200),
+  /**
+   * Crash-recovery key, persisted by the runner BEFORE calling claim. A retry
+   * bearing the live claim's key re-keys it (fresh token + lease) instead of 409.
+   */
+  idempotencyKey: z.string().min(8).max(128).optional(),
 })
 
 export const reportDelegationStatusSchema = z.object({
