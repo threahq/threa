@@ -34,8 +34,11 @@ function makeReqRes(opts: {
   return { req, res, jsonCalls, setHeaders }
 }
 
+let changesAfterSpy: ReturnType<typeof spyOn> | null = null
+
 afterEach(() => {
-  spyOn(versions, "changesAfter").mockRestore()
+  changesAfterSpy?.mockRestore()
+  changesAfterSpy = null
 })
 
 describe("createApiVersionGate — resolution precedence", () => {
@@ -117,7 +120,7 @@ describe("createApiVersionGate — transform pipeline", () => {
     }
     // changesAfter returns ascending order; the gate applies upgrades in that
     // order and downgrades in reverse.
-    spyOn(versions, "changesAfter").mockReturnValue([older, newer])
+    changesAfterSpy = spyOn(versions, "changesAfter").mockReturnValue([older, newer])
 
     const gate = createApiVersionGate("listMessages")
     const { req, res, jsonCalls } = makeReqRes({
@@ -140,7 +143,7 @@ describe("createApiVersionGate — transform pipeline", () => {
       operations: new Set(["sendMessage"]),
       upgradeRequest: (body) => ({ ...(body as object), touched: true }),
     }
-    spyOn(versions, "changesAfter").mockReturnValue([foreign])
+    changesAfterSpy = spyOn(versions, "changesAfter").mockReturnValue([foreign])
 
     const gate = createApiVersionGate("listMessages")
     const { req } = makeReqRes({ userApiKey: { id: "uak_1", apiVersion: CURRENT_API_VERSION }, body: { base: true } })

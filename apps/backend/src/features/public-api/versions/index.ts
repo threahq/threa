@@ -30,9 +30,9 @@ export function parseApiVersion(raw: string): ApiVersion {
 }
 
 /** Changes the caller is behind on, i.e. with version strictly newer than theirs. */
-export function changesAfter(clientVersion: ApiVersion): VersionChange[] {
+export function changesAfter(clientVersion: ApiVersion, changes: readonly VersionChange[] = VERSION_CHANGES) {
   // ISO dates compare lexicographically — no Date parsing.
-  return VERSION_CHANGES.filter((c) => c.version > clientVersion)
+  return changes.filter((c) => c.version > clientVersion)
 }
 
 export { API_VERSIONS, CURRENT_API_VERSION }

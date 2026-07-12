@@ -14,15 +14,17 @@ describe("parseApiVersion", () => {
   })
 
   test("throws 400 INVALID_API_VERSION on an unknown version, listing known versions", () => {
+    let thrown: unknown
     try {
       parseApiVersion("2020-01-01")
-      throw new Error("expected parseApiVersion to throw")
     } catch (err) {
-      const e = err as { status?: number; code?: string; message?: string }
-      expect(e.status).toBe(400)
-      expect(e.code).toBe("INVALID_API_VERSION")
-      expect(e.message).toContain(API_VERSIONS.join(", "))
+      thrown = err
     }
+    expect(thrown).toMatchObject({
+      status: 400,
+      code: "INVALID_API_VERSION",
+      message: expect.stringContaining(API_VERSIONS.join(", ")),
+    })
   })
 
   test("throws on a malformed / non-date value", () => {
@@ -53,5 +55,15 @@ describe("assertChangesAscending", () => {
 describe("changesAfter", () => {
   test("returns no changes in the Phase-1 steady state (empty registry)", () => {
     expect(changesAfter(CURRENT_API_VERSION)).toEqual([])
+  })
+
+  test("returns only strictly-newer changes, in registry order", () => {
+    const a = change("2026-08-01")
+    const b = change("2026-11-01")
+    const c = change("2027-01-01")
+    expect(changesAfter("2026-07-12" as never, [a, b, c])).toEqual([a, b, c])
+    // Equal is excluded — a caller pinned AT a change's version already has it.
+    expect(changesAfter("2026-11-01" as never, [a, b, c])).toEqual([c])
+    expect(changesAfter("2027-01-01" as never, [a, b, c])).toEqual([])
   })
 })

@@ -80,7 +80,7 @@ Handlers and serializers always produce/consume the **latest** shape. Each dated
 
 Changes are scoped by `operationId` (the registry already names every endpoint). A change touching a shared wire resource (e.g. the message object appears in `listMessages`, `sendMessage`, `searchMessages`, `findMessagesByMetadata`) declares one transform function and lists the operations it applies to — explicit and compile-checked rather than a magic deep-walker.
 
-```
+```text
 apps/backend/src/features/public-api/versions/
   index.ts                        # ordered registry + resolution helpers
   types.ts                        # ApiVersion, VersionChange

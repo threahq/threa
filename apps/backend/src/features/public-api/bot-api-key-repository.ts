@@ -1,5 +1,6 @@
 import { sql } from "../../db"
 import type { Querier } from "../../db"
+import type { ApiVersion } from "./versions"
 
 export interface BotApiKeyRow {
   id: string
@@ -49,7 +50,7 @@ export const BotApiKeyRepository = {
       keyHash: string
       keyPrefix: string
       scopes: string[]
-      apiVersion: string
+      apiVersion: ApiVersion
       expiresAt: Date | null
     }
   ): Promise<BotApiKeyRow> {
@@ -107,7 +108,7 @@ export const BotApiKeyRepository = {
     workspaceId: string,
     botId: string,
     id: string,
-    apiVersion: string | null
+    apiVersion: ApiVersion | null
   ): Promise<BotApiKeyRow | null> {
     const result = await db.query<Record<string, unknown>>(sql`
       UPDATE bot_api_keys
