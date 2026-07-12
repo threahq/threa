@@ -1,67 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { forwardRef, useImperativeHandle } from "react"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { JSONContent, PersonaConfigResponse, PersonaResolvedConfig } from "@threa/types"
+import type { PersonaConfigResponse, PersonaResolvedConfig } from "@threa/types"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"
-import { spyOnExport } from "@/test/spy"
-import * as editorModule from "@/components/editor"
 import { PersonaEditorForm } from "./persona-editor-form"
-
-function extractText(node: JSONContent | undefined): string {
-  if (!node) return ""
-  if (node.type === "text") return node.text ?? ""
-  return (node.content ?? []).map((child) => extractText(child)).join("")
-}
-
-function createDoc(text: string): JSONContent {
-  return { type: "doc", content: [{ type: "paragraph", content: text ? [{ type: "text", text }] : undefined }] }
-}
-
-// The system-prompt field mounts a RichEditor; stub it as a plain textarea (the
-// established pattern in ai-settings.test) so tests exercise the markdown
-// round-trip and per-field reset without a real TipTap instance in jsdom.
-beforeEach(() => {
-  const MockRichEditor = forwardRef<
-    {
-      focus: () => void
-      insertMention: () => void
-      insertSlash: () => void
-      insertEmoji: () => void
-      getEditor: () => null
-    },
-    { value: JSONContent; onChange: (v: JSONContent) => void; onSubmit?: () => void; ariaLabel?: string }
-  >(function MockRichEditor({ value, onChange, onSubmit, ariaLabel }, ref) {
-    useImperativeHandle(ref, () => ({
-      focus: () => undefined,
-      insertMention: () => undefined,
-      insertSlash: () => undefined,
-      insertEmoji: () => undefined,
-      getEditor: () => null,
-    }))
-    return (
-      <textarea
-        aria-label={ariaLabel}
-        value={extractText(value)}
-        onChange={(event) => onChange(createDoc(event.target.value))}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && event.metaKey) {
-            event.preventDefault()
-            onSubmit?.()
-          }
-        }}
-      />
-    )
-  })
-  spyOnExport(editorModule, "RichEditor").mockReturnValue(MockRichEditor as unknown as typeof editorModule.RichEditor)
-
-  const MockEditorActionBar = (({ trailingContent }: Record<string, unknown>) => (
-    <div>{trailingContent as React.ReactNode}</div>
-  )) as unknown as typeof editorModule.EditorActionBar
-  spyOnExport(editorModule, "EditorActionBar").mockReturnValue(MockEditorActionBar)
-})
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -124,79 +68,101 @@ function renderForm(cfg: PersonaConfigResponse = config()) {
   return { ...utils, rerenderWith }
 }
 
-describe("PersonaEditorForm", () => {
-  it("saves only the fields that diverge from defaults (sparse patch)", async () => {
+describe("PersonaEditorForm (restricted built-in editor)", () => {
+  it("offers only the editable fields — no locked identity/prompt inputs; the prompt is read-only", async () => {
+    const user = userEvent.setup()
+    renderForm()
+
+    // Editable fields present.
+    expect(screen.getByText("Model")).toBeInTheDocument()
+    expect(screen.getByText("Tone")).toBeInTheDocument()
+    expect(screen.getByText("Brevity")).toBeInTheDocument()
+    expect(screen.getByText("Tools")).toBeInTheDocument()
+
+    // Locked identity/prompt inputs are absent.
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Persona system prompt editor")).not.toBeInTheDocument()
+
+    // The system prompt is shown read-only inside a disclosure.
+    await user.click(screen.getByRole("button", { name: /System prompt/ }))
+    expect(await screen.findByText("You are Ariadne.")).toBeInTheDocument()
+  })
+
+  it("saves a sparse patch containing only editable keys", async () => {
     const put = vi
       .spyOn(personasApi, "putOverride")
       .mockResolvedValue({ persona: { id: "persona_system_ariadne" } as never, updatedAt: "2026-07-11T00:00:00Z" })
     const user = userEvent.setup()
     renderForm()
 
-    const name = screen.getByLabelText("Name")
-    await user.clear(name)
-    await user.type(name, "Ari")
+    // Toggle a tool off — the only thing that changed.
+    await user.click(screen.getByRole("checkbox", { name: "Web search" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     await waitFor(() =>
       expect(put).toHaveBeenCalledWith("ws_1", "persona_system_ariadne", {
-        patch: { name: "Ari" },
+        patch: { enabledTools: ["send_message"] },
         expectedUpdatedAt: null,
       })
     )
   })
 
-  it("resets a field back to its default, clearing the pending change", async () => {
+  it("commits a style-preset draft as a tonePreset patch (an allowed key)", async () => {
+    const put = vi
+      .spyOn(personasApi, "putOverride")
+      .mockResolvedValue({ persona: { id: "persona_system_ariadne" } as never, updatedAt: "2026-07-11T00:00:00Z" })
     const user = userEvent.setup()
-    renderForm()
+    // A saved draft that set the tone preset seeds the form dirty.
+    renderForm(
+      config({ draft: { patch: { tonePreset: "direct" }, testStreamId: null, updatedAt: "2026-07-11T00:00:00Z" } })
+    )
 
-    const name = screen.getByLabelText("Name")
-    await user.clear(name)
-    await user.type(name, "Ari")
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+    await user.click(screen.getByRole("button", { name: "Save" }))
 
-    await user.click(screen.getByRole("button", { name: "Reset Name" }))
-
-    expect(screen.getByLabelText("Name")).toHaveValue("Ariadne")
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith("ws_1", "persona_system_ariadne", {
+        patch: { tonePreset: "direct" },
+        expectedUpdatedAt: null,
+      })
+    )
   })
 
   it("surfaces a concurrent edit inline and keeps the local draft (INV-63)", async () => {
     vi.spyOn(personasApi, "putOverride").mockRejectedValue(
       new ApiError(409, "PERSONA_OVERRIDE_CONFLICT", "conflict", {
-        current: { patch: { name: "Theirs" }, updatedAt: "2026-07-11T01:00:00Z" },
+        current: { patch: { model: "openrouter:anthropic/claude-opus-4.8" }, updatedAt: "2026-07-11T01:00:00Z" },
       })
     )
     const user = userEvent.setup()
     renderForm()
 
-    const name = screen.getByLabelText("Name")
-    await user.clear(name)
-    await user.type(name, "Mine")
+    await user.click(screen.getByRole("checkbox", { name: "Web search" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(await screen.findByText(/Someone else updated this persona/)).toBeInTheDocument()
-    expect(screen.getByLabelText("Name")).toHaveValue("Mine")
+    // Local edit kept — the tool is still unchecked.
+    expect(screen.getByRole("checkbox", { name: "Web search" })).not.toBeChecked()
   })
 
-  it("adopts a concurrent override that arrives via broadcast when the form is pristine (no silent clobber)", async () => {
+  it("adopts a concurrent override that arrives via broadcast when pristine (no silent clobber)", async () => {
     const put = vi
       .spyOn(personasApi, "putOverride")
       .mockResolvedValue({ persona: { id: "persona_system_ariadne" } as never, updatedAt: "2026-07-11T03:00:00Z" })
     const { rerenderWith } = renderForm()
 
-    // Another admin's commit lands via `agent_config:updated` → the config query
-    // refetches and the parent re-renders this form with the advanced baseline.
+    // Initially the model trigger shows the default.
+    expect(screen.getByText("Claude Sonnet 4.6")).toBeInTheDocument()
+
     rerenderWith(
       config({
-        overridePatch: { name: "Theirs" },
+        overridePatch: { model: "openrouter:anthropic/claude-opus-4.8" },
         overrideUpdatedAt: "2026-07-11T02:00:00Z",
-        resolved: { ...defaults(), name: "Theirs" },
+        resolved: { ...defaults(), model: "openrouter:anthropic/claude-opus-4.8" },
       })
     )
 
-    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Theirs"))
-    // The form has no unsynced work, so it adopts their version and Save stays
-    // disabled — the old bug armed Save under stale values and wrote an empty patch.
+    // Pristine form adopts their model; Save stays disabled and never fires.
+    await waitFor(() => expect(screen.getByText("Claude Opus 4.8")).toBeInTheDocument())
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
     expect(put).not.toHaveBeenCalled()
   })
@@ -205,90 +171,54 @@ describe("PersonaEditorForm", () => {
     const user = userEvent.setup()
     const { rerenderWith } = renderForm()
 
-    const name = screen.getByLabelText("Name")
-    await user.clear(name)
-    await user.type(name, "Mine")
+    await user.click(screen.getByRole("checkbox", { name: "Web search" }))
 
     rerenderWith(
       config({
-        overridePatch: { name: "Theirs" },
+        overridePatch: { model: "openrouter:anthropic/claude-opus-4.8" },
         overrideUpdatedAt: "2026-07-11T02:00:00Z",
-        resolved: { ...defaults(), name: "Theirs" },
+        resolved: { ...defaults(), model: "openrouter:anthropic/claude-opus-4.8" },
       })
     )
 
     expect(await screen.findByText(/Someone else updated this persona/)).toBeInTheDocument()
-    expect(screen.getByLabelText("Name")).toHaveValue("Mine")
-  })
-
-  it("saves a system-prompt edit as serialized markdown in the sparse patch", async () => {
-    const put = vi
-      .spyOn(personasApi, "putOverride")
-      .mockResolvedValue({ persona: { id: "persona_system_ariadne" } as never, updatedAt: "2026-07-11T00:00:00Z" })
-    const user = userEvent.setup()
-    renderForm()
-
-    const prompt = screen.getByLabelText("Persona system prompt editor")
-    await user.clear(prompt)
-    await user.type(prompt, "Be terse.")
-    await user.click(screen.getByRole("button", { name: "Save" }))
-
-    await waitFor(() =>
-      expect(put).toHaveBeenCalledWith("ws_1", "persona_system_ariadne", {
-        patch: { systemPrompt: "Be terse." },
-        expectedUpdatedAt: null,
-      })
-    )
-  })
-
-  it("resets the system prompt back to its default, clearing the pending change", async () => {
-    const user = userEvent.setup()
-    renderForm()
-
-    const prompt = screen.getByLabelText("Persona system prompt editor")
-    await user.clear(prompt)
-    await user.type(prompt, "Draft prompt")
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
-
-    // System prompt is the fourth field (Name, Description, Avatar, System prompt).
-    await user.click(screen.getByRole("button", { name: "Reset System prompt" }))
-
-    expect(screen.getByLabelText("Persona system prompt editor")).toHaveValue("You are Ariadne.")
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+    expect(screen.getByRole("checkbox", { name: "Web search" })).not.toBeChecked()
   })
 
   it("debounces edits into a draft write", async () => {
     const putDraft = vi
       .spyOn(personasApi, "putDraft")
-      .mockResolvedValue({ patch: { name: "Ari" }, testStreamId: null, updatedAt: "2026-07-11T00:00:00Z" })
+      .mockResolvedValue({
+        patch: { enabledTools: ["send_message"] },
+        testStreamId: null,
+        updatedAt: "2026-07-11T00:00:00Z",
+      })
     const user = userEvent.setup()
     renderForm()
 
-    const name = screen.getByLabelText("Name")
-    await user.clear(name)
-    await user.type(name, "Ari")
+    await user.click(screen.getByRole("checkbox", { name: "Web search" }))
 
-    await waitFor(() => expect(putDraft).toHaveBeenCalledWith("ws_1", "persona_system_ariadne", { name: "Ari" }), {
-      timeout: 2000,
-    })
+    await waitFor(
+      () => expect(putDraft).toHaveBeenCalledWith("ws_1", "persona_system_ariadne", { enabledTools: ["send_message"] }),
+      { timeout: 2000 }
+    )
   })
 
   it("a pending debounce does not resurrect the draft after Save (ghost-draft regression)", async () => {
     const putDraft = vi
       .spyOn(personasApi, "putDraft")
-      .mockResolvedValue({ patch: { name: "Ari" }, testStreamId: null, updatedAt: "2026-07-11T00:00:00Z" })
+      .mockResolvedValue({
+        patch: { enabledTools: ["send_message"] },
+        testStreamId: null,
+        updatedAt: "2026-07-11T00:00:00Z",
+      })
     const putOverride = vi
       .spyOn(personasApi, "putOverride")
       .mockResolvedValue({ persona: { id: "persona_system_ariadne" }, updatedAt: "2026-07-11T00:00:01Z" } as never)
     const user = userEvent.setup()
     renderForm()
 
-    const name = screen.getByLabelText("Name")
-    await user.clear(name)
-    await user.type(name, "Ari")
-    // Save inside the 700ms debounce window: the armed timer must observe the
-    // save (editedRef reset) and skip its draft write, or a ghost draft row
-    // reappears right after the commit transaction deleted it.
+    await user.click(screen.getByRole("checkbox", { name: "Web search" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(putOverride).toHaveBeenCalled())
 

@@ -1,4 +1,4 @@
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { AriadneIcon } from "@/components/ariadne-icon"
 import { cn } from "@/lib/utils"
 
@@ -33,6 +33,12 @@ const SIZE_CONFIG: Record<AvatarSize, { avatar: string; icon: "xs" | "sm" | "md"
 interface PersonaAvatarProps {
   /** Persona slug (e.g., "ariadne") - used to determine if SVG icon should be rendered */
   slug?: string
+  /**
+   * Served URL of a custom persona's uploaded avatar image (from
+   * `getPersonaAvatarUrl`). When set it renders above the icon/emoji/initials
+   * fallback; a built-in (Ariadne) never carries one and keeps its SVG icon.
+   */
+  avatarUrl?: string
   /** Fallback display: emoji or initials */
   fallback: string
   /** Size variant */
@@ -44,18 +50,21 @@ interface PersonaAvatarProps {
 /**
  * Avatar component for personas that handles special icons.
  *
+ * - For a custom persona with an uploaded image: renders the image (Radix falls
+ *   back to the icon/emoji/initials below while it loads or on error)
  * - For Ariadne: renders the AriadneIcon SVG with gold border
  * - For other personas: renders emoji or initials with solid gold background
  *
  * Centralizes the logic for persona avatar rendering so it's consistent
  * across message timeline, mention list, and other UI.
  */
-export function PersonaAvatar({ slug, fallback, size = "md", className }: PersonaAvatarProps) {
+export function PersonaAvatar({ slug, avatarUrl, fallback, size = "md", className }: PersonaAvatarProps) {
   const config = SIZE_CONFIG[size]
   const isAriadne = slug === ARIADNE_SLUG
 
   return (
     <Avatar className={cn(config.avatar, "shrink-0", className)}>
+      {avatarUrl && <AvatarImage src={avatarUrl} alt="" />}
       <AvatarFallback className={cn("bg-card text-primary", config.text, config.border)}>
         {isAriadne ? <AriadneIcon size={config.icon} /> : fallback}
       </AvatarFallback>

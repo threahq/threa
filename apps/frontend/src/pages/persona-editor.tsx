@@ -10,6 +10,7 @@ import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { usePersonaConfig } from "@/hooks/use-personas"
 import { usePanelLayout, useIsSplitCapable } from "@/hooks"
 import { PersonaEditorForm } from "@/components/persona-editor/persona-editor-form"
+import { CustomPersonaEditor } from "@/components/persona-editor/custom-persona-editor"
 import { PersonaTestChatDrawer, PersonaTestChatPane } from "@/components/persona-editor/persona-test-chat"
 import type { SyncState } from "@/components/persona-editor/persona-form"
 import { ApiError } from "@/api/client"
@@ -77,6 +78,15 @@ export function PersonaEditorPage() {
     )
   } else if (isLoading || !config) {
     body = <p className="text-sm text-muted-foreground">Loading persona…</p>
+  } else if (config.kind === "custom") {
+    body = (
+      <CustomPersonaEditor
+        workspaceId={workspaceId}
+        personaId={personaId}
+        config={config}
+        onSyncStateChange={setSyncState}
+      />
+    )
   } else {
     body = (
       <PersonaEditorForm

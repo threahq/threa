@@ -1,9 +1,9 @@
 import { useState } from "react"
 import { History, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
-import type { PersonaConfigPatch, PersonaConfigRevision } from "@threa/types"
+import type { PersonaConfigPatch, PersonaConfigRevision, PersonaKind } from "@threa/types"
 import { ApiError } from "@/api/client"
-import type { PersonaOverrideConflict } from "@/api"
+import type { PersonaCustomConflict, PersonaOverrideConflict } from "@/api"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,14 +34,21 @@ import { changedPatchFields, PERSONA_FIELD_LABELS } from "./persona-form"
 interface PersonaHistoryPanelProps {
   workspaceId: string
   personaId: string
+  /**
+   * Built-in vs custom. A built-in has a synthetic "v0" defaults floor (restorable
+   * by clearing the override); a custom has no defaults baseline, so that row is
+   * omitted and the newest revision is always the current one.
+   */
+  kind: PersonaKind
   /** The `overrideUpdatedAt` a restore asserts against (same OCC token as Save). */
   expectedUpdatedAt: string | null
   /**
    * Reuse the form's inline amber conflict banner when a restore 409s — hand the
-   * other admin's committed override up so the next Save/restore asserts against
-   * it (INV-63, nothing lost silently).
+   * other admin's committed config up so the next Save/restore asserts against it
+   * (INV-63, nothing lost silently). A built-in hands a sparse patch, a custom the
+   * full config; each editor narrows on the shape it expects.
    */
-  onOverrideConflict: (current: PersonaOverrideConflict | null) => void
+  onOverrideConflict: (current: PersonaOverrideConflict | PersonaCustomConflict | null) => void
 }
 
 /**
@@ -196,22 +203,24 @@ function PersonaDefaultRow({
 export function PersonaHistoryPanel({
   workspaceId,
   personaId,
+  kind,
   expectedUpdatedAt,
   onOverrideConflict,
 }: PersonaHistoryPanelProps) {
   const [open, setOpen] = useState(false)
   const { getActorName } = useActors(workspaceId)
   const revisionsQuery = useRevisions(workspaceId, personaId, { enabled: open })
-  const restore = useRestoreRevision(workspaceId, personaId)
+  const restore = useRestoreRevision(workspaceId, personaId, kind)
   const resetToDefault = useUpdatePersonaOverride(workspaceId, personaId)
   const revisions = revisionsQuery.data ?? []
-  // No active override → the persona is at its built-in defaults (the v0 floor).
-  const atDefault = expectedUpdatedAt === null
+  // A built-in with no active override sits at its defaults floor (v0); a custom
+  // has no floor, so the newest committed revision is always current.
+  const atDefault = kind === "builtin" && expectedUpdatedAt === null
   const restorePending = restore.isPending || resetToDefault.isPending
 
   const handleCommitError = (error: unknown, notFoundMessage: string) => {
     if (ApiError.isApiError(error) && error.code === "PERSONA_OVERRIDE_CONFLICT") {
-      onOverrideConflict((error.details?.current ?? null) as PersonaOverrideConflict | null)
+      onOverrideConflict((error.details?.current ?? null) as PersonaOverrideConflict | PersonaCustomConflict | null)
       setOpen(false)
       return
     }
@@ -278,11 +287,13 @@ export function PersonaHistoryPanel({
                   onRestore={handleRestore}
                 />
               ))}
-              <PersonaDefaultRow
-                isCurrent={atDefault}
-                restorePending={restorePending}
-                onRestore={handleResetToDefault}
-              />
+              {kind === "builtin" && (
+                <PersonaDefaultRow
+                  isCurrent={atDefault}
+                  restorePending={restorePending}
+                  onRestore={handleResetToDefault}
+                />
+              )}
             </ul>
           )}
         </ResponsiveDialogBody>

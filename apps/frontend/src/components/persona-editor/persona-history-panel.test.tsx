@@ -97,11 +97,12 @@ function defaults(): PersonaResolvedConfig {
   }
 }
 
-// A workspace already customized to v2 (name + model), so the panel's OCC token
-// (overrideUpdatedAt) is non-null and a restore asserts against it.
+// A workspace already customized to v2 (tone + model), so the panel's OCC token
+// (overrideUpdatedAt) is non-null and a restore asserts against it. Only editable
+// built-in fields appear in the patch (identity/prompt are locked).
 function config(): PersonaConfigResponse {
   const d = defaults()
-  const overridePatch = { name: "V2 name", model: "openrouter:anthropic/claude-opus-4.8" }
+  const overridePatch = { tonePreset: "warm" as const, model: "openrouter:anthropic/claude-opus-4.8" }
   return {
     kind: "builtin",
     defaults: d,
@@ -120,7 +121,7 @@ const revisions: PersonaConfigRevision[] = [
   {
     id: "acrev_2",
     version: 2,
-    patch: { name: "V2 name", model: "openrouter:anthropic/claude-opus-4.8" },
+    patch: { tonePreset: "warm", model: "openrouter:anthropic/claude-opus-4.8" },
     createdByKind: "user",
     createdById: "usr_alice",
     createdAt: "2026-07-11T02:00:00Z",
@@ -128,7 +129,7 @@ const revisions: PersonaConfigRevision[] = [
   {
     id: "acrev_1",
     version: 1,
-    patch: { name: "V1 name" },
+    patch: { tonePreset: "warm" },
     createdByKind: "user",
     createdById: "usr_bob",
     createdAt: "2026-07-10T00:00:00Z",
@@ -183,10 +184,10 @@ describe("PersonaHistoryPanel", () => {
     renderEditor(makeClient())
 
     const dialog = await openHistory(user)
-    // v2 vs v1: name changed (V1 name → V2 name) and model added.
-    expect(await within(dialog).findByText("Changed: name, model")).toBeInTheDocument()
-    // v1 vs nothing: it set name over the defaults.
-    expect(within(dialog).getByText("Changed: name")).toBeInTheDocument()
+    // v2 vs v1: model added (tone unchanged).
+    expect(await within(dialog).findByText("Changed: model")).toBeInTheDocument()
+    // v1 vs nothing: it set the tone over the defaults.
+    expect(within(dialog).getByText("Changed: tone")).toBeInTheDocument()
   })
 
   it("restores an older revision: calls the API with expectedUpdatedAt and the form re-seeds", async () => {
@@ -198,7 +199,8 @@ describe("PersonaHistoryPanel", () => {
     const user = userEvent.setup()
     renderEditor(makeClient())
 
-    expect(screen.getByLabelText("Name")).toHaveValue("V2 name")
+    // v2's model is Opus.
+    expect(screen.getByText("Claude Opus 4.8")).toBeInTheDocument()
 
     const dialog = await openHistory(user)
     await user.click(within(dialog).getByRole("button", { name: "Restore version 1" }))
@@ -208,8 +210,8 @@ describe("PersonaHistoryPanel", () => {
     await waitFor(() =>
       expect(restore).toHaveBeenCalledWith(WS, PERSONA, "acrev_1", { expectedUpdatedAt: "2026-07-11T02:00:00Z" })
     )
-    // Cache write → harness re-render → form reconciles to the restored patch.
-    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("V1 name"))
+    // Cache write → harness re-render → form reconciles to v1 (model back to default).
+    await waitFor(() => expect(screen.getByText("Claude Sonnet 4.6")).toBeInTheDocument())
   })
 
   it("surfaces a 409 conflict inline (INV-63) when a restore races another admin", async () => {
@@ -217,7 +219,7 @@ describe("PersonaHistoryPanel", () => {
     vi.spyOn(personasApi, "listRevisions").mockResolvedValue(revisions)
     vi.spyOn(personasApi, "restoreRevision").mockRejectedValue(
       new ApiError(409, "PERSONA_OVERRIDE_CONFLICT", "conflict", {
-        current: { patch: { name: "Theirs" }, updatedAt: "2026-07-11T05:00:00Z" },
+        current: { patch: { model: "openrouter:anthropic/claude-sonnet-4.6" }, updatedAt: "2026-07-11T05:00:00Z" },
       })
     )
     const user = userEvent.setup()
@@ -225,9 +227,7 @@ describe("PersonaHistoryPanel", () => {
 
     // Local edits present: a restore 409 keeps them and surfaces the banner,
     // exactly like Save's conflict path (a pristine form silently adopts).
-    const name = screen.getByLabelText("Name")
-    await user.clear(name)
-    await user.type(name, "Mine")
+    await user.click(screen.getByRole("checkbox", { name: "Web search" }))
 
     const dialog = await openHistory(user)
     await user.click(within(dialog).getByRole("button", { name: "Restore version 1" }))
@@ -235,7 +235,7 @@ describe("PersonaHistoryPanel", () => {
     await user.click(within(alert).getByRole("button", { name: "Restore" }))
 
     expect(await screen.findByText(/Someone else updated this persona/)).toBeInTheDocument()
-    expect(screen.getByLabelText("Name")).toHaveValue("Mine")
+    expect(screen.getByRole("checkbox", { name: "Web search" })).not.toBeChecked()
   })
 
   it("restore-to-default commits an empty patch and the form re-seeds to the built-in config", async () => {
@@ -247,7 +247,7 @@ describe("PersonaHistoryPanel", () => {
     const user = userEvent.setup()
     renderEditor(makeClient())
 
-    expect(screen.getByLabelText("Name")).toHaveValue("V2 name")
+    expect(screen.getByText("Claude Opus 4.8")).toBeInTheDocument()
 
     const dialog = await openHistory(user)
     await user.click(within(dialog).getByRole("button", { name: "Restore built-in defaults" }))
@@ -257,7 +257,7 @@ describe("PersonaHistoryPanel", () => {
     await waitFor(() =>
       expect(putOverride).toHaveBeenCalledWith(WS, PERSONA, { patch: {}, expectedUpdatedAt: "2026-07-11T02:00:00Z" })
     )
-    // Cache reconcile → the form re-seeds to the built-in default name.
-    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Ariadne"))
+    // Cache reconcile → the form re-seeds to the built-in default model.
+    await waitFor(() => expect(screen.getByText("Claude Sonnet 4.6")).toBeInTheDocument())
   })
 })

@@ -37,6 +37,7 @@ import type {
   DraftUpsertedPayload,
   DraftDeletedPayload,
   PersonaListItem,
+  Persona,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { conversationKeys } from "@/hooks/use-conversations"
@@ -1433,14 +1434,45 @@ export function registerWorkspaceSocketHandlers(
   const handleAgentConfigUpdated = (payload: { workspaceId: string; agentId: string; persona: PersonaListItem }) => {
     if (payload.workspaceId !== workspaceId) return
 
-    const { id, name, description, avatarEmoji, model } = payload.persona
-    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
-      ...old,
-      personas: (old.personas ?? []).map((persona) =>
-        persona.id === id ? { ...persona, name, description, avatarEmoji, model } : persona
-      ),
-    }))
-    db.personas.update(id, { name, description, avatarEmoji, model, _cachedAt: Date.now() })
+    const { id, slug, name, description, avatarEmoji, avatarUrl, model, kind } = payload.persona
+    const patch = { slug, name, description, avatarEmoji, avatarUrl, model }
+    // A fork broadcasts a NEW custom that no existing row covers — upsert it so the
+    // roster and actor rendering reflect it live (the list payload lacks the full
+    // row, so synthesize the non-display fields; a bootstrap resync fills them in).
+    const nowIso = new Date().toISOString()
+    const synthesized: Persona = {
+      id,
+      workspaceId: kind === "custom" ? workspaceId : null,
+      slug,
+      name,
+      description,
+      avatarEmoji,
+      avatarUrl,
+      systemPrompt: null,
+      model,
+      temperature: null,
+      maxTokens: null,
+      enabledTools: null,
+      managedBy: kind === "custom" ? "workspace" : "system",
+      status: "active",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    }
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
+      const personas = old.personas ?? []
+      if (personas.some((persona) => persona.id === id)) {
+        return { ...old, personas: personas.map((persona) => (persona.id === id ? { ...persona, ...patch } : persona)) }
+      }
+      return { ...old, personas: [...personas, synthesized] }
+    })
+    // Upsert into IDB: update the display fields if present, else insert the synthesized row.
+    void db.personas.get(id).then((existing) => {
+      if (existing) {
+        void db.personas.update(id, { ...patch, _cachedAt: Date.now() })
+        return
+      }
+      void db.personas.put({ ...synthesized, _cachedAt: Date.now() })
+    })
 
     queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, payload.agentId) })
     queryClient.invalidateQueries({ queryKey: personaKeys.list(workspaceId) })

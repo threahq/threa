@@ -245,6 +245,8 @@ export interface CachedPersona {
   name: string
   description: string | null
   avatarEmoji: string | null
+  /** Base path of an uploaded custom-persona avatar image, or null (built-ins never carry one). */
+  avatarUrl: string | null
   systemPrompt: string | null
   model: string
   temperature: number | null

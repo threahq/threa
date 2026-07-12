@@ -320,7 +320,7 @@ export { stripMarkdown, stripMarkdownToInline } from "./markdown-strip"
 export { matchesBoardLens } from "./board-lens"
 
 // Domain entities (wire format)
-export { getAvatarUrl, getBotAvatarUrl } from "./domain"
+export { getAvatarUrl, getBotAvatarUrl, getPersonaAvatarUrl } from "./domain"
 export type {
   Workspace,
   User,

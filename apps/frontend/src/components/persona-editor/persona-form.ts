@@ -1,10 +1,40 @@
-import type { AgentToolName, PersonaConfigPatch, PersonaResolvedConfig } from "@threa/types"
+import {
+  SYSTEM_PERSONA_EDITABLE_FIELDS,
+  type AgentToolName,
+  type BrevityPreset,
+  type PersonaConfigPatch,
+  type PersonaCustomConfig,
+  type PersonaModelOption,
+  type PersonaResolvedConfig,
+  type TonePreset,
+} from "@threa/types"
 
 /**
- * The full editable field set the editor holds. Mirrors {@link PersonaConfigPatch}'s
- * fields, but every field is concrete (the form always shows a resolved value):
- * the patch sent to the server is the SPARSE diff of these against the built-in
- * defaults (only diverging fields — additive override, per roadmap 7.1).
+ * The registry-derived assignable models with any off-allowlist ids (a current
+ * or default value) folded in so a legal-but-unlisted model still renders as an
+ * item instead of a blank Select trigger. Shared by both editors' model /
+ * escalation pickers. A folded-in id has no registry label, so it renders raw.
+ */
+export function buildModelOptions(
+  available: PersonaModelOption[],
+  extras: (string | null | undefined)[]
+): PersonaModelOption[] {
+  const options: PersonaModelOption[] = available.map((option) => ({ id: option.id, label: option.label }))
+  for (const id of extras) {
+    if (id && !options.some((option) => option.id === id)) options.unshift({ id, label: id })
+  }
+  return options
+}
+
+/**
+ * The full editable field set the editor holds. Mirrors {@link PersonaResolvedConfig}'s
+ * editable fields, but every field is concrete (the form always shows a resolved
+ * value). Two editors read from this one shape: the restricted BUILT-IN editor
+ * (only the `SYSTEM_PERSONA_EDITABLE_FIELDS` subset is writable — its save is the
+ * SPARSE diff against the built-in defaults) and the full CUSTOM editor (writes
+ * every custom field verbatim). Presets are built-in-only; the free-text slots
+ * (`tonePrompt`/`brevityPrompt`) are custom-only — a given form only ever edits
+ * one of the two style shapes, so the other stays at its baseline (null).
  */
 export interface PersonaFormValues {
   name: string
@@ -16,6 +46,10 @@ export interface PersonaFormValues {
   temperature: number | null
   maxTokens: number | null
   enabledTools: AgentToolName[]
+  tonePreset: TonePreset | null
+  brevityPreset: BrevityPreset | null
+  tonePrompt: string | null
+  brevityPrompt: string | null
 }
 
 export type PersonaFormField = keyof PersonaFormValues
@@ -35,11 +69,70 @@ export const PERSONA_FORM_FIELDS = [
   "temperature",
   "maxTokens",
   "enabledTools",
+  "tonePreset",
+  "brevityPreset",
+  "tonePrompt",
+  "brevityPrompt",
 ] as const satisfies readonly PersonaFormField[]
 
 // Compile error if PersonaFormValues gains a field the list above lacks.
 const _exhaustive: PersonaFormField extends (typeof PERSONA_FORM_FIELDS)[number] ? true : never = true
 void _exhaustive
+
+/**
+ * The fields a BUILT-IN persona's editor may write — the only keys allowed into
+ * its sparse override patch (the backend 400s `PERSONA_FIELD_LOCKED` on any
+ * other). Same source of truth as the backend restriction ({@link SYSTEM_PERSONA_EDITABLE_FIELDS}).
+ */
+export const BUILTIN_EDITABLE_FIELDS = SYSTEM_PERSONA_EDITABLE_FIELDS as readonly PersonaFormField[]
+
+/**
+ * The fields a CUSTOM persona's editor writes — every key of {@link PersonaCustomConfig}
+ * (the full-field PUT body and the draft sparse-diff domain). Presets are absent
+ * (a custom uses free-text slots); `slug` is not editable.
+ */
+export const CUSTOM_EDITABLE_FIELDS = [
+  "name",
+  "description",
+  "avatarEmoji",
+  "systemPrompt",
+  "model",
+  "escalationModel",
+  "temperature",
+  "maxTokens",
+  "enabledTools",
+  "tonePrompt",
+  "brevityPrompt",
+] as const satisfies readonly PersonaFormField[]
+
+/** Project the form values onto a custom persona's full PUT config (INV-31 field set). */
+export function toCustomConfig(values: PersonaFormValues): PersonaCustomConfig {
+  return {
+    name: values.name,
+    description: values.description,
+    avatarEmoji: values.avatarEmoji,
+    systemPrompt: values.systemPrompt,
+    model: values.model,
+    escalationModel: values.escalationModel,
+    temperature: values.temperature,
+    maxTokens: values.maxTokens,
+    enabledTools: values.enabledTools,
+    tonePrompt: values.tonePrompt,
+    brevityPrompt: values.brevityPrompt,
+  }
+}
+
+/** Whether two form value sets agree on every field in `fields` (order-insensitive tools). */
+export function valuesEqual(a: PersonaFormValues, b: PersonaFormValues, fields: readonly PersonaFormField[]): boolean {
+  for (const field of fields) {
+    if (field === "enabledTools") {
+      if (!toolsEqual(a.enabledTools, b.enabledTools)) return false
+      continue
+    }
+    if (!Object.is(a[field], b[field])) return false
+  }
+  return true
+}
 
 /**
  * Draft-sync lifecycle shared by the editor form (which owns the debounce and
@@ -101,13 +194,20 @@ export function isFieldOverridden(
 }
 
 /**
- * The sparse override/draft patch: only the fields that diverge from the
- * built-in defaults. An empty object means "identical to defaults" (no override).
+ * The sparse override/draft patch: only the fields (of `fields`) that diverge
+ * from the baseline. An empty object means "identical to baseline" (no override).
+ * `fields` restricts which keys may enter the patch — a built-in editor passes
+ * {@link BUILTIN_EDITABLE_FIELDS} so a locked field can never leak in (the
+ * backend 400s on any non-editable key); it defaults to the full field set.
  */
-export function computeSparsePatch(values: PersonaFormValues, defaults: PersonaResolvedConfig): PersonaConfigPatch {
+export function computeSparsePatch(
+  values: PersonaFormValues,
+  baseline: PersonaResolvedConfig,
+  fields: readonly PersonaFormField[] = PERSONA_FORM_FIELDS
+): PersonaConfigPatch {
   const patch = {} as Record<PersonaFormField, unknown>
-  for (const field of PERSONA_FORM_FIELDS) {
-    if (isFieldOverridden(values, defaults, field)) patch[field] = cloneField(values[field])
+  for (const field of fields) {
+    if (isFieldOverridden(values, baseline, field)) patch[field] = cloneField(values[field])
   }
   return patch as PersonaConfigPatch
 }
@@ -124,6 +224,10 @@ export const PERSONA_FIELD_LABELS: Record<PersonaFormField, string> = {
   temperature: "temperature",
   maxTokens: "max tokens",
   enabledTools: "tools",
+  tonePreset: "tone",
+  brevityPreset: "brevity",
+  tonePrompt: "tone",
+  brevityPrompt: "brevity",
 }
 
 /**

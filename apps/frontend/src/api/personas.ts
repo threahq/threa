@@ -1,10 +1,12 @@
-import { api } from "./client"
+import { api, postAvatarUpload } from "./client"
 import type {
   PersonaConfigPatch,
   PersonaConfigResponse,
   PersonaConfigRevision,
+  PersonaCustomConfig,
   PersonaDraftState,
   PersonaListItem,
+  PersonaResolvedConfig,
 } from "@threa/types"
 
 /**
@@ -16,6 +18,17 @@ import type {
  */
 export interface PersonaOverrideConflict {
   patch: PersonaConfigPatch
+  updatedAt: string
+}
+
+/**
+ * A CUSTOM persona's `PERSONA_OVERRIDE_CONFLICT` (409) `details.current`: the
+ * full row config another admin just committed and the row `updatedAt` to
+ * re-assert against. Unlike a built-in conflict (a sparse patch), a custom carries
+ * its whole resolved config — the editor adopts it as the new saved baseline.
+ */
+export interface PersonaCustomConflict {
+  config: PersonaResolvedConfig
   updatedAt: string
 }
 
@@ -34,6 +47,61 @@ export const personasApi = {
 
   getConfig(workspaceId: string, personaId: string): Promise<PersonaConfigResponse> {
     return api.get<PersonaConfigResponse>(`/api/workspaces/${workspaceId}/personas/${personaId}/config`)
+  },
+
+  /** Fork a source persona (built-in or custom) into a new workspace custom (admin). Returns the new list item. */
+  async fork(workspaceId: string, input: { sourcePersonaId: string; name: string }): Promise<PersonaListItem> {
+    const { persona } = await api.post<{ persona: PersonaListItem }>(`/api/workspaces/${workspaceId}/personas`, input)
+    return persona
+  },
+
+  /**
+   * Full-field write of a CUSTOM persona (admin). `expectedUpdatedAt` is the
+   * row's `updatedAt` the caller last read; a mismatch throws an `ApiError`
+   * (`PERSONA_OVERRIDE_CONFLICT`) whose `details.current` is a {@link PersonaCustomConflict}.
+   */
+  updateCustom(
+    workspaceId: string,
+    personaId: string,
+    input: { config: PersonaCustomConfig; expectedUpdatedAt: string | null }
+  ): Promise<{ persona: PersonaListItem; updatedAt: string | null }> {
+    return api.put<{ persona: PersonaListItem; updatedAt: string | null }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}`,
+      input
+    )
+  },
+
+  /** Archive a custom persona (admin) — drops it from the roster/picker, keeps it resolvable for history. */
+  async archive(workspaceId: string, personaId: string): Promise<PersonaListItem> {
+    const { persona } = await api.post<{ persona: PersonaListItem }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}/archive`
+    )
+    return persona
+  },
+
+  /** Restore an archived custom persona to active (admin). */
+  async unarchive(workspaceId: string, personaId: string): Promise<PersonaListItem> {
+    const { persona } = await api.post<{ persona: PersonaListItem }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}/unarchive`
+    )
+    return persona
+  },
+
+  /** Upload a custom persona's avatar image (multipart, mirrors the bot avatar upload). */
+  async uploadAvatar(workspaceId: string, personaId: string, file: File): Promise<PersonaListItem> {
+    const { persona } = await postAvatarUpload<{ persona: PersonaListItem }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}/avatar`,
+      file
+    )
+    return persona
+  },
+
+  /** Remove a custom persona's avatar image (falls back to emoji/initials). */
+  async removeAvatar(workspaceId: string, personaId: string): Promise<PersonaListItem> {
+    const { persona } = await api.delete<{ persona: PersonaListItem }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}/avatar`
+    )
+    return persona
   },
 
   /**
