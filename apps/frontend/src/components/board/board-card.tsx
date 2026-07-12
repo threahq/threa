@@ -485,7 +485,13 @@ export function BoardCard({
           continuation={continuation}
           conversationId={branch.conversationId}
           conversationRootStreamId={branch.threadStreamId}
-          surfaceClassName="bg-card"
+          // Same actor-accent treatment as a top-level row, scaled to the branch
+          // rail's `pl-2 sm:pl-3` indent: the row breaks out to the rail border and
+          // pads the content back (net-zero, so avatars stay aligned with the branch
+          // header). Without the `px-*`, a colored row's inset accent rail sat flush
+          // against the text.
+          surfaceClassName="bg-card px-2 sm:px-3"
+          rowInsetClassName="-mx-2 sm:-mx-3"
           onNewSubtopic={
             canBranch
               ? () => inlineComposer.openNewSubtopic(message.streamId ?? branch.threadStreamId, message.id)
