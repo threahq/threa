@@ -36,6 +36,7 @@ describe("personaResolvedConfigSchema style slots", () => {
     name: "Ariadne",
     description: null,
     avatarEmoji: null,
+    avatarUrl: null,
     systemPrompt: "You are Ariadne.",
     model: "openrouter:anthropic/claude-sonnet-5",
     escalationModel: null,

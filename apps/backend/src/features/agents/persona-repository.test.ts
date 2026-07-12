@@ -295,4 +295,27 @@ describe("PersonaRepository custom write layer", () => {
       await PersonaRepository.setStatus(db, { workspaceId: "workspace_1", personaId: "x", status: "active" })
     ).toBeNull()
   })
+
+  test("updateAvatarUrl hard-scopes to managed_by=workspace AND the workspace and maps avatar_url", async () => {
+    const db = createDb([
+      [{ ...workspacePersonaRow, avatar_url: "avatars/workspace_1/personas/persona_workspace_helper/222" }],
+    ])
+    const row = await PersonaRepository.updateAvatarUrl(db, {
+      workspaceId: "workspace_1",
+      personaId: "persona_workspace_helper",
+      avatarUrl: "avatars/workspace_1/personas/persona_workspace_helper/222",
+    })
+    const query = db.queries[0] as { text: string }
+    expect(query.text).toContain("UPDATE personas SET avatar_url")
+    expect(query.text).toContain("managed_by = 'workspace'")
+    expect(query.text).toContain("workspace_id =")
+    expect(row).toMatchObject({ avatarUrl: "avatars/workspace_1/personas/persona_workspace_helper/222" })
+  })
+
+  test("updateAvatarUrl returns null when no custom row matches (a 404)", async () => {
+    const db = createDb([[]])
+    expect(
+      await PersonaRepository.updateAvatarUrl(db, { workspaceId: "workspace_1", personaId: "x", avatarUrl: null })
+    ).toBeNull()
+  })
 })

@@ -37,6 +37,7 @@ function resolved(): PersonaResolvedConfig {
     name: "Ariadne",
     description: null,
     avatarEmoji: ":thread:",
+    avatarUrl: null,
     systemPrompt: "You are Ariadne.",
     model: "openrouter:anthropic/claude-sonnet-4.6",
     escalationModel: null,

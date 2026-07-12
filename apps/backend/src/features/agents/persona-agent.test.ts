@@ -27,6 +27,7 @@ const persona: Persona = {
   name: "Ariadne",
   description: null,
   avatarEmoji: null,
+  avatarUrl: null,
   systemPrompt: "You are a test persona.",
   model: SONNET,
   escalationModel: OPUS,

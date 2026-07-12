@@ -11,6 +11,7 @@ const persona: Persona = {
   name: "Ariadne",
   description: null,
   avatarEmoji: null,
+  avatarUrl: null,
   systemPrompt: "Base system prompt",
   model: "openrouter:anthropic/claude-sonnet-4.6",
   escalationModel: null,

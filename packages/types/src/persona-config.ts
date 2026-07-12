@@ -154,6 +154,11 @@ export const personaResolvedConfigSchema = z.object({
   name: z.string(),
   description: z.string().nullable(),
   avatarEmoji: z.string().nullable(),
+  // Base path of an uploaded avatar image, or null. Only a custom persona can
+  // carry one (set via the dedicated avatar endpoint, never the config PUT); a
+  // built-in resolves this to null. Resolve to a served URL with
+  // `getPersonaAvatarUrl`.
+  avatarUrl: z.string().nullable(),
   systemPrompt: z.string().min(1),
   model: z.string().min(1),
   escalationModel: z.string().min(1).nullable(),

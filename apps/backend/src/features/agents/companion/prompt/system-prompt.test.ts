@@ -13,6 +13,7 @@ const persona: Persona = {
   name: "Ariadne",
   description: null,
   avatarEmoji: null,
+  avatarUrl: null,
   systemPrompt: "Base system prompt",
   model: "openai/gpt-5.4",
   escalationModel: null,

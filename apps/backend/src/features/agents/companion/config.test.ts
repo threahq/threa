@@ -11,6 +11,7 @@ function persona(overrides: Partial<Persona> = {}): Persona {
     name: "X",
     description: null,
     avatarEmoji: null,
+    avatarUrl: null,
     systemPrompt: "base",
     model: "m",
     escalationModel: null,

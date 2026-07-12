@@ -215,6 +215,7 @@ describe("ActivityService author name resolution", () => {
       name: "Ada",
       description: null,
       avatarEmoji: null,
+      avatarUrl: null,
       systemPrompt: null,
       model: "claude-sonnet-4-5-20250514",
       escalationModel: null,

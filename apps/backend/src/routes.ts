@@ -314,7 +314,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
   const drafts = createDraftsHandlers({ draftsService })
   const label = createLabelHandlers({ labelService, labelAssignmentService, labelMessageService })
-  const persona = createPersonaConfigHandlers({ personaConfigService })
+  const persona = createPersonaConfigHandlers({ personaConfigService, avatarService })
   const agentSession = createAgentSessionHandlers({ pool })
   const agentFollowUps = createAgentFollowUpHandlers({ pool, agentFollowUpService })
   const delegations = createDelegationHandlers({ pool, delegationService })
@@ -513,6 +513,23 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
     persona.createTestStream
   )
+  // Custom persona avatar image (admin, customs only — a built-in id 400s in the
+  // service). Upload/remove mirror the bot avatar flow; serving is unauthenticated
+  // by path (S3 keys carry unguessable ULIDs).
+  app.post(
+    "/api/workspaces/:workspaceId/personas/:personaId/avatar",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    avatarUpload,
+    persona.uploadAvatar
+  )
+  app.delete(
+    "/api/workspaces/:workspaceId/personas/:personaId/avatar",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.removeAvatar
+  )
+  app.get("/api/workspaces/:workspaceId/personas/:personaId/avatar/:file", persona.serveAvatarFile)
 
   // Sidebar config (per-user, per-workspace layout)
   app.get("/api/workspaces/:workspaceId/sidebar-config", ...authed, sidebarConfig.get)

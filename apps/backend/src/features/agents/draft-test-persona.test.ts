@@ -12,6 +12,7 @@ const customRow: Persona = {
   name: "Helper",
   description: null,
   avatarEmoji: null,
+  avatarUrl: null,
   systemPrompt: "Help.",
   model: "openrouter:anthropic/claude-haiku-4.5",
   escalationModel: null,

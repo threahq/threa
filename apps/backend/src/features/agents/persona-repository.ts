@@ -50,6 +50,13 @@ export interface Persona {
   name: string
   description: string | null
   avatarEmoji: string | null
+  /**
+   * Base path of an uploaded avatar image (`avatars/{ws}/personas/{id}/{ts}`), or
+   * null. Only a workspace custom can carry one (per-persona upload, roadmap 7.1
+   * step 3); built-ins are always null. Resolved to a served URL by
+   * `getPersonaAvatarUrl`.
+   */
+  avatarUrl: string | null
   systemPrompt: string | null
   model: string
   /**
@@ -87,6 +94,7 @@ function mapRowToPersona(row: PersonaRow): Persona {
     name: row.name,
     description: row.description,
     avatarEmoji: row.avatar_emoji,
+    avatarUrl: row.avatar_url,
     systemPrompt: row.system_prompt,
     model: row.model,
     escalationModel: row.escalation_model,
@@ -121,6 +129,7 @@ function mapBuiltInToPersona(agent: BuiltInAgentConfig): Persona {
     name: agent.name,
     description: agent.description,
     avatarEmoji: agent.avatarEmoji,
+    avatarUrl: agent.avatarUrl,
     systemPrompt: agent.systemPrompt,
     model: agent.model,
     escalationModel: agent.escalationModel,
@@ -552,6 +561,28 @@ export const PersonaRepository = {
     const { workspaceId, personaId, status } = params
     const result = await db.query<PersonaRow>(sql`
       UPDATE personas SET status = ${status}
+      WHERE id = ${personaId}
+        AND workspace_id = ${workspaceId}
+        AND managed_by = 'workspace'
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return result.rows[0] ? mapRowToPersona(result.rows[0]) : null
+  },
+
+  /**
+   * Set (or clear, with `null`) a custom persona's avatar base path. Hard-scoped
+   * to `managed_by = 'workspace'` AND the caller workspace (INV-8) so the avatar
+   * write path can never touch a system row. Returns the updated row, or null
+   * when no such custom exists (a 404). `updated_at` is bumped by the table
+   * trigger.
+   */
+  async updateAvatarUrl(
+    db: Querier,
+    params: { workspaceId: string; personaId: string; avatarUrl: string | null }
+  ): Promise<Persona | null> {
+    const { workspaceId, personaId, avatarUrl } = params
+    const result = await db.query<PersonaRow>(sql`
+      UPDATE personas SET avatar_url = ${avatarUrl}
       WHERE id = ${personaId}
         AND workspace_id = ${workspaceId}
         AND managed_by = 'workspace'

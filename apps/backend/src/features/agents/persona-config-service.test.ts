@@ -116,6 +116,7 @@ describe("PersonaConfigService.listVisible", () => {
         name: "Helper",
         description: "A helper",
         avatarEmoji: ":sparkles:",
+        avatarUrl: null,
         systemPrompt: "Help.",
         model: "openrouter:anthropic/claude-haiku-4.5",
         escalationModel: null,
@@ -885,6 +886,7 @@ function customPersona(overrides: Partial<Persona> = {}): Persona {
     name: "Helper",
     description: "A helper",
     avatarEmoji: ":sparkles:",
+    avatarUrl: null,
     systemPrompt: "Help.",
     model: "openrouter:anthropic/claude-sonnet-5",
     escalationModel: null,
@@ -1123,5 +1125,58 @@ describe("PersonaConfigService custom getConfig + status", () => {
     await expect(
       makeService().setCustomStatus(WORKSPACE_ID, ARIADNE_AGENT_ID, "archived", CALLER_ID)
     ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
+  })
+
+  it("setCustomAvatar writes the pointer, broadcasts, and returns the prior avatar for cleanup", async () => {
+    setupTransaction()
+    const previous = "avatars/workspace_1/personas/persona_custom_1/111"
+    const next = "avatars/workspace_1/personas/persona_custom_1/222"
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "custom",
+      row: customPersona({ avatarUrl: previous }),
+    })
+    const update = spyOn(PersonaRepository, "updateAvatarUrl").mockResolvedValue(customPersona({ avatarUrl: next }))
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await makeService().setCustomAvatar(WORKSPACE_ID, "persona_custom_1", next, CALLER_ID)
+
+    expect(result).toEqual({
+      persona: expect.objectContaining({ id: "persona_custom_1", kind: "custom", avatarUrl: next }),
+      previousAvatarUrl: previous,
+    })
+    expect(update).toHaveBeenCalledWith(
+      {},
+      { workspaceId: WORKSPACE_ID, personaId: "persona_custom_1", avatarUrl: next }
+    )
+    expect(outbox).toHaveBeenCalledWith(
+      {},
+      "agent_config:updated",
+      expect.objectContaining({ agentId: "persona_custom_1" })
+    )
+  })
+
+  it("setCustomAvatar 400s (PERSONA_NOT_CUSTOM) for a built-in", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "builtin",
+      base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
+    })
+    await expect(
+      makeService().setCustomAvatar(WORKSPACE_ID, ARIADNE_AGENT_ID, "avatars/x", CALLER_ID)
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
+  })
+
+  it("setCustomAvatar short-circuits a clear when the persona has no avatar (no write/broadcast)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "custom",
+      row: customPersona({ avatarUrl: null }),
+    })
+    const update = spyOn(PersonaRepository, "updateAvatarUrl").mockResolvedValue(customPersona())
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await makeService().setCustomAvatar(WORKSPACE_ID, "persona_custom_1", null, CALLER_ID)
+
+    expect(result.previousAvatarUrl).toBeNull()
+    expect(update).not.toHaveBeenCalled()
+    expect(outbox).not.toHaveBeenCalled()
   })
 })

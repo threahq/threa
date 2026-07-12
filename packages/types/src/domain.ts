@@ -133,6 +133,45 @@ export function getAvatarUrl(
 }
 
 /**
+ * Shared parse for a prefixed (bot/persona) avatar base path. The key format is
+ * `avatars/{workspaceId}/{kind}/{subjectId}/{timestamp}` and the served URL is
+ * `/api/workspaces/{workspaceId}/{kind}/{subjectId}/avatar/{timestamp}.{size}.webp`
+ * — identical for bots and personas but for the `kind` segment, so both callers
+ * route through here rather than duplicating the parse.
+ */
+const AVATAR_BASE_PATH_PATTERNS = {
+  bots: /^avatars\/([^/]+)\/bots\/([^/]+)\/([^/]+)$/,
+  personas: /^avatars\/([^/]+)\/personas\/([^/]+)\/([^/]+)$/,
+} as const
+
+function getPrefixedAvatarUrl(
+  kind: "bots" | "personas",
+  workspaceId: string,
+  avatarUrl: string | null | undefined,
+  size: 256 | 64
+): string | undefined {
+  if (!avatarUrl) return undefined
+
+  const match = avatarUrl.match(AVATAR_BASE_PATH_PATTERNS[kind])
+  if (!match) {
+    console.error(
+      `Malformed ${kind} avatarUrl: "${avatarUrl}" (expected avatars/{workspaceId}/${kind}/{id}/{timestamp})`
+    )
+    return undefined
+  }
+
+  const [, embeddedWorkspaceId, subjectId, timestamp] = match
+  if (embeddedWorkspaceId !== workspaceId) {
+    console.error(
+      `${kind} avatarUrl workspaceId mismatch: key has "${embeddedWorkspaceId}" but received "${workspaceId}"`
+    )
+    return undefined
+  }
+
+  return `/api/workspaces/${workspaceId}/${kind}/${subjectId}/avatar/${timestamp}.${size}.webp`
+}
+
+/**
  * Get the display URL for a bot avatar image.
  * avatarUrl stores the S3 key base path (avatars/{workspaceId}/bots/{botId}/{timestamp}).
  */
@@ -141,21 +180,19 @@ export function getBotAvatarUrl(
   avatarUrl: string | null | undefined,
   size: 256 | 64
 ): string | undefined {
-  if (!avatarUrl) return undefined
+  return getPrefixedAvatarUrl("bots", workspaceId, avatarUrl, size)
+}
 
-  const match = avatarUrl.match(/^avatars\/([^/]+)\/bots\/([^/]+)\/([^/]+)$/)
-  if (!match) {
-    console.error(`Malformed bot avatarUrl: "${avatarUrl}" (expected avatars/{workspaceId}/bots/{botId}/{timestamp})`)
-    return undefined
-  }
-
-  const [, embeddedWorkspaceId, botId, timestamp] = match
-  if (embeddedWorkspaceId !== workspaceId) {
-    console.error(`Bot avatarUrl workspaceId mismatch: key has "${embeddedWorkspaceId}" but received "${workspaceId}"`)
-    return undefined
-  }
-
-  return `/api/workspaces/${workspaceId}/bots/${botId}/avatar/${timestamp}.${size}.webp`
+/**
+ * Get the display URL for a custom persona avatar image.
+ * avatarUrl stores the S3 key base path (avatars/{workspaceId}/personas/{personaId}/{timestamp}).
+ */
+export function getPersonaAvatarUrl(
+  workspaceId: string,
+  avatarUrl: string | null | undefined,
+  size: 256 | 64
+): string | undefined {
+  return getPrefixedAvatarUrl("personas", workspaceId, avatarUrl, size)
 }
 
 export type WorkspaceInvitationKind = "email" | "link"
@@ -545,6 +582,12 @@ export interface Persona {
   name: string
   description: string | null
   avatarEmoji: string | null
+  /**
+   * Base path of an uploaded custom-persona avatar image, or null (emoji/initials
+   * fallback). Resolve to a served URL with {@link getPersonaAvatarUrl}. Built-in
+   * personas never carry one.
+   */
+  avatarUrl: string | null
   systemPrompt: string | null
   model: string
   temperature: number | null

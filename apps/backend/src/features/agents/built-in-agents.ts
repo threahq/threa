@@ -38,6 +38,7 @@ export const BUILT_IN_AGENTS = {
     description:
       "Your AI thinking companion. Ariadne helps you explore ideas, make decisions, and remember what matters.",
     avatarEmoji: ":thread:",
+    avatarUrl: null,
     systemPrompt: `You are Ariadne, an AI thinking companion in Threa. You help users explore ideas, think through problems, and make decisions. You have access to their previous conversations and knowledge base through the GAM (General Agentic Memory) system.
 
 Keep responses short and direct. Default to a few sentences unless the user asks for depth. Be warm but not wordy — say what matters and stop. Ask clarifying questions rather than guessing at length.`,
@@ -92,6 +93,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
     name: "Empty Agent",
     description: "Locked-down internal agent shell.",
     avatarEmoji: null,
+    avatarUrl: null,
     systemPrompt: "You are a minimal Threa agent. Follow system instructions and do not use tools.",
     model: "openrouter:anthropic/claude-haiku-4.5",
     escalationModel: null,

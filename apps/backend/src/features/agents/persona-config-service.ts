@@ -85,6 +85,7 @@ function customRowToResolvedConfig(row: Persona): PersonaResolvedConfig {
     name: row.name,
     description: row.description,
     avatarEmoji: row.avatarEmoji,
+    avatarUrl: row.avatarUrl,
     systemPrompt: row.systemPrompt ?? "",
     model: row.model,
     escalationModel: row.escalationModel,
@@ -130,8 +131,7 @@ function customRowToListItem(row: Persona): PersonaListItem {
     avatarEmoji: row.avatarEmoji,
     model: row.model,
     kind: "custom",
-    // Avatar image uploads land in step 3; null until then.
-    avatarUrl: null,
+    avatarUrl: row.avatarUrl,
     isCustomized: false,
   }
 }
@@ -835,5 +835,42 @@ export class PersonaConfigService {
       await OutboxRepository.insert(client, "agent_config:updated", { workspaceId, agentId: personaId, persona })
       return persona
     })
+  }
+
+  /**
+   * Set (`avatarBasePath` non-null) or clear (`null`) a custom persona's avatar
+   * image pointer (customs only — built-ins have no image avatar → 400). Writes
+   * the row and broadcasts `agent_config:updated` in one transaction (INV-7). The
+   * caller (handler) owns the S3 processing outside this txn (INV-41) and the
+   * post-commit deletion of the returned `previousAvatarUrl`'s files. Clearing an
+   * already-empty avatar short-circuits without a write (no spurious broadcast),
+   * mirroring the bot remove-avatar no-op.
+   */
+  async setCustomAvatar(
+    workspaceId: string,
+    personaId: string,
+    avatarBasePath: string | null,
+    _callerId: string
+  ): Promise<{ persona: PersonaListItem; previousAvatarUrl: string | null }> {
+    const editable = await this.resolveEditableOr404(workspaceId, personaId)
+    if (editable.kind !== "custom") throw customsOnly()
+
+    const previousAvatarUrl = editable.row.avatarUrl
+    if (avatarBasePath === null && previousAvatarUrl === null) {
+      return { persona: customRowToListItem(editable.row), previousAvatarUrl: null }
+    }
+
+    const persona = await withTransaction(this.pool, async (client) => {
+      const row = await PersonaRepository.updateAvatarUrl(client, {
+        workspaceId,
+        personaId,
+        avatarUrl: avatarBasePath,
+      })
+      if (!row) throw personaNotFound()
+      const item = customRowToListItem(row)
+      await OutboxRepository.insert(client, "agent_config:updated", { workspaceId, agentId: personaId, persona: item })
+      return item
+    })
+    return { persona, previousAvatarUrl }
   }
 }

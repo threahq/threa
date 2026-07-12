@@ -10,6 +10,7 @@ function defaults(overrides: Partial<PersonaResolvedConfig> = {}): PersonaResolv
     name: "Ariadne",
     description: "Your AI thinking companion.",
     avatarEmoji: ":thread:",
+    avatarUrl: null,
     systemPrompt: "You are Ariadne.",
     model: "openrouter:anthropic/claude-sonnet-4.6",
     escalationModel: "openrouter:anthropic/claude-opus-4.8",
