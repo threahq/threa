@@ -52,7 +52,15 @@ import {
 import { createLinkPreviewHandlers } from "./features/link-previews"
 import { createGiphyHandlers } from "./features/giphy"
 import { createWorkspaceIntegrationHandlers } from "./features/workspace-integrations"
-import { createPublicApiHandlers, createBotHandlers, createDelegationPublicApiHandlers } from "./features/public-api"
+import {
+  createPublicApiHandlers,
+  createBotHandlers,
+  createDelegationPublicApiHandlers,
+  PUBLIC_API_ROUTES,
+  type OperationId,
+  toExpressPath,
+  assertHandlerParity,
+} from "./features/public-api"
 import { BotRuntimeService, type BotRuntimeWriteOps } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
 import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from "./features/voice-transcription"
@@ -932,289 +940,67 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   })
   const publicMiddleware = [rateLimits.publicApiWorkspace, rateLimits.publicApiKey, publicAuth] as const
 
-  app.post(
-    "/api/v1/workspaces/:workspaceId/messages/search",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MESSAGES_SEARCH),
-    publicApi.searchMessages
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/memos/search",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MEMOS_READ),
-    publicApi.searchMemos
-  )
-  app.get(
-    "/api/v1/workspaces/:workspaceId/memos/:memoId",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MEMOS_READ),
-    publicApi.getMemo
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/attachments",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_WRITE),
-    rateLimits.upload,
-    upload,
-    publicApi.uploadAttachment
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/attachments/search",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ),
-    publicApi.searchAttachments
-  )
-  app.get(
-    "/api/v1/workspaces/:workspaceId/attachments/:attachmentId",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ),
-    publicApi.getAttachment
-  )
-  app.get(
-    "/api/v1/workspaces/:workspaceId/attachments/:attachmentId/url",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ),
-    publicApi.getAttachmentDownloadUrl
-  )
+  const publicHandlers: Record<OperationId, RequestHandler | RequestHandler[]> = {
+    searchMessages: publicApi.searchMessages,
+    searchMemos: publicApi.searchMemos,
+    getMemo: publicApi.getMemo,
+    uploadAttachment: [rateLimits.upload, upload, publicApi.uploadAttachment],
+    searchAttachments: publicApi.searchAttachments,
+    getAttachment: publicApi.getAttachment,
+    getAttachmentDownloadUrl: publicApi.getAttachmentDownloadUrl,
+    upsertBotRuntimePresence: publicApi.upsertBotRuntimePresence,
+    createBotRuntimeSession: publicApi.createBotRuntimeSession,
+    getBotOwnerE2eKey: publicApi.getBotOwnerE2eKey,
+    provisionStreamE2eKeyWraps: publicApi.provisionStreamE2eKeyWraps,
+    renameBotRuntimeSession: publicApi.renameBotRuntimeSession,
+    rebindBotRuntimeSession: publicApi.rebindBotRuntimeSession,
+    claimBotInvocation: publicApi.claimBotInvocation,
+    renewBotInvocationClaim: publicApi.renewBotInvocationClaim,
+    recordBotInvocationStep: publicApi.recordBotInvocationStep,
+    startBotInvocationSealedStep: publicApi.startBotInvocationSealedStep,
+    recordBotInvocationSealedStep: publicApi.recordBotInvocationSealedStep,
+    sendBotInvocationSealedMessage: publicApi.sendBotInvocationSealedMessage,
+    completeBotInvocationSealed: publicApi.completeBotInvocationSealed,
+    completeBotInvocation: publicApi.completeBotInvocation,
+    failBotInvocation: publicApi.failBotInvocation,
+    listDelegations: delegationPublicApi.listDelegations,
+    claimDelegation: delegationPublicApi.claimDelegation,
+    heartbeatDelegation: delegationPublicApi.heartbeatDelegation,
+    reportDelegationStatus: delegationPublicApi.reportDelegationStatus,
+    completeDelegation: delegationPublicApi.completeDelegation,
+    failDelegation: delegationPublicApi.failDelegation,
+    listStreams: publicApi.listStreams,
+    getStream: publicApi.getStream,
+    updateStream: publicApi.updateStream,
+    listMembers: publicApi.listMembers,
+    listMessages: publicApi.listMessages,
+    sendMessage: publicApi.sendMessage,
+    findMessagesByMetadata: publicApi.findMessagesByMetadata,
+    updateMessage: publicApi.updateMessage,
+    deleteMessage: publicApi.deleteMessage,
+    listUsers: publicApi.listUsers,
+    listLabels: publicApi.listLabels,
+    createLabel: publicApi.createLabel,
+    assignLabel: publicApi.assignLabel,
+    unassignLabel: publicApi.unassignLabel,
+    updateLabel: publicApi.updateLabel,
+    deleteLabel: publicApi.deleteLabel,
+    getMe: publicApi.getMe,
+    listMyBots: publicApi.listMyBots,
+  }
 
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-runtime/presence",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
-    publicApi.upsertBotRuntimePresence
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-runtime/sessions",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
-    publicApi.createBotRuntimeSession
-  )
-  app.get(
-    "/api/v1/workspaces/:workspaceId/bot-runtime/owner-e2e-key",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
-    publicApi.getBotOwnerE2eKey
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/streams/:streamId/e2e/key-wraps",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
-    publicApi.provisionStreamE2eKeyWraps
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-runtime/sessions/rename",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
-    publicApi.renameBotRuntimeSession
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-runtime/sessions/rebind",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
-    publicApi.rebindBotRuntimeSession
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-invocations/claim",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
-    publicApi.claimBotInvocation
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/renew",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
-    publicApi.renewBotInvocationClaim
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/steps",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
-    publicApi.recordBotInvocationStep
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/sealed-steps/started",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
-    publicApi.startBotInvocationSealedStep
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/sealed-steps",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
-    publicApi.recordBotInvocationSealedStep
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/sealed-messages",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
-    publicApi.sendBotInvocationSealedMessage
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/sealed-complete",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
-    publicApi.completeBotInvocationSealed
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/complete",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
-    publicApi.completeBotInvocation
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/fail",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
-    publicApi.failBotInvocation
-  )
+  assertHandlerParity(Object.keys(publicHandlers))
 
-  // Delegations (roadmap 5.3) — the agent lifecycle over delegated tasks.
-  // Both key kinds (identity resolved in the handlers: user key posts results
-  // as the user, workspace key as the bot); claim mints the token, later
-  // transitions authenticate via X-Threa-Callback-Token.
-  app.get(
-    "/api/v1/workspaces/:workspaceId/delegations",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ),
-    delegationPublicApi.listDelegations
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/claim",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
-    delegationPublicApi.claimDelegation
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/heartbeat",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
-    delegationPublicApi.heartbeatDelegation
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/status",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
-    delegationPublicApi.reportDelegationStatus
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/complete",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
-    delegationPublicApi.completeDelegation
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/fail",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
-    delegationPublicApi.failDelegation
-  )
-
-  app.get(
-    "/api/v1/workspaces/:workspaceId/streams",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.STREAMS_READ),
-    publicApi.listStreams
-  )
-  app.get(
-    "/api/v1/workspaces/:workspaceId/streams/:streamId",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.STREAMS_READ),
-    publicApi.getStream
-  )
-  app.patch(
-    "/api/v1/workspaces/:workspaceId/streams/:streamId",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.STREAMS_WRITE),
-    publicApi.updateStream
-  )
-  app.get(
-    "/api/v1/workspaces/:workspaceId/streams/:streamId/members",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.STREAMS_READ),
-    publicApi.listMembers
-  )
-
-  app.get(
-    "/api/v1/workspaces/:workspaceId/streams/:streamId/messages",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ),
-    publicApi.listMessages
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/streams/:streamId/messages",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE),
-    publicApi.sendMessage
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/messages/find-by-metadata",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ),
-    publicApi.findMessagesByMetadata
-  )
-  app.patch(
-    "/api/v1/workspaces/:workspaceId/messages/:messageId",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE),
-    publicApi.updateMessage
-  )
-  app.delete(
-    "/api/v1/workspaces/:workspaceId/messages/:messageId",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE),
-    publicApi.deleteMessage
-  )
-
-  app.get(
-    "/api/v1/workspaces/:workspaceId/users",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.USERS_READ),
-    publicApi.listUsers
-  )
-
-  app.get(
-    "/api/v1/workspaces/:workspaceId/labels",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_READ),
-    publicApi.listLabels
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/labels",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.createLabel
-  )
-  // Name-based assignment routes are registered before the `/:labelId` CRUD
-  // routes so the literal `assignments` segment isn't captured as a label id.
-  app.post(
-    "/api/v1/workspaces/:workspaceId/labels/assignments",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.assignLabel
-  )
-  app.delete(
-    "/api/v1/workspaces/:workspaceId/labels/assignments",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.unassignLabel
-  )
-  app.patch(
-    "/api/v1/workspaces/:workspaceId/labels/:labelId",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.updateLabel
-  )
-  app.delete(
-    "/api/v1/workspaces/:workspaceId/labels/:labelId",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.deleteLabel
-  )
-
-  // Identity — no scope check. Authentication alone is sufficient for a key
-  // to introspect itself and (for user keys) enumerate the owner's personal bots.
-  app.get("/api/v1/workspaces/:workspaceId/me", ...publicMiddleware, publicApi.getMe)
-  app.get("/api/v1/workspaces/:workspaceId/me/bots", ...publicMiddleware, publicApi.listMyBots)
+  for (const route of PUBLIC_API_ROUTES) {
+    const handler = publicHandlers[route.operationId]
+    const scopeGuard = route.scopes.length > 0 ? [requireApiKeyScope(...route.scopes)] : []
+    app[route.method](
+      toExpressPath(route.path),
+      ...publicMiddleware,
+      ...scopeGuard,
+      ...(Array.isArray(handler) ? handler : [handler])
+    )
+  }
 
   app.use(errorHandler)
 }

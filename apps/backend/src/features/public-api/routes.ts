@@ -606,10 +606,58 @@ const delegationTokenHeaderParam = {
   description: "Per-claim token from the delegation claim response (binds the caller to its claim).",
 }
 
+export type OperationId =
+  | "searchMessages"
+  | "searchMemos"
+  | "getMemo"
+  | "uploadAttachment"
+  | "searchAttachments"
+  | "getAttachment"
+  | "getAttachmentDownloadUrl"
+  | "upsertBotRuntimePresence"
+  | "createBotRuntimeSession"
+  | "getBotOwnerE2eKey"
+  | "provisionStreamE2eKeyWraps"
+  | "renameBotRuntimeSession"
+  | "rebindBotRuntimeSession"
+  | "claimBotInvocation"
+  | "renewBotInvocationClaim"
+  | "recordBotInvocationStep"
+  | "startBotInvocationSealedStep"
+  | "recordBotInvocationSealedStep"
+  | "sendBotInvocationSealedMessage"
+  | "completeBotInvocationSealed"
+  | "completeBotInvocation"
+  | "failBotInvocation"
+  | "listDelegations"
+  | "claimDelegation"
+  | "heartbeatDelegation"
+  | "reportDelegationStatus"
+  | "completeDelegation"
+  | "failDelegation"
+  | "listStreams"
+  | "getStream"
+  | "updateStream"
+  | "listMembers"
+  | "listMessages"
+  | "sendMessage"
+  | "findMessagesByMetadata"
+  | "updateMessage"
+  | "deleteMessage"
+  | "listUsers"
+  | "listLabels"
+  | "createLabel"
+  | "assignLabel"
+  | "unassignLabel"
+  | "updateLabel"
+  | "deleteLabel"
+  | "getMe"
+  | "listMyBots"
+
 export interface PublicApiRoute {
   method: "get" | "post" | "patch" | "delete"
   path: string
-  operationId: string
+  operationId: OperationId
   summary: string
   description?: string
   tags: string[]
@@ -1217,6 +1265,9 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: dataEnvelope(labelSchema),
     successStatus: 201,
   },
+  // Literal `assignments` routes precede the `/{labelId}` CRUD entries below:
+  // registry order is mount order, so a `:labelId` param route registered first
+  // would capture `assignments` as an id.
   {
     method: "post",
     path: "/api/v1/workspaces/{workspaceId}/labels/assignments",
