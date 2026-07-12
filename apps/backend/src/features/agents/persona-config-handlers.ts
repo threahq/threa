@@ -242,7 +242,7 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
       if (result.previousAvatarUrl) {
         avatarService.deleteAvatarFiles(result.previousAvatarUrl)
       }
-      res.json({ persona: result.persona })
+      res.json({ persona: result.persona, updatedAt: result.updatedAt })
     },
 
     /** DELETE /api/workspaces/:workspaceId/personas/:personaId/avatar */
@@ -255,7 +255,7 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
       if (result.previousAvatarUrl) {
         avatarService.deleteAvatarFiles(result.previousAvatarUrl)
       }
-      res.json({ persona: result.persona })
+      res.json({ persona: result.persona, updatedAt: result.updatedAt })
     },
 
     /**

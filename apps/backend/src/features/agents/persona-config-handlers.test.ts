@@ -331,6 +331,7 @@ describe("persona config avatar handlers", () => {
     const setCustomAvatar = mock(async () => ({
       persona: { id: CUSTOM_ID, avatarUrl: "avatars/workspace_1/personas/persona_custom_1/222" },
       previousAvatarUrl: "avatars/workspace_1/personas/persona_custom_1/111",
+      updatedAt: "2026-07-12T10:00:00.000Z",
     }))
     const uploadRawForPersona = mock(async () => "avatars/workspace_1/personas/persona_custom_1/222.original")
     const rawKeyToBasePath = mock((k: string) => k.replace(/\.original$/, ""))
@@ -356,7 +357,10 @@ describe("persona config avatar handlers", () => {
     expect(setCustomAvatar).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, basePath, "usr_1")
     // Old files cleaned up only after the commit succeeds.
     expect(deleteAvatarFiles).toHaveBeenCalledWith("avatars/workspace_1/personas/persona_custom_1/111")
-    expect(res.body).toEqual({ persona: { id: CUSTOM_ID, avatarUrl: basePath } })
+    expect(res.body).toEqual({
+      persona: { id: CUSTOM_ID, avatarUrl: basePath },
+      updatedAt: "2026-07-12T10:00:00.000Z",
+    })
   })
 
   it("POST avatar cleans up the orphaned processed files when the write is rejected (non-custom)", async () => {
@@ -394,6 +398,7 @@ describe("persona config avatar handlers", () => {
     const setCustomAvatar = mock(async () => ({
       persona: { id: CUSTOM_ID, avatarUrl: null },
       previousAvatarUrl: "avatars/workspace_1/personas/persona_custom_1/111",
+      updatedAt: "2026-07-12T10:00:00.000Z",
     }))
     const deleteAvatarFiles = mock(async () => {})
     const handlers = makeHandlers({ setCustomAvatar } as unknown as Partial<PersonaConfigService>, {
@@ -404,7 +409,7 @@ describe("persona config avatar handlers", () => {
 
     expect(setCustomAvatar).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, null, "usr_1")
     expect(deleteAvatarFiles).toHaveBeenCalledWith("avatars/workspace_1/personas/persona_custom_1/111")
-    expect(res.body).toEqual({ persona: { id: CUSTOM_ID, avatarUrl: null } })
+    expect(res.body).toEqual({ persona: { id: CUSTOM_ID, avatarUrl: null }, updatedAt: "2026-07-12T10:00:00.000Z" })
   })
 
   it("DELETE avatar skips the S3 delete when the persona had no avatar", async () => {

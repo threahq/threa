@@ -12,17 +12,19 @@ export interface CompanionSelection {
 /**
  * Resolve a stream's companion-persona pointer against the roster. A null
  * pointer resolves to the built-in default (Ariadne) at dispatch, so the picker
- * pre-selects that persona and mode copy names it; a pointer to a persona
- * missing from the roster (archived) degrades the same way.
+ * pre-selects that persona and mode copy names it. A pointer to a persona
+ * missing from the roster (archived) degrades to the default too — the returned
+ * id is the RESOLVED persona's, never the raw off-roster pointer, so the Select
+ * trigger and the mode copy always agree.
  */
 export function resolveCompanionSelection(
   personas: PersonaListItem[] | undefined,
   companionPersonaId: string | null | undefined
 ): CompanionSelection {
   const defaultPersona = personas?.find((p) => p.slug === ARIADNE_PERSONA_SLUG)
-  const selectedPersonaId = companionPersonaId ?? defaultPersona?.id
-  const selectedPersona = personas?.find((p) => p.id === selectedPersonaId) ?? defaultPersona
-  return { selectedPersonaId, selectedPersona, companionName: selectedPersona?.name ?? "Ariadne" }
+  const pointed = companionPersonaId ? personas?.find((p) => p.id === companionPersonaId) : undefined
+  const selectedPersona = pointed ?? defaultPersona
+  return { selectedPersonaId: selectedPersona?.id, selectedPersona, companionName: selectedPersona?.name ?? "Ariadne" }
 }
 
 interface CompanionAgentSelectProps {

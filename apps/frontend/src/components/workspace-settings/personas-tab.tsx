@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react"
+import { toast } from "sonner"
 import { Link } from "react-router-dom"
 import { ChevronDown, Pencil } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -112,7 +113,9 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
                       size="sm"
                       className="shrink-0"
                       disabled={unarchive.isPending}
-                      onClick={() => unarchive.mutate(persona.id)}
+                      onClick={() =>
+                        unarchive.mutate(persona.id, { onError: () => toast.error("Failed to unarchive agent") })
+                      }
                     >
                       Unarchive
                     </Button>

@@ -96,20 +96,22 @@ export const personasApi = {
   },
 
   /** Upload a custom persona's avatar image (multipart, mirrors the bot avatar upload). */
-  async uploadAvatar(workspaceId: string, personaId: string, file: File): Promise<PersonaListItem> {
-    const { persona } = await postAvatarUpload<{ persona: PersonaListItem }>(
+  uploadAvatar(
+    workspaceId: string,
+    personaId: string,
+    file: File
+  ): Promise<{ persona: PersonaListItem; updatedAt: string }> {
+    return postAvatarUpload<{ persona: PersonaListItem; updatedAt: string }>(
       `/api/workspaces/${workspaceId}/personas/${personaId}/avatar`,
       file
     )
-    return persona
   },
 
   /** Remove a custom persona's avatar image (falls back to emoji/initials). */
-  async removeAvatar(workspaceId: string, personaId: string): Promise<PersonaListItem> {
-    const { persona } = await api.delete<{ persona: PersonaListItem }>(
+  removeAvatar(workspaceId: string, personaId: string): Promise<{ persona: PersonaListItem; updatedAt: string }> {
+    return api.delete<{ persona: PersonaListItem; updatedAt: string }>(
       `/api/workspaces/${workspaceId}/personas/${personaId}/avatar`
     )
-    return persona
   },
 
   /**

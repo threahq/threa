@@ -1160,6 +1160,7 @@ describe("PersonaConfigService custom getConfig + status", () => {
     expect(result).toEqual({
       persona: expect.objectContaining({ id: "persona_custom_1", kind: "custom", avatarUrl: next }),
       previousAvatarUrl: previous,
+      updatedAt: expect.any(String),
     })
     expect(update).toHaveBeenCalledWith(
       {},

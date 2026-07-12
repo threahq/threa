@@ -83,13 +83,24 @@ function applyCommittedCustom(
   void queryClient.invalidateQueries({ queryKey: personaKeys.revisions(workspaceId, personaId) })
 }
 
-/** Adopt a custom persona's new avatar (upload/remove): patch the list row and the config's resolved avatarUrl. */
-function applyCustomAvatar(queryClient: QueryClient, workspaceId: string, personaId: string, persona: PersonaListItem) {
+/**
+ * Adopt a custom persona's new avatar (upload/remove): patch the list row, the
+ * config's resolved avatarUrl, AND the OCC token — the row's updated_at bumped,
+ * so a Save asserting the stale token inside the broadcast-refetch window would
+ * 409 spuriously.
+ */
+function applyCustomAvatar(
+  queryClient: QueryClient,
+  workspaceId: string,
+  personaId: string,
+  persona: PersonaListItem,
+  updatedAt: string
+) {
   queryClient.setQueryData<PersonaListItem[]>(personaKeys.list(workspaceId), (old) =>
     old?.map((p) => (p.id === personaId ? persona : p))
   )
   queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
-    old ? { ...old, resolved: { ...old.resolved, avatarUrl: persona.avatarUrl } } : old
+    old ? { ...old, overrideUpdatedAt: updatedAt, resolved: { ...old.resolved, avatarUrl: persona.avatarUrl } } : old
   )
 }
 
@@ -336,7 +347,7 @@ export function useUploadPersonaAvatar(workspaceId: string, personaId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (file: File) => personasApi.uploadAvatar(workspaceId, personaId, file),
-    onSuccess: (persona) => applyCustomAvatar(queryClient, workspaceId, personaId, persona),
+    onSuccess: ({ persona, updatedAt }) => applyCustomAvatar(queryClient, workspaceId, personaId, persona, updatedAt),
   })
 }
 
@@ -345,6 +356,6 @@ export function useRemovePersonaAvatar(workspaceId: string, personaId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: () => personasApi.removeAvatar(workspaceId, personaId),
-    onSuccess: (persona) => applyCustomAvatar(queryClient, workspaceId, personaId, persona),
+    onSuccess: ({ persona, updatedAt }) => applyCustomAvatar(queryClient, workspaceId, personaId, persona, updatedAt),
   })
 }

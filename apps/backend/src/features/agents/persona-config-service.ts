@@ -857,16 +857,24 @@ export class PersonaConfigService {
     personaId: string,
     avatarBasePath: string | null,
     _callerId: string
-  ): Promise<{ persona: PersonaListItem; previousAvatarUrl: string | null }> {
+  ): Promise<{ persona: PersonaListItem; previousAvatarUrl: string | null; updatedAt: string }> {
     const editable = await this.resolveEditableOr404(workspaceId, personaId)
     if (editable.kind !== "custom") throw customsOnly()
 
     const previousAvatarUrl = editable.row.avatarUrl
     if (avatarBasePath === null && previousAvatarUrl === null) {
-      return { persona: customRowToListItem(editable.row), previousAvatarUrl: null }
+      return {
+        persona: customRowToListItem(editable.row),
+        previousAvatarUrl: null,
+        updatedAt: editable.row.updatedAt.toISOString(),
+      }
     }
 
-    const persona = await withTransaction(this.pool, async (client) => {
+    // The UPDATE trigger bumps updated_at (the OCC token Save asserts against), so
+    // the new token rides the response — the client adopts it synchronously instead
+    // of waiting for the broadcast-driven refetch, else an edit+Save inside that
+    // window 409s spuriously.
+    const { persona, updatedAt } = await withTransaction(this.pool, async (client) => {
       const row = await PersonaRepository.updateAvatarUrl(client, {
         workspaceId,
         personaId,
@@ -875,8 +883,8 @@ export class PersonaConfigService {
       if (!row) throw personaNotFound()
       const item = customRowToListItem(row)
       await OutboxRepository.insert(client, "agent_config:updated", { workspaceId, agentId: personaId, persona: item })
-      return item
+      return { persona: item, updatedAt: row.updatedAt.toISOString() }
     })
-    return { persona, previousAvatarUrl }
+    return { persona, previousAvatarUrl, updatedAt }
   }
 }
