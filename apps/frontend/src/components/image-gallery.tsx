@@ -254,7 +254,7 @@ function GalleryMediaContent({
           className="relative max-w-full max-h-full overflow-hidden rounded-lg bg-black shadow-2xl"
           style={{
             aspectRatio: current.aspectRatio,
-            width: `min(100%, calc(85vh * ${current.aspectRatio}))`,
+            width: `min(100%, calc(85dvh * ${current.aspectRatio}))`,
           }}
         >
           <iframe
@@ -862,10 +862,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // so it stays readable against any backdrop
   // (image, video poster, markdown panel, sandboxed iframe). The text viewers
   // reserve their top inset (pt-14 / pt-16) so the pill never overlaps the
-  // panel chrome; `top-3 right-3` gives the pill visible breathing room from
-  // the screen edge instead of kissing it.
+  // panel chrome; the 0.75rem offsets (bumped by safe-area insets on notched
+  // devices) give the pill visible breathing room from the screen edge instead
+  // of kissing it.
   const actionBar = (
-    <div className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-full bg-black/55 px-1 py-0.5 shadow-lg backdrop-blur-sm">
+    <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))] z-10 flex items-center gap-1 rounded-full bg-black/55 px-1 py-0.5 shadow-lg backdrop-blur-sm">
       {!isMobile && current?.type === "image" && (
         <ZoomControls
           subscribeScale={subscribeScale}
@@ -959,10 +960,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       {!current ? null : (
         <DialogContent
           className={cn(
-            "p-0 max-sm:p-0 overflow-hidden bg-black/95 border-none",
-            "max-sm:inset-auto max-sm:left-1/2 max-sm:top-1/2 max-sm:-translate-x-1/2 max-sm:-translate-y-1/2",
-            "max-sm:max-w-[95vw] max-sm:h-[90vh] max-sm:rounded-lg",
-            isMobile ? "max-w-[95vw] h-[90vh]" : "max-w-[90vw] h-[90vh]"
+            // <sm keeps the base DialogContent full-bleed layout (inset-0), which
+            // tracks the dynamic viewport — a sized 90vh card measures the LARGE
+            // viewport, so expanding mobile browser chrome covered the top row.
+            "p-0 max-sm:p-0 max-sm:gap-0 overflow-hidden max-sm:overflow-hidden bg-black/95 border-none",
+            isMobile ? "sm:max-w-[95vw] sm:h-[90dvh]" : "sm:max-w-[90vw] sm:h-[90dvh]"
           )}
           hideCloseButton
         >
@@ -1011,7 +1013,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                 </div>
 
                 {/* Filename bar sits above the strip so it doesn't scroll with it */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pointer-events-none z-10">
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pointer-events-none z-10">
                   <span className="text-sm text-white">{current.filename}</span>
                 </div>
               </div>
