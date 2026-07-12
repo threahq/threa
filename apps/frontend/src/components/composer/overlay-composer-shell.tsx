@@ -32,21 +32,36 @@ export function OverlayComposerShell({ open, onOpenChange, title, header, childr
         hideCloseButton
         desktopClassName="flex h-[85vh] max-h-[760px] w-[92vw] max-w-[820px] flex-col gap-0 overflow-hidden p-0"
         drawerClassName="mt-0 flex h-[92dvh] flex-col gap-0 p-0"
+        onOpenAutoFocus={(e) => {
+          // Let the composer's own autoFocus land the caret in the editor. Radix
+          // otherwise focuses the first focusable (the header picker/close), which
+          // leaves the editor unfocused and breaks the Escape-to-blur-then-close
+          // two-step (the first Escape would have nothing to blur).
+          e.preventDefault()
+        }}
         onPointerDownOutside={(e) => {
           // Don't close when a click lands on an editor suggestion popover
           // (@mention / emoji / slash) that portals outside the dialog.
           if ((e.target as HTMLElement).closest('[role="listbox"]')) e.preventDefault()
         }}
         onEscapeKeyDown={(e) => {
-          // Radix dismisses on a capture-phase keydown, which would preempt the
-          // editor's own Escape (dismiss an open @mention/emoji/slash popup, then
-          // blur). Let the editor handle Escape first while it's focused (or a
-          // suggestion list is open); a later Escape with focus back on the shell
-          // falls through to Radix and closes the overlay — the two-step the
-          // fullscreen editor announces.
+          // Own the two-step Escape the fullscreen editor announces. Radix
+          // dismisses on a capture-phase keydown that races the editor's own
+          // blur, so drive it here deterministically:
+          //  - a suggestion popup (@mention/emoji/slash) owns Escape first —
+          //    keep the overlay open and let the editor dismiss the popup;
+          //  - otherwise the first Escape blurs the focused editor (overlay stays
+          //    open); a later Escape with focus outside the editor falls through
+          //    to Radix and closes.
           const active = document.activeElement as HTMLElement | null
-          if (document.querySelector('[role="listbox"]') || active?.closest('[contenteditable="true"]')) {
+          if (document.querySelector('[role="listbox"]')) {
             e.preventDefault()
+            return
+          }
+          const editable = active?.closest<HTMLElement>('[contenteditable="true"]')
+          if (editable) {
+            e.preventDefault()
+            editable.blur()
           }
         }}
       >
