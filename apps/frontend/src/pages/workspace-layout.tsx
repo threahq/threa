@@ -48,7 +48,7 @@ import {
 import {
   useKeyboardShortcuts,
   useMentionables,
-  usePersistLastStream,
+  usePersistLastLocation,
   useAppUpdate,
   useMessageQueue,
   useUnreadTabIndicator,
@@ -422,7 +422,7 @@ export function WorkspaceLayout() {
   const { mentionables } = useMentionables()
   const streams = useWorkspaceStreams(workspaceId ?? "")
 
-  usePersistLastStream(workspaceId, streamId)
+  usePersistLastLocation(workspaceId)
 
   // Remember the workspace the user is in so the `/` entry route can redirect
   // straight here on a returning launch (renders from IndexedDB) instead of

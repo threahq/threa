@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { LegacyMemoRedirect, RootRedirect, WorkspaceHome } from "./index"
-import * as useLastStreamModule from "@/hooks/use-last-stream"
+import * as useLastLocationModule from "@/hooks/use-last-location"
 import * as sidebarContextModule from "@/contexts/sidebar-context"
 import { clearLastWorkspaceId, setLastWorkspaceId } from "@/lib/last-workspace"
 
-const mockUseLastStream = vi.fn()
+const mockUseLastLocation = vi.fn()
 const mockTogglePinned = vi.fn()
 
 function SearchEcho() {
@@ -55,19 +55,21 @@ describe("RootRedirect", () => {
 describe("WorkspaceHome", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    mockUseLastStream.mockReset()
+    mockUseLastLocation.mockReset()
     mockTogglePinned.mockReset()
-    vi.spyOn(useLastStreamModule, "useLastStream").mockImplementation(
-      (...args) => mockUseLastStream(...args) as ReturnType<typeof useLastStreamModule.useLastStream>
+    vi.spyOn(useLastLocationModule, "useLastLocation").mockImplementation(
+      (...args) => mockUseLastLocation(...args) as ReturnType<typeof useLastLocationModule.useLastLocation>
     )
     vi.spyOn(sidebarContextModule, "useSidebar").mockReturnValue({
       state: "expanded",
       togglePinned: mockTogglePinned,
     } as unknown as ReturnType<typeof sidebarContextModule.useSidebar>)
 
-    mockUseLastStream.mockReturnValue({
+    mockUseLastLocation.mockReturnValue({
       redirectStreamId: "stream_123",
+      boardHref: null,
       shouldOpenSidebar: false,
+      pendingBoardFlag: false,
     })
   })
 
@@ -82,6 +84,46 @@ describe("WorkspaceHome", () => {
     )
 
     expect(await screen.findByTestId("search")).toHaveTextContent("?ws-settings=bots")
+  })
+
+  it("redirects to the board href when the last surface was the board", async () => {
+    mockUseLastLocation.mockReturnValue({
+      redirectStreamId: null,
+      boardHref: "/w/ws_123/board/active?in=stream_x",
+      shouldOpenSidebar: false,
+      pendingBoardFlag: false,
+    })
+    render(
+      <MemoryRouter initialEntries={["/w/ws_123"]}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHome />} />
+          <Route path="/w/:workspaceId/board/:lens" element={<PathEcho />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByTestId("path")).toHaveTextContent("/w/ws_123/board/active")
+  })
+
+  it("renders nothing while the board flag is still unknown", () => {
+    mockUseLastLocation.mockReturnValue({
+      redirectStreamId: null,
+      boardHref: null,
+      shouldOpenSidebar: false,
+      pendingBoardFlag: true,
+    })
+    render(
+      <MemoryRouter initialEntries={["/w/ws_123"]}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHome />} />
+          <Route path="/w/:workspaceId/s/:streamId" element={<SearchEcho />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(screen.queryByText("Select a stream from the sidebar")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("search")).not.toBeInTheDocument()
+    expect(mockTogglePinned).not.toHaveBeenCalled()
   })
 
   it("redirects legacy memo routes into the memory explorer", async () => {
