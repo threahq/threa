@@ -1,8 +1,72 @@
 import { serializeToMarkdown } from "@threa/prosemirror"
-import { AuthorTypes, Visibilities, type AuthorType, type JSONContent, type StreamWithPreview } from "@threa/types"
+import {
+  AuthorTypes,
+  StreamTypes,
+  Visibilities,
+  type AuthorType,
+  type JSONContent,
+  type StreamWithPreview,
+} from "@threa/types"
+import { createDmDraftId } from "@/hooks/use-stream-or-draft"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { getStreamName } from "@/lib/streams"
 import type { SectionKey, SortType, StreamItemData, UrgencyLevel } from "./types"
+
+/** Minimal workspace-user shape needed to synthesize a DM draft row. */
+interface VirtualDmUser {
+  id: string
+  name: string
+}
+
+/**
+ * Synthesize "virtual DM draft" rows for workspace members the viewer has no DM
+ * stream with yet. Returns `[]` in board mode: a nonexistent DM has no
+ * conversations, so the row would be dead weight on the board
+ * (board-centered-sidebar-exploration.md § "Feature parity").
+ */
+export function buildVirtualDmDrafts(args: {
+  isBoardMode: boolean
+  workspaceId: string
+  currentUserId: string | null
+  workspaceUsers: readonly VirtualDmUser[]
+  dmPeerUserIds: readonly string[]
+}): StreamItemData[] {
+  const { isBoardMode, workspaceId, currentUserId, workspaceUsers, dmPeerUserIds } = args
+  if (isBoardMode) return []
+  if (workspaceUsers.length === 0 || !currentUserId) return []
+
+  const dmPeerIds = new Set(dmPeerUserIds)
+  const now = new Date().toISOString()
+
+  return workspaceUsers
+    .filter((workspaceUser) => workspaceUser.id !== currentUserId)
+    .filter((workspaceUser) => !dmPeerIds.has(workspaceUser.id))
+    .map(
+      (workspaceUser): StreamItemData => ({
+        id: createDmDraftId(workspaceUser.id),
+        workspaceId,
+        type: StreamTypes.DM,
+        displayName: workspaceUser.name,
+        slug: null,
+        description: null,
+        visibility: Visibilities.PRIVATE,
+        parentStreamId: null,
+        parentMessageId: null,
+        rootStreamId: null,
+        companionMode: "off",
+        companionPersonaId: null,
+        createdBy: currentUserId,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        lastMessagePreview: null,
+        urgency: "quiet",
+        section: "other",
+        dmPeerUserId: workspaceUser.id,
+      })
+    )
+    .sort((a, b) => (a.displayName ?? "").localeCompare(b.displayName ?? ""))
+}
 
 /** Minimal stream shape for the sidebar visibility filter. */
 interface SidebarVisibilityStream {

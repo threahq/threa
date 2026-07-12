@@ -1,0 +1,210 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import CodeBlock from "../../components/CodeBlock.astro"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+
+// The current version and the changelog both come from the generated files, so
+// this page can't drift from what the API actually serves.
+const specPath = fileURLToPath(new URL("../../../../../docs/public-api/openapi.json", import.meta.url))
+const spec = JSON.parse(readFileSync(specPath, "utf8"))
+const currentVersion: string = spec.info.version
+
+const changelogPath = fileURLToPath(new URL("../../../../../docs/public-api/CHANGELOG.md", import.meta.url))
+const changelogRaw = readFileSync(changelogPath, "utf8")
+
+interface ChangelogEntry {
+  version: string
+  body: string
+}
+const changelog: ChangelogEntry[] = changelogRaw
+  .split(/^## /m)
+  .slice(1)
+  .map((chunk) => {
+    const [version, ...rest] = chunk.split("\n")
+    return { version: version.trim(), body: rest.join("\n").trim() }
+  })
+---
+
+<DocsLayout
+  title="Versioning · Threa Developers"
+  description="How Threa API versions work: date-based versions, pinned per key at mint, overridable with the Threa-Version header, with a support window of at least twelve months."
+  current="versioning"
+  sections={[
+    { id: "how-it-works", label: "How it works" },
+    { id: "the-header", label: "The header" },
+    { id: "pins", label: "Reading and changing the pin" },
+    { id: "breaking-vs-additive", label: "Breaking vs additive" },
+    { id: "support-window", label: "Support window" },
+    { id: "the-path-prefix", label: "The path prefix" },
+    { id: "changelog", label: "Changelog" },
+  ]}
+>
+  <p class="eyebrow">Versioning</p>
+  <h1>API <span class="accent">versions</span>.</h1>
+  <p class="lead">
+    Threa versions the API by date. Each key is pinned to a version when you
+    create it, so your integration keeps seeing the same shapes until you decide
+    to move. When a version introduces a breaking change, your key stays on the
+    older one and you opt in when you are ready.
+  </p>
+
+  <h2 id="how-it-works">How it works</h2>
+  <p>
+    A version is a date. The current version is <code>{currentVersion}</code>.
+    When you create an API key it is pinned to
+    whatever version is current at that moment, and that pin decides which shapes
+    the key sees on every request. You do not have to send anything for this to
+    work.
+  </p>
+  <p>
+    When we later ship a version with a breaking change, existing keys are
+    unaffected. You test the new version by sending the <code>Threa-Version</code>
+    header on individual requests, and when your integration is ready you either
+    send that header everywhere or create a new key pinned to the newer version.
+  </p>
+
+  <h2 id="the-header">The header</h2>
+  <p>
+    Send <code>Threa-Version</code> with a version date to override your key's pin
+    for a single request. A valid header takes precedence over the pin.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="override the pin for one request"
+    code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Threa-Version: ${currentVersion}"`}
+  />
+  <p>
+    The value must be one of the known versions exactly. An unknown or malformed
+    value returns <code>400</code> with the code <code>INVALID_API_VERSION</code>
+    and the list of known versions in the error, so a typo fails loudly instead of
+    being treated as the latest. Every response that resolved a version echoes it
+    in a <code>Threa-Version</code> response header, so you can always confirm
+    which shapes you received. The <code>400</code> for an unknown version has no
+    resolved version, so it carries no echo header.
+  </p>
+  <CodeBlock
+    lang="json"
+    label="400 on an unknown version"
+    code={`{
+  "error": "Unknown API version \\"2020-01-01\\". Known versions: ${currentVersion}",
+  "code": "INVALID_API_VERSION"
+}`}
+  />
+
+  <h2 id="pins">Reading and changing the pin</h2>
+  <p>
+    <code>GET /api/v1/workspaces/&#123;workspaceId&#125;/me</code> reports the key's
+    version state alongside its identity, so an agent can discover its pin with a
+    call it already makes:
+  </p>
+  <CodeBlock
+    lang="json"
+    label="apiVersion block in the /me response"
+    code={`{
+  "data": {
+    "kind": "user",
+    "workspaceId": "ws_...",
+    "userId": "usr_...",
+    "apiVersion": {
+      "pinned": "${currentVersion}",
+      "resolved": "${currentVersion}",
+      "current": "${currentVersion}",
+      "supported": ["${currentVersion}"]
+    }
+  }
+}`}
+  />
+  <p>
+    <code>pinned</code> is the key's pin, or <code>null</code> when the key is
+    unpinned. <code>resolved</code> is the version this request used.
+  </p>
+  <CodeBlock
+    lang="ts"
+    label="detect that a newer version exists"
+    code={`interface ApiVersionInfo {
+  pinned: string | null
+  resolved: string
+  current: string
+  supported: string[]
+}
+
+const res = await fetch("{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me", {
+  headers: { Authorization: "Bearer {{apiKey}}" },
+})
+const { data } = (await res.json()) as { data: { apiVersion: ApiVersionInfo } }
+
+if (data.apiVersion.resolved !== data.apiVersion.current) {
+  // A newer version exists. Test against it by sending
+  // "Threa-Version": data.apiVersion.current on individual requests.
+}`}
+  />
+  <p>
+    Pins belong to the key's owner and are managed in the app, not through the
+    public API: <code>PATCH</code> the key in the workspace's key management with
+    <code>&#123;"apiVersion": "&lt;date&gt;"&#125;</code> to re-pin it, or
+    <code>&#123;"apiVersion": null&#125;</code> to unpin it. An unpinned key always
+    uses the current version, including future breaking changes, so unpin only if
+    you update your integration as versions ship. To adopt newer shapes without
+    touching the pin, send the header or create a new key.
+  </p>
+
+  <h2 id="breaking-vs-additive">Breaking vs additive changes</h2>
+  <p>
+    Additive changes do not get a new version and can arrive on your current one at
+    any time. Plan for them. These are new endpoints, new optional request fields,
+    new response fields, and new values in response enums that are documented as
+    open sets. Write your client so an unexpected field or enum value is ignored
+    rather than rejected.
+  </p>
+  <p>
+    Breaking changes get a new dated version and never reach a key pinned to an
+    earlier one. A change is breaking when it removes or renames a field, changes a
+    field's type or meaning, tightens request validation, changes a default, or
+    changes an error code or status. This is the same split Stripe uses.
+  </p>
+  <table class="docs-table">
+    <thead><tr><th>Change</th><th>New version?</th></tr></thead>
+    <tbody>
+      <tr><td>New endpoint</td><td>No</td></tr>
+      <tr><td>New optional request field</td><td>No</td></tr>
+      <tr><td>New response field</td><td>No</td></tr>
+      <tr><td>New value in an open response enum</td><td>No</td></tr>
+      <tr><td>Removing or renaming a field</td><td>Yes</td></tr>
+      <tr><td>Changing a field's type or meaning</td><td>Yes</td></tr>
+      <tr><td>Tightening request validation</td><td>Yes</td></tr>
+      <tr><td>Changing a default value</td><td>Yes</td></tr>
+      <tr><td>Changing an error code or status</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="support-window">Support window</h2>
+  <p>
+    A version stays supported for at least twelve months after it is succeeded, so
+    a key pinned to an older version keeps working for that long once a newer
+    version ships.
+  </p>
+
+  <h2 id="the-path-prefix">The path prefix</h2>
+  <p>
+    The URL prefix does not change with versions. Every endpoint stays under
+    <code>/api/v1</code>, and the <code>Threa-Version</code> header carries the
+    version. The <code>v1</code> segment is a stable prefix, so paths you hardcode
+    today keep working. Version negotiation happens entirely through the header and
+    the key's pin.
+  </p>
+
+  <h2 id="changelog">Changelog</h2>
+  <p>
+    Each dated version is listed here with what changed. The current version is
+    <code>{currentVersion}</code>.
+  </p>
+  {changelog.map((entry) => (
+    <Fragment>
+      <h3 id={`v-${entry.version}`}>{entry.version}</h3>
+      <p>{entry.body}</p>
+    </Fragment>
+  ))}
+</DocsLayout>

@@ -1078,6 +1078,11 @@ export const ENCLAVE_CALLBACK_TOKEN_HEADER = "X-Enclave-Callback-Token"
 // bot transport, shared by every sealed-capable external driver.
 export const THREA_CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
 
+// Public API wire-version negotiation: on requests it overrides the key's
+// pinned version; on responses it echoes the resolved version. No X- prefix —
+// it's a documented public header, named like Stripe-Version.
+export const THREA_VERSION_HEADER = "Threa-Version"
+
 // Original client-facing host (e.g. `admin.threa.io`, `pr-204-staging.threa.io`)
 // carried from the Cloudflare routers to the control-plane.
 //

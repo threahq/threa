@@ -243,6 +243,30 @@ describe("DelegatedTaskRepository.markCancelled", () => {
   })
 })
 
+describe("DelegatedTaskRepository.markDone", () => {
+  afterEach(() => mock.restore())
+
+  it("CASes any non-terminal status → completed with no token, clearing the note", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeRow({ status: DelegationStatuses.COMPLETED })])
+
+    await DelegatedTaskRepository.markDone(db, { workspaceId: "ws_1", id: "dlg_1", streamId: "stream_1" })
+
+    expect(captured.values).toContain(DelegationStatuses.COMPLETED)
+    expect(captured.values).toContain(DelegationStatuses.OPEN)
+    expect(captured.values).toContain(DelegationStatuses.CLAIMED)
+    expect(captured.values).toContain(DelegationStatuses.RUNNING)
+    expect(captured.values).toContain("stream_1")
+    expect(captured.text).toContain("status_note = NULL")
+    expect(captured.text).not.toContain("claim_token_hash =")
+  })
+
+  it("returns null when the row already reached a terminal state", async () => {
+    const db = createQuerier({ text: null, values: null }, [])
+    expect(await DelegatedTaskRepository.markDone(db, { workspaceId: "ws_1", id: "dlg_1" })).toBeNull()
+  })
+})
+
 describe("DelegatedTaskRepository.listByStream", () => {
   afterEach(() => mock.restore())
 

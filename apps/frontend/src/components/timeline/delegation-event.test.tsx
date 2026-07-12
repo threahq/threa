@@ -126,9 +126,42 @@ describe("DelegationEvent", () => {
     renderCard()
     await userEvent.click(screen.getByRole("button", { name: /Copy prompt/ }))
 
-    expect(writeText).toHaveBeenCalledWith(buildDelegationPrompt(CREATED_PAYLOAD))
+    expect(writeText).toHaveBeenCalledWith(
+      buildDelegationPrompt(CREATED_PAYLOAD, { workspaceId: "ws_1", origin: window.location.origin })
+    )
     await screen.findByRole("button", { name: "Prompt copied" })
     expect(success).not.toHaveBeenCalled()
+  })
+
+  it("marks the delegation done for paste-path work and relabels in place", async () => {
+    const markDone = vi.spyOn(delegationsApi, "markDone").mockResolvedValue({ completed: true })
+
+    renderCard()
+    await userEvent.click(screen.getByRole("button", { name: "Mark done" }))
+
+    expect(markDone).toHaveBeenCalledWith("ws_1", "dlg_1")
+    await waitFor(() => expect(screen.getByText(/Ariadne · Completed/)).toBeInTheDocument())
+    expect(screen.getByRole("button", { name: /Done/ })).toHaveAttribute("aria-disabled", "true")
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+  })
+
+  it("does not flip when mark-done lost the race; informs instead", async () => {
+    vi.spyOn(delegationsApi, "markDone").mockResolvedValue({ completed: false })
+    const info = vi.spyOn(toast, "info")
+
+    renderCard()
+    await userEvent.click(screen.getByRole("button", { name: "Mark done" }))
+
+    await waitFor(() => expect(info).toHaveBeenCalled())
+    expect(screen.getByText(/Ariadne · Open/)).toBeInTheDocument()
+  })
+
+  it("embeds the lifecycle breadcrumb (id + claim endpoint) in the compiled prompt", () => {
+    const prompt = buildDelegationPrompt(CREATED_PAYLOAD, { workspaceId: "ws_1", origin: "https://threa.test" })
+    expect(prompt).toContain("## Threa delegation lifecycle")
+    expect(prompt).toContain("https://threa.test/api/v1/workspaces/ws_1/delegations/dlg_1/claim")
+    expect(prompt).toContain("X-Threa-Callback-Token")
+    expect(prompt).toContain('press "Mark done"')
   })
 
   it("cancels via the API and flips to Cancelled for the clicking member", async () => {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
 import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./public-api-auth"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { CURRENT_API_VERSION } from "../features/public-api/versions"
 
 function createPoolStub() {
   return {
@@ -298,6 +299,7 @@ describe("requireApiKeyScope", () => {
       userId: "user_1",
       name: "Test",
       scopes: new Set(["messages:search"]),
+      apiVersion: CURRENT_API_VERSION,
     }
 
     let nextCalled = false
@@ -321,6 +323,7 @@ describe("requireApiKeyScope", () => {
       botId: "bot_1",
       name: "Bot Key",
       scopes: new Set(["messages:write"]),
+      apiVersion: CURRENT_API_VERSION,
     }
 
     let nextCalled = false
@@ -344,6 +347,7 @@ describe("requireApiKeyScope", () => {
       userId: "user_1",
       name: "Test",
       scopes: new Set(["streams:read"]),
+      apiVersion: CURRENT_API_VERSION,
     }
 
     let error: any = null
@@ -365,6 +369,7 @@ describe("requireApiKeyScope", () => {
       botId: "bot_1",
       name: "Bot Key",
       scopes: new Set(["messages:read"]),
+      apiVersion: CURRENT_API_VERSION,
     }
 
     let error: any = null

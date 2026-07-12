@@ -58,7 +58,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 6.1  | Memo edit/archive endpoints + explorer UI                                      | ☑      | #1246          |
 | 6.2  | `save_memo` tool                                                               | ☑      | #1260          |
 | 6.3  | Reflective capture at session completion                                       | ☑      | #1273          |
-| 6.4  | `memoScope` (user/stream/workspace)                                            | ☐      |                |
+| 6.4  | `memoScope` (user/stream/workspace)                                            | ☑      | #1286          |
 | 6.5  | Retrieval feedback decay                                                       | ☐      |                |
 | 6.6  | Agent-memo safety: read-time provenance + type allowlist                       | ☑      | #1277          |
 | 7.1  | Workspace persona config API + editor (bounded built-ins + fork-based customs) | ☑      | #1285, Phase B |
@@ -513,6 +513,8 @@ The strategic bet: Threa is the shared-memory/coordination plane; the user's loc
 
 **Done when:** `threa-remote delegate <id>` (or equivalent) executes a delegation locally through the SDK runner and the card shows claimed → completed with the result linked — with zero delegation logic inside claude-code-remote itself.
 
+**Ruling from the adversarial UX review (2026-07-12, PR #1272 comment):** the runner's default delivery is **push over the existing bot-runtime websocket**, not polling — a connected claude-code-channel runtime already holds a live socket that receives bot invocations instantly, so delegation nudges ride the same channel at zero marginal request cost. HTTP polling of `GET /delegations` stays as the fallback for headless/cron runners only; the review's rate-limit math (60 req/min/key shared with lifecycle calls) puts a 15–30s floor on poll-based pickup, and every poll routes through the per-request-billed Cloudflare worker. Two contract improvements queued for the same step: **claim accepts a caller idempotency key** (a crash between claim-200 and persisting the single-shot token currently strands the task until TTL expiry), and consider a `since`/ETag on the list endpoint. Also from the review: port the delegation recipe to the public `/developers` docs — today the only working walkthrough is the internal `threa-public-api` skill, so no external user can complete the journey.
+
 ### 5.5 `@threa/mcp` server
 
 **Goal:** every local agent — not just ours — can pull Threa context and close delegations. One integration on our side instead of integrating everywhere.
@@ -698,6 +700,8 @@ The product model changed: system built-ins are bounded, and full editing moved 
 **Goal:** choose the companion per stream; make first-party personas and external bots legible in one place.
 
 > **Shipped (Phase B).** The workspace persona editor landed early with 7.1 (#1285); the per-stream picker in `companion-tab.tsx` shipped in Phase B — see the "Phase B" block under 7.1 for the full shape (shared `CompanionAgentSelect`, validated `companionPersonaId` write, thread inheritance, archived-pointer fallback).
+
+> **🔒 Claimed locally (2026-07-12, Kris):** the persona editor is being revamped in a local working thread, and the persona roster/picker follows locally once the editor lands. **Do not pick this step up from a remote/parallel session** — coordinate with Kris first. Remove this note when the local work merges.
 
 **Shape:** `companion-tab.tsx` gains a persona select (streams already carry `companionPersonaId`) listing built-ins + workspace personas, plus a link to a small workspace-settings persona editor (create/edit per 7.1). External bots noted in the same tab via the existing `ExternalAgentIndicator` — one mental model: "who works in this stream."
 

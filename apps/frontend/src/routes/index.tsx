@@ -4,7 +4,7 @@ import { ErrorBoundary } from "@/components/error-boundary"
 import { FallbackLoader } from "@/components/fallback-loader"
 import { attachOverlayHistoryRouter, OverlayHistoryLayout } from "@/components/ui/history-back-close"
 import { useSidebar } from "@/contexts"
-import { useLastStream } from "@/hooks"
+import { useLastLocation } from "@/hooks"
 import { getLastWorkspaceId } from "@/lib/last-workspace"
 
 // Route-level code splitting: each page lazy-loads its own chunk so heavy
@@ -179,7 +179,7 @@ export function WorkspaceHome() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const location = useLocation()
   const { state, togglePinned } = useSidebar()
-  const { redirectStreamId, shouldOpenSidebar } = useLastStream(workspaceId ?? "")
+  const { redirectStreamId, boardHref, shouldOpenSidebar, pendingBoardFlag } = useLastLocation(workspaceId ?? "")
   const sidebarOpenedRef = useRef(false)
 
   useEffect(() => {
@@ -188,6 +188,14 @@ export function WorkspaceHome() {
       togglePinned()
     }
   }, [shouldOpenSidebar, state, togglePinned])
+
+  if (pendingBoardFlag) {
+    return null
+  }
+
+  if (boardHref && workspaceId) {
+    return <Navigate to={boardHref} replace />
+  }
 
   if (redirectStreamId && workspaceId) {
     return (

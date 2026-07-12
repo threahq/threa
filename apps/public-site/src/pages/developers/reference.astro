@@ -144,10 +144,14 @@ const sections = groups.flatMap((g) =>
     the read-only examples run against your own workspace as you read.
   </p>
   <p>
-    The base is <code>https://app.threa.io</code>, versioned under <code>/api/v1</code>
-    and scoped to a workspace: <code>/api/v1/workspaces/&#123;workspaceId&#125;/…</code>.
-    Every request authenticates with <code>Authorization: Bearer &lt;key&gt;</code>.
-    Error shapes, paging, idempotency, and rate limits live in
+    The base is <code>https://app.threa.io</code>, under the stable
+    <code>/api/v1</code> prefix and scoped to a workspace:
+    <code>/api/v1/workspaces/&#123;workspaceId&#125;/…</code>. The <code>v1</code>
+    segment does not move as the API evolves; versions are dated and selected with
+    the <code>Threa-Version</code> header, described in
+    <a class="link" href="/developers/versioning">Versioning</a>. Every request
+    authenticates with <code>Authorization: Bearer &lt;key&gt;</code>. Error
+    shapes, paging, idempotency, and rate limits live in
     <a class="link" href="/developers/operations">Operations</a>.
   </p>
 

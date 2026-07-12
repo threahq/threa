@@ -1,0 +1,134 @@
+import { useMemo } from "react"
+import { Link, useLocation } from "react-router-dom"
+import { ArrowLeft, Bookmark, Pin } from "lucide-react"
+import { BOARD_LENSES, type BoardLens } from "@threa/types"
+import { useSidebar } from "@/contexts"
+import { cn } from "@/lib/utils"
+import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
+import { useBoardSelection } from "@/hooks/use-board-selection"
+import { isViewActive, lensHref, savedViewHref } from "@/components/board/board-saved-views"
+import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
+import { getLastLocation } from "@/lib/last-location"
+import { BoardFilterChips } from "./board-filter-chips"
+
+interface BoardModeBlockProps {
+  workspaceId: string
+  /** The viewer's auth id — keys the last-location record for the "← Chats" target. */
+  userId: string | null
+  /** Per-lens workspace topic totals for the Lenses row counts, from the sidebar's
+   *  single stats pass; `null`/absent while it resolves (render no count). */
+  lensTotals?: Record<BoardLens, number> | null
+}
+
+const ROW_CLASS = "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+const SECTION_LABEL_CLASS =
+  "m-0 px-4 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+
+/**
+ * The board block replaces the quick-links block in the sidebar while on
+ * `/board` (board-centered-sidebar-exploration.md § V2 top blocks). Top-to-
+ * bottom: a "← Chats" back link to the last visited stream, the viewer's saved
+ * Views, and the board Lenses. Every entry is a `<Link>` — the board's whole
+ * state is URL (INV-40/INV-59) — and the URLs are built with the same helpers
+ * the filter bar uses (`lensHref`, `savedViewHref`) so the two surfaces can't
+ * drift (INV-35). The filter axes ride along a lens switch, so scoping survives.
+ */
+export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlockProps) {
+  const { collapseOnMobile } = useSidebar()
+  const location = useLocation()
+
+  // One shared URL derivation (INV-35) — the chips block reads the same hook.
+  const { homeLens, currentLens, selection } = useBoardSelection()
+
+  const { data: views } = useBoardViews(workspaceId)
+  const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
+  const hasSavedViewHome = homeViewId !== null
+
+  // A saved view IS the selection when the live lens + every axis match it, so it
+  // — not its base lens — reads as active; a lens is active only when no view is.
+  const activeViewId = views?.find((view) => isViewActive(view, selection))?.id ?? null
+
+  const sortedViews = useMemo(() => (views ? [...views].sort((a, b) => a.sortOrder - b.sortOrder) : []), [views])
+
+  const lastLocation = userId ? getLastLocation(userId, workspaceId) : null
+  const chatsHref = lastLocation?.streamId ? `/w/${workspaceId}/s/${lastLocation.streamId}` : `/w/${workspaceId}`
+
+  const hasActiveFilters =
+    selection.scopeStreamIds.length > 0 ||
+    selection.scopeStreamTypes.length > 0 ||
+    selection.scopeLabelIds.length > 0 ||
+    selection.excludeStreamIds.length > 0 ||
+    selection.excludeStreamTypes.length > 0 ||
+    selection.excludeLabelIds.length > 0
+
+  return (
+    <div className="mb-2 space-y-1">
+      <Link
+        to={chatsHref}
+        onClick={collapseOnMobile}
+        className={cn(ROW_CLASS, "text-muted-foreground hover:bg-muted/50")}
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Chats
+      </Link>
+
+      {hasActiveFilters && <BoardFilterChips workspaceId={workspaceId} />}
+
+      {sortedViews.length > 0 && (
+        <div className="pt-1">
+          {/* No count: a saved view is an arbitrary scope/type/label/lens predicate,
+              not a single lens total, so the sidebar's one-pass stats can't derive it
+              (see Piece 4 "where computable"). Lens rows below do get counts. */}
+          <h3 className={SECTION_LABEL_CLASS}>Views</h3>
+          {sortedViews.map((view) => {
+            const active = view.id === activeViewId
+            const isHome = view.id === homeView?.id
+            return (
+              <Link
+                key={view.id}
+                to={savedViewHref(workspaceId, view, homeLens)}
+                onClick={collapseOnMobile}
+                aria-current={active ? "true" : undefined}
+                className={cn(ROW_CLASS, active ? "bg-primary/10" : "hover:bg-muted/50 text-muted-foreground")}
+              >
+                {isHome ? (
+                  <Pin className="h-4 w-4 shrink-0 fill-current" aria-label="Board home" />
+                ) : (
+                  <Bookmark className="h-4 w-4 shrink-0" />
+                )}
+                <span className="min-w-0 flex-1 truncate">{view.name}</span>
+              </Link>
+            )
+          })}
+        </div>
+      )}
+
+      <div className="pt-1">
+        <h3 className={SECTION_LABEL_CLASS}>Lenses</h3>
+        {BOARD_LENSES.map((value) => {
+          const def = BOARD_LENS_DEFS[value]
+          const Icon = def.icon
+          const active = value === currentLens && activeViewId === null
+          const count = lensTotals?.[value] ?? null
+          return (
+            <Link
+              key={value}
+              to={lensHref(workspaceId, value, location.search, homeLens, hasSavedViewHome)}
+              onClick={collapseOnMobile}
+              aria-current={active ? "true" : undefined}
+              className={cn(ROW_CLASS, active ? "bg-primary/10" : "hover:bg-muted/50 text-muted-foreground")}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{def.label}</span>
+              {count !== null && (
+                <span aria-hidden className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {count}
+                </span>
+              )}
+            </Link>
+          )
+        })}
+      </div>
+    </div>
+  )
+}

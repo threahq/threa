@@ -70,3 +70,57 @@ describe("SectionHeader accessory", () => {
     expect(onToggle).not.toHaveBeenCalled()
   })
 })
+
+describe("SectionHeader board-mode Scope all", () => {
+  it("renders a Scope-all link to the board `?in=` URL, named for the section", () => {
+    renderHeader({ label: "Unread", scopeAllHref: "/w/ws_1/board?in=a,b" })
+
+    const link = screen.getByRole("link", { name: "Scope board to Unread streams" })
+    expect(link).toHaveAttribute("href", "/w/ws_1/board?in=a,b")
+  })
+
+  it("does not toggle the section and collapses on mobile when scoping", async () => {
+    const onTitleNavigate = vi.fn()
+    const { onToggle } = renderHeader({
+      label: "Reading list",
+      scopeAllHref: "/w/ws_1/board?in=a",
+      onTitleNavigate,
+    })
+
+    await userEvent.click(screen.getByRole("link", { name: "Scope board to Reading list streams" }))
+
+    expect(onTitleNavigate).toHaveBeenCalledTimes(1)
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+
+  it("renders no Scope-all link in chats mode (no scopeAllHref)", () => {
+    renderHeader({ label: "Unread" })
+    expect(screen.queryByRole("link", { name: /scope board/i })).not.toBeInTheDocument()
+  })
+})
+
+describe("SectionHeader label open target", () => {
+  it("points the open link at the label page in chats mode", () => {
+    renderHeader({ label: "Design", titleContent: "Design", titleHref: "/w/ws_1/labels/label_1" })
+    expect(screen.getByRole("link", { name: "Open Design" })).toHaveAttribute("href", "/w/ws_1/labels/label_1")
+  })
+
+  it("points the open link at the board label axis in board mode", () => {
+    renderHeader({ label: "Design", titleContent: "Design", titleHref: "/w/ws_1/board?label=label_1" })
+    expect(screen.getByRole("link", { name: "Open Design" })).toHaveAttribute("href", "/w/ws_1/board?label=label_1")
+  })
+
+  it("names the board-mode label affordance for its filter action, not 'Open'", () => {
+    renderHeader({
+      label: "Design",
+      titleContent: "Design",
+      titleHref: "/w/ws_1/board?label=label_1",
+      titleActionLabel: "Filter board by Design",
+    })
+    expect(screen.queryByRole("link", { name: "Open Design" })).not.toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Filter board by Design" })).toHaveAttribute(
+      "href",
+      "/w/ws_1/board?label=label_1"
+    )
+  })
+})
