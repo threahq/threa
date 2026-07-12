@@ -94,6 +94,10 @@ export function AgentSettingsPanel({
             disabled={personaPicker.busy}
             triggerClassName="w-full"
           />
+          <p className="text-xs text-muted-foreground">
+            Threads inherit this scratchpad&apos;s agent — sessions already running keep their agent; new sessions use
+            this selection.
+          </p>
         </div>
       )}
 

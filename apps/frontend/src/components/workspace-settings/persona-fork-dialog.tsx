@@ -95,10 +95,7 @@ export function PersonaForkDialog({ workspaceId, sources }: PersonaForkDialogPro
                     {source.name}
                   </SelectItem>
                 ))}
-                <SelectItem value={BLANK_SOURCE}>
-                  <span>Blank agent</span>
-                  <span className="block text-xs text-muted-foreground">Empty prompt, no tools — write your own</span>
-                </SelectItem>
+                <SelectItem value={BLANK_SOURCE}>Blank agent</SelectItem>
               </SelectContent>
             </Select>
           </div>
