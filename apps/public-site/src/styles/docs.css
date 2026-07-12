@@ -1025,6 +1025,60 @@ a {
   border-bottom-color: hsl(var(--gold));
   color: hsl(var(--gold));
 }
+
+/* Version picker — dated-spec switcher above the endpoints. Links only, so the
+   active view comes from the URL. The current-version pill keeps its border in
+   both states, so selecting one causes no layout shift. */
+.version-picker {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 22px 0 6px;
+}
+.version-picker-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+}
+.version-picker-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.version-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: hsl(var(--ink-soft));
+  text-decoration: none;
+  padding: 4px 10px;
+  border: 1px solid hsl(var(--line));
+  border-radius: 5px;
+  background: hsl(var(--paper));
+}
+.version-pick:hover {
+  border-color: hsl(var(--gold) / 0.5);
+  color: hsl(var(--ink));
+}
+.version-pick.current {
+  color: hsl(var(--gold-dim));
+  border-color: hsl(var(--gold) / 0.5);
+  background: hsl(var(--gold) / 0.08);
+}
+.version-pick-tag {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+}
+.version-pick.current .version-pick-tag {
+  color: hsl(var(--gold-dim));
+}
 .api-op {
   scroll-margin-top: 64px;
   padding: 22px 0 26px;

@@ -361,7 +361,7 @@ ${PAGES.map((p) => `- [${p.title}](${SITE}/${p.md}): ${p.blurb}`).join("\n")}
 
 ## Machine-readable
 
-- [OpenAPI 3.0 spec](${SITE}/openapi.json): the canonical contract — every endpoint, schema, scope, and error
+- [OpenAPI 3.0 spec](${SITE}/openapi.json): the canonical contract — every endpoint, schema, scope, and error. This is the current version; each dated version has its own spec at ${SITE}/openapi/<version>.json.
 - [Full docs in one file](${SITE}/llms-full.txt): all pages above concatenated
 
 ## Optional

@@ -8,15 +8,23 @@
  */
 import { z } from "zod"
 import { resolve, dirname } from "path"
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs"
 import * as prettier from "prettier"
 import { PUBLIC_API_ROUTES, errorSchema } from "../src/features/public-api/routes"
-import { API_VERSIONS, CURRENT_API_VERSION, VERSION_CHANGES } from "../src/features/public-api/versions"
+import {
+  API_VERSIONS,
+  CURRENT_API_VERSION,
+  deriveVersionSpec,
+  VERSION_CHANGES,
+} from "../src/features/public-api/versions"
+import type { ApiVersion, OpenApiSpec } from "../src/features/public-api/versions"
 import { API_KEY_ELIGIBLE_PICKER_SCOPES, THREA_VERSION_HEADER } from "@threa/types"
 
 const REPO_ROOT = resolve(import.meta.dirname!, "../../..")
 const OUTPUT_PATH = resolve(REPO_ROOT, "docs/public-api/openapi.json")
 const CHANGELOG_PATH = resolve(REPO_ROOT, "docs/public-api/CHANGELOG.md")
+const VERSIONS_DIR = resolve(REPO_ROOT, "docs/public-api/versions")
+const versionSpecPath = (version: ApiVersion) => resolve(VERSIONS_DIR, `${version}.json`)
 const CHECK_MODE = process.argv.includes("--check")
 
 // The epoch version predates the version-change machinery, so it has no module
@@ -336,23 +344,51 @@ function buildChangelog(): string {
 // Main
 // ---------------------------------------------------------------------------
 
-const spec = buildSpec()
+const canonical = buildSpec()
 const prettierConfig = await prettier.resolveConfig(OUTPUT_PATH)
-const json = await prettier.format(JSON.stringify(spec), {
-  ...prettierConfig,
-  filepath: OUTPUT_PATH,
-})
+
+const formatJson = (spec: OpenApiSpec, filepath: string) =>
+  prettier.format(JSON.stringify(spec), { ...prettierConfig, filepath })
+
 const changelog = await prettier.format(buildChangelog(), {
   ...prettierConfig,
   filepath: CHANGELOG_PATH,
 })
 
+// The canonical spec (info.version = CURRENT_API_VERSION) stays at the unchanged
+// docs/public-api/openapi.json — external references depend on that path. Each
+// dated version additionally emits docs/public-api/versions/<version>.json,
+// derived from the canonical spec by deriveVersionSpec. Both cover ALL versions
+// in --check, so a stale per-version spec fails pre-commit.
 const outputs = [
-  { path: OUTPUT_PATH, contents: json, label: "OpenAPI spec" },
+  { path: OUTPUT_PATH, contents: await formatJson(canonical, OUTPUT_PATH), label: "OpenAPI spec" },
   { path: CHANGELOG_PATH, contents: changelog, label: "changelog" },
 ]
+for (const version of API_VERSIONS) {
+  const path = versionSpecPath(version)
+  outputs.push({
+    path,
+    contents: await formatJson(deriveVersionSpec(canonical, version), path),
+    label: `OpenAPI spec (${version})`,
+  })
+}
+
+// Any versions/*.json not backed by a current API_VERSIONS entry is stale — a
+// version removed from the registry leaving its file behind. The per-file check
+// above can't see it (it only compares files it emits), so detect it explicitly.
+const expectedVersionFiles = new Set(API_VERSIONS.map((v) => `${v}.json`))
+const orphanVersionFiles = existsSync(VERSIONS_DIR)
+  ? readdirSync(VERSIONS_DIR).filter((f) => f.endsWith(".json") && !expectedVersionFiles.has(f))
+  : []
 
 if (CHECK_MODE) {
+  if (orphanVersionFiles.length > 0) {
+    console.error(
+      `Stale per-version spec(s) in ${VERSIONS_DIR} not in API_VERSIONS: ${orphanVersionFiles.join(", ")}. ` +
+        `Run: bun apps/backend/scripts/generate-api-docs.ts`
+    )
+    process.exit(1)
+  }
   for (const { path, contents, label } of outputs) {
     if (!existsSync(path)) {
       console.error(`${label} not found at ${path}. Run: bun apps/backend/scripts/generate-api-docs.ts`)
@@ -363,10 +399,15 @@ if (CHECK_MODE) {
       process.exit(1)
     }
   }
-  console.log("OpenAPI spec and changelog are up to date.")
+  console.log("OpenAPI spec, per-version specs, and changelog are up to date.")
   process.exit(0)
 }
 
+if (orphanVersionFiles.length > 0) {
+  console.warn(
+    `Warning: ${orphanVersionFiles.join(", ")} in ${VERSIONS_DIR} no longer match API_VERSIONS; remove them by hand.`
+  )
+}
 for (const { path, contents, label } of outputs) {
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, contents)
