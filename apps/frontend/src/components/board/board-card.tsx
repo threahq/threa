@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
+import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { buildBranchedBoardRows } from "@/components/board/board-row-item"
 import { BranchedBoardRows, BranchProvenanceRow } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
@@ -474,6 +475,11 @@ export function BoardCard({
   // surfaces) and identify as the CHILD conversation (copy-link opens its panel).
   const renderBranchMessage = (branch: BranchConversationView, message: RenderableMessage, continuation: boolean) => {
     const canBranch = !structuralIndex.threadsByParentMessageId.has(message.id)
+    // Per-message spine color: a colored actor (persona gold / bot green / system)
+    // overlays its own 2px border onto the branch's neutral rail at that row —
+    // covering it at the same width — while a user row stays plain so the neutral
+    // grouping rail shows. The row's own accent stripe is suppressed either way.
+    const rail = actorRowTheme(message.authorType).railClassName
     return (
       <ConversationReadProvider value={null}>
         <MessageItem
@@ -485,10 +491,8 @@ export function BoardCard({
           continuation={continuation}
           conversationId={branch.conversationId}
           conversationRootStreamId={branch.threadStreamId}
-          // The branch spine (BranchGroup rail) carries the actor color, so the row
-          // suppresses its own accent stripe (no doubled bar) and stays padded
-          // inside the rail — no edge breakout that would paint over the spine.
-          surfaceClassName="bg-card"
+          surfaceClassName={rail ? cn("bg-card border-l-2 px-2 sm:px-3", rail) : "bg-card"}
+          rowInsetClassName={rail ? "-mx-2 sm:-mx-3" : undefined}
           suppressRowAccent
           onNewSubtopic={
             canBranch

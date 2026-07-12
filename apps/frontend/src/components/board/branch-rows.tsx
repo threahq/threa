@@ -16,8 +16,6 @@ import {
 } from "@/components/ui/alert-dialog"
 import { BoardEventRowItem, type BoardRow } from "@/components/board/board-row-item"
 import { isContinuation, type RenderableMessage } from "@/components/message/message-item"
-import { actorRowTheme } from "@/components/message/actor-row-theme"
-import { cn } from "@/lib/utils"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
 
 /** Indent per thread boundary (spanning), applied on a wrapper so the shared
@@ -116,12 +114,6 @@ interface BranchGroupProps {
 export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, renderAfterMessage }: BranchGroupProps) {
   const { getPanelUrl } = usePanel()
   const panelUrl = getPanelUrl(createConversationPanelId(branch.conversationId))
-  // The nested conversation's spine takes its actor's color: the first colored
-  // author in the branch (persona/bot/system) tints the rail, so the whole nested
-  // block reads as theirs. Per-message stripes are suppressed on these rows
-  // (`suppressRowAccent`), so this rail is the single 2px colored bar.
-  const accentActor = branch.messages.find((m) => m.authorType && m.authorType !== "user")?.authorType
-  const railClassName = actorRowTheme(accentActor).railClassName || "border-muted-foreground/25"
   // A pending branch (sub-topic sent, conversation echo not landed) has no real
   // conversation to open yet — its header is inert until the graph takes over.
   const header = (
@@ -142,7 +134,7 @@ export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, ren
           {header}
         </Link>
       )}
-      <div className={cn("mt-1 border-l-2 pl-2 sm:pl-3 [&>*:first-child]:mt-0", railClassName)}>
+      <div className="mt-1 border-l-2 border-muted-foreground/25 pl-2 sm:pl-3 [&>*:first-child]:mt-0">
         {renderBranchMessage &&
           branch.messages.map((message, index) => {
             const prev = index > 0 ? branch.messages[index - 1] : null

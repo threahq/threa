@@ -41,6 +41,7 @@ import { useMoveToSubtopic } from "@/components/board/use-move-to-subtopic"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
 import { useBoardHiddenConversations } from "@/stores/board-exclusions-store"
 import { cn } from "@/lib/utils"
+import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { RelativeTime } from "@/components/relative-time"
@@ -523,6 +524,10 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   // so copy-link opens its panel. Same shape as the board card's.
   const renderBranchMessage = (branch: BranchConversationView, message: RenderableMessage, continuation: boolean) => {
     const canBranch = !structuralIndex.threadsByParentMessageId.has(message.id)
+    // Per-message spine color (persona gold / bot green / system) overlaying the
+    // branch's neutral rail at that row; a user row stays plain so the neutral
+    // grouping rail shows. See the board card's renderBranchMessage.
+    const rail = actorRowTheme(message.authorType).railClassName
     return (
       <ConversationReadProvider value={null}>
         <MessageItem
@@ -534,10 +539,8 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
           continuation={continuation}
           conversationId={branch.conversationId}
           conversationRootStreamId={branch.threadStreamId}
-          // The branch spine (BranchGroup rail) carries the actor color, so the row
-          // suppresses its own accent stripe (no doubled bar) and stays padded
-          // inside the rail — no edge breakout that would paint over the spine.
-          surfaceClassName="bg-background"
+          surfaceClassName={rail ? cn("bg-background border-l-2 px-2 sm:px-3", rail) : "bg-background"}
+          rowInsetClassName={rail ? "-mx-2 sm:-mx-3" : undefined}
           suppressRowAccent
           onNewSubtopic={
             canBranch
