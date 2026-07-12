@@ -12,6 +12,16 @@ export function boardScopeStreamId(stream: { type: StreamType; id: string; rootS
 }
 
 /**
+ * Whether a workspace-relative location is the board surface — bare `/board` OR
+ * a lens segment (`/board/active`). A suffix `endsWith("/board")` check misses
+ * the lens form, which turned the sidebar back to chats mode the moment a lens
+ * was active (caught live; no full-Sidebar mount harness covers the swap).
+ */
+export function isBoardPath(pathname: string): boolean {
+  return /^\/w\/[^/]+\/board(\/[^/]*)?$/.test(pathname)
+}
+
+/**
  * Board-mode descriptor threaded from the sidebar orchestrator into every stream
  * row (board-centered-sidebar-exploration.md § "Click model"). Present only on
  * `/board` with the flag on; `null` everywhere else, and every board branch in a

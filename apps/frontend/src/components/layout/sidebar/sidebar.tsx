@@ -70,7 +70,7 @@ import {
   toggleExcludeSearch,
   toggleIncludeSearch,
 } from "@/components/board/board-filter-params"
-import type { SidebarBoardMode } from "./board-sidebar-mode"
+import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
 import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
 import { StreamTypes, LabelableResourceTypes, type SidebarQuickLinkKey } from "@threa/types"
 
@@ -139,7 +139,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const isSavedPage = splat === "saved" || window.location.pathname.endsWith("/saved")
   const isScheduledPage = splat === "scheduled" || window.location.pathname.includes("/scheduled")
   const isActivityPage = splat === "activity" || window.location.pathname.endsWith("/activity")
-  const isBoardPage = splat === "board" || window.location.pathname.endsWith("/board")
+  // Reactive pathname (useLocation), and a real matcher: /board carries an
+  // optional lens segment, so a suffix check misses /board/active.
+  const isBoardPage = isBoardPath(location.pathname)
   // The Board is gated behind the board-view flag — hide its quick link (and its
   // editor row) for users without it, matching the route + endpoint gates.
   const boardEnabled = useFeatureFlag(workspaceId, "board-view") === "on"
