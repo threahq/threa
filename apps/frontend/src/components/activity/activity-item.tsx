@@ -112,7 +112,14 @@ function renderAvatar(params: {
     )
   }
   if (isPersona) {
-    return <PersonaAvatar slug={actorAvatar.slug} fallback={actorAvatar.fallback} size="md" />
+    return (
+      <PersonaAvatar
+        slug={actorAvatar.slug}
+        avatarUrl={actorAvatar.avatarUrl}
+        fallback={actorAvatar.fallback}
+        size="md"
+      />
+    )
   }
   return (
     <Avatar className="h-8 w-8 rounded-[8px] shrink-0">

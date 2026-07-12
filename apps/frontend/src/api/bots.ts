@@ -1,4 +1,4 @@
-import { api, API_BASE, parseApiError } from "./client"
+import { api, postAvatarUpload } from "./client"
 import type { Bot, BotApiKey, BotTrait, CreateBotApiKeyResponse, WorkspacePermissionSlug } from "@threa/types"
 
 export interface CreateBotInput {
@@ -81,18 +81,8 @@ export const botsApi = {
   },
 
   async uploadAvatar(workspaceId: string, botId: string, file: File): Promise<Bot> {
-    const formData = new FormData()
-    formData.append("avatar", file)
-    const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/bots/${botId}/avatar`, {
-      method: "POST",
-      credentials: "include",
-      body: formData,
-    })
-    if (!response.ok) {
-      throw await parseApiError(response, { code: "AVATAR_UPLOAD_ERROR", message: "Failed to upload avatar" })
-    }
-    const body = await response.json()
-    return body.data
+    const { data } = await postAvatarUpload<{ data: Bot }>(`/api/workspaces/${workspaceId}/bots/${botId}/avatar`, file)
+    return data
   },
 
   async removeAvatar(workspaceId: string, botId: string): Promise<Bot> {

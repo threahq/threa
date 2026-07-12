@@ -56,6 +56,13 @@ export {
   type PersonaManagedBy,
   PERSONA_STATUSES,
   type PersonaStatus,
+  // Persona style slots (tone / brevity presets)
+  TONE_PRESETS,
+  type TonePreset,
+  TonePresets,
+  BREVITY_PRESETS,
+  type BrevityPreset,
+  BrevityPresets,
   // Attachments
   STORAGE_PROVIDERS,
   type StorageProvider,
@@ -315,7 +322,7 @@ export { stripMarkdown, stripMarkdownToInline } from "./markdown-strip"
 export { matchesBoardLens } from "./board-lens"
 
 // Domain entities (wire format)
-export { getAvatarUrl, getBotAvatarUrl } from "./domain"
+export { getAvatarUrl, getBotAvatarUrl, getPersonaAvatarUrl } from "./domain"
 export type {
   Workspace,
   User,
@@ -832,11 +839,19 @@ export {
 export {
   type PersonaModelOption,
   PERSONA_SYSTEM_PROMPT_MAX_CHARS,
+  PERSONA_SLOT_MAX_CHARS,
+  PERSONA_NAME_MAX_CHARS,
+  PERSONA_DESCRIPTION_MAX_CHARS,
+  SYSTEM_PERSONA_EDITABLE_FIELDS,
+  type SystemPersonaEditableField,
   personaConfigPatchSchema,
   type PersonaConfigPatch,
+  personaCustomConfigSchema,
+  type PersonaCustomConfig,
   personaConfigStatusSchema,
   personaResolvedConfigSchema,
   type PersonaResolvedConfig,
+  type PersonaKind,
   type PersonaListItem,
   type PersonaDraftState,
   type PersonaConfigResponse,
@@ -845,6 +860,8 @@ export {
   type PersonaRevisionAuthorKind,
   type RestorePersonaRevisionInput,
   type UpdatePersonaOverrideInput,
+  type ForkPersonaInput,
+  type UpdatePersonaCustomInput,
 } from "./persona-config"
 
 // Feature flags (per-user rollout switches, managed from the backoffice)

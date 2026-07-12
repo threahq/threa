@@ -1,28 +1,33 @@
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
+import { toast } from "sonner"
 import { Link } from "react-router-dom"
-import { Pencil } from "lucide-react"
+import { ChevronDown, Pencil } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { buttonVariants } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
-import { PersonaAvatar } from "@/components/persona-avatar"
-import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
-import { usePersonas } from "@/hooks/use-personas"
+import { PersonaListAvatar } from "@/components/persona-avatar"
+import { useArchivedPersonas, usePersonas, useUnarchivePersona } from "@/hooks/use-personas"
 import { FollowUpLimitSection } from "./follow-up-limit-section"
+import { PersonaForkDialog } from "./persona-fork-dialog"
 
 interface PersonasTabProps {
   workspaceId: string
 }
 
 /**
- * Workspace "AI Agents" settings. Two sections: the editable built-in personas
- * (v1: Ariadne) that link out to the full editor (INV-40 — navigation is a link),
- * and workspace-level assistant behavior knobs. Admin-gated by the dialog's
- * `visibleTabs` filter.
+ * Workspace "AI Agents" settings. The roster merges built-in personas (bounded
+ * editing) and workspace customs (full editing, created by forking) — each links
+ * out to the full editor (INV-40). "New agent" forks a source into a custom.
+ * Archived customs sit behind an Archived disclosure with Unarchive.
+ * Admin-gated by the dialog's `visibleTabs` filter.
  */
 export function PersonasTab({ workspaceId }: PersonasTabProps) {
   const { data: personas, isLoading, isError, refetch } = usePersonas(workspaceId)
-  const { toEmoji } = useWorkspaceEmoji(workspaceId)
+  const { data: archived } = useArchivedPersonas(workspaceId)
+  const unarchive = useUnarchivePersona(workspaceId)
+  const [archivedOpen, setArchivedOpen] = useState(false)
 
   let personaList: ReactNode
   if (isLoading) {
@@ -42,16 +47,13 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
       <ul className="space-y-2">
         {personas.map((persona) => (
           <li key={persona.id} className="flex items-center gap-3 rounded-lg border border-input bg-card p-3">
-            <PersonaAvatar
-              slug={persona.slug}
-              fallback={
-                (persona.avatarEmoji && (toEmoji(persona.avatarEmoji) ?? persona.avatarEmoji)) || persona.name.charAt(0)
-              }
-              size="lg"
-            />
+            <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="truncate text-sm font-medium">{persona.name}</span>
+                {persona.kind === "builtin" && (
+                  <span className="shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">Built-in</span>
+                )}
                 {persona.isCustomized && (
                   <Badge variant="secondary" className="h-4 px-1.5 py-0 text-[11px] font-normal">
                     Customized
@@ -78,14 +80,51 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
   return (
     <div className="space-y-6">
       <div className="space-y-4">
-        <div className="space-y-1">
-          <h3 className="text-sm font-medium">Agents</h3>
-          <p className="text-xs text-muted-foreground">
-            Edit a built-in AI companion&apos;s prompt, model, and tools for this workspace. Changes apply to every
-            stream the agent takes part in.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <h3 className="text-sm font-medium">Agents</h3>
+            <p className="text-xs text-muted-foreground">
+              Built-in companions have bounded editing (tools, model, style); forked custom agents are fully editable.
+              Changes apply to every stream the agent takes part in.
+            </p>
+          </div>
+          {personas && <PersonaForkDialog workspaceId={workspaceId} sources={personas} />}
         </div>
         {personaList}
+
+        {archived && archived.length > 0 && (
+          <Collapsible open={archivedOpen} onOpenChange={setArchivedOpen}>
+            <CollapsibleTrigger className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", archivedOpen && "rotate-180")} />
+              Archived ({archived.length})
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              <ul className="space-y-2">
+                {archived.map((persona) => (
+                  <li
+                    key={persona.id}
+                    className="flex items-center gap-3 rounded-lg border border-dashed border-input p-3"
+                  >
+                    <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
+                    <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{persona.name}</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={unarchive.isPending}
+                      onClick={() =>
+                        unarchive.mutate(persona.id, { onError: () => toast.error("Failed to unarchive agent") })
+                      }
+                    >
+                      Unarchive
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
       </div>
 
       <Separator />

@@ -41,15 +41,34 @@ export class AvatarService {
   }
 
   /**
+   * Upload the raw (unprocessed) image buffer to S3 under an avatar `prefix`
+   * (the subject directory, e.g. `avatars/{ws}/bots/{botId}`). Returns the full
+   * `{prefix}/{timestamp}.original` key. Single home for the raw-key format so
+   * the user/bot/persona variants can't drift {@link rawKeyToBasePath} apart.
+   */
+  private async uploadRawToPrefix(prefix: string, buffer: Buffer): Promise<string> {
+    const key = `${prefix}/${Date.now()}.original`
+    await this.storage.putObject(key, buffer, "application/octet-stream")
+    return key
+  }
+
+  /**
+   * Stream a processed avatar variant under `prefix` if `file` matches the read
+   * pattern, else null. Single home for the pattern gate + key assembly shared by
+   * the user/bot/persona serve endpoints.
+   */
+  private streamProcessed(prefix: string, file: string): Promise<Readable | null> {
+    if (!AvatarService.AVATAR_FILE_PATTERN.test(file)) return Promise.resolve(null)
+    return this.storage.getObjectStream(`${prefix}/${file}`)
+  }
+
+  /**
    * Upload the raw (unprocessed) image buffer to S3 for a user avatar.
    * Returns the S3 key for later retrieval by the worker.
    */
   async uploadRaw(params: { buffer: Buffer; workspaceId: string; userId: string }): Promise<string> {
     const { buffer, workspaceId, userId } = params
-    const timestamp = Date.now()
-    const key = `avatars/${workspaceId}/${userId}/${timestamp}.original`
-    await this.storage.putObject(key, buffer, "application/octet-stream")
-    return key
+    return this.uploadRawToPrefix(`avatars/${workspaceId}/${userId}`, buffer)
   }
 
   /**
@@ -58,10 +77,16 @@ export class AvatarService {
    */
   async uploadRawForBot(params: { buffer: Buffer; workspaceId: string; botId: string }): Promise<string> {
     const { buffer, workspaceId, botId } = params
-    const timestamp = Date.now()
-    const key = `avatars/${workspaceId}/bots/${botId}/${timestamp}.original`
-    await this.storage.putObject(key, buffer, "application/octet-stream")
-    return key
+    return this.uploadRawToPrefix(`avatars/${workspaceId}/bots/${botId}`, buffer)
+  }
+
+  /**
+   * Upload the raw (unprocessed) image buffer to S3 for a custom persona avatar.
+   * Returns the S3 key for later retrieval.
+   */
+  async uploadRawForPersona(params: { buffer: Buffer; workspaceId: string; personaId: string }): Promise<string> {
+    const { buffer, workspaceId, personaId } = params
+    return this.uploadRawToPrefix(`avatars/${workspaceId}/personas/${personaId}`, buffer)
   }
 
   async downloadRaw(rawS3Key: string): Promise<Buffer> {
@@ -95,15 +120,19 @@ export class AvatarService {
    * Returns null if the filename doesn't match the expected pattern.
    */
   async streamAvatarFile(params: { workspaceId: string; userId: string; file: string }): Promise<Readable | null> {
-    if (!AvatarService.AVATAR_FILE_PATTERN.test(params.file)) return null
-    const s3Key = `avatars/${params.workspaceId}/${params.userId}/${params.file}`
-    return this.storage.getObjectStream(s3Key)
+    return this.streamProcessed(`avatars/${params.workspaceId}/${params.userId}`, params.file)
   }
 
   async streamBotAvatarFile(params: { workspaceId: string; botId: string; file: string }): Promise<Readable | null> {
-    if (!AvatarService.AVATAR_FILE_PATTERN.test(params.file)) return null
-    const s3Key = `avatars/${params.workspaceId}/bots/${params.botId}/${params.file}`
-    return this.storage.getObjectStream(s3Key)
+    return this.streamProcessed(`avatars/${params.workspaceId}/bots/${params.botId}`, params.file)
+  }
+
+  async streamPersonaAvatarFile(params: {
+    workspaceId: string
+    personaId: string
+    file: string
+  }): Promise<Readable | null> {
+    return this.streamProcessed(`avatars/${params.workspaceId}/personas/${params.personaId}`, params.file)
   }
 
   /**

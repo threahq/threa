@@ -12,4 +12,6 @@ export * from "./render"
 
 export { spyOnExport } from "./spy"
 
+export { stubImageLoading } from "./image"
+
 // Fixtures live in "@/test/fixtures" for data factories.

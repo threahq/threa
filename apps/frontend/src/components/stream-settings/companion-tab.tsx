@@ -3,6 +3,7 @@ import { toast } from "sonner"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useUpdateCompanionMode } from "@/hooks/use-streams"
+import { usePersonas } from "@/hooks/use-personas"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import {
   CompanionModes,
@@ -11,6 +12,7 @@ import {
   type ToolPrivacyCategory,
   type ToolPrivacyPolicy,
 } from "@threa/types"
+import { CompanionAgentSelect, resolveCompanionSelection } from "./companion-agent-select"
 import { ToolPolicyPicker } from "./tool-policy-picker"
 import { ExternalAgentIndicator } from "./external-agent-indicator"
 import { BriefSection } from "./brief-section"
@@ -42,12 +44,28 @@ export function CompanionTab({
   const isE2e = stream.e2eEnabled === true
   const disabled = isPending
 
+  // The picker (and its roster fetch) is plaintext-only — an encrypted
+  // scratchpad always runs the built-in Ariadne, so don't fire /personas there.
+  const { data: personas } = usePersonas(workspaceId, { enabled: !isE2e })
+
+  const { selectedPersonaId, companionName } = resolveCompanionSelection(personas, stream.companionPersonaId)
+
   const handleChange = async (next: CompanionMode) => {
     if (next === stream.companionMode) return
     try {
-      await updateCompanionMode(next)
+      await updateCompanionMode({ companionMode: next })
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update companion mode"
+      toast.error(message)
+    }
+  }
+
+  const handlePersonaChange = async (personaId: string) => {
+    if (personaId === selectedPersonaId) return
+    try {
+      await updateCompanionMode({ companionMode: stream.companionMode, companionPersonaId: personaId })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update companion agent"
       toast.error(message)
     }
   }
@@ -60,7 +78,8 @@ export function CompanionTab({
         <div className="space-y-1">
           <Label className="text-sm font-medium">Companion mode</Label>
           <p className="text-xs text-muted-foreground">
-            Decide whether Ariadne reads new messages and replies, or whether this scratchpad stays a silent dump.
+            Decide whether {companionName} reads new messages and replies, or whether this scratchpad stays a silent
+            dump.
           </p>
         </div>
         <div
@@ -74,7 +93,7 @@ export function CompanionTab({
             onSelect={() => handleChange(CompanionModes.ON)}
             icon={Sparkles}
             label="Companion"
-            hint="Ariadne reads new messages and replies in the thread"
+            hint={`${companionName} reads new messages and replies in the thread`}
             disabled={disabled}
           />
           <CompanionOption
@@ -87,6 +106,28 @@ export function CompanionTab({
           />
         </div>
       </div>
+
+      {/* Encrypted scratchpads always run the built-in Ariadne in the enclave
+          regardless of the pointer, so the persona picker is plaintext-only. */}
+      {!isE2e && personas && personas.length > 0 && (
+        <div className="space-y-2">
+          <div className="space-y-1">
+            <Label className="text-sm font-medium">Companion agent</Label>
+            <p className="text-xs text-muted-foreground">
+              Which agent replies here. Threads inherit this scratchpad&apos;s agent — sessions already running keep
+              their agent; new sessions use this selection.
+            </p>
+          </div>
+          <CompanionAgentSelect
+            workspaceId={workspaceId}
+            personas={personas}
+            value={selectedPersonaId}
+            onChange={handlePersonaChange}
+            disabled={disabled}
+            triggerClassName="w-full sm:w-72"
+          />
+        </div>
+      )}
 
       {isE2e && (
         <p className="text-xs text-muted-foreground">

@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react"
 import {
   getAvatarUrl,
   getBotAvatarUrl,
+  getPersonaAvatarUrl,
   resolveActiveStatus,
   resolveNotificationPause,
   type ActiveNotificationPause,
@@ -132,6 +133,8 @@ export function useActors(workspaceId: string): ActorLookup {
 
       if (actorType === "persona" && actorId) {
         const persona = personaMap.get(actorId)
+        const avatarUrl = getPersonaAvatarUrl(workspaceId, persona?.avatarUrl, 64)
+        if (avatarUrl) return { fallback, slug: persona?.slug, avatarUrl }
         return { fallback, slug: persona?.slug }
       }
 

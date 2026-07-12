@@ -294,6 +294,31 @@ export type PersonaManagedBy = (typeof PERSONA_MANAGED_BY)[number]
 export const PERSONA_STATUSES = ["pending", "active", "disabled", "archived"] as const
 export type PersonaStatus = (typeof PERSONA_STATUSES)[number]
 
+// Persona style slots (roadmap 7.1). Two orthogonal aspects of response style
+// an admin sets on a persona: TONE (how it sounds) and BREVITY (how long it
+// goes). Built-in personas pick a preset; each preset maps to an authored
+// prompt fragment (backend-only, in features/agents/companion/config.ts) that
+// replaces that aspect's default guidance in the `## Response Style` section.
+// Custom personas carry free-text slot content instead of a preset key. No DB
+// enum (INV-3) — TEXT validated in app code.
+export const TONE_PRESETS = ["warm", "neutral", "direct"] as const
+export type TonePreset = (typeof TONE_PRESETS)[number]
+
+export const TonePresets = {
+  WARM: "warm",
+  NEUTRAL: "neutral",
+  DIRECT: "direct",
+} as const satisfies Record<string, TonePreset>
+
+export const BREVITY_PRESETS = ["brief", "balanced", "thorough"] as const
+export type BrevityPreset = (typeof BREVITY_PRESETS)[number]
+
+export const BrevityPresets = {
+  BRIEF: "brief",
+  BALANCED: "balanced",
+  THOROUGH: "thorough",
+} as const satisfies Record<string, BrevityPreset>
+
 export const STORAGE_PROVIDERS = ["s3"] as const
 export type StorageProvider = (typeof STORAGE_PROVIDERS)[number]
 

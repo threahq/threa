@@ -32,40 +32,40 @@ Two concurrent efforts share primitives with this work; steps below reference th
 
 ## Status
 
-| Step | Deliverable                                              | Status | PR    |
-| ---- | -------------------------------------------------------- | ------ | ----- |
-| 1.1  | `schedule_follow_up` tool + follow-up infra              | ☑      | #1138 |
-| 1.2  | Follow-up turn invocation (context + prompt)             | ☑      | #1142 |
-| 1.3  | Follow-up visibility: timeline card + cancel             | ☑      | #1176 |
-| 1.4  | Configurable follow-up limits (workspace setting)        | ☑      | #1223 |
-| 1.5  | Turn-purpose consolidation (invocation variants)         | ☑      | #1155 |
-| 1.6  | Follow-up admin tools (list/cancel/update)               | ☑      | #1159 |
-| 2.1  | Generalized session abort                                | ☑      | #1177 |
-| 2.2  | Stop/Redirect affordances on the activity card           | ☑      | #1190 |
-| 2.3  | Per-turn model resolution + first escalation rule        | ☑      | #1202 |
-| 3.1  | Persisted episode summaries                              | ☑      | #1162 |
-| 3.2  | Per-thread session concurrency                           | ☑      | #1167 |
-| 3.3  | Conversation-anchored agent replies                      | ☑      | #1170 |
-| 4.1  | `stream_briefs` storage + endpoints + injection          | ☑      | #1214 |
-| 4.2  | `update_stream_brief` tool + timeline event              | ☑      | #1220 |
-| 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2)    | ☑      | #1218 |
-| 4.4  | Brief correction eval                                    | ☑      | #1289 |
-| 5.1  | `delegate_task` tool + delegation substrate + INV-65     | ☑      | #1261 |
-| 5.2  | Delegation card UI                                       | ☑      | #1261 |
-| 5.3  | Delegation public API (claim/status/complete)            | ☑      | #1272 |
-| 5.4  | claude-code-remote delegation support                    | ☐      |       |
-| 5.5  | `@threa/mcp` server                                      | ☐      |       |
-| 6.1  | Memo edit/archive endpoints + explorer UI                | ☑      | #1246 |
-| 6.2  | `save_memo` tool                                         | ☑      | #1260 |
-| 6.3  | Reflective capture at session completion                 | ☑      | #1273 |
-| 6.4  | `memoScope` (user/stream/workspace)                      | ☑      | #1286 |
-| 6.5  | Retrieval feedback decay                                 | ☐      |       |
-| 6.6  | Agent-memo safety: read-time provenance + type allowlist | ☑      | #1277 |
-| 7.1  | Workspace persona config API + editor (partial: Ariadne) | ☑      | #1285 |
-| 7.2  | Persona picker UI                                        | 🔒     | local |
-| 8.1  | Ambient classifier on settled conversations              | ☐      |       |
-| 8.2  | "Ariadne noticed" card + budget + toggle                 | ☐      |       |
-| 8.3  | Ambient precision eval                                   | ☐      |       |
+| Step | Deliverable                                                                    | Status | PR             |
+| ---- | ------------------------------------------------------------------------------ | ------ | -------------- |
+| 1.1  | `schedule_follow_up` tool + follow-up infra                                    | ☑      | #1138          |
+| 1.2  | Follow-up turn invocation (context + prompt)                                   | ☑      | #1142          |
+| 1.3  | Follow-up visibility: timeline card + cancel                                   | ☑      | #1176          |
+| 1.4  | Configurable follow-up limits (workspace setting)                              | ☑      | #1223          |
+| 1.5  | Turn-purpose consolidation (invocation variants)                               | ☑      | #1155          |
+| 1.6  | Follow-up admin tools (list/cancel/update)                                     | ☑      | #1159          |
+| 2.1  | Generalized session abort                                                      | ☑      | #1177          |
+| 2.2  | Stop/Redirect affordances on the activity card                                 | ☑      | #1190          |
+| 2.3  | Per-turn model resolution + first escalation rule                              | ☑      | #1202          |
+| 3.1  | Persisted episode summaries                                                    | ☑      | #1162          |
+| 3.2  | Per-thread session concurrency                                                 | ☑      | #1167          |
+| 3.3  | Conversation-anchored agent replies                                            | ☑      | #1170          |
+| 4.1  | `stream_briefs` storage + endpoints + injection                                | ☑      | #1214          |
+| 4.2  | `update_stream_brief` tool + timeline event                                    | ☑      | #1220          |
+| 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2)                          | ☑      | #1218          |
+| 4.4  | Brief correction eval                                                          | ☑      | #1289          |
+| 5.1  | `delegate_task` tool + delegation substrate + INV-65                           | ☑      | #1261          |
+| 5.2  | Delegation card UI                                                             | ☑      | #1261          |
+| 5.3  | Delegation public API (claim/status/complete)                                  | ☑      | #1272          |
+| 5.4  | claude-code-remote delegation support                                          | ☐      |                |
+| 5.5  | `@threa/mcp` server                                                            | ☐      |                |
+| 6.1  | Memo edit/archive endpoints + explorer UI                                      | ☑      | #1246          |
+| 6.2  | `save_memo` tool                                                               | ☑      | #1260          |
+| 6.3  | Reflective capture at session completion                                       | ☑      | #1273          |
+| 6.4  | `memoScope` (user/stream/workspace)                                            | ☑      | #1286          |
+| 6.5  | Retrieval feedback decay                                                       | ☐      |                |
+| 6.6  | Agent-memo safety: read-time provenance + type allowlist                       | ☑      | #1277          |
+| 7.1  | Workspace persona config API + editor (bounded built-ins + fork-based customs) | ☑      | #1285, Phase B |
+| 7.2  | Persona picker UI                                                              | ☑      | Phase B        |
+| 8.1  | Ambient classifier on settled conversations                                    | ☐      |                |
+| 8.2  | "Ariadne noticed" card + budget + toggle                                       | ☐      |                |
+| 8.3  | Ambient precision eval                                                         | ☐      |                |
 
 Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and 8 strictly last (it depends on 1, 1.5, and 4). Pull **3.1 forward to right after Phase 1** — fired follow-up turns consume episode summaries (see 3.1), and until it lands the 1.2 prompt hint is compensating for their absence.
 
@@ -683,13 +683,25 @@ Code-complete backend machinery (`applyBuiltInAgentPatch`, `agent_config_overrid
 - **Second follow-up round (#1287 + revisions):**
   - **The "Personas" tab is "AI Agents"** (tab id `ai-agents`, with a `personas → ai-agents` param alias mirroring `members → users`), and the workspace follow-up-limit knob (was buried in the General tab, §1.4) moved here as an "Assistant behavior" section — the tab is now a small grouping, not a single-purpose launcher. Ariadne's list row renders through `PersonaAvatar` (so her `AriadneIcon` shows instead of the `:thread:` emoji, matching every other surface). New admin-gated "AI Agents settings" quick-switcher command. Editor gained a General-research help tooltip and a "View default" popover on a customized system prompt.
   - **Config revision history (view + restore).** Unlike `stream_brief_revisions` (write-only, no read/restore surface), this ships the full loop: `persona_config_revisions` (append-only, `acrev_` ULID, JSONB patch, monotonic `version` derived `MAX+1` inside `setOverride`'s transaction — race-safe because the override upsert's `FOR UPDATE` lock serializes concurrent `(workspace, agent)` writers), a revision captured on every accepted `setOverride` (INV-7), `GET …/revisions` (admin, cap 50) and `POST …/revisions/:id/restore` (admin) where restore re-commits the old patch through `setOverride` whole (never destructive — it appends a new revision). A schema-drifted revision returns 422 `PERSONA_REVISION_INCOMPATIBLE`, not a raw 500. The editor's History panel (`PersonaHistoryPanel`) lists revisions newest-first with a "Current" badge, who/when, and a per-revision "Changed: …" field summary; Restore confirms via AlertDialog and reuses the save's amber conflict banner on 409.
-  - **Deferred:** persona avatar-**image** upload (Ariadne renders her icon; the bots `avatar_url` pattern only has a target once custom workspace agents exist — building it now is dead UI, INV-36).
+  - **Deferred:** persona avatar-**image** upload (Ariadne renders her icon; the bots `avatar_url` pattern only has a target once custom workspace agents exist — building it now is dead UI, INV-36). **Now shipped in Phase B** (custom agents exist).
+
+**Phase B — bounded built-ins + fork-based customs (shipped, supersedes the v1 "Ariadne only" model):**
+
+The product model changed: system built-ins are bounded, and full editing moved to workspace-owned customs created by forking. This retires the "v1 edits Ariadne only / no create/archive" and "no `status` field" deviations above.
+
+- **System built-ins (Ariadne) are bounded.** Editable = toolset + model + a **Tone preset** + a **Brevity preset**. Name/slug/description/avatar/systemPrompt/escalationModel/temperature/maxTokens are server-locked for `managed_by='system'`: `setOverride`/`saveDraft` reject any patch key outside `SYSTEM_PERSONA_EDITABLE_FIELDS` with 400 `PERSONA_FIELD_LOCKED` (resolution stays permissive so legacy override rows still apply). The restricted editor renders the system prompt **read-only** (collapsible `MarkdownContent`), so the free-form prompt field no longer exists for a built-in.
+- **Style slots.** `TONE_PRESETS`/`BREVITY_PRESETS` enums (`packages/types`); each preset maps to an authored prompt fragment (`TONE_PRESET_FRAGMENTS`/`BREVITY_PRESET_FRAGMENTS` in `companion/config.ts`, shared with evals per INV-44). `buildSystemPrompt` gained one optional `styleSlots` param; an unset slot keeps today's `## Response Style` text verbatim (byte-identical prompts for the unset case), a set slot replaces its aspect. Both callers pass it (`companion/context.ts` and `enclave-system-prompt.ts` — enclave parity). Customs store free-text `tone_prompt`/`brevity_prompt` instead of preset keys; a fork materializes the source preset into that text.
+- **Custom workspace personas = fork ("copy then edit").** `POST …/personas { sourcePersonaId, name }` (admin) inserts a `managed_by='workspace'` row (race-safe slug via the `(workspace_id, slug)` unique constraint + 23505 retry, INV-20), copies the resolved source config, materializes slots, and writes revision v1 in the same txn. `PUT …/personas/:id` full-field update with OCC (409 `PERSONA_OVERRIDE_CONFLICT`); `POST …/archive` + `/unarchive` status flips. Full editing: name, description, avatar (emoji **and** image upload, bots pattern), free-form system prompt (`RichEditor`), free-text tone/brevity slots, tools, model, escalationModel, temperature, maxTokens. New migration adds `escalation_model`, `avatar_url`, `tone_prompt`, `brevity_prompt` (append-only, INV-17). The 9 built-in-only gates collapsed to one `resolveEditablePersona` resolver (`{ kind: "builtin" | "custom" }`); drafts, test-drive, and revisions generalize to any persona id.
+- **Avatar images (custom only).** `AvatarService` persona namespace mirroring the bot flow (upload/serve/remove, sharp-processed `.256`/`.64` webp); `avatarUrl` flows through the list item, resolved config, and bootstrap; `getPersonaAvatarUrl` next to `getBotAvatarUrl`. Ariadne keeps her SVG icon.
+- **Picker shipped (this is 7.2).** `companion-tab.tsx` (and the compact `agent-settings-panel.tsx`) gained a shared `CompanionAgentSelect` fed by the merged roster; it writes `companionPersonaId` through the existing `updateCompanionMode` (now validated: persona exists, active, built-in-or-this-workspace → 400 `PERSONA_NOT_AVAILABLE`). Threads inherit the root scratchpad's agent; a stream pointing at an archived custom degrades to Ariadne at dispatch.
+- **Targeted persona-style evals.** A dedicated `persona-style` suite runs the real `PersonaAgent.run` under preset permutations: deterministic word-count ordering across brevity presets + an LLM tone judge, importing the same fragment maps as production (INV-45). Run targeted (`-s persona-style`), not the full companion suite.
+- **Deliberately OUT (documented):** E2E/enclave support for **custom** personas — the enclave stays Ariadne-only (it hardcodes `ARIADNE_AGENT_ID`); an encrypted scratchpad's companion picker is hidden and Ariadne runs in the enclave regardless of the pointer. Researcher tool-limiting and `memoScope` work are out of this slice.
 
 ### 7.2 Persona picker UI
 
 **Goal:** choose the companion per stream; make first-party personas and external bots legible in one place.
 
-> The **workspace persona editor** half of this phase (the settings-page editor linked from the companion tab) shipped early with 7.1 (#1285) — see its Deviations block. What remains here is the per-stream persona _picker_ in `companion-tab.tsx`.
+> **Shipped (Phase B).** The workspace persona editor landed early with 7.1 (#1285); the per-stream picker in `companion-tab.tsx` shipped in Phase B — see the "Phase B" block under 7.1 for the full shape (shared `CompanionAgentSelect`, validated `companionPersonaId` write, thread inheritance, archived-pointer fallback).
 
 > **🔒 Claimed locally (2026-07-12, Kris):** the persona editor is being revamped in a local working thread, and the persona roster/picker follows locally once the editor lands. **Do not pick this step up from a remote/parallel session** — coordinate with Kris first. Remove this note when the local work merges.
 

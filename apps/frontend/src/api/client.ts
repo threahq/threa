@@ -46,6 +46,26 @@ export async function parseApiError(
  */
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ""
 
+/**
+ * Multipart avatar upload (bots and personas). The shared `apiFetch` forces a
+ * JSON content-type, which would clobber the multipart boundary the browser must
+ * set for a `FormData` body — so this posts the form directly and returns the
+ * parsed JSON for the caller to project onto its own response shape.
+ */
+export async function postAvatarUpload<T>(path: string, file: File): Promise<T> {
+  const formData = new FormData()
+  formData.append("avatar", file)
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  })
+  if (!response.ok) {
+    throw await parseApiError(response, { code: "AVATAR_UPLOAD_ERROR", message: "Failed to upload avatar" })
+  }
+  return (await response.json()) as T
+}
+
 // Bound every request so a flaky/slow network can't leave a fetch hanging
 // forever — background revalidations must settle (to cached state) instead of
 // piling up. Generous because it's a safety net, not a latency budget;

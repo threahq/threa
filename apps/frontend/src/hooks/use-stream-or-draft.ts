@@ -220,6 +220,7 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
           type: StreamTypes.SCRATCHPAD,
           displayName: draftData?.displayName ?? undefined,
           companionMode,
+          companionPersonaId: draftData?.companionPersonaId,
           allowedToolCategories: draftData?.allowedToolCategories,
         },
         draftId: streamId,

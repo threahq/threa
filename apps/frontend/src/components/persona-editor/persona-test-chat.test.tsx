@@ -37,12 +37,17 @@ function resolved(): PersonaResolvedConfig {
     name: "Ariadne",
     description: null,
     avatarEmoji: ":thread:",
+    avatarUrl: null,
     systemPrompt: "You are Ariadne.",
     model: "openrouter:anthropic/claude-sonnet-4.6",
     escalationModel: null,
     temperature: null,
     maxTokens: null,
     enabledTools: ["send_message"],
+    tonePreset: null,
+    brevityPreset: null,
+    tonePrompt: null,
+    brevityPrompt: null,
     managedBy: "system",
     status: "active",
     visibility: "visible",
@@ -53,6 +58,7 @@ function resolved(): PersonaResolvedConfig {
 function config(testStreamId: string | null): PersonaConfigResponse {
   const r = resolved()
   return {
+    kind: "builtin",
     defaults: r,
     overridePatch: null,
     overrideUpdatedAt: null,

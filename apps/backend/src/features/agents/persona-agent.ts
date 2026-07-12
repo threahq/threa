@@ -351,7 +351,11 @@ export class PersonaAgent {
       let persona: Persona | null = null
       if (purpose.kind === "draft_test") {
         const draft = await PersonaConfigDraftRepository.findById(client, workspaceId, purpose.draftId)
-        persona = resolveDraftTestPersona(draft, personaId, workspaceId)
+        // The draft applies over the saved persona — built-in defaults or the
+        // custom row; `customBase` supplies the row for a custom (ignored for a
+        // built-in). A gone/corrupt draft resolves to the saved base.
+        const savedBase = await PersonaRepository.findById(client, personaId, workspaceId)
+        persona = resolveDraftTestPersona(draft, personaId, workspaceId, savedBase) ?? savedBase
       }
       if (!persona) {
         persona = await PersonaRepository.findById(client, personaId, workspaceId)

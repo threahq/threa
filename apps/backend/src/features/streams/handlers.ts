@@ -770,7 +770,7 @@ export function createStreamHandlers({
         return res.status(403).json({ error: "Not a member of this stream" })
       }
 
-      const updated = await streamService.updateCompanionMode(streamId, companionMode, companionPersonaId)
+      const updated = await streamService.updateCompanionMode(streamId, workspaceId, companionMode, companionPersonaId)
 
       res.json({ stream: updated })
     },

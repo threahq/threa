@@ -1,10 +1,17 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
-import type { PersonaConfigPatch, PersonaConfigResponse, PersonaListItem } from "@threa/types"
+import type {
+  PersonaConfigPatch,
+  PersonaConfigResponse,
+  PersonaCustomConfig,
+  PersonaKind,
+  PersonaListItem,
+} from "@threa/types"
 import { personasApi } from "@/api"
 
 export const personaKeys = {
   all: ["personas"] as const,
   list: (workspaceId: string) => [...personaKeys.all, "list", workspaceId] as const,
+  archived: (workspaceId: string) => [...personaKeys.all, "archived", workspaceId] as const,
   config: (workspaceId: string, personaId: string) => [...personaKeys.all, "config", workspaceId, personaId] as const,
   revisions: (workspaceId: string, personaId: string) =>
     [...personaKeys.all, "revisions", workspaceId, personaId] as const,
@@ -32,7 +39,8 @@ function applyCommittedOverride(
           ...old,
           overridePatch: committed.patch,
           overrideUpdatedAt: committed.updatedAt,
-          resolved: { ...old.defaults, ...committed.patch },
+          // Built-in commit path (defaults always present); customs get their own updater later.
+          resolved: { ...old.defaults!, ...committed.patch },
           draft: null,
         }
       : old
@@ -43,12 +51,79 @@ function applyCommittedOverride(
   void queryClient.invalidateQueries({ queryKey: personaKeys.revisions(workspaceId, personaId) })
 }
 
+/**
+ * The single committed-write cache reconcile for a CUSTOM persona (shared by Save
+ * and Restore): the full config becomes the saved baseline (resolved = the config
+ * merged over identity fields), the draft clears, `overrideUpdatedAt` advances to
+ * the new row token, the list row adopts the returned persona, and the revisions
+ * list is invalidated. The custom analogue of {@link applyCommittedOverride} — a
+ * custom has no defaults baseline, so it writes the whole config rather than a
+ * defaults-plus-patch merge.
+ */
+function applyCommittedCustom(
+  queryClient: QueryClient,
+  workspaceId: string,
+  personaId: string,
+  committed: { config: PersonaCustomConfig; updatedAt: string | null; persona: PersonaListItem }
+) {
+  queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
+    old
+      ? {
+          ...old,
+          overridePatch: null,
+          overrideUpdatedAt: committed.updatedAt,
+          resolved: { ...old.resolved, ...committed.config },
+          draft: null,
+        }
+      : old
+  )
+  queryClient.setQueryData<PersonaListItem[]>(personaKeys.list(workspaceId), (old) =>
+    old?.map((persona) => (persona.id === personaId ? committed.persona : persona))
+  )
+  void queryClient.invalidateQueries({ queryKey: personaKeys.revisions(workspaceId, personaId) })
+}
+
+/**
+ * Adopt a custom persona's new avatar (upload/remove): patch the list row, the
+ * config's resolved avatarUrl, AND the OCC token — the row's updated_at bumped,
+ * so a Save asserting the stale token inside the broadcast-refetch window would
+ * 409 spuriously.
+ */
+function applyCustomAvatar(
+  queryClient: QueryClient,
+  workspaceId: string,
+  personaId: string,
+  persona: PersonaListItem,
+  updatedAt: string
+) {
+  queryClient.setQueryData<PersonaListItem[]>(personaKeys.list(workspaceId), (old) =>
+    old?.map((p) => (p.id === personaId ? persona : p))
+  )
+  queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
+    old ? { ...old, overrideUpdatedAt: updatedAt, resolved: { ...old.resolved, avatarUrl: persona.avatarUrl } } : old
+  )
+}
+
+/** Insert a row into a persona list cache if absent (fork adds an active custom; archive adds to the archived list). */
+function upsertIntoList(queryClient: QueryClient, key: readonly unknown[], persona: PersonaListItem) {
+  queryClient.setQueryData<PersonaListItem[]>(key, (old) => {
+    const base = old ?? []
+    if (base.some((p) => p.id === persona.id)) return base.map((p) => (p.id === persona.id ? persona : p))
+    return [...base, persona]
+  })
+}
+
+/** Remove a row from a persona list cache by id (archive drops from active; unarchive drops from archived). */
+function removeFromList(queryClient: QueryClient, key: readonly unknown[], personaId: string) {
+  queryClient.setQueryData<PersonaListItem[]>(key, (old) => old?.filter((p) => p.id !== personaId))
+}
+
 /** Member-visible persona list (no systemPrompt). Powers the settings tab. */
-export function usePersonas(workspaceId: string) {
+export function usePersonas(workspaceId: string, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: personaKeys.list(workspaceId),
     queryFn: () => personasApi.list(workspaceId),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && (opts?.enabled ?? true),
     staleTime: 30_000,
   })
 }
@@ -91,7 +166,7 @@ export function useRevisions(workspaceId: string, personaId: string, options?: {
  * `patch` rides on the input so the cache write reflects the restored config
  * without a refetch.
  */
-export function useRestoreRevision(workspaceId: string, personaId: string) {
+export function useRestoreRevision(workspaceId: string, personaId: string, kind: PersonaKind) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: { revisionId: string; patch: PersonaConfigPatch; expectedUpdatedAt: string | null }) =>
@@ -99,6 +174,16 @@ export function useRestoreRevision(workspaceId: string, personaId: string) {
         expectedUpdatedAt: input.expectedUpdatedAt,
       }),
     onSuccess: (result, input) => {
+      if (kind === "custom") {
+        // A custom revision's `patch` is the full config snapshot; the server
+        // re-commits it through the custom update path (a new revision).
+        applyCommittedCustom(queryClient, workspaceId, personaId, {
+          config: input.patch as PersonaCustomConfig,
+          updatedAt: result.updatedAt,
+          persona: result.persona,
+        })
+        return
+      }
       applyCommittedOverride(queryClient, workspaceId, personaId, {
         patch: input.patch,
         updatedAt: result.updatedAt,
@@ -182,5 +267,96 @@ export function useDiscardPersonaDraft(workspaceId: string, personaId: string) {
         old ? { ...old, draft: null } : old
       )
     },
+  })
+}
+
+/**
+ * Fork a source persona into a new workspace custom. On success the new custom
+ * lands in the active roster cache immediately (so the roster reflects it before
+ * the broadcast-driven refetch); the caller navigates to its editor.
+ */
+export function useForkPersona(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { sourcePersonaId: string | null; name: string }) => personasApi.fork(workspaceId, input),
+    onSuccess: (persona) => {
+      upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)
+    },
+  })
+}
+
+/**
+ * Commit a custom persona's full config. The caller handles a
+ * `PERSONA_OVERRIDE_CONFLICT` inline (INV-63); on success the config becomes the
+ * saved baseline, the draft clears, and the revisions list refreshes — the shared
+ * {@link applyCommittedCustom}.
+ */
+export function useUpdatePersonaCustom(workspaceId: string, personaId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { config: PersonaCustomConfig; expectedUpdatedAt: string | null }) =>
+      personasApi.updateCustom(workspaceId, personaId, input),
+    onSuccess: (result, input) => {
+      applyCommittedCustom(queryClient, workspaceId, personaId, {
+        config: input.config,
+        updatedAt: result.updatedAt,
+        persona: result.persona,
+      })
+    },
+  })
+}
+
+/** Archive a custom persona: drop it from the active roster and move it to the archived list (Unarchive-able). */
+export function useArchivePersona(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (personaId: string) => personasApi.archive(workspaceId, personaId),
+    onSuccess: (persona) => {
+      removeFromList(queryClient, personaKeys.list(workspaceId), persona.id)
+      upsertIntoList(queryClient, personaKeys.archived(workspaceId), persona)
+    },
+  })
+}
+
+/** Restore an archived custom persona to the active roster. */
+export function useUnarchivePersona(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (personaId: string) => personasApi.unarchive(workspaceId, personaId),
+    onSuccess: (persona) => {
+      removeFromList(queryClient, personaKeys.archived(workspaceId), persona.id)
+      upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)
+    },
+  })
+}
+
+/**
+ * Archived custom personas (admin fetch). The archive/unarchive mutations also
+ * write this cache directly so the disclosure updates without a refetch; the
+ * fetch makes it durable across reloads.
+ */
+export function useArchivedPersonas(workspaceId: string) {
+  return useQuery({
+    queryKey: personaKeys.archived(workspaceId),
+    queryFn: () => personasApi.listArchived(workspaceId),
+    enabled: !!workspaceId,
+  })
+}
+
+/** Upload a custom persona's avatar image; the list row and config resolved avatar adopt it. */
+export function useUploadPersonaAvatar(workspaceId: string, personaId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => personasApi.uploadAvatar(workspaceId, personaId, file),
+    onSuccess: ({ persona, updatedAt }) => applyCustomAvatar(queryClient, workspaceId, personaId, persona, updatedAt),
+  })
+}
+
+/** Remove a custom persona's avatar image (falls back to emoji/initials). */
+export function useRemovePersonaAvatar(workspaceId: string, personaId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => personasApi.removeAvatar(workspaceId, personaId),
+    onSuccess: ({ persona, updatedAt }) => applyCustomAvatar(queryClient, workspaceId, personaId, persona, updatedAt),
   })
 }

@@ -245,6 +245,8 @@ export interface CachedPersona {
   name: string
   description: string | null
   avatarEmoji: string | null
+  /** Base path of an uploaded custom-persona avatar image, or null (built-ins never carry one). */
+  avatarUrl: string | null
   systemPrompt: string | null
   model: string
   temperature: number | null
@@ -261,6 +263,8 @@ export interface PendingStreamCreation {
   type: StreamType
   displayName?: string
   companionMode?: CompanionMode
+  /** Companion persona chosen on the draft; threaded into the create request. */
+  companionPersonaId?: string
   parentStreamId?: string
   parentMessageId?: string
   /** At-creation tool policy carried from the draft; threaded into the create request. */
@@ -411,6 +415,12 @@ export interface DraftScratchpad {
    * enclave "not yet" gating never applies here.
    */
   allowedToolCategories?: ToolPrivacyPolicy
+  /**
+   * Companion persona chosen before the scratchpad is server-created.
+   * `undefined` = default (Ariadne); threaded into the create request when the
+   * first message promotes the draft.
+   */
+  companionPersonaId?: string
   createdAt: number
 }
 

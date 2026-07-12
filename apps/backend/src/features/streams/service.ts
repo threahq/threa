@@ -51,7 +51,7 @@ import {
   type AuthorType,
   type DescriptionSetEventPayload,
 } from "@threa/types"
-import { ContextBagRepository } from "../agents"
+import { ContextBagRepository, PersonaRepository } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
@@ -731,9 +731,21 @@ export class StreamService {
 
   async updateCompanionMode(
     streamId: string,
+    workspaceId: string,
     companionMode: CompanionMode,
     companionPersonaId?: string | null
   ): Promise<Stream> {
+    // Setting a companion persona must resolve to an active persona visible to
+    // this workspace (a built-in or a workspace custom). `null` clears it and
+    // `undefined` leaves it unchanged — both skip validation. An archived/foreign
+    // persona is a 400 rather than a silent pointer to a persona that degrades to
+    // Ariadne at dispatch.
+    if (companionPersonaId != null) {
+      const persona = await PersonaRepository.findById(this.pool, companionPersonaId, workspaceId)
+      if (!persona || persona.status !== "active") {
+        throw new HttpError("Persona not available", { status: 400, code: "PERSONA_NOT_AVAILABLE" })
+      }
+    }
     return withTransaction(this.pool, async (client) => {
       const stream = await StreamRepository.update(client, streamId, {
         companionMode,

@@ -7,6 +7,7 @@ import { StreamEventRepository } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
+import { PersonaRepository } from "../agents"
 import { MessageRepository } from "../messaging"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import { EnclaveRuntimesRepository } from "../enclave-runtimes"
@@ -1690,5 +1691,49 @@ describe("StreamService.createScratchpadInTransaction description", () => {
     )
 
     expect(mockInsertEvent).not.toHaveBeenCalled()
+  })
+})
+
+describe("StreamService.updateCompanionMode persona validation", () => {
+  let service: StreamService
+  const mockPersonaFindById = spyOn(PersonaRepository, "findById")
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockUpdate.mockReset()
+    mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
+    mockInsertOutbox.mockClear()
+    mockInsertOutbox.mockResolvedValue({} as never)
+    mockPersonaFindById.mockReset()
+  })
+
+  test("rejects a companionPersonaId that resolves to no active persona", async () => {
+    mockPersonaFindById.mockResolvedValue(null)
+    await expect(service.updateCompanionMode("stream_1", "ws_1", "on", "persona_gone")).rejects.toMatchObject({
+      status: 400,
+      code: "PERSONA_NOT_AVAILABLE",
+    })
+    expect(mockUpdate).not.toHaveBeenCalled()
+  })
+
+  test("rejects an archived persona", async () => {
+    mockPersonaFindById.mockResolvedValue({ id: "persona_x", status: "archived" } as never)
+    await expect(service.updateCompanionMode("stream_1", "ws_1", "on", "persona_x")).rejects.toMatchObject({
+      status: 400,
+      code: "PERSONA_NOT_AVAILABLE",
+    })
+  })
+
+  test("accepts an active persona and writes", async () => {
+    mockPersonaFindById.mockResolvedValue({ id: "persona_x", status: "active" } as never)
+    await service.updateCompanionMode("stream_1", "ws_1", "on", "persona_x")
+    expect(mockUpdate).toHaveBeenCalled()
+    expect(mockPersonaFindById).toHaveBeenCalledWith(expect.anything(), "persona_x", "ws_1")
+  })
+
+  test("clearing (null) skips persona validation", async () => {
+    await service.updateCompanionMode("stream_1", "ws_1", "off", null)
+    expect(mockPersonaFindById).not.toHaveBeenCalled()
+    expect(mockUpdate).toHaveBeenCalled()
   })
 })

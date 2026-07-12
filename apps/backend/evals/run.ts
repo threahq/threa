@@ -20,6 +20,7 @@ import { multimodalVisionSuite } from "./suites/multimodal-vision/suite"
 import { memoClassifierSuite } from "./suites/memo-classifier/suite"
 import { memorizerSuite } from "./suites/memorizer/suite"
 import { briefCorrectionSuite } from "./suites/brief-correction/suite"
+import { personaStyleSuite } from "./suites/persona-style/suite"
 import { isConfigFilePath } from "./framework/config-loader"
 
 // All available suites
@@ -31,6 +32,7 @@ const allSuites = [
   memoClassifierSuite,
   memorizerSuite,
   briefCorrectionSuite,
+  personaStyleSuite,
 ]
 
 function printHelp(): void {

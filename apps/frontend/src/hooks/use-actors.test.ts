@@ -56,6 +56,7 @@ function createPersona(overrides: Partial<Persona> & { _cachedAt?: number } = {}
     name: "Test Persona",
     description: null,
     avatarEmoji: null,
+    avatarUrl: null,
     systemPrompt: null,
     model: "claude-sonnet-4-20250514",
     temperature: null,
@@ -246,6 +247,36 @@ describe("useActors", () => {
         wrapper: createTestWrapper(queryClient),
       })
       expect(result.current.getPersona("nonexistent")).toBeUndefined()
+    })
+  })
+
+  describe("getActorAvatar persona image", () => {
+    it("passes a custom persona's uploaded avatar through as a served URL", () => {
+      mockPersonas = [
+        createPersona({
+          id: "persona_c1",
+          slug: "researcher",
+          name: "Researcher",
+          managedBy: "workspace",
+          avatarUrl: `avatars/${workspaceId}/personas/persona_c1/1720000000000`,
+        }),
+      ]
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      const info = result.current.getActorAvatar("persona_c1", "persona")
+      expect(info.slug).toBe("researcher")
+      expect(info.avatarUrl).toBe(`/api/workspaces/${workspaceId}/personas/persona_c1/avatar/1720000000000.64.webp`)
+    })
+
+    it("omits avatarUrl for a persona with no uploaded image", () => {
+      mockPersonas = [createPersona({ id: "persona_123", slug: "ariadne", name: "Ariadne" })]
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      const info = result.current.getActorAvatar("persona_123", "persona")
+      expect(info.avatarUrl).toBeUndefined()
+      expect(info.slug).toBe("ariadne")
     })
   })
 

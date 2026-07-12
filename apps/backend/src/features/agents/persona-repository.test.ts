@@ -23,13 +23,31 @@ const workspacePersonaRow = {
   avatar_emoji: ":sparkles:",
   system_prompt: "Help this workspace.",
   model: "openrouter:anthropic/claude-haiku-4.5",
+  escalation_model: null,
   temperature: "0.2",
   max_tokens: 1000,
   enabled_tools: [AgentToolNames.READ_URL],
+  tone_prompt: null,
+  brevity_prompt: null,
+  avatar_url: null,
   managed_by: "workspace",
   status: "active",
   created_at: new Date("2026-01-01T00:00:00Z"),
   updated_at: new Date("2026-01-01T00:00:00Z"),
+}
+
+const customConfig = {
+  name: "Helper",
+  description: "Workspace helper",
+  avatarEmoji: ":sparkles:",
+  systemPrompt: "Help this workspace.",
+  model: "openrouter:anthropic/claude-haiku-4.5",
+  escalationModel: null,
+  temperature: 0.2,
+  maxTokens: 1000,
+  enabledTools: [AgentToolNames.READ_URL],
+  tonePrompt: null,
+  brevityPrompt: null,
 }
 
 describe("PersonaRepository built-in agent config", () => {
@@ -156,5 +174,148 @@ describe("PersonaRepository built-in agent config", () => {
       managedBy: "workspace",
       systemPrompt: "Help this workspace.",
     })
+  })
+
+  test("maps the new custom columns (escalation/slots) through mapRowToPersona", async () => {
+    const row = {
+      ...workspacePersonaRow,
+      escalation_model: "openrouter:anthropic/claude-opus-4.8",
+      tone_prompt: "Be blunt.",
+      brevity_prompt: "Be terse.",
+    }
+    const persona = await PersonaRepository.findById(createDb([[row]]), "persona_workspace_helper", "workspace_1")
+    expect(persona).toMatchObject({
+      escalationModel: "openrouter:anthropic/claude-opus-4.8",
+      tonePrompt: "Be blunt.",
+      brevityPrompt: "Be terse.",
+    })
+  })
+})
+
+describe("PersonaRepository custom write layer", () => {
+  test("findWorkspacePersona hard-scopes to managed_by=workspace AND the caller workspace", async () => {
+    const db = createDb([[]])
+    await PersonaRepository.findWorkspacePersona(db, "workspace_1", "persona_workspace_helper")
+
+    const query = db.queries[0] as { text: string; values: unknown[] }
+    expect(query.text).toContain("workspace_id = $2")
+    expect(query.text).toContain("managed_by = 'workspace'")
+    expect(query.values).toEqual(["persona_workspace_helper", "workspace_1"])
+  })
+
+  test("resolveEditable short-circuits a built-in without a DB read", async () => {
+    const db = createDb([])
+    const editable = await PersonaRepository.resolveEditable(db, "workspace_1", ARIADNE_AGENT_ID)
+    expect(editable).toMatchObject({ kind: "builtin" })
+    expect(db.queries).toHaveLength(0)
+  })
+
+  test("resolveEditable returns a custom row (any status, incl. archived)", async () => {
+    const db = createDb([[{ ...workspacePersonaRow, status: "archived" }]])
+    const editable = await PersonaRepository.resolveEditable(db, "workspace_1", "persona_workspace_helper")
+    expect(editable).toMatchObject({ kind: "custom", row: { id: "persona_workspace_helper", status: "archived" } })
+  })
+
+  test("resolveEditable is null for a foreign-workspace / unknown id", async () => {
+    const db = createDb([[]])
+    expect(await PersonaRepository.resolveEditable(db, "workspace_1", "persona_other")).toBeNull()
+  })
+
+  test("insertWorkspacePersona writes managed_by=workspace/status=active and the config columns", async () => {
+    const db = createDb([[workspacePersonaRow]])
+    const persona = await PersonaRepository.insertWorkspacePersona(db, {
+      workspaceId: "workspace_1",
+      slug: "helper",
+      config: customConfig,
+    })
+    const query = db.queries[0] as { text: string; values: unknown[] }
+    expect(query.text).toContain("INSERT INTO personas")
+    expect(query.text).toContain("'workspace', 'active'")
+    expect(query.values).toContain("workspace_1")
+    expect(query.values).toContain("helper")
+    expect(persona).toMatchObject({ id: "persona_workspace_helper", managedBy: "workspace" })
+  })
+
+  test("updateWorkspacePersona conflicts when expectedUpdatedAt mismatches the locked row", async () => {
+    const db = createDb([[workspacePersonaRow]]) // FOR UPDATE select returns the row
+    const result = await PersonaRepository.updateWorkspacePersona(db, {
+      workspaceId: "workspace_1",
+      personaId: "persona_workspace_helper",
+      expectedUpdatedAt: "1999-01-01T00:00:00.000Z",
+      config: customConfig,
+    })
+    expect(result.outcome).toBe("conflict")
+    // Only the FOR UPDATE select ran — no UPDATE on a conflict.
+    expect(db.queries).toHaveLength(1)
+  })
+
+  test("updateWorkspacePersona writes when the OCC token matches", async () => {
+    const locked = { ...workspacePersonaRow, updated_at: new Date("2026-02-02T00:00:00.000Z") }
+    const written = { ...locked, name: "Renamed", updated_at: new Date("2026-02-03T00:00:00.000Z") }
+    const db = createDb([[locked], [written]])
+    const result = await PersonaRepository.updateWorkspacePersona(db, {
+      workspaceId: "workspace_1",
+      personaId: "persona_workspace_helper",
+      expectedUpdatedAt: "2026-02-02T00:00:00.000Z",
+      config: { ...customConfig, name: "Renamed" },
+    })
+    expect(result).toMatchObject({ outcome: "written", updatedAt: "2026-02-03T00:00:00.000Z" })
+    const updateQuery = db.queries[1] as { text: string }
+    expect(updateQuery.text).toContain("UPDATE personas SET")
+    expect(updateQuery.text).toContain("managed_by = 'workspace'")
+  })
+
+  test("updateWorkspacePersona conflicts (current:null) when no scoped row exists", async () => {
+    const db = createDb([[]])
+    const result = await PersonaRepository.updateWorkspacePersona(db, {
+      workspaceId: "workspace_1",
+      personaId: "persona_missing",
+      expectedUpdatedAt: null,
+      config: customConfig,
+    })
+    expect(result).toEqual({ outcome: "conflict", current: null })
+  })
+
+  test("setStatus hard-scopes to managed_by=workspace AND the workspace", async () => {
+    const db = createDb([[{ ...workspacePersonaRow, status: "archived" }]])
+    const row = await PersonaRepository.setStatus(db, {
+      workspaceId: "workspace_1",
+      personaId: "persona_workspace_helper",
+      status: "archived",
+    })
+    const query = db.queries[0] as { text: string }
+    expect(query.text).toContain("UPDATE personas SET status")
+    expect(query.text).toContain("managed_by = 'workspace'")
+    expect(row).toMatchObject({ status: "archived" })
+  })
+
+  test("setStatus returns null when no custom row matches", async () => {
+    const db = createDb([[]])
+    expect(
+      await PersonaRepository.setStatus(db, { workspaceId: "workspace_1", personaId: "x", status: "active" })
+    ).toBeNull()
+  })
+
+  test("updateAvatarUrl hard-scopes to managed_by=workspace AND the workspace and maps avatar_url", async () => {
+    const db = createDb([
+      [{ ...workspacePersonaRow, avatar_url: "avatars/workspace_1/personas/persona_workspace_helper/222" }],
+    ])
+    const row = await PersonaRepository.updateAvatarUrl(db, {
+      workspaceId: "workspace_1",
+      personaId: "persona_workspace_helper",
+      avatarUrl: "avatars/workspace_1/personas/persona_workspace_helper/222",
+    })
+    const query = db.queries[0] as { text: string }
+    expect(query.text).toContain("UPDATE personas SET avatar_url")
+    expect(query.text).toContain("managed_by = 'workspace'")
+    expect(query.text).toContain("workspace_id =")
+    expect(row).toMatchObject({ avatarUrl: "avatars/workspace_1/personas/persona_workspace_helper/222" })
+  })
+
+  test("updateAvatarUrl returns null when no custom row matches (a 404)", async () => {
+    const db = createDb([[]])
+    expect(
+      await PersonaRepository.updateAvatarUrl(db, { workspaceId: "workspace_1", personaId: "x", avatarUrl: null })
+    ).toBeNull()
   })
 })
