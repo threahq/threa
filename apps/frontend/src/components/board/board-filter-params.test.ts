@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest"
+import { MAX_BOARD_SCOPE_STREAMS } from "@threa/types"
 import {
   boardHomeSearch,
+  focusScopeSearch,
+  isSoleInclude,
   parseIdListParam,
   parseTypeListParam,
+  removeAxisValueSearch,
   toggleExclude,
+  toggleExcludeSearch,
   toggleInclude,
+  toggleIncludeSearch,
 } from "./board-filter-params"
 
 describe("boardHomeSearch", () => {
@@ -50,5 +56,74 @@ describe("toggleInclude / toggleExclude", () => {
 
   it("removes from exclude when already excluded", () => {
     expect(toggleExclude("a", [], ["a", "b"])).toEqual({ include: [], exclude: ["b"] })
+  })
+})
+
+describe("isSoleInclude", () => {
+  it("is true only when `in` is exactly the one stream", () => {
+    expect(isSoleInclude("?in=a", "a")).toBe(true)
+    expect(isSoleInclude("?in=a,b", "a")).toBe(false)
+    expect(isSoleInclude("?in=b", "a")).toBe(false)
+    expect(isSoleInclude("", "a")).toBe(false)
+  })
+})
+
+describe("focusScopeSearch", () => {
+  it("replaces the whole `in` scope with the clicked stream, preserving other axes", () => {
+    const next = focusScopeSearch("?in=a,b&is=dm&label=l1&panel=conv_1", "c")
+    const params = new URLSearchParams(next)
+    expect(params.get("in")).toBe("c")
+    expect(params.get("is")).toBe("dm")
+    expect(params.get("label")).toBe("l1")
+    expect(params.get("panel")).toBe("conv_1")
+  })
+
+  it("drops the clicked stream from `not-in` when focusing it", () => {
+    const next = focusScopeSearch("?not-in=a,b", "a")
+    const params = new URLSearchParams(next)
+    expect(params.get("in")).toBe("a")
+    expect(params.get("not-in")).toBe("b")
+  })
+
+  it("clears `in` when the clicked stream is already the sole include", () => {
+    expect(focusScopeSearch("?in=a&is=dm", "a")).toBe("?is=dm")
+  })
+})
+
+describe("toggleIncludeSearch / toggleExcludeSearch", () => {
+  it("adds to `in` additively and moves an id across from `not-in`", () => {
+    expect(new URLSearchParams(toggleIncludeSearch("?in=a", "b")).get("in")).toBe("a,b")
+    const moved = new URLSearchParams(toggleIncludeSearch("?not-in=a", "a"))
+    expect(moved.get("in")).toBe("a")
+    expect(moved.get("not-in")).toBeNull()
+  })
+
+  it("removes an id from `in` when it is already included", () => {
+    expect(new URLSearchParams(toggleIncludeSearch("?in=a,b", "a")).get("in")).toBe("b")
+  })
+
+  it("toggles the exclude axis and clears the param when it empties", () => {
+    expect(new URLSearchParams(toggleExcludeSearch("?in=a", "a")).get("not-in")).toBe("a")
+    expect(toggleExcludeSearch("?not-in=a", "a")).toBe("")
+  })
+
+  it("no-ops a new include past MAX_BOARD_SCOPE_STREAMS but still toggles an existing id off", () => {
+    const ids = Array.from({ length: MAX_BOARD_SCOPE_STREAMS }, (_, i) => `s${i}`)
+    const search = `?in=${ids.join(",")}`
+    expect(new URLSearchParams(toggleIncludeSearch(search, "overflow")).get("in")).toBe(ids.join(","))
+    expect(new URLSearchParams(toggleIncludeSearch(search, ids[0])).get("in")).toBe(ids.slice(1).join(","))
+  })
+
+  it("no-ops a new exclude past MAX_BOARD_SCOPE_STREAMS", () => {
+    const ids = Array.from({ length: MAX_BOARD_SCOPE_STREAMS }, (_, i) => `x${i}`)
+    const search = `?not-in=${ids.join(",")}`
+    expect(new URLSearchParams(toggleExcludeSearch(search, "overflow")).get("not-in")).toBe(ids.join(","))
+  })
+})
+
+describe("removeAxisValueSearch", () => {
+  it("drops one value from a list param and keeps the others and unrelated params", () => {
+    expect(removeAxisValueSearch("?in=a,b,c&is=dm", "in", "b")).toBe("?in=a%2Cc&is=dm")
+    expect(removeAxisValueSearch("?not-label=l1&panel=x", "not-label", "l1")).toBe("?panel=x")
   })
 })

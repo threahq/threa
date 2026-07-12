@@ -5,6 +5,7 @@ import { fireEvent, render, screen, spyOnExport } from "@/test"
 import { StreamTypes, Visibilities } from "@threa/types"
 import { StreamItem } from "./stream-item"
 import type { StreamItemData } from "./types"
+import type { SidebarBoardMode } from "./board-sidebar-mode"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as inputModeModule from "@/hooks/use-input-mode"
@@ -340,5 +341,167 @@ describe("StreamItem", () => {
     )
 
     expect(screen.getByRole("button", { name: "Stream actions" })).toBeInTheDocument()
+  })
+})
+
+function makeBoardMode(over: Partial<SidebarBoardMode> = {}): SidebarBoardMode {
+  return {
+    workspaceId: "workspace_1",
+    includedStreamIds: new Set<string>(),
+    excludedStreamIds: new Set<string>(),
+    mutedStreamIds: new Set<string>(),
+    focusHref: (id) => `/w/workspace_1/board?in=${id}`,
+    applyInclude: vi.fn(),
+    applyExclude: vi.fn(),
+    setMuted: vi.fn(),
+    ...over,
+  }
+}
+
+function renderBoardRow(stream: StreamItemData, boardMode: SidebarBoardMode) {
+  return renderWithRouter(
+    <StreamItem
+      workspaceId="workspace_1"
+      stream={stream}
+      isActive={false}
+      unreadCount={0}
+      mentionCount={0}
+      allStreams={[stream]}
+      boardMode={boardMode}
+    />
+  )
+}
+
+describe("StreamItem — board mode", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.useFakeTimers()
+    touchState.inputMode = "touch"
+    touchState.touchCapable = true
+    vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
+      collapseOnMobile,
+      setMenuOpen,
+    } as unknown as ReturnType<typeof contextsModule.useSidebar>)
+    vi.spyOn(hooksModule, "isDraftId").mockImplementation(() => false)
+    vi.spyOn(hooksModule, "useActors").mockReturnValue({
+      getActorName: () => "Ariadne",
+      getActorAvatar: () => null,
+    } as unknown as ReturnType<typeof hooksModule.useActors>)
+    vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => touchState.inputMode)
+    vi.spyOn(touchCapableModule, "useTouchCapable").mockImplementation(() => touchState.touchCapable)
+    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(
+      (() => null) as unknown as typeof relativeTimeModule.RelativeTime
+    )
+    spyOnExport(drawerModule, "Drawer").mockReturnValue((({
+      open,
+      children,
+    }: {
+      open: boolean
+      children: ReactNode
+    }) => (open ? <div>{children}</div> : null)) as unknown as typeof drawerModule.Drawer)
+    spyOnExport(drawerModule, "DrawerContent").mockReturnValue((({ children }: { children: ReactNode }) => (
+      <div>{children}</div>
+    )) as unknown as typeof drawerModule.DrawerContent)
+    spyOnExport(drawerModule, "DrawerDescription").mockReturnValue((({ children }: { children: ReactNode }) => (
+      <div>{children}</div>
+    )) as unknown as typeof drawerModule.DrawerDescription)
+    spyOnExport(drawerModule, "DrawerTitle").mockReturnValue((({ children }: { children: ReactNode }) => (
+      <div>{children}</div>
+    )) as unknown as typeof drawerModule.DrawerTitle)
+    vi.spyOn(streamSettingsModule, "useStreamSettings").mockReturnValue({
+      openStreamSettings,
+    } as unknown as ReturnType<typeof streamSettingsModule.useStreamSettings>)
+    vi.spyOn(urgencyTrackingModule, "useUrgencyTracking").mockImplementation(() => undefined)
+  })
+
+  afterEach(() => vi.useRealTimers())
+
+  it("points the row's Link at the focus href (a real navigation, back-friendly)", () => {
+    const stream = createStream()
+    renderBoardRow(stream, makeBoardMode())
+    expect(screen.getByRole("link", { name: /general/i })).toHaveAttribute(
+      "href",
+      "/w/workspace_1/board?in=stream_general"
+    )
+  })
+
+  it("cmd/ctrl-click applies an additive include instead of navigating", () => {
+    const stream = createStream()
+    const applyInclude = vi.fn()
+    renderBoardRow(stream, makeBoardMode({ applyInclude }))
+    const link = screen.getByRole("link", { name: /general/i })
+    fireEvent.click(link, { metaKey: true })
+    expect(applyInclude).toHaveBeenCalledWith("stream_general")
+  })
+
+  it("shows a checked tile toggle and tints the row when the stream is included", () => {
+    const stream = createStream()
+    renderBoardRow(stream, makeBoardMode({ includedStreamIds: new Set(["stream_general"]) }))
+    const toggle = screen.getByRole("button", { name: /Remove .* from board filter/ })
+    expect(toggle).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByRole("link", { name: /general/i })).toHaveClass("bg-primary/10")
+  })
+
+  it("dims an excluded row and offers 'Include again' in the drawer", async () => {
+    const stream = createStream()
+    const applyExclude = vi.fn()
+    renderBoardRow(stream, makeBoardMode({ excludedStreamIds: new Set(["stream_general"]), applyExclude }))
+    expect(screen.getByRole("link", { name: /general/i })).toHaveClass("opacity-50")
+
+    fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), { touches: [{ clientX: 16, clientY: 16 }] })
+    await act(async () => vi.advanceTimersByTime(500))
+    fireEvent.click(screen.getByRole("button", { name: "Include again" }))
+    expect(applyExclude).toHaveBeenCalledWith("stream_general")
+  })
+
+  it("renders a muted row dimmed with a bell-off glyph and the muted status line", () => {
+    const stream = createStream()
+    renderBoardRow(stream, makeBoardMode({ mutedStreamIds: new Set(["stream_general"]) }))
+    expect(screen.getByLabelText("Muted on the board")).toBeInTheDocument()
+    expect(screen.getByText("Muted on the board")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /general/i })).toHaveClass("opacity-50")
+  })
+
+  it("renders an E2E row as 'Not on the board' with no filter toggle", () => {
+    const stream = createStream({ e2eEnabled: true })
+    renderBoardRow(stream, makeBoardMode())
+    expect(screen.getByText("Not on the board")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /board filter/ })).not.toBeInTheDocument()
+  })
+
+  it("points an E2E row's Link at the timeline, not an empty board scope", () => {
+    const stream = createStream({ e2eEnabled: true })
+    renderBoardRow(stream, makeBoardMode())
+    expect(screen.getByRole("link", { name: /general/i })).toHaveAttribute("href", "/w/workspace_1/s/stream_general")
+  })
+
+  it("adds the board verbs to the action drawer, keeping the existing actions", async () => {
+    const stream = createStream()
+    renderBoardRow(stream, makeBoardMode())
+    fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), { touches: [{ clientX: 16, clientY: 16 }] })
+    await act(async () => vi.advanceTimersByTime(500))
+    for (const label of ["Add to filter", "Exclude from board", "Mute on board", "Settings"]) {
+      expect(screen.getByRole("button", { name: label })).toBeInTheDocument()
+    }
+    // "Open timeline" is an href action — a Link (INV-40), not a button.
+    expect(screen.getByRole("link", { name: "Open timeline" })).toBeInTheDocument()
+  })
+
+  it("keeps the board verbs out of the drawer in chats mode", async () => {
+    const stream = createStream()
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+    fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), { touches: [{ clientX: 16, clientY: 16 }] })
+    await act(async () => vi.advanceTimersByTime(500))
+    expect(screen.queryByRole("button", { name: "Add to filter" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument()
   })
 })

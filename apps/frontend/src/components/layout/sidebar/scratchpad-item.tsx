@@ -1,5 +1,18 @@
-import { useCallback, useMemo, useRef, useState, type RefObject } from "react"
-import { Archive, FileEdit, FolderPlus, Lock, Settings, Sparkles, Tag } from "lucide-react"
+import { useCallback, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react"
+import {
+  Archive,
+  Ban,
+  Bell,
+  BellOff,
+  FileEdit,
+  FolderPlus,
+  Lock,
+  MessageSquareText,
+  Plus,
+  Settings,
+  Sparkles,
+  Tag,
+} from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { SectionPicker } from "./section-picker"
@@ -21,10 +34,11 @@ import {
   type SidebarActionItem,
   type SidebarActionPreview,
 } from "./sidebar-actions"
-import { UrgencyStrip, StreamItemAvatar, StreamItemPreview } from "./stream-item"
+import { UrgencyStrip, StreamItemAvatar, StreamItemPreview, BoardTileToggle, type BoardTileState } from "./stream-item"
 import { StreamLabelDots } from "./sidebar-labels"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { truncateContent } from "./utils"
+import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
 
 interface ScratchpadItemProps {
@@ -39,6 +53,8 @@ interface ScratchpadItemProps {
   scrollContainerRef?: RefObject<HTMLDivElement | null>
   /** Trailing "· home" hint — set only in the Unread section. See {@link StreamItem}. */
   homeHint?: string
+  /** Board-mode descriptor when on `/board` (flag on); `null`/absent in chats mode. */
+  boardMode?: SidebarBoardMode | null
 }
 
 export function ScratchpadItem({
@@ -52,6 +68,7 @@ export function ScratchpadItem({
   showPreviewOnHover = false,
   scrollContainerRef,
   homeHint,
+  boardMode,
 }: ScratchpadItemProps) {
   const navigate = useNavigate()
   const archiveStream = useArchiveStream(workspaceId)
@@ -75,6 +92,19 @@ export function ScratchpadItem({
   const nameDecrypting = streamWithPreview.nameDecrypting ?? false
   const preview = streamWithPreview.lastMessagePreview
 
+  // Board mode re-aims the row (see {@link StreamItem}). A scratchpad is a board
+  // root, so it scopes by its own id — unless it's an unsaved draft (no
+  // conversations yet) or E2E (extraction skips it), where the tri-state control
+  // and filter verbs are withheld.
+  const isE2e = !!streamWithPreview.e2eEnabled
+  const boardScopable = !!boardMode && !isDraft && !isE2e
+  const boardIncluded = boardScopable && boardMode.includedStreamIds.has(streamWithPreview.id)
+  const boardExcluded = boardScopable && boardMode.excludedStreamIds.has(streamWithPreview.id)
+  const boardMuted = boardScopable && boardMode.mutedStreamIds.has(streamWithPreview.id)
+  let boardTileState: BoardTileState = "neutral"
+  if (boardIncluded) boardTileState = "included"
+  else if (boardExcluded) boardTileState = "excluded"
+
   useUrgencyTracking(itemRef, streamWithPreview.id, streamWithPreview.urgency, scrollContainerRef)
 
   const handleArchive = useCallback(async () => {
@@ -90,8 +120,43 @@ export function ScratchpadItem({
     }
   }, [archiveStream, deleteScratchpad, isActive, isDraft, navigate, streamWithPreview.id, workspaceId])
 
+  const boardActions = useMemo<SidebarActionItem[]>(() => {
+    if (!boardMode) return []
+    const items: SidebarActionItem[] = []
+    if (boardScopable) {
+      items.push(
+        {
+          id: "board-filter",
+          label: boardIncluded ? "Remove from filter" : "Add to filter",
+          icon: Plus,
+          onSelect: () => boardMode.applyInclude(streamWithPreview.id),
+        },
+        {
+          id: "board-exclude",
+          label: boardExcluded ? "Include again" : "Exclude from board",
+          icon: Ban,
+          onSelect: () => boardMode.applyExclude(streamWithPreview.id),
+        },
+        {
+          id: "board-mute",
+          label: boardMuted ? "Unmute on board" : "Mute on board",
+          icon: boardMuted ? Bell : BellOff,
+          onSelect: () => boardMode.setMuted(streamWithPreview.id, !boardMuted),
+        }
+      )
+    }
+    items.push({
+      id: "board-open-timeline",
+      label: "Open timeline",
+      icon: MessageSquareText,
+      href: `/w/${workspaceId}/s/${streamWithPreview.id}`,
+    })
+    return items
+  }, [boardMode, boardScopable, boardIncluded, boardExcluded, boardMuted, streamWithPreview.id, workspaceId])
+
   const actions = useMemo<SidebarActionItem[]>(
     () => [
+      ...boardActions,
       ...(!isDraft
         ? [
             {
@@ -99,6 +164,7 @@ export function ScratchpadItem({
               label: "Settings",
               icon: Settings,
               onSelect: () => openStreamSettings(streamWithPreview.id),
+              separatorBefore: boardActions.length > 0,
             } satisfies SidebarActionItem,
             {
               id: "labels",
@@ -120,10 +186,10 @@ export function ScratchpadItem({
         icon: Archive,
         onSelect: handleArchive,
         variant: "destructive",
-        separatorBefore: !isDraft,
+        separatorBefore: !isDraft || boardActions.length > 0,
       },
     ],
-    [handleArchive, isDraft, openStreamSettings, streamWithPreview.id]
+    [handleArchive, isDraft, openStreamSettings, streamWithPreview.id, boardActions]
   )
 
   const drawerPreview: SidebarActionPreview | null =
@@ -155,23 +221,42 @@ export function ScratchpadItem({
     decoration = { icon: Sparkles, color: "text-primary", ariaLabel: "AI companion attached" }
   }
 
+  // An E2E scratchpad has no board cards (extraction skips it), so its Link opens
+  // the timeline rather than focusing an empty scope. See {@link StreamItem}.
+  const timelineHref = `/w/${workspaceId}/s/${streamWithPreview.id}`
+  const rowTo = boardMode && !isE2e ? boardMode.focusHref(streamWithPreview.id) : timelineHref
+  const handleRowClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (boardScopable && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      boardMode.applyInclude(streamWithPreview.id)
+      return
+    }
+    handleClick(e)
+  }
+  let boardStatusLine: string | null = null
+  if (isE2e && boardMode) boardStatusLine = "Not on the board"
+  else if (boardMuted) boardStatusLine = "Muted on the board"
+  const boardDimmed = boardExcluded || boardMuted || (isE2e && !!boardMode)
+
   return (
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
         <div className="group reveal-host relative">
           <Link
             ref={itemRef}
-            to={`/w/${workspaceId}/s/${streamWithPreview.id}`}
-            onClick={handleClick}
+            to={rowTo}
+            onClick={handleRowClick}
             onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
             onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
             onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
             onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
             className={cn(
               "flex items-stretch rounded-lg text-sm transition-colors",
-              // The tinted background means exactly one thing: "you are here" —
-              // see StreamItem; unread is the bold title + urgency strip.
-              isActive ? "bg-primary/10" : "hover:bg-muted/50",
+              // The tinted background means exactly one thing: "you are here" — or,
+              // in board mode, "included in the scope". See StreamItem; unread is
+              // the bold title + urgency strip.
+              isActive || boardIncluded ? "bg-primary/10" : "hover:bg-muted/50",
+              boardDimmed && "opacity-50",
               isTouchInput && actions.length > 0 && "select-none",
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
@@ -183,6 +268,15 @@ export function ScratchpadItem({
                 icon={<FileEdit className="h-3.5 w-3.5" />}
                 className="bg-primary/10 text-primary"
                 decoration={decoration}
+                boardControl={
+                  boardScopable ? (
+                    <BoardTileToggle
+                      state={boardTileState}
+                      streamName={name}
+                      onToggle={() => boardMode.applyInclude(streamWithPreview.id)}
+                    />
+                  ) : undefined
+                }
               />
 
               <div
@@ -201,20 +295,27 @@ export function ScratchpadItem({
                       {homeHint && <span className="text-xs text-muted-foreground font-normal"> · {homeHint}</span>}
                     </span>
                   )}
+                  {boardMuted && (
+                    <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
+                  )}
                   <div className="ml-auto flex items-center gap-1.5">
                     <StreamLabelDots streamId={streamWithPreview.id} />
                     <MentionIndicator count={mentionCount} />
                   </div>
                 </div>
-                <StreamItemPreview
-                  preview={preview}
-                  getActorName={getActorName}
-                  toEmoji={toEmoji}
-                  compact={compact}
-                  showPreviewOnHover={showPreviewOnHover}
-                  isTouch={isTouchInput}
-                  e2eEnabled={streamWithPreview.e2eEnabled}
-                />
+                {boardStatusLine ? (
+                  <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
+                ) : (
+                  <StreamItemPreview
+                    preview={preview}
+                    getActorName={getActorName}
+                    toEmoji={toEmoji}
+                    compact={compact}
+                    showPreviewOnHover={showPreviewOnHover}
+                    isTouch={isTouchInput}
+                    e2eEnabled={streamWithPreview.e2eEnabled}
+                  />
+                )}
               </div>
             </div>
           </Link>

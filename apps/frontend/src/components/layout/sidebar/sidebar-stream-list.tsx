@@ -28,6 +28,7 @@ import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import type { SidebarActionItem } from "./sidebar-actions"
+import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
 
 /** Default state of the "more" expander: collapsed so quiet tails stay hidden. */
@@ -116,6 +117,9 @@ interface SidebarStreamListProps {
   /** Resolve a stream's "· home" hint (custom section / pinned label) for Unread rows. */
   homeHintFor: (streamId: string) => string | null
   scrollContainerRef: RefObject<HTMLDivElement | null>
+  /** Board-mode descriptor when on `/board` (flag on); `null` in chats mode. Every
+   *  row's board branch is gated on it, so chats mode is untouched. */
+  boardMode?: SidebarBoardMode | null
 }
 
 export function SidebarStreamList({
@@ -139,6 +143,7 @@ export function SidebarStreamList({
   onStreamMovedFromLabel,
   homeHintFor,
   scrollContainerRef,
+  boardMode,
 }: SidebarStreamListProps) {
   // Drag-to-file is a mouse interaction; a finger does the same through the
   // action drawer's section picker. Keyed on the active input (not capability)
@@ -293,6 +298,7 @@ export function SidebarStreamList({
               addTooltip={add?.addTooltip}
               addMenuActions={add?.addMenuActions}
               streamDragEnabled={streamDragEnabled}
+              boardMode={boardMode}
             />
           ) : (
             <StreamSection
@@ -315,6 +321,7 @@ export function SidebarStreamList({
               scrollContainerRef={scrollContainerRef}
               streamDragEnabled={streamDragEnabled}
               homeHintFor={isUnread ? homeHintFor : undefined}
+              boardMode={boardMode}
             />
           )
 

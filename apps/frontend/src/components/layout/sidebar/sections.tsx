@@ -8,6 +8,7 @@ import { isDraftId } from "@/hooks"
 import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 import { StreamItem } from "./stream-item"
 import { DraggableStreamRow } from "./sidebar-dnd"
+import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
 import { getActivityTime } from "./utils"
 
@@ -225,6 +226,7 @@ interface RenderRowOptions {
   scrollContainerRef?: RefObject<HTMLDivElement | null>
   streamDragEnabled: boolean
   homeHintFor?: (streamId: string) => string | null
+  boardMode?: SidebarBoardMode | null
 }
 
 /**
@@ -247,6 +249,7 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
       showPreviewOnHover={opts.showPreviewOnHover}
       scrollContainerRef={opts.scrollContainerRef}
       homeHint={opts.homeHintFor?.(stream.id) ?? undefined}
+      boardMode={opts.boardMode}
     />
   )
   const dragEnabled = opts.streamDragEnabled && !isDraftId(stream.id)
@@ -317,6 +320,8 @@ interface StreamSectionProps {
    * Set only on the Unread section, where rows are drawn out of their home.
    */
   homeHintFor?: (streamId: string) => string | null
+  /** Board-mode descriptor when on `/board` (flag on); `null` in chats mode. */
+  boardMode?: SidebarBoardMode | null
 }
 
 /** Simple binary collapsible section used for Important / Recent. */
@@ -343,6 +348,7 @@ export function StreamSection({
   addMenuActions,
   streamDragEnabled = false,
   homeHintFor,
+  boardMode,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -360,6 +366,7 @@ export function StreamSection({
       scrollContainerRef,
       streamDragEnabled,
       homeHintFor,
+      boardMode,
     })
 
   return (
@@ -439,6 +446,7 @@ export function TieredStreamSection({
   addMenuActions,
   streamDragEnabled = false,
   homeHintFor,
+  boardMode,
 }: TieredStreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -469,6 +477,7 @@ export function TieredStreamSection({
       scrollContainerRef,
       streamDragEnabled,
       homeHintFor,
+      boardMode,
     })
 
   return (

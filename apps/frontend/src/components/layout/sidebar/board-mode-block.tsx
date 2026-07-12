@@ -18,6 +18,7 @@ import {
 } from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import { getLastLocation } from "@/lib/last-location"
+import { BoardFilterChips } from "./board-filter-chips"
 
 interface BoardModeBlockProps {
   workspaceId: string
@@ -77,6 +78,14 @@ export function BoardModeBlock({ workspaceId, userId }: BoardModeBlockProps) {
   const lastLocation = userId ? getLastLocation(userId, workspaceId) : null
   const chatsHref = lastLocation?.streamId ? `/w/${workspaceId}/s/${lastLocation.streamId}` : `/w/${workspaceId}`
 
+  const hasActiveFilters =
+    selection.scopeStreamIds.length > 0 ||
+    selection.scopeStreamTypes.length > 0 ||
+    selection.scopeLabelIds.length > 0 ||
+    selection.excludeStreamIds.length > 0 ||
+    selection.excludeStreamTypes.length > 0 ||
+    selection.excludeLabelIds.length > 0
+
   return (
     <div className="mb-2 space-y-1">
       <Link
@@ -87,6 +96,8 @@ export function BoardModeBlock({ workspaceId, userId }: BoardModeBlockProps) {
         <ArrowLeft className="h-4 w-4" />
         Chats
       </Link>
+
+      {hasActiveFilters && <BoardFilterChips workspaceId={workspaceId} />}
 
       {sortedViews.length > 0 && (
         <div className="pt-1">

@@ -333,6 +333,47 @@ export function BoardSavedViews({
   )
 }
 
+/**
+ * Save the board's live selection as a new view, reusing the same
+ * {@link SaveViewDialog} the lens menu opens (INV-35 — one dialog, no duplicate).
+ * Standalone so the board-mode sidebar chips can offer "Save view" without
+ * re-hosting the whole saved-views list. Silent on success (INV-63).
+ */
+export function SaveCurrentViewDialog({
+  workspaceId,
+  open,
+  onOpenChange,
+  selection,
+}: {
+  workspaceId: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  selection: BoardViewSelection
+}) {
+  const save = useSaveBoardView(workspaceId)
+  return (
+    <SaveViewDialog
+      open={open}
+      initialName=""
+      isRename={false}
+      onOpenChange={onOpenChange}
+      onSubmit={(name) => {
+        save.mutate({
+          name,
+          baseLens: selection.lens,
+          scopeStreamIds: selection.scopeStreamIds,
+          scopeStreamTypes: selection.scopeStreamTypes,
+          scopeLabelIds: selection.scopeLabelIds,
+          excludeStreamIds: selection.excludeStreamIds,
+          excludeStreamTypes: selection.excludeStreamTypes,
+          excludeLabelIds: selection.excludeLabelIds,
+        })
+        onOpenChange(false)
+      }}
+    />
+  )
+}
+
 interface SaveViewDialogProps {
   open: boolean
   initialName: string
