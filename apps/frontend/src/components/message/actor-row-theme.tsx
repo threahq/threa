@@ -18,6 +18,11 @@ export interface ActorRowTheme {
    * by the timeline (`MessageEvent`) and the board/panel (`MessageItem`).
    */
   rowAccent: string
+  /** Border-color class for a nested sub-conversation's spine (`border-l-2`), so
+   *  the whole nested block reads as that actor's — the color covers the branch
+   *  rail at the same 2px width instead of a separate per-message stripe beside
+   *  it. Empty = neutral (plain user branch). Matches `rowAccent`'s hues. */
+  railClassName: string
   /** Color class applied to the author-name element. Empty = inherit. */
   nameClassName: string
   /** Optional inline pill rendered in the header row after the author name. */
@@ -27,21 +32,25 @@ export interface ActorRowTheme {
 export const ACTOR_ROW_THEME: Record<AuthorType, ActorRowTheme> = {
   user: {
     rowAccent: "",
+    railClassName: "",
     nameClassName: "",
     badge: null,
   },
   persona: {
     rowAccent: "bg-gradient-to-r from-primary/[0.06] to-transparent shadow-[inset_3px_0_0_hsl(var(--primary))]",
+    railClassName: "border-primary",
     nameClassName: "text-primary",
     badge: null,
   },
   bot: {
     rowAccent: "bg-gradient-to-r from-emerald-500/[0.06] to-transparent shadow-[inset_3px_0_0_hsl(152_69%_41%)]",
+    railClassName: "border-[hsl(152_69%_41%)]",
     nameClassName: "text-emerald-600",
     badge: <span className="text-[10px] text-emerald-600/70 font-medium cursor-default">BOT</span>,
   },
   system: {
     rowAccent: "bg-gradient-to-r from-blue-500/[0.04] to-transparent shadow-[inset_3px_0_0_hsl(210_100%_55%)]",
+    railClassName: "border-[hsl(210_100%_55%)]",
     nameClassName: "text-blue-500",
     badge: null,
   },

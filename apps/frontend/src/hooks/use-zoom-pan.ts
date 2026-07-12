@@ -4,6 +4,10 @@ export const ZOOM_MIN = 1
 export const ZOOM_MAX = 8
 export const ZOOM_STEP = 1.5
 export const DOUBLE_ZOOM = 2
+/** Two taps within this window (and 30px) are a double-tap zoom. Consumers that
+ *  act on single taps (the gallery chrome toggle) defer past this window so the
+ *  first tap of a double-tap never fires their action. */
+export const DOUBLE_TAP_MS = 300
 
 interface UseZoomPanOptions {
   containerRef: RefObject<HTMLElement | null>
@@ -428,7 +432,7 @@ export function useZoomPan({ containerRef, contentRef, onZoomChange, onScaleChan
       const t = e.changedTouches[0]
       const dx = t.clientX - lastTapX
       const dy = t.clientY - lastTapY
-      const isDouble = now - lastTap < 300 && Math.hypot(dx, dy) < 30
+      const isDouble = now - lastTap < DOUBLE_TAP_MS && Math.hypot(dx, dy) < 30
       if (isDouble) {
         const rect = container!.getBoundingClientRect()
         const localX = t.clientX - rect.left

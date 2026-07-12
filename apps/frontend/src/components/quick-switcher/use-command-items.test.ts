@@ -41,4 +41,10 @@ describe("rankCommands", () => {
     const ranked = rankCommands(commands, "zzz-no-such-command")
     expect(ranked).toEqual([])
   })
+
+  it("surfaces the New Post command for authoring keywords", () => {
+    for (const q of ["post", "compose", "write"]) {
+      expect(rankCommands(commands, q).map((c) => c.id)).toContain("new-post")
+    }
+  })
 })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import type { VirtualizerHandle } from "virtua"
-import { AlertCircle, ArrowLeft, LayoutGrid } from "lucide-react"
+import { AlertCircle, ArrowLeft, LayoutGrid, PenLine } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -36,7 +36,8 @@ import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/
 import { BoardCard } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
-import { BoardComposer } from "@/components/board/board-composer"
+import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
+import { setBoardFlash } from "@/stores/board-flash-store"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
 import { boardHomeRedirectHref, isBoardAtHome } from "@/components/board/board-saved-views"
 import { useBoardViews, useBoardHome } from "@/hooks/use-board-views"
@@ -486,6 +487,8 @@ function BoardPageInner({
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
+  // Peer user id per DM stream — feeds the card's leading avatar (sidebar parity).
+  const dmPeerByStreamId = useMemo(() => new Map(dmPeers.map((p) => [p.streamId, p.userId])), [dmPeers])
   const sections = useMemo(() => groupByRecency(posts, activityById, Date.now()), [posts, activityById])
 
   // The board feed is virtualized (`virtua`): ~430 active cards each mount
@@ -562,34 +565,67 @@ function BoardPageInner({
     excludeStreamTypes.length > 0 ||
     scopeLabelIds.length > 0 ||
     excludeLabelIds.length > 0
-  const handlePosted = () => {
+  // The viewer's own just-posted card gets a brief gold-thread flash (the golden
+  // thread motif, on the primary action). The flashed id lives in a module store
+  // (`setBoardFlash`) that each card subscribes to by its own id, not in page
+  // state — routing it through `renderedRows` would rebuild every mounted card
+  // twice per post (set + clear). Held ~1.6s so the ~1.4s pulse finishes.
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      clearTimeout(flashTimerRef.current ?? undefined)
+      setBoardFlash(null)
+    },
+    []
+  )
+
+  const handlePosted = (conversationId?: string) => {
     // The viewer's own post must ALWAYS surface. It already shows where the
     // current view can contain it — an unfiltered `all`/`mine` lens — so stay
-    // put there (a `mine` home shouldn't bounce the author off their own home).
-    // Any other view (a status/memo lens, or an active scope filter) might not
-    // match the fresh post, so return to the All baseline; the optimistic card
-    // (written `_status: "pending"`) then reveals itself at top there via
-    // `reconcileStableView`, whether it lands inline or later from the
-    // promote-on-send drain — no reveal arm to carry across the reset.
+    // put there (a `mine` home shouldn't bounce the author off their own home),
+    // but jump to the top so the prepended card and its flash are on-screen even
+    // if the viewer had scrolled down. Any other view (a status/memo lens, or an
+    // active scope filter) might not match the fresh post, so return to the All
+    // baseline; the optimistic card (written `_status: "pending"`) reveals itself
+    // at top there via `reconcileStableView`, and `navigate` scrolls to top via
+    // the `resetKey` layout effect.
     const currentViewSurfacesOwnPost = SELF_POST_VISIBLE_LENSES.has(lens) && !hasFilterParams
-    if (!currentViewSurfacesOwnPost) {
+    if (currentViewSurfacesOwnPost) {
+      if (scrollerRef.current) scrollerRef.current.scrollTop = 0
+    } else {
       navigate(boardHome)
     }
+    if (conversationId) {
+      setBoardFlash(conversationId)
+      clearTimeout(flashTimerRef.current ?? undefined)
+      flashTimerRef.current = setTimeout(() => setBoardFlash(null), 1600)
+    }
   }
+
+  // Register the board's post-reveal with the single app-level compose overlay so
+  // a post surfaces here whichever entry point opened it (board button, command)
+  // — while the board is mounted. A stable wrapper reads the latest handler via a
+  // ref so it re-registers once, not every render.
+  const handlePostedRef = useRef(handlePosted)
+  handlePostedRef.current = handlePosted
+  useEffect(() => registerComposeOnPosted((conversationId) => handlePostedRef.current(conversationId)), [])
 
   // Where the post lives — the stream's own name (channel #slug, DM peer,
   // scratchpad name), used as the card's locator. The glyph follows the type.
   // Stable per workspace-cache change so the row memo below only recomputes when a
   // label input actually changes, not on every parent re-render.
   const labelsFor = useCallback(
-    (conversation: ConversationWithStaleness): { contextLabel: string; streamType: string | undefined } => {
+    (
+      conversation: ConversationWithStaleness
+    ): { contextLabel: string; streamType: string | undefined; dmPeerUserId: string | null } => {
       const streamName = resolveStreamName(conversation.streamId, { streams, users, dmPeers }, "generic")
       return {
         contextLabel: streamName ?? "Unknown stream",
         streamType: streamById.get(conversation.streamId)?.type,
+        dmPeerUserId: dmPeerByStreamId.get(conversation.streamId) ?? null,
       }
     },
-    [streams, users, dmPeers, streamById]
+    [streams, users, dmPeers, streamById, dmPeerByStreamId]
   )
 
   // Flat if-chain, not a nested ternary (INV-47 / no-nested-ternary).
@@ -639,11 +675,12 @@ function BoardPageInner({
             <h2
               key={row.key}
               className={cn(
-                "px-1 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
+                "flex items-center gap-3 px-1 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
                 row.first ? "pt-2" : "pt-6"
               )}
             >
-              {row.label}
+              <span className="shrink-0">{row.label}</span>
+              <span className="h-px flex-1 bg-border" aria-hidden />
             </h2>
           )
         }
@@ -662,7 +699,7 @@ function BoardPageInner({
             </div>
           )
         }
-        const { contextLabel, streamType } = labelsFor(row.post.conversation)
+        const { contextLabel, streamType, dmPeerUserId } = labelsFor(row.post.conversation)
         return (
           <div key={row.key} className="pb-3">
             <BoardCard
@@ -670,6 +707,7 @@ function BoardPageInner({
               post={row.post}
               contextLabel={contextLabel}
               streamType={streamType}
+              dmPeerUserId={dmPeerUserId}
               scrollerRef={scrollerRef}
               listRef={listRef}
             />
@@ -810,13 +848,11 @@ function BoardPageInner({
               // open, so the reply target can scroll above the pill; 0 otherwise.
               style={{ paddingBottom: `var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px)` }}
             >
-              {/* Composer sits above the virtualized rows in the same scroller; its
-                  measured height feeds virtua's `startMargin` so item offsets stay
-                  aligned. It is not virtualized, so its open/draft state survives a
-                  scroll away and back. */}
-              <div ref={setComposerEl} className="pt-3">
-                <BoardComposer workspaceId={workspaceId} onPosted={handlePosted} />
-              </div>
+              {/* Small top inset above the virtualized rows; its measured height
+                  feeds virtua's `startMargin` so item offsets stay aligned.
+                  Authoring lifts into the overlay, opened from the floating compose
+                  button below rather than an inline top trigger. */}
+              <div ref={setComposerEl} className="pt-3" />
               {showFeed ? (
                 <BoardFeedList scrollRef={scrollerRef} listRef={listRef} startMargin={startMargin}>
                   {renderedRows}
@@ -827,6 +863,32 @@ function BoardPageInner({
             </main>
           </div>
         </FloatingComposerAnchorProvider>
+        {/* Floating compose button — always reachable (doesn't scroll with the
+            feed), bottom-right. Flat solid accent + a restrained warm shadow, per
+            Threa's Button language (no gradient/gloss). On a pointer it expands to
+            reveal its "New post" label. Opens the same overlay as the command. */}
+        <button
+          type="button"
+          onClick={() => openCompose()}
+          aria-label="New post"
+          className={cn(
+            "group absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-5 z-20",
+            // Width is content-driven (min-w square when collapsed), so the
+            // expanded pill hugs its label + icon with no slack — the icon stays
+            // pinned right and the label slides in to its left.
+            "flex h-14 min-w-[56px] items-center justify-end overflow-hidden rounded-2xl pl-0 pr-[18px]",
+            "transition-[padding,gap,background-color] duration-200 ease-out",
+            "sm:hover:gap-2 sm:hover:pl-[18px]",
+            "bg-primary text-primary-foreground hover:bg-primary/90",
+            "shadow-[0_6px_16px_-6px_hsl(28_30%_22%/0.3),0_2px_5px_-2px_hsl(28_30%_22%/0.14)]",
+            "dark:shadow-[0_8px_20px_-8px_rgb(0_0_0/0.5),0_2px_6px_-2px_rgb(0_0_0/0.3)]"
+          )}
+        >
+          <span className="hidden max-w-0 whitespace-nowrap text-[13px] font-medium opacity-0 transition-[max-width,opacity] duration-200 group-hover:max-w-[96px] group-hover:opacity-100 sm:block">
+            New post
+          </span>
+          <PenLine className="h-5 w-5 shrink-0" />
+        </button>
       </div>
     </div>
   )

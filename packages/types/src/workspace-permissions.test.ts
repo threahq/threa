@@ -35,9 +35,9 @@ describe("WORKSPACE_PERMISSIONS catalog", () => {
     }
   })
 
-  test("catalog has exactly 21 permissions", () => {
-    expect(WORKSPACE_PERMISSIONS).toHaveLength(21)
-    expect(SCOPE_VALUES.size).toBe(21)
+  test("catalog has exactly 23 permissions", () => {
+    expect(WORKSPACE_PERMISSIONS).toHaveLength(23)
+    expect(SCOPE_VALUES.size).toBe(23)
   })
 })
 
@@ -94,10 +94,10 @@ describe("WORKSPACE_ROLE_DEFINITIONS", () => {
     }
   })
 
-  test("absolute permission counts (member=12, admin=20, owner=21)", () => {
-    expect(getRole(WORKSPACE_ROLE_SLUGS.MEMBER).permissions).toHaveLength(12)
-    expect(getRole(WORKSPACE_ROLE_SLUGS.ADMIN).permissions).toHaveLength(20)
-    expect(getRole(WORKSPACE_ROLE_SLUGS.OWNER).permissions).toHaveLength(21)
+  test("absolute permission counts (member=14, admin=22, owner=23)", () => {
+    expect(getRole(WORKSPACE_ROLE_SLUGS.MEMBER).permissions).toHaveLength(14)
+    expect(getRole(WORKSPACE_ROLE_SLUGS.ADMIN).permissions).toHaveLength(22)
+    expect(getRole(WORKSPACE_ROLE_SLUGS.OWNER).permissions).toHaveLength(23)
   })
 })
 

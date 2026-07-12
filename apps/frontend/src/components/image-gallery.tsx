@@ -34,6 +34,7 @@ import { isLinkPreviewGalleryId } from "@/components/gallery/link-preview-galler
 import { isPendingGalleryId } from "@/components/gallery/pending-gallery-id"
 import { buildEmbedPlaybackSrc } from "@/components/gallery/video-embed"
 import type { VideoPreviewProvider } from "@threa/types"
+import { DOUBLE_TAP_MS } from "@/hooks/use-zoom-pan"
 import { ZoomControls } from "@/components/gallery/zoom-controls"
 import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
 import { HtmlViewer } from "@/components/gallery/html-viewer"
@@ -254,7 +255,7 @@ function GalleryMediaContent({
           className="relative max-w-full max-h-full overflow-hidden rounded-lg bg-black shadow-2xl"
           style={{
             aspectRatio: current.aspectRatio,
-            width: `min(100%, calc(85vh * ${current.aspectRatio}))`,
+            width: `min(100%, calc(85dvh * ${current.aspectRatio}))`,
           }}
         >
           <iframe
@@ -401,6 +402,20 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // navigation within a session — if the user is reading raw markdown and
   // arrows over to the next markdown file, they probably want raw there too.
   const [rawMode, setRawMode] = useState(false)
+  // Touch layout: a single tap on the media (zoomed or not) toggles the
+  // gallery's own chrome (action bar, filename bar) so the image can be viewed
+  // with nothing on top of it. Zoom gestures never hide it — the toggle is
+  // deferred past the double-tap window so the first tap of a double-tap zoom
+  // doesn't fire it — and zooming all the way back out always re-shows it.
+  // Persists across swipes; resets to visible on every open.
+  const [chromeVisible, setChromeVisible] = useState(true)
+  const pendingChromeToggleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelPendingChromeToggle = useCallback(() => {
+    if (pendingChromeToggleRef.current) {
+      clearTimeout(pendingChromeToggleRef.current)
+      pendingChromeToggleRef.current = null
+    }
+  }, [])
   // containerWidth drives both slide sizing and strip transform calculations on mobile
   const [containerWidth, setContainerWidth] = useState(0)
 
@@ -416,6 +431,17 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // read the current zoom state without stale closures.
   const isZoomedRef = useRef(false)
   isZoomedRef.current = isZoomed
+  const handleZoomChange = useCallback(
+    (zoomed: boolean) => {
+      setIsZoomed(zoomed)
+      // A double-tap zoom's first tap has a chrome toggle in flight — a zoom
+      // must never flip the chrome, so kill it. Zooming back out to 1× always
+      // brings the chrome back.
+      cancelPendingChromeToggle()
+      if (!zoomed) setChromeVisible(true)
+    },
+    [cancelPendingChromeToggle]
+  )
 
   // Pub/sub for scale so the percent display in ZoomControls can update at
   // 60fps during pinch without re-rendering this component (PR #384 pattern:
@@ -467,10 +493,12 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   useLayoutEffect(() => {
     if (isOpen && !prevOpen.current) {
       setCurrentIndex(initialIndex)
+      cancelPendingChromeToggle()
+      setChromeVisible(true)
       justOpened.current = true
     }
     prevOpen.current = isOpen
-  }, [isOpen, initialIndex])
+  }, [isOpen, initialIndex, cancelPendingChromeToggle])
 
   // Re-anchor currentIndex when the items array shifts underneath it.
   const viewedIdRef = useRef<string | null>(null)
@@ -584,6 +612,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     () => () => {
       if (copyResetRef.current) clearTimeout(copyResetRef.current)
       if (downloadResetRef.current) clearTimeout(downloadResetRef.current)
+      if (pendingChromeToggleRef.current) clearTimeout(pendingChromeToggleRef.current)
     },
     []
   )
@@ -830,28 +859,51 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     [currentIndex, hasNext, hasPrev, items, onItemChange, onClose]
   )
 
-  // Touch: tap left/right zones to navigate (suppressed after a committed swipe
-  // and disabled while zoomed so taps inside a zoomed image don't navigate away).
+  // Touch: tap left/right zones to navigate (when not zoomed); any other tap
+  // toggles the gallery chrome, zoomed or not. Suppressed after a committed
+  // swipe.
   const handleMobileTap = useCallback(
     (e: React.MouseEvent) => {
-      if (!inputModeTouch || !isMultiple) return
-      if (isZoomedRef.current) return
-      // Tap-to-navigate inside the text panel would hijack link clicks, text
-      // selection, and code-block interactions. Taps in the surrounding margin
-      // still navigate — that's the only way to flip between text slides on
+      if (!inputModeTouch) return
+      // Taps inside the text panel would hijack link clicks, text selection,
+      // and code-block interactions. Taps in the surrounding margin still
+      // navigate/toggle — that's the only way to flip between text slides on
       // mobile once swipe is relinquished to native scroll.
       const target = e.target as HTMLElement | null
       if (target?.closest("[data-gallery-text-viewer]")) return
+      // Taps on the native <video> controls are play/pause/seek, not toggles.
+      if (target?.closest("video")) return
       if (didSwipe.current) {
         didSwipe.current = false
         return
       }
       const rect = e.currentTarget.getBoundingClientRect()
       const zone = (e.clientX - rect.left) / rect.width
-      if (zone < 0.3 && hasPrev) goPrev()
-      else if (zone > 0.7 && hasNext) goNext()
+      // While zoomed, taps never navigate — the whole surface is toggle.
+      const canNavigate = !isZoomedRef.current && isMultiple
+      if (canNavigate && zone < 0.3 && hasPrev) {
+        cancelPendingChromeToggle()
+        goPrev()
+      } else if (canNavigate && zone > 0.7 && hasNext) {
+        cancelPendingChromeToggle()
+        goNext()
+      } else if (pendingChromeToggleRef.current) {
+        // Second tap of a double-tap that didn't zoom (text-slide margin,
+        // video poster): a double-tap is never a toggle, so drop both taps.
+        cancelPendingChromeToggle()
+      } else {
+        pendingChromeToggleRef.current = setTimeout(() => {
+          pendingChromeToggleRef.current = null
+          // Hiding makes the action bar inert; if focus is still on one of its
+          // buttons (Radix focuses the first one on open) the browser ejects
+          // focus to <body>, which the dialog's dismissable layer reads as
+          // focus-outside and closes the gallery. Park focus here first.
+          containerRef.current?.focus({ preventScroll: true })
+          setChromeVisible((v) => !v)
+        }, DOUBLE_TAP_MS)
+      }
     },
-    [inputModeTouch, isMultiple, hasPrev, hasNext, goPrev, goNext]
+    [inputModeTouch, isMultiple, hasPrev, hasNext, goPrev, goNext, cancelPendingChromeToggle]
   )
 
   const handleZoomIn = useCallback(() => zoomableRef.current?.zoomIn(), [])
@@ -862,10 +914,21 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // so it stays readable against any backdrop
   // (image, video poster, markdown panel, sandboxed iframe). The text viewers
   // reserve their top inset (pt-14 / pt-16) so the pill never overlaps the
-  // panel chrome; `top-3 right-3` gives the pill visible breathing room from
-  // the screen edge instead of kissing it.
+  // panel chrome; the 0.75rem offsets (bumped by safe-area insets on notched
+  // devices) give the pill visible breathing room from the screen edge instead
+  // of kissing it.
+  const chromeHidden = inputModeTouch && !chromeVisible
   const actionBar = (
-    <div className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-full bg-black/55 px-1 py-0.5 shadow-lg backdrop-blur-sm">
+    <div
+      className={cn(
+        "absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))] z-10 flex items-center gap-1 rounded-full bg-black/55 px-1 py-0.5 shadow-lg backdrop-blur-sm",
+        "transition-opacity duration-200",
+        chromeHidden && "pointer-events-none opacity-0"
+      )}
+      // inert (not just opacity-0) so hidden controls are unfocusable and
+      // invisible to assistive tech while the image is being viewed clean.
+      inert={chromeHidden || undefined}
+    >
       {!isMobile && current?.type === "image" && (
         <ZoomControls
           subscribeScale={subscribeScale}
@@ -959,10 +1022,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       {!current ? null : (
         <DialogContent
           className={cn(
-            "p-0 max-sm:p-0 overflow-hidden bg-black/95 border-none",
-            "max-sm:inset-auto max-sm:left-1/2 max-sm:top-1/2 max-sm:-translate-x-1/2 max-sm:-translate-y-1/2",
-            "max-sm:max-w-[95vw] max-sm:h-[90vh] max-sm:rounded-lg",
-            isMobile ? "max-w-[95vw] h-[90vh]" : "max-w-[90vw] h-[90vh]"
+            // <sm keeps the base DialogContent full-bleed layout (inset-0), which
+            // tracks the dynamic viewport — a sized 90vh card measures the LARGE
+            // viewport, so expanding mobile browser chrome covered the top row.
+            "p-0 max-sm:p-0 max-sm:gap-0 overflow-hidden max-sm:overflow-hidden bg-black/95 border-none",
+            isMobile ? "sm:max-w-[95vw] sm:h-[90dvh]" : "sm:max-w-[90vw] sm:h-[90dvh]"
           )}
           hideCloseButton
         >
@@ -982,7 +1046,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
                 <div
                   ref={setContainerNode}
-                  className="absolute inset-0 overflow-hidden"
+                  className="absolute inset-0 overflow-hidden outline-none"
+                  tabIndex={-1}
                   onTouchStart={handleTouchStart}
                   onTouchMove={handleTouchMove}
                   onTouchEnd={handleTouchEnd}
@@ -1001,7 +1066,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                           isActive={Math.abs(i - currentIndex) <= 1}
                           isCurrent={i === currentIndex}
                           zoomableRef={i === currentIndex && item.type === "image" ? zoomableRef : undefined}
-                          onZoomChange={i === currentIndex && item.type === "image" ? setIsZoomed : undefined}
+                          onZoomChange={i === currentIndex && item.type === "image" ? handleZoomChange : undefined}
                           onScaleChange={i === currentIndex && item.type === "image" ? publishScale : undefined}
                           rawMode={i === currentIndex ? rawMode : false}
                         />
@@ -1011,7 +1076,14 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                 </div>
 
                 {/* Filename bar sits above the strip so it doesn't scroll with it */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pointer-events-none z-10">
+                <div
+                  className={cn(
+                    "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pointer-events-none z-10",
+                    "transition-opacity duration-200",
+                    chromeHidden && "opacity-0"
+                  )}
+                  aria-hidden={chromeHidden || undefined}
+                >
                   <span className="text-sm text-white">{current.filename}</span>
                 </div>
               </div>
@@ -1027,7 +1099,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                   <GalleryMediaContent
                     current={current}
                     zoomableRef={current.type === "image" ? zoomableRef : undefined}
-                    onZoomChange={current.type === "image" ? setIsZoomed : undefined}
+                    onZoomChange={current.type === "image" ? handleZoomChange : undefined}
                     onScaleChange={current.type === "image" ? publishScale : undefined}
                     rawMode={rawMode}
                   />

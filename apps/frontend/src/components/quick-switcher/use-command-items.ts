@@ -9,6 +9,9 @@ import { commands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
 import type { ModeResult, QuickSwitcherItem } from "./types"
 
+// Commands only shown when the board-view flag is on (route + sidebar gated too).
+const BOARD_GATED_COMMAND_IDS = new Set(["view-board", "new-post"])
+
 interface UseCommandItemsParams {
   query: string
   commandContext: CommandContext
@@ -29,8 +32,8 @@ export function rankCommands(candidates: Command[], query: string): Command[] {
 }
 
 export function useCommandItems({ query, commandContext }: UseCommandItemsParams): ModeResult {
-  // The "View Board" command is gated behind the board-view flag, matching the
-  // route + sidebar gates.
+  // The board commands ("View Board", "New Post") are gated behind the board-view
+  // flag, matching the route + sidebar gates.
   const boardEnabled = useFeatureFlag(commandContext.workspaceId, "board-view") === "on"
   // AI Agents settings is admin-only (the tab itself is admin-gated), so the
   // command hides for non-admins rather than opening settings to a fallback tab.
@@ -63,7 +66,7 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     const contextualItems = rankCommands(contextualCommands, query).map((c) => toItem(c, contextualGroup))
 
     const globalCommands = commands.filter(
-      (c) => (c.id !== "view-board" || boardEnabled) && (c.id !== "open-ai-agents" || isAdmin)
+      (c) => (!BOARD_GATED_COMMAND_IDS.has(c.id) || boardEnabled) && (c.id !== "open-ai-agents" || isAdmin)
     )
     const globalItems = rankCommands(globalCommands, query).map((c) => toItem(c, "Commands"))
 

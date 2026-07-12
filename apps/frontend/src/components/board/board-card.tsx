@@ -3,22 +3,14 @@ import type { RefObject } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import type { VirtualizerHandle } from "virtua"
-import {
-  Hash,
-  FileEdit,
-  User,
-  MessageSquareText,
-  ChevronDown,
-  ChevronRight,
-  CircleCheck,
-  PanelRight,
-  type LucideIcon,
-} from "lucide-react"
+import { ChevronDown, ChevronRight, CircleCheck, PanelRight } from "lucide-react"
 import { DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT, DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT } from "@threa/types"
 import { RelativeTime } from "@/components/relative-time"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
+import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { buildBranchedBoardRows } from "@/components/board/board-row-item"
 import { BranchedBoardRows, BranchProvenanceRow } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
@@ -31,6 +23,7 @@ import {
 } from "@/hooks/use-conversation-graph"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
 import { cn } from "@/lib/utils"
+import { streamTypeVisual } from "@/lib/stream-visuals"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
@@ -39,6 +32,7 @@ import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useBoardFlash } from "@/stores/board-flash-store"
 import { useConversationService, usePanel, createConversationPanelId, usePreferences } from "@/contexts"
 import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { conversationKeys, useSplitThread } from "@/hooks/use-conversations"
@@ -52,20 +46,17 @@ interface BoardCardProps {
   post: BoardViewPost
   /** Where the post lives (channel name, DM peer, scratchpad name), for the header. */
   contextLabel: string
-  /** Resolved stream type, selecting the context glyph. */
+  /** Resolved stream type, selecting the context glyph + tile tint. */
   streamType: string | undefined
+  /** For a DM post, the peer's user id — resolves the peer avatar shown over the
+   *  locator tile, matching the sidebar. Absent for non-DM streams. */
+  dmPeerUserId?: string | null
   /** The board's owned scroll viewport — lets a middle-gap expand hold the newest
    *  replies still instead of shoving them down (`useBoardCardRevealAnchor`).
    *  Absent when the card renders outside the virtualized board (tests). */
   scrollerRef?: RefObject<HTMLDivElement | null>
   /** virtua's imperative handle for the board feed, paired with `scrollerRef`. */
   listRef?: RefObject<VirtualizerHandle | null>
-}
-
-const TYPE_GLYPH: Record<string, LucideIcon> = {
-  channel: Hash,
-  scratchpad: FileEdit,
-  dm: User,
 }
 
 /** How many trailing messages a nested branch previews on a collapsed card; the
@@ -87,9 +78,18 @@ const COLLAPSED_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 2rem),
  * conversation (no reply indentation); a collapsed "N more messages" gap fills
  * in on click. The stream it lives in is the header locator, not a topic line.
  */
-export function BoardCard({ workspaceId, post, contextLabel, streamType, scrollerRef, listRef }: BoardCardProps) {
+export function BoardCard({
+  workspaceId,
+  post,
+  contextLabel,
+  streamType,
+  dmPeerUserId,
+  scrollerRef,
+  listRef,
+}: BoardCardProps) {
   const { conversation } = post
-  const { getActorName } = useActors(workspaceId)
+  const flash = useBoardFlash(conversation.id)
+  const { getActorName, getActorAvatar } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
   const { openPanel, getPanelUrl } = usePanel()
@@ -142,7 +142,11 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
   })
 
   const streamId = conversation.streamId
-  const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
+  // Leading visual matches the sidebar's stream row: a per-type glyph on a tinted
+  // tile, except a DM shows the peer avatar over it (icon as the fallback). Shared
+  // `streamTypeVisual` keeps board and sidebar in lockstep.
+  const { Icon: TypeIcon, tileClassName } = streamTypeVisual(streamType)
+  const dmAvatarUrl = dmPeerUserId ? getActorAvatar(dmPeerUserId, "user").avatarUrl : undefined
 
   // Whole-card fold: every card can be folded from the chevron; automatic
   // collapse is opt-in and only decides whether a tall conversation starts
@@ -295,6 +299,14 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
     derivePendingBranches,
     messagesById,
   ])
+  // Direct sub-topics under this conversation — the "↳" branch groups, counted
+  // for the locator line and collapse pill. Top-level only (grandchildren nest
+  // visually but don't inflate the card's headline count).
+  const subtopicCount = useMemo(() => {
+    let n = 0
+    for (const list of branchesByForkMessageId.values()) n += list.length
+    return n
+  }, [branchesByForkMessageId])
   const provenance = useMemo(
     () =>
       deriveBranchProvenance({
@@ -465,6 +477,14 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
   // surfaces) and identify as the CHILD conversation (copy-link opens its panel).
   const renderBranchMessage = (branch: BranchConversationView, message: RenderableMessage, continuation: boolean) => {
     const canBranch = !structuralIndex.threadsByParentMessageId.has(message.id)
+    // Per-message spine color: a colored actor (persona gold / bot green / system)
+    // overlays its own 2px border onto the branch's neutral rail at that row —
+    // covering it at the same width — while a user row stays plain so the neutral
+    // grouping rail shows. The row's own accent stripe is suppressed either way.
+    // Break out by the rail's padding PLUS its 2px border (`-mx-2.5 sm:-mx-3.5`)
+    // so the colored border lands ON the neutral rail, not beside it; `px-2 sm:px-3`
+    // re-pads so content aligns with the branch header.
+    const rail = actorRowTheme(message.authorType).railClassName
     return (
       <ConversationReadProvider value={null}>
         <MessageItem
@@ -476,7 +496,9 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
           continuation={continuation}
           conversationId={branch.conversationId}
           conversationRootStreamId={branch.threadStreamId}
-          surfaceClassName="bg-card"
+          surfaceClassName={rail ? cn("bg-card border-l-2 px-2 sm:px-3", rail) : "bg-card"}
+          rowInsetClassName={rail ? "-mx-2.5 sm:-mx-3.5" : undefined}
+          suppressRowAccent
           onNewSubtopic={
             canBranch
               ? () => inlineComposer.openNewSubtopic(message.streamId ?? branch.threadStreamId, message.id)
@@ -490,6 +512,99 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
     )
   }
 
+  // Header chrome shared by both header shapes (title-led and message-led), so
+  // the chevron/dot/actions don't get duplicated across the two branches.
+  const chevronToggle = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={toggleBodyCollapsed}
+          aria-expanded={!bodyCollapsed}
+          aria-label={bodyCollapsed ? "Expand conversation" : "Collapse conversation"}
+          className="-ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground"
+        >
+          {bodyCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{bodyCollapsed ? "Expand" : "Collapse"}</TooltipContent>
+    </Tooltip>
+  )
+  // Quiet unread dot: the conversation holds an effectively-unread member
+  // message. Reserved fixed footprint (no layout shift, INV-21); clears live.
+  const unreadDot = (
+    <span
+      className="flex h-2 w-2 shrink-0 items-center justify-center"
+      aria-label={cardHasUnread ? "Unread" : undefined}
+    >
+      {cardHasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
+    </span>
+  )
+  const headerActions = (
+    <>
+      {/* Open the whole conversation in the side panel (Mechanism B) — reads it
+          coherently and replies scoped to it, peer to a thread. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+            aria-label="Open conversation"
+            onClick={() => openPanel(createConversationPanelId(conversation.id))}
+          >
+            <PanelRight className="h-3.5 w-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Open conversation</TooltipContent>
+      </Tooltip>
+      <ConversationActionsMenu
+        workspaceId={workspaceId}
+        conversationId={conversation.id}
+        streamId={conversation.streamId}
+        topicSummary={conversation.topicSummary}
+        status={conversation.status}
+        triggerClassName="shrink-0"
+      />
+    </>
+  )
+  // The stream the post lives in — a real link back into it (INV-40). The leading
+  // visual mirrors the sidebar: a DM shows the peer avatar (glyph fallback), every
+  // other type shows the tinted glyph tile. `size` scales tile+label for the
+  // message-led lead (where the locator IS the headline) vs the demoted locator.
+  const locatorLink = (size: "sm" | "xs") => {
+    const tileSize = size === "sm" ? "h-6 w-6" : "h-5 w-5"
+    const glyph = <TypeIcon className={size === "sm" ? "h-3.5 w-3.5" : "h-3 w-3"} />
+    return (
+      <Link
+        to={`/w/${workspaceId}/s/${streamId}`}
+        className="flex min-w-0 items-center gap-1.5 transition-colors hover:text-foreground"
+      >
+        {dmAvatarUrl ? (
+          <Avatar className={cn("shrink-0 rounded-md", tileSize)}>
+            <AvatarImage src={dmAvatarUrl} alt={contextLabel} />
+            <AvatarFallback className={cn("rounded-md", tileClassName)}>{glyph}</AvatarFallback>
+          </Avatar>
+        ) : (
+          <span className={cn("flex shrink-0 items-center justify-center rounded-md", tileSize, tileClassName)}>
+            {glyph}
+          </span>
+        )}
+        <span className={cn("truncate", size === "sm" ? "text-sm font-medium text-foreground" : "font-medium")}>
+          {contextLabel}
+        </span>
+      </Link>
+    )
+  }
+  const subtopicLabel = subtopicCount > 0 && (
+    <>
+      <span className="shrink-0 opacity-50">·</span>
+      <span className="shrink-0">
+        {subtopicCount} {subtopicCount === 1 ? "sub-topic" : "sub-topics"}
+      </span>
+    </>
+  )
+
   return (
     // Scope quote reply to this card: a message row's "Quote reply" routes into
     // this card's own reply composer, not another card's.
@@ -498,7 +613,17 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
         {/* Desktop text-selection → floating "Quote" button, scoped to this card. */}
         <TextSelectionQuote streamId={streamId} containerRef={cardRef} />
         {moveToSubtopic.moveDialog}
-        <div ref={cardRef} className="rounded-xl border bg-card p-3 sm:p-4">
+        {/* Rest shadow lifts the card off the page — the light-mode card/bg
+            lightness delta is ~1%, so the border alone left cards reading flat.
+            Board-scoped; global tokens untouched. Dark leans on a deeper shadow
+            since the fill delta reads weakly on the charcoal canvas. */}
+        <div
+          ref={cardRef}
+          className={cn(
+            "rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] sm:p-4 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]",
+            flash && "board-post-flash"
+          )}
+        >
           {/* Zero-height marker at the card top: drives the header's stuck state
               (see the observer above). In flow but h-0, so it shifts nothing. */}
           <div ref={stuckSentinelRef} aria-hidden className="h-0" />
@@ -515,82 +640,46 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
               headerStuck && "sm:border-border/60 sm:shadow-[0_4px_12px_-6px_rgb(0_0_0/0.4)]"
             )}
           >
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={toggleBodyCollapsed}
-                    aria-expanded={!bodyCollapsed}
-                    aria-label={bodyCollapsed ? "Expand conversation" : "Collapse conversation"}
-                    className="-ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground"
-                  >
-                    {bodyCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">{bodyCollapsed ? "Expand" : "Collapse"}</TooltipContent>
-              </Tooltip>
-              {/* The stream the post lives in — a real link back into it (INV-40). */}
-              <Link
-                to={`/w/${workspaceId}/s/${streamId}`}
-                className="flex min-w-0 items-center gap-1.5 transition-colors hover:text-foreground"
-              >
-                <ContextGlyph className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate font-medium">{contextLabel}</span>
-              </Link>
-              {/* Quiet unread dot: the conversation holds an effectively-unread member
-              message. Reserved fixed footprint (no layout shift, INV-21); clears
-              live as read state changes. */}
-              <span
-                className="ml-auto flex h-2 w-2 shrink-0 items-center justify-center"
-                aria-label={cardHasUnread ? "Unread" : undefined}
-              >
-                {cardHasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
-              </span>
-              <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />
-              {/* Open the whole conversation in the side panel (Mechanism B) — reads it
-            coherently and replies scoped to it, peer to a thread. */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                    aria-label="Open conversation"
-                    onClick={() => openPanel(createConversationPanelId(conversation.id))}
-                  >
-                    <PanelRight className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Open conversation</TooltipContent>
-              </Tooltip>
-              <ConversationActionsMenu
-                workspaceId={workspaceId}
-                conversationId={conversation.id}
-                streamId={conversation.streamId}
-                topicSummary={conversation.topicSummary}
-                status={conversation.status}
-                triggerClassName="shrink-0"
-              />
-            </div>
-
-            {/* The conversation's topic — a quiet single-line label, shown only when
-            the extractor (or a rename) set one, so a message-led card stays
-            message-led when it hasn't. A resolved topic reads muted with a small
-            marker; the card also drops out of the Active lens (its own signal). */}
-            {conversation.topicSummary && (
-              <div className="mt-2 flex items-center gap-1.5">
-                {conversation.status === "resolved" && (
-                  <CircleCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Resolved" />
-                )}
-                <span
-                  className={cn(
-                    "truncate text-sm font-medium",
-                    conversation.status === "resolved" && "text-muted-foreground"
+            {/* Title-led when the extractor (or a rename) set a topic: the topic is
+                the card's headline and the locator (glyph · stream · time) demotes
+                to a small line beneath it. A message-led card (no topic) keeps the
+                locator AS the lead so it never grows a fake title. A resolved topic
+                reads muted with a marker; it also drops out of the Active lens. */}
+            {conversation.topicSummary ? (
+              <>
+                <div className="flex items-center gap-1.5">
+                  {chevronToggle}
+                  {conversation.status === "resolved" && (
+                    <CircleCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Resolved" />
                   )}
-                >
-                  {conversation.topicSummary}
-                </span>
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-[15px] leading-tight tracking-tight",
+                      conversation.status === "resolved" ? "font-medium text-muted-foreground" : "font-semibold"
+                    )}
+                  >
+                    {conversation.topicSummary}
+                  </span>
+                  {unreadDot}
+                  {headerActions}
+                </div>
+                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  {locatorLink("xs")}
+                  <span className="shrink-0 opacity-50">·</span>
+                  <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />
+                  {subtopicLabel}
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                {chevronToggle}
+                {locatorLink("sm")}
+                {subtopicLabel}
+                <div className="ml-auto flex items-center gap-1.5">
+                  {unreadDot}
+                  <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />
+                  {headerActions}
+                </div>
               </div>
             )}
 
@@ -602,6 +691,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
                 className="mt-2 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 {messageCount} {messageCount === 1 ? "message" : "messages"}
+                {subtopicCount > 0 && ` · ${subtopicCount} ${subtopicCount === 1 ? "sub-topic" : "sub-topics"}`}
               </button>
             )}
           </div>

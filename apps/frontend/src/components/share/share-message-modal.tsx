@@ -1,7 +1,6 @@
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { Clock, ArrowDownAZ } from "lucide-react"
-import { StreamTypes, Visibilities, type StreamType } from "@threa/types"
+import { StreamTypes, type StreamType } from "@threa/types"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -10,11 +9,10 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { useWorkspaceStreams, useWorkspaceStreamMemberships, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { StreamSortToggle } from "@/components/composer/stream-sort-toggle"
 import { streamLabel, STREAM_ICONS } from "@/lib/streams"
-import { compareStreamEntries, scoreStreamMatch, useStoredStreamSortMode } from "@/lib/stream-sort"
-import { calculateUrgency } from "@/components/layout/sidebar/utils"
+import { useStoredStreamSortMode } from "@/lib/stream-sort"
+import { useStreamPickerGroups } from "@/hooks/use-stream-picker-groups"
 import { queueShareHandoff, queuePlaintextShareHandoff } from "@/stores/share-handoff-store"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -35,10 +33,6 @@ const TARGET_GROUPS: { id: "channel" | "dm" | "scratchpad"; heading: string; typ
   { id: "dm", heading: "Direct messages", type: StreamTypes.DM },
   { id: "scratchpad", heading: "Your scratchpads", type: StreamTypes.SCRATCHPAD },
 ]
-
-// Stable identity for the no-unread-state case so the streamsByGroup memo doesn't
-// re-sort on every render when the workspace has no cached unread bootstrap yet.
-const EMPTY_COUNTS: Record<string, number> = Object.freeze({}) as Record<string, number>
 
 interface ShareMessageModalProps {
   open: boolean
@@ -84,57 +78,13 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs, sour
   const [sortMode, setSortMode] = useStoredStreamSortMode()
   const navigate = useNavigate()
   const location = useLocation()
-  const streams = useWorkspaceStreams(workspaceId)
-  const memberships = useWorkspaceStreamMemberships(workspaceId)
-  const unreadState = useWorkspaceUnreadState(workspaceId)
-  const unreadCounts = unreadState?.unreadCounts ?? EMPTY_COUNTS
-  const mentionCounts = unreadState?.mentionCounts ?? EMPTY_COUNTS
-  const activityCounts = unreadState?.activityCounts ?? EMPTY_COUNTS
-  const mutedStreamIds = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   // The Drawer/Dialog split is owned by ResponsiveDialog; isMobile here only
   // governs the post-select navigation contract (mobile strips `?panel=…`).
   const isMobile = useIsMobile()
 
-  const memberStreamIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const m of memberships) ids.add(m.streamId)
-    return ids
-  }, [memberships])
-
-  const streamsByGroup = useMemo(() => {
-    const lower = search.toLowerCase()
-    const isSearching = lower.length > 0
-    const matchable = streams.filter((s) => {
-      if (s.archivedAt) return false
-      if (s.rootStreamId) return false
-      if (s.type === StreamTypes.THREAD || s.type === StreamTypes.SYSTEM) return false
-      const accessible = s.visibility === Visibilities.PUBLIC || memberStreamIds.has(s.id)
-      return accessible
-    })
-
-    const enriched = matchable
-      .map((stream) => {
-        const score = scoreStreamMatch(stream, lower)
-        const unreadCount = unreadCounts[stream.id] ?? 0
-        const mentionCount = mentionCounts[stream.id] ?? 0
-        const activityCount = activityCounts[stream.id] ?? 0
-        const isMuted = mutedStreamIds.has(stream.id)
-        const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted, activityCount)
-        return { stream, score, urgency }
-      })
-      .filter(({ score }) => score !== Infinity)
-
-    const byType = new Map<StreamType, typeof enriched>()
-    for (const entry of enriched) {
-      const list = byType.get(entry.stream.type) ?? []
-      list.push(entry)
-      byType.set(entry.stream.type, list)
-    }
-    for (const [, list] of byType) {
-      list.sort((a, b) => compareStreamEntries(a, b, { isSearching, mode: sortMode }))
-    }
-    return byType
-  }, [streams, memberStreamIds, search, sortMode, unreadCounts, mentionCounts, activityCounts, mutedStreamIds])
+  // Baseline access filter (public-or-member, not archived, not thread/system) —
+  // includes scratchpads, which you can share into. No extra predicate.
+  const streamsByGroup = useStreamPickerGroups(workspaceId, { search, sortMode })
 
   // Wrap the parent's open-change so search resets on every close path
   // (Esc, backdrop, X, programmatic). Without this, dismissing without
@@ -189,23 +139,7 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs, sour
                 Pick a stream to insert this share into the composer.
               </ResponsiveDialogDescription>
             </div>
-            <ToggleGroup
-              type="single"
-              size="sm"
-              value={sortMode}
-              onValueChange={(value) => {
-                if (value === "recency" || value === "alphabetical") setSortMode(value)
-              }}
-              aria-label="Sort streams"
-              className="shrink-0"
-            >
-              <ToggleGroupItem value="recency" aria-label="Sort by recency" title="Recent activity">
-                <Clock className="h-4 w-4" aria-hidden="true" />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="alphabetical" aria-label="Sort alphabetically" title="A–Z">
-                <ArrowDownAZ className="h-4 w-4" aria-hidden="true" />
-              </ToggleGroupItem>
-            </ToggleGroup>
+            <StreamSortToggle value={sortMode} onChange={setSortMode} />
           </div>
         </ResponsiveDialogHeader>
         <Command shouldFilter={false} className="rounded-none">

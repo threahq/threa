@@ -11,6 +11,8 @@ import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { resetStreamStoreCache } from "@/stores/stream-store"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
+import { resetComposeOverlayStoreCache } from "@/stores/compose-overlay-store"
+import { resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { resetSnippetRequestStoreCache } from "@/stores/snippet-request-store"
 import { resetConversationReplyOpenStoreCache } from "@/stores/conversation-reply-open-store"
 import { resetE2eSessionStoreCache } from "@/stores/e2e-session-store"
@@ -73,6 +75,8 @@ function flushModuleStoreCaches(): void {
   resetSnippetRequestStoreCache()
   resetConversationReplyOpenStoreCache()
   resetE2eSessionStoreCache()
+  resetComposeOverlayStoreCache()
+  resetBoardFlashStoreCache()
   resetRevealGate()
 }
 

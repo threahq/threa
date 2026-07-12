@@ -364,15 +364,16 @@ describe("useCreateBoardPost", () => {
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
 
-    // The mutation resolves despite the cache-write failure — no false send error
-    // that would prompt a duplicate resend.
+    // The mutation resolves (with the new conversation id, for the board's flash)
+    // despite the cache-write failure — no false send error that would prompt a
+    // duplicate resend.
     await act(async () => {
       await expect(
         result.current.mutateAsync({
           target: { type: "stream", streamId: STREAM_ID },
           contentJson: { type: "doc", content: [] },
         })
-      ).resolves.toBeUndefined()
+      ).resolves.toBe("conv_new")
     })
     expect(putOptimistic).toHaveBeenCalled()
   })
