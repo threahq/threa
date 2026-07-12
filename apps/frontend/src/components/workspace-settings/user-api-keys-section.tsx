@@ -23,6 +23,7 @@ import {
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { API_KEY_ELIGIBLE_PICKER_SCOPES, WORKSPACE_PERMISSIONS, type WorkspacePermissionSlug } from "@threa/types"
 import { Check, ChevronDown, Copy, Key, Plus, Trash2, Eye, EyeOff } from "lucide-react"
+import { ApiKeyVersionControl } from "./api-key-version-control"
 
 // Full catalog drives SCOPE_LABELS so previously-issued keys with scopes
 // outside the eligible picker subset still render a human-readable name.
@@ -73,6 +74,14 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
     onSuccess: () => {
       setEditTarget(null)
       setEditScopes(new Set())
+      queryClient.invalidateQueries({ queryKey })
+    },
+  })
+
+  const updateVersionMutation = useMutation({
+    mutationFn: (params: { keyId: string; apiVersion: string | null }) =>
+      workspacesApi.updateUserApiKeyVersion(workspaceId, params.keyId, params.apiVersion),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey })
     },
   })
@@ -304,6 +313,13 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
                     </>
                   )}
                 </p>
+                <div className="mt-1">
+                  <ApiKeyVersionControl
+                    apiVersion={key.apiVersion}
+                    disabled={updateVersionMutation.isPending}
+                    onChange={(apiVersion) => updateVersionMutation.mutate({ keyId: key.id, apiVersion })}
+                  />
+                </div>
               </div>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -364,6 +380,9 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
 
       {updateScopesMutation.error && (
         <p className="text-sm text-destructive">Failed to update key scopes. Please try again.</p>
+      )}
+      {updateVersionMutation.error && (
+        <p className="text-sm text-destructive">Failed to update API version. Please try again.</p>
       )}
       {revokeMutation.error && <p className="text-sm text-destructive">Failed to revoke key. Please try again.</p>}
 

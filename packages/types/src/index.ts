@@ -926,6 +926,9 @@ export {
   type CreateBotApiKeyResponse,
 } from "./api-keys"
 
+// Dated public-API versions (Threa-Version header)
+export { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion } from "./api-versions"
+
 // Workspace permissions catalog
 export {
   WORKSPACE_PERMISSION_SCOPES,
