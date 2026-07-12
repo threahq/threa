@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { Fragment, createElement } from "react"
 import * as boardFeedListModule from "@/components/board/board-feed-list"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
@@ -116,8 +116,6 @@ function mountBoard(
   opts: {
     nextCursor?: string | null
     fail?: boolean
-    /** "unknown" leaves the flag absent from the bootstrap (still-resolving state). */
-    boardFlag?: "on" | "off" | "unknown"
     failMessages?: boolean
     /** URL to mount at — set `/w/<ws>/board/<lens>` to exercise a lens segment. */
     entry?: string
@@ -125,14 +123,7 @@ function mountBoard(
     boardViews?: BoardView[]
   } = {}
 ) {
-  const {
-    nextCursor = null,
-    fail = false,
-    boardFlag = "on",
-    failMessages = false,
-    entry = `/w/${WORKSPACE_ID}/board`,
-    boardViews,
-  } = opts
+  const { nextCursor = null, fail = false, failMessages = false, entry = `/w/${WORKSPACE_ID}/board`, boardViews } = opts
   const listByWorkspace = vi.fn(async () => {
     if (fail) throw new Error("boom")
     return { posts, nextCursor }
@@ -147,10 +138,8 @@ function mountBoard(
   // pagination/loading/error, so `listByWorkspace` is exercised as before.
   vi.spyOn(boardStoreModule, "useBoardPosts").mockReturnValue(posts as never)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  // The board is gated behind the board-view flag, read from the bootstrap cache;
   // `boardViews` seeds the saved-view list `useBoardViews` reads from bootstrap.
   queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), {
-    featureFlags: boardFlag === "unknown" ? {} : { "board-view": boardFlag },
     boardViews: boardViews ?? [],
   })
   const tree = (
@@ -275,29 +264,6 @@ describe("BoardPage", () => {
     mountBoard([], { boardViews: [makeBoardView()] })
     const probe = await screen.findByTestId("location")
     await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board/active?is=channel`))
-  })
-
-  it("does not bounce to the saved-view home while the board-view flag is unknown", async () => {
-    // The redirect is gated behind the resolved flag (like the rest of the board),
-    // so a still-loading flag never bounces through the saved-view URL first.
-    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
-      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-    mountBoard([], { boardFlag: "unknown", boardViews: [makeBoardView()] })
-    const probe = await screen.findByTestId("location")
-    // Stays put on bare `/board`; never navigates to the view URL.
-    expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board`)
-  })
-
-  it("does not bounce to the saved-view home when the board-view flag is off", async () => {
-    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
-      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-    mountBoard([], { boardFlag: "off", boardViews: [makeBoardView()] })
-    const probe = await screen.findByTestId("location")
-    // Flag-off leaves the board route (to the workspace), never through the view URL.
-    await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}`))
-    expect(probe.textContent).not.toContain("is=channel")
   })
 
   it("hides 'Show everything' on an empty saved-view home landing", async () => {
@@ -511,16 +477,6 @@ describe("BoardPage", () => {
     // Load more is driven by the query's async `hasNextPage` (the feed itself
     // renders synchronously from the store), so wait for it to resolve.
     expect(await screen.findByRole("button", { name: "Load more" })).toBeTruthy()
-  })
-
-  it("does not render the board when the board-view flag is off", async () => {
-    const { listByWorkspace } = mountBoard([makePost()], { boardFlag: "off" })
-    // Gate redirects away — board content never appears and the feed isn't fetched.
-    // Flush effects so a (hypothetical) deferred mount would have its chance to fire.
-    await act(async () => {})
-    expect(screen.queryByText("Opening message body.")).toBeNull()
-    expect(screen.queryByText("Board")).toBeNull()
-    expect(listByWorkspace).not.toHaveBeenCalled()
   })
 
   it("permalinks each message to itself in its stream timeline (no conversations pane)", async () => {

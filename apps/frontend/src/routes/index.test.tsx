@@ -69,7 +69,6 @@ describe("WorkspaceHome", () => {
       redirectStreamId: "stream_123",
       boardHref: null,
       shouldOpenSidebar: false,
-      pendingBoardFlag: false,
     })
   })
 
@@ -91,7 +90,6 @@ describe("WorkspaceHome", () => {
       redirectStreamId: null,
       boardHref: "/w/ws_123/board/active?in=stream_x",
       shouldOpenSidebar: false,
-      pendingBoardFlag: false,
     })
     render(
       <MemoryRouter initialEntries={["/w/ws_123"]}>
@@ -103,27 +101,6 @@ describe("WorkspaceHome", () => {
     )
 
     expect(await screen.findByTestId("path")).toHaveTextContent("/w/ws_123/board/active")
-  })
-
-  it("renders nothing while the board flag is still unknown", () => {
-    mockUseLastLocation.mockReturnValue({
-      redirectStreamId: null,
-      boardHref: null,
-      shouldOpenSidebar: false,
-      pendingBoardFlag: true,
-    })
-    render(
-      <MemoryRouter initialEntries={["/w/ws_123"]}>
-        <Routes>
-          <Route path="/w/:workspaceId" element={<WorkspaceHome />} />
-          <Route path="/w/:workspaceId/s/:streamId" element={<SearchEcho />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    expect(screen.queryByText("Select a stream from the sidebar")).not.toBeInTheDocument()
-    expect(screen.queryByTestId("search")).not.toBeInTheDocument()
-    expect(mockTogglePinned).not.toHaveBeenCalled()
   })
 
   it("redirects legacy memo routes into the memory explorer", async () => {

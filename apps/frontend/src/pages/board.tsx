@@ -9,7 +9,6 @@ import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
 import { usePanelLayout } from "@/hooks"
-import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
 import {
@@ -198,11 +197,10 @@ export function BoardPage() {
   const bareBoard = lensParam === undefined && location.search === ""
   // Bare `/board` is a "resolve where home is" route: hold (render nothing) until
   // the home is knowable, rather than paint the plain-lens board and then bounce
-  // to a saved-view home a frame later (mirrors the flag gate below).
+  // to a saved-view home a frame later.
   if (bareBoard && !savedViewReady) return null
   // The bounce target for a bare `/board` arrival with a saved-view home. Resolved
-  // here but NAVIGATED inside BoardPageGate — only once the board-view flag is on
-  // and at most once per navigation — so it never fires ahead of the flag gate and
+  // here but NAVIGATED inside BoardPageGate — at most once per navigation — so
   // pinning a view as home while sitting on `/board` (a same-URL preference change)
   // can't yank the user off the page.
   const savedViewTarget =
@@ -230,11 +228,10 @@ export function BoardPage() {
 }
 
 /**
- * The board is gated behind the `board-view` feature flag. While the bootstrap
- * (and thus the flag) is still unknown, render nothing rather than redirect —
- * redirecting on the default would bounce a flagged user who deep-links or
- * refreshes on /board before the bootstrap cache is populated. The backend
- * endpoint 404s without the flag too, so this is the UX half of the gate.
+ * Handles the bare `/board` → saved-view-home redirect as a post-commit effect.
+ * It lives in this child (not BoardPage) because a hook can't sit after
+ * BoardPage's early returns. The redirect fires at most once per navigation; a
+ * later same-URL re-render from pinning a view as home must not re-trigger it.
  */
 function BoardPageGate({
   workspaceId,
@@ -249,29 +246,26 @@ function BoardPageGate({
   savedViewTarget: string | null
   savedViewReady: boolean
 }) {
-  const boardFlag = useFeatureFlagWhenKnown(workspaceId, "board-view")
   const navigate = useNavigate()
   const location = useLocation()
-  // Bounce a bare `/board` arrival to the saved-view home, but only once the flag
-  // is on and at most once per navigation (`location.key`): a later same-URL
-  // re-render from pinning a view as home must not re-trigger it, so the redirect
-  // follows navigation, not the live preference.
+  // Bounce a bare `/board` arrival to the saved-view home at most once per
+  // navigation (`location.key`): a later same-URL re-render from pinning a view
+  // as home must not re-trigger it, so the redirect follows navigation, not the
+  // live preference.
   const handledKeyRef = useRef<string | null>(null)
   useEffect(() => {
-    if (boardFlag !== "on" || !savedViewReady) return
+    if (!savedViewReady) return
     if (handledKeyRef.current === location.key) return
     handledKeyRef.current = location.key
     if (savedViewTarget) navigate(savedViewTarget, { replace: true })
-  }, [boardFlag, savedViewReady, savedViewTarget, location.key, navigate])
-  if (boardFlag === null) return null
-  if (boardFlag !== "on") return <Navigate to={`/w/${workspaceId}`} replace />
+  }, [savedViewReady, savedViewTarget, location.key, navigate])
   // A saved-view home is about to redirect (the effect above fires post-commit) —
-  // render nothing rather than paint one frame of the wrong lens board first,
-  // mirroring the flag gate's "render nothing rather than redirect". Gate this on
-  // the SAME "not yet handled this navigation" condition the effect uses: when the
-  // target only appears because the viewer pinned a view as home while sitting on
-  // `/board` (same `location.key`, already handled), the effect deliberately won't
-  // navigate — so blanking here would strand the board. Render it instead.
+  // render nothing rather than paint one frame of the wrong lens board first. Gate
+  // this on the SAME "not yet handled this navigation" condition the effect uses:
+  // when the target only appears because the viewer pinned a view as home while
+  // sitting on `/board` (same `location.key`, already handled), the effect
+  // deliberately won't navigate — so blanking here would strand the board. Render
+  // it instead.
   if (savedViewTarget && handledKeyRef.current !== location.key) return null
   return <BoardPageInner workspaceId={workspaceId} lens={lens} homeLens={homeLens} />
 }

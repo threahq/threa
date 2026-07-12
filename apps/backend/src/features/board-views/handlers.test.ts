@@ -26,11 +26,9 @@ describe("Board view handlers", () => {
   const mockCreate = mock(() => Promise.resolve({ id: "boardview_1" } as Record<string, unknown>))
   const mockUpdate = mock(() => Promise.resolve({ id: "boardview_1" } as Record<string, unknown>))
   const mockDelete = mock(() => Promise.resolve())
-  const mockGetFlag = mock(() => Promise.resolve("on" as string))
 
   const handlers = createBoardViewHandlers({
     boardViewService: { list: mockList, create: mockCreate, update: mockUpdate, delete: mockDelete } as never,
-    featureFlagService: { getFlag: mockGetFlag } as never,
   })
 
   beforeEach(() => {
@@ -38,11 +36,9 @@ describe("Board view handlers", () => {
     mockCreate.mockReset()
     mockUpdate.mockReset()
     mockDelete.mockReset()
-    mockGetFlag.mockReset()
     mockList.mockResolvedValue([])
     mockCreate.mockResolvedValue({ id: "boardview_1", name: "My view" })
     mockUpdate.mockResolvedValue({ id: "boardview_1", name: "Renamed" })
-    mockGetFlag.mockResolvedValue("on")
   })
 
   test("list returns the viewer's saved views", async () => {
@@ -143,15 +139,5 @@ describe("Board view handlers", () => {
     await handlers.remove(mockReq({ params: { boardViewId: "boardview_1" } }), res)
     expect(mockDelete).toHaveBeenCalledWith("ws_1", "usr_1", "boardview_1")
     expect((res as unknown as { body: unknown }).body).toEqual({ ok: true })
-  })
-
-  test("every endpoint 404s without the board-view flag before touching the service", async () => {
-    mockGetFlag.mockResolvedValue("off")
-    await expect(handlers.list(mockReq(), mockRes())).rejects.toMatchObject({ status: 404 })
-    await expect(handlers.create(mockReq({ body: { name: "x", baseLens: "all" } }), mockRes())).rejects.toMatchObject({
-      status: 404,
-    })
-    expect(mockList).not.toHaveBeenCalled()
-    expect(mockCreate).not.toHaveBeenCalled()
   })
 })

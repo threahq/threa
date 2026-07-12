@@ -2,7 +2,6 @@ import { useEffect, useMemo } from "react"
 import { useLocation, useMatch } from "react-router-dom"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import {
   buildBoardHref,
   getLastLocation,
@@ -19,18 +18,14 @@ interface UseLastLocationResult {
   boardHref: string | null
   /** True when bootstrap is loaded and the workspace has zero streams. */
   shouldOpenSidebar: boolean
-  /** Board surface chosen but the `board-view` flag isn't known yet — render nothing. */
-  pendingBoardFlag: boolean
 }
 
 /**
  * Resolves where the workspace index route should land, restoring the last
  * surface (stream or board) the viewer was on.
  *
- * Board arm: requires the `board-view` flag to be known and `"on"` (render
- * nothing while unknown, mirroring the board page's own gate; flag off falls
- * through to the stream arm using the retained last stream). The lens is
- * validated and stale scope ids swept inside {@link buildBoardHref}.
+ * Board arm: a stored board record resolves straight to the board URL, with the
+ * lens validated and stale scope ids swept inside {@link buildBoardHref}.
  *
  * Stream arm (unchanged): stored stream validated against bootstrap, most-
  * recently-active fallback, and `shouldOpenSidebar` only once bootstrap has
@@ -39,35 +34,21 @@ interface UseLastLocationResult {
 export function useLastLocation(workspaceId: string): UseLastLocationResult {
   const { user } = useAuth()
   const streams = useWorkspaceStreams(workspaceId)
-  const boardFlag = useFeatureFlagWhenKnown(workspaceId, "board-view")
 
   const result = useMemo(() => {
     const record = user ? getLastLocation(user.id, workspaceId) : null
 
     if (record?.surface === "board" && record.board) {
-      if (boardFlag === null) {
-        return {
-          redirectStreamId: null,
-          boardHref: null,
-          shouldOpenSidebar: false,
-          pendingBoardFlag: true,
-          staleStoredId: false,
-        }
+      return {
+        redirectStreamId: null,
+        boardHref: buildBoardHref(
+          workspaceId,
+          record.board,
+          streams.map((s) => s.id)
+        ),
+        shouldOpenSidebar: false,
+        staleStoredId: false,
       }
-      if (boardFlag === "on") {
-        return {
-          redirectStreamId: null,
-          boardHref: buildBoardHref(
-            workspaceId,
-            record.board,
-            streams.map((s) => s.id)
-          ),
-          shouldOpenSidebar: false,
-          pendingBoardFlag: false,
-          staleStoredId: false,
-        }
-      }
-      // Flag off: fall through to the stream arm using the retained stream id.
     }
 
     const storedId = record?.streamId ?? null
@@ -78,7 +59,6 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
           redirectStreamId: storedId,
           boardHref: null,
           shouldOpenSidebar: false,
-          pendingBoardFlag: false,
           staleStoredId: false,
         }
       }
@@ -86,7 +66,6 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
         redirectStreamId: streams.length > 0 ? getMostRecentStreamId(streams) : null,
         boardHref: null,
         shouldOpenSidebar: streams.length === 0,
-        pendingBoardFlag: false,
         staleStoredId: true,
       }
     }
@@ -96,7 +75,6 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
         redirectStreamId: getMostRecentStreamId(streams),
         boardHref: null,
         shouldOpenSidebar: false,
-        pendingBoardFlag: false,
         staleStoredId: false,
       }
     }
@@ -105,10 +83,9 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
       redirectStreamId: null,
       boardHref: null,
       shouldOpenSidebar: true,
-      pendingBoardFlag: false,
       staleStoredId: false,
     }
-  }, [user, workspaceId, streams, boardFlag])
+  }, [user, workspaceId, streams])
 
   useEffect(() => {
     if (result.staleStoredId && user) {

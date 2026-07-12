@@ -31,7 +31,6 @@ import {
   useWorkspaceLabelAssignments,
 } from "@/stores/workspace-store"
 import { useCoordinatedLoading, useSidebar, usePreferencesOptional } from "@/contexts"
-import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useCreateChannel } from "@/components/create-channel"
 import { Button } from "@/components/ui/button"
 import { SidebarShell } from "./sidebar-shell"
@@ -74,10 +73,7 @@ import {
 } from "@/components/board/board-filter-params"
 import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
 import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
-import { StreamTypes, LabelableResourceTypes, type SidebarQuickLinkKey } from "@threa/types"
-
-/** The flag-gated Board quick-link key — one constant for the filter + the editor. */
-const BOARD_QUICK_LINK_KEY: SidebarQuickLinkKey = "board"
+import { StreamTypes, LabelableResourceTypes } from "@threa/types"
 
 /** Stable empty set for layouts with no Unread section (avoids a new ref each render). */
 const EMPTY_UNREAD_IDS: ReadonlySet<string> = new Set()
@@ -144,13 +140,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // Reactive pathname (useLocation), and a real matcher: /board carries an
   // optional lens segment, so a suffix check misses /board/active.
   const isBoardPage = isBoardPath(location.pathname)
-  // The Board is gated behind the board-view flag — hide its quick link (and its
-  // editor row) for users without it, matching the route + endpoint gates.
-  const boardEnabled = useFeatureFlag(workspaceId, "board-view") === "on"
-  const boardQuickLinks = boardEnabled
-    ? sidebarConfig.quickLinks
-    : sidebarConfig.quickLinks.filter((link) => link.key !== BOARD_QUICK_LINK_KEY)
-  const isBoardMode = isBoardPage && boardEnabled
   const boardMutedStreamIds = useBoardMutedStreamIds(workspaceId)
   const muteStream = useMuteStream(workspaceId)
   const unmuteStream = useUnmuteStream(workspaceId)
@@ -247,13 +236,13 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const virtualDmStreams = useMemo(
     () =>
       buildVirtualDmDrafts({
-        isBoardMode,
+        isBoardMode: isBoardPage,
         workspaceId,
         currentUserId: currentUser?.id ?? null,
         workspaceUsers,
         dmPeerUserIds: idbDmPeers.map((peer) => peer.userId),
       }),
-    [workspaceUsers, idbDmPeers, currentUser, workspaceId, isBoardMode]
+    [workspaceUsers, idbDmPeers, currentUser, workspaceId, isBoardPage]
   )
 
   const hasUserStreams = hasUserStreamsFromStreams || virtualDmStreams.length > 0
@@ -339,9 +328,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // The single reactive topic-stats pass — one subscription for the whole board
   // sidebar (rows + Lenses counts), gated on board mode so chats mode subscribes
   // to nothing (perf contract in the exploration doc).
-  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardMode)
+  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardPage)
   const boardMode = useMemo<SidebarBoardMode | null>(() => {
-    if (!isBoardMode) return null
+    if (!isBoardPage) return null
     return {
       workspaceId,
       includedStreamIds: boardIncludedStreamIds,
@@ -360,7 +349,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       lensTotals: boardSidebarStats?.lensTotals ?? null,
     }
   }, [
-    isBoardMode,
+    isBoardPage,
     workspaceId,
     boardIncludedStreamIds,
     boardExcludedStreamIds,
@@ -377,35 +366,30 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // removing the section from the editor takes it out of both the normal list
   // (resolved as a positioned section) and the empty-streams state.
   const hasQuickLinksSection = sidebarConfig.sections.some((s) => s.spec.kind === "quicklinks")
-  // On `/board` (flag on) the board block replaces the quick-links block in place;
-  // every other surface keeps the unchanged quick links.
+  // On `/board` the board block replaces the quick-links block in place; every
+  // other surface keeps the unchanged quick links.
   let quickLinksSlot: ReactNode
   if (hasQuickLinksSection) {
-    quickLinksSlot =
-      isBoardPage && boardEnabled ? (
-        <BoardModeBlock
-          workspaceId={workspaceId}
-          userId={user?.id ?? null}
-          lensTotals={boardMode?.lensTotals ?? null}
-        />
-      ) : (
-        <SidebarQuickLinks
-          workspaceId={workspaceId}
-          quickLinks={boardQuickLinks}
-          isDraftsPage={isDraftsPage}
-          draftCount={draftCount}
-          isSavedPage={isSavedPage}
-          savedCount={savedCount}
-          isScheduledPage={isScheduledPage}
-          scheduledCount={scheduledCount}
-          isActivityPage={isActivityPage}
-          isBoardPage={isBoardPage}
-          isMemoryPage={isMemoryPage}
-          isFilesPage={isFilesPage}
-          isLabelsPage={isLabelsPage}
-          unreadActivityCount={unreadActivityCount}
-        />
-      )
+    quickLinksSlot = isBoardPage ? (
+      <BoardModeBlock workspaceId={workspaceId} userId={user?.id ?? null} lensTotals={boardMode?.lensTotals ?? null} />
+    ) : (
+      <SidebarQuickLinks
+        workspaceId={workspaceId}
+        quickLinks={sidebarConfig.quickLinks}
+        isDraftsPage={isDraftsPage}
+        draftCount={draftCount}
+        isSavedPage={isSavedPage}
+        savedCount={savedCount}
+        isScheduledPage={isScheduledPage}
+        scheduledCount={scheduledCount}
+        isActivityPage={isActivityPage}
+        isBoardPage={isBoardPage}
+        isMemoryPage={isMemoryPage}
+        isFilesPage={isFilesPage}
+        isLabelsPage={isLabelsPage}
+        unreadActivityCount={unreadActivityCount}
+      />
+    )
   }
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -699,12 +683,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           </>
         }
       />
-      <SidebarEditorDialog
-        workspaceId={workspaceId}
-        open={isEditorOpen}
-        onOpenChange={setIsEditorOpen}
-        hiddenQuickLinkKeys={boardEnabled ? undefined : [BOARD_QUICK_LINK_KEY]}
-      />
+      <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />
       {labelRemovePrompt && (
         <RemoveLabelDialog
           open

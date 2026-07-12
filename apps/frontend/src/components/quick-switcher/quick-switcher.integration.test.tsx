@@ -563,14 +563,11 @@ describe("QuickSwitcher Integration Tests", () => {
       // Switch to command mode
       await user.type(screen.getByLabelText("Quick switcher input"), ">")
 
-      // First command should be selected after mode switch
+      // selectedIndex resets to 0 on the mode switch — the first command row
+      // (data-index 0) carries the highlight regardless of which command it is.
       await waitFor(() => {
-        // Look for command items (they're rendered as divs since commands don't have href)
-        const commandItems = screen.getAllByText(/new scratchpad|new channel|toggle theme/i)
-        if (commandItems.length > 0) {
-          const firstCommandItem = commandItems[0].closest("div[data-index]")
-          expect(firstCommandItem?.classList.contains("bg-muted")).toBe(true)
-        }
+        const firstCommandItem = document.querySelector('[data-index="0"]')
+        expect(firstCommandItem?.classList.contains("bg-muted")).toBe(true)
       })
     })
   })

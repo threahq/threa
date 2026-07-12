@@ -305,13 +305,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     boundaryExtractionService,
     boardExclusionService,
     streamService,
-    featureFlagService,
   })
   const command = createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService })
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
   const workspaceSettings = createWorkspaceSettingsHandlers({ workspaceSettingsService })
   const sidebarConfig = createSidebarConfigHandlers({ sidebarConfigService })
-  const boardView = createBoardViewHandlers({ boardViewService, featureFlagService })
+  const boardView = createBoardViewHandlers({ boardViewService })
   const userE2eKeys = createUserE2eKeysHandlers({ userE2eKeysService })
   const aiUsage = createAIUsageHandlers({ pool })
   const debug = createDebugHandlers({ pool, poolMonitor })

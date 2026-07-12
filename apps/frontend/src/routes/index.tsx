@@ -179,7 +179,7 @@ export function WorkspaceHome() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const location = useLocation()
   const { state, togglePinned } = useSidebar()
-  const { redirectStreamId, boardHref, shouldOpenSidebar, pendingBoardFlag } = useLastLocation(workspaceId ?? "")
+  const { redirectStreamId, boardHref, shouldOpenSidebar } = useLastLocation(workspaceId ?? "")
   const sidebarOpenedRef = useRef(false)
 
   useEffect(() => {
@@ -188,10 +188,6 @@ export function WorkspaceHome() {
       togglePinned()
     }
   }, [shouldOpenSidebar, state, togglePinned])
-
-  if (pendingBoardFlag) {
-    return null
-  }
 
   if (boardHref && workspaceId) {
     return <Navigate to={boardHref} replace />

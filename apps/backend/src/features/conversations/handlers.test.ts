@@ -48,7 +48,6 @@ describe("Conversation Handlers", () => {
       mutedStreamIds: [] as string[],
     })
   )
-  const mockGetFlag = mock(() => Promise.resolve("on" as string))
   const mockSplitThread = mock(() =>
     Promise.resolve({ conversation: { id: "conv_new" }, sourceConversation: { id: "conv_1" } })
   )
@@ -78,9 +77,6 @@ describe("Conversation Handlers", () => {
     streamService: {
       validateStreamAccess: mockValidateStreamAccess,
     } as never,
-    featureFlagService: {
-      getFlag: mockGetFlag,
-    } as never,
   })
 
   beforeEach(() => {
@@ -96,7 +92,6 @@ describe("Conversation Handlers", () => {
     mockMuteStream.mockReset()
     mockUnmuteStream.mockReset()
     mockGetExclusions.mockReset()
-    mockGetFlag.mockReset()
     mockUpdateConversation.mockResolvedValue({
       conversation: { id: "conv_1", topicSummary: "Renamed", status: "active" },
     })
@@ -108,7 +103,6 @@ describe("Conversation Handlers", () => {
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
     mockListByStream.mockResolvedValue([])
     mockListByWorkspace.mockResolvedValue({ posts: [], nextCursor: null })
-    mockGetFlag.mockResolvedValue("on")
     mockGetById.mockResolvedValue({
       id: "conv_1",
       streamId: "stream_1",
@@ -144,17 +138,6 @@ describe("Conversation Handlers", () => {
   })
 
   describe("listByWorkspace", () => {
-    test("404s when the board-view feature flag is not 'on'", async () => {
-      mockGetFlag.mockResolvedValue("off")
-      await expect(handlers.listByWorkspace(mockReq({ query: {} }), mockRes())).rejects.toMatchObject({ status: 404 })
-      expect(mockListByWorkspace).not.toHaveBeenCalled()
-    })
-
-    test("checks the board-view flag for the viewer", async () => {
-      await handlers.listByWorkspace(mockReq({ query: {} }), mockRes())
-      expect(mockGetFlag).toHaveBeenCalledWith("ws_1", "usr_1", "board-view")
-    })
-
     test("passes workspaceId, userId and validated query (incl. decoded cursor) to the service", async () => {
       const res = mockRes()
       await handlers.listByWorkspace(
@@ -386,14 +369,6 @@ describe("Conversation Handlers", () => {
   })
 
   describe("getBoardPost", () => {
-    test("404s when the board-view feature flag is not 'on'", async () => {
-      mockGetFlag.mockResolvedValue("off")
-      await expect(
-        handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), mockRes())
-      ).rejects.toMatchObject({ status: 404 })
-      expect(mockGetBoardPostById).not.toHaveBeenCalled()
-    })
-
     test("gates on the conversation's single root via validateStreamAccess (INV-62)", async () => {
       await handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), mockRes())
       expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
@@ -487,10 +462,9 @@ describe("Conversation Handlers", () => {
   })
 
   describe("board exclusions", () => {
-    test("hideConversation gates on the board flag, checks access, then delegates", async () => {
+    test("hideConversation checks access, then delegates", async () => {
       const res = mockRes()
       await handlers.hideConversation(mockReq({ params: { conversationId: "conv_1" } }), res)
-      expect(mockGetFlag).toHaveBeenCalledWith("ws_1", "usr_1", "board-view")
       expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
       expect(mockHideConversation).toHaveBeenCalledWith({
         workspaceId: "ws_1",
@@ -498,14 +472,6 @@ describe("Conversation Handlers", () => {
         userId: "usr_1",
       })
       expect((res as unknown as { body: unknown }).body).toEqual({ hiddenAt: "2026-07-05T00:00:00.000Z" })
-    })
-
-    test("hideConversation 404s without the board-view flag before writing", async () => {
-      mockGetFlag.mockResolvedValue("off")
-      await expect(
-        handlers.hideConversation(mockReq({ params: { conversationId: "conv_1" } }), mockRes())
-      ).rejects.toMatchObject({ status: 404 })
-      expect(mockHideConversation).not.toHaveBeenCalled()
     })
 
     test("muteStream validates the target stream then delegates", async () => {

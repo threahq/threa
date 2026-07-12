@@ -16,13 +16,8 @@
  * Every live feature flag, mapping key → allowed values. The first value is
  * the default. Add a flag while rolling a feature out; delete it the moment
  * the rollout is done. A flag that survives long here is a smell.
- *
- * - `board-view`: gates the workspace Board (a cross-stream view of
- *   conversations). Off by default; flip to `on` per user from the backoffice.
  */
-export const FEATURE_FLAGS = {
-  "board-view": ["off", "on"],
-} as const satisfies Record<string, readonly [string, ...string[]]>
+export const FEATURE_FLAGS = {} as const satisfies Record<string, readonly [string, ...string[]]>
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS
 

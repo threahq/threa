@@ -1,16 +1,12 @@
 import { useMemo } from "react"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { isDraftId } from "@/hooks"
-import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
 import { rankMatches } from "@/lib/match-score"
 import { commands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
 import type { ModeResult, QuickSwitcherItem } from "./types"
-
-// Commands only shown when the board-view flag is on (route + sidebar gated too).
-const BOARD_GATED_COMMAND_IDS = new Set(["view-board", "new-post"])
 
 interface UseCommandItemsParams {
   query: string
@@ -32,9 +28,6 @@ export function rankCommands(candidates: Command[], query: string): Command[] {
 }
 
 export function useCommandItems({ query, commandContext }: UseCommandItemsParams): ModeResult {
-  // The board commands ("View Board", "New Post") are gated behind the board-view
-  // flag, matching the route + sidebar gates.
-  const boardEnabled = useFeatureFlag(commandContext.workspaceId, "board-view") === "on"
   // AI Agents settings is admin-only (the tab itself is admin-gated), so the
   // command hides for non-admins rather than opening settings to a fallback tab.
   const bootstrap = useCachedWorkspaceBootstrap(commandContext.workspaceId)
@@ -65,13 +58,11 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     // cross-group ordering is the section order, not match quality.
     const contextualItems = rankCommands(contextualCommands, query).map((c) => toItem(c, contextualGroup))
 
-    const globalCommands = commands.filter(
-      (c) => (!BOARD_GATED_COMMAND_IDS.has(c.id) || boardEnabled) && (c.id !== "open-ai-agents" || isAdmin)
-    )
+    const globalCommands = commands.filter((c) => c.id !== "open-ai-agents" || isAdmin)
     const globalItems = rankCommands(globalCommands, query).map((c) => toItem(c, "Commands"))
 
     return [...contextualItems, ...globalItems]
-  }, [query, commandContext, boardEnabled, isAdmin])
+  }, [query, commandContext, isAdmin])
 
   return {
     items,
