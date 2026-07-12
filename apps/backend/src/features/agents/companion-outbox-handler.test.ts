@@ -7,6 +7,7 @@ import { StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { CompanionHandler } from "./companion-outbox-handler"
 import { PersonaRepository } from "./persona-repository"
+import * as resolveDefaultPersonaModule from "./resolve-default-persona"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository } from "./session-repository"
 
@@ -259,6 +260,110 @@ describe("CompanionHandler", () => {
         personaId: "persona_system_ariadne",
         personaDraftId: "pcd_1",
       })
+    )
+  })
+
+  it("resolves the default persona at dispatch when the scratchpad has no explicit pick", async () => {
+    mockUserMessageEvent("stream_unpinned")
+
+    const scratchpad = makeStream({
+      id: "stream_unpinned",
+      type: StreamTypes.SCRATCHPAD,
+      companionMode: CompanionModes.ON,
+      companionPersonaId: null,
+      createdBy: "usr_creator",
+    })
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad)
+    const findById = spyOn(PersonaRepository, "findById")
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+    const resolveSpy = spyOn(resolveDefaultPersonaModule, "resolveDefaultPersona").mockResolvedValue({
+      id: "persona_resolved_default",
+      status: "active",
+    } as any)
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    // Null pointer never hits findById; the resolver runs with the creator's id.
+    expect(findById).not.toHaveBeenCalled()
+    expect(resolveSpy).toHaveBeenCalledWith({}, "ws_1", "usr_creator")
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.agent",
+      expect.objectContaining({
+        streamId: "stream_unpinned",
+        personaId: "persona_resolved_default",
+      })
+    )
+  })
+
+  it("resolves the default with the ROOT scratchpad's creator for an unpinned nested thread", async () => {
+    mockUserMessageEvent("stream_thread_unpinned")
+
+    const thread = makeStream({
+      id: "stream_thread_unpinned",
+      type: StreamTypes.THREAD,
+      parentStreamId: "stream_root_unpinned",
+      parentMessageId: "msg_parent",
+      rootStreamId: "stream_root_unpinned",
+      companionMode: CompanionModes.OFF,
+      companionPersonaId: null,
+      createdBy: "usr_thread_author",
+    })
+    const rootScratchpad = makeStream({
+      id: "stream_root_unpinned",
+      type: StreamTypes.SCRATCHPAD,
+      companionMode: CompanionModes.ON,
+      companionPersonaId: null,
+      createdBy: "usr_root_owner",
+    })
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+      if (id === "stream_thread_unpinned") return thread
+      if (id === "stream_root_unpinned") return rootScratchpad
+      return null
+    })
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+    const resolveSpy = spyOn(resolveDefaultPersonaModule, "resolveDefaultPersona").mockResolvedValue({
+      id: "persona_resolved_default",
+      status: "active",
+    } as any)
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(resolveSpy).toHaveBeenCalledWith({}, "ws_1", "usr_root_owner")
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.agent",
+      expect.objectContaining({
+        streamId: "stream_thread_unpinned",
+        personaId: "persona_resolved_default",
+      })
+    )
+  })
+
+  it("bypasses the default resolver when the scratchpad has an active explicit pick", async () => {
+    mockUserMessageEvent("stream_pinned")
+
+    const scratchpad = makeStream({
+      id: "stream_pinned",
+      type: StreamTypes.SCRATCHPAD,
+      companionMode: CompanionModes.ON,
+      companionPersonaId: "persona_pinned",
+    })
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad)
+    spyOn(PersonaRepository, "findById").mockResolvedValue({ id: "persona_pinned", status: "active" } as any)
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+    const resolveSpy = spyOn(resolveDefaultPersonaModule, "resolveDefaultPersona")
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(resolveSpy).not.toHaveBeenCalled()
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.agent",
+      expect.objectContaining({ streamId: "stream_pinned", personaId: "persona_pinned" })
     )
   })
 

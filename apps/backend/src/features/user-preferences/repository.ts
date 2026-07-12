@@ -26,6 +26,22 @@ export const UserPreferencesRepository = {
     }))
   },
 
+  /**
+   * Read a single override by key, or null when the user has no override for it
+   * (i.e. inherits the default). Cheaper than merging the whole preference object
+   * when a caller needs one key (INV-27).
+   */
+  async findOverride(db: Querier, userId: string, key: string): Promise<PreferenceOverrideRecord | null> {
+    const result = await db.query<PreferenceOverrideRow>(sql`
+      SELECT key, value
+      FROM user_preference_overrides
+      WHERE user_id = ${userId}
+        AND key = ${key}
+    `)
+    const row = result.rows[0]
+    return row ? { key: row.key, value: row.value } : null
+  },
+
   async setOverride(db: Querier, userId: string, key: string, value: unknown): Promise<void> {
     await db.query(sql`
       INSERT INTO user_preference_overrides (user_id, key, value)

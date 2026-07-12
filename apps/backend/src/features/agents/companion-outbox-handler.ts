@@ -3,6 +3,7 @@ import { StreamRepository } from "../streams"
 import { resolveDeliveryVerdict, TrustTiers } from "@threa/agent-runtime"
 import { resolveSealingContext } from "../e2e-streams"
 import { PersonaRepository } from "./persona-repository"
+import { resolveDefaultPersona } from "./resolve-default-persona"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { parseMessagePayload } from "../../lib/outbox"
@@ -101,7 +102,10 @@ export class CompanionHandler extends DebouncedOutboxHandler {
       : null
 
     if (!persona || persona.status !== "active") {
-      persona = await PersonaRepository.getSystemDefault(this.db, companionSource.workspaceId)
+      // No explicit (or a now-inactive) pick: resolve the default at dispatch —
+      // owning user's preference → workspace setting → Ariadne. The owner is the
+      // companion-source stream's creator (the root scratchpad for threads).
+      persona = await resolveDefaultPersona(this.db, companionSource.workspaceId, companionSource.createdBy)
     }
 
     if (!persona) {
