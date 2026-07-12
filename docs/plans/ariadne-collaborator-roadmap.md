@@ -49,7 +49,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 4.1  | `stream_briefs` storage + endpoints + injection          | ☑      | #1214 |
 | 4.2  | `update_stream_brief` tool + timeline event              | ☑      | #1220 |
 | 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2)    | ☑      | #1218 |
-| 4.4  | Brief correction eval                                    | ☐      |       |
+| 4.4  | Brief correction eval                                    | ☑      | #1289 |
 | 5.1  | `delegate_task` tool + delegation substrate + INV-65     | ☑      | #1261 |
 | 5.2  | Delegation card UI                                       | ☑      | #1261 |
 | 5.3  | Delegation public API (claim/status/complete)            | ☐      |       |
@@ -423,6 +423,13 @@ Tag's channel memory / Claude Code's CLAUDE.md: a persistent, human-auditable, c
 **Files:** eval suite next to `companion/`, fixtures.
 
 **Done when:** eval runs in CI (or the eval harness) with recorded baseline.
+
+**Deviations (shipped):**
+
+- **Dedicated sibling suite `evals/suites/brief-correction/`**, not an extension of the companion suite — matches the repo's one-suite-per-behavior convention (`memorizer`, `memo-classifier`, …) and keeps 4.4's chitchat gate nameable via `/eval -s brief-correction`. It runs the production `PersonaAgent.run()` on a private scratchpad with `update_stream_brief` wired to the production `StreamBriefService` exactly as `server.ts` binds it (INV-45), so the real write path is under test.
+- **Config co-located in `brief-correction/config.ts`** re-exporting `COMPANION_MODEL_ID`/`COMPANION_TEMPERATURE` from the companion config (INV-44) rather than adding brief constants to `companion/config.ts` — the eval drives Ariadne with the production model, and the suite's two gates (`CHITCHAT_NO_WRITE_GATE = 0.9`, `BRIEF_ACCURACY_GATE = 0.8`) live in one place.
+- **Graded by DB readback**, not tool-call interception: after the turn the suite reads `stream_briefs` + counts `stream_brief_revisions`. `write-decision` (deterministic) is the (a)/(c) arm; `single-revision` (deterministic) enforces one full replacement per write, not a loop/append; `brief-content` (LLM-judged, the `memorizer` conclusion-judge shape) is the (b) arm — the reversal must assert the new fact and _not still assert_ the old one as current. Run-level `chitchat-no-write-rate` is the ≥90% gate; `accuracy` the ≥80% floor.
+- **Deterministic evaluators carry a unit test** (`evaluators.test.ts`) so the scoring/gate math is verified without a live model; the `brief-content` judge and the live baseline are recorded via the `/eval brief-correction` CI comment (the harness needs `OPENROUTER_API_KEY` + a real DB, so no in-sandbox baseline).
 
 ---
 

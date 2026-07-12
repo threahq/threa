@@ -59,6 +59,10 @@ describe("parseEvalCommand", () => {
     expect(() => parseEvalCommand("/eval -s not-a-suite")).toThrow(/Unknown suite/)
   })
 
+  it("accepts the brief-correction suite", () => {
+    expect(parseEvalCommand("/eval -s brief-correction").args).toEqual(["-s", "brief-correction"])
+  })
+
   it("rejects an unknown flag rather than silently dropping it", () => {
     expect(() => parseEvalCommand("/eval --danger rm")).toThrow(/Unknown argument/)
   })
