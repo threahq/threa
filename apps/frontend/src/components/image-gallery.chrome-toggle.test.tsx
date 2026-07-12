@@ -8,9 +8,16 @@ import { AttachmentList } from "@/components/timeline/attachment-list"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
+import { DOUBLE_TAP_MS } from "@/hooks/use-zoom-pan"
 import type { AttachmentSummary } from "@threa/types"
 
 const WIDTH = 400
+
+// The toggle is deferred past the double-tap window; anything that should NOT
+// have fired needs a real-time wait comfortably past it before asserting.
+const AFTER_WINDOW = DOUBLE_TAP_MS + 150
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 let offsetWidthSpy: PropertyDescriptor | undefined
 
 beforeEach(() => {
@@ -75,35 +82,61 @@ function tapContainer(): HTMLElement {
   return container
 }
 
+/** ZoomableImage's viewport (only the current image slide mounts it). jsdom's
+ *  cssstyle drops `touch-action`, so locate it via the main img's alt — the
+ *  zoomable viewport is its direct parent (it owns the gesture listeners). */
+function zoomContainer(): HTMLElement {
+  const img = within(screen.getByRole("dialog")).getByAltText("photo2.png")
+  const container = img.parentElement
+  if (!container) throw new Error("zoom container not found")
+  return container
+}
+
 function closeButton(): HTMLElement {
   return within(screen.getByRole("dialog")).getByRole("button", { name: /close/i, hidden: true })
 }
 
+const chromeHidden = () => closeButton().closest("[inert]") !== null
+
 describe("MediaGallery touch chrome toggle", () => {
-  it("hides and re-shows the action bar on a middle tap, and resets to visible on reopen", async () => {
+  it("hides and re-shows the chrome on a single middle tap, and resets to visible on reopen", async () => {
     const user = userEvent.setup()
     renderGallery()
 
     await user.click(await screen.findByRole("button", { name: /photo2\.png/i }))
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
-    expect(closeButton().closest("[inert]")).toBeNull()
+    expect(chromeHidden()).toBe(false)
 
-    // Middle tap hides the chrome (action bar becomes inert, filename bar hidden).
+    // Single middle tap hides the chrome once the double-tap window passes.
     fireEvent.click(tapContainer(), { clientX: WIDTH / 2 })
-    expect(closeButton().closest("[inert]")).not.toBeNull()
+    expect(chromeHidden()).toBe(false) // deferred, not immediate
+    await waitFor(() => expect(chromeHidden()).toBe(true))
 
-    // Middle tap again brings it back.
+    // Tap again brings it back.
     fireEvent.click(tapContainer(), { clientX: WIDTH / 2 })
-    expect(closeButton().closest("[inert]")).toBeNull()
+    await waitFor(() => expect(chromeHidden()).toBe(false))
 
     // Hide, close via Escape, reopen: chrome must reset to visible.
     fireEvent.click(tapContainer(), { clientX: WIDTH / 2 })
-    expect(closeButton().closest("[inert]")).not.toBeNull()
+    await waitFor(() => expect(chromeHidden()).toBe(true))
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
     await user.click(await screen.findByRole("button", { name: /photo2\.png/i }))
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
-    expect(closeButton().closest("[inert]")).toBeNull()
+    expect(chromeHidden()).toBe(false)
+  })
+
+  it("treats two quick taps as a double-tap: no toggle fires", async () => {
+    const user = userEvent.setup()
+    renderGallery()
+
+    await user.click(await screen.findByRole("button", { name: /photo2\.png/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    fireEvent.click(tapContainer(), { clientX: WIDTH / 2 })
+    fireEvent.click(tapContainer(), { clientX: WIDTH / 2 })
+    await sleep(AFTER_WINDOW)
+    expect(chromeHidden()).toBe(false)
   })
 
   it("keeps edge taps as navigation, not chrome toggles", async () => {
@@ -113,13 +146,39 @@ describe("MediaGallery touch chrome toggle", () => {
     await user.click(await screen.findByRole("button", { name: /photo2\.png/i }))
     await waitFor(() => expect(screen.getByText("2 / 3")).toBeInTheDocument())
 
-    // Left-zone tap navigates back and leaves the chrome alone.
+    // Left-zone tap navigates back immediately and never toggles.
     fireEvent.click(tapContainer(), { clientX: WIDTH * 0.1 })
     await waitFor(() => expect(screen.getByText("1 / 3")).toBeInTheDocument())
-    expect(closeButton().closest("[inert]")).toBeNull()
+    await sleep(AFTER_WINDOW)
+    expect(chromeHidden()).toBe(false)
 
     // At the first slide there is no prev — the same left-zone tap now toggles.
     fireEvent.click(tapContainer(), { clientX: WIDTH * 0.1 })
-    expect(closeButton().closest("[inert]")).not.toBeNull()
+    await waitFor(() => expect(chromeHidden()).toBe(true))
+  })
+
+  it("zoom never hides the chrome, taps toggle while zoomed, and zooming out re-shows it", async () => {
+    const user = userEvent.setup()
+    renderGallery()
+
+    await user.click(await screen.findByRole("button", { name: /photo2\.png/i }))
+    await waitFor(() => expect(screen.getByText("2 / 3")).toBeInTheDocument())
+    // ZoomableImage mounts only once the slide's full-resolution URL resolves.
+    await waitFor(() => zoomContainer())
+
+    // Double-click zoom (the desktop analogue of double-tap; same commit path)
+    // leaves visible chrome alone.
+    fireEvent.dblClick(zoomContainer(), { clientX: 100, clientY: 100 })
+    await sleep(AFTER_WINDOW)
+    expect(chromeHidden()).toBe(false)
+
+    // While zoomed, an edge tap toggles instead of navigating.
+    fireEvent.click(tapContainer(), { clientX: WIDTH * 0.1 })
+    await waitFor(() => expect(chromeHidden()).toBe(true))
+    expect(screen.getByText("2 / 3")).toBeInTheDocument()
+
+    // Zooming all the way back out re-shows the chrome immediately.
+    fireEvent.dblClick(zoomContainer(), { clientX: 100, clientY: 100 })
+    await waitFor(() => expect(chromeHidden()).toBe(false))
   })
 })
