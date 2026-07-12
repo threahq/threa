@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express"
+import { THREA_VERSION_HEADER } from "@threa/types"
 import type { OperationId } from "../features/public-api/routes"
 import * as versions from "../features/public-api/versions"
 import type { ApiVersion } from "../features/public-api/versions"
@@ -38,7 +39,7 @@ export interface ApiVersionLog {
  */
 export function createApiVersionGate(operationId: OperationId) {
   return function apiVersionGate(req: Request, res: Response, next: NextFunction): void {
-    const header = req.header("Threa-Version")
+    const header = req.header(THREA_VERSION_HEADER)
     const pinned = req.userApiKey?.apiVersion ?? req.botApiKey?.apiVersion ?? versions.CURRENT_API_VERSION
 
     // Stashed BEFORE parsing so the INVALID_API_VERSION 400 log still carries
@@ -56,7 +57,7 @@ export function createApiVersionGate(operationId: OperationId) {
     const version = header ? versions.parseApiVersion(header) : pinned
 
     req.apiVersion = version
-    res.setHeader("Threa-Version", version)
+    res.setHeader(THREA_VERSION_HEADER, version)
     publicApiVersionRequests.inc({ version, source: log.versionSource })
 
     const pending = versions.changesAfter(version).filter((c) => c.operations.has(operationId))

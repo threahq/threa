@@ -370,6 +370,8 @@ Shipping it:
 
 That module is the template for every future breaking change: ~40 lines, no handler edits, no route edits.
 
+One constraint every `downgradeResponse` must respect: the `res.json` wrap sees **every** payload the route emits for a behind-version caller, including the error envelope (`{ error, code }`) produced by `errorHandler` after the wrap is installed. Transforms must pass through payloads that don't match the success shape untouched (the example above does this implicitly — it only rewrites the `data` field it finds). Add a golden test for the error path when the transform destructures the envelope.
+
 ## 9. Example implementation C — the path move (Phase 2)
 
 Backend, in `src/routes.ts` before the public mount loop:

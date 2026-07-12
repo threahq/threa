@@ -240,6 +240,8 @@ export {
   INTERNAL_API_KEY_HEADER,
   ENCLAVE_CALLBACK_TOKEN_HEADER,
   THREA_CALLBACK_TOKEN_HEADER,
+  // Public API version negotiation
+  THREA_VERSION_HEADER,
   // Original client host forwarded through the CF routers (survives Railway)
   ORIGINAL_HOST_HEADER,
   // Socket heartbeat

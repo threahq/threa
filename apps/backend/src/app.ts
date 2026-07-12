@@ -5,7 +5,7 @@ import helmet from "helmet"
 import cookieParser from "cookie-parser"
 import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
-import { INTERNAL_API_KEY_HEADER } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER, THREA_VERSION_HEADER } from "@threa/types"
 import { logger } from "./lib/logger"
 import { bigIntReplacer } from "@threa/backend-common"
 import { createMetricsMiddleware } from "./middleware/metrics"
@@ -61,7 +61,7 @@ export function createApp(options: CreateAppOptions): Express {
       credentials: true,
       // Cross-origin callers (developer playground) must be able to read the
       // resolved public API version the gate echoes back.
-      exposedHeaders: ["Threa-Version"],
+      exposedHeaders: [THREA_VERSION_HEADER],
     })
   )
   app.use(cookieParser())

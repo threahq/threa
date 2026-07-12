@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
 import * as prettier from "prettier"
 import { PUBLIC_API_ROUTES, errorSchema } from "../src/features/public-api/routes"
 import { API_VERSIONS, CURRENT_API_VERSION, VERSION_CHANGES } from "../src/features/public-api/versions"
-import { API_KEY_ELIGIBLE_PICKER_SCOPES } from "@threa/types"
+import { API_KEY_ELIGIBLE_PICKER_SCOPES, THREA_VERSION_HEADER } from "@threa/types"
 
 const REPO_ROOT = resolve(import.meta.dirname!, "../../..")
 const OUTPUT_PATH = resolve(REPO_ROOT, "docs/public-api/openapi.json")
@@ -281,7 +281,7 @@ function buildSpec() {
     components: {
       parameters: {
         ThreaVersion: {
-          name: "Threa-Version",
+          name: THREA_VERSION_HEADER,
           in: "header",
           required: false,
           schema: { type: "string", enum: [...API_VERSIONS] },
