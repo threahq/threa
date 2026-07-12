@@ -85,5 +85,35 @@ export function createDelegationHandlers({ pool, delegationService }: Dependenci
       // double-click is harmless.
       res.json({ cancelled: cancelled !== null })
     },
+
+    /**
+     * "Mark as done" from the card — closes the loop for work executed outside
+     * the API path (copy-paste into a local agent). Same access model and
+     * race-honest response shape as cancel.
+     */
+    async markDone(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const id = req.params.id!
+
+      const delegation = await delegationService.getById({ workspaceId, id })
+      if (!delegation) {
+        throw new HttpError("Delegation not found", { status: 404, code: "DELEGATION_NOT_FOUND" })
+      }
+
+      const access = await checkStreamAccess(pool, delegation.streamId, workspaceId, userId)
+      if (!access) {
+        throw new HttpError("Delegation not found", { status: 404, code: "DELEGATION_NOT_FOUND" })
+      }
+
+      const done = await delegationService.markDone({
+        workspaceId,
+        id,
+        streamId: delegation.streamId,
+        completedBy: { actorId: userId, actorType: AuthorTypes.USER },
+      })
+
+      res.json({ completed: done !== null })
+    },
   }
 }

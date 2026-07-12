@@ -91,6 +91,52 @@ describe("DelegationService.create", () => {
   })
 })
 
+describe("DelegationService.markDone", () => {
+  afterEach(() => mock.restore())
+
+  it("appends a completed status patch attributed to the marking user", async () => {
+    stubTransaction()
+    spyOn(DelegatedTaskRepository, "markDone").mockResolvedValue(
+      fakeDelegation({ status: DelegationStatuses.COMPLETED })
+    )
+    const { insertEvent, insertOutbox } = stubEventAppend()
+
+    const done = await makeService().markDone({
+      workspaceId: "ws_1",
+      id: "dlg_1",
+      streamId: "stream_1",
+      completedBy: { actorId: "usr_kris", actorType: AuthorTypes.USER },
+    })
+
+    expect(done?.status).toBe(DelegationStatuses.COMPLETED)
+    expect(insertEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        eventType: "delegation:status_changed",
+        actorId: "usr_kris",
+        actorType: AuthorTypes.USER,
+        payload: expect.objectContaining({ delegationId: "dlg_1", status: DelegationStatuses.COMPLETED }),
+      })
+    )
+    expect(insertOutbox.mock.calls[0]?.[1]).toBe("stream:delegation_status_changed")
+  })
+
+  it("returns null (and appends nothing) when the mark-done lost the race", async () => {
+    stubTransaction()
+    spyOn(DelegatedTaskRepository, "markDone").mockResolvedValue(null)
+    const { insertEvent } = stubEventAppend()
+
+    const done = await makeService().markDone({
+      workspaceId: "ws_1",
+      id: "dlg_1",
+      completedBy: { actorId: "usr_kris", actorType: AuthorTypes.USER },
+    })
+
+    expect(done).toBeNull()
+    expect(insertEvent).not.toHaveBeenCalled()
+  })
+})
+
 describe("DelegationService.cancel", () => {
   afterEach(() => mock.restore())
 

@@ -748,6 +748,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   app.get("/api/workspaces/:workspaceId/delegations", ...authed, delegations.list)
   app.post("/api/workspaces/:workspaceId/delegations/:id/cancel", ...authed, delegations.cancel)
+  app.post("/api/workspaces/:workspaceId/delegations/:id/done", ...authed, delegations.markDone)
 
   // Drafts — centralized, local-first composer payloads that roam across the
   // author's devices. Private to the author; never timeline-broadcast.
