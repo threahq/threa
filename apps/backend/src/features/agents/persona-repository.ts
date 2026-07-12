@@ -457,6 +457,19 @@ export const PersonaRepository = {
     return result.rows.map(mapRowToPersona)
   },
 
+  /** Archived custom personas — the roster's Archived disclosure (unarchive targets). */
+  async listArchivedCustoms(db: Querier, workspaceId: string): Promise<Persona[]> {
+    const result = await db.query<PersonaRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}
+      FROM personas
+      WHERE workspace_id = ${workspaceId}
+        AND managed_by = 'workspace'
+        AND status = 'archived'
+      ORDER BY name ASC
+    `)
+    return result.rows.map(mapRowToPersona)
+  },
+
   /**
    * Resolve which persona an admin editor may write: a code-backed visible
    * built-in (edited additively) or a workspace-owned custom row (any status).

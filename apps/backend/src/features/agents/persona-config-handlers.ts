@@ -139,6 +139,12 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
 
     // The gate for the endpoints below lives in the service (resolveEditable →
     // 404), which covers both built-ins and workspace customs.
+    async listArchived(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const personas = await personaConfigService.listArchived(workspaceId)
+      res.json({ personas })
+    },
+
     async listRevisions(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!

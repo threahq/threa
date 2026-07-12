@@ -298,7 +298,7 @@ export function useUpdatePersonaCustom(workspaceId: string, personaId: string) {
   })
 }
 
-/** Archive a custom persona: drop it from the active roster and hold it in the session archived list (Unarchive-able). */
+/** Archive a custom persona: drop it from the active roster and move it to the archived list (Unarchive-able). */
 export function useArchivePersona(workspaceId: string) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -323,17 +323,14 @@ export function useUnarchivePersona(workspaceId: string) {
 }
 
 /**
- * The session's archived customs (populated by {@link useArchivePersona}). There
- * is no list-archived endpoint yet, so this is empty on a fresh load — the roster
- * hides the Archived disclosure when empty.
+ * Archived custom personas (admin fetch). The archive/unarchive mutations also
+ * write this cache directly so the disclosure updates without a refetch; the
+ * fetch makes it durable across reloads.
  */
 export function useArchivedPersonas(workspaceId: string) {
-  const queryClient = useQueryClient()
   return useQuery({
     queryKey: personaKeys.archived(workspaceId),
-    queryFn: () => queryClient.getQueryData<PersonaListItem[]>(personaKeys.archived(workspaceId)) ?? [],
-    enabled: false,
-    staleTime: Infinity,
+    queryFn: () => personasApi.listArchived(workspaceId),
   })
 }
 

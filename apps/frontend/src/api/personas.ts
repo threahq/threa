@@ -45,6 +45,14 @@ export const personasApi = {
     return personas
   },
 
+  /** Archived custom personas (admin) — the roster's Archived disclosure. */
+  async listArchived(workspaceId: string): Promise<PersonaListItem[]> {
+    const { personas } = await api.get<{ personas: PersonaListItem[] }>(
+      `/api/workspaces/${workspaceId}/personas/archived`
+    )
+    return personas
+  },
+
   getConfig(workspaceId: string, personaId: string): Promise<PersonaConfigResponse> {
     return api.get<PersonaConfigResponse>(`/api/workspaces/${workspaceId}/personas/${personaId}/config`)
   },

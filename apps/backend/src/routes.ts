@@ -437,6 +437,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // member-visible; reading a persona's full config and writing its override
   // are workspace-admin only. Gate at the route layer (not the handler).
   app.get("/api/workspaces/:workspaceId/personas", ...authed, persona.list)
+  app.get(
+    "/api/workspaces/:workspaceId/personas/archived",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.listArchived
+  )
   // Fork a source persona into a new custom (admin). Custom lifecycle (create /
   // full-field update / archive / unarchive) is admin-gated; the built-in
   // override path stays on its own PUT below.

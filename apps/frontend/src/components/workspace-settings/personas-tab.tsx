@@ -21,7 +21,7 @@ interface PersonasTabProps {
  * Workspace "AI Agents" settings. The roster merges built-in personas (bounded
  * editing) and workspace customs (full editing, created by forking) — each links
  * out to the full editor (INV-40). "New agent" forks a source into a custom.
- * Customs archived this session sit behind an Archived disclosure with Unarchive.
+ * Archived customs sit behind an Archived disclosure with Unarchive.
  * Admin-gated by the dialog's `visibleTabs` filter.
  */
 export function PersonasTab({ workspaceId }: PersonasTabProps) {

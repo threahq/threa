@@ -291,6 +291,12 @@ export class PersonaConfigService {
    * Archived customs are excluded here (still resolvable by id for history /
    * actor rendering via {@link getConfig}).
    */
+  /** Archived custom personas — the roster's Archived disclosure. */
+  async listArchived(workspaceId: string): Promise<PersonaListItem[]> {
+    const rows = await PersonaRepository.listArchivedCustoms(this.pool, workspaceId)
+    return rows.map((row) => customRowToListItem(row))
+  }
+
   async listVisible(workspaceId: string): Promise<PersonaListItem[]> {
     const overrides = await AgentConfigOverrideRepository.listActiveByWorkspace(this.pool, workspaceId)
     const overridesByAgentId = new Map(overrides.map((override) => [override.agentId, override.patch]))

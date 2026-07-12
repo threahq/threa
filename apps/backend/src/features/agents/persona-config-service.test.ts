@@ -142,6 +142,23 @@ describe("PersonaConfigService.listVisible", () => {
   })
 })
 
+describe("PersonaConfigService.listArchived", () => {
+  afterEach(() => mock.restore())
+
+  it("returns archived customs as list items (the roster's Archived disclosure survives reload)", async () => {
+    const listSpy = spyOn(PersonaRepository, "listArchivedCustoms").mockResolvedValue([
+      customPersona({ status: "archived" }),
+    ])
+
+    const personas = await makeService().listArchived(WORKSPACE_ID)
+
+    expect(listSpy.mock.calls[0][1]).toBe(WORKSPACE_ID)
+    expect(personas).toHaveLength(1)
+    expect(personas[0]).toMatchObject({ id: "persona_custom_1", kind: "custom" })
+    expect(personas[0]).not.toHaveProperty("systemPrompt")
+  })
+})
+
 describe("PersonaConfigService.getConfig", () => {
   afterEach(() => mock.restore())
 
