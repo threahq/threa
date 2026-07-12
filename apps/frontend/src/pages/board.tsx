@@ -818,20 +818,11 @@ function BoardPageInner({
               // open, so the reply target can scroll above the pill; 0 otherwise.
               style={{ paddingBottom: `var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px)` }}
             >
-              {/* The "Write a post" trigger sits above the virtualized rows in the
-                  same scroller; its measured height feeds virtua's `startMargin` so
-                  item offsets stay aligned. Authoring itself lifts into the overlay
-                  (BoardOverlayComposer) rather than an inline form. */}
-              <div ref={setComposerEl} className="pt-3">
-                <button
-                  type="button"
-                  onClick={() => openCompose()}
-                  className="mb-3 flex w-full items-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-                >
-                  <PenSquare className="h-4 w-4 shrink-0" />
-                  Write a post…
-                </button>
-              </div>
+              {/* Small top inset above the virtualized rows; its measured height
+                  feeds virtua's `startMargin` so item offsets stay aligned.
+                  Authoring lifts into the overlay, opened from the floating compose
+                  button below rather than an inline top trigger. */}
+              <div ref={setComposerEl} className="pt-3" />
               {showFeed ? (
                 <BoardFeedList scrollRef={scrollerRef} listRef={listRef} startMargin={startMargin}>
                   {renderedRows}
@@ -842,6 +833,17 @@ function BoardPageInner({
             </main>
           </div>
         </FloatingComposerAnchorProvider>
+        {/* Floating compose button — always reachable (doesn't scroll with the
+            feed), X-style bottom-right. Opens the same overlay as the command. */}
+        <button
+          type="button"
+          onClick={() => openCompose()}
+          aria-label="New post"
+          title="New post"
+          className="absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-5 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-transform hover:scale-105 active:scale-95"
+        >
+          <PenSquare className="h-6 w-6" />
+        </button>
       </div>
     </div>
   )
