@@ -33,6 +33,10 @@ export interface BoardOverlayComposerProps {
  * in `expanded` mode (INV-35) and the board post path (`useCreateBoardPost`,
  * which declares a new-topic conversation). The timeline fullscreen editor is a
  * sibling host on the same shell — see step 4.
+ *
+ * Target state lives here (retained across close/reopen); the draft + post hooks
+ * live in the body, which the shell mounts only while open — so an unopened
+ * overlay costs nothing and never runs the mutation/draft machinery.
  */
 export function BoardOverlayComposer({
   workspaceId,
@@ -42,7 +46,6 @@ export function BoardOverlayComposer({
   defaultTarget,
 }: BoardOverlayComposerProps) {
   const streams = useWorkspaceStreams(workspaceId)
-  const createPost = useCreateBoardPost(workspaceId)
 
   // Recents are stable while the overlay is open (the MRU only changes on send,
   // which closes it), so recompute per open rather than every render.
@@ -72,8 +75,54 @@ export function BoardOverlayComposer({
     () => postableStreams.find((s) => s.id === targetValue),
     [postableStreams, targetValue]
   )
-  const streamContext = useMentionStreamContext(workspaceId, selectedStream)
 
+  return (
+    <OverlayComposerShell
+      open={open}
+      onOpenChange={onOpenChange}
+      title="New post"
+      header={
+        <StreamTargetPicker
+          workspaceId={workspaceId}
+          value={targetValue}
+          onChange={setTargetValue}
+          includeNewOptions
+          recents={recents}
+        />
+      }
+    >
+      <BoardOverlayComposerBody
+        workspaceId={workspaceId}
+        targetValue={targetValue}
+        selectedStream={selectedStream}
+        onOpenChange={onOpenChange}
+        onPosted={onPosted}
+      />
+    </OverlayComposerShell>
+  )
+}
+
+/**
+ * The draft editor + board-post machinery, mounted only while the overlay is open
+ * (it is the shell's child, which the dialog unmounts on close). Keeping the
+ * mutation/draft hooks here means a closed overlay never subscribes to a draft or
+ * constructs the post mutation.
+ */
+function BoardOverlayComposerBody({
+  workspaceId,
+  targetValue,
+  selectedStream,
+  onOpenChange,
+  onPosted,
+}: {
+  workspaceId: string
+  targetValue: string
+  selectedStream: CachedStream | undefined
+  onOpenChange: (open: boolean) => void
+  onPosted?: () => void
+}) {
+  const createPost = useCreateBoardPost(workspaceId)
+  const streamContext = useMentionStreamContext(workspaceId, selectedStream)
   const composer = useDraftComposer({ workspaceId, draftKey: OVERLAY_DRAFT_KEY, scopeId: OVERLAY_DRAFT_KEY })
 
   const canPost = composer.canSend && !!targetValue && !createPost.isPending
@@ -100,7 +149,9 @@ export function BoardOverlayComposer({
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
-      pushTargetMru(workspaceId, targetValue)
+      // Only real streams enter Recents / seed the next default — a "New scratchpad"
+      // sentinel shouldn't make minting-another the default on the next open.
+      if (target.type === "stream") pushTargetMru(workspaceId, targetValue)
       onOpenChange(false)
       // Reveal the just-posted card rather than letting it wait behind its own
       // "N new" pill — the viewer's own action should surface immediately.
@@ -113,43 +164,28 @@ export function BoardOverlayComposer({
   }
 
   return (
-    <OverlayComposerShell
-      open={open}
-      onOpenChange={onOpenChange}
-      title="New post"
-      header={
-        <StreamTargetPicker
-          workspaceId={workspaceId}
-          value={targetValue}
-          onChange={setTargetValue}
-          includeNewOptions
-          recents={recents}
-        />
-      }
-    >
-      <MessageComposer
-        expanded
-        hideExpandedClose
-        onCollapse={() => onOpenChange(false)}
-        content={composer.content}
-        onContentChange={composer.handleContentChange}
-        pendingAttachments={composer.pendingAttachments}
-        onRemoveAttachment={composer.handleRemoveAttachment}
-        onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
-        workspaceId={workspaceId}
-        streamId={selectedStream?.id}
-        fileInputRef={composer.fileInputRef}
-        onFileSelect={composer.handleFileSelect}
-        onFileUpload={composer.uploadFile}
-        imageCount={composer.imageCount}
-        onSubmit={handleSubmit}
-        canSubmit={canPost}
-        isSubmitting={composer.isSending}
-        hasFailed={composer.hasFailed}
-        placeholder={targetValue ? "Write a post…" : "Pick where to post, then write…"}
-        scopeId={OVERLAY_DRAFT_KEY}
-        streamContext={streamContext}
-      />
-    </OverlayComposerShell>
+    <MessageComposer
+      expanded
+      hideExpandedClose
+      onCollapse={() => onOpenChange(false)}
+      content={composer.content}
+      onContentChange={composer.handleContentChange}
+      pendingAttachments={composer.pendingAttachments}
+      onRemoveAttachment={composer.handleRemoveAttachment}
+      onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
+      workspaceId={workspaceId}
+      streamId={selectedStream?.id}
+      fileInputRef={composer.fileInputRef}
+      onFileSelect={composer.handleFileSelect}
+      onFileUpload={composer.uploadFile}
+      imageCount={composer.imageCount}
+      onSubmit={handleSubmit}
+      canSubmit={canPost}
+      isSubmitting={composer.isSending}
+      hasFailed={composer.hasFailed}
+      placeholder={targetValue ? "Write a post…" : "Pick where to post, then write…"}
+      scopeId={OVERLAY_DRAFT_KEY}
+      streamContext={streamContext}
+    />
   )
 }

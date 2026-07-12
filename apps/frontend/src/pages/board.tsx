@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import type { VirtualizerHandle } from "virtua"
-import { AlertCircle, ArrowLeft, LayoutGrid } from "lucide-react"
+import { AlertCircle, ArrowLeft, LayoutGrid, PenSquare } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -36,7 +36,7 @@ import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/
 import { BoardCard } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
-import { BoardComposer } from "@/components/board/board-composer"
+import { BoardOverlayComposer } from "@/components/board/board-overlay-composer"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
 import { boardHomeRedirectHref, isBoardAtHome } from "@/components/board/board-saved-views"
 import { useBoardViews, useBoardHome } from "@/hooks/use-board-views"
@@ -510,6 +510,7 @@ function BoardPageInner({
   // mount-once effect would leave the observer bound to the dead node — freezing
   // `startMargin` so virtua's offsets drift once the new composer resizes.
   const [composerEl, setComposerEl] = useState<HTMLDivElement | null>(null)
+  const [composerOpen, setComposerOpen] = useState(false)
   const [startMargin, setStartMargin] = useState(0)
   useLayoutEffect(() => {
     if (!composerEl) return
@@ -810,13 +811,26 @@ function BoardPageInner({
               // open, so the reply target can scroll above the pill; 0 otherwise.
               style={{ paddingBottom: `var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px)` }}
             >
-              {/* Composer sits above the virtualized rows in the same scroller; its
-                  measured height feeds virtua's `startMargin` so item offsets stay
-                  aligned. It is not virtualized, so its open/draft state survives a
-                  scroll away and back. */}
+              {/* The "Write a post" trigger sits above the virtualized rows in the
+                  same scroller; its measured height feeds virtua's `startMargin` so
+                  item offsets stay aligned. Authoring itself lifts into the overlay
+                  (BoardOverlayComposer) rather than an inline form. */}
               <div ref={setComposerEl} className="pt-3">
-                <BoardComposer workspaceId={workspaceId} onPosted={handlePosted} />
+                <button
+                  type="button"
+                  onClick={() => setComposerOpen(true)}
+                  className="mb-3 flex w-full items-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+                >
+                  <PenSquare className="h-4 w-4 shrink-0" />
+                  Write a post…
+                </button>
               </div>
+              <BoardOverlayComposer
+                workspaceId={workspaceId}
+                open={composerOpen}
+                onOpenChange={setComposerOpen}
+                onPosted={handlePosted}
+              />
               {showFeed ? (
                 <BoardFeedList scrollRef={scrollerRef} listRef={listRef} startMargin={startMargin}>
                   {renderedRows}
