@@ -41,6 +41,16 @@ export function PersonaForkDialog({ workspaceId, sources }: PersonaForkDialogPro
 
   const canCreate = !!sourceId && name.trim().length > 0 && name.length <= PERSONA_NAME_MAX_CHARS && !fork.isPending
 
+  // Reset on any close (Cancel / Escape / overlay), not just the success path, so
+  // a dismissed dialog reopens blank instead of carrying a stale name/source.
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next)
+    if (!next) {
+      setName("")
+      setSourceId(sources[0]?.id ?? "")
+    }
+  }
+
   const handleCreate = () => {
     if (!canCreate) return
     fork.mutate(
@@ -57,7 +67,7 @@ export function PersonaForkDialog({ workspaceId, sources }: PersonaForkDialogPro
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button type="button" size="sm" variant="outline">
           <Plus className="mr-1 h-3.5 w-3.5" />

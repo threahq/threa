@@ -105,6 +105,12 @@ export const CUSTOM_EDITABLE_FIELDS = [
   "brevityPrompt",
 ] as const satisfies readonly PersonaFormField[]
 
+// Ties the array to the schema: a key added to PersonaCustomConfig that is
+// missing here becomes a compile error, so a new custom field can't silently
+// drop out of dirty-tracking / patch inclusion.
+const _customExhaustive: keyof PersonaCustomConfig extends (typeof CUSTOM_EDITABLE_FIELDS)[number] ? true : never = true
+void _customExhaustive
+
 /** Project the form values onto a custom persona's full PUT config (INV-31 field set). */
 export function toCustomConfig(values: PersonaFormValues): PersonaCustomConfig {
   return {

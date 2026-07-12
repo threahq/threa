@@ -1,12 +1,13 @@
 import { api, postAvatarUpload } from "./client"
 import type {
+  ForkPersonaInput,
   PersonaConfigPatch,
   PersonaConfigResponse,
   PersonaConfigRevision,
-  PersonaCustomConfig,
   PersonaDraftState,
   PersonaListItem,
   PersonaResolvedConfig,
+  UpdatePersonaCustomInput,
 } from "@threa/types"
 
 /**
@@ -58,7 +59,7 @@ export const personasApi = {
   },
 
   /** Fork a source persona (built-in or custom; null = blank agent) into a new workspace custom (admin). */
-  async fork(workspaceId: string, input: { sourcePersonaId: string | null; name: string }): Promise<PersonaListItem> {
+  async fork(workspaceId: string, input: ForkPersonaInput): Promise<PersonaListItem> {
     const { persona } = await api.post<{ persona: PersonaListItem }>(`/api/workspaces/${workspaceId}/personas`, input)
     return persona
   },
@@ -71,7 +72,7 @@ export const personasApi = {
   updateCustom(
     workspaceId: string,
     personaId: string,
-    input: { config: PersonaCustomConfig; expectedUpdatedAt: string | null }
+    input: UpdatePersonaCustomInput
   ): Promise<{ persona: PersonaListItem; updatedAt: string | null }> {
     return api.put<{ persona: PersonaListItem; updatedAt: string | null }>(
       `/api/workspaces/${workspaceId}/personas/${personaId}`,

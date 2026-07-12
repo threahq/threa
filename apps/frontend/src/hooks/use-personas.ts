@@ -339,6 +339,7 @@ export function useArchivedPersonas(workspaceId: string) {
   return useQuery({
     queryKey: personaKeys.archived(workspaceId),
     queryFn: () => personasApi.listArchived(workspaceId),
+    enabled: !!workspaceId,
   })
 }
 

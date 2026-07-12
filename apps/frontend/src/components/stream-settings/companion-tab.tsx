@@ -37,13 +37,16 @@ export function CompanionTab({
 }: CompanionTabProps) {
   const { mutateAsync: updateCompanionMode, isPending } = useUpdateCompanionMode(workspaceId, stream.id)
   const externalAgent = useActiveBotPresence(workspaceId, stream.id)
-  const { data: personas } = usePersonas(workspaceId)
 
   // On encrypted scratchpads Ariadne runs in the enclave (never the plaintext
   // companion path), so the toggle is a real control here too: Companion =
   // she replies via the enclave, Quiet = silent encrypted storage.
   const isE2e = stream.e2eEnabled === true
   const disabled = isPending
+
+  // The picker (and its roster fetch) is plaintext-only — an encrypted
+  // scratchpad always runs the built-in Ariadne, so don't fire /personas there.
+  const { data: personas } = usePersonas(workspaceId, { enabled: !isE2e })
 
   const { selectedPersonaId, companionName } = resolveCompanionSelection(personas, stream.companionPersonaId)
 

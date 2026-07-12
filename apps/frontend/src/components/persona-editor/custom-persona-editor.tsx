@@ -54,6 +54,18 @@ import { ToolChecklist } from "./tool-checklist"
 
 const ESCALATION_NONE = "__none__"
 
+/**
+ * Narrow the 409's opaque `details.current` to a custom conflict at runtime — a
+ * differently-shaped payload (e.g. a built-in's sparse patch) resolves to null
+ * and surfaces the mismatch rather than silently falling through to the old
+ * resolved config.
+ */
+function asCustomConflict(current: unknown): PersonaCustomConflict | null {
+  return typeof current === "object" && current !== null && "config" in current && "updatedAt" in current
+    ? (current as PersonaCustomConflict)
+    : null
+}
+
 interface CustomPersonaEditorProps {
   workspaceId: string
   personaId: string
@@ -163,7 +175,7 @@ export function CustomPersonaEditor({ workspaceId, personaId, config, onSyncStat
         },
         onError: (error) => {
           if (ApiError.isApiError(error) && error.code === "PERSONA_OVERRIDE_CONFLICT") {
-            applyCustomConflict((error.details?.current ?? null) as PersonaCustomConflict | null)
+            applyCustomConflict(asCustomConflict(error.details?.current))
             return
           }
           toast.error(error instanceof Error ? error.message : "Failed to save persona")

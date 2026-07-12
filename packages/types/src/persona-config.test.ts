@@ -60,6 +60,11 @@ describe("personaResolvedConfigSchema style slots", () => {
       tonePrompt: null,
       brevityPrompt: null,
     })
+    // Non-optional: omitting any of the four fails to parse.
+    for (const field of ["tonePreset", "brevityPreset", "tonePrompt", "brevityPrompt"] as const) {
+      const { [field]: _omitted, ...missing } = base
+      expect(personaResolvedConfigSchema.safeParse(missing).success).toBe(false)
+    }
   })
 
   test("caps the free-text slot at PERSONA_SLOT_MAX_CHARS", () => {

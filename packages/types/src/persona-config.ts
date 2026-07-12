@@ -197,7 +197,7 @@ export interface PersonaListItem {
   kind: PersonaKind
   /**
    * Base path of an uploaded avatar image, or null (emoji/initials fallback).
-   * Always null for now; populated when persona avatar uploads land (step 3).
+   * Only a custom persona can carry one; a built-in always resolves to null.
    */
   avatarUrl: string | null
   /**
