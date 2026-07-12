@@ -3,6 +3,27 @@ import "@testing-library/jest-dom/vitest"
 import { beforeEach } from "vitest"
 import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
 
+// Node ≥25 ships an experimental global `localStorage` (enabled with an implicit
+// `--localstorage-file`) that shadows jsdom's spec-compliant one but omits the
+// standard methods (`clear`/`removeItem` throw), so every localStorage-backed
+// test breaks under it. When the active global is that broken build, replace it
+// with an in-memory Storage. Guarded on a missing `clear`, so on a Node/CI
+// runtime whose `localStorage` already works this is a no-op.
+if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localStorage.clear !== "function") {
+  const store = new Map<string, string>()
+  const storage: Storage = {
+    get length() {
+      return store.size
+    },
+    clear: () => store.clear(),
+    getItem: (key) => (store.has(key) ? store.get(key)! : null),
+    key: (index) => [...store.keys()][index] ?? null,
+    removeItem: (key) => void store.delete(key),
+    setItem: (key, value) => void store.set(String(key), String(value)),
+  }
+  Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true, writable: true })
+}
+
 // The markdown-block + link-preview collapse cache is module-scoped, so its
 // state would otherwise leak between tests. Reset it before each case so
 // every test starts with an empty (unhydrated) cache.
