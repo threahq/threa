@@ -1,6 +1,5 @@
 import { useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { Clock, ArrowDownAZ } from "lucide-react"
 import { StreamTypes, type StreamType } from "@threa/types"
 import {
   ResponsiveDialog,
@@ -10,7 +9,7 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { StreamSortToggle } from "@/components/composer/stream-sort-toggle"
 import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { useStoredStreamSortMode } from "@/lib/stream-sort"
 import { useStreamPickerGroups } from "@/hooks/use-stream-picker-groups"
@@ -140,23 +139,7 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs, sour
                 Pick a stream to insert this share into the composer.
               </ResponsiveDialogDescription>
             </div>
-            <ToggleGroup
-              type="single"
-              size="sm"
-              value={sortMode}
-              onValueChange={(value) => {
-                if (value === "recency" || value === "alphabetical") setSortMode(value)
-              }}
-              aria-label="Sort streams"
-              className="shrink-0"
-            >
-              <ToggleGroupItem value="recency" aria-label="Sort by recency" title="Recent activity">
-                <Clock className="h-4 w-4" aria-hidden="true" />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="alphabetical" aria-label="Sort alphabetically" title="A–Z">
-                <ArrowDownAZ className="h-4 w-4" aria-hidden="true" />
-              </ToggleGroupItem>
-            </ToggleGroup>
+            <StreamSortToggle value={sortMode} onChange={setSortMode} />
           </div>
         </ResponsiveDialogHeader>
         <Command shouldFilter={false} className="rounded-none">

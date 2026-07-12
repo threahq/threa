@@ -1,11 +1,11 @@
 import { useMemo, useState, useEffect, type ReactNode } from "react"
-import { ChevronsUpDown, Clock, ArrowDownAZ, PenSquare, StickyNote } from "lucide-react"
+import { ChevronsUpDown, PenSquare, StickyNote } from "lucide-react"
 import { StreamTypes, type StreamType } from "@threa/types"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Button } from "@/components/ui/button"
+import { StreamSortToggle } from "./stream-sort-toggle"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useStreamPickerGroups } from "@/hooks/use-stream-picker-groups"
 import { useStoredStreamSortMode } from "@/lib/stream-sort"
@@ -132,11 +132,14 @@ export function StreamTargetPicker({
     if (!value) return null
     const newOpt = NEW_OPTIONS.find((o) => o.value === value)
     if (newOpt) return newOpt.icon
-    const stream = streamById.get(value)
+    // Resolve from the full stream cache, not the search-narrowed `groups`, so
+    // typing in the open picker never drops the trigger's icon for the current
+    // target while its label (resolved from the same cache) stays put.
+    const stream = streams.find((s) => s.id === value)
     if (!stream) return null
     const Icon = STREAM_ICONS[stream.type]
     return <Icon className="h-4 w-4" />
-  }, [value, streamById])
+  }, [value, streams])
 
   const handleSelect = (next: string) => {
     onChange(next)
@@ -174,23 +177,7 @@ export function StreamTargetPicker({
           onValueChange={setSearch}
           className="flex-1 border-0"
         />
-        <ToggleGroup
-          type="single"
-          size="sm"
-          value={sortMode}
-          onValueChange={(v) => {
-            if (v === "recency" || v === "alphabetical") setSortMode(v)
-          }}
-          aria-label="Sort streams"
-          className="shrink-0"
-        >
-          <ToggleGroupItem value="recency" aria-label="Sort by recent activity" title="Recent activity">
-            <Clock className="h-3.5 w-3.5" aria-hidden="true" />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="alphabetical" aria-label="Sort A–Z" title="A–Z">
-            <ArrowDownAZ className="h-3.5 w-3.5" aria-hidden="true" />
-          </ToggleGroupItem>
-        </ToggleGroup>
+        <StreamSortToggle value={sortMode} onChange={setSortMode} iconClassName="h-3.5 w-3.5" />
       </div>
       <CommandList className="max-h-[min(60vh,360px)] overscroll-contain">
         {!hasAnyRow && <CommandEmpty>No matching streams.</CommandEmpty>}
