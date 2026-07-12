@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { useState, type ReactNode } from "react"
+import { useState, type ReactElement, type ReactNode } from "react"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { InlineComposerForm } from "./board-inline-composer"
@@ -13,12 +13,18 @@ import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamStoreModule from "@/stores/stream-store"
 import type { MessageComposerProps } from "@/components/composer"
+import type { JSONContent } from "@threa/types"
 
 // The behavior under test is the floating-anchor layer (portal placement,
 // slot exclusivity, close semantics, height publication) — not editor
 // mechanics — so the heavy tiptap editor is swapped for a marker div.
 const EditorStub = (props: MessageComposerProps) => (
-  <div data-testid="editor-stub" data-expanded={String(!!props.expanded)}>
+  <div
+    data-testid="editor-stub"
+    data-expanded={String(!!props.expanded)}
+    data-has-stash={String(!!props.stashedDraftsTrigger && !!props.stashedDraftsTriggerFab && !!props.onStashDraft)}
+    data-has-schedule={String(!!props.scheduledMessagesTrigger && !!props.scheduledMessagesTriggerFab)}
+  >
     {props.placeholder}
     {props.onExpandClick && (
       <button type="button" onClick={props.onExpandClick}>
@@ -28,7 +34,7 @@ const EditorStub = (props: MessageComposerProps) => (
   </div>
 )
 
-const EMPTY_DOC = { type: "doc", content: [] }
+const EMPTY_DOC: JSONContent = { type: "doc", content: [] }
 
 function draftComposerStub() {
   return {
@@ -53,14 +59,38 @@ function draftComposerStub() {
   }
 }
 
+function stashComposerStub() {
+  return {
+    drafts: [],
+    handleStashDraft: vi.fn().mockResolvedValue(undefined),
+    handleRestoreStashed: vi.fn().mockResolvedValue(undefined),
+    handleDeleteStashed: vi.fn().mockResolvedValue(undefined),
+  }
+}
+
 let flushDraft: ReturnType<typeof vi.fn>
+let composerStub: ReturnType<typeof draftComposerStub>
+let scheduleMutateAsync: ReturnType<typeof vi.fn>
+// vi.fn wrapper so tests can read the props the form rendered the editor with.
+let editorSpy: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   Element.prototype.scrollIntoView ??= () => {}
-  spyOnExport(composerModule, "MessageComposer").mockReturnValue(EditorStub as never)
+  editorSpy = vi.fn(EditorStub)
+  spyOnExport(composerModule, "MessageComposer").mockReturnValue(editorSpy as never)
   const stub = draftComposerStub()
+  composerStub = stub
   flushDraft = stub.flushDraft
   spyOnExport(hooksModule, "useDraftComposer").mockReturnValue((() => stub) as never)
+  // `useStashComposer` reaches for `useSearchParams` (the `?stash=` deep-link
+  // restore) and `useScheduleMessage` for the query client / sync engine — both
+  // out of scope here, so they're stubbed like the draft composer above.
+  const stash = stashComposerStub()
+  spyOnExport(hooksModule, "useStashComposer").mockReturnValue((() => stash) as never)
+  scheduleMutateAsync = vi.fn().mockResolvedValue(undefined)
+  spyOnExport(hooksModule, "useScheduleMessage").mockReturnValue((() => ({
+    mutateAsync: scheduleMutateAsync,
+  })) as never)
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({ preferences: undefined } as never)
   vi.spyOn(mentionablesModule, "useMentionStreamContext").mockReturnValue(undefined as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
@@ -184,5 +214,81 @@ describe("InlineComposerForm fullscreen expand", () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
     render(<Anchored>{form()}</Anchored>)
     expect(screen.queryByRole("button", { name: "Expand" })).toBeNull()
+  })
+})
+
+describe("InlineComposerForm stash + schedule", () => {
+  beforeEach(() => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+  })
+
+  /** The MessageComposer props the form last rendered with. */
+  const lastComposerProps = (): MessageComposerProps => editorSpy.mock.calls.at(-1)![0] as MessageComposerProps
+
+  it("always wires the stash pile; the schedule picker only with a declared target", () => {
+    const { rerender } = render(<Anchored>{form()}</Anchored>)
+    expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-has-stash", "true")
+    expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-has-schedule", "false")
+
+    rerender(<Anchored>{form({ scheduleTarget: { streamId: "stream_1", conversationId: "conv_1" } })}</Anchored>)
+    expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-has-schedule", "true")
+  })
+
+  it("scheduling routes to the schedule mutation with the existing-conversation directive and closes", async () => {
+    composerStub.canSend = true
+    const onClose = vi.fn()
+    render(<Anchored>{form({ scheduleTarget: { streamId: "stream_1", conversationId: "conv_1" }, onClose })}</Anchored>)
+
+    const trigger = lastComposerProps().scheduledMessagesTrigger as ReactElement<{
+      onSchedule: (when: Date) => Promise<void>
+    }>
+    const when = new Date("2030-01-02T10:00:00.000Z")
+    await trigger.props.onSchedule(when)
+
+    expect(scheduleMutateAsync).toHaveBeenCalledWith({
+      streamId: "stream_1",
+      contentJson: EMPTY_DOC,
+      attachmentIds: undefined,
+      scheduledFor: when.toISOString(),
+      conversation: { intent: "existing", conversationId: "conv_1" },
+    })
+    expect(composerStub.resolveDraft).toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalledWith({ refocus: true })
+  })
+
+  it("restores the content and stays open when scheduling fails", async () => {
+    const typedDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] }
+    composerStub.canSend = true
+    composerStub.content = typedDoc
+    scheduleMutateAsync.mockRejectedValueOnce(new Error("offline"))
+    const onClose = vi.fn()
+    render(<Anchored>{form({ scheduleTarget: { streamId: "stream_1", conversationId: "conv_1" }, onClose })}</Anchored>)
+
+    const trigger = lastComposerProps().scheduledMessagesTrigger as ReactElement<{
+      onSchedule: (when: Date) => Promise<void>
+    }>
+    await trigger.props.onSchedule(new Date("2030-01-02T10:00:00.000Z"))
+
+    // Cleared up front, restored on failure — nothing typed is lost.
+    expect(composerStub.setContent).toHaveBeenLastCalledWith(typedDoc)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(composerStub.resolveDraft).not.toHaveBeenCalled()
+  })
+
+  it("blocks scheduling into an E2E host with the reject message", async () => {
+    composerStub.canSend = true
+    vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue({ e2eEnabled: true } as never)
+    render(
+      <Anchored>
+        {form({ scheduleTarget: { streamId: "stream_1", conversationId: "conv_1" }, rejectE2e: "No E2E here" })}
+      </Anchored>
+    )
+
+    const trigger = lastComposerProps().scheduledMessagesTrigger as ReactElement<{
+      onSchedule: (when: Date) => Promise<void>
+    }>
+    await trigger.props.onSchedule(new Date("2030-01-02T10:00:00.000Z"))
+
+    expect(scheduleMutateAsync).not.toHaveBeenCalled()
   })
 })

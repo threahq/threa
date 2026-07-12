@@ -242,6 +242,11 @@ export function useInlineBranchComposer(params: {
             // generically rather than echoing the placeholder back.
             contextChip={branch.pending ? "Replying in this sub-topic" : `Replying in ${branch.title}`}
             rejectE2e={E2E_REPLY_MESSAGE}
+            // A pending branch's conversation id is a synthetic draft-panel id
+            // (no real target until the echo lands), so scheduling waits for it.
+            scheduleTarget={
+              branch.pending ? undefined : { streamId: branch.threadStreamId, conversationId: branch.conversationId }
+            }
             onSubmit={(sendInput) => submitBranchReply(branch, sendInput)}
             onClose={closeComposer}
           />

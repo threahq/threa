@@ -6,13 +6,15 @@ import {
   MessageComposer,
   FloatingComposerShell,
   OverlayComposerShell,
+  ScheduledMessagesPicker,
+  StashedDraftsPicker,
   useFloatingComposerAnchor,
   FLOATING_COMPOSER_HEIGHT_VAR,
   type ComposerControlHandle,
 } from "@/components/composer"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
-import { useDraftComposer } from "@/hooks"
+import { useDraftComposer, useScheduleMessage, useStashComposer } from "@/hooks"
 import { usePreferences } from "@/contexts"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -62,6 +64,15 @@ interface InlineComposerFormProps {
    * kept so nothing typed is lost.
    */
   rejectE2e?: string
+  /**
+   * Enables the schedule-send picker. A scheduled send can't run the call
+   * site's live routing at fire time, so the resolved target is declared up
+   * front: the stream the fired message posts into plus the conversation it
+   * files into (`{ intent: "existing" }`, matching the timeline composer's
+   * armed-reply scheduling). Omit where the target doesn't exist until send —
+   * a new sub-topic or a still-pending branch — and the affordance is absent.
+   */
+  scheduleTarget?: { streamId: string; conversationId: string }
   /** Perform the send. Throws to keep the composer open and restore the draft. */
   onSubmit: (input: InlineComposerSubmit) => Promise<void>
   /** Collapse the composer (Escape / after-send / blur-when-empty). */
@@ -87,6 +98,7 @@ export function InlineComposerForm({
   pendingQuote,
   onQuoteConsumed,
   rejectE2e,
+  scheduleTarget,
   onSubmit,
   onClose,
 }: InlineComposerFormProps) {
@@ -103,6 +115,11 @@ export function InlineComposerForm({
   const hostIsE2e = hostStream?.e2eEnabled === true || idbHostStream?.e2eEnabled === true
 
   const composer = useDraftComposer({ workspaceId, draftKey, scopeId: draftKey })
+  // "Save for later" pile scoped to this reply target — the same pointer-move
+  // stash the timeline composer has, so a half-written inline reply survives
+  // switching cards without hijacking the ambient draft slot.
+  const stash = useStashComposer(composer, workspaceId, draftKey)
+  const scheduleMessage = useScheduleMessage(workspaceId)
 
   const composerControlRef = useRef<ComposerControlHandle | null>(null)
   const composerRef = useRef(composer)
@@ -282,6 +299,67 @@ export function InlineComposerForm({
     }
   }
 
+  /**
+   * Schedule the current content for a future send. Mirrors `handleSubmit`
+   * (materialize refs, clear up front, restore on failure) but routes to the
+   * schedule API against the declared `scheduleTarget` instead of the call
+   * site's live routing — the fired message posts into the target stream and
+   * the assigner attaches it to the conversation by id.
+   */
+  const handleSchedule = async (when: Date) => {
+    if (!composer.canSend || !scheduleTarget) return
+
+    if (rejectE2e && hostIsE2e) {
+      toast.error(rejectE2e)
+      return
+    }
+
+    const pendingAttachments = composer.getPendingAttachmentsSnapshot()
+    const normalizedContent = materializePendingAttachmentReferences(composer.content, pendingAttachments)
+    const attachmentIds = extractUploadedAttachments(normalizedContent).map((a) => a.id)
+
+    composer.setIsSending(true)
+    composer.setContent(EMPTY_DOC)
+    try {
+      await scheduleMessage.mutateAsync({
+        streamId: scheduleTarget.streamId,
+        contentJson: normalizedContent,
+        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        scheduledFor: when.toISOString(),
+        conversation: { intent: "existing", conversationId: scheduleTarget.conversationId },
+      })
+      await composer.resolveDraft()
+      composer.clearAttachments()
+      onClose({ refocus: true })
+    } catch {
+      composer.setContent(normalizedContent)
+      toast.error("Couldn't schedule. Please try again.")
+    } finally {
+      composer.setIsSending(false)
+    }
+  }
+
+  // Inline drafts are plaintext (no `e2eStreamId` on the composer above), so the
+  // picker's own `contentJson` fallback previews suffice — no decrypt pass.
+  const stashPickerProps = {
+    drafts: stash.drafts,
+    canStashCurrent: composer.canSend,
+    onStashCurrent: stash.handleStashDraft,
+    onRestore: stash.handleRestoreStashed,
+    onDelete: stash.handleDeleteStashed,
+    controlsDisabled: composer.isSending,
+  } as const
+
+  const schedulePickerProps = scheduleTarget
+    ? ({
+        workspaceId,
+        streamId: scheduleTarget.streamId,
+        canSchedule: composer.canSend,
+        onSchedule: handleSchedule,
+        controlsDisabled: composer.isSending,
+      } as const)
+    : null
+
   const contextChipNode = contextChip ? (
     <div className="flex w-fit min-w-0 max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
       <CornerDownRight className="h-3 w-3 shrink-0" />
@@ -312,6 +390,13 @@ export function InlineComposerForm({
     messageSendMode: preferences?.messageSendMode ?? "enter",
     scopeId: draftKey,
     streamContext,
+    onStashDraft: stash.handleStashDraft,
+    stashedDraftsTrigger: <StashedDraftsPicker {...stashPickerProps} />,
+    stashedDraftsTriggerFab: <StashedDraftsPicker {...stashPickerProps} size="fab" />,
+    scheduledMessagesTrigger: schedulePickerProps ? <ScheduledMessagesPicker {...schedulePickerProps} /> : undefined,
+    scheduledMessagesTriggerFab: schedulePickerProps ? (
+      <ScheduledMessagesPicker {...schedulePickerProps} size="fab" />
+    ) : undefined,
   } as const
 
   const editor = (

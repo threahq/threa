@@ -166,6 +166,7 @@ function BoardReplyComposerForm({
       pendingQuote={pendingQuote}
       onQuoteConsumed={onQuoteConsumed}
       rejectE2e="Encrypted notes can't be replied to from the board yet — open the note to reply there."
+      scheduleTarget={{ streamId, conversationId: post.conversation.id }}
       onSubmit={onSubmit}
       onClose={onClose}
     />
