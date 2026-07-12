@@ -119,6 +119,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -310,6 +314,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -508,6 +516,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -596,6 +608,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -706,6 +722,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -819,6 +839,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -895,6 +919,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1033,6 +1061,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1133,6 +1165,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1198,6 +1234,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1317,6 +1357,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1415,6 +1459,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1506,6 +1554,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1780,6 +1832,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1873,6 +1929,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1993,6 +2053,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2148,6 +2212,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2304,6 +2372,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2435,6 +2507,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2577,6 +2653,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2813,6 +2893,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2903,6 +2987,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2992,6 +3080,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3107,6 +3199,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3131,6 +3227,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3208,6 +3308,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3315,6 +3419,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3434,6 +3542,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3542,6 +3654,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3639,6 +3755,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3727,6 +3847,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3829,6 +3953,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3919,6 +4047,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4072,6 +4204,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4226,6 +4362,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4390,6 +4530,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4533,6 +4677,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4584,6 +4732,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4670,6 +4822,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4798,6 +4954,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4906,6 +5066,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5047,6 +5211,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5109,6 +5277,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5226,6 +5398,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5277,6 +5453,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5462,6 +5642,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5567,6 +5751,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },

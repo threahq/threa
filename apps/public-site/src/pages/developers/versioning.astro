@@ -80,9 +80,10 @@ const changelog: ChangelogEntry[] = changelogRaw
     The value must be one of the known versions exactly. An unknown or malformed
     value returns <code>400</code> with the code <code>INVALID_API_VERSION</code>
     and the list of known versions in the error, so a typo fails loudly instead of
-    being treated as the latest. Every response echoes the version that was used in
-    a <code>Threa-Version</code> response header, so you can always confirm which
-    shapes you received.
+    being treated as the latest. Every response that resolved a version echoes it
+    in a <code>Threa-Version</code> response header, so you can always confirm
+    which shapes you received. The <code>400</code> for an unknown version has no
+    resolved version, so it carries no echo header.
   </p>
   <CodeBlock
     lang="json"

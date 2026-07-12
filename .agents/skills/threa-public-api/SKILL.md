@@ -59,8 +59,8 @@ version when it is minted, and that pin applies to every request, so you do not
 need to send anything. Pass `Threa-Version: <date>` to override the pin for a
 single request; a valid header wins over the pin. An unknown value returns
 `400` with code `INVALID_API_VERSION` and the known versions in the error.
-Every response echoes the resolved version in a `Threa-Version` response
-header. The `/api/v1` path prefix is stable and does not change with versions.
+Every response that resolved a version echoes it in a `Threa-Version`
+response header (the 400 for an unknown version has none to echo). The `/api/v1` path prefix is stable and does not change with versions.
 The generated changelog is `docs/public-api/CHANGELOG.md`.
 
 `GET .../me` reports the key's version state as `data.apiVersion`

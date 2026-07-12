@@ -374,6 +374,11 @@ That module is the template for every future breaking change: ~40 lines, no hand
 
 One constraint every `downgradeResponse` must respect: the `res.json` wrap sees **every** payload the route emits for a behind-version caller, including the error envelope (`{ error, code }`) produced by `errorHandler` after the wrap is installed. Transforms must pass through payloads that don't match the success shape untouched (the example above does this implicitly — it only rewrites the `data` field it finds). Add a golden test for the error path when the transform destructures the envelope.
 
+Two more substrate constraints for change authors (adversarial review 2026-07-12):
+
+- **`upgradeRequest` receives `req.body` only.** A change that alters the shape of a query-parameter operation (`requestIn: "query"`) has nothing to transform today — extend the gate with a query-upgrade hook in the same PR that ships the first such change; do not ship a query-shape change assuming the body hook covers it.
+- **Multipart operations parse after the gate.** For `uploadAttachment`, multer runs downstream of the version gate, so `req.body` is empty at upgrade time and is later replaced by multer. A change touching a multipart operation's fields cannot use `upgradeRequest`; it needs a post-multer hook.
+
 ## 9. Example implementation C — the path move (Phase 2)
 
 Backend, in `src/routes.ts` before the public mount loop:

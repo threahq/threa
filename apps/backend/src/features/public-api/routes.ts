@@ -528,6 +528,7 @@ const sealedInterimMessageSchema = z.object({ messageId: z.string() })
 
 const errorSchema = z.object({
   error: z.string(),
+  code: z.string().optional().describe("Machine-readable error code, e.g. INVALID_API_VERSION"),
   details: z.record(z.string(), z.array(z.string())).optional(),
 })
 
