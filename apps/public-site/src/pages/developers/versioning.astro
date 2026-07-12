@@ -33,6 +33,7 @@ const changelog: ChangelogEntry[] = changelogRaw
   sections={[
     { id: "how-it-works", label: "How it works" },
     { id: "the-header", label: "The header" },
+    { id: "pins", label: "Reading and changing the pin" },
     { id: "breaking-vs-additive", label: "Breaking vs additive" },
     { id: "support-window", label: "Support window" },
     { id: "the-path-prefix", label: "The path prefix" },
@@ -91,6 +92,41 @@ const changelog: ChangelogEntry[] = changelogRaw
   "code": "INVALID_API_VERSION"
 }`}
   />
+
+  <h2 id="pins">Reading and changing the pin</h2>
+  <p>
+    <code>GET /api/v1/workspaces/&#123;workspaceId&#125;/me</code> reports the key's
+    version state alongside its identity, so an agent can discover its pin with a
+    call it already makes:
+  </p>
+  <CodeBlock
+    lang="json"
+    label="apiVersion block in the /me response"
+    code={`{
+  "data": {
+    "kind": "user",
+    "workspaceId": "ws_...",
+    "userId": "usr_...",
+    "apiVersion": {
+      "pinned": "${currentVersion}",
+      "resolved": "${currentVersion}",
+      "current": "${currentVersion}",
+      "supported": ["${currentVersion}"]
+    }
+  }
+}`}
+  />
+  <p>
+    <code>pinned</code> is the key's pin, or <code>null</code> when the key is
+    unpinned. <code>resolved</code> is the version this request used.
+  </p>
+  <p>
+    The pin is changed from the key management API in the app, by the key's owner.
+    <code>PATCH</code> the key with <code>&#123;"apiVersion": "&lt;date&gt;"&#125;</code> to pin it to a
+    supported version, or <code>&#123;"apiVersion": null&#125;</code> to unpin it. An unpinned key
+    always uses the current version, including future ones with breaking changes,
+    so unpin only if you update your integration as versions ship.
+  </p>
 
   <h2 id="breaking-vs-additive">Breaking vs additive changes</h2>
   <p>

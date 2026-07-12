@@ -102,6 +102,22 @@ export const BotApiKeyRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  async updateApiVersionOwned(
+    db: Querier,
+    workspaceId: string,
+    botId: string,
+    id: string,
+    apiVersion: string | null
+  ): Promise<BotApiKeyRow | null> {
+    const result = await db.query<Record<string, unknown>>(sql`
+      UPDATE bot_api_keys
+      SET api_version = ${apiVersion}
+      WHERE id = ${id} AND workspace_id = ${workspaceId} AND bot_id = ${botId} AND revoked_at IS NULL
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
   async revokeOwned(
     db: Querier,
     workspaceId: string,

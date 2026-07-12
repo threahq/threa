@@ -111,6 +111,22 @@ export const UserApiKeyRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  async updateApiVersionOwned(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    id: string,
+    apiVersion: string | null
+  ): Promise<UserApiKeyRow | null> {
+    const result = await db.query<Record<string, unknown>>(sql`
+      UPDATE user_api_keys
+      SET api_version = ${apiVersion}
+      WHERE id = ${id} AND workspace_id = ${workspaceId} AND user_id = ${userId} AND revoked_at IS NULL
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
   async revokeOwned(
     db: Querier,
     workspaceId: string,

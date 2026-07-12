@@ -61,6 +61,8 @@ UPDATE bot_api_keys SET api_version = '2026-07-12' WHERE api_version IS NULL;
 
 (Epoch = ship date of Phase 1, fixed at `2026-07-12`.) New keys are minted at the then-current version. `TEXT`, validated in code against the version list (INV-3). No user-facing version picker for now — a key's pin is upgradeable later via the existing key-management PATCH if we ever want it; do not build UI speculatively (INV-36).
 
+A key can also be **unpinned** (`api_version = NULL`, follow-up to Kris's 2026-07-12 request): the resolution chain then lands on `CURRENT_API_VERSION`, so the key always speaks the latest shapes, breaking changes included. Detach/re-pin is a management-plane operation — `PATCH` on the app API's key endpoints with `apiVersion: "<date>" | null` — and `GET /api/v1/.../me` reports `apiVersion: { pinned, resolved, current, supported }` so an agent can discover its pin. Changing the pin deliberately stays off the public API: an agent may discover it is behind, not silently rewrite its own wire contract.
+
 An integrator's upgrade story: their key is pinned at 2026-07-12; when we ship the 2026-11-01 version, nothing changes for them; they test with `Threa-Version: 2026-11-01` on individual requests; when ready, they either send the header everywhere or mint a new key.
 
 ### 2.3 What counts as a breaking change (needs a new version) vs not

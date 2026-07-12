@@ -5300,7 +5300,7 @@
         "operationId": "getMe",
         "summary": "Get the authenticated principal",
         "tags": ["Identity"],
-        "description": "Returns a discriminated union describing the authenticated principal — either the API-key owner (`kind: \"user\"`) or the bot whose key is in use (`kind: \"bot\"`). Used by clients (e.g. the OpenClaw channel plugin) to verify their key and discover their identity after pairing.",
+        "description": "Returns a discriminated union describing the authenticated principal — either the API-key owner (`kind: \"user\"`) or the bot whose key is in use (`kind: \"bot\"`). Also reports the key's API version pin, the version this request resolved to, and the supported versions. Used by clients (e.g. the OpenClaw channel plugin) to verify their key and discover their identity after pairing.",
         "security": [{ "apiKey": [] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -5328,9 +5328,30 @@
                           "properties": {
                             "kind": { "type": "string", "const": "user" },
                             "workspaceId": { "type": "string" },
-                            "userId": { "type": "string" }
+                            "userId": { "type": "string" },
+                            "apiVersion": {
+                              "type": "object",
+                              "properties": {
+                                "pinned": {
+                                  "anyOf": [{ "type": "string" }, { "type": "null" }],
+                                  "description": "The key's pinned version, or null when the key is unpinned and tracks the current version"
+                                },
+                                "resolved": {
+                                  "type": "string",
+                                  "description": "Version this request resolved to (header override, else pin, else current)"
+                                },
+                                "current": { "type": "string", "description": "The latest API version" },
+                                "supported": {
+                                  "type": "array",
+                                  "items": { "type": "string" },
+                                  "description": "All versions the API currently accepts"
+                                }
+                              },
+                              "required": ["pinned", "resolved", "current", "supported"],
+                              "additionalProperties": false
+                            }
                           },
-                          "required": ["kind", "workspaceId", "userId"],
+                          "required": ["kind", "workspaceId", "userId", "apiVersion"],
                           "additionalProperties": false
                         },
                         {
@@ -5344,9 +5365,38 @@
                               "type": "array",
                               "items": { "type": "string", "enum": ["mentionable", "active-scratchpad"] }
                             },
-                            "ownerUserId": { "type": "null" }
+                            "ownerUserId": { "type": "null" },
+                            "apiVersion": {
+                              "type": "object",
+                              "properties": {
+                                "pinned": {
+                                  "anyOf": [{ "type": "string" }, { "type": "null" }],
+                                  "description": "The key's pinned version, or null when the key is unpinned and tracks the current version"
+                                },
+                                "resolved": {
+                                  "type": "string",
+                                  "description": "Version this request resolved to (header override, else pin, else current)"
+                                },
+                                "current": { "type": "string", "description": "The latest API version" },
+                                "supported": {
+                                  "type": "array",
+                                  "items": { "type": "string" },
+                                  "description": "All versions the API currently accepts"
+                                }
+                              },
+                              "required": ["pinned", "resolved", "current", "supported"],
+                              "additionalProperties": false
+                            }
                           },
-                          "required": ["kind", "workspaceId", "botId", "botType", "traits", "ownerUserId"],
+                          "required": [
+                            "kind",
+                            "workspaceId",
+                            "botId",
+                            "botType",
+                            "traits",
+                            "ownerUserId",
+                            "apiVersion"
+                          ],
                           "additionalProperties": false
                         },
                         {
@@ -5360,9 +5410,38 @@
                               "type": "array",
                               "items": { "type": "string", "enum": ["mentionable", "active-scratchpad"] }
                             },
-                            "ownerUserId": { "type": "string" }
+                            "ownerUserId": { "type": "string" },
+                            "apiVersion": {
+                              "type": "object",
+                              "properties": {
+                                "pinned": {
+                                  "anyOf": [{ "type": "string" }, { "type": "null" }],
+                                  "description": "The key's pinned version, or null when the key is unpinned and tracks the current version"
+                                },
+                                "resolved": {
+                                  "type": "string",
+                                  "description": "Version this request resolved to (header override, else pin, else current)"
+                                },
+                                "current": { "type": "string", "description": "The latest API version" },
+                                "supported": {
+                                  "type": "array",
+                                  "items": { "type": "string" },
+                                  "description": "All versions the API currently accepts"
+                                }
+                              },
+                              "required": ["pinned", "resolved", "current", "supported"],
+                              "additionalProperties": false
+                            }
                           },
-                          "required": ["kind", "workspaceId", "botId", "botType", "traits", "ownerUserId"],
+                          "required": [
+                            "kind",
+                            "workspaceId",
+                            "botId",
+                            "botType",
+                            "traits",
+                            "ownerUserId",
+                            "apiVersion"
+                          ],
                           "additionalProperties": false
                         }
                       ]

@@ -40,8 +40,8 @@ export interface ValidatedBotApiKey {
   botId: string
   name: string
   scopes: Set<string>
-  /** Wire version the key is pinned to; the version gate's floor when no header is sent. */
-  apiVersion: ApiVersion
+  /** Pinned wire version, or null when unpinned — the version gate then resolves to the current version. */
+  apiVersion: ApiVersion | null
 }
 
 export class BotApiKeyService {
@@ -133,6 +133,26 @@ export class BotApiKeyService {
     return row
   }
 
+  async updateApiVersion(params: {
+    workspaceId: string
+    botId: string
+    keyId: string
+    /** A supported version to pin to, or null to unpin (the key then tracks the current version). */
+    apiVersion: ApiVersion | null
+  }): Promise<BotApiKeyRow> {
+    const row = await BotApiKeyRepository.updateApiVersionOwned(
+      this.pool,
+      params.workspaceId,
+      params.botId,
+      params.keyId,
+      params.apiVersion
+    )
+    if (!row) {
+      throw new HttpError("API key not found", { status: 404, code: "NOT_FOUND" })
+    }
+    return row
+  }
+
   async revokeKey(workspaceId: string, botId: string, keyId: string): Promise<void> {
     const result = await BotApiKeyRepository.revokeOwned(this.pool, workspaceId, botId, keyId)
     if (result === "not_found") {
@@ -171,7 +191,7 @@ export class BotApiKeyService {
       botId: match.botId,
       name: match.name,
       scopes: new Set(match.scopes),
-      apiVersion: (match.apiVersion ?? CURRENT_API_VERSION) as ApiVersion,
+      apiVersion: match.apiVersion as ApiVersion | null,
     }
   }
 }

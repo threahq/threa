@@ -63,6 +63,12 @@ Every response echoes the resolved version in a `Threa-Version` response
 header. The `/api/v1` path prefix is stable and does not change with versions.
 The generated changelog is `docs/public-api/CHANGELOG.md`.
 
+`GET .../me` reports the key's version state as `data.apiVersion`
+(`{ pinned, resolved, current, supported }`; `pinned: null` means the key is
+unpinned and tracks the current version). The pin is changed via the app's key
+management API (`PATCH` the key with `{"apiVersion": "<date>"}` or
+`{"apiVersion": null}` to unpin), not via the public API.
+
 ## Workspace & stream IDs
 
 Threa app URLs encode both IDs — copy them straight out:
