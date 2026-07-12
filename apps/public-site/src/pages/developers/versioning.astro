@@ -121,12 +121,34 @@ const changelog: ChangelogEntry[] = changelogRaw
     <code>pinned</code> is the key's pin, or <code>null</code> when the key is
     unpinned. <code>resolved</code> is the version this request used.
   </p>
+  <CodeBlock
+    lang="ts"
+    label="detect that a newer version exists"
+    code={`interface ApiVersionInfo {
+  pinned: string | null
+  resolved: string
+  current: string
+  supported: string[]
+}
+
+const res = await fetch("{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me", {
+  headers: { Authorization: "Bearer {{apiKey}}" },
+})
+const { data } = (await res.json()) as { data: { apiVersion: ApiVersionInfo } }
+
+if (data.apiVersion.resolved !== data.apiVersion.current) {
+  // A newer version exists. Test against it by sending
+  // "Threa-Version": data.apiVersion.current on individual requests.
+}`}
+  />
   <p>
-    The pin is changed from the key management API in the app, by the key's owner.
-    <code>PATCH</code> the key with <code>&#123;"apiVersion": "&lt;date&gt;"&#125;</code> to pin it to a
-    supported version, or <code>&#123;"apiVersion": null&#125;</code> to unpin it. An unpinned key
-    always uses the current version, including future ones with breaking changes,
-    so unpin only if you update your integration as versions ship.
+    Pins belong to the key's owner and are managed in the app, not through the
+    public API: <code>PATCH</code> the key in the workspace's key management with
+    <code>&#123;"apiVersion": "&lt;date&gt;"&#125;</code> to re-pin it, or
+    <code>&#123;"apiVersion": null&#125;</code> to unpin it. An unpinned key always
+    uses the current version, including future breaking changes, so unpin only if
+    you update your integration as versions ship. To adopt newer shapes without
+    touching the pin, send the header or create a new key.
   </p>
 
   <h2 id="breaking-vs-additive">Breaking vs additive changes</h2>
@@ -162,7 +184,7 @@ const changelog: ChangelogEntry[] = changelogRaw
   <p>
     A version stays supported for at least twelve months after it is succeeded, so
     a key pinned to an older version keeps working for that long once a newer
-    version ships. That gives you time to test and migrate on your own schedule.
+    version ships.
   </p>
 
   <h2 id="the-path-prefix">The path prefix</h2>

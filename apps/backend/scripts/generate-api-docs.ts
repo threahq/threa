@@ -219,7 +219,7 @@ function buildSpec() {
 
     if (route.canReturn409) {
       responses["409"] = {
-        description: "Conflict — the resource is not in the state the operation requires",
+        description: "Conflict: the resource is not in the state the operation requires",
         content: { "application/json": { schema: errorJsonSchema } },
       }
     }
@@ -235,7 +235,7 @@ function buildSpec() {
       title: "Threa Public API",
       version: CURRENT_API_VERSION,
       description: [
-        "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.",
+        "The Threa Public API lets you programmatically read and write messages, list streams, and search messages, memos, and attachments.",
         "",
         "## Authentication",
         "",
@@ -247,8 +247,8 @@ function buildSpec() {
         "",
         "Keys use two prefixes. A **personal access key** (`threa_uk_…`) carries a member's own",
         "identity and access; any member creates one in the Threa app under **Settings > API keys**.",
-        "A **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace —",
-        "either a personal bot or a shared workspace bot — and is minted from the bot's settings",
+        "A **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace",
+        "(a personal bot or a shared workspace bot) and is minted from the bot's settings",
         "(personal bots by their owner, shared bots by an admin).",
         "Each key is scoped to a workspace and granted specific permissions (scopes).",
         "",
@@ -258,7 +258,7 @@ function buildSpec() {
         "",
         "API keys are granted specific scopes that control access:",
         "",
-        ...API_KEY_ELIGIBLE_PICKER_SCOPES.map((p) => `- \`${p.slug}\` — ${p.description}`),
+        ...API_KEY_ELIGIBLE_PICKER_SCOPES.map((p) => `- \`${p.slug}\`: ${p.description}`),
         "",
         "## Rate Limits",
         "",
@@ -291,7 +291,7 @@ function buildSpec() {
             "this header to override the pin per request (a valid header always wins). The",
             "value must be an exact member of the enum; an unknown or malformed value returns",
             "400 with code INVALID_API_VERSION and the known versions in the error. Every",
-            "response echoes the resolved version in a Threa-Version response header.",
+            "response that resolved a version echoes it in a Threa-Version response header.",
           ].join(" "),
         },
       },
