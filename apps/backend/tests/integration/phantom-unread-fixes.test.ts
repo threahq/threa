@@ -184,7 +184,14 @@ describe("Phantom-unread drift fixes", () => {
       actorType: "user",
     })
 
-    const row = await pool.query(`SELECT read_at FROM user_activity WHERE message_id = $1`, [msg])
+    // Scope to the recipient's mention row: ActivityFeedHandler also writes an
+    // author self-row on message:created, and a lingering activity listener from
+    // another integration file (shared DB, debounced processing) can land it at
+    // any point in this test — an unscoped by-message query flakes to length 2.
+    const row = await pool.query(
+      `SELECT read_at FROM user_activity WHERE message_id = $1 AND user_id = $2 AND activity_type = 'mention'`,
+      [msg, recipient.id]
+    )
     expect(row.rows).toHaveLength(1)
     expect(row.rows[0].read_at).not.toBeNull()
   })
