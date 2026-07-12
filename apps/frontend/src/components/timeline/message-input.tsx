@@ -889,7 +889,7 @@ function MessageInputComponent({
         onOpenChange={setExpanded}
         title="Message editor"
         header={
-          <div className="flex items-center gap-1.5 text-sm font-medium">
+          <div className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border bg-background px-3 text-sm font-medium">
             {StreamGlyph && <StreamGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />}
             <span className="truncate">{overlayStreamName ?? "This stream"}</span>
           </div>
