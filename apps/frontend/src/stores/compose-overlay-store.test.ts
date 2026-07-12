@@ -6,12 +6,11 @@ import {
   closeCompose,
   registerComposeOnPosted,
   notifyComposePosted,
+  resetComposeOverlayStoreCache,
 } from "./compose-overlay-store"
 
 beforeEach(() => {
-  closeCompose()
-  // Clear any onPosted a prior test registered.
-  registerComposeOnPosted(() => {})()
+  resetComposeOverlayStoreCache()
 })
 
 describe("compose overlay store", () => {

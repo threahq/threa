@@ -50,6 +50,17 @@ export function notifyComposePosted(): void {
   onPostedRef?.()
 }
 
+/**
+ * Clear the module state on account switch — like every sibling store — so a
+ * prior account's open overlay / target can't bleed into the next (account-scope
+ * `flushModuleStoreCaches`).
+ */
+export function resetComposeOverlayStoreCache(): void {
+  state = { open: false }
+  onPostedRef = undefined
+  emit()
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
