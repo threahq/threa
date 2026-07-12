@@ -71,9 +71,11 @@ export function PdfViewer({ url, filename, variant = "gallery" }: PdfViewerProps
     return isInline ? (
       <div className="w-full">{renderer}</div>
     ) : (
-      <div data-gallery-text-viewer="true" className="absolute inset-0 pb-16 pt-14 sm:py-16">
-        {renderer}
-      </div>
+      // No data-gallery-text-viewer here: the marker lives on the renderer's
+      // inner scroll region (mirroring markdown/html/text) so the reserved
+      // pt-14/pb-16 strips stay valid chrome-toggle tap zones — marking this
+      // full-bleed wrapper made PDF slides untappable, stranding hidden chrome.
+      <div className="absolute inset-0 pb-16 pt-14 sm:py-16">{renderer}</div>
     )
   }
 
