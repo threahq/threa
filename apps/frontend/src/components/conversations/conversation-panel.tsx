@@ -540,7 +540,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
           conversationId={branch.conversationId}
           conversationRootStreamId={branch.threadStreamId}
           surfaceClassName={rail ? cn("bg-background border-l-2 px-2 sm:px-3", rail) : "bg-background"}
-          rowInsetClassName={rail ? "-mx-2 sm:-mx-3" : undefined}
+          rowInsetClassName={rail ? "-mx-2.5 sm:-mx-3.5" : undefined}
           suppressRowAccent
           onNewSubtopic={
             canBranch

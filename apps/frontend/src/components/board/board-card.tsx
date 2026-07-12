@@ -479,6 +479,9 @@ export function BoardCard({
     // overlays its own 2px border onto the branch's neutral rail at that row —
     // covering it at the same width — while a user row stays plain so the neutral
     // grouping rail shows. The row's own accent stripe is suppressed either way.
+    // Break out by the rail's padding PLUS its 2px border (`-mx-2.5 sm:-mx-3.5`)
+    // so the colored border lands ON the neutral rail, not beside it; `px-2 sm:px-3`
+    // re-pads so content aligns with the branch header.
     const rail = actorRowTheme(message.authorType).railClassName
     return (
       <ConversationReadProvider value={null}>
@@ -492,7 +495,7 @@ export function BoardCard({
           conversationId={branch.conversationId}
           conversationRootStreamId={branch.threadStreamId}
           surfaceClassName={rail ? cn("bg-card border-l-2 px-2 sm:px-3", rail) : "bg-card"}
-          rowInsetClassName={rail ? "-mx-2 sm:-mx-3" : undefined}
+          rowInsetClassName={rail ? "-mx-2.5 sm:-mx-3.5" : undefined}
           suppressRowAccent
           onNewSubtopic={
             canBranch
