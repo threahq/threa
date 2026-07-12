@@ -164,6 +164,41 @@ export function toggleExcludeSearch(search: string, streamId: string): string {
   return toSearch(params)
 }
 
+/**
+ * The section-header "Scope all" verb (Unread / custom-section headers, board
+ * mode): replace the whole stream scope with every stream in one section at once.
+ * Generalizes {@link focusScopeSearch} from one id to a list — sets `?in=` to the
+ * ids (deduped, capped at {@link MAX_BOARD_SCOPE_STREAMS} keep-first) and drops
+ * those ids from `?not-in=`, leaving every other axis (types, labels, archived,
+ * the lens-carried params) untouched. The caller root-resolves threads to their
+ * root before passing ids, since the board scopes root streams.
+ */
+export function scopeAllSearch(search: string, streamIds: string[]): string {
+  const params = new URLSearchParams(search)
+  const ids = Array.from(new Set(streamIds.filter(Boolean))).slice(0, MAX_BOARD_SCOPE_STREAMS)
+  writeIdList(params, BOARD_SCOPE_PARAM, ids)
+  const included = new Set(ids)
+  const excluded = parseIdListParam(params.get(BOARD_EXCLUDE_SCOPE_PARAM)).filter((id) => !included.has(id))
+  writeIdList(params, BOARD_EXCLUDE_SCOPE_PARAM, excluded)
+  return toSearch(params)
+}
+
+/**
+ * The board-mode label-section header verb: FOCUS the board's label axis on one
+ * label (`?label=<id>`). Mirrors {@link focusScopeSearch} on the label axis —
+ * replaces the label include list with just this id and drops it from
+ * `?not-label`, leaving every other axis untouched. The board's label matching is
+ * anchor-or-root and stays live as assignments change, so this beats expanding a
+ * pinned label to stream ids (design doc § "Feature parity").
+ */
+export function labelFocusSearch(search: string, labelId: string): string {
+  const params = new URLSearchParams(search)
+  writeIdList(params, BOARD_LABEL_PARAM, [labelId])
+  const excluded = parseIdListParam(params.get(BOARD_EXCLUDE_LABEL_PARAM)).filter((id) => id !== labelId)
+  writeIdList(params, BOARD_EXCLUDE_LABEL_PARAM, excluded)
+  return toSearch(params)
+}
+
 /** Remove one value from any single filter axis (a chip's X). Works for every
  *  id/type list param — the value is dropped, order and the other params kept. */
 export function removeAxisValueSearch(search: string, param: string, value: string): string {

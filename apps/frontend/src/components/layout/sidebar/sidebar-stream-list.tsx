@@ -28,7 +28,7 @@ import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import type { SidebarActionItem } from "./sidebar-actions"
-import type { SidebarBoardMode } from "./board-sidebar-mode"
+import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
 
 /** Default state of the "more" expander: collapsed so quiet tails stay hidden. */
@@ -255,9 +255,25 @@ export function SidebarStreamList({
           let titleContent: ReactNode = undefined
           if (label) titleContent = <LabelChip label={label} />
           else if (isUnread) titleContent = <UnreadSectionTitle label={presentation.label} quiet={isEmptyUnread} />
-          // Label sections get an "open" affordance to their landing page.
-          const titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
+          // Label sections get an "open" affordance: the label landing page in
+          // chats mode, or — in board mode — the board's own label axis
+          // (`?label=<id>`), which stays live as assignments change (design doc
+          // § "Feature parity").
+          let titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
+          let titleActionLabel: string | undefined = undefined
+          if (label && boardMode) {
+            titleHref = boardMode.labelFocusHref(label.id)
+            titleActionLabel = `Filter board by ${label.name}`
+          }
           const headerLabel = label ? label.name : presentation.label
+
+          // Board mode only: Unread and custom-section headers gain a "Scope all"
+          // link that scopes `?in=` to every stream in the section at once. Rows
+          // resolve to their board scope id (threads → root), deduped/capped by
+          // the helper. Smart/type/label sections don't scope-all.
+          const canScopeAll =
+            !!boardMode && (section.spec.kind === "unread" || section.spec.kind === "custom") && items.length > 0
+          const scopeAllHref = canScopeAll ? boardMode.scopeAllHref(items.map(boardScopeStreamId)) : undefined
 
           const state = getSectionState(section.id, presentation.defaultCollapse)
           const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
@@ -279,7 +295,9 @@ export function SidebarStreamList({
               label={headerLabel}
               titleContent={titleContent}
               titleHref={titleHref}
+              titleActionLabel={titleActionLabel}
               onTitleNavigate={collapseOnMobile}
+              scopeAllHref={scopeAllHref}
               icon={presentation.icon}
               items={items}
               allStreams={processedStreams}
@@ -305,7 +323,9 @@ export function SidebarStreamList({
               label={headerLabel}
               titleContent={titleContent}
               titleHref={titleHref}
+              titleActionLabel={titleActionLabel}
               onTitleNavigate={collapseOnMobile}
+              scopeAllHref={scopeAllHref}
               icon={presentation.icon}
               items={items}
               allStreams={processedStreams}

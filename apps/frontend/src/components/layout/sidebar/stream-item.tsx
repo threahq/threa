@@ -51,7 +51,7 @@ import {
   type StreamWithPreview,
 } from "@threa/types"
 import type { StreamItemData, UrgencyLevel } from "./types"
-import type { SidebarBoardMode } from "./board-sidebar-mode"
+import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
 import { ScratchpadItem } from "./scratchpad-item"
 
@@ -346,7 +346,7 @@ export function StreamItem({
   // them) and threads aren't scopable rows, so the tri-state tile control is
   // limited to non-thread, non-E2E rows; both still keep "Open timeline".
   const isE2e = !!stream.e2eEnabled
-  const boardScopeId = stream.type === StreamTypes.THREAD ? (stream.rootStreamId ?? stream.id) : stream.id
+  const boardScopeId = boardScopeStreamId(stream)
   const boardScopable = !!boardMode && stream.type !== StreamTypes.THREAD && !isE2e
   const boardIncluded = boardScopable && boardMode.includedStreamIds.has(boardScopeId)
   const boardExcluded = boardScopable && boardMode.excludedStreamIds.has(boardScopeId)

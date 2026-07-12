@@ -353,6 +353,8 @@ function makeBoardMode(over: Partial<SidebarBoardMode> = {}): SidebarBoardMode {
     focusHref: (id) => `/w/workspace_1/board?in=${id}`,
     applyInclude: vi.fn(),
     applyExclude: vi.fn(),
+    scopeAllHref: (ids) => `/w/workspace_1/board?in=${ids.join(",")}`,
+    labelFocusHref: (labelId) => `/w/workspace_1/board?label=${labelId}`,
     setMuted: vi.fn(),
     statsForStream: () => null,
     lensTotals: null,

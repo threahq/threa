@@ -64,7 +64,9 @@ import {
   BOARD_SCOPE_PARAM,
   BOARD_EXCLUDE_SCOPE_PARAM,
   focusScopeSearch,
+  labelFocusSearch,
   parseIdListParam,
+  scopeAllSearch,
   toggleExcludeSearch,
   toggleIncludeSearch,
 } from "@/components/board/board-filter-params"
@@ -344,6 +346,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       focusHref: (streamId) => `${location.pathname}${focusScopeSearch(boardSearch, streamId)}`,
       applyInclude: (streamId) => navigate(`${location.pathname}${toggleIncludeSearch(boardSearch, streamId)}`),
       applyExclude: (streamId) => navigate(`${location.pathname}${toggleExcludeSearch(boardSearch, streamId)}`),
+      scopeAllHref: (streamIds) => `${location.pathname}${scopeAllSearch(boardSearch, streamIds)}`,
+      labelFocusHref: (labelId) => `${location.pathname}${labelFocusSearch(boardSearch, labelId)}`,
       setMuted: (streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId)),
       statsForStream: (streamId) =>
         boardSidebarStats ? (boardSidebarStats.byStream.get(streamId) ?? ZERO_BOARD_STREAM_STATS) : null,

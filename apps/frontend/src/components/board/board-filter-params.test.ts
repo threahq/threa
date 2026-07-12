@@ -4,9 +4,11 @@ import {
   boardHomeSearch,
   focusScopeSearch,
   isSoleInclude,
+  labelFocusSearch,
   parseIdListParam,
   parseTypeListParam,
   removeAxisValueSearch,
+  scopeAllSearch,
   toggleExclude,
   toggleExcludeSearch,
   toggleInclude,
@@ -118,6 +120,54 @@ describe("toggleIncludeSearch / toggleExcludeSearch", () => {
     const ids = Array.from({ length: MAX_BOARD_SCOPE_STREAMS }, (_, i) => `x${i}`)
     const search = `?not-in=${ids.join(",")}`
     expect(new URLSearchParams(toggleExcludeSearch(search, "overflow")).get("not-in")).toBe(ids.join(","))
+  })
+})
+
+describe("scopeAllSearch", () => {
+  it("replaces the whole `in` scope with the section's ids, preserving other axes", () => {
+    const next = scopeAllSearch("?in=x&is=dm&label=l1&panel=conv_1", ["a", "b", "c"])
+    const params = new URLSearchParams(next)
+    expect(params.get("in")).toBe("a,b,c")
+    expect(params.get("is")).toBe("dm")
+    expect(params.get("label")).toBe("l1")
+    expect(params.get("panel")).toBe("conv_1")
+  })
+
+  it("dedupes and preserves first-seen order", () => {
+    expect(new URLSearchParams(scopeAllSearch("", ["a", "b", "a", "c", "b"])).get("in")).toBe("a,b,c")
+  })
+
+  it("caps at MAX_BOARD_SCOPE_STREAMS, keeping the first ids", () => {
+    const ids = Array.from({ length: MAX_BOARD_SCOPE_STREAMS + 5 }, (_, i) => `s${i}`)
+    const kept = ids.slice(0, MAX_BOARD_SCOPE_STREAMS)
+    expect(new URLSearchParams(scopeAllSearch("", ids)).get("in")).toBe(kept.join(","))
+  })
+
+  it("drops the scoped ids from `not-in` and keeps the rest", () => {
+    const params = new URLSearchParams(scopeAllSearch("?not-in=a,b,z", ["a", "b"]))
+    expect(params.get("in")).toBe("a,b")
+    expect(params.get("not-in")).toBe("z")
+  })
+
+  it("clears `in` for an empty id list while keeping other axes", () => {
+    expect(scopeAllSearch("?in=a&is=dm", [])).toBe("?is=dm")
+  })
+})
+
+describe("labelFocusSearch", () => {
+  it("replaces the label include axis with the one label, preserving other axes", () => {
+    const next = labelFocusSearch("?label=l1,l2&in=a&is=dm&panel=conv_1", "l3")
+    const params = new URLSearchParams(next)
+    expect(params.get("label")).toBe("l3")
+    expect(params.get("in")).toBe("a")
+    expect(params.get("is")).toBe("dm")
+    expect(params.get("panel")).toBe("conv_1")
+  })
+
+  it("drops the focused label from `not-label`", () => {
+    const params = new URLSearchParams(labelFocusSearch("?not-label=l1,l2", "l1"))
+    expect(params.get("label")).toBe("l1")
+    expect(params.get("not-label")).toBe("l2")
   })
 })
 

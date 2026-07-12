@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronDown, ChevronRight, ChevronUp, Plus } from "lucide-react"
+import { ArrowUpRight, ChevronDown, ChevronRight, ChevronUp, ListFilter, Plus } from "lucide-react"
 import { Fragment, type ReactNode, type RefObject } from "react"
 import { Link } from "react-router-dom"
 import type { CollapseState } from "@/contexts"
@@ -26,8 +26,23 @@ interface SectionHeaderProps {
    * collapse; this is a separate affordance on the right, like the "+" button.
    */
   titleHref?: string
+  /**
+   * Accessible name/tooltip for the `titleHref` link. Defaults to `Open {label}`.
+   * Set in board mode where the affordance filters the board (`?label=`) rather
+   * than opening the label page, so the name describes the real action.
+   */
+  titleActionLabel?: string
   /** Called when the `titleHref` link is clicked — e.g. collapse the sidebar on mobile. */
   onTitleNavigate?: () => void
+  /**
+   * Board mode only: a hover-revealed "Scope all" link that scopes the board's
+   * `?in=` to every stream in this section at once (Unread / custom-section
+   * headers). Lives in the same right-side action slot as `titleHref`/"+", so
+   * showing it never reflows the list (INV-21). Shares `onTitleNavigate` for the
+   * mobile-collapse on click. `undefined` in chats mode and on sections that
+   * don't scope (smart/type/label).
+   */
+  scopeAllHref?: string
   /** Current collapse state. If omitted, header renders as static (non-clickable). */
   state?: CollapseState
   /** Toggle callback. If omitted, header renders as static. */
@@ -64,7 +79,9 @@ export function SectionHeader({
   icon,
   titleContent,
   titleHref,
+  titleActionLabel,
   onTitleNavigate,
+  scopeAllHref,
   state,
   onToggle,
   unreadAggregate = 0,
@@ -132,6 +149,9 @@ export function SectionHeader({
   // through the React tree — without this guard, clicking (or pressing
   // Enter/Space on) a menu item bubbles up to the header's `onToggle` and
   // collapses the section as a side effect.
+  const scopeAllTitle = label ? `Scope board to ${label} streams` : "Scope board to these streams"
+  const titleLinkLabel = titleActionLabel ?? (label ? `Open ${label}` : "Open")
+
   const rightContent = (
     <div
       className="flex items-center gap-1"
@@ -139,13 +159,24 @@ export function SectionHeader({
       onKeyDown={(e) => e.stopPropagation()}
     >
       {headerAccessory}
+      {scopeAllHref && (
+        <Link
+          to={scopeAllHref}
+          onClick={onTitleNavigate}
+          className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
+          title={scopeAllTitle}
+          aria-label={scopeAllTitle}
+        >
+          <ListFilter className="h-3.5 w-3.5" />
+        </Link>
+      )}
       {titleHref && (
         <Link
           to={titleHref}
           onClick={onTitleNavigate}
           className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
-          title={label ? `Open ${label}` : "Open"}
-          aria-label={label ? `Open ${label}` : "Open"}
+          title={titleLinkLabel}
+          aria-label={titleLinkLabel}
         >
           <ArrowUpRight className="h-3.5 w-3.5" />
         </Link>
@@ -289,8 +320,14 @@ interface StreamSectionProps {
   titleContent?: ReactNode
   /** Optional "open" link for the header (e.g. a label section → its landing page). */
   titleHref?: string
+  /** Accessible name for the `titleHref` link; defaults to `Open {label}`. Set in
+   *  board mode where the affordance filters the board rather than opening a page. */
+  titleActionLabel?: string
   /** Click handler for the "open" link (e.g. collapse the sidebar on mobile). */
   onTitleNavigate?: () => void
+  /** Board mode only: "Scope all" header link scoping `?in=` to every stream in
+   *  this section (Unread / custom sections). Forwarded to SectionHeader. */
+  scopeAllHref?: string
   items: StreamItemData[]
   allStreams: StreamItemData[]
   workspaceId: string
@@ -330,7 +367,9 @@ export function StreamSection({
   icon,
   titleContent,
   titleHref,
+  titleActionLabel,
   onTitleNavigate,
+  scopeAllHref,
   items,
   allStreams,
   workspaceId,
@@ -376,7 +415,9 @@ export function StreamSection({
         icon={icon}
         titleContent={titleContent}
         titleHref={titleHref}
+        titleActionLabel={titleActionLabel}
         onTitleNavigate={onTitleNavigate}
+        scopeAllHref={scopeAllHref}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}
@@ -427,7 +468,9 @@ export function TieredStreamSection({
   icon,
   titleContent,
   titleHref,
+  titleActionLabel,
   onTitleNavigate,
+  scopeAllHref,
   items,
   allStreams,
   workspaceId,
@@ -487,7 +530,9 @@ export function TieredStreamSection({
         icon={icon}
         titleContent={titleContent}
         titleHref={titleHref}
+        titleActionLabel={titleActionLabel}
         onTitleNavigate={onTitleNavigate}
+        scopeAllHref={scopeAllHref}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}

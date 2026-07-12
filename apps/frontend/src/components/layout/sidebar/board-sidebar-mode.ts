@@ -1,5 +1,15 @@
-import type { BoardLens } from "@threa/types"
+import { StreamTypes, type BoardLens, type StreamType } from "@threa/types"
 import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
+
+/**
+ * A row's board scope id: the board scopes root streams, so a thread focuses its
+ * root, not itself; every other stream focuses itself. Shared by the stream row
+ * (its focus/toggle target) and the section-header "Scope all" so the two can't
+ * drift (INV-35).
+ */
+export function boardScopeStreamId(stream: { type: StreamType; id: string; rootStreamId?: string | null }): string {
+  return stream.type === StreamTypes.THREAD ? (stream.rootStreamId ?? stream.id) : stream.id
+}
 
 /**
  * Board-mode descriptor threaded from the sidebar orchestrator into every stream
@@ -25,6 +35,15 @@ export interface SidebarBoardMode {
   applyInclude: (streamId: string) => void
   /** Additive exclude toggle ("Exclude from board" / "Include again"). */
   applyExclude: (streamId: string) => void
+  /** Board URL that scopes `?in=` to an entire section's streams at once (the
+   *  Unread / custom-section header "Scope all"). Ids are root scope ids; the
+   *  builder dedupes + caps at `MAX_BOARD_SCOPE_STREAMS`. A real navigation
+   *  (INV-40), so back/forward reproduce the scope. */
+  scopeAllHref: (streamIds: string[]) => string
+  /** Board URL that focuses the label axis on one label (the label-section
+   *  header's open affordance in board mode → `?label=<id>` instead of the label
+   *  page). */
+  labelFocusHref: (labelId: string) => string
   /** Mute / unmute a root stream on the board. */
   setMuted: (streamId: string, mute: boolean) => void
   /** Per-root-stream topic tally for the row's board-mode preview line. `null`
