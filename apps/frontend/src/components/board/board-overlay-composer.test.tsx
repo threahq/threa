@@ -76,14 +76,20 @@ beforeEach(() => {
 })
 
 describe("BoardOverlayComposer", () => {
-  it("seeds the target from the MRU and posts to it, then promotes it + closes", async () => {
-    localStorage.setItem("board:post-target-mru:workspace_1", JSON.stringify([channel.id]))
+  it("posts to the picked target, then promotes it into the MRU and clears the draft target + closes", async () => {
     const onOpenChange = vi.fn()
     const onPosted = vi.fn()
 
-    render(<BoardOverlayComposer workspaceId="workspace_1" open onOpenChange={onOpenChange} onPosted={onPosted} />)
+    render(
+      <BoardOverlayComposer
+        workspaceId="workspace_1"
+        open
+        onOpenChange={onOpenChange}
+        onPosted={onPosted}
+        defaultTarget={channel.id}
+      />
+    )
 
-    // Target seeded from MRU → picker shows it, editor is enabled.
     expect(screen.getByRole("combobox")).toHaveTextContent("general")
     expect(screen.getByTestId("placeholder")).toHaveTextContent("Write a post…")
 
@@ -96,26 +102,28 @@ describe("BoardOverlayComposer", () => {
     )
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(onPosted).toHaveBeenCalledWith("conv_1")
+    // The stream still enters Recents (the MRU)...
     expect(readTargetMru("workspace_1")).toEqual([channel.id])
-    // The draft's persisted target is cleared on send (the draft is resolved).
+    // ...but the draft's persisted target is cleared on send, so a fresh "New
+    // post" doesn't re-default to wherever the last one went.
     expect(readDraftTarget("workspace_1")).toBe("")
   })
 
-  it("seeds from the persisted draft target over the MRU head, so a restored draft keeps its target", () => {
-    localStorage.setItem("board:post-target-mru:workspace_1", JSON.stringify(["stream_other"]))
+  it("seeds from a persisted in-progress draft target, so a restored draft keeps its target", () => {
     localStorage.setItem("board:new-post:target:workspace_1", channel.id)
     render(<BoardOverlayComposer workspaceId="workspace_1" open onOpenChange={vi.fn()} />)
     expect(screen.getByRole("combobox")).toHaveTextContent("general")
   })
 
-  it("re-seeds the target from persistence on each open (the singleton never remounts)", async () => {
-    // Mounted closed with an empty MRU → seeds "". A target set after mount (e.g.
-    // the MRU updated by a prior post) is picked up on the next open edge, so a
-    // stale in-memory pick can't linger across close→reopen.
+  it("does not re-seed the target from the MRU on reopen — a fresh post always starts unpicked", async () => {
+    // A prior post landed this stream in the MRU, but with no in-progress draft
+    // target persisted, opening fresh must start with nothing selected rather
+    // than re-defaulting to wherever the last post went.
     const { rerender } = render(<BoardOverlayComposer workspaceId="workspace_1" open={false} onOpenChange={vi.fn()} />)
     localStorage.setItem("board:post-target-mru:workspace_1", JSON.stringify([channel.id]))
     rerender(<BoardOverlayComposer workspaceId="workspace_1" open onOpenChange={vi.fn()} />)
-    expect(await screen.findByRole("combobox")).toHaveTextContent("general")
+    expect(await screen.findByTestId("stub-send")).toBeDisabled()
+    expect(screen.getByRole("combobox")).not.toHaveTextContent("general")
   })
 
   it("adopts an explicit defaultTarget and disables send until a target is set", async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { Archive, Ban, Bell, BellOff, Check, ChevronDown, Hash, Layers, Pin, Tag, X } from "lucide-react"
+import { Archive, Ban, Bell, BellOff, Check, ChevronDown, CircleDot, Hash, Layers, Pin, Tag, X } from "lucide-react"
 import {
   BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
@@ -81,6 +81,10 @@ interface BoardFilterBarProps {
   showArchived: boolean
   /** Toggle the archived opt-in; the page owns the URL write. */
   onToggleArchived: (next: boolean) => void
+  /** Whether the board is narrowed to unread conversations (`?unread=true`). */
+  unreadOnly: boolean
+  /** Toggle the unread-only opt-in; the page owns the URL write. */
+  onToggleUnreadOnly: (next: boolean) => void
 }
 
 /**
@@ -119,6 +123,8 @@ export function BoardFilterBar({
   onToggleMute,
   showArchived,
   onToggleArchived,
+  unreadOnly,
+  onToggleUnreadOnly,
 }: BoardFilterBarProps) {
   const location = useLocation()
   const streams = useWorkspaceStreams(workspaceId)
@@ -137,15 +143,23 @@ export function BoardFilterBar({
   // is the plain home lens, or (when set) the saved view they home on, so resting
   // on that view must also read as unfiltered even though it carries scope.
   const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
-  const isFiltered = !isBoardAtHome(homeLens, homeView, {
-    lens,
-    scopeStreamIds,
-    scopeStreamTypes,
-    scopeLabelIds,
-    excludeStreamIds,
-    excludeStreamTypes,
-    excludeLabelIds,
-  })
+  // `unreadOnly` narrows the feed like every other axis (unlike `showArchived`,
+  // which broadens it), so it must count toward "filtered" too — otherwise
+  // toggling Unread with nothing else selected hides "Clear filters" and the
+  // empty-state "Show everything" CTA even though the board is narrowed.
+  // `BoardViewSelection` itself stays unread-unaware (matching `showArchived`'s
+  // precedent): unread state churns on every read receipt, so it isn't
+  // meaningful to capture in a saved view.
+  const isFiltered =
+    !isBoardAtHome(homeLens, homeView, {
+      lens,
+      scopeStreamIds,
+      scopeStreamTypes,
+      scopeLabelIds,
+      excludeStreamIds,
+      excludeStreamTypes,
+      excludeLabelIds,
+    }) || unreadOnly
   const clearedSearch = useMemo(() => boardHomeSearch(location.search), [location.search])
   // "Clear filters" returns to the viewer's home: the saved-view home when one
   // resolves (straight to its URL — no bare `/board` detour that would blank-flash
@@ -209,6 +223,18 @@ export function BoardFilterBar({
           onLabelFilterChange={onLabelFilterChange}
         />
       )}
+      <Button
+        type="button"
+        variant={unreadOnly ? "secondary" : "outline"}
+        size="sm"
+        onClick={() => onToggleUnreadOnly(!unreadOnly)}
+        aria-pressed={unreadOnly}
+        className="h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs font-normal"
+        aria-label={unreadOnly ? "Show every conversation" : "Show only unread conversations"}
+      >
+        <CircleDot className="h-3.5 w-3.5" />
+        Unread
+      </Button>
       <Button
         type="button"
         variant={showArchived ? "secondary" : "outline"}

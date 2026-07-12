@@ -17,7 +17,16 @@ import type { MessageComposerProps } from "@/components/composer"
 // The behavior under test is the floating-anchor layer (portal placement,
 // slot exclusivity, close semantics, height publication) — not editor
 // mechanics — so the heavy tiptap editor is swapped for a marker div.
-const EditorStub = (props: MessageComposerProps) => <div data-testid="editor-stub">{props.placeholder}</div>
+const EditorStub = (props: MessageComposerProps) => (
+  <div data-testid="editor-stub" data-expanded={String(!!props.expanded)}>
+    {props.placeholder}
+    {props.onExpandClick && (
+      <button type="button" onClick={props.onExpandClick}>
+        Expand
+      </button>
+    )}
+  </div>
+)
 
 const EMPTY_DOC = { type: "doc", content: [] }
 
@@ -55,6 +64,8 @@ beforeEach(() => {
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({ preferences: undefined } as never)
   vi.spyOn(mentionablesModule, "useMentionStreamContext").mockReturnValue(undefined as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
+  vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
+  vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
   vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue(undefined as never)
 })
 
@@ -150,5 +161,28 @@ describe("InlineComposerForm floating anchor (mobile)", () => {
     const pills = anchor.querySelectorAll('[data-testid="editor-stub"]')
     expect(pills).toHaveLength(1)
     expect(pills[0]?.textContent).toBe("Second")
+  })
+})
+
+describe("InlineComposerForm fullscreen expand", () => {
+  it("desktop: an expand button opens the same draft in the fullscreen editor", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    render(<Anchored>{form()}</Anchored>)
+
+    expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-expanded", "false")
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand" }))
+
+    // The inline form is replaced by the expanded one — same draft, one editor
+    // mounted at a time, not two competing instances of the same content.
+    const stubs = await screen.findAllByTestId("editor-stub")
+    expect(stubs).toHaveLength(1)
+    expect(stubs[0]).toHaveAttribute("data-expanded", "true")
+  })
+
+  it("mobile: no expand affordance — the floating pill has its own height-publish lifecycle", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    render(<Anchored>{form()}</Anchored>)
+    expect(screen.queryByRole("button", { name: "Expand" })).toBeNull()
   })
 })

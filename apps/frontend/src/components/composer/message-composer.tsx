@@ -323,9 +323,8 @@ export function MessageComposer({
   const [formatOpen, setFormatOpen] = useState(false)
   const [isInTable, setIsInTable] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
-  // Expanded-mode FAB actions reveal on hover/focus on desktop; touch has neither
-  // (the editor lives outside the group, so focus-within never fires), so a tap on
-  // the "+" toggles them. Reachable on touch now that the overlay hosts `expanded`.
+  // Expanded-mode FAB actions are always visible on desktop. Touch has no hover,
+  // so a tap on the "+" toggles them instead.
   const [fabActionsOpen, setFabActionsOpen] = useState(false)
   const [mobileFocused, setMobileFocused] = useState(initialMobileChromeOpen)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
@@ -886,14 +885,16 @@ export function MessageComposer({
             <div className="h-[50vh]" />
           </div>
 
-          <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10 flex items-center gap-1.5 group/fab">
-            {/* Action drawer — slides out from behind the + button on hover /
-                focus-within (desktop) or when tapped open (touch). */}
+          <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10 flex items-center gap-1.5">
+            {/* Action drawer — always visible on desktop; on touch (no hover) it
+                stays behind the + button and opens on tap. `inert` while
+                collapsed on mobile so its buttons drop out of tab order instead
+                of sitting invisibly ahead of the visible "+" button. */}
             <div
+              inert={isMobile && !fabActionsOpen}
               className={cn(
-                "flex items-center gap-1 overflow-hidden max-w-0 opacity-0 transition-all duration-200 ease-out",
-                "group-hover/fab:max-w-[240px] group-hover/fab:opacity-100",
-                "group-focus-within/fab:max-w-[240px] group-focus-within/fab:opacity-100",
+                "flex items-center gap-1 overflow-hidden transition-all duration-200 ease-out",
+                isMobile ? "max-w-0 opacity-0" : "max-w-[240px] opacity-100",
                 fabActionsOpen && "max-w-[240px] opacity-100"
               )}
             >
@@ -981,22 +982,23 @@ export function MessageComposer({
                 </TooltipContent>
               </Tooltip>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              aria-label={fabActionsOpen ? "Hide actions" : "Show actions"}
-              aria-expanded={fabActionsOpen}
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => setFabActionsOpen((v) => !v)}
-              className={cn(
-                "h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md [&_svg]:transition-transform",
-                "group-hover/fab:[&_svg]:rotate-45 group-focus-within/fab:[&_svg]:rotate-45",
-                fabActionsOpen && "[&_svg]:rotate-45"
-              )}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
+            {isMobile ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label={fabActionsOpen ? "Hide actions" : "Show actions"}
+                aria-expanded={fabActionsOpen}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => setFabActionsOpen((v) => !v)}
+                className={cn(
+                  "h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md [&_svg]:transition-transform",
+                  fabActionsOpen && "[&_svg]:rotate-45"
+                )}
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            ) : null}
             {micButtonFab}
             {hasFailed ? (
               <Tooltip>

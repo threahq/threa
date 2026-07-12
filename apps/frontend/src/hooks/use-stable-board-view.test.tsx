@@ -22,6 +22,7 @@ function filterOf(over: Partial<BoardViewFilter> = {}): BoardViewFilter {
     excludeTypes: null,
     labels: null,
     excludeLabels: null,
+    unread: null,
     showArchived: false,
     ...over,
   }
@@ -40,6 +41,10 @@ function scopeFilter(ids: string[], lens: BoardLens = "all"): BoardViewFilter {
 
 function typesFilter(types: BoardScopeStreamType[]): BoardViewFilter {
   return filterOf({ types: { key: [...types].sort().join(","), ids: new Set(types) } })
+}
+
+function unreadFilter(streamIds: string[]): BoardViewFilter {
+  return filterOf({ unread: { key: "true", streamIds: new Set(streamIds) } })
 }
 
 function post(id: string, activityMs: number): CachedBoardPost {
@@ -731,5 +736,55 @@ describe("useStableBoardView — hide & mute exclusions", () => {
     expect(result.current.posts).toEqual([])
     expect(result.current.isLoading).toBe(false)
     expect(result.current.hasRawPosts).toBe(true)
+  })
+})
+
+describe("useStableBoardView — unread filter", () => {
+  let liveValue: CachedBoardPost[] | undefined
+  function mockLive(value: CachedBoardPost[] | undefined) {
+    liveValue = value
+    vi.spyOn(boardStoreModule, "useBoardPosts").mockImplementation(() => liveValue)
+  }
+  afterEach(() => vi.restoreAllMocks())
+
+  it("shows only posts on an unread root stream, falling back to the anchor stream id without one", () => {
+    // No `rootStreamId` — falls back to `conversation.streamId` (the anchor).
+    const legacy = {
+      ...post("c", 100),
+      conversation: { ...post("c", 100).conversation, streamId: "stream_anchor" },
+    } as CachedBoardPost
+    mockLive(feed(streamPost("a", 300, "stream_unread"), streamPost("b", 200, "stream_read"), legacy))
+    const { result } = renderHook(() => useStableBoardView("ws_1", unreadFilter(["stream_unread", "stream_anchor"])))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "c"])
+  })
+
+  it("drops a card immediately once its stream leaves the unread set — even after commit (the crux)", () => {
+    // Mirrors the hide/mute crux: a committed, retained card must not linger
+    // just because it's no longer in `live` — reading it while sitting on
+    // `?unread=true` is a voluntary action, same class as hide/mute.
+    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter), {
+      initialProps: { filter: unreadFilter(["stream_x", "stream_y"]) },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+
+    // "stream_x" gets read — its id drops out of the live unread set. No commit.
+    rerender({ filter: unreadFilter(["stream_y"]) })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+  })
+
+  it("a live unread re-resolution (same `?unread=true` selection) never resets the frozen view", () => {
+    mockLive(feed(streamPost("a", 300, "stream_x")))
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter), {
+      initialProps: { filter: unreadFilter(["stream_x"]) },
+    })
+    act(() => result.current.commit())
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+
+    // A second, unread-adjacent stream becoming unread doesn't touch "a"'s
+    // committed position — the `key` (not the resolved ids) is the view-reset
+    // key, mirroring the label-scope re-resolution guarantee.
+    rerender({ filter: unreadFilter(["stream_x", "stream_other"]) })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
   })
 })

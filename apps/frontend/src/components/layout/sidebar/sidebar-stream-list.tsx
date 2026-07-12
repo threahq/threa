@@ -265,14 +265,27 @@ export function SidebarStreamList({
             titleHref = boardMode.labelFocusHref(label.id)
             titleActionLabel = `Filter board by ${label.name}`
           }
+          // Board mode only, mirroring the label case above: a type section
+          // (Channels/DMs/Scratchpads) focuses the board's type axis (`?is=`),
+          // and Unread focuses the unread axis (`?unread=true`) — both live
+          // aggregate filters, not a one-time snapshot of the current ids.
+          if (boardMode && section.spec.kind === "type") {
+            titleHref = boardMode.typeFocusHref(section.spec.streamType)
+            titleActionLabel = `Filter board by ${presentation.label}`
+          } else if (boardMode && section.spec.kind === "unread") {
+            titleHref = boardMode.unreadFocusHref()
+            titleActionLabel = "Filter board by unread"
+          }
           const headerLabel = label ? label.name : presentation.label
 
-          // Board mode only: Unread and custom-section headers gain a "Scope all"
+          // Board mode only: smart and custom-section headers gain a "Scope all"
           // link that scopes `?in=` to every stream in the section at once. Rows
           // resolve to their board scope id (threads → root), deduped/capped by
-          // the helper. Smart/type/label sections don't scope-all.
+          // the helper. Type/label/unread sections use a live aggregate filter
+          // (above) instead — their membership already has a query-language
+          // equivalent, so scoping to a frozen id snapshot would be a downgrade.
           const canScopeAll =
-            !!boardMode && (section.spec.kind === "unread" || section.spec.kind === "custom") && items.length > 0
+            !!boardMode && (section.spec.kind === "smart" || section.spec.kind === "custom") && items.length > 0
           const scopeAllHref = canScopeAll ? boardMode.scopeAllHref(items.map(boardScopeStreamId)) : undefined
 
           const state = getSectionState(section.id, presentation.defaultCollapse)

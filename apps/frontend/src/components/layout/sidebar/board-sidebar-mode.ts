@@ -1,4 +1,4 @@
-import { StreamTypes, type BoardLens, type StreamType } from "@threa/types"
+import { StreamTypes, type BoardLens, type BoardScopeStreamType, type StreamType } from "@threa/types"
 import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
 
 /**
@@ -54,6 +54,14 @@ export interface SidebarBoardMode {
    *  header's open affordance in board mode → `?label=<id>` instead of the label
    *  page). */
   labelFocusHref: (labelId: string) => string
+  /** Board URL that focuses the type axis on one root-stream type (a type
+   *  section's — Channels/DMs/Scratchpads — open affordance → `?is=<type>`). */
+  typeFocusHref: (type: BoardScopeStreamType) => string
+  /** Board URL that narrows to unread conversations (the Unread section's open
+   *  affordance → `?unread=true`). Live, not a snapshot — unlike `scopeAllHref`,
+   *  it keeps matching as things get read/unread instead of freezing the ids
+   *  that were unread at click time. */
+  unreadFocusHref: () => string
   /** Mute / unmute a root stream on the board. */
   setMuted: (streamId: string, mute: boolean) => void
   /** Per-root-stream topic tally for the row's board-mode preview line. `null`

@@ -355,6 +355,8 @@ function makeBoardMode(over: Partial<SidebarBoardMode> = {}): SidebarBoardMode {
     applyExclude: vi.fn(),
     scopeAllHref: (ids) => `/w/workspace_1/board?in=${ids.join(",")}`,
     labelFocusHref: (labelId) => `/w/workspace_1/board?label=${labelId}`,
+    typeFocusHref: (type) => `/w/workspace_1/board?is=${type}`,
+    unreadFocusHref: () => `/w/workspace_1/board?unread=true`,
     setMuted: vi.fn(),
     statsForStream: () => null,
     lensTotals: null,
