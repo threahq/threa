@@ -58,11 +58,11 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 6.1  | Memo edit/archive endpoints + explorer UI                | ☑      | #1246 |
 | 6.2  | `save_memo` tool                                         | ☑      | #1260 |
 | 6.3  | Reflective capture at session completion                 | ☑      | #1273 |
-| 6.4  | `memoScope` (user/stream/workspace)                      | ☐      |       |
+| 6.4  | `memoScope` (user/stream/workspace)                      | ☑      | #1286 |
 | 6.5  | Retrieval feedback decay                                 | ☐      |       |
 | 6.6  | Agent-memo safety: read-time provenance + type allowlist | ☑      | #1277 |
 | 7.1  | Workspace persona config API + editor (partial: Ariadne) | ☑      | #1285 |
-| 7.2  | Persona picker UI                                        | ☐      |       |
+| 7.2  | Persona picker UI                                        | 🔒     | local |
 | 8.1  | Ambient classifier on settled conversations              | ☐      |       |
 | 8.2  | "Ariadne noticed" card + budget + toggle                 | ☐      |       |
 | 8.3  | Ambient precision eval                                   | ☐      |       |
@@ -677,6 +677,8 @@ Code-complete backend machinery (`applyBuiltInAgentPatch`, `agent_config_overrid
 **Goal:** choose the companion per stream; make first-party personas and external bots legible in one place.
 
 > The **workspace persona editor** half of this phase (the settings-page editor linked from the companion tab) shipped early with 7.1 (#1285) — see its Deviations block. What remains here is the per-stream persona _picker_ in `companion-tab.tsx`.
+
+> **🔒 Claimed locally (2026-07-12, Kris):** the persona editor is being revamped in a local working thread, and the persona roster/picker follows locally once the editor lands. **Do not pick this step up from a remote/parallel session** — coordinate with Kris first. Remove this note when the local work merges.
 
 **Shape:** `companion-tab.tsx` gains a persona select (streams already carry `companionPersonaId`) listing built-ins + workspace personas, plus a link to a small workspace-settings persona editor (create/edit per 7.1). External bots noted in the same tab via the existing `ExternalAgentIndicator` — one mental model: "who works in this stream."
 
