@@ -80,7 +80,7 @@ function QuoteAuthor({
   return (
     <span className="inline-flex items-center gap-1.5">
       {isPersona ? (
-        <PersonaAvatar slug={slug} fallback={fallback} size="sm" className="h-4 w-4 text-[8px]" />
+        <PersonaAvatar slug={slug} avatarUrl={avatarUrl} fallback={fallback} size="sm" className="h-4 w-4 text-[8px]" />
       ) : (
         <Avatar className="h-4 w-4 rounded-[4px] shrink-0">
           {avatarUrl && <AvatarImage src={avatarUrl} alt={authorName} />}

@@ -76,7 +76,15 @@ export function ActorAvatar({
   const info = getActorAvatar(actorId, actorType)
 
   if (actorType === "persona") {
-    return <PersonaAvatar slug={info.slug} fallback={info.fallback} size={size} className={className} />
+    return (
+      <PersonaAvatar
+        slug={info.slug}
+        avatarUrl={info.avatarUrl}
+        fallback={info.fallback}
+        size={size}
+        className={className}
+      />
+    )
   }
 
   let fallbackTint = "bg-muted text-foreground"
