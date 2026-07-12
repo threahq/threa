@@ -73,9 +73,9 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(MemoryRouter, { initialEntries: ["/"] }, children)
 }
 
-function useRestoreHarness() {
-  const composer = useDraftComposer({ workspaceId, draftKey, scopeId: streamId })
-  const stash = useStashComposer(composer, workspaceId, draftKey)
+function useRestoreHarness(key: string = draftKey, scopeId: string = streamId) {
+  const composer = useDraftComposer({ workspaceId, draftKey: key, scopeId })
+  const stash = useStashComposer(composer, workspaceId, key)
   return { composer, stash }
 }
 
@@ -132,5 +132,28 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
     expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(bigId)
     // 4) The previously-loaded ambient draft is preserved as a stash sibling (swap, not clobber).
     await waitFor(() => expect(result.current.stash.drafts.some((d) => d.id === ambientId)).toBe(true))
+  })
+
+  it("?stash= auto-restore is consumed only by the host whose scope owns the row", async () => {
+    const { bigId } = await seedStashAndAmbient()
+    const foreignKey = "board:reply:conv_1"
+
+    function urlWrapper({ children }: { children: ReactNode }) {
+      return createElement(MemoryRouter, { initialEntries: [`/?stash=${bigId}`] }, children)
+    }
+
+    // A host on a DIFFERENT scope must not consume the param: pointing its own
+    // loaded slot at the foreign row would split one draft across two composers.
+    const foreign = renderHook(() => useRestoreHarness(foreignKey, foreignKey), { wrapper: urlWrapper })
+    await waitFor(() => expect(foreign.result.current.composer.isLoaded).toBe(true))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect((await db.composerLoaded.get(foreignKey))?.draftId).not.toBe(bigId)
+    foreign.unmount()
+
+    // The owning host consumes it and checks the row out.
+    renderHook(() => useRestoreHarness(), { wrapper: urlWrapper })
+    await waitFor(async () => expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(bigId))
   })
 })

@@ -96,6 +96,12 @@ export function useStashComposer(
   useEffect(() => {
     const stashId = searchParams.get("stash")
     if (!stashId || !scope || !composer.isLoaded) return
+    // Only the host whose scope owns the row consumes the param. Several hosts
+    // can mount this hook at once (stream composer + thread panel + inline
+    // reply forms); restoring a foreign id would point THIS scope's loaded
+    // draft at another scope's row, splitting one draft across two composers.
+    // Skipping (without stripping) leaves the param for the owning host.
+    if (!stashedDrafts.drafts.some((draft) => draft.id === stashId)) return
     if (pendingStashRestoreRef.current === stashId) return
 
     pendingStashRestoreRef.current = stashId
@@ -112,7 +118,7 @@ export function useStashComposer(
         console.error("Failed to auto-restore stashed draft from URL", err)
       }
     )
-  }, [searchParams, setSearchParams, scope, composer.isLoaded, handleRestoreStashed])
+  }, [searchParams, setSearchParams, scope, composer.isLoaded, stashedDrafts.drafts, handleRestoreStashed])
 
   return {
     drafts: stashedDrafts.drafts,
