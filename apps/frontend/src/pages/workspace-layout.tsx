@@ -64,6 +64,7 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
 import { draftsApi, messagesApi, syncApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
+import { ComposeOverlayMount } from "@/components/board/compose-overlay-mount"
 import { SettingsDialog } from "@/components/settings"
 import { WorkspaceSettingsDialog } from "@/components/workspace-settings/workspace-settings-dialog"
 import { AccountSwitcherDialog, LogoutScopeDialog } from "@/components/account-switcher"
@@ -498,6 +499,7 @@ export function WorkspaceLayout() {
                                             initialMode={switcherMode}
                                             currentStreamId={streamId}
                                           />
+                                          <ComposeOverlayMount workspaceId={workspaceId} />
                                         </SearchPanelProvider>
                                       </SidebarProvider>
                                       <SettingsDialog />

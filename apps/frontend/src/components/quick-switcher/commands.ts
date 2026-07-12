@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   ListTodo,
   Paperclip,
+  PenSquare,
   Search,
   FileEdit,
   Lock,
@@ -19,6 +20,7 @@ import {
   UserPlus,
 } from "lucide-react"
 import { toast } from "sonner"
+import { openCompose } from "@/stores/compose-overlay-store"
 import { SETTINGS_TABS, type SettingsTab } from "@threa/types"
 import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
 import type { WorkspaceSettingsTab } from "@/components/workspace-settings/tab-config"
@@ -89,6 +91,16 @@ export interface Command {
 }
 
 export const commands: Command[] = [
+  {
+    id: "new-post",
+    label: "New Post",
+    icon: PenSquare,
+    keywords: ["compose", "write", "board", "post", "topic"],
+    action: ({ closeDialog }) => {
+      closeDialog()
+      openCompose()
+    },
+  },
   {
     id: "new-scratchpad",
     label: "New Scratchpad",
