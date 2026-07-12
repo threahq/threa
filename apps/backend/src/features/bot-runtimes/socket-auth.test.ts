@@ -2,6 +2,7 @@ import { describe, expect, it, mock } from "bun:test"
 import type { Socket } from "socket.io"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import type { BotApiKeyService, ValidatedBotApiKey } from "../public-api"
+import { CURRENT_API_VERSION } from "../public-api"
 import { createBotSocketAuthMiddleware } from "./socket-auth"
 
 function fakeSocket(opts: { token?: string; headerAuth?: string } = {}): Socket {
@@ -21,6 +22,7 @@ function makeKey(overrides: Partial<ValidatedBotApiKey> = {}): ValidatedBotApiKe
     botId: "bot_alice",
     name: "default",
     scopes: new Set([WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE]),
+    apiVersion: CURRENT_API_VERSION,
     ...overrides,
   }
 }

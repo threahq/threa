@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Threa Public API",
-    "version": "1.0.0",
+    "version": "2026-07-12",
     "description": "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer threa_uk_your_api_key_here\n```\n\nKeys use two prefixes. A **personal access key** (`threa_uk_…`) carries a member's own\nidentity and access; any member creates one in the Threa app under **Settings > API keys**.\nA **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace —\neither a personal bot or a shared workspace bot — and is minted from the bot's settings\n(personal bots by their owner, shared bots by an admin).\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\nHuman-readable docs: https://threa.io/developers (agent-friendly mirror: https://threa.io/llms.txt).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search` — Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read` — Grants access to list and search accessible streams in a workspace.\n- `messages:read` — Grants access to read messages in accessible streams.\n- `messages:write` — Grants access to send, update, and delete messages in accessible streams.\n- `users:read` — Grants access to list and search workspace users.\n- `memos:read` — Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read` — Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `attachments:write` — Grants access to upload and replace attachments in accessible streams.\n- `labels:read` — Grants access to list workspace labels and their assignments on accessible resources.\n- `labels:write` — Grants access to create, edit, archive, join, and apply labels to accessible resources such as streams.\n- `bot-runtime:read` — Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write` — Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read` — Grants access to read bot invocation state.\n- `bot-invocations:write` — Grants access to claim, complete, or fail bot invocations.\n- `delegations:read` — Grants access to list delegated tasks in accessible streams, including open tasks ready to claim.\n- `delegations:write` — Grants an agent access to claim delegated tasks and report progress, completion (posting the result as the key's identity), or failure.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
   },
   "servers": [{ "url": "https://app.threa.io", "description": "Production" }],
@@ -16,6 +16,7 @@
         "description": "Full-text and optional semantic search across accessible streams.",
         "security": [{ "apiKey": ["messages:search"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -118,6 +119,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -143,6 +148,7 @@
         "description": "Search preserved workspace memos with semantic, exact, or recent-first retrieval.",
         "security": [{ "apiKey": ["memos:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -308,6 +314,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -333,6 +343,7 @@
         "description": "Retrieve a memo together with source stream and source message provenance.",
         "security": [{ "apiKey": ["memos:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -505,6 +516,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -531,6 +546,7 @@
         "description": "Upload a file as multipart/form-data using field `file`. Include the returned attachment id in message markdown as `attachment:<id>` to attach it to a message.",
         "security": [{ "apiKey": ["attachments:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -592,6 +608,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -617,6 +637,7 @@
         "description": "Search accessible attachments by filename or extracted content.",
         "security": [{ "apiKey": ["attachments:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -701,6 +722,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -726,6 +751,7 @@
         "description": "Retrieve attachment metadata and extracted content for an accessible attachment.",
         "security": [{ "apiKey": ["attachments:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -813,6 +839,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -839,6 +869,7 @@
         "description": "Create a short-lived signed URL for an accessible attachment.",
         "security": [{ "apiKey": ["attachments:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -888,6 +919,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -913,6 +948,7 @@
         "tags": ["Bot runtimes"],
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -1025,6 +1061,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1049,6 +1089,7 @@
         "tags": ["Bot runtimes"],
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -1124,6 +1165,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1149,6 +1194,7 @@
         "description": "The bot owner's active UIK (key id + base64 X25519 public key). A sealed harness fetches this before creating an end-to-end-encrypted session so it can wrap the generation-0 stream key to the owner. 404 when the owner has not set up encryption.",
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -1188,6 +1234,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1214,6 +1264,7 @@
         "description": "Phase two of harness-created E2E scratchpads: stores the stream-key wraps (owner UIK + the harness's own BIK) minted against the stream id returned by session create. Bot-actor-only, current generation only, and only while the generation has no wraps — slots are immutable, so a replay cannot splice keys.",
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -1306,6 +1357,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1331,6 +1386,7 @@
         "tags": ["Bot runtimes"],
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -1403,6 +1459,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1428,6 +1488,7 @@
         "tags": ["Bot runtimes"],
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -1493,6 +1554,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1518,6 +1583,7 @@
         "tags": ["Bot invocations"],
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -1766,6 +1832,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1790,6 +1860,7 @@
         "tags": ["Bot invocations"],
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -1858,6 +1929,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -1883,6 +1958,7 @@
         "tags": ["Bot invocations"],
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -1977,6 +2053,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2003,6 +2083,7 @@
         "description": "Sealed variant of the trace-step start, for an owner-granted E2E bot harness: the content is ciphertext the server never decrypts. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -2131,6 +2212,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2157,6 +2242,7 @@
         "description": "Sealed variant of the trace-step finalize, for an owner-granted E2E bot harness: sets the sealed content + completion on the step opened at sealed-steps/started (or inserts a completed row if the start was dropped). Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -2286,6 +2372,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2312,6 +2402,7 @@
         "description": "Sealed variant of a mid-turn bot message, for an owner-granted E2E bot harness: posts one sealed interim message (ciphertext the server never decrypts) into the claim's stream before the turn completes — progress notes, permission prompts, early acks. The client-minted messageId binds the seal AAD and dedupes retries. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -2416,6 +2507,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2442,6 +2537,7 @@
         "description": "Sealed variant of the completion, for an owner-granted E2E bot harness: persists the turn's final sealed reply (ciphertext the server never decrypts) or noResponse, flips the claim, and finalizes the agent session. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -2557,6 +2653,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2582,6 +2682,7 @@
         "tags": ["Bot invocations"],
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -2792,6 +2893,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2817,6 +2922,7 @@
         "tags": ["Bot invocations"],
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -2881,6 +2987,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2907,6 +3017,7 @@
         "description": "List delegated tasks that are open to claim, filtered to what the key can access: a user-scoped key sees streams its user can access, a workspace key sees the bot's channel grants.",
         "security": [{ "apiKey": ["delegations:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -2969,6 +3080,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -2994,6 +3109,7 @@
         "description": "Atomically claim an open delegation. Returns the brief, context refs, and the claim token (cleartext, exactly once — send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -3083,6 +3199,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3107,6 +3227,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3130,6 +3254,7 @@
         "description": "Push the claim's expiry forward while the local agent is still working. Liveness only — no status change on the card. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -3183,6 +3308,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3209,6 +3338,7 @@
         "description": "Mark the delegation running and put a free-text progress note on its card (each report replaces the previous note; the claim TTL renews). Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -3289,6 +3419,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3315,6 +3449,7 @@
         "description": "Complete the claimed delegation. When resultMarkdown is given, the result is posted to the delegation's stream in the same transaction as the completion — authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. It enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -3407,6 +3542,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3433,6 +3572,7 @@
         "description": "Mark the claimed delegation failed, recording why on its card. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -3514,6 +3654,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3540,6 +3684,7 @@
         "description": "List streams accessible to this API key, with optional type and text filters.",
         "security": [{ "apiKey": ["streams:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -3610,6 +3755,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3634,6 +3783,7 @@
         "tags": ["Streams"],
         "security": [{ "apiKey": ["streams:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -3697,6 +3847,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3721,6 +3875,7 @@
         "description": "Set the stream's description from markdown (parsed to rich text, same as message content). Send an empty string to clear it. User-scoped keys attribute the change to the key owner; workspace-scoped keys to the bot.",
         "security": [{ "apiKey": ["streams:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -3798,6 +3953,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3823,6 +3982,7 @@
         "tags": ["Streams"],
         "security": [{ "apiKey": ["streams:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -3887,6 +4047,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -3912,6 +4076,7 @@
         "description": "Cursor-paginated message list. Use `before` or `after` sequence numbers.",
         "security": [{ "apiKey": ["messages:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -4039,6 +4204,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4062,6 +4231,7 @@
         "description": "Send a message. Workspace-scoped keys send as a bot; user-scoped keys send on behalf of the key owner.",
         "security": [{ "apiKey": ["messages:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -4192,6 +4362,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4217,6 +4391,7 @@
         "description": "Find non-deleted messages whose `metadata` contains all the given key/value pairs (AND-containment). Useful for dedup flows — e.g. 'has a message already been posted for this GitHub PR event?'.",
         "security": [{ "apiKey": ["messages:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -4355,6 +4530,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4380,6 +4559,7 @@
         "description": "Update a message you previously sent via API.",
         "security": [{ "apiKey": ["messages:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -4497,6 +4677,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4521,6 +4705,7 @@
         "description": "Delete a message you previously sent via API.",
         "security": [{ "apiKey": ["messages:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -4547,6 +4732,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4573,6 +4762,7 @@
         "description": "List users in the workspace with optional text search and cursor pagination.",
         "security": [{ "apiKey": ["users:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -4632,6 +4822,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4657,6 +4851,7 @@
         "description": "The key actor's labels (every label is private to its owner) and their resource assignments.",
         "security": [{ "apiKey": ["labels:read"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -4759,6 +4954,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4782,6 +4981,7 @@
         "description": "Find-or-create a label owned by the key actor (a user or a bot), keyed by its name. Posting an existing name returns that label and applies any appearance fields supplied — labels are identified by their text, so this is idempotent.",
         "security": [{ "apiKey": ["labels:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -4866,6 +5066,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -4891,6 +5095,7 @@
         "description": "Attach a label to a resource the key actor can reach, identifying the label by its text: the label is found-or-created for the actor, then assigned. `resourceType` is the polymorphic target (`stream` today) so the same endpoint labels any future resource without a wire change.",
         "security": [{ "apiKey": ["labels:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -5006,6 +5211,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5030,6 +5239,7 @@
         "description": "Remove the key actor's assignment of a label (identified by its text) from a resource.",
         "security": [{ "apiKey": ["labels:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -5067,6 +5277,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5093,6 +5307,7 @@
         "description": "Update a label the key actor created.",
         "security": [{ "apiKey": ["labels:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -5183,6 +5398,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5207,6 +5426,7 @@
         "description": "Archive a label the key actor created and remove its assignments.",
         "security": [{ "apiKey": ["labels:write"] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -5233,6 +5453,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5256,9 +5480,10 @@
         "operationId": "getMe",
         "summary": "Get the authenticated principal",
         "tags": ["Identity"],
-        "description": "Returns a discriminated union describing the authenticated principal — either the API-key owner (`kind: \"user\"`) or the bot whose key is in use (`kind: \"bot\"`). Used by clients (e.g. the OpenClaw channel plugin) to verify their key and discover their identity after pairing.",
+        "description": "Returns a discriminated union describing the authenticated principal — either the API-key owner (`kind: \"user\"`) or the bot whose key is in use (`kind: \"bot\"`). Also reports the key's API version pin, the version this request resolved to, and the supported versions. Used by clients (e.g. the OpenClaw channel plugin) to verify their key and discover their identity after pairing.",
         "security": [{ "apiKey": [] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -5283,9 +5508,30 @@
                           "properties": {
                             "kind": { "type": "string", "const": "user" },
                             "workspaceId": { "type": "string" },
-                            "userId": { "type": "string" }
+                            "userId": { "type": "string" },
+                            "apiVersion": {
+                              "type": "object",
+                              "properties": {
+                                "pinned": {
+                                  "anyOf": [{ "type": "string" }, { "type": "null" }],
+                                  "description": "The key's pinned version, or null when the key is unpinned and tracks the current version"
+                                },
+                                "resolved": {
+                                  "type": "string",
+                                  "description": "Version this request resolved to (header override, else pin, else current)"
+                                },
+                                "current": { "type": "string", "description": "The latest API version" },
+                                "supported": {
+                                  "type": "array",
+                                  "items": { "type": "string" },
+                                  "description": "All versions the API currently accepts"
+                                }
+                              },
+                              "required": ["pinned", "resolved", "current", "supported"],
+                              "additionalProperties": false
+                            }
                           },
-                          "required": ["kind", "workspaceId", "userId"],
+                          "required": ["kind", "workspaceId", "userId", "apiVersion"],
                           "additionalProperties": false
                         },
                         {
@@ -5299,9 +5545,38 @@
                               "type": "array",
                               "items": { "type": "string", "enum": ["mentionable", "active-scratchpad"] }
                             },
-                            "ownerUserId": { "type": "null" }
+                            "ownerUserId": { "type": "null" },
+                            "apiVersion": {
+                              "type": "object",
+                              "properties": {
+                                "pinned": {
+                                  "anyOf": [{ "type": "string" }, { "type": "null" }],
+                                  "description": "The key's pinned version, or null when the key is unpinned and tracks the current version"
+                                },
+                                "resolved": {
+                                  "type": "string",
+                                  "description": "Version this request resolved to (header override, else pin, else current)"
+                                },
+                                "current": { "type": "string", "description": "The latest API version" },
+                                "supported": {
+                                  "type": "array",
+                                  "items": { "type": "string" },
+                                  "description": "All versions the API currently accepts"
+                                }
+                              },
+                              "required": ["pinned", "resolved", "current", "supported"],
+                              "additionalProperties": false
+                            }
                           },
-                          "required": ["kind", "workspaceId", "botId", "botType", "traits", "ownerUserId"],
+                          "required": [
+                            "kind",
+                            "workspaceId",
+                            "botId",
+                            "botType",
+                            "traits",
+                            "ownerUserId",
+                            "apiVersion"
+                          ],
                           "additionalProperties": false
                         },
                         {
@@ -5315,9 +5590,38 @@
                               "type": "array",
                               "items": { "type": "string", "enum": ["mentionable", "active-scratchpad"] }
                             },
-                            "ownerUserId": { "type": "string" }
+                            "ownerUserId": { "type": "string" },
+                            "apiVersion": {
+                              "type": "object",
+                              "properties": {
+                                "pinned": {
+                                  "anyOf": [{ "type": "string" }, { "type": "null" }],
+                                  "description": "The key's pinned version, or null when the key is unpinned and tracks the current version"
+                                },
+                                "resolved": {
+                                  "type": "string",
+                                  "description": "Version this request resolved to (header override, else pin, else current)"
+                                },
+                                "current": { "type": "string", "description": "The latest API version" },
+                                "supported": {
+                                  "type": "array",
+                                  "items": { "type": "string" },
+                                  "description": "All versions the API currently accepts"
+                                }
+                              },
+                              "required": ["pinned", "resolved", "current", "supported"],
+                              "additionalProperties": false
+                            }
                           },
-                          "required": ["kind", "workspaceId", "botId", "botType", "traits", "ownerUserId"],
+                          "required": [
+                            "kind",
+                            "workspaceId",
+                            "botId",
+                            "botType",
+                            "traits",
+                            "ownerUserId",
+                            "apiVersion"
+                          ],
                           "additionalProperties": false
                         }
                       ]
@@ -5338,6 +5642,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5363,6 +5671,7 @@
         "description": "For user-scoped keys: lists the authenticated user's personal bots, optionally filtered by trait. Used by the frontend to enumerate quick-switcher commands. Bot-scoped keys receive 403.",
         "security": [{ "apiKey": [] }],
         "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
           {
             "name": "workspaceId",
             "in": "path",
@@ -5442,6 +5751,10 @@
                   "type": "object",
                   "properties": {
                     "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
                     "details": {
                       "type": "object",
                       "propertyNames": { "type": "string" },
@@ -5461,6 +5774,15 @@
     }
   },
   "components": {
+    "parameters": {
+      "ThreaVersion": {
+        "name": "Threa-Version",
+        "in": "header",
+        "required": false,
+        "schema": { "type": "string", "enum": ["2026-07-12"] },
+        "description": "Selects the dated API version for this request. Each API key is pinned to a version when it is minted, and that pin applies when the header is absent. Send this header to override the pin per request (a valid header always wins). The value must be an exact member of the enum; an unknown or malformed value returns 400 with code INVALID_API_VERSION and the known versions in the error. Every response echoes the resolved version in a Threa-Version response header."
+      }
+    },
     "securitySchemes": {
       "apiKey": {
         "type": "http",

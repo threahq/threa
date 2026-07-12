@@ -5,10 +5,11 @@ import helmet from "helmet"
 import cookieParser from "cookie-parser"
 import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
-import { INTERNAL_API_KEY_HEADER } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER, THREA_VERSION_HEADER } from "@threa/types"
 import { logger } from "./lib/logger"
 import { bigIntReplacer } from "@threa/backend-common"
 import { createMetricsMiddleware } from "./middleware/metrics"
+import type { ApiVersionLog } from "./middleware/api-version"
 import { createCorsOriginChecker } from "./lib/cors"
 
 interface CreateAppOptions {
@@ -54,7 +55,15 @@ export function createApp(options: CreateAppOptions): Express {
     })
   )
 
-  app.use(cors({ origin: createCorsOriginChecker(options.corsAllowedOrigins), credentials: true }))
+  app.use(
+    cors({
+      origin: createCorsOriginChecker(options.corsAllowedOrigins),
+      credentials: true,
+      // Cross-origin callers (developer playground) must be able to read the
+      // resolved public API version the gate echoes back.
+      exposedHeaders: [THREA_VERSION_HEADER],
+    })
+  )
   app.use(cookieParser())
   app.use(express.json({ limit: "10mb" }))
   app.use(express.urlencoded({ extended: true, limit: "10mb" }))
@@ -71,6 +80,10 @@ export function createApp(options: CreateAppOptions): Express {
         return "silent"
       },
       genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
+      // Public API version telemetry — the api-version gate stashes the requested
+      // version, its source (header override vs key pin), the key id, and the
+      // operationId on res.locals; empty object for every non-public-API request.
+      customProps: (_req, res) => (res as { locals?: { apiVersionLog?: ApiVersionLog } }).locals?.apiVersionLog ?? {},
       redact: {
         // The default pino-http req serializer logs the full headers object, so
         // every secret-bearing header must be redacted here or it lands in the

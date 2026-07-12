@@ -11,11 +11,18 @@ import { resolve, dirname } from "path"
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
 import * as prettier from "prettier"
 import { PUBLIC_API_ROUTES, errorSchema } from "../src/features/public-api/routes"
-import { API_KEY_ELIGIBLE_PICKER_SCOPES } from "@threa/types"
+import { API_VERSIONS, CURRENT_API_VERSION, VERSION_CHANGES } from "../src/features/public-api/versions"
+import { API_KEY_ELIGIBLE_PICKER_SCOPES, THREA_VERSION_HEADER } from "@threa/types"
 
 const REPO_ROOT = resolve(import.meta.dirname!, "../../..")
 const OUTPUT_PATH = resolve(REPO_ROOT, "docs/public-api/openapi.json")
+const CHANGELOG_PATH = resolve(REPO_ROOT, "docs/public-api/CHANGELOG.md")
 const CHECK_MODE = process.argv.includes("--check")
+
+// The epoch version predates the version-change machinery, so it has no module
+// in VERSION_CHANGES; seed its changelog entry here.
+const EPOCH_VERSION = API_VERSIONS[0]
+const EPOCH_CHANGELOG_DESCRIPTION = "Initial versioned API."
 
 // ---------------------------------------------------------------------------
 // Zod → JSON Schema conversion
@@ -110,8 +117,10 @@ function buildSpec() {
     // Security — list required scopes
     operation.security = [{ apiKey: route.scopes }]
 
-    // Parameters (path + query)
-    const parameters: unknown[] = []
+    // Parameters (path + query). Threa-Version leads every operation via a
+    // shared component so the versioning header is documented once and referenced
+    // everywhere.
+    const parameters: unknown[] = [{ $ref: "#/components/parameters/ThreaVersion" }]
 
     if (route.parameters) {
       for (const p of route.parameters) {
@@ -224,7 +233,7 @@ function buildSpec() {
     openapi: "3.0.3",
     info: {
       title: "Threa Public API",
-      version: "1.0.0",
+      version: CURRENT_API_VERSION,
       description: [
         "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.",
         "",
@@ -270,6 +279,22 @@ function buildSpec() {
     security: [{ apiKey: [] }],
     paths,
     components: {
+      parameters: {
+        ThreaVersion: {
+          name: THREA_VERSION_HEADER,
+          in: "header",
+          required: false,
+          schema: { type: "string", enum: [...API_VERSIONS] },
+          description: [
+            "Selects the dated API version for this request. Each API key is pinned to a",
+            "version when it is minted, and that pin applies when the header is absent. Send",
+            "this header to override the pin per request (a valid header always wins). The",
+            "value must be an exact member of the enum; an unknown or malformed value returns",
+            "400 with code INVALID_API_VERSION and the known versions in the error. Every",
+            "response echoes the resolved version in a Threa-Version response header.",
+          ].join(" "),
+        },
+      },
       securitySchemes: {
         apiKey: {
           type: "http",
@@ -284,6 +309,30 @@ function buildSpec() {
 }
 
 // ---------------------------------------------------------------------------
+// Changelog
+// ---------------------------------------------------------------------------
+
+// Newest version first, with the epoch (which has no change module) last.
+function buildChangelog(): string {
+  const entries = [...VERSION_CHANGES]
+    .sort((a, b) => (a.version < b.version ? 1 : -1))
+    .map((change) => {
+      const ops = [...change.operations].sort()
+      const affected = ops.length > 0 ? `\n\nAffected operations: ${ops.join(", ")}` : ""
+      return `## ${change.version}\n\n${change.description}${affected}`
+    })
+  entries.push(`## ${EPOCH_VERSION}\n\n${EPOCH_CHANGELOG_DESCRIPTION}`)
+  return [
+    "# Threa Public API changelog",
+    "",
+    "Generated from the version-change modules. Do not edit by hand.",
+    "",
+    entries.join("\n\n"),
+    "",
+  ].join("\n")
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -293,21 +342,33 @@ const json = await prettier.format(JSON.stringify(spec), {
   ...prettierConfig,
   filepath: OUTPUT_PATH,
 })
+const changelog = await prettier.format(buildChangelog(), {
+  ...prettierConfig,
+  filepath: CHANGELOG_PATH,
+})
+
+const outputs = [
+  { path: OUTPUT_PATH, contents: json, label: "OpenAPI spec" },
+  { path: CHANGELOG_PATH, contents: changelog, label: "changelog" },
+]
 
 if (CHECK_MODE) {
-  if (!existsSync(OUTPUT_PATH)) {
-    console.error(`OpenAPI spec not found at ${OUTPUT_PATH}. Run: bun apps/backend/scripts/generate-api-docs.ts`)
-    process.exit(1)
+  for (const { path, contents, label } of outputs) {
+    if (!existsSync(path)) {
+      console.error(`${label} not found at ${path}. Run: bun apps/backend/scripts/generate-api-docs.ts`)
+      process.exit(1)
+    }
+    if (readFileSync(path, "utf-8") !== contents) {
+      console.error(`${label} is out of date. Run: bun apps/backend/scripts/generate-api-docs.ts`)
+      process.exit(1)
+    }
   }
-  const existing = readFileSync(OUTPUT_PATH, "utf-8")
-  if (existing !== json) {
-    console.error("OpenAPI spec is out of date. Run: bun apps/backend/scripts/generate-api-docs.ts")
-    process.exit(1)
-  }
-  console.log("OpenAPI spec is up to date.")
+  console.log("OpenAPI spec and changelog are up to date.")
   process.exit(0)
 }
 
-mkdirSync(dirname(OUTPUT_PATH), { recursive: true })
-writeFileSync(OUTPUT_PATH, json)
-console.log(`Wrote OpenAPI spec to ${OUTPUT_PATH}`)
+for (const { path, contents, label } of outputs) {
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, contents)
+  console.log(`Wrote ${label} to ${path}`)
+}

@@ -4,6 +4,7 @@ import { validateRequest } from "../../lib/validation"
 import type { UserApiKeyService } from "./service"
 import type { UserApiKeyRow } from "./repository"
 import { API_KEY_ELIGIBLE_SCOPES, type WorkspacePermissionSlug, type UserApiKey } from "@threa/types"
+import { API_VERSIONS, type ApiVersion } from "../public-api/versions"
 
 const createKeySchema = z.object({
   name: z.string().min(1, "name is required").max(100),
@@ -18,9 +19,15 @@ const createKeySchema = z.object({
     }),
 })
 
-const updateKeySchema = z.object({
-  scopes: z.array(z.enum(API_KEY_ELIGIBLE_SCOPES)).min(1, "at least one scope is required"),
-})
+const updateKeySchema = z
+  .object({
+    scopes: z.array(z.enum(API_KEY_ELIGIBLE_SCOPES)).min(1, "at least one scope is required").optional(),
+    // A supported version pins the key; null unpins it (the key then tracks the current version).
+    apiVersion: z.enum(API_VERSIONS).nullable().optional(),
+  })
+  .refine((data) => data.scopes !== undefined || data.apiVersion !== undefined, {
+    message: "provide scopes and/or apiVersion",
+  })
 
 const revokeKeySchema = z.object({
   keyId: z.string().min(1),
@@ -32,6 +39,7 @@ function serializeKey(row: UserApiKeyRow): UserApiKey {
     name: row.name,
     keyPrefix: row.keyPrefix,
     scopes: row.scopes as WorkspacePermissionSlug[],
+    apiVersion: row.apiVersion,
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
     expiresAt: row.expiresAt?.toISOString() ?? null,
     revokedAt: row.revokedAt?.toISOString() ?? null,
@@ -77,13 +85,24 @@ export function createUserApiKeyHandlers({ userApiKeyService }: Dependencies) {
 
       const data = validateRequest(updateKeySchema, req.body)
 
-      const row = await userApiKeyService.updateScopes({
-        workspaceId,
-        userId,
-        keyId,
-        scopes: data.scopes as WorkspacePermissionSlug[],
-      })
-      res.json({ key: serializeKey(row) })
+      let row: UserApiKeyRow | undefined
+      if (data.scopes !== undefined) {
+        row = await userApiKeyService.updateScopes({
+          workspaceId,
+          userId,
+          keyId,
+          scopes: data.scopes as WorkspacePermissionSlug[],
+        })
+      }
+      if (data.apiVersion !== undefined) {
+        row = await userApiKeyService.updateApiVersion({
+          workspaceId,
+          userId,
+          keyId,
+          apiVersion: data.apiVersion as ApiVersion | null,
+        })
+      }
+      res.json({ key: serializeKey(row!) })
     },
 
     async revoke(req: Request, res: Response) {

@@ -115,6 +115,7 @@ import type {
   WireLabel,
   WireLabelAssignment,
 } from "./routes"
+import { API_VERSIONS, CURRENT_API_VERSION } from "./versions"
 import {
   publicSearchSchema,
   listStreamsSchema,
@@ -2322,6 +2323,16 @@ export function createPublicApiHandlers({
     async getMe(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
+      // Version introspection for agents: the key's pin (null = unpinned,
+      // tracks current), what this request resolved to (req.apiVersion, set by
+      // the version gate), and the full supported list.
+      const apiVersion = {
+        pinned: req.userApiKey ? req.userApiKey.apiVersion : (req.botApiKey?.apiVersion ?? null),
+        resolved: req.apiVersion ?? CURRENT_API_VERSION,
+        current: CURRENT_API_VERSION,
+        supported: [...API_VERSIONS],
+      }
+
       if (req.userApiKey) {
         const user = req.user!
         res.json({
@@ -2329,6 +2340,7 @@ export function createPublicApiHandlers({
             kind: "user",
             workspaceId,
             userId: user.id,
+            apiVersion,
           },
         })
         return
@@ -2347,6 +2359,7 @@ export function createPublicApiHandlers({
             botType: bot.type,
             traits: bot.traits,
             ownerUserId: bot.ownerUserId,
+            apiVersion,
           },
         })
         return

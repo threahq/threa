@@ -227,11 +227,22 @@ const botSchema = z.discriminatedUnion("type", [sharedBotSchema, personalBotSche
 // share `kind: "bot"` but split on `botType`. z.union handles the three-way
 // shape correctly; the generated OpenAPI uses `oneOf`, which clients narrow
 // on `kind` first and then `botType` for the bot branch.
+const apiVersionInfoSchema = z.object({
+  pinned: z
+    .string()
+    .nullable()
+    .describe("The key's pinned version, or null when the key is unpinned and tracks the current version"),
+  resolved: z.string().describe("Version this request resolved to (header override, else pin, else current)"),
+  current: z.string().describe("The latest API version"),
+  supported: z.array(z.string()).describe("All versions the API currently accepts"),
+})
+
 const principalSchema = z.union([
   z.object({
     kind: z.literal("user"),
     workspaceId: z.string(),
     userId: z.string(),
+    apiVersion: apiVersionInfoSchema,
   }),
   z.object({
     kind: z.literal("bot"),
@@ -240,6 +251,7 @@ const principalSchema = z.union([
     botType: z.literal("shared"),
     traits: z.array(z.enum(BOT_TRAITS)),
     ownerUserId: z.null(),
+    apiVersion: apiVersionInfoSchema,
   }),
   z.object({
     kind: z.literal("bot"),
@@ -248,6 +260,7 @@ const principalSchema = z.union([
     botType: z.literal("personal"),
     traits: z.array(z.enum(BOT_TRAITS)),
     ownerUserId: z.string(),
+    apiVersion: apiVersionInfoSchema,
   }),
 ])
 
@@ -515,6 +528,7 @@ const sealedInterimMessageSchema = z.object({ messageId: z.string() })
 
 const errorSchema = z.object({
   error: z.string(),
+  code: z.string().optional().describe("Machine-readable error code, e.g. INVALID_API_VERSION"),
   details: z.record(z.string(), z.array(z.string())).optional(),
 })
 
@@ -606,10 +620,58 @@ const delegationTokenHeaderParam = {
   description: "Per-claim token from the delegation claim response (binds the caller to its claim).",
 }
 
+export type OperationId =
+  | "searchMessages"
+  | "searchMemos"
+  | "getMemo"
+  | "uploadAttachment"
+  | "searchAttachments"
+  | "getAttachment"
+  | "getAttachmentDownloadUrl"
+  | "upsertBotRuntimePresence"
+  | "createBotRuntimeSession"
+  | "getBotOwnerE2eKey"
+  | "provisionStreamE2eKeyWraps"
+  | "renameBotRuntimeSession"
+  | "rebindBotRuntimeSession"
+  | "claimBotInvocation"
+  | "renewBotInvocationClaim"
+  | "recordBotInvocationStep"
+  | "startBotInvocationSealedStep"
+  | "recordBotInvocationSealedStep"
+  | "sendBotInvocationSealedMessage"
+  | "completeBotInvocationSealed"
+  | "completeBotInvocation"
+  | "failBotInvocation"
+  | "listDelegations"
+  | "claimDelegation"
+  | "heartbeatDelegation"
+  | "reportDelegationStatus"
+  | "completeDelegation"
+  | "failDelegation"
+  | "listStreams"
+  | "getStream"
+  | "updateStream"
+  | "listMembers"
+  | "listMessages"
+  | "sendMessage"
+  | "findMessagesByMetadata"
+  | "updateMessage"
+  | "deleteMessage"
+  | "listUsers"
+  | "listLabels"
+  | "createLabel"
+  | "assignLabel"
+  | "unassignLabel"
+  | "updateLabel"
+  | "deleteLabel"
+  | "getMe"
+  | "listMyBots"
+
 export interface PublicApiRoute {
   method: "get" | "post" | "patch" | "delete"
   path: string
-  operationId: string
+  operationId: OperationId
   summary: string
   description?: string
   tags: string[]
@@ -1217,6 +1279,9 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: dataEnvelope(labelSchema),
     successStatus: 201,
   },
+  // Literal `assignments` routes precede the `/{labelId}` CRUD entries below:
+  // registry order is mount order, so a `:labelId` param route registered first
+  // would capture `assignments` as an id.
   {
     method: "post",
     path: "/api/v1/workspaces/{workspaceId}/labels/assignments",
@@ -1285,7 +1350,8 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     summary: "Get the authenticated principal",
     description:
       "Returns a discriminated union describing the authenticated principal — either the API-key owner " +
-      '(`kind: "user"`) or the bot whose key is in use (`kind: "bot"`). Used by clients (e.g. the ' +
+      '(`kind: "user"`) or the bot whose key is in use (`kind: "bot"`). Also reports the key\'s API version ' +
+      "pin, the version this request resolved to, and the supported versions. Used by clients (e.g. the " +
       "OpenClaw channel plugin) to verify their key and discover their identity after pairing.",
     tags: ["Identity"],
     scopes: [],

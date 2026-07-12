@@ -6,6 +6,7 @@ import { userApiKeyId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
 import type { WorkspacePermissionSlug } from "@threa/types"
 import { API_KEY_ELIGIBLE_SCOPES } from "@threa/types"
+import { CURRENT_API_VERSION, type ApiVersion } from "../public-api/versions"
 
 const KEY_PREFIX = "threa_uk_"
 const KEY_BYTE_LENGTH = 32 // 256-bit random key
@@ -40,6 +41,8 @@ export interface ValidatedUserApiKey {
   userId: string
   name: string
   scopes: Set<string>
+  /** Pinned wire version, or null when unpinned — the version gate then resolves to the current version. */
+  apiVersion: ApiVersion | null
 }
 
 export class UserApiKeyService {
@@ -89,6 +92,7 @@ export class UserApiKeyService {
         keyHash,
         keyPrefix,
         scopes: params.scopes,
+        apiVersion: CURRENT_API_VERSION,
         expiresAt: params.expiresAt,
       })
     })
@@ -113,6 +117,26 @@ export class UserApiKeyService {
       params.userId,
       params.keyId,
       params.scopes
+    )
+    if (!row) {
+      throw new HttpError("API key not found", { status: 404, code: "NOT_FOUND" })
+    }
+    return row
+  }
+
+  async updateApiVersion(params: {
+    workspaceId: string
+    userId: string
+    keyId: string
+    /** A supported version to pin to, or null to unpin (the key then tracks the current version). */
+    apiVersion: ApiVersion | null
+  }): Promise<UserApiKeyRow> {
+    const row = await UserApiKeyRepository.updateApiVersionOwned(
+      this.pool,
+      params.workspaceId,
+      params.userId,
+      params.keyId,
+      params.apiVersion
     )
     if (!row) {
       throw new HttpError("API key not found", { status: 404, code: "NOT_FOUND" })
@@ -158,6 +182,7 @@ export class UserApiKeyService {
       userId: match.userId,
       name: match.name,
       scopes: new Set(match.scopes),
+      apiVersion: match.apiVersion as ApiVersion | null,
     }
   }
 }

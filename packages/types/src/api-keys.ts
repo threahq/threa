@@ -67,6 +67,8 @@ export interface UserApiKey {
   name: string
   keyPrefix: string
   scopes: WorkspacePermissionSlug[]
+  /** Pinned public API version (YYYY-MM-DD); null when unpinned (tracks the current version) */
+  apiVersion: string | null
   lastUsedAt: string | null
   expiresAt: string | null
   revokedAt: string | null
@@ -89,6 +91,8 @@ export interface BotApiKey {
   name: string
   keyPrefix: string
   scopes: WorkspacePermissionSlug[]
+  /** Pinned public API version (YYYY-MM-DD); null when unpinned (tracks the current version) */
+  apiVersion: string | null
   lastUsedAt: string | null
   expiresAt: string | null
   revokedAt: string | null
