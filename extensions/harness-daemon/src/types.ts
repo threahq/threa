@@ -33,6 +33,12 @@ export interface SpawnOptions {
   noYolo?: boolean
 }
 
+export interface ResumeOptions {
+  tmux?: string
+  dryRun?: boolean
+  force?: boolean
+}
+
 export interface SpawnResult {
   worktree: string
   branch: string

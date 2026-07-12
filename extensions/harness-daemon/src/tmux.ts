@@ -1,6 +1,6 @@
 import { die } from "./errors"
 import { output, run } from "./shell"
-import type { SpawnOptions } from "./types"
+import type { ManagedAgent, SpawnOptions } from "./types"
 
 /**
  * The tmux session the user is actually looking at: the enclosing session when
@@ -28,9 +28,26 @@ export function tmuxSession(options: SpawnOptions): string {
   return options.tmux ?? attachedTmuxSession() ?? "0"
 }
 
-export function ensureTmuxSession(session: string): void {
+export function ensureTmuxSession(session: string, create = false): void {
   const result = output(["tmux", "has-session", "-t", session], { allowFailure: true })
-  if (result.exitCode !== 0) die(`tmux session '${session}' not found`)
+  if (result.exitCode === 0) return
+  if (!create) die(`tmux session '${session}' not found`)
+  run(["tmux", "new-session", "-d", "-s", session, "-n", "harnessd"])
+}
+
+/** A surviving tmux window means a LaunchAgent reload must not start a duplicate agent. */
+export function agentWindowExists(agent: ManagedAgent): boolean {
+  if (agent.tmuxWindowId) {
+    const result = output(["tmux", "display-message", "-p", "-t", agent.tmuxWindowId, "#{session_name}"], {
+      allowFailure: true,
+    })
+    if (result.exitCode === 0 && (!agent.tmuxSession || result.stdout.trim() === agent.tmuxSession)) return true
+  }
+  const window = agent.tmuxWindow ?? agent.name
+  const target = agent.tmuxSession ? ["-t", agent.tmuxSession] : ["-a"]
+  return output(["tmux", "list-windows", ...target, "-F", "#{window_name}"], { allowFailure: true })
+    .stdout.split("\n")
+    .includes(window)
 }
 
 export function pickTmuxWindow(session: string, name: string): string {

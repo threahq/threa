@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { installBootResume } from "./boot"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
 import { die } from "./errors"
 import { findAgent, inventoryPath, readInventory, upsertAgent } from "./inventory"
 import { commandExists, commandPath, output } from "./shell"
-import { ClaudeRuntimeSpawner, PiRuntimeSpawner } from "./spawners"
-import { attachedTmuxSession, sendKeys } from "./tmux"
-import type { ManagedAgent, SpawnOptions } from "./types"
+import { ClaudeRuntimeSpawner, PiRuntimeSpawner, readThreaChannelConfig } from "./spawners"
+import { latestAgents, parseScratchpadUrl } from "./resume"
+import { agentWindowExists, attachedTmuxSession, ensureTmuxSession, sendKeys } from "./tmux"
+import type { ManagedAgent, ResumeOptions, SpawnOptions } from "./types"
 
 function spawnCommand(options: SpawnOptions): string[] {
   const command = ["threa-harnessd", "spawn", options.runtime, "--name", options.name]
@@ -58,6 +63,154 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
   } catch (error) {
     upsertAgent({ ...agent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
     throw error
+  }
+}
+
+export async function bootResume(options: ResumeOptions): Promise<void> {
+  const session = options.tmux ?? "threa-agents"
+  ensureTmuxSession(session, true)
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const retryable = await resumeActive({ ...options, tmux: session })
+    if (!retryable || options.dryRun) return
+    if (attempt < 3) {
+      console.warn(`harnessd: Threa API unavailable; retrying boot resume (${attempt}/3) in 10 seconds`)
+      await Bun.sleep(10_000)
+    }
+  }
+}
+
+export function installBootResumeAgent(options: ResumeOptions): void {
+  installBootResume(options.tmux ?? "threa-agents")
+}
+
+export async function resumeActive(options: ResumeOptions): Promise<boolean> {
+  output(["tmux", "wait-for", "-L", "harnessd-resume-active"])
+  try {
+    return await resumeActiveUnlocked(options)
+  } finally {
+    output(["tmux", "wait-for", "-U", "harnessd-resume-active"], { allowFailure: true })
+  }
+}
+
+async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
+  const config = readThreaChannelConfig()
+  const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
+  const apiKey = process.env.THREA_API_KEY || config.apiKey
+  const agents = latestAgents(readInventory())
+  if (agents.length === 0) {
+    console.log("No managed agents.")
+    return false
+  }
+  let retryable = false
+
+  for (const agent of agents) {
+    const skip = (reason: string) => console.log(`skip\t${agent.name}\t${reason}`)
+    if (agentWindowExists(agent)) {
+      skip("already running")
+      continue
+    }
+    if (agent.status === "stopped") {
+      skip("stopped")
+      continue
+    }
+    if (agent.runtime === "pi") {
+      skip("Pi session reattachment is not supported")
+      continue
+    }
+    if (!agent.scratchpadUrl) {
+      skip("no scratchpad URL")
+      continue
+    }
+    if (!agent.worktree || !existsSync(agent.worktree)) {
+      skip("missing worktree dir")
+      continue
+    }
+    const mcpConfig = join(homedir(), ".threa", "harnessd", "mcp", `${agent.name}.json`)
+    if (!existsSync(mcpConfig)) {
+      skip("missing MCP config")
+      continue
+    }
+    const scratchpad = parseScratchpadUrl(agent.scratchpadUrl)
+    if (!scratchpad) {
+      skip("invalid scratchpad URL")
+      continue
+    }
+    const configuredBaseUrl = (process.env.THREA_BASE_URL || config.baseUrl || "https://app.threa.io").replace(
+      /\/$/,
+      ""
+    )
+    if (scratchpad.baseUrl !== configuredBaseUrl) {
+      skip("scratchpad URL origin does not match configured Threa base URL")
+      continue
+    }
+    if (workspaceId && scratchpad.workspaceId && workspaceId !== scratchpad.workspaceId) {
+      skip("scratchpad workspace does not match configured workspace")
+      continue
+    }
+    const scratchpadWorkspaceId = scratchpad.workspaceId || workspaceId
+    if (!scratchpadWorkspaceId || !apiKey) {
+      if (!options.force) {
+        skip("missing Threa credentials")
+        continue
+      }
+    } else {
+      const result = await scratchpadStatus({
+        baseUrl: configuredBaseUrl,
+        workspaceId: scratchpadWorkspaceId,
+        apiKey,
+        streamId: scratchpad.streamId,
+      })
+      if (result === "unavailable") retryable = true
+      if (result !== "active" && !options.force) {
+        skip(result)
+        continue
+      }
+      if (result !== "active") console.log(`force\t${agent.name}\t${result}`)
+    }
+    if (options.dryRun) {
+      console.log(`restore\t${agent.name}\t${agent.scratchpadUrl}`)
+      continue
+    }
+
+    try {
+      const result = await new ClaudeRuntimeSpawner().resume(agent, options)
+      upsertAgent({
+        ...agent,
+        tmuxSession: result.tmuxSession,
+        tmuxWindow: result.tmuxWindow,
+        tmuxWindowId: result.tmuxWindowId,
+        status: "online",
+        updatedAt: now(),
+        lastOutput: result.output.slice(-4000),
+      })
+      const bypass = agent.command.includes("--no-yolo") ? "disabled" : "enabled"
+      console.log(`restored\t${agent.name}\tbypass ${bypass}`)
+    } catch (error) {
+      upsertAgent({ ...agent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
+      skip(`launch failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  return retryable
+}
+
+async function scratchpadStatus(params: {
+  baseUrl: string
+  workspaceId: string
+  apiKey: string
+  streamId: string
+}): Promise<"active" | "archived" | "inaccessible" | "unavailable"> {
+  try {
+    const response = await fetch(
+      `${params.baseUrl.replace(/\/$/, "")}/api/v1/workspaces/${params.workspaceId}/streams/${params.streamId}`,
+      { headers: { authorization: `Bearer ${params.apiKey}` }, signal: AbortSignal.timeout(10_000) }
+    )
+    if (response.status === 403 || response.status === 404) return "inaccessible"
+    if (!response.ok) return response.status === 429 || response.status >= 500 ? "unavailable" : "inaccessible"
+    const json = (await response.json()) as { data?: { archivedAt?: string | null } }
+    if (!json.data || !("archivedAt" in json.data)) return "inaccessible"
+    return json.data.archivedAt ? "archived" : "active"
+  } catch {
+    return "unavailable"
   }
 }
 

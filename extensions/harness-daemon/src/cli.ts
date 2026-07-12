@@ -9,6 +9,9 @@ Usage:
   threa-harnessd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
   threa-harnessd do <natural language command>
   threa-harnessd list
+  threa-harnessd resume-active [--tmux <session>] [--dry-run] [--force]
+  threa-harnessd boot-resume [--tmux <session>] [--dry-run] [--force]
+  threa-harnessd install-boot-resume [--tmux <session>]
   threa-harnessd stop <agent-id-or-name>
   threa-harnessd interrupt <agent-id-or-name>
   threa-harnessd steer <agent-id-or-name> [follow-up text]
@@ -19,6 +22,8 @@ Usage:
 Examples:
   threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
   threa-harnessd spawn claude --name fix-sidebar --branch fix/sidebar
+  threa-harnessd resume-active --dry-run
+  threa-harnessd install-boot-resume
   threa-harnessd do spawn a pi agent for long chat performance
   threa-harnessd interrupt fix-sidebar
   threa-harnessd steer fix-sidebar "also update the tests"
@@ -81,6 +86,15 @@ export function inferBranch(name: string, text?: string): string {
   if (lower.includes("fix")) return `fix/${name.replace(/^fix-/, "")}`
   if (lower.includes("refactor")) return `refactor/${name.replace(/^refactor-/, "")}`
   return `explore/${name.replace(/^explore-/, "")}`
+}
+
+export function parseResume(args: string[]): { tmux?: string; dryRun?: boolean; force?: boolean } {
+  const flags = parseFlags(args)
+  return {
+    tmux: stringFlag(flags, "tmux"),
+    dryRun: boolFlag(flags, "dry-run"),
+    force: boolFlag(flags, "force"),
+  }
 }
 
 export function parseSpawn(args: string[]): SpawnOptions {
