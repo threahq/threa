@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react"
-import { Link, useLocation, useMatch, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import { Layers, Plus, Tag } from "lucide-react"
-import { DEFAULT_BOARD_LENS, type BoardLens } from "@threa/types"
-import { usePreferencesOptional } from "@/contexts"
 import {
   useWorkspaceDmPeers,
   useWorkspaceLabels,
@@ -12,7 +10,7 @@ import {
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
 import { FilterChip } from "@/components/board/board-filter-bar"
 import { SaveCurrentViewDialog } from "@/components/board/board-saved-views"
-import type { BoardViewSelection } from "@/lib/board/filter-state"
+import { useBoardSelection } from "@/hooks/use-board-selection"
 import { BOARD_STREAM_TYPE_LABELS } from "@/lib/board/stream-type-labels"
 import {
   BOARD_SCOPE_PARAM,
@@ -22,8 +20,6 @@ import {
   BOARD_LABEL_PARAM,
   BOARD_EXCLUDE_LABEL_PARAM,
   boardHomeSearch,
-  parseIdListParam,
-  parseTypeListParam,
   removeAxisValueSearch,
 } from "@/components/board/board-filter-params"
 
@@ -43,7 +39,6 @@ interface BoardFilterChipsProps {
 export function BoardFilterChips({ workspaceId }: BoardFilterChipsProps) {
   const location = useLocation()
   const navigate = useNavigate()
-  const lensMatch = useMatch("/w/:workspaceId/board/:lens?")
   const [saveOpen, setSaveOpen] = useState(false)
 
   const streams = useWorkspaceStreams(workspaceId)
@@ -53,21 +48,7 @@ export function BoardFilterChips({ workspaceId }: BoardFilterChipsProps) {
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels])
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
 
-  const homeLens: BoardLens = usePreferencesOptional()?.preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
-  const currentLens: BoardLens = (lensMatch?.params.lens as BoardLens | undefined) ?? homeLens
-
-  const selection = useMemo<BoardViewSelection>(() => {
-    const params = new URLSearchParams(location.search)
-    return {
-      lens: currentLens,
-      scopeStreamIds: parseIdListParam(params.get(BOARD_SCOPE_PARAM)),
-      scopeStreamTypes: parseTypeListParam(params.get(BOARD_TYPE_PARAM)),
-      scopeLabelIds: parseIdListParam(params.get(BOARD_LABEL_PARAM)),
-      excludeStreamIds: parseIdListParam(params.get(BOARD_EXCLUDE_SCOPE_PARAM)),
-      excludeStreamTypes: parseTypeListParam(params.get(BOARD_EXCLUDE_TYPE_PARAM)),
-      excludeLabelIds: parseIdListParam(params.get(BOARD_EXCLUDE_LABEL_PARAM)),
-    }
-  }, [location.search, currentLens])
+  const { selection } = useBoardSelection()
 
   const remove = (param: string, value: string) =>
     navigate(`${location.pathname}${removeAxisValueSearch(location.search, param, value)}`)

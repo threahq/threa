@@ -58,39 +58,39 @@ import { ScratchpadItem } from "./scratchpad-item"
 export type BoardTileState = "included" | "excluded" | "neutral"
 
 /**
- * The board-mode tri-state affordance on a stream row's tile (INV-21 — absolutely
- * positioned, zero layout shift). `included` shows a filled check, `excluded` a
- * ban badge (both always visible as state); `neutral` shows a plus that reveals
- * on hover/touch (the `reveal-actions` pattern). Clicking always toggles include
- * additively — exclude lives in the context menu, not on this control. Rendered
- * inside the tile, so it stops propagation to keep the row's focus-`<Link>` inert.
+ * The board-mode tri-state affordance drawn over a stream row's tile corner
+ * (INV-21 — absolutely positioned, zero layout shift). `included` shows a filled
+ * check, `excluded` a ban badge (both always visible as state); `neutral` shows
+ * a plus that reveals on hover/touch (the `reveal-actions` pattern). Clicking
+ * always toggles include additively — exclude lives in the context menu. It is
+ * a SIBLING of the row's `<Link>` (a button may not nest inside an anchor), so
+ * the caller positions it over the tile via `className`.
  */
 export function BoardTileToggle({
   state,
   streamName,
   onToggle,
+  className,
 }: {
   state: BoardTileState
   streamName: string
   onToggle: () => void
+  className?: string
 }) {
   const included = state === "included"
   const excluded = state === "excluded"
   return (
     <button
       type="button"
-      onClick={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        onToggle()
-      }}
+      onClick={onToggle}
       aria-pressed={included}
       aria-label={included ? `Remove ${streamName} from board filter` : `Add ${streamName} to board filter`}
       className={cn(
-        "absolute -bottom-1 -right-1 z-10 flex h-4 w-4 items-center justify-center rounded-full border ring-2 ring-sidebar transition-colors",
+        "absolute z-10 flex h-4 w-4 items-center justify-center rounded-full border ring-2 ring-sidebar transition-colors",
         included && "border-primary bg-primary text-primary-foreground",
         excluded && "border-destructive bg-background text-destructive",
-        !included && !excluded && "reveal-actions border-border bg-background text-muted-foreground"
+        !included && !excluded && "reveal-actions border-border bg-background text-muted-foreground",
+        className
       )}
     >
       {included && <Check className="h-2.5 w-2.5" />}
@@ -139,21 +139,9 @@ interface StreamItemAvatarProps {
    * Renders as a small bordered circle, independent of `badge` (top-left).
    */
   decoration?: { icon: typeof Hash; color: string; ariaLabel?: string } | null
-  /** Board-mode tri-state toggle overlaid on the tile's bottom-right corner. Only
-   *  supplied for board-scopable rows (non-thread, non-E2E); bottom-right stays
-   *  clear of the thread badge (top-left) and the metadata decoration (top-right). */
-  boardControl?: ReactNode
 }
 
-export function StreamItemAvatar({
-  icon,
-  className,
-  avatarUrl,
-  avatarAlt,
-  badge,
-  decoration,
-  boardControl,
-}: StreamItemAvatarProps) {
+export function StreamItemAvatar({ icon, className, avatarUrl, avatarAlt, badge, decoration }: StreamItemAvatarProps) {
   // Thread-of-DM: thread icon as main content, avatar as small badge overlay
   if (badge && avatarUrl) {
     return (
@@ -201,7 +189,6 @@ export function StreamItemAvatar({
         </div>
       )}
       {decoration && <AvatarDecoration {...decoration} />}
-      {boardControl}
     </div>
   )
 }
@@ -544,15 +531,6 @@ export function StreamItem({
                 avatarUrl={dmPeerAvatar?.avatarUrl}
                 avatarAlt={name}
                 badge={threadBadge}
-                boardControl={
-                  boardScopable ? (
-                    <BoardTileToggle
-                      state={boardTileState}
-                      streamName={name}
-                      onToggle={() => boardMode.applyInclude(boardScopeId)}
-                    />
-                  ) : undefined
-                }
               />
 
               <div
@@ -594,6 +572,17 @@ export function StreamItem({
               </div>
             </div>
           </Link>
+
+          {/* Sibling of the Link (button-in-anchor is invalid); positioned over the
+              tile's bottom-right corner — the tile sits at the strip (4px) + px-2. */}
+          {boardScopable && (
+            <BoardTileToggle
+              state={boardTileState}
+              streamName={name}
+              onToggle={() => boardMode.applyInclude(boardScopeId)}
+              className={cn("top-[calc(50%+0.25rem)]", showUrgencyStrip ? "left-8" : "left-7")}
+            />
+          )}
 
           <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
         </div>

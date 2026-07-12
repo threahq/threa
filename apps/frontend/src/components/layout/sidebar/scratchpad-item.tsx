@@ -298,15 +298,6 @@ export function ScratchpadItem({
                 icon={<FileEdit className="h-3.5 w-3.5" />}
                 className="bg-primary/10 text-primary"
                 decoration={decoration}
-                boardControl={
-                  boardScopable ? (
-                    <BoardTileToggle
-                      state={boardTileState}
-                      streamName={name}
-                      onToggle={() => boardMode.applyInclude(streamWithPreview.id)}
-                    />
-                  ) : undefined
-                }
               />
 
               <div
@@ -337,6 +328,17 @@ export function ScratchpadItem({
               </div>
             </div>
           </Link>
+
+          {/* Sibling of the Link (button-in-anchor is invalid); positioned over the
+              tile's bottom-right corner — see StreamItem. */}
+          {boardScopable && (
+            <BoardTileToggle
+              state={boardTileState}
+              streamName={name}
+              onToggle={() => boardMode.applyInclude(streamWithPreview.id)}
+              className={cn("top-[calc(50%+0.25rem)]", showUrgencyStrip ? "left-8" : "left-7")}
+            />
+          )}
 
           <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
         </div>

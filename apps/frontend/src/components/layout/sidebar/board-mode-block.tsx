@@ -1,21 +1,12 @@
 import { useMemo } from "react"
-import { Link, useLocation, useMatch } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 import { ArrowLeft, Bookmark, Pin } from "lucide-react"
-import { BOARD_LENSES, DEFAULT_BOARD_LENS, type BoardLens } from "@threa/types"
-import { useSidebar, usePreferencesOptional } from "@/contexts"
+import { BOARD_LENSES, type BoardLens } from "@threa/types"
+import { useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
-import { isViewActive, lensHref, savedViewHref, type BoardViewSelection } from "@/components/board/board-saved-views"
-import {
-  BOARD_SCOPE_PARAM,
-  BOARD_EXCLUDE_SCOPE_PARAM,
-  BOARD_TYPE_PARAM,
-  BOARD_EXCLUDE_TYPE_PARAM,
-  BOARD_LABEL_PARAM,
-  BOARD_EXCLUDE_LABEL_PARAM,
-  parseIdListParam,
-  parseTypeListParam,
-} from "@/components/board/board-filter-params"
+import { useBoardSelection } from "@/hooks/use-board-selection"
+import { isViewActive, lensHref, savedViewHref } from "@/components/board/board-saved-views"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import { getLastLocation } from "@/lib/last-location"
 import { BoardFilterChips } from "./board-filter-chips"
@@ -45,32 +36,13 @@ const SECTION_LABEL_CLASS =
 export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlockProps) {
   const { collapseOnMobile } = useSidebar()
   const location = useLocation()
-  const lensMatch = useMatch("/w/:workspaceId/board/:lens?")
 
-  const preferences = usePreferencesOptional()?.preferences ?? null
-  const homeLens: BoardLens = preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
+  // One shared URL derivation (INV-35) — the chips block reads the same hook.
+  const { homeLens, currentLens, selection } = useBoardSelection()
 
   const { data: views } = useBoardViews(workspaceId)
   const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
   const hasSavedViewHome = homeViewId !== null
-
-  const lensParam = lensMatch?.params.lens
-  const currentLens: BoardLens = (lensParam as BoardLens | undefined) ?? homeLens
-
-  // Parse the live selection off the URL so a saved view / lens can read as
-  // active — reuses the board's URL vocabulary (INV-35), not a hand-rolled parse.
-  const selection = useMemo<BoardViewSelection>(() => {
-    const params = new URLSearchParams(location.search)
-    return {
-      lens: currentLens,
-      scopeStreamIds: parseIdListParam(params.get(BOARD_SCOPE_PARAM)),
-      scopeStreamTypes: parseTypeListParam(params.get(BOARD_TYPE_PARAM)),
-      scopeLabelIds: parseIdListParam(params.get(BOARD_LABEL_PARAM)),
-      excludeStreamIds: parseIdListParam(params.get(BOARD_EXCLUDE_SCOPE_PARAM)),
-      excludeStreamTypes: parseTypeListParam(params.get(BOARD_EXCLUDE_TYPE_PARAM)),
-      excludeLabelIds: parseIdListParam(params.get(BOARD_EXCLUDE_LABEL_PARAM)),
-    }
-  }, [location.search, currentLens])
 
   // A saved view IS the selection when the live lens + every axis match it, so it
   // — not its base lens — reads as active; a lens is active only when no view is.
