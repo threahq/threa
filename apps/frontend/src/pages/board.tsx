@@ -564,7 +564,14 @@ function BoardPageInner({
     excludeStreamTypes.length > 0 ||
     scopeLabelIds.length > 0 ||
     excludeLabelIds.length > 0
-  const handlePosted = () => {
+  // The viewer's own just-posted card gets a brief gold-thread flash (the golden
+  // thread motif, on the primary action). Held ~1.6s so the ~1.4s pulse finishes,
+  // then cleared so a later re-render doesn't replay it.
+  const [flashConversationId, setFlashConversationId] = useState<string | null>(null)
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => clearTimeout(flashTimerRef.current ?? undefined), [])
+
+  const handlePosted = (conversationId?: string) => {
     // The viewer's own post must ALWAYS surface. It already shows where the
     // current view can contain it — an unfiltered `all`/`mine` lens — so stay
     // put there (a `mine` home shouldn't bounce the author off their own home).
@@ -577,6 +584,11 @@ function BoardPageInner({
     if (!currentViewSurfacesOwnPost) {
       navigate(boardHome)
     }
+    if (conversationId) {
+      setFlashConversationId(conversationId)
+      clearTimeout(flashTimerRef.current ?? undefined)
+      flashTimerRef.current = setTimeout(() => setFlashConversationId(null), 1600)
+    }
   }
 
   // Register the board's post-reveal with the single app-level compose overlay so
@@ -585,7 +597,7 @@ function BoardPageInner({
   // ref so it re-registers once, not every render.
   const handlePostedRef = useRef(handlePosted)
   handlePostedRef.current = handlePosted
-  useEffect(() => registerComposeOnPosted(() => handlePostedRef.current()), [])
+  useEffect(() => registerComposeOnPosted((conversationId) => handlePostedRef.current(conversationId)), [])
 
   // Where the post lives — the stream's own name (channel #slug, DM peer,
   // scratchpad name), used as the card's locator. The glyph follows the type.
@@ -687,11 +699,21 @@ function BoardPageInner({
               dmPeerUserId={dmPeerUserId}
               scrollerRef={scrollerRef}
               listRef={listRef}
+              flash={row.post.conversation.id === flashConversationId}
             />
           </div>
         )
       }),
-    [feedRows, labelsFor, isFetchNextPageError, isFetchingNextPage, fetchNextPage, loadMoreLabel, workspaceId]
+    [
+      feedRows,
+      labelsFor,
+      isFetchNextPageError,
+      isFetchingNextPage,
+      fetchNextPage,
+      loadMoreLabel,
+      workspaceId,
+      flashConversationId,
+    ]
   )
 
   // Non-feed states (error / skeleton / empty) render as a single centered block

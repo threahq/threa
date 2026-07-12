@@ -22,7 +22,7 @@ export interface BoardOverlayComposerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Fired after a successful post so the board can surface the new card. */
-  onPosted?: () => void
+  onPosted?: (conversationId?: string) => void
   /** Pre-selected target (a stream id or `new:*` sentinel) to open on. */
   defaultTarget?: string
 }
@@ -146,7 +146,7 @@ function BoardOverlayComposerBody({
   targetValue: string
   selectedStream: CachedStream | undefined
   onOpenChange: (open: boolean) => void
-  onPosted?: () => void
+  onPosted?: (conversationId?: string) => void
 }) {
   const createPost = useCreateBoardPost(workspaceId)
   const streamContext = useMentionStreamContext(workspaceId, selectedStream)
@@ -166,7 +166,7 @@ function BoardOverlayComposerBody({
 
     composer.setIsSending(true)
     try {
-      await createPost.mutateAsync({
+      const postedConversationId = await createPost.mutateAsync({
         target,
         contentJson: normalizedContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
@@ -183,9 +183,9 @@ function BoardOverlayComposerBody({
       // sentinel shouldn't make minting-another the default on the next open.
       if (target.type === "stream") pushTargetMru(workspaceId, targetValue)
       onOpenChange(false)
-      // Reveal the just-posted card rather than letting it wait behind its own
-      // "N new" pill — the viewer's own action should surface immediately.
-      onPosted?.()
+      // Reveal + flash the just-posted card rather than letting it wait behind its
+      // own "N new" pill — the viewer's own action should surface immediately.
+      onPosted?.(postedConversationId)
     } catch {
       toast.error("Couldn't post to the board. Please try again.")
     } finally {

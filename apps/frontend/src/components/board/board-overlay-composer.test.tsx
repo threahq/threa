@@ -65,7 +65,7 @@ beforeEach(() => {
   const stub = draftComposerStub()
   spyOnExport(hooksModule, "useDraftComposer").mockReturnValue((() => stub) as never)
   vi.spyOn(mentionablesModule, "useMentionStreamContext").mockReturnValue(undefined as never)
-  mutateAsync = vi.fn().mockResolvedValue({ message: { id: "msg_1" }, conversationId: "conv_1" })
+  mutateAsync = vi.fn().mockResolvedValue("conv_1")
   vi.spyOn(conversationsModule, "useCreateBoardPost").mockReturnValue({ mutateAsync, isPending: false } as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([channel] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
@@ -95,7 +95,7 @@ describe("BoardOverlayComposer", () => {
       )
     )
     expect(onOpenChange).toHaveBeenCalledWith(false)
-    expect(onPosted).toHaveBeenCalled()
+    expect(onPosted).toHaveBeenCalledWith("conv_1")
     expect(readTargetMru("workspace_1")).toEqual([channel.id])
     // The draft's persisted target is cleared on send (the draft is resolved).
     expect(readDraftTarget("workspace_1")).toBe("")

@@ -56,6 +56,8 @@ interface BoardCardProps {
   scrollerRef?: RefObject<HTMLDivElement | null>
   /** virtua's imperative handle for the board feed, paired with `scrollerRef`. */
   listRef?: RefObject<VirtualizerHandle | null>
+  /** Play the one-shot gold-thread pulse — the viewer's own just-posted card. */
+  flash?: boolean
 }
 
 /** How many trailing messages a nested branch previews on a collapsed card; the
@@ -85,6 +87,7 @@ export function BoardCard({
   dmPeerUserId,
   scrollerRef,
   listRef,
+  flash,
 }: BoardCardProps) {
   const { conversation } = post
   const { getActorName, getActorAvatar } = useActors(workspaceId)
@@ -617,7 +620,10 @@ export function BoardCard({
             since the fill delta reads weakly on the charcoal canvas. */}
         <div
           ref={cardRef}
-          className="rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] sm:p-4 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]"
+          className={cn(
+            "rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] sm:p-4 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]",
+            flash && "board-post-flash"
+          )}
         >
           {/* Zero-height marker at the card top: drives the header's stuck state
               (see the observer above). In flow but h-0, so it shifts nothing. */}
