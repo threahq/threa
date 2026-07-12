@@ -106,6 +106,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       voiceSteeringWords: [],
       statusPresets: [],
       workSchedule: null,
+      defaultCompanionPersonaId: null,
       gettingStartedDismissed: false,
       accessibility: {
         fontSize: "medium",

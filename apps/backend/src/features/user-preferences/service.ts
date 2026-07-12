@@ -2,6 +2,7 @@ import { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { UserPreferencesRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
+import { assertAssignablePersona } from "../agents"
 import {
   type UserPreferences,
   type UpdateUserPreferencesInput,
@@ -88,6 +89,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "voicePolishLevel",
     "voiceSteeringWords",
     "workSchedule",
+    "defaultCompanionPersonaId",
     "statusPresets",
     "gettingStartedDismissed",
   ] as const
@@ -135,6 +137,7 @@ export class UserPreferencesService {
     userId: string,
     updates: UpdateUserPreferencesInput
   ): Promise<UserPreferences> {
+    await assertAssignablePersona(this.pool, updates.defaultCompanionPersonaId, workspaceId)
     return withTransaction(this.pool, async (client) => {
       const currentOverrides =
         updates.keyboardShortcuts !== undefined ? await UserPreferencesRepository.findOverrides(client, userId) : null

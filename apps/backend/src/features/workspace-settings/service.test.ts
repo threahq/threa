@@ -4,6 +4,7 @@ import { DEFAULT_WORK_SCHEDULE, DEFAULT_MAX_PENDING_FOLLOW_UPS, type WorkSchedul
 import { WorkspaceSettingsService } from "./service"
 import { WorkspaceSettingsRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
+import { PersonaRepository } from "../agents"
 import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "ws_1"
@@ -111,6 +112,66 @@ describe("WorkspaceSettingsService.updateSettings", () => {
     await service.updateSettings(WORKSPACE_ID, { maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS })
 
     expect(deleteOverride).toHaveBeenCalledWith({}, WORKSPACE_ID, "maxPendingFollowUps")
+    expect(setOverride).not.toHaveBeenCalled()
+  })
+})
+
+describe("WorkspaceSettingsService.updateSettings defaultCompanionPersonaId", () => {
+  afterEach(() => mock.restore())
+
+  it("stores an active persona id as an override", async () => {
+    setupTransaction()
+    const findById = spyOn(PersonaRepository, "findById").mockResolvedValue({ status: "active" } as any)
+    const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
+    spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
+    spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([
+      { key: "defaultCompanionPersonaId", value: "persona_x" },
+    ])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new WorkspaceSettingsService({} as any)
+
+    const settings = await service.updateSettings(WORKSPACE_ID, { defaultCompanionPersonaId: "persona_x" })
+
+    expect(findById).toHaveBeenCalledWith({}, "persona_x", WORKSPACE_ID)
+    expect(setOverride).toHaveBeenCalledWith({}, WORKSPACE_ID, "defaultCompanionPersonaId", "persona_x")
+    expect(settings.defaultCompanionPersonaId).toBe("persona_x")
+  })
+
+  it("rejects an archived persona id with a 400", async () => {
+    spyOn(PersonaRepository, "findById").mockResolvedValue({ status: "archived" } as any)
+    const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
+    const service = new WorkspaceSettingsService({} as any)
+
+    await expect(
+      service.updateSettings(WORKSPACE_ID, { defaultCompanionPersonaId: "persona_x" })
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_AVAILABLE" })
+    expect(setOverride).not.toHaveBeenCalled()
+  })
+
+  it("rejects an id not resolvable in this workspace with a 400", async () => {
+    spyOn(PersonaRepository, "findById").mockResolvedValue(null)
+    const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
+    const service = new WorkspaceSettingsService({} as any)
+
+    await expect(
+      service.updateSettings(WORKSPACE_ID, { defaultCompanionPersonaId: "persona_other_ws" })
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_AVAILABLE" })
+    expect(setOverride).not.toHaveBeenCalled()
+  })
+
+  it("clears the override on null without a persona lookup", async () => {
+    setupTransaction()
+    const findById = spyOn(PersonaRepository, "findById").mockResolvedValue({ status: "active" } as any)
+    const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
+    const deleteOverride = spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
+    spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new WorkspaceSettingsService({} as any)
+
+    await service.updateSettings(WORKSPACE_ID, { defaultCompanionPersonaId: null })
+
+    expect(findById).not.toHaveBeenCalled()
+    expect(deleteOverride).toHaveBeenCalledWith({}, WORKSPACE_ID, "defaultCompanionPersonaId")
     expect(setOverride).not.toHaveBeenCalled()
   })
 })

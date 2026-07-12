@@ -54,6 +54,15 @@ export interface WorkspaceSettings {
    * in the follow-up service; a per-stream column is deferred until asked for.
    */
   maxPendingFollowUps: number
+  /**
+   * The workspace-wide default companion persona a scratchpad runs when it has no
+   * explicit persona pick. Resolution order is user preference
+   * (`UserPreferences.defaultCompanionPersonaId`) → this workspace setting →
+   * built-in Ariadne. `null` means Ariadne. A stored id that is missing, archived,
+   * or not active in the workspace degrades to the next tier at dispatch time;
+   * write-time validation rejects an id that isn't an active persona here.
+   */
+  defaultCompanionPersonaId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -65,6 +74,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   memoLanguage: null,
   voiceSteeringWords: [],
   maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
+  defaultCompanionPersonaId: null,
 }
 
 /** Partial update — only provided fields are changed. */
@@ -74,6 +84,7 @@ export interface UpdateWorkspaceSettingsInput {
   memoLanguage?: string | null
   voiceSteeringWords?: string[]
   maxPendingFollowUps?: number
+  defaultCompanionPersonaId?: string | null
 }
 
 /** Valid top-level settings keys that can be overridden. */

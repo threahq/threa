@@ -120,6 +120,7 @@ export type { OrphanSessionCleanup } from "./orphan-session-cleanup"
 
 export { PersonaRepository } from "./persona-repository"
 export type { Persona } from "./persona-repository"
+export { assertAssignablePersona } from "./persona-guards"
 export {
   ARIADNE_AGENT_ID,
   EMPTY_AGENT_ID,

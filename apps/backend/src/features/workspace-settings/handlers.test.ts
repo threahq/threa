@@ -23,3 +23,26 @@ describe("updateWorkspaceSettingsSchema voiceSteeringWords", () => {
     expect(updateWorkspaceSettingsSchema.parse({}).voiceSteeringWords).toBeUndefined()
   })
 })
+
+describe("updateWorkspaceSettingsSchema defaultCompanionPersonaId", () => {
+  it("accepts a persona id", () => {
+    expect(
+      updateWorkspaceSettingsSchema.parse({ defaultCompanionPersonaId: "persona_1" }).defaultCompanionPersonaId
+    ).toBe("persona_1")
+  })
+
+  it("accepts null to clear back to Ariadne", () => {
+    expect(
+      updateWorkspaceSettingsSchema.parse({ defaultCompanionPersonaId: null }).defaultCompanionPersonaId
+    ).toBeNull()
+  })
+
+  it("rejects an empty or over-long id", () => {
+    expect(updateWorkspaceSettingsSchema.safeParse({ defaultCompanionPersonaId: "" }).success).toBe(false)
+    expect(updateWorkspaceSettingsSchema.safeParse({ defaultCompanionPersonaId: "x".repeat(65) }).success).toBe(false)
+  })
+
+  it("treats the field as optional", () => {
+    expect(updateWorkspaceSettingsSchema.parse({}).defaultCompanionPersonaId).toBeUndefined()
+  })
+})
