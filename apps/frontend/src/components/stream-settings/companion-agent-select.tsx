@@ -9,9 +9,30 @@ export interface CompanionSelection {
   companionName: string
 }
 
-/** Sentinel Select value for the "Workspace default" synthetic option (user
- *  settings): distinct from any `persona_…` id, round-trips as null at the caller. */
+/** Sentinel Select value for the synthetic "default" option: distinct from any
+ *  `persona_…` id, round-trips as null (streams) / null-pref (user settings). */
 export const COMPANION_DEFAULT_OPTION_VALUE = "__workspace_default__"
+
+/**
+ * Select value for a stream surface's picker: an explicit on-roster pointer
+ * selects its persona row; anything else — null (inherit) or an off-roster
+ * (archived) pointer that dispatch would degrade anyway — selects the synthetic
+ * default row. Inherit is legible and picking a concrete persona always pins.
+ */
+export function companionPickerValue(
+  personas: PersonaListItem[] | undefined,
+  companionPersonaId: string | null | undefined
+): string {
+  return companionPersonaId && personas?.some((p) => p.id === companionPersonaId)
+    ? companionPersonaId
+    : COMPANION_DEFAULT_OPTION_VALUE
+}
+
+/** Label for the stream pickers' synthetic inherit row, naming the persona the
+ *  default currently resolves to. */
+export function companionDefaultOptionLabel(defaultPersona: PersonaListItem | undefined): string {
+  return `Default (${defaultPersona?.name ?? "Ariadne"})`
+}
 
 /**
  * Resolve a stream's companion-persona pointer against the roster. A null

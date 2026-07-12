@@ -27,8 +27,13 @@ export interface AgentPersonaBinding {
   workspaceId: string
   /** Roster to offer (built-ins + active customs). */
   personas: PersonaListItem[]
+  /** Select value: an explicit persona id, or the inherit sentinel (see
+   *  `companionPickerValue`). */
   selectedPersonaId: string | undefined
   onChange: (personaId: string) => void
+  /** The synthetic leading "Default (X)" row; the caller maps its sentinel
+   *  value back to null (inherit). */
+  defaultOption?: { label: string }
   busy?: boolean
 }
 
@@ -91,6 +96,7 @@ export function AgentSettingsPanel({
             personas={personaPicker.personas}
             value={personaPicker.selectedPersonaId}
             onChange={personaPicker.onChange}
+            defaultOption={personaPicker.defaultOption}
             disabled={personaPicker.busy}
             triggerClassName="w-full"
           />

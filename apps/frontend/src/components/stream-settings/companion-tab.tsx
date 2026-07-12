@@ -13,7 +13,13 @@ import {
   type ToolPrivacyCategory,
   type ToolPrivacyPolicy,
 } from "@threa/types"
-import { CompanionAgentSelect, resolveCompanionSelection } from "./companion-agent-select"
+import {
+  COMPANION_DEFAULT_OPTION_VALUE,
+  CompanionAgentSelect,
+  companionDefaultOptionLabel,
+  companionPickerValue,
+  resolveCompanionSelection,
+} from "./companion-agent-select"
 import { ToolPolicyPicker } from "./tool-policy-picker"
 import { ExternalAgentIndicator } from "./external-agent-indicator"
 import { BriefSection } from "./brief-section"
@@ -50,11 +56,17 @@ export function CompanionTab({
   const { data: personas } = usePersonas(workspaceId, { enabled: !isE2e })
   const { effectiveDefault } = useDefaultCompanionPersona(workspaceId, { enabled: !isE2e })
 
-  const { selectedPersonaId, companionName } = resolveCompanionSelection(
+  const { companionName: resolvedName } = resolveCompanionSelection(
     personas,
     stream.companionPersonaId,
     effectiveDefault
   )
+  // Until the roster resolves, the real default is unknown — say "your companion"
+  // rather than flash a name that may be wrong. E2E streams never load the roster
+  // and genuinely always run Ariadne, so the resolved name is correct there.
+  const rosterReady = isE2e || personas !== undefined
+  const companionName = rosterReady ? resolvedName : "your companion"
+  const pickerValue = companionPickerValue(personas, stream.companionPersonaId)
 
   const handleChange = async (next: CompanionMode) => {
     if (next === stream.companionMode) return
@@ -67,9 +79,12 @@ export function CompanionTab({
   }
 
   const handlePersonaChange = async (personaId: string) => {
-    if (personaId === selectedPersonaId) return
+    if (personaId === pickerValue) return
     try {
-      await updateCompanionMode({ companionMode: stream.companionMode, companionPersonaId: personaId })
+      await updateCompanionMode({
+        companionMode: stream.companionMode,
+        companionPersonaId: personaId === COMPANION_DEFAULT_OPTION_VALUE ? null : personaId,
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update companion agent"
       toast.error(message)
@@ -99,7 +114,11 @@ export function CompanionTab({
             onSelect={() => handleChange(CompanionModes.ON)}
             icon={Sparkles}
             label="Companion"
-            hint={`${companionName} reads new messages and replies in the thread`}
+            hint={
+              rosterReady
+                ? `${companionName} reads new messages and replies in the thread`
+                : "Your companion reads new messages and replies in the thread"
+            }
             disabled={disabled}
           />
           <CompanionOption
@@ -127,8 +146,9 @@ export function CompanionTab({
           <CompanionAgentSelect
             workspaceId={workspaceId}
             personas={personas}
-            value={selectedPersonaId}
+            value={pickerValue}
             onChange={handlePersonaChange}
+            defaultOption={{ label: companionDefaultOptionLabel(effectiveDefault) }}
             disabled={disabled}
             triggerClassName="w-full sm:w-72"
           />

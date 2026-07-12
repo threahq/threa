@@ -3,7 +3,11 @@ import { useDraftScratchpads } from "@/hooks/use-draft-scratchpads"
 import { usePersonas } from "@/hooks/use-personas"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
 import { AgentSettingsPanel } from "./agent-settings-panel"
-import { resolveCompanionSelection } from "./companion-agent-select"
+import {
+  COMPANION_DEFAULT_OPTION_VALUE,
+  companionDefaultOptionLabel,
+  companionPickerValue,
+} from "./companion-agent-select"
 
 interface DraftAgentSettingsProps {
   workspaceId: string
@@ -32,11 +36,7 @@ export function DraftAgentSettings({
   const { data: personas } = usePersonas(workspaceId)
   const { effectiveDefault } = useDefaultCompanionPersona(workspaceId)
 
-  const { selectedPersonaId } = resolveCompanionSelection(
-    personas,
-    getScratchpad(draftId)?.companionPersonaId,
-    effectiveDefault
-  )
+  const pickerValue = companionPickerValue(personas, getScratchpad(draftId)?.companionPersonaId)
 
   return (
     <AgentSettingsPanel
@@ -47,8 +47,13 @@ export function DraftAgentSettings({
           ? {
               workspaceId,
               personas,
-              selectedPersonaId,
-              onChange: (personaId) => updateScratchpad(draftId, { companionPersonaId: personaId }),
+              selectedPersonaId: pickerValue,
+              onChange: (personaId) =>
+                updateScratchpad(draftId, {
+                  // Dexie removes a key set to undefined — inherit means no stored pointer.
+                  companionPersonaId: personaId === COMPANION_DEFAULT_OPTION_VALUE ? undefined : personaId,
+                }),
+              defaultOption: { label: companionDefaultOptionLabel(effectiveDefault) },
             }
           : undefined
       }

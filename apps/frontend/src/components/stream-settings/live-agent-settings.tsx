@@ -8,7 +8,11 @@ import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-person
 import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { AgentSettingsPanel } from "./agent-settings-panel"
-import { resolveCompanionSelection } from "./companion-agent-select"
+import {
+  COMPANION_DEFAULT_OPTION_VALUE,
+  companionDefaultOptionLabel,
+  companionPickerValue,
+} from "./companion-agent-select"
 
 interface LiveAgentSettingsProps {
   workspaceId: string
@@ -54,16 +58,15 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
     }
   }
 
-  const { selectedPersonaId } = resolveCompanionSelection(
-    personas,
-    bootstrap?.stream?.companionPersonaId,
-    effectiveDefault
-  )
+  const pickerValue = companionPickerValue(personas, bootstrap?.stream?.companionPersonaId)
 
   const handlePersona = async (personaId: string) => {
-    if (personaId === selectedPersonaId) return
+    if (personaId === pickerValue) return
     try {
-      await updateCompanionMode({ companionMode, companionPersonaId: personaId })
+      await updateCompanionMode({
+        companionMode,
+        companionPersonaId: personaId === COMPANION_DEFAULT_OPTION_VALUE ? null : personaId,
+      })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update companion agent")
     }
@@ -85,7 +88,14 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
       externalAgent={externalAgent}
       personaPicker={
         !e2e && personas
-          ? { workspaceId, personas, selectedPersonaId, onChange: handlePersona, busy: companionBusy }
+          ? {
+              workspaceId,
+              personas,
+              selectedPersonaId: pickerValue,
+              onChange: handlePersona,
+              defaultOption: { label: companionDefaultOptionLabel(effectiveDefault) },
+              busy: companionBusy,
+            }
           : undefined
       }
       toolPolicy={

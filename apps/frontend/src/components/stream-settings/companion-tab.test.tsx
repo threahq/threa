@@ -92,7 +92,11 @@ describe("CompanionTab persona picker", () => {
     expect(screen.getByText(/Ariadne reads new messages and replies in the thread/i)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
-    expect(await screen.findByRole("option", { name: /Ariadne/i })).toBeInTheDocument()
+    // Leading synthetic inherit row, then the roster.
+    expect(await screen.findByRole("option", { name: /Default \(Ariadne\)/i })).toBeInTheDocument()
+    expect(
+      screen.getByRole("option", { name: (name) => name.includes("Ariadne") && !name.includes("Default") })
+    ).toBeInTheDocument()
     expect(screen.getByRole("option", { name: /Coach/i })).toBeInTheDocument()
   })
 
