@@ -449,6 +449,70 @@
     animation: none;
   }
 }
+
+/* Board card hover life: on pointer hover the card lifts and its border warms to
+   the primary (Ariadne thread) tint over a deeper float shadow, so the board
+   reads as tactile rather than static. A border-color change (constant width) +
+   transform + box-shadow — nothing reflows (INV-21). A warmed border, not an
+   inset left bar, so it doesn't compete with the per-message actor accent already
+   on the card's left. Gated to a real hover pointer so a tap on touch can't stick
+   the lifted state; the light/dark shadow split matches the card's rest shadow. */
+@media (hover: hover) and (pointer: fine) {
+  .board-card-lift {
+    transition:
+      transform 200ms ease-out,
+      box-shadow 200ms ease-out,
+      border-color 200ms ease-out;
+  }
+  .board-card-lift:hover {
+    transform: translateY(-3px);
+    border-color: hsl(var(--primary) / 0.5);
+    box-shadow:
+      0 4px 6px rgb(0 0 0 / 0.07),
+      0 16px 30px -12px rgb(0 0 0 / 0.22);
+  }
+  .dark .board-card-lift:hover {
+    border-color: hsl(var(--primary) / 0.55);
+    box-shadow:
+      0 4px 6px rgb(0 0 0 / 0.55),
+      0 20px 36px -12px rgb(0 0 0 / 0.65);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .board-card-lift {
+      transition:
+        box-shadow 200ms ease-out,
+        border-color 200ms ease-out;
+    }
+    .board-card-lift:hover {
+      transform: none;
+    }
+  }
+}
+
+/* Springy scale-in for the overlay composer's desktop modal — a touch of
+   overshoot (cubic-bezier past 1) so the compose surface arrives with life
+   rather than a flat cut. Scoped to the composer via `desktopClassName`, not the
+   base DialogContent, so no other dialog changes. The keyframe carries the
+   centering translate so it lands exactly on the Tailwind `-translate-*` rest
+   transform with no jump. */
+.overlay-composer-content[data-state="open"] {
+  animation: overlay-composer-in 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes overlay-composer-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay-composer-content[data-state="open"] {
+    animation: none;
+  }
+}
 /* While a dictation preview occupies the line, suppress the empty-state
    placeholder so it doesn't render on top of the ghost text. */
 .ProseMirror p.is-editor-empty:first-child:has(.dictation-preview-ghost)::before {
