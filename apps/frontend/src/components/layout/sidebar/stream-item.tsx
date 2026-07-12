@@ -481,10 +481,14 @@ export function StreamItem({
     }
     handleClick(e)
   }
+  // An explicit `?in=` scope overrides a board mute (the server's mute-skip
+  // rule), so a muted-but-focused row must read as on the board — the muted
+  // dim + status line yield to the include state. E2E and excluded rows can't
+  // be included (not scopable / mutually exclusive), so only mute needs the guard.
   let boardStatusLine: string | null = null
   if (isE2e && boardMode) boardStatusLine = "Not on the board"
-  else if (boardMuted) boardStatusLine = "Muted on the board"
-  const boardDimmed = boardExcluded || boardMuted || (isE2e && !!boardMode)
+  else if (boardMuted && !boardIncluded) boardStatusLine = "Muted on the board"
+  const boardDimmed = boardExcluded || (boardMuted && !boardIncluded) || (isE2e && !!boardMode)
 
   // The row's second line: a board status line (muted/E2E — takes precedence),
   // else the board topic stats (board mode), else the chats-mode message preview.

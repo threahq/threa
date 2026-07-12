@@ -240,10 +240,12 @@ export function ScratchpadItem({
     }
     handleClick(e)
   }
+  // Mute-skip parity with StreamItem: an active `?in=` include overrides the
+  // board mute, so the muted dim + status line yield to the include state.
   let boardStatusLine: string | null = null
   if (isE2e && boardMode) boardStatusLine = "Not on the board"
-  else if (boardMuted) boardStatusLine = "Muted on the board"
-  const boardDimmed = boardExcluded || boardMuted || (isE2e && !!boardMode)
+  else if (boardMuted && !boardIncluded) boardStatusLine = "Muted on the board"
+  const boardDimmed = boardExcluded || (boardMuted && !boardIncluded) || (isE2e && !!boardMode)
 
   // Second line: board status (muted/E2E — precedence), else board topic stats,
   // else the chats-mode message preview. See {@link StreamItem}.

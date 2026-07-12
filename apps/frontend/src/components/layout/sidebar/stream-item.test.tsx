@@ -546,4 +546,21 @@ describe("StreamItem — board mode", () => {
     expect(screen.getByText("Muted on the board")).toBeInTheDocument()
     expect(screen.queryByText(/14 topics/)).not.toBeInTheDocument()
   })
+
+  it("lets an active include override the muted rendering (mute-skip rule)", () => {
+    const stream = createStream()
+    renderBoardRow(
+      stream,
+      makeBoardMode({
+        includedStreamIds: new Set(["stream_general"]),
+        mutedStreamIds: new Set(["stream_general"]),
+        statsForStream: () => ({ topics: 14, active: 6, needsResolution: 2 }),
+      })
+    )
+    // ?in= overrides the board mute server-side, so the row must read as on the
+    // board: stats line instead of the muted status, no dim.
+    expect(screen.queryByText("Muted on the board")).not.toBeInTheDocument()
+    expect(screen.getByText("14 topics · 6 active · 2 need resolution")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /general/i })).not.toHaveClass("opacity-50")
+  })
 })
