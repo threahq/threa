@@ -834,33 +834,27 @@ function BoardPageInner({
           </div>
         </FloatingComposerAnchorProvider>
         {/* Floating compose button — always reachable (doesn't scroll with the
-            feed), bottom-right. A squircle with a hand-tuned amber gradient, the
-            app's layered warm shadow + a top inset highlight, and a hover lift, so
-            it reads as a deliberate, tactile affordance rather than a flat disc.
-            On a pointer it expands to reveal its "New post" label. Opens the same
-            overlay as the quick-switcher command. */}
+            feed), bottom-right. Flat solid accent + a restrained warm shadow, per
+            Threa's Button language (no gradient/gloss). On a pointer it expands to
+            reveal its "New post" label. Opens the same overlay as the command. */}
         <button
           type="button"
           onClick={() => openCompose()}
           aria-label="New post"
           className={cn(
             "group absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-5 z-20",
-            "flex h-14 items-center justify-end gap-0 overflow-hidden rounded-[18px] pl-0 pr-[17px]",
-            "w-14 sm:transition-[width,padding] sm:duration-200 sm:ease-out sm:hover:w-[150px] sm:hover:gap-2 sm:hover:pl-5 sm:hover:pr-[17px]",
-            "bg-gradient-to-b from-[hsl(40_82%_60%)] to-[hsl(35_63%_47%)] text-primary-foreground",
-            "ring-1 ring-inset ring-white/25 dark:ring-white/10",
-            "shadow-[0_10px_24px_-6px_hsl(36_65%_42%/0.55),0_3px_8px_-3px_hsl(28_45%_18%/0.35),inset_0_1px_0_0_hsl(46_96%_82%/0.6)]",
-            "transition-[transform,box-shadow] duration-200",
-            "hover:-translate-y-0.5 hover:shadow-[0_18px_34px_-8px_hsl(36_68%_42%/0.6),0_6px_14px_-4px_hsl(28_45%_18%/0.42),inset_0_1px_0_0_hsl(46_96%_84%/0.65)]",
-            "active:translate-y-0 active:duration-75",
-            "dark:from-[hsl(41_62%_57%)] dark:to-[hsl(35_54%_46%)]",
-            "dark:shadow-[0_12px_28px_-8px_rgb(0_0_0/0.6),0_4px_10px_-4px_rgb(0_0_0/0.42),inset_0_1px_0_0_hsl(46_80%_76%/0.35)]"
+            "flex h-14 w-14 items-center justify-end overflow-hidden rounded-2xl pl-0 pr-[18px]",
+            "transition-[width,padding,background-color] duration-200 ease-out",
+            "sm:hover:w-[150px] sm:hover:gap-2 sm:hover:pl-[18px]",
+            "bg-primary text-primary-foreground hover:bg-primary/90",
+            "shadow-[0_6px_16px_-6px_hsl(28_30%_22%/0.3),0_2px_5px_-2px_hsl(28_30%_22%/0.14)]",
+            "dark:shadow-[0_8px_20px_-8px_rgb(0_0_0/0.5),0_2px_6px_-2px_rgb(0_0_0/0.3)]"
           )}
         >
-          <span className="hidden max-w-0 whitespace-nowrap text-sm font-semibold opacity-0 transition-[max-width,opacity] duration-200 group-hover:max-w-[100px] group-hover:opacity-100 sm:block">
+          <span className="hidden max-w-0 whitespace-nowrap text-[13px] font-medium opacity-0 transition-[max-width,opacity] duration-200 group-hover:max-w-[96px] group-hover:opacity-100 sm:block">
             New post
           </span>
-          <PenLine className="h-[22px] w-[22px] shrink-0 transition-transform duration-200 group-hover:-rotate-6" />
+          <PenLine className="h-5 w-5 shrink-0" />
         </button>
       </div>
     </div>
