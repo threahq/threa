@@ -37,6 +37,7 @@ import { BoardCard } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
+import { setBoardFlash } from "@/stores/board-flash-store"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
 import { boardHomeRedirectHref, isBoardAtHome } from "@/components/board/board-saved-views"
 import { useBoardViews, useBoardHome } from "@/hooks/use-board-views"
@@ -565,29 +566,39 @@ function BoardPageInner({
     scopeLabelIds.length > 0 ||
     excludeLabelIds.length > 0
   // The viewer's own just-posted card gets a brief gold-thread flash (the golden
-  // thread motif, on the primary action). Held ~1.6s so the ~1.4s pulse finishes,
-  // then cleared so a later re-render doesn't replay it.
-  const [flashConversationId, setFlashConversationId] = useState<string | null>(null)
+  // thread motif, on the primary action). The flashed id lives in a module store
+  // (`setBoardFlash`) that each card subscribes to by its own id, not in page
+  // state — routing it through `renderedRows` would rebuild every mounted card
+  // twice per post (set + clear). Held ~1.6s so the ~1.4s pulse finishes.
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => clearTimeout(flashTimerRef.current ?? undefined), [])
+  useEffect(
+    () => () => {
+      clearTimeout(flashTimerRef.current ?? undefined)
+      setBoardFlash(null)
+    },
+    []
+  )
 
   const handlePosted = (conversationId?: string) => {
     // The viewer's own post must ALWAYS surface. It already shows where the
     // current view can contain it — an unfiltered `all`/`mine` lens — so stay
-    // put there (a `mine` home shouldn't bounce the author off their own home).
-    // Any other view (a status/memo lens, or an active scope filter) might not
-    // match the fresh post, so return to the All baseline; the optimistic card
-    // (written `_status: "pending"`) then reveals itself at top there via
-    // `reconcileStableView`, whether it lands inline or later from the
-    // promote-on-send drain — no reveal arm to carry across the reset.
+    // put there (a `mine` home shouldn't bounce the author off their own home),
+    // but jump to the top so the prepended card and its flash are on-screen even
+    // if the viewer had scrolled down. Any other view (a status/memo lens, or an
+    // active scope filter) might not match the fresh post, so return to the All
+    // baseline; the optimistic card (written `_status: "pending"`) reveals itself
+    // at top there via `reconcileStableView`, and `navigate` scrolls to top via
+    // the `resetKey` layout effect.
     const currentViewSurfacesOwnPost = SELF_POST_VISIBLE_LENSES.has(lens) && !hasFilterParams
-    if (!currentViewSurfacesOwnPost) {
+    if (currentViewSurfacesOwnPost) {
+      if (scrollerRef.current) scrollerRef.current.scrollTop = 0
+    } else {
       navigate(boardHome)
     }
     if (conversationId) {
-      setFlashConversationId(conversationId)
+      setBoardFlash(conversationId)
       clearTimeout(flashTimerRef.current ?? undefined)
-      flashTimerRef.current = setTimeout(() => setFlashConversationId(null), 1600)
+      flashTimerRef.current = setTimeout(() => setBoardFlash(null), 1600)
     }
   }
 
@@ -699,21 +710,11 @@ function BoardPageInner({
               dmPeerUserId={dmPeerUserId}
               scrollerRef={scrollerRef}
               listRef={listRef}
-              flash={row.post.conversation.id === flashConversationId}
             />
           </div>
         )
       }),
-    [
-      feedRows,
-      labelsFor,
-      isFetchNextPageError,
-      isFetchingNextPage,
-      fetchNextPage,
-      loadMoreLabel,
-      workspaceId,
-      flashConversationId,
-    ]
+    [feedRows, labelsFor, isFetchNextPageError, isFetchingNextPage, fetchNextPage, loadMoreLabel, workspaceId]
   )
 
   // Non-feed states (error / skeleton / empty) render as a single centered block

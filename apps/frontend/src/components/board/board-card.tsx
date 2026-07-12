@@ -32,6 +32,7 @@ import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useBoardFlash } from "@/stores/board-flash-store"
 import { useConversationService, usePanel, createConversationPanelId, usePreferences } from "@/contexts"
 import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { conversationKeys, useSplitThread } from "@/hooks/use-conversations"
@@ -56,8 +57,6 @@ interface BoardCardProps {
   scrollerRef?: RefObject<HTMLDivElement | null>
   /** virtua's imperative handle for the board feed, paired with `scrollerRef`. */
   listRef?: RefObject<VirtualizerHandle | null>
-  /** Play the one-shot gold-thread pulse — the viewer's own just-posted card. */
-  flash?: boolean
 }
 
 /** How many trailing messages a nested branch previews on a collapsed card; the
@@ -87,9 +86,9 @@ export function BoardCard({
   dmPeerUserId,
   scrollerRef,
   listRef,
-  flash,
 }: BoardCardProps) {
   const { conversation } = post
+  const flash = useBoardFlash(conversation.id)
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()

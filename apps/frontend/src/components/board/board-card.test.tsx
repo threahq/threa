@@ -24,6 +24,7 @@ import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as inlineComposerModule from "@/components/board/board-inline-composer"
 import * as inputModeModule from "@/hooks/use-input-mode"
+import { setBoardFlash, resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { spyOnExport } from "@/test/spy"
 import { MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 
@@ -191,6 +192,38 @@ describe("BoardCard unread dot", () => {
     mountCard()
     await screen.findByText("Opening body.")
     expect(screen.queryByLabelText("Unread")).toBeNull()
+  })
+})
+
+describe("BoardCard post flash", () => {
+  beforeEach(() => {
+    vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
+      value: readValue,
+      hasUnread: () => false,
+      markReadSilently: () => Promise.resolve(),
+      setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
+    })
+  })
+  afterEach(() => resetBoardFlashStoreCache())
+
+  it("rings the card while its own conversation is flashing, then clears", async () => {
+    mountCard()
+    const body = await screen.findByText("Opening body.")
+    expect(body.closest(".board-post-flash")).toBeNull()
+
+    act(() => setBoardFlash("conv_1"))
+    expect(body.closest(".board-post-flash")).not.toBeNull()
+
+    act(() => setBoardFlash(null))
+    expect(body.closest(".board-post-flash")).toBeNull()
+  })
+
+  it("does not ring a card whose conversation isn't the flashed one", async () => {
+    mountCard()
+    const body = await screen.findByText("Opening body.")
+    act(() => setBoardFlash("conv_other"))
+    expect(body.closest(".board-post-flash")).toBeNull()
   })
 })
 
