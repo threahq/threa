@@ -1,5 +1,4 @@
 import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
-import { createPortal } from "react-dom"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import {
@@ -17,10 +16,13 @@ import { useConnectionState } from "@/components/layout/connection-status"
 import {
   FloatingComposerShell,
   MessageComposer,
+  OverlayComposerShell,
   ScheduledMessagesPicker,
   StashedDraftsPicker,
 } from "@/components/composer"
 import type { ComposerControlHandle } from "@/components/composer"
+import { useStreamName } from "@/hooks/use-stream-name"
+import { STREAM_ICONS } from "@/lib/streams"
 import { useScheduleMessage, useStreamBootstrap } from "@/hooks"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
@@ -513,11 +515,7 @@ function MessageInputComponent({
   const connectionState = useConnectionState()
   const isOffline = connectionState === "offline"
 
-  // Resolve the portal target for the expanded overlay by walking up from our own DOM node
-  // to the closest [data-editor-zone] ancestor. Works for both main stream view and thread panel.
   const selfRef = useRef<HTMLDivElement>(null)
-  const expandedRef = useRef<HTMLDivElement>(null)
-  const portalTargetRef = useRef<HTMLElement | null>(null)
 
   // Reset local state on stream change (e.g., draft promotion) without remounting
   useEffect(() => {
@@ -525,50 +523,23 @@ function MessageInputComponent({
     setExpanded(false)
   }, [streamId])
 
-  // Collapse expanded overlay when viewport crosses to mobile (expand is desktop-only)
+  // Collapse the fullscreen overlay when the viewport crosses to mobile (expand is
+  // a desktop affordance; mobile authors long messages via the mobile-expanded chrome).
   useEffect(() => {
     if (isMobile) setExpanded(false)
   }, [isMobile])
 
-  // Resolve the portal target lazily on expand to avoid silent blank screen
-  // if the component mounts before the [data-editor-zone] ancestor exists.
-  const handleExpandClick = useCallback(() => {
-    portalTargetRef.current = selfRef.current?.closest<HTMLElement>("[data-editor-zone]") ?? null
-    if (!portalTargetRef.current) {
-      console.warn("MessageInput: no [data-editor-zone] ancestor found — expand disabled")
-      return
-    }
-    setExpanded(true)
-  }, [])
+  const handleExpandClick = useCallback(() => setExpanded(true), [])
   const handleCollapse = useCallback(() => setExpanded(false), [])
 
-  // Publish the floating composer's measured height so the scroll area can
-  // dock above it instead of relying on in-content bottom padding.
-  // Disabled while the expanded overlay is open so the scroll area can use its
-  // full height behind the overlay. `onHeightChange` lets the timeline
-  // re-anchor to the bottom when the composer settles to a new height.
+  // Publish the floating composer's measured height so the scroll area can dock
+  // above it. Disabled while the overlay is open — the inline composer is hidden
+  // then, so it has no height to publish. `onHeightChange` re-anchors the timeline
+  // to the bottom when the composer settles to a new height.
   useComposerHeightPublish(selfRef, { active: !expanded, onHeightChange: onComposerHeightChange })
 
-  // Escape to close — only when focus is inside this expanded editor
-  useEffect(() => {
-    if (!expanded) return
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return
-      if (e.key !== "Escape") return
-
-      const expandedElement = expandedRef.current
-      if (!expandedElement) return
-
-      const activeElement = document.activeElement as HTMLElement | null
-      const focusedEditor = activeElement?.closest<HTMLElement>('[contenteditable="true"]')
-      if (focusedEditor && expandedElement.contains(focusedEditor)) return
-
-      e.preventDefault()
-      setExpanded(false)
-    }
-    document.addEventListener("keydown", onKeyDown)
-    return () => document.removeEventListener("keydown", onKeyDown)
-  }, [expanded])
+  // Stream label for the fullscreen overlay header (the post's destination).
+  const overlayStreamName = useStreamName(workspaceId, streamId)
 
   const handleSubmit = useCallback(
     async (editorContent?: JSONContent) => {
@@ -905,20 +876,30 @@ function MessageInputComponent({
     </div>
   ) : null
 
+  const StreamGlyph = stream ? STREAM_ICONS[stream.type] : null
+
   return (
     <>
-      {/* Expanded overlay — portaled into the stream view area */}
-      {expanded &&
-        portalTargetRef.current &&
-        createPortal(
-          <div ref={expandedRef} className="absolute inset-0 z-30 flex flex-col bg-background">
-            {conversationReplyStrip}
-            <div className="min-h-0 flex-1">
-              <MessageComposer {...composerProps} expanded onCollapse={handleCollapse} autoFocus />
-            </div>
-          </div>,
-          portalTargetRef.current
-        )}
+      {/* Fullscreen editor — the shared overlay shell (Linear-style modal on
+          desktop), the same surface the board authoring overlay uses. Posts into
+          THIS stream: the header shows it, and the full composer prop bag (E2E,
+          thread, schedule, quote, stash) rides along unchanged. */}
+      <OverlayComposerShell
+        open={expanded}
+        onOpenChange={setExpanded}
+        title="Message editor"
+        header={
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            {StreamGlyph && <StreamGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />}
+            <span className="truncate">{overlayStreamName ?? "This stream"}</span>
+          </div>
+        }
+      >
+        {conversationReplyStrip}
+        <div className="min-h-0 flex-1">
+          <MessageComposer {...composerProps} expanded hideExpandedClose onCollapse={handleCollapse} autoFocus />
+        </div>
+      </OverlayComposerShell>
 
       {/* Inline composer — hidden while expanded. Mobile inline editing hides the
           composer via the body-level inline-edit presence attribute. */}
