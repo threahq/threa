@@ -263,6 +263,28 @@ async function writeBootstrapEventsAndStream(
       existingRows.filter((row): row is NonNullable<typeof row> => row != null).map((row) => [row.id, row] as const)
     )
 
+    // The bootstrap can carry the server copy of a message whose optimistic
+    // temp_* row is still in IDB: a reload can interrupt the send pipeline
+    // after the server committed, so the message:created echo that normally
+    // swaps optimistic → real (handleMessageCreated) died with the old page —
+    // and the queue's re-send hits the backend's idempotent replay path, which
+    // returns the existing message WITHOUT emitting a new event, so no echo
+    // ever comes. Without this swap both copies render until the next
+    // bootstrap whose cleanupStaleOptimisticEvents happens to run after the
+    // outbox row is gone. Mirror the echo swap here: real row written first
+    // (bulkPut below), optimistic row + outbox entry deleted after, E2E
+    // decrypt cache seeded from the optimistic plaintext.
+    const messageCreatedWithClientId = bootstrap.events
+      .filter((e) => e.eventType === "message_created")
+      .map((e) => ({ realEvent: e, clientMessageId: (e.payload as { clientMessageId?: string }).clientMessageId }))
+      .filter((pair): pair is { realEvent: StreamEvent; clientMessageId: string } => !!pair.clientMessageId)
+    const optimisticRows = await db.events.bulkGet(messageCreatedWithClientId.map((pair) => pair.clientMessageId))
+    const optimisticSwaps = messageCreatedWithClientId.flatMap(({ realEvent }, i) => {
+      const optimistic = optimisticRows[i]
+      return optimistic ? [{ realEvent, optimistic }] : []
+    })
+    const optimisticByRealEventId = new Map(optimisticSwaps.map((s) => [s.realEvent.id, s.optimistic] as const))
+
     const toWrite: CachedEvent[] = []
     for (const e of bootstrap.events) {
       const base = { ...e, workspaceId, _sequenceNum: sequenceToNum(e.sequence), _cachedAt: now }
@@ -274,7 +296,21 @@ async function writeBootstrapEventsAndStream(
         continue
       }
       if (!existing) {
-        toWrite.push(base)
+        // Same carry as the echo swap: a board reply's conversationId lives
+        // only on the optimistic payload (the server event doesn't carry it),
+        // so bring it across or the card row blinks out until the
+        // conversation:updated aggregate lands.
+        const carriedConversationId = (
+          optimisticByRealEventId.get(e.id)?.payload as { conversationId?: string } | undefined
+        )?.conversationId
+        toWrite.push(
+          carriedConversationId && !(base.payload as { conversationId?: string }).conversationId
+            ? {
+                ...base,
+                payload: { ...(base.payload as Record<string, unknown>), conversationId: carriedConversationId },
+              }
+            : base
+        )
         continue
       }
       if (snapshotMs !== null && existing._patchedAt !== undefined && existing._patchedAt > snapshotMs) {
@@ -298,6 +334,19 @@ async function writeBootstrapEventsAndStream(
 
     if (toWrite.length > 0) {
       await db.events.bulkPut(toWrite)
+    }
+
+    // Real rows are in place (bulkPut above, or already present via a skipped
+    // rewrite) — now drop the optimistic copies and their outbox entries so a
+    // liveQuery frame never shows neither copy. Deleting the outbox row also
+    // stops the queue from replaying a send the server already committed.
+    for (const { realEvent, optimistic } of optimisticSwaps) {
+      await db.events.delete(optimistic.id)
+      await db.pendingMessages.delete(optimistic.id)
+      const plaintext = readPlaintextContent(optimistic.payload)
+      if (plaintext && isEncryptedPayload(realEvent.payload)) {
+        seedDecryption(realEvent.id, plaintext)
+      }
     }
   }
 

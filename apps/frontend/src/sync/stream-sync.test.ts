@@ -532,6 +532,85 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     expect(await db.events.get("evt_A")).toBeDefined()
   })
 
+  it("collapses an optimistic row when the bootstrap carries its server copy (reload-during-send race)", async () => {
+    const streamId = "stream_reload_race"
+
+    // State a reload leaves behind when it interrupts the send pipeline after
+    // the server committed: the optimistic event AND its outbox row survive in
+    // IDB, the message:created echo was lost with the old page, and the
+    // queue's re-send hits the backend's idempotent replay (no new event → no
+    // echo ever). The bootstrap is the only remaining reconciliation point.
+    await db.events.put({
+      id: "temp_reload",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "1752350000000", // optimistic rows use Date.now() — sorts after every real event
+      _sequenceNum: 1752350000000,
+      eventType: "message_created",
+      payload: { messageId: "temp_reload", contentMarkdown: "hello" },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _cachedAt: Date.now(),
+    })
+    await db.pendingMessages.add({
+      clientId: "temp_reload",
+      workspaceId: "ws_1",
+      streamId,
+      content: "hello",
+      contentFormat: "markdown",
+      createdAt: Date.now(),
+      retryCount: 0,
+    })
+
+    const serverCopy = makeEvent({ id: "evt_real", streamId, sequence: "100" })
+    serverCopy.payload = { messageId: "msg_1", contentMarkdown: "hello", clientMessageId: "temp_reload" }
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([serverCopy], streamId))
+
+    expect(await db.events.get("evt_real")).toBeDefined()
+    expect(await db.events.get("temp_reload")).toBeUndefined()
+    expect(await db.pendingMessages.get("temp_reload")).toBeUndefined()
+  })
+
+  it("carries the optimistic row's conversationId onto the swapped-in server copy", async () => {
+    const streamId = "stream_reload_conv"
+
+    await db.events.put({
+      id: "temp_conv",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "1752350000000",
+      _sequenceNum: 1752350000000,
+      eventType: "message_created",
+      payload: { messageId: "temp_conv", contentMarkdown: "board reply", conversationId: "conv_1" },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _cachedAt: Date.now(),
+    })
+    // Outbox row still present (the reload case) — without it,
+    // cleanupStaleOptimisticEvents drops the temp row before the swap runs.
+    await db.pendingMessages.add({
+      clientId: "temp_conv",
+      workspaceId: "ws_1",
+      streamId,
+      content: "board reply",
+      contentFormat: "markdown",
+      createdAt: Date.now(),
+      retryCount: 0,
+    })
+
+    const serverCopy = makeEvent({ id: "evt_conv_real", streamId, sequence: "100" })
+    serverCopy.payload = { messageId: "msg_2", contentMarkdown: "board reply", clientMessageId: "temp_conv" }
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([serverCopy], streamId))
+
+    const swapped = await db.events.get("evt_conv_real")
+    expect((swapped?.payload as { conversationId?: string }).conversationId).toBe("conv_1")
+    expect(await db.events.get("temp_conv")).toBeUndefined()
+  })
+
   it("writes stream metadata to IDB", async () => {
     const streamId = "stream_meta"
     const bootstrap = makeBootstrap([], streamId)
