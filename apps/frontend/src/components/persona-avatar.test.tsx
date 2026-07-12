@@ -1,32 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
+import { stubImageLoading } from "@/test"
 import { PersonaAvatar } from "./persona-avatar"
-
-// Radix Avatar.Image only renders its <img> once an off-screen preload reports
-// "loaded"; in jsdom that never fires on its own, so stub window.Image to resolve
-// synchronously when a src is assigned. This lets the image-vs-fallback precedence
-// be observed at all.
-class MockImage {
-  private _src = ""
-  complete = false
-  naturalWidth = 0
-  addEventListener() {}
-  removeEventListener() {}
-  setAttribute() {}
-  set src(value: string) {
-    this._src = value
-    // Radix resolves "loaded" from complete + naturalWidth, not just an event.
-    this.complete = true
-    this.naturalWidth = 1
-  }
-  get src() {
-    return this._src
-  }
-}
 
 describe("PersonaAvatar", () => {
   beforeEach(() => {
-    vi.stubGlobal("Image", MockImage)
+    stubImageLoading()
   })
   afterEach(() => vi.unstubAllGlobals())
 
