@@ -30,7 +30,7 @@ export function OverlayComposerShell({ open, onOpenChange, title, header, childr
     <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
       <ResponsiveDialogContent
         hideCloseButton
-        desktopClassName="flex h-[85vh] max-h-[760px] w-[92vw] max-w-[820px] flex-col gap-0 overflow-hidden p-0"
+        desktopClassName="overlay-composer-content flex h-[85vh] max-h-[760px] w-[92vw] max-w-[820px] flex-col gap-0 overflow-hidden p-0"
         drawerClassName="mt-0 flex h-[92dvh] flex-col gap-0 p-0"
         onOpenAutoFocus={(e) => {
           // Let the composer's own autoFocus land the caret in the editor. Radix
