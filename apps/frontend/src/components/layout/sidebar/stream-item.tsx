@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
-import { Bell, FileEdit, FolderPlus, Hash, Link2, Lock, MessageSquareText, Settings, Tag, User } from "lucide-react"
+import { FolderPlus, Hash, Link2, Lock, MessageSquareText, Settings, Tag } from "lucide-react"
 import { Link } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { SectionPicker } from "./section-picker"
@@ -15,6 +15,7 @@ import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
+import { streamTypeVisual } from "@/lib/stream-visuals"
 import { copyStreamLink } from "@/lib/stream-links"
 import { BADGE_CONFIG, URGENCY_COLORS } from "./config"
 import {
@@ -225,39 +226,10 @@ export function StreamItem({
 
   useUrgencyTracking(itemRef, stream.id, stream.urgency, scrollContainerRef)
 
-  const getAvatar = () => {
-    if (stream.type === StreamTypes.CHANNEL) {
-      return {
-        icon: <Hash className="h-3.5 w-3.5" />,
-        className: "bg-muted text-[hsl(200_60%_50%)]",
-      }
-    }
-    if (stream.type === StreamTypes.SCRATCHPAD) {
-      return {
-        icon: <FileEdit className="h-3.5 w-3.5" />,
-        className: "bg-primary/10 text-primary",
-      }
-    }
-    if (stream.type === StreamTypes.SYSTEM) {
-      return {
-        icon: <Bell className="h-3.5 w-3.5" />,
-        className: "bg-blue-500/10 text-blue-500",
-      }
-    }
-    if (stream.type === StreamTypes.THREAD) {
-      return {
-        icon: <MessageSquareText className="h-3.5 w-3.5" />,
-        className: "bg-muted text-muted-foreground",
-      }
-    }
-    // DM
-    return {
-      icon: <User className="h-3.5 w-3.5" />,
-      className: "bg-muted text-muted-foreground",
-    }
-  }
-
-  const avatar = getAvatar()
+  // Per-type glyph + tile tint, shared with the board card (single source of
+  // truth so the two surfaces can't drift). A DM overlays the peer avatar below.
+  const { Icon: TypeIcon, tileClassName } = streamTypeVisual(stream.type)
+  const avatar = { icon: <TypeIcon className="h-3.5 w-3.5" />, className: tileClassName }
   const name = streamLabel(stream, "sidebar")
   const threadRootStream =
     stream.type === StreamTypes.THREAD && stream.rootStreamId

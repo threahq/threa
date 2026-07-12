@@ -3,19 +3,10 @@ import type { RefObject } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import type { VirtualizerHandle } from "virtua"
-import {
-  Hash,
-  FileEdit,
-  User,
-  MessageSquareText,
-  ChevronDown,
-  ChevronRight,
-  CircleCheck,
-  PanelRight,
-  type LucideIcon,
-} from "lucide-react"
+import { ChevronDown, ChevronRight, CircleCheck, PanelRight } from "lucide-react"
 import { DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT, DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT } from "@threa/types"
 import { RelativeTime } from "@/components/relative-time"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
@@ -31,6 +22,7 @@ import {
 } from "@/hooks/use-conversation-graph"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
 import { cn } from "@/lib/utils"
+import { streamTypeVisual } from "@/lib/stream-visuals"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
@@ -52,8 +44,11 @@ interface BoardCardProps {
   post: BoardViewPost
   /** Where the post lives (channel name, DM peer, scratchpad name), for the header. */
   contextLabel: string
-  /** Resolved stream type, selecting the context glyph. */
+  /** Resolved stream type, selecting the context glyph + tile tint. */
   streamType: string | undefined
+  /** For a DM post, the peer's user id — resolves the peer avatar shown over the
+   *  locator tile, matching the sidebar. Absent for non-DM streams. */
+  dmPeerUserId?: string | null
   /** The board's owned scroll viewport — lets a middle-gap expand hold the newest
    *  replies still instead of shoving them down (`useBoardCardRevealAnchor`).
    *  Absent when the card renders outside the virtualized board (tests). */
@@ -61,23 +56,6 @@ interface BoardCardProps {
   /** virtua's imperative handle for the board feed, paired with `scrollerRef`. */
   listRef?: RefObject<VirtualizerHandle | null>
 }
-
-const TYPE_GLYPH: Record<string, LucideIcon> = {
-  channel: Hash,
-  scratchpad: FileEdit,
-  dm: User,
-}
-
-/** The stream-type accent tile behind the context glyph — the board's one color
- *  dimension (INV-14 stays: this is a token tint, not a new primitive). The tint
- *  is keyed by stream type via `--type-*`; an unknown type falls back to the
- *  neutral muted tile so it never goes uncolored-but-mismatched. */
-const TYPE_TILE: Record<string, string> = {
-  channel: "bg-[hsl(var(--type-channel)/0.14)] text-[hsl(var(--type-channel))]",
-  scratchpad: "bg-[hsl(var(--type-scratchpad)/0.16)] text-[hsl(var(--type-scratchpad))]",
-  dm: "bg-[hsl(var(--type-dm)/0.15)] text-[hsl(var(--type-dm))]",
-}
-const NEUTRAL_TILE = "bg-muted text-muted-foreground"
 
 /** How many trailing messages a nested branch previews on a collapsed card; the
  *  hidden rest sits behind an "N more replies" link into the child's panel. */
@@ -98,9 +76,17 @@ const COLLAPSED_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 2rem),
  * conversation (no reply indentation); a collapsed "N more messages" gap fills
  * in on click. The stream it lives in is the header locator, not a topic line.
  */
-export function BoardCard({ workspaceId, post, contextLabel, streamType, scrollerRef, listRef }: BoardCardProps) {
+export function BoardCard({
+  workspaceId,
+  post,
+  contextLabel,
+  streamType,
+  dmPeerUserId,
+  scrollerRef,
+  listRef,
+}: BoardCardProps) {
   const { conversation } = post
-  const { getActorName } = useActors(workspaceId)
+  const { getActorName, getActorAvatar } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
   const { openPanel, getPanelUrl } = usePanel()
@@ -153,8 +139,11 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
   })
 
   const streamId = conversation.streamId
-  const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
-  const tileClass = (streamType && TYPE_TILE[streamType]) || NEUTRAL_TILE
+  // Leading visual matches the sidebar's stream row: a per-type glyph on a tinted
+  // tile, except a DM shows the peer avatar over it (icon as the fallback). Shared
+  // `streamTypeVisual` keeps board and sidebar in lockstep.
+  const { Icon: TypeIcon, tileClassName } = streamTypeVisual(streamType)
+  const dmAvatarUrl = dmPeerUserId ? getActorAvatar(dmPeerUserId, "user").avatarUrl : undefined
 
   // Whole-card fold: every card can be folded from the chevron; automatic
   // collapse is opt-in and only decides whether a tall conversation starts
@@ -566,22 +555,34 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType, scrolle
       />
     </>
   )
-  // The stream the post lives in — a real link back into it (INV-40). The glyph
-  // sits in a stream-type-tinted tile (the board's one accent). `size` scales the
-  // tile+label for the message-led lead (where the locator IS the headline).
-  const locatorLink = (size: "sm" | "xs") => (
-    <Link
-      to={`/w/${workspaceId}/s/${streamId}`}
-      className="flex min-w-0 items-center gap-1.5 transition-colors hover:text-foreground"
-    >
-      <span className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-md", tileClass)}>
-        <ContextGlyph className="h-3 w-3" />
-      </span>
-      <span className={cn("truncate", size === "sm" ? "text-sm font-medium text-foreground" : "font-medium")}>
-        {contextLabel}
-      </span>
-    </Link>
-  )
+  // The stream the post lives in — a real link back into it (INV-40). The leading
+  // visual mirrors the sidebar: a DM shows the peer avatar (glyph fallback), every
+  // other type shows the tinted glyph tile. `size` scales tile+label for the
+  // message-led lead (where the locator IS the headline) vs the demoted locator.
+  const locatorLink = (size: "sm" | "xs") => {
+    const tileSize = size === "sm" ? "h-6 w-6" : "h-5 w-5"
+    const glyph = <TypeIcon className={size === "sm" ? "h-3.5 w-3.5" : "h-3 w-3"} />
+    return (
+      <Link
+        to={`/w/${workspaceId}/s/${streamId}`}
+        className="flex min-w-0 items-center gap-1.5 transition-colors hover:text-foreground"
+      >
+        {dmAvatarUrl ? (
+          <Avatar className={cn("shrink-0 rounded-md", tileSize)}>
+            <AvatarImage src={dmAvatarUrl} alt={contextLabel} />
+            <AvatarFallback className={cn("rounded-md", tileClassName)}>{glyph}</AvatarFallback>
+          </Avatar>
+        ) : (
+          <span className={cn("flex shrink-0 items-center justify-center rounded-md", tileSize, tileClassName)}>
+            {glyph}
+          </span>
+        )}
+        <span className={cn("truncate", size === "sm" ? "text-sm font-medium text-foreground" : "font-medium")}>
+          {contextLabel}
+        </span>
+      </Link>
+    )
+  }
   const subtopicLabel = subtopicCount > 0 && (
     <>
       <span className="shrink-0 opacity-50">·</span>
