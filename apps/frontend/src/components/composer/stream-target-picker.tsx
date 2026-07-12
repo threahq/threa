@@ -93,25 +93,20 @@ export function StreamTargetPicker({
     [includeNewOptions, isSearching, lower]
   )
 
-  // Resolve recent values to their picker rows: a sentinel keeps its New option,
-  // a stream id must still be a targetable group member (dropped otherwise).
   const streamById = useMemo(() => {
     const map = new Map<string, CachedStream>()
     for (const list of groups.values()) for (const { stream } of list) map.set(stream.id, stream)
     return map
   }, [groups])
+  // Recent is recently-posted STREAMS only — the New options are always pinned in
+  // their own group, so a sentinel is never surfaced here (would double it).
   const recentRows = useMemo(() => {
     if (isSearching || !recents) return []
     const rows: { value: string; label: string; icon: ReactNode }[] = []
     const seen = new Set<string>()
     for (const v of recents) {
-      if (seen.has(v)) continue
+      if (seen.has(v) || v === NEW_SCRATCHPAD || v === NEW_QUICK_NOTE) continue
       seen.add(v)
-      const newOpt = NEW_OPTIONS.find((o) => o.value === v)
-      if (newOpt && includeNewOptions) {
-        rows.push({ value: v, label: newOpt.label, icon: newOpt.icon })
-        continue
-      }
       const stream = streamById.get(v)
       if (stream) {
         const Icon = STREAM_ICONS[stream.type]
@@ -119,7 +114,11 @@ export function StreamTargetPicker({
       }
     }
     return rows.slice(0, 5)
-  }, [isSearching, recents, includeNewOptions, streamById])
+  }, [isSearching, recents, streamById])
+
+  // A value shown in Recent is not repeated in the New group / type groups below
+  // (and cmdk keys rows by value, so a duplicate id would double-register).
+  const recentIds = useMemo(() => new Set(recentRows.map((r) => r.value)), [recentRows])
 
   const selectedLabel = useMemo(() => {
     if (!value) return null
@@ -208,7 +207,7 @@ export function StreamTargetPicker({
           </CommandGroup>
         )}
         {TYPE_GROUPS.map((group) => {
-          const list = groups.get(group.type)
+          const list = groups.get(group.type)?.filter(({ stream }) => !recentIds.has(stream.id))
           if (!list || list.length === 0) return null
           return (
             <CommandGroup key={group.type} heading={group.heading}>

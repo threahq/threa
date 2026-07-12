@@ -61,4 +61,14 @@ describe("StreamTargetPicker", () => {
     expect(await screen.findByText("Channels")).toBeInTheDocument()
     expect(screen.queryByText("New scratchpad")).not.toBeInTheDocument()
   })
+
+  it("shows a recent stream only in Recent, not doubled in its type group", async () => {
+    render(<StreamTargetPicker workspaceId="workspace_1" value="" onChange={vi.fn()} recents={[general.id]} />)
+    await userEvent.click(screen.getByRole("combobox"))
+    expect(await screen.findByText("Recent")).toBeInTheDocument()
+    // The channel appears once (under Recent) — filtered out of the Channels group.
+    expect(screen.getAllByText("#general")).toHaveLength(1)
+    // The DM (not recent) still shows in its group.
+    expect(screen.getByText("Martin")).toBeInTheDocument()
+  })
 })

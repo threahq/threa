@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { type JSONContent } from "@threa/types"
 import { MessageComposer, StreamTargetPicker } from "@/components/composer"
@@ -72,6 +72,20 @@ export function BoardOverlayComposer({
   useEffect(() => {
     if (open && defaultTarget) changeTarget(defaultTarget)
   }, [open, defaultTarget, changeTarget])
+
+  // The overlay is a persistent app-level singleton (never remounts), so a stale
+  // in-memory target survives close→reopen. On each open without an explicit
+  // target, re-seed from persistence — after a send the draft target is cleared,
+  // so this drops a just-used "New scratchpad" sentinel instead of defaulting the
+  // next post to minting another.
+  const prevOpenRef = useRef(open)
+  useEffect(() => {
+    const justOpened = open && !prevOpenRef.current
+    prevOpenRef.current = open
+    if (justOpened && !defaultTarget) {
+      setTargetValue(readDraftTarget(workspaceId) || readTargetMru(workspaceId)[0] || "")
+    }
+  }, [open, defaultTarget, workspaceId])
 
   const postableStreams = useMemo(() => streams.filter(isPostableStream), [streams])
 

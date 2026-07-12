@@ -108,6 +108,16 @@ describe("BoardOverlayComposer", () => {
     expect(screen.getByRole("combobox")).toHaveTextContent("general")
   })
 
+  it("re-seeds the target from persistence on each open (the singleton never remounts)", async () => {
+    // Mounted closed with an empty MRU → seeds "". A target set after mount (e.g.
+    // the MRU updated by a prior post) is picked up on the next open edge, so a
+    // stale in-memory pick can't linger across close→reopen.
+    const { rerender } = render(<BoardOverlayComposer workspaceId="workspace_1" open={false} onOpenChange={vi.fn()} />)
+    localStorage.setItem("board:post-target-mru:workspace_1", JSON.stringify([channel.id]))
+    rerender(<BoardOverlayComposer workspaceId="workspace_1" open onOpenChange={vi.fn()} />)
+    expect(await screen.findByRole("combobox")).toHaveTextContent("general")
+  })
+
   it("adopts an explicit defaultTarget and disables send until a target is set", async () => {
     const { rerender } = render(<BoardOverlayComposer workspaceId="workspace_1" open={false} onOpenChange={vi.fn()} />)
     // Opening with a defaultTarget adopts it.
