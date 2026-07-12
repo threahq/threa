@@ -62,6 +62,7 @@ async function promoteDraft(
       type: creation.type,
       displayName: creation.displayName,
       companionMode: creation.companionMode,
+      companionPersonaId: creation.companionPersonaId,
       parentStreamId: creation.parentStreamId,
       parentMessageId: creation.parentMessageId,
       allowedToolCategories: creation.allowedToolCategories,

@@ -36,8 +36,8 @@ interface AgentSettingsPanelProps {
   companionMode: CompanionMode
   onCompanionModeChange: (mode: CompanionMode) => void
   companionBusy?: boolean
-  /** Persona picker; omit to hide it (drafts have no persisted stream to point,
-   *  and encrypted scratchpads always run the enclave's built-in Ariadne). */
+  /** Persona picker; omit to hide it (encrypted scratchpads always run the
+   *  enclave's built-in Ariadne). */
   personaPicker?: AgentPersonaBinding
   /** Tool-access section; omit to hide it (e.g. the viewer isn't the owner). */
   toolPolicy?: AgentToolPolicyBinding
