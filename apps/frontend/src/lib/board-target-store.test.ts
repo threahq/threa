@@ -1,11 +1,25 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { readTargetMru, pushTargetMru } from "./board-target-mru"
+import { readTargetMru, pushTargetMru, readDraftTarget, writeDraftTarget } from "./board-target-store"
 
 const WS = "workspace_1"
 
 beforeEach(() => {
-  localStorage.removeItem("board:post-target-mru:workspace_1")
-  localStorage.removeItem("board:post-target-mru:workspace_2")
+  for (const key of [
+    "board:post-target-mru:workspace_1",
+    "board:post-target-mru:workspace_2",
+    "board:new-post:target:workspace_1",
+  ])
+    localStorage.removeItem(key)
+})
+
+describe("board draft target", () => {
+  it("returns empty when nothing is stored, round-trips a value, and clears on empty", () => {
+    expect(readDraftTarget(WS)).toBe("")
+    writeDraftTarget(WS, "stream_design")
+    expect(readDraftTarget(WS)).toBe("stream_design")
+    writeDraftTarget(WS, "")
+    expect(readDraftTarget(WS)).toBe("")
+  })
 })
 
 describe("board target MRU", () => {

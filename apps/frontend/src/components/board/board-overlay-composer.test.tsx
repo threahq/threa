@@ -8,7 +8,7 @@ import * as conversationsModule from "@/hooks/use-conversations"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import { createMockStream } from "@/test/fixtures"
-import { readTargetMru } from "@/lib/board-target-mru"
+import { readTargetMru, readDraftTarget } from "@/lib/board-target-store"
 import { BoardOverlayComposer } from "./board-overlay-composer"
 import type { MessageComposerProps } from "@/components/composer"
 
@@ -59,6 +59,7 @@ let mutateAsync: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   localStorage.removeItem("board:post-target-mru:workspace_1")
+  localStorage.removeItem("board:new-post:target:workspace_1")
   Element.prototype.scrollIntoView ??= () => {}
   spyOnExport(composerModule, "MessageComposer").mockReturnValue(EditorStub as never)
   const stub = draftComposerStub()
@@ -96,6 +97,15 @@ describe("BoardOverlayComposer", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(onPosted).toHaveBeenCalled()
     expect(readTargetMru("workspace_1")).toEqual([channel.id])
+    // The draft's persisted target is cleared on send (the draft is resolved).
+    expect(readDraftTarget("workspace_1")).toBe("")
+  })
+
+  it("seeds from the persisted draft target over the MRU head, so a restored draft keeps its target", () => {
+    localStorage.setItem("board:post-target-mru:workspace_1", JSON.stringify(["stream_other"]))
+    localStorage.setItem("board:new-post:target:workspace_1", channel.id)
+    render(<BoardOverlayComposer workspaceId="workspace_1" open onOpenChange={vi.fn()} />)
+    expect(screen.getByRole("combobox")).toHaveTextContent("general")
   })
 
   it("adopts an explicit defaultTarget and disables send until a target is set", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { type JSONContent } from "@threa/types"
 import { MessageComposer, StreamTargetPicker } from "@/components/composer"
@@ -10,7 +10,7 @@ import { useWorkspaceStreams, type CachedStream } from "@/stores/workspace-store
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import { isPostableStream, targetForValue, NEW_SCRATCHPAD, NEW_QUICK_NOTE } from "@/lib/board-post-target"
-import { readTargetMru, pushTargetMru } from "@/lib/board-target-mru"
+import { readTargetMru, pushTargetMru, readDraftTarget, writeDraftTarget } from "@/lib/board-target-store"
 
 // One durable draft for the overlay composer body, shared across every entry
 // point (board button, global shortcut) so an in-progress post survives closing
@@ -51,14 +51,27 @@ export function BoardOverlayComposer({
   // which closes it), so recompute per open rather than every render.
   const recents = useMemo(() => readTargetMru(workspaceId), [workspaceId, open])
 
-  const [targetValue, setTargetValue] = useState(() => defaultTarget ?? readTargetMru(workspaceId)[0] ?? "")
+  // Seed from the persisted in-progress draft target first (so a restored draft
+  // body pairs with the place it was headed), then the last-posted stream.
+  const [targetValue, setTargetValue] = useState(
+    () => defaultTarget ?? (readDraftTarget(workspaceId) || readTargetMru(workspaceId)[0] || "")
+  )
+
+  // Persist the target alongside the draft body so a reload restores both.
+  const changeTarget = useCallback(
+    (value: string) => {
+      setTargetValue(value)
+      writeDraftTarget(workspaceId, value)
+    },
+    [workspaceId]
+  )
 
   // Adopt an explicit defaultTarget each time the overlay is (re)opened with one
   // — e.g. a global "post to #here" entry. Only on the opening edge so it never
   // overrides a choice the user makes while the overlay is open.
   useEffect(() => {
-    if (open && defaultTarget) setTargetValue(defaultTarget)
-  }, [open, defaultTarget])
+    if (open && defaultTarget) changeTarget(defaultTarget)
+  }, [open, defaultTarget, changeTarget])
 
   const postableStreams = useMemo(() => streams.filter(isPostableStream), [streams])
 
@@ -67,8 +80,8 @@ export function BoardOverlayComposer({
   // are always valid.
   useEffect(() => {
     if (!targetValue || targetValue === NEW_SCRATCHPAD || targetValue === NEW_QUICK_NOTE) return
-    if (streams.length > 0 && !postableStreams.some((s) => s.id === targetValue)) setTargetValue("")
-  }, [targetValue, postableStreams, streams.length])
+    if (streams.length > 0 && !postableStreams.some((s) => s.id === targetValue)) changeTarget("")
+  }, [targetValue, postableStreams, streams.length, changeTarget])
 
   // Only an existing-stream target has a stream object for mention context.
   const selectedStream = useMemo<CachedStream | undefined>(
@@ -85,7 +98,7 @@ export function BoardOverlayComposer({
         <StreamTargetPicker
           workspaceId={workspaceId}
           value={targetValue}
-          onChange={setTargetValue}
+          onChange={changeTarget}
           includeNewOptions
           recents={recents}
         />
@@ -149,6 +162,9 @@ function BoardOverlayComposerBody({
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
+      // The draft is resolved — clear its persisted target so a later reload
+      // doesn't restore a target with no matching draft body.
+      writeDraftTarget(workspaceId, "")
       // Only real streams enter Recents / seed the next default — a "New scratchpad"
       // sentinel shouldn't make minting-another the default on the next open.
       if (target.type === "stream") pushTargetMru(workspaceId, targetValue)
