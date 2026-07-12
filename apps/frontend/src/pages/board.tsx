@@ -843,9 +843,12 @@ function BoardPageInner({
           aria-label="New post"
           className={cn(
             "group absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-5 z-20",
-            "flex h-14 w-14 items-center justify-end overflow-hidden rounded-2xl pl-0 pr-[18px]",
-            "transition-[width,padding,background-color] duration-200 ease-out",
-            "sm:hover:w-[150px] sm:hover:gap-2 sm:hover:pl-[18px]",
+            // Width is content-driven (min-w square when collapsed), so the
+            // expanded pill hugs its label + icon with no slack — the icon stays
+            // pinned right and the label slides in to its left.
+            "flex h-14 min-w-[56px] items-center justify-end overflow-hidden rounded-2xl pl-0 pr-[18px]",
+            "transition-[padding,gap,background-color] duration-200 ease-out",
+            "sm:hover:gap-2 sm:hover:pl-[18px]",
             "bg-primary text-primary-foreground hover:bg-primary/90",
             "shadow-[0_6px_16px_-6px_hsl(28_30%_22%/0.3),0_2px_5px_-2px_hsl(28_30%_22%/0.14)]",
             "dark:shadow-[0_8px_20px_-8px_rgb(0_0_0/0.5),0_2px_6px_-2px_rgb(0_0_0/0.3)]"
