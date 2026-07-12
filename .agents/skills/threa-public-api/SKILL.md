@@ -52,6 +52,17 @@ return 403). The key is bound to one workspace; the `{workspaceId}` in the
 path must match it. Each endpoint requires a permission scope (column
 below) — a missing scope returns 403/404.
 
+## Versioning
+
+The API is versioned by date (e.g. `2026-07-12`). Each key is pinned to a
+version when it is minted, and that pin applies to every request, so you do not
+need to send anything. Pass `Threa-Version: <date>` to override the pin for a
+single request; a valid header wins over the pin. An unknown value returns
+`400` with code `INVALID_API_VERSION` and the known versions in the error.
+Every response echoes the resolved version in a `Threa-Version` response
+header. The `/api/v1` path prefix is stable and does not change with versions.
+The generated changelog is `docs/public-api/CHANGELOG.md`.
+
 ## Workspace & stream IDs
 
 Threa app URLs encode both IDs — copy them straight out:

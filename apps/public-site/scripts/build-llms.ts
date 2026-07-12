@@ -69,6 +69,14 @@ const PAGES: Page[] = [
       "The message content format: standard markdown plus the user:/channel:/attachment:/memo: link schemes for mentions, channels, files, and memos.",
   },
   {
+    route: "/developers/versioning",
+    html: "developers/versioning/index.html",
+    md: "developers/versioning.md",
+    title: "Versioning",
+    blurb:
+      "Date-based API versions pinned per key at mint, overridable with the Threa-Version header, breaking vs additive changes, and the support window.",
+  },
+  {
     route: "/developers/operations",
     html: "developers/operations/index.html",
     md: "developers/operations.md",
