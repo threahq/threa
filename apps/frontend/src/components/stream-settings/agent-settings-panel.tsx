@@ -1,11 +1,18 @@
 import type { ComponentType } from "react"
 import { Moon, Sparkles } from "lucide-react"
-import { CompanionModes, type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
+import {
+  CompanionModes,
+  type CompanionMode,
+  type PersonaListItem,
+  type ToolPrivacyCategory,
+  type ToolPrivacyPolicy,
+} from "@threa/types"
 import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
 import type { ActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { ToolPolicyControl } from "./tool-policy-picker"
 import { ExternalAgentIndicator } from "./external-agent-indicator"
+import { CompanionAgentSelect } from "./companion-agent-select"
 
 export interface AgentToolPolicyBinding {
   value: ToolPrivacyPolicy
@@ -16,10 +23,22 @@ export interface AgentToolPolicyBinding {
   busy?: boolean
 }
 
+export interface AgentPersonaBinding {
+  workspaceId: string
+  /** Roster to offer (built-ins + active customs). */
+  personas: PersonaListItem[]
+  selectedPersonaId: string | undefined
+  onChange: (personaId: string) => void
+  busy?: boolean
+}
+
 interface AgentSettingsPanelProps {
   companionMode: CompanionMode
   onCompanionModeChange: (mode: CompanionMode) => void
   companionBusy?: boolean
+  /** Persona picker; omit to hide it (drafts have no persisted stream to point,
+   *  and encrypted scratchpads always run the enclave's built-in Ariadne). */
+  personaPicker?: AgentPersonaBinding
   /** Tool-access section; omit to hide it (e.g. the viewer isn't the owner). */
   toolPolicy?: AgentToolPolicyBinding
   /** External agent attached to the scratchpad, surfaced above the mode radios. */
@@ -36,6 +55,7 @@ export function AgentSettingsPanel({
   companionMode,
   onCompanionModeChange,
   companionBusy,
+  personaPicker,
   toolPolicy,
   externalAgent,
 }: AgentSettingsPanelProps) {
@@ -62,6 +82,20 @@ export function AgentSettingsPanel({
           />
         </div>
       </div>
+
+      {personaPicker && personaPicker.personas.length > 0 && (
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Companion agent</Label>
+          <CompanionAgentSelect
+            workspaceId={personaPicker.workspaceId}
+            personas={personaPicker.personas}
+            value={personaPicker.selectedPersonaId}
+            onChange={personaPicker.onChange}
+            disabled={personaPicker.busy}
+            triggerClassName="w-full"
+          />
+        </div>
+      )}
 
       {toolPolicy && (
         <div className="border-t pt-4">

@@ -7,6 +7,8 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
 import { streamKeys } from "@/hooks"
 import * as streamsHooks from "@/hooks/use-streams"
+import * as personasHooks from "@/hooks/use-personas"
+import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import * as workspacesHooks from "@/hooks/use-workspaces"
 import * as workspaceStore from "@/stores/workspace-store"
 import { LiveAgentSettings } from "./live-agent-settings"
@@ -31,7 +33,38 @@ beforeEach(() => {
     id: "user_owner",
   } as unknown as ReturnType<typeof workspacesHooks.useCurrentWorkspaceUser>)
   vi.spyOn(workspaceStore, "useWorkspaceBots").mockReturnValue([])
+  vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
+    data: undefined,
+  } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+  vi.spyOn(emojiHooks, "useWorkspaceEmoji").mockReturnValue({
+    toEmoji: (shortcode: string) => shortcode,
+  } as unknown as ReturnType<typeof emojiHooks.useWorkspaceEmoji>)
 })
+
+const ROSTER = [
+  {
+    id: "persona_ariadne",
+    slug: "ariadne",
+    name: "Ariadne",
+    description: null,
+    avatarEmoji: null,
+    model: "openrouter:anthropic/claude-sonnet-5",
+    kind: "builtin",
+    avatarUrl: null,
+    isCustomized: false,
+  },
+  {
+    id: "persona_coach",
+    slug: "coach",
+    name: "Coach",
+    description: null,
+    avatarEmoji: "🏋️",
+    model: "openrouter:anthropic/claude-haiku-4.5",
+    kind: "custom",
+    avatarUrl: null,
+    isCustomized: false,
+  },
+]
 
 function seedAndRender(opts: {
   createdBy?: string
@@ -41,13 +74,20 @@ function seedAndRender(opts: {
   botMemberIds?: string[]
   botRuntimePresence?: Record<string, { status: string } | null>
   bots?: WorkspaceBot[]
+  personas?: typeof ROSTER
+  companionPersonaId?: string | null
 }) {
   if (opts.bots) {
     vi.spyOn(workspaceStore, "useWorkspaceBots").mockReturnValue(opts.bots)
   }
+  if (opts.personas) {
+    vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
+      data: opts.personas,
+    } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+  }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_sp"), {
-    stream: { createdBy: opts.createdBy ?? "user_owner" },
+    stream: { createdBy: opts.createdBy ?? "user_owner", companionPersonaId: opts.companionPersonaId ?? null },
     allowedToolCategories: opts.allowed ?? null,
     configuredToolCategories: opts.configured,
     botMemberIds: opts.botMemberIds,
@@ -68,7 +108,7 @@ describe("LiveAgentSettings", () => {
 
     await userEvent.click(screen.getByRole("radio", { name: /quiet/i }))
 
-    expect(companionMutate).toHaveBeenCalledWith("off")
+    expect(companionMutate).toHaveBeenCalledWith({ companionMode: "off" })
   })
 
   it("lets the owner restrict tools via the live mutation", async () => {
@@ -113,5 +153,29 @@ describe("LiveAgentSettings", () => {
     seedAndRender({})
 
     expect(screen.queryByText(/external agent/i)).not.toBeInTheDocument()
+  })
+
+  it("offers the companion-agent picker and sends companionPersonaId keeping the current mode", async () => {
+    seedAndRender({ personas: ROSTER, companionPersonaId: null })
+
+    await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
+    await userEvent.click(screen.getByRole("option", { name: /coach/i }))
+
+    expect(companionMutate).toHaveBeenCalledWith({ companionMode: "on", companionPersonaId: "persona_coach" })
+  })
+
+  it("treats picking the already-selected agent (the null-pointer default) as a no-op", async () => {
+    seedAndRender({ personas: ROSTER, companionPersonaId: null })
+
+    await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
+    await userEvent.click(screen.getByRole("option", { name: /ariadne/i }))
+
+    expect(companionMutate).not.toHaveBeenCalled()
+  })
+
+  it("hides the picker on encrypted scratchpads (enclave runs the built-in Ariadne)", () => {
+    seedAndRender({ personas: ROSTER, e2e: true })
+
+    expect(screen.queryByRole("combobox", { name: /companion agent/i })).not.toBeInTheDocument()
   })
 })

@@ -115,7 +115,7 @@ describe("StreamSheet", () => {
     const quiet = screen.getByRole("radio", { name: "Quiet" })
     expect(screen.getByRole("radio", { name: "Companion" })).toBeChecked()
     await userEvent.click(quiet)
-    expect(updateCompanionMode).toHaveBeenCalledWith(CompanionModes.OFF)
+    expect(updateCompanionMode).toHaveBeenCalledWith({ companionMode: CompanionModes.OFF })
   })
 
   it("shows no agent section for a channel and surfaces the archived state", () => {

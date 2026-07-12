@@ -221,8 +221,8 @@ export function useUpdateCompanionMode(workspaceId: string, streamId: string) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (companionMode: CompanionMode) =>
-      streamService.updateCompanionMode(workspaceId, streamId, { companionMode }),
+    mutationFn: (input: { companionMode: CompanionMode; companionPersonaId?: string | null }) =>
+      streamService.updateCompanionMode(workspaceId, streamId, input),
     onSuccess: (updatedStream) => {
       queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, streamId), updatedStream)
 

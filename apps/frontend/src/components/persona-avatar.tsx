@@ -1,5 +1,7 @@
+import { getPersonaAvatarUrl, type PersonaListItem } from "@threa/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { AriadneIcon } from "@/components/ariadne-icon"
+import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { cn } from "@/lib/utils"
 
 /** System persona slug for Ariadne - uses SVG icon instead of emoji */
@@ -78,4 +80,31 @@ export function PersonaAvatar({ slug, avatarUrl, fallback, size = "md", classNam
  */
 export function personaHasSvgIcon(slug: string | undefined): boolean {
   return slug === ARIADNE_SLUG
+}
+
+interface PersonaListAvatarProps {
+  workspaceId: string
+  persona: Pick<PersonaListItem, "slug" | "name" | "avatarEmoji" | "avatarUrl">
+  size?: AvatarSize
+  className?: string
+}
+
+/**
+ * PersonaAvatar for a roster/list row: resolves the served image URL and the
+ * emoji-shortcode-or-initial fallback from the list item itself, so list
+ * surfaces (settings roster, companion picker) don't each re-derive them.
+ */
+export function PersonaListAvatar({ workspaceId, persona, size = "md", className }: PersonaListAvatarProps) {
+  const { toEmoji } = useWorkspaceEmoji(workspaceId)
+  const fallback =
+    (persona.avatarEmoji && (toEmoji(persona.avatarEmoji) ?? persona.avatarEmoji)) || persona.name.charAt(0)
+  return (
+    <PersonaAvatar
+      slug={persona.slug}
+      avatarUrl={getPersonaAvatarUrl(workspaceId, persona.avatarUrl, 64)}
+      fallback={fallback}
+      size={size}
+      className={className}
+    />
+  )
 }

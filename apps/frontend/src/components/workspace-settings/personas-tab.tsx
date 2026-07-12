@@ -1,14 +1,12 @@
 import { useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { ChevronDown, Pencil } from "lucide-react"
-import { getPersonaAvatarUrl, type PersonaListItem } from "@threa/types"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
-import { PersonaAvatar } from "@/components/persona-avatar"
-import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { PersonaListAvatar } from "@/components/persona-avatar"
 import { useArchivedPersonas, usePersonas, useUnarchivePersona } from "@/hooks/use-personas"
 import { FollowUpLimitSection } from "./follow-up-limit-section"
 import { PersonaForkDialog } from "./persona-fork-dialog"
@@ -27,12 +25,8 @@ interface PersonasTabProps {
 export function PersonasTab({ workspaceId }: PersonasTabProps) {
   const { data: personas, isLoading, isError, refetch } = usePersonas(workspaceId)
   const { data: archived } = useArchivedPersonas(workspaceId)
-  const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const unarchive = useUnarchivePersona(workspaceId)
   const [archivedOpen, setArchivedOpen] = useState(false)
-
-  const emojiFallback = (persona: PersonaListItem) =>
-    (persona.avatarEmoji && (toEmoji(persona.avatarEmoji) ?? persona.avatarEmoji)) || persona.name.charAt(0)
 
   let personaList: ReactNode
   if (isLoading) {
@@ -52,12 +46,7 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
       <ul className="space-y-2">
         {personas.map((persona) => (
           <li key={persona.id} className="flex items-center gap-3 rounded-lg border border-input bg-card p-3">
-            <PersonaAvatar
-              slug={persona.slug}
-              avatarUrl={getPersonaAvatarUrl(workspaceId, persona.avatarUrl, 64)}
-              fallback={emojiFallback(persona)}
-              size="lg"
-            />
+            <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="truncate text-sm font-medium">{persona.name}</span>
@@ -115,12 +104,7 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
                     key={persona.id}
                     className="flex items-center gap-3 rounded-lg border border-dashed border-input p-3"
                   >
-                    <PersonaAvatar
-                      slug={persona.slug}
-                      avatarUrl={getPersonaAvatarUrl(workspaceId, persona.avatarUrl, 64)}
-                      fallback={emojiFallback(persona)}
-                      size="lg"
-                    />
+                    <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
                     <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{persona.name}</span>
                     <Button
                       type="button"

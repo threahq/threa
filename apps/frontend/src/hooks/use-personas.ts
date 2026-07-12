@@ -11,9 +11,6 @@ import { personasApi } from "@/api"
 export const personaKeys = {
   all: ["personas"] as const,
   list: (workspaceId: string) => [...personaKeys.all, "list", workspaceId] as const,
-  // Session-scoped: archived customs a caller archived this session (the visible
-  // list endpoint excludes archived, and there is no list-archived endpoint yet),
-  // so the roster's Archived disclosure can offer Unarchive until the next reload.
   archived: (workspaceId: string) => [...personaKeys.all, "archived", workspaceId] as const,
   config: (workspaceId: string, personaId: string) => [...personaKeys.all, "config", workspaceId, personaId] as const,
   revisions: (workspaceId: string, personaId: string) =>
@@ -111,11 +108,11 @@ function removeFromList(queryClient: QueryClient, key: readonly unknown[], perso
 }
 
 /** Member-visible persona list (no systemPrompt). Powers the settings tab. */
-export function usePersonas(workspaceId: string) {
+export function usePersonas(workspaceId: string, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: personaKeys.list(workspaceId),
     queryFn: () => personasApi.list(workspaceId),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && (opts?.enabled ?? true),
     staleTime: 30_000,
   })
 }
