@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import type { PersonaListItem, Stream } from "@threa/types"
 import * as streamsHooks from "@/hooks/use-streams"
 import * as personasHooks from "@/hooks/use-personas"
+import * as defaultCompanionHooks from "@/hooks/use-default-companion-persona"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import * as botPresenceHooks from "@/hooks/use-active-bot-presence"
 import * as briefHooks from "@/hooks/use-stream-brief"
@@ -38,6 +39,10 @@ beforeEach(() => {
   vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
     data: [ARIADNE, COACH],
   } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+  vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
+    effectiveDefault: ARIADNE,
+    workspaceDefault: ARIADNE,
+  } as unknown as ReturnType<typeof defaultCompanionHooks.useDefaultCompanionPersona>)
   vi.spyOn(emojiHooks, "useWorkspaceEmoji").mockReturnValue({
     toEmoji: (shortcode: string) => shortcode,
   } as unknown as ReturnType<typeof emojiHooks.useWorkspaceEmoji>)
@@ -103,6 +108,17 @@ describe("CompanionTab persona picker", () => {
   it("names the pointed-at persona in the mode copy", () => {
     renderTab({ companionPersonaId: "persona_coach" })
 
+    expect(screen.getByText(/Coach reads new messages and replies in the thread/i)).toBeInTheDocument()
+  })
+
+  it("shows the configured workspace default on an unpinned stream", () => {
+    vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
+      effectiveDefault: COACH,
+      workspaceDefault: COACH,
+    })
+    renderTab({ companionPersonaId: null })
+
+    // A null pointer now resolves to the configured default, not the hardcoded Ariadne.
     expect(screen.getByText(/Coach reads new messages and replies in the thread/i)).toBeInTheDocument()
   })
 

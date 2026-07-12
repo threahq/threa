@@ -4,6 +4,7 @@ import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useUpdateCompanionMode } from "@/hooks/use-streams"
 import { usePersonas } from "@/hooks/use-personas"
+import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import {
   CompanionModes,
@@ -47,8 +48,13 @@ export function CompanionTab({
   // The picker (and its roster fetch) is plaintext-only — an encrypted
   // scratchpad always runs the built-in Ariadne, so don't fire /personas there.
   const { data: personas } = usePersonas(workspaceId, { enabled: !isE2e })
+  const { effectiveDefault } = useDefaultCompanionPersona(workspaceId, { enabled: !isE2e })
 
-  const { selectedPersonaId, companionName } = resolveCompanionSelection(personas, stream.companionPersonaId)
+  const { selectedPersonaId, companionName } = resolveCompanionSelection(
+    personas,
+    stream.companionPersonaId,
+    effectiveDefault
+  )
 
   const handleChange = async (next: CompanionMode) => {
     if (next === stream.companionMode) return

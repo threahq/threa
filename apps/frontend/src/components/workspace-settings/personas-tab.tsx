@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import { PersonaListAvatar } from "@/components/persona-avatar"
 import { useArchivedPersonas, usePersonas, useUnarchivePersona } from "@/hooks/use-personas"
 import { FollowUpLimitSection } from "./follow-up-limit-section"
+import { DefaultCompanionSection } from "./default-companion-section"
 import { PersonaForkDialog } from "./persona-fork-dialog"
 
 interface PersonasTabProps {
@@ -136,6 +137,7 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
             Workspace-wide limits on what the assistants may do on their own.
           </p>
         </div>
+        <DefaultCompanionSection workspaceId={workspaceId} />
         <FollowUpLimitSection workspaceId={workspaceId} />
       </div>
     </div>

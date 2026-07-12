@@ -1,6 +1,7 @@
 import { type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
 import { useDraftScratchpads } from "@/hooks/use-draft-scratchpads"
 import { usePersonas } from "@/hooks/use-personas"
+import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
 import { AgentSettingsPanel } from "./agent-settings-panel"
 import { resolveCompanionSelection } from "./companion-agent-select"
 
@@ -29,8 +30,13 @@ export function DraftAgentSettings({
 }: DraftAgentSettingsProps) {
   const { getScratchpad, updateScratchpad } = useDraftScratchpads(workspaceId)
   const { data: personas } = usePersonas(workspaceId)
+  const { effectiveDefault } = useDefaultCompanionPersona(workspaceId)
 
-  const { selectedPersonaId } = resolveCompanionSelection(personas, getScratchpad(draftId)?.companionPersonaId)
+  const { selectedPersonaId } = resolveCompanionSelection(
+    personas,
+    getScratchpad(draftId)?.companionPersonaId,
+    effectiveDefault
+  )
 
   return (
     <AgentSettingsPanel

@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
 import * as draftHook from "@/hooks/use-draft-scratchpads"
 import * as personasHooks from "@/hooks/use-personas"
+import * as defaultCompanionHooks from "@/hooks/use-default-companion-persona"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import { DraftAgentSettings } from "./draft-agent-settings"
 
@@ -47,6 +48,10 @@ beforeEach(() => {
   vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
     data: ROSTER,
   } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+  vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
+    effectiveDefault: ROSTER[0],
+    workspaceDefault: ROSTER[0],
+  } as unknown as ReturnType<typeof defaultCompanionHooks.useDefaultCompanionPersona>)
   vi.spyOn(emojiHooks, "useWorkspaceEmoji").mockReturnValue({
     toEmoji: (shortcode: string) => shortcode,
   } as unknown as ReturnType<typeof emojiHooks.useWorkspaceEmoji>)

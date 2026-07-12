@@ -4,6 +4,7 @@ import type { CompanionMode, StreamBootstrap, ToolPrivacyPolicy } from "@threa/t
 import { streamKeys } from "@/hooks"
 import { useUpdateCompanionMode, useUpdateToolPolicy } from "@/hooks/use-streams"
 import { usePersonas } from "@/hooks/use-personas"
+import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
 import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { AgentSettingsPanel } from "./agent-settings-panel"
@@ -32,6 +33,7 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
   // Encrypted scratchpads always run the enclave's built-in Ariadne, so the
   // picker (and its roster fetch) is plaintext-only.
   const { data: personas } = usePersonas(workspaceId, { enabled: !e2e })
+  const { effectiveDefault } = useDefaultCompanionPersona(workspaceId, { enabled: !e2e })
 
   // Cache-only observer: re-renders when a mutation patches the bootstrap.
   const { data: bootstrap } = useQuery({
@@ -52,7 +54,11 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
     }
   }
 
-  const { selectedPersonaId } = resolveCompanionSelection(personas, bootstrap?.stream?.companionPersonaId)
+  const { selectedPersonaId } = resolveCompanionSelection(
+    personas,
+    bootstrap?.stream?.companionPersonaId,
+    effectiveDefault
+  )
 
   const handlePersona = async (personaId: string) => {
     if (personaId === selectedPersonaId) return
