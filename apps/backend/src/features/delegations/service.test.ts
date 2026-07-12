@@ -24,6 +24,7 @@ function fakeDelegation(overrides: Partial<DelegatedTask> = {}): DelegatedTask {
     contextRefs: ["memo:memo_1"],
     status: DelegationStatuses.OPEN,
     claimTokenHash: null,
+    claimIdempotencyKey: null,
     claimExpiresAt: null,
     claimedByLabel: null,
     resultMessageId: null,
@@ -180,6 +181,51 @@ describe("DelegationService.cancel", () => {
 
     expect(cancelled).toBeNull()
     expect(insertEvent).not.toHaveBeenCalled()
+  })
+})
+
+describe("DelegationService.claim idempotent recovery", () => {
+  afterEach(() => mock.restore())
+
+  it("re-keys the live claim on retry with the original idempotency key (fresh token, no card event)", async () => {
+    stubTransaction()
+    spyOn(DelegatedTaskRepository, "claim").mockResolvedValue(null)
+    const reclaim = spyOn(DelegatedTaskRepository, "reclaimByIdempotencyKey").mockResolvedValue(
+      fakeDelegation({ status: DelegationStatuses.CLAIMED, claimIdempotencyKey: "runner-key-1" })
+    )
+    const { insertEvent } = stubEventAppend()
+
+    const result = await makeService().claim({
+      workspaceId: "ws_1",
+      id: "dlg_1",
+      claimedByLabel: "Rig",
+      idempotencyKey: "runner-key-1",
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("unreachable")
+    const reclaimParams = reclaim.mock.calls[0]?.[1] as { claimIdempotencyKey: string; claimTokenHash: string }
+    expect(reclaimParams.claimIdempotencyKey).toBe("runner-key-1")
+    expect(reclaimParams.claimTokenHash).toBe(hashCallbackToken(result.claimToken))
+    // Re-keying is not a status change — no patch lands on the card.
+    expect(insertEvent).not.toHaveBeenCalled()
+  })
+
+  it("still classifies not_open when the retry carries a non-matching key", async () => {
+    stubTransaction()
+    spyOn(DelegatedTaskRepository, "claim").mockResolvedValue(null)
+    spyOn(DelegatedTaskRepository, "reclaimByIdempotencyKey").mockResolvedValue(null)
+    spyOn(DelegatedTaskRepository, "findById").mockResolvedValue(fakeDelegation({ status: DelegationStatuses.CLAIMED }))
+    stubEventAppend()
+
+    const result = await makeService().claim({
+      workspaceId: "ws_1",
+      id: "dlg_1",
+      claimedByLabel: "Rig",
+      idempotencyKey: "wrong-key",
+    })
+
+    expect(result).toEqual({ ok: false, reason: "not_open" })
   })
 })
 

@@ -15,6 +15,7 @@ interface DelegatedTaskRow {
   context_refs: string[]
   status: string
   claim_token_hash: string | null
+  claim_idempotency_key: string | null
   claim_expires_at: Date | null
   claimed_by_label: string | null
   result_message_id: string | null
@@ -37,6 +38,7 @@ export interface DelegatedTask {
   contextRefs: string[]
   status: DelegationStatus
   claimTokenHash: string | null
+  claimIdempotencyKey: string | null
   claimExpiresAt: Date | null
   claimedByLabel: string | null
   resultMessageId: string | null
@@ -62,7 +64,7 @@ export interface InsertDelegatedTaskParams {
 const COLUMNS = `
   id, workspace_id, stream_id, session_id, source_conversation_id,
   created_by_kind, created_by_id, title, brief, context_refs,
-  status, claim_token_hash, claim_expires_at, claimed_by_label,
+  status, claim_token_hash, claim_idempotency_key, claim_expires_at, claimed_by_label,
   result_message_id, status_note, created_at, updated_at, status_changed_at
 `
 
@@ -89,6 +91,7 @@ function mapRow(row: DelegatedTaskRow): DelegatedTask {
     contextRefs: row.context_refs,
     status: row.status as DelegationStatus,
     claimTokenHash: row.claim_token_hash,
+    claimIdempotencyKey: row.claim_idempotency_key,
     claimExpiresAt: row.claim_expires_at,
     claimedByLabel: row.claimed_by_label,
     resultMessageId: row.result_message_id,
@@ -131,11 +134,16 @@ export const DelegatedTaskRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
-  /** A workspace's open (claimable) delegations, oldest first — the 5.3 list surface. */
-  async listOpen(db: Querier, workspaceId: string): Promise<DelegatedTask[]> {
+  /**
+   * A workspace's open (claimable) delegations, oldest first — the 5.3 list
+   * surface. `since` narrows to rows created after the instant, so a polling
+   * runner that remembers its last sweep doesn't re-download the whole queue.
+   */
+  async listOpen(db: Querier, workspaceId: string, { since }: { since?: Date } = {}): Promise<DelegatedTask[]> {
     const result = await db.query<DelegatedTaskRow>(sql`
       SELECT ${sql.raw(COLUMNS)} FROM delegated_tasks
       WHERE workspace_id = ${workspaceId} AND status = ${DelegationStatuses.OPEN}
+        AND (${since ?? null}::timestamptz IS NULL OR created_at > ${since ?? null})
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRow)
@@ -180,6 +188,7 @@ export const DelegatedTaskRepository = {
       workspaceId: string
       id: string
       claimTokenHash: string
+      claimIdempotencyKey: string | null
       claimedByLabel: string
       ttlSeconds: number
     }
@@ -188,6 +197,7 @@ export const DelegatedTaskRepository = {
       UPDATE delegated_tasks SET
         status = ${DelegationStatuses.CLAIMED},
         claim_token_hash = ${params.claimTokenHash},
+        claim_idempotency_key = ${params.claimIdempotencyKey},
         claim_expires_at = NOW() + (${params.ttlSeconds} || ' seconds')::interval,
         claimed_by_label = ${params.claimedByLabel},
         status_changed_at = NOW(),
@@ -195,6 +205,33 @@ export const DelegatedTaskRepository = {
       WHERE id = ${params.id}
         AND workspace_id = ${params.workspaceId}
         AND status = ${DelegationStatuses.OPEN}
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
+   * Re-key a claim whose one-time token was lost (crash between the claim
+   * response and persisting the token). CAS-guarded on the SAME idempotency
+   * key the original claim carried — the runner persists that key BEFORE
+   * claiming, so only the original claimer can re-key. Mints nothing itself:
+   * the caller supplies the fresh token hash; the old token stops matching
+   * immediately. Status is untouched (still claimed/running); the lease
+   * restarts.
+   */
+  async reclaimByIdempotencyKey(
+    db: Querier,
+    params: { workspaceId: string; id: string; claimIdempotencyKey: string; claimTokenHash: string; ttlSeconds: number }
+  ): Promise<DelegatedTask | null> {
+    const result = await db.query<DelegatedTaskRow>(sql`
+      UPDATE delegated_tasks SET
+        claim_token_hash = ${params.claimTokenHash},
+        claim_expires_at = NOW() + (${params.ttlSeconds} || ' seconds')::interval,
+        updated_at = NOW()
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND status IN (${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING})
+        AND claim_idempotency_key = ${params.claimIdempotencyKey}
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null

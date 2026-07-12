@@ -29,6 +29,7 @@ function makeDelegation(overrides: Partial<DelegatedTask> = {}): DelegatedTask {
     contextRefs: ["memo:memo_1"],
     status: DelegationStatuses.OPEN,
     claimTokenHash: null,
+    claimIdempotencyKey: null,
     claimExpiresAt: null,
     claimedByLabel: null,
     resultMessageId: null,

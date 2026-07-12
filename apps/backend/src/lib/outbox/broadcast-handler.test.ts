@@ -487,6 +487,35 @@ describe("BroadcastHandler", () => {
     expect(emitChains.filter((e) => e.eventType === "conversation:message_reassigned")).toHaveLength(1)
   })
 
+  it("fans stream:delegation_created to the stream room AND nudges the workspace runtime room (5.4 push)", async () => {
+    const event = makeEvent(1n, "stream:delegation_created", {
+      workspaceId: "ws_1",
+      streamId: "stream_a",
+      event: {
+        id: "event_1",
+        streamId: "stream_a",
+        eventType: "delegation:created",
+        payload: { delegationId: "dlg_1", title: "Fix the build", brief: "…", contextRefs: [] },
+      },
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    // Viewers get the full card event on the stream room, as before.
+    expect(emitChains.some((e) => e.room === "ws:ws_1:stream:stream_a")).toBe(true)
+    // Every connected runtime in the workspace gets the slim nudge.
+    expect(emitChains).toContainEqual({
+      room: "bot:ws_1",
+      eventType: "delegation:available",
+      payload: { workspaceId: "ws_1", streamId: "stream_a", delegationId: "dlg_1", title: "Fix the build" },
+      namespace: "/bot",
+    })
+  })
+
   // Bot-scoped events route into the `/bot` namespace using the narrowest room
   // a payload supports — see `BroadcastHandler.dispatchBotEvent`.
   it("routes bot_invocation:available with no steering to the per-bot room", async () => {

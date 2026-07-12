@@ -110,8 +110,8 @@ export class DelegationService {
   }
 
   /** A workspace's claimable delegations, oldest first (the 5.3 list surface). */
-  async listOpen(params: { workspaceId: string }): Promise<DelegatedTask[]> {
-    return DelegatedTaskRepository.listOpen(this.pool, params.workspaceId)
+  async listOpen(params: { workspaceId: string; since?: Date }): Promise<DelegatedTask[]> {
+    return DelegatedTaskRepository.listOpen(this.pool, params.workspaceId, { since: params.since })
   }
 
   /** A stream's delegations with live statuses, newest first (the "In this stream" panel). */
@@ -173,14 +173,25 @@ export class DelegationService {
    * Claim an open delegation for a local agent (the 5.3 claim endpoint's core).
    * Mints the claim token here — the cleartext goes back to the claimer once,
    * only its hash is stored (a DB read can never impersonate a claim).
+   *
+   * `idempotencyKey` (persisted by the runner BEFORE calling) makes the claim
+   * crash-recoverable: a retry bearing the key of the delegation's live claim
+   * re-keys it — fresh token, fresh lease, old token dead — instead of a 409
+   * that strands the task until expiry. No status change, so no card event.
    */
-  async claim(params: { workspaceId: string; id: string; claimedByLabel: string }): Promise<ClaimDelegationResult> {
+  async claim(params: {
+    workspaceId: string
+    id: string
+    claimedByLabel: string
+    idempotencyKey?: string
+  }): Promise<ClaimDelegationResult> {
     const claimToken = randomUUID()
     const result = await withTransaction(this.pool, async (client) => {
       const claimed = await DelegatedTaskRepository.claim(client, {
         workspaceId: params.workspaceId,
         id: params.id,
         claimTokenHash: hashCallbackToken(claimToken),
+        claimIdempotencyKey: params.idempotencyKey ?? null,
         claimedByLabel: params.claimedByLabel,
         ttlSeconds: this.claimTtlSeconds,
       })
@@ -189,6 +200,17 @@ export class DelegationService {
       return claimed
     })
     if (result) return { ok: true, delegation: result, claimToken }
+
+    if (params.idempotencyKey) {
+      const rekeyed = await DelegatedTaskRepository.reclaimByIdempotencyKey(this.pool, {
+        workspaceId: params.workspaceId,
+        id: params.id,
+        claimIdempotencyKey: params.idempotencyKey,
+        claimTokenHash: hashCallbackToken(claimToken),
+        ttlSeconds: this.claimTtlSeconds,
+      })
+      if (rekeyed) return { ok: true, delegation: rekeyed, claimToken }
+    }
 
     // Failure-path read only classifies the error (nothing mutated).
     const existing = await DelegatedTaskRepository.findById(this.pool, params.workspaceId, params.id)

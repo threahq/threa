@@ -22,6 +22,7 @@ function makeRow(overrides: Record<string, unknown> = {}) {
     context_refs: ["memo:memo_1"],
     status: DelegationStatuses.OPEN,
     claim_token_hash: null,
+    claim_idempotency_key: null,
     claim_expires_at: null,
     claimed_by_label: null,
     result_message_id: null,
@@ -94,6 +95,7 @@ describe("DelegatedTaskRepository.claim", () => {
       workspaceId: "ws_1",
       id: "dlg_1",
       claimTokenHash: "hash_1",
+      claimIdempotencyKey: null,
       claimedByLabel: "Kris's MacBook / Claude Code",
       ttlSeconds: 900,
     })
@@ -114,6 +116,7 @@ describe("DelegatedTaskRepository.claim", () => {
       workspaceId: "ws_1",
       id: "dlg_1",
       claimTokenHash: "hash_1",
+      claimIdempotencyKey: null,
       claimedByLabel: "somewhere",
       ttlSeconds: 900,
     })
@@ -188,6 +191,59 @@ describe("claim-authenticated transitions carry the live-holder guard", () => {
       expect(await run(db)).toBeNull()
     })
   }
+})
+
+describe("DelegatedTaskRepository.reclaimByIdempotencyKey", () => {
+  afterEach(() => mock.restore())
+
+  it("re-keys a live claim guarded on the original idempotency key, restarting the lease", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeRow({ status: DelegationStatuses.CLAIMED })])
+
+    await DelegatedTaskRepository.reclaimByIdempotencyKey(db, {
+      workspaceId: "ws_1",
+      id: "dlg_1",
+      claimIdempotencyKey: "runner-key-1",
+      claimTokenHash: "fresh_hash",
+      ttlSeconds: 900,
+    })
+
+    expect(captured.values).toContain("runner-key-1")
+    expect(captured.values).toContain("fresh_hash")
+    expect(captured.values).toContain(DelegationStatuses.CLAIMED)
+    expect(captured.values).toContain(DelegationStatuses.RUNNING)
+    // Deliberately NO claim_expires_at guard: the recovery window includes a
+    // lapsed-but-unswept claim; a swept (expired) row fails the status guard.
+    expect(captured.text).not.toContain("claim_expires_at >")
+  })
+
+  it("returns null when the key doesn't match the live claim", async () => {
+    const db = createQuerier({ text: null, values: null }, [])
+    expect(
+      await DelegatedTaskRepository.reclaimByIdempotencyKey(db, {
+        workspaceId: "ws_1",
+        id: "dlg_1",
+        claimIdempotencyKey: "someone-elses-key",
+        claimTokenHash: "x",
+        ttlSeconds: 900,
+      })
+    ).toBeNull()
+  })
+})
+
+describe("DelegatedTaskRepository.listOpen since", () => {
+  afterEach(() => mock.restore())
+
+  it("narrows to rows created after the instant when since is given", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [])
+    const since = new Date("2026-07-12T10:00:00.000Z")
+
+    await DelegatedTaskRepository.listOpen(db, "ws_1", { since })
+
+    expect(captured.text).toContain("created_at >")
+    expect(captured.values).toContain(since)
+  })
 })
 
 describe("DelegatedTaskRepository.findClaimedForUpdate", () => {

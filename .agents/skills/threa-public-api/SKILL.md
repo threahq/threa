@@ -107,8 +107,8 @@ Or discover via `GET /api/v1/workspaces/{workspaceId}/streams`.
 | DELETE | `/workspaces/{ws}/labels/assignments`             | `labels:write`     | Remove a label (by name) from a resource. **204**. Query `?name=…&resourceType=stream&resourceId=…`.                                                                                                 |
 | PATCH  | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`     | Edit a label you created. Body any of `{name, color, emoji, description}`.                                                                                                                           |
 | DELETE | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`     | Archive a label you created (drops its assignments). **204**.                                                                                                                                        |
-| GET    | `/workspaces/{ws}/delegations`                    | `delegations:read` | Open delegated tasks the key can see (query `status=open` is the only filter today). User keys see the user's streams; workspace keys see the bot's channel grants.                                  |
-| POST   | `/workspaces/{ws}/delegations/{id}/claim`         | `delegations:write`| Body `{claimedByLabel}`. Returns brief + contextRefs + **`claimToken` (cleartext, once)** + expiry. Lost race → **409** `DELEGATION_NOT_OPEN`.                                                       |
+| GET    | `/workspaces/{ws}/delegations`                    | `delegations:read` | Open delegated tasks the key can see. Query `since=<ISO>` for a cheap delta. User keys see the user's streams; workspace keys see the bot's channel grants.                                          |
+| POST   | `/workspaces/{ws}/delegations/{id}/claim`         | `delegations:write`| Body `{claimedByLabel, idempotencyKey?}`. Returns brief + contextRefs + **`claimToken` (cleartext, once)** + expiry. Lost race → **409**. Persist the idempotencyKey BEFORE claiming: a retry with it re-keys your own live claim (crash recovery).      |
 | POST   | `/workspaces/{ws}/delegations/{id}/heartbeat`     | `delegations:write`| Header `X-Threa-Callback-Token: <claimToken>`. Renews the 15-min claim TTL. Gone claim → **404**.                                                                                                    |
 | POST   | `/workspaces/{ws}/delegations/{id}/status`        | `delegations:write`| Header token. Body `{statusNote?}` — marks running, note shows on the card, TTL renews.                                                                                                              |
 | POST   | `/workspaces/{ws}/delegations/{id}/complete`      | `delegations:write`| Header token. Body `{resultMarkdown?, metadata?}` — posts the result atomically with completion, authored as the key's user (via-API badge) or as the bot for a workspace key; GAM memorizes it. Retries with the same token return the committed outcome. |
@@ -331,6 +331,10 @@ curl -sS -X POST "$BASE/delegations/<dlg_id>/status" -H "$AUTH" -H "$TOK" -H "$J
 curl -sS -X POST "$BASE/delegations/<dlg_id>/complete" -H "$AUTH" -H "$TOK" -H "$JSON" \
   -d '{"resultMarkdown":"Shipped in PR #42. All acceptance criteria pass."}'
 ```
+
+Connected runtimes (the bot-runtime socket) also receive a `delegation:available`
+nudge on the `/bot` namespace when a delegation is created, so a socket-holding
+runner reacts instantly and keeps polling only as a backstop.
 
 Scripted runner (Bun). Heartbeat on an interval inside the 15-minute TTL, send
 `status` at milestones, and wrap the work in `try/catch/finally` so every exit

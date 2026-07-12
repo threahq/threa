@@ -136,9 +136,9 @@ export function createDelegationPublicApiHandlers({
     async listDelegations(req: Request, res: Response) {
       const identity = resolveKeyIdentity(req)
       const workspaceId = req.workspaceId!
-      validateRequest(listDelegationsQuerySchema, req.query)
+      const { since } = validateRequest(listDelegationsQuerySchema, req.query)
 
-      const open = await delegationService.listOpen({ workspaceId })
+      const open = await delegationService.listOpen({ workspaceId, since: since ? new Date(since) : undefined })
       const accessible =
         identity.kind === "user"
           ? await listAccessibleStreamIds(
@@ -161,11 +161,11 @@ export function createDelegationPublicApiHandlers({
       const identity = resolveKeyIdentity(req)
       const workspaceId = req.workspaceId!
       const id = req.params.delegationId!
-      const { claimedByLabel } = validateRequest(claimDelegationSchema, req.body)
+      const { claimedByLabel, idempotencyKey } = validateRequest(claimDelegationSchema, req.body)
 
       await resolveAccessibleDelegation(identity, workspaceId, id)
 
-      const result = await delegationService.claim({ workspaceId, id, claimedByLabel })
+      const result = await delegationService.claim({ workspaceId, id, claimedByLabel, idempotencyKey })
       if (!result.ok) {
         if (result.reason === "not_found") {
           throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
