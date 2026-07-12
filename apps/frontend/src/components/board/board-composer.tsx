@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, Sele
 import { MessageComposer } from "@/components/composer"
 import { useDraftComposer } from "@/hooks"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
-import { useCreateBoardPost, type BoardPostTarget } from "@/hooks/use-conversations"
+import { useCreateBoardPost } from "@/hooks/use-conversations"
 import {
   useWorkspaceStreams,
   useWorkspaceUsers,
@@ -16,19 +16,8 @@ import {
 import { resolveStreamName } from "@/lib/streams"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
-import { StreamTypes, type JSONContent } from "@threa/types"
-
-// Existing streams a board post can target: live channels and DMs. Scratchpads
-// are deliberately excluded — you don't post into an existing one, you create a
-// new one (the two "New …" options below). Threads are derived (not authored
-// into), system streams aren't user-postable, archived streams are closed, and
-// E2E streams need client-side sealing the board composer doesn't do yet.
-const POSTABLE_TYPES = new Set<string>([StreamTypes.CHANNEL, StreamTypes.DM])
-
-// Sentinel target values for the two "create a new scratchpad" options, kept
-// distinct from any stream id (which is what the rest of the Select holds).
-const NEW_SCRATCHPAD = "new:scratchpad"
-const NEW_QUICK_NOTE = "new:quick-note"
+import { isPostableStream, targetForValue, NEW_SCRATCHPAD, NEW_QUICK_NOTE } from "@/lib/board-post-target"
+import { type JSONContent } from "@threa/types"
 
 // One durable draft for the board's "New post" composer body.
 const BOARD_DRAFT_KEY = "board:new-post"
@@ -56,24 +45,6 @@ function writeStoredTarget(workspaceId: string, value: string): void {
   } catch {
     /* ignore */
   }
-}
-
-/**
- * Existing streams a board post can target: live channels and DMs. Scratchpads
- * are created via a post (the "New scratchpad" / "New quick note" options), not
- * appended to from the board (user ruling). Threads/system are not user-authored
- * surfaces; archived and E2E streams are excluded.
- */
-export function isPostableStream(stream: Pick<CachedStream, "type" | "archivedAt" | "e2eEnabled">): boolean {
-  return POSTABLE_TYPES.has(stream.type) && !stream.archivedAt && stream.e2eEnabled !== true
-}
-
-/** Map a Select value to the API target. Stream ids fall through to a stream target. */
-function targetForValue(value: string): BoardPostTarget | null {
-  if (!value) return null
-  if (value === NEW_SCRATCHPAD) return { type: "newScratchpad", companionMode: "on" }
-  if (value === NEW_QUICK_NOTE) return { type: "newScratchpad", companionMode: "off" }
-  return { type: "stream", streamId: value }
 }
 
 /**
