@@ -639,11 +639,12 @@ function BoardPageInner({
             <h2
               key={row.key}
               className={cn(
-                "px-1 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
+                "flex items-center gap-3 px-1 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
                 row.first ? "pt-2" : "pt-6"
               )}
             >
-              {row.label}
+              <span className="shrink-0">{row.label}</span>
+              <span className="h-px flex-1 bg-border" aria-hidden />
             </h2>
           )
         }

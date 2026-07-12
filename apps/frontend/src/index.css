@@ -162,6 +162,14 @@
     --conversation-6: 22 70% 47%;
     --conversation-7: 245 50% 58%;
     --conversation-8: 88 45% 34%;
+
+    /* Board stream-type accent — the glyph tile's tint, keyed by stream type so a
+       card's kind is scannable at a glance. Desaturated on purpose: it's a
+       locator cue, not a second selection color (the unread dot owns the gold
+       --primary). Composed with alpha at the tile: hsl(var(--type-channel) / 0.14) */
+    --type-channel: 217 45% 48%;
+    --type-scratchpad: 38 62% 46%;
+    --type-dm: 152 38% 38%;
   }
 
   .dark {
@@ -233,6 +241,11 @@
     --conversation-6: 24 75% 60%;
     --conversation-7: 245 60% 72%;
     --conversation-8: 88 40% 52%;
+
+    /* Board stream-type accent — lifted lightness for the dark canvas */
+    --type-channel: 217 55% 66%;
+    --type-scratchpad: 40 58% 60%;
+    --type-dm: 152 40% 56%;
   }
 }
 
