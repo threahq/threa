@@ -6,6 +6,7 @@ import { userApiKeyId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
 import type { WorkspacePermissionSlug } from "@threa/types"
 import { API_KEY_ELIGIBLE_SCOPES } from "@threa/types"
+import { CURRENT_API_VERSION, type ApiVersion } from "../public-api/versions"
 
 const KEY_PREFIX = "threa_uk_"
 const KEY_BYTE_LENGTH = 32 // 256-bit random key
@@ -40,6 +41,8 @@ export interface ValidatedUserApiKey {
   userId: string
   name: string
   scopes: Set<string>
+  /** Wire version the key is pinned to; the version gate's floor when no header is sent. */
+  apiVersion: ApiVersion
 }
 
 export class UserApiKeyService {
@@ -89,6 +92,7 @@ export class UserApiKeyService {
         keyHash,
         keyPrefix,
         scopes: params.scopes,
+        apiVersion: CURRENT_API_VERSION,
         expiresAt: params.expiresAt,
       })
     })
@@ -158,6 +162,7 @@ export class UserApiKeyService {
       userId: match.userId,
       name: match.name,
       scopes: new Set(match.scopes),
+      apiVersion: (match.apiVersion ?? CURRENT_API_VERSION) as ApiVersion,
     }
   }
 }

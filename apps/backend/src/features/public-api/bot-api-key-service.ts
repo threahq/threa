@@ -6,6 +6,7 @@ import { botApiKeyId } from "../../lib/id"
 import { HttpError } from "@threa/backend-common"
 import type { WorkspacePermissionSlug } from "@threa/types"
 import { API_KEY_ELIGIBLE_SCOPES, BOT_KEY_PREFIX } from "@threa/types"
+import { CURRENT_API_VERSION, type ApiVersion } from "./versions"
 
 const KEY_BYTE_LENGTH = 32
 const STORED_PREFIX_LENGTH = 8
@@ -39,6 +40,8 @@ export interface ValidatedBotApiKey {
   botId: string
   name: string
   scopes: Set<string>
+  /** Wire version the key is pinned to; the version gate's floor when no header is sent. */
+  apiVersion: ApiVersion
 }
 
 export class BotApiKeyService {
@@ -98,6 +101,7 @@ export class BotApiKeyService {
         keyHash,
         keyPrefix,
         scopes: params.scopes,
+        apiVersion: CURRENT_API_VERSION,
         expiresAt: params.expiresAt,
       })
     })
@@ -167,6 +171,7 @@ export class BotApiKeyService {
       botId: match.botId,
       name: match.name,
       scopes: new Set(match.scopes),
+      apiVersion: (match.apiVersion ?? CURRENT_API_VERSION) as ApiVersion,
     }
   }
 }

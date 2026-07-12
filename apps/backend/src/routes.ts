@@ -79,6 +79,7 @@ import {
   type ApiKeyService,
 } from "@threa/backend-common"
 import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./middleware/public-api-auth"
+import { createApiVersionGate } from "./middleware/api-version"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import type { WorkspaceService } from "./features/workspaces"
 import type { StreamService } from "./features/streams"
@@ -997,6 +998,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app[route.method](
       toExpressPath(route.path),
       ...publicMiddleware,
+      createApiVersionGate(route.operationId),
       ...scopeGuard,
       ...(Array.isArray(handler) ? handler : [handler])
     )

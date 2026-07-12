@@ -21,6 +21,7 @@ function makeKey(overrides: Partial<ValidatedBotApiKey> = {}): ValidatedBotApiKe
     botId: "bot_alice",
     name: "default",
     scopes: new Set([WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE]),
+    apiVersion: "2026-07-12",
     ...overrides,
   }
 }

@@ -9,6 +9,7 @@ export interface BotApiKeyRow {
   keyHash: string
   keyPrefix: string
   scopes: string[]
+  apiVersion: string | null
   lastUsedAt: Date | null
   expiresAt: Date | null
   revokedAt: Date | null
@@ -17,7 +18,7 @@ export interface BotApiKeyRow {
 
 const SELECT_FIELDS = `
   id, workspace_id, bot_id, name, key_hash, key_prefix, scopes,
-  last_used_at, expires_at, revoked_at, created_at
+  api_version, last_used_at, expires_at, revoked_at, created_at
 `
 
 function mapRow(row: Record<string, unknown>): BotApiKeyRow {
@@ -29,6 +30,7 @@ function mapRow(row: Record<string, unknown>): BotApiKeyRow {
     keyHash: row.key_hash as string,
     keyPrefix: row.key_prefix as string,
     scopes: row.scopes as string[],
+    apiVersion: row.api_version as string | null,
     lastUsedAt: row.last_used_at as Date | null,
     expiresAt: row.expires_at as Date | null,
     revokedAt: row.revoked_at as Date | null,
@@ -47,14 +49,15 @@ export const BotApiKeyRepository = {
       keyHash: string
       keyPrefix: string
       scopes: string[]
+      apiVersion: string
       expiresAt: Date | null
     }
   ): Promise<BotApiKeyRow> {
     const result = await db.query<Record<string, unknown>>(sql`
-      INSERT INTO bot_api_keys (id, workspace_id, bot_id, name, key_hash, key_prefix, scopes, expires_at)
+      INSERT INTO bot_api_keys (id, workspace_id, bot_id, name, key_hash, key_prefix, scopes, api_version, expires_at)
       VALUES (
         ${params.id}, ${params.workspaceId}, ${params.botId}, ${params.name},
-        ${params.keyHash}, ${params.keyPrefix}, ${params.scopes}, ${params.expiresAt}
+        ${params.keyHash}, ${params.keyPrefix}, ${params.scopes}, ${params.apiVersion}, ${params.expiresAt}
       )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)

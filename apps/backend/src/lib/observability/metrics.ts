@@ -103,6 +103,16 @@ export const httpRequestsTotal = new Counter({
   registers: [registry],
 })
 
+// Happy-path request logs are silenced (customLogLevel), so version adoption
+// tracking — "who still runs an old pin" ahead of a sunset — lives here, not
+// in the logs. The logs only carry version context on 4xx/5xx.
+export const publicApiVersionRequests = new Counter({
+  name: "public_api_version_requests_total",
+  help: "Public API requests by resolved wire version and how it was resolved",
+  labelNames: ["version", "source"],
+  registers: [registry],
+})
+
 export const httpRequestDuration = new Histogram({
   name: "http_request_duration_seconds",
   help: "HTTP request duration in seconds",

@@ -298,6 +298,7 @@ describe("requireApiKeyScope", () => {
       userId: "user_1",
       name: "Test",
       scopes: new Set(["messages:search"]),
+      apiVersion: "2026-07-12",
     }
 
     let nextCalled = false
@@ -321,6 +322,7 @@ describe("requireApiKeyScope", () => {
       botId: "bot_1",
       name: "Bot Key",
       scopes: new Set(["messages:write"]),
+      apiVersion: "2026-07-12",
     }
 
     let nextCalled = false
@@ -344,6 +346,7 @@ describe("requireApiKeyScope", () => {
       userId: "user_1",
       name: "Test",
       scopes: new Set(["streams:read"]),
+      apiVersion: "2026-07-12",
     }
 
     let error: any = null
@@ -365,6 +368,7 @@ describe("requireApiKeyScope", () => {
       botId: "bot_1",
       name: "Bot Key",
       scopes: new Set(["messages:read"]),
+      apiVersion: "2026-07-12",
     }
 
     let error: any = null
