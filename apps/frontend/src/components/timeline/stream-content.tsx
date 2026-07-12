@@ -72,6 +72,7 @@ import {
   collectDelegationStatusPatches,
   findMessageItemIndex,
   findEventItemIndex,
+  findTimelineTargetIndex,
   getTimelineItemKey,
   filterVisibleItems,
   OLDER_SKELETON_ITEMS,
@@ -214,6 +215,14 @@ export function matchesDeepLinkTarget(event: { id: string; payload: unknown }, t
  * anchor/highlight the target when it lands.
  */
 export const DEEP_LINK_HOLD_MAX_MS = 600
+
+/**
+ * Gap between the viewport top and a top-aligned scroll target (the unread
+ * divider row): clears the sticky date header and leaves a sliver of context
+ * above so the unread run reads from the top. Shared by the jump-to-first-
+ * unread pill and the marker-open scroll so both land identically.
+ */
+const UNREAD_MARKER_TOP_GAP_PX = 56
 
 /**
  * Whether the timeline should keep showing the skeleton while a deep-link
@@ -1406,12 +1415,16 @@ export function StreamContent({
     [isJumpMode, skipInitialScroll, useVirtualized]
   )
 
-  // Scroll to a specific message and keep re-scrolling until the target
-  // element is actually visible in the scroller viewport. Items rendered
-  // with estimated heights cause the target to drift after the first scroll
-  // as surrounding items are measured; this loop keeps correcting until
-  // stable (or a short timeout). User input (wheel / touch / key) aborts
-  // the loop immediately so manual scrolling always wins.
+  // Scroll to a specific timeline row — addressed by message id or event id
+  // (any row `findTimelineTargetIndex` resolves, including session/command
+  // group cards) — and keep re-scrolling until the target element is actually
+  // visible in the scroller viewport. Items rendered with estimated heights
+  // cause the target to drift after the first scroll as surrounding items are
+  // measured; this loop keeps correcting until stable (or a short timeout).
+  // User input (wheel / touch / key) aborts the loop immediately so manual
+  // scrolling always wins. `align: "center"` (default) centers the target
+  // (deep links); `align: "start"` pins its top near the viewport top (the
+  // unread marker open).
   //
   // Implementation notes: Virtuoso's scrollToIndex expects the 0-based
   // index within the current data array (NOT firstItemIndex + idx). Once
@@ -1430,13 +1443,14 @@ export function StreamContent({
   // exactly the "I scroll up to read context, then get yanked back to the
   // linked message" deep-link bug.
   const scrollToMessage = useCallback(
-    (messageId: string) => {
+    (targetId: string, opts?: { align?: "center" | "start" }) => {
+      const align = opts?.align ?? "center"
       if (!useVirtualized) {
-        deepLinkDebug("scrollToMessage bail: not virtualized", messageId)
+        deepLinkDebug("scrollToMessage bail: not virtualized", targetId)
         return false
       }
-      if (findMessageItemIndex(visibleItems, messageId) < 0) {
-        deepLinkDebug("scrollToMessage bail: target not a timeline item yet", messageId)
+      if (findTimelineTargetIndex(visibleItems, targetId) < 0) {
+        deepLinkDebug("scrollToMessage bail: target not a timeline item yet", targetId)
         return false
       }
       // The user already took manual control for this scroll intent (e.g.
@@ -1444,7 +1458,7 @@ export function StreamContent({
       // start a retry loop that would fight them back to the target — the
       // mount anchor already placed it close enough.
       if (userInteractedAtRef.current > 0) {
-        deepLinkDebug("scrollToMessage bail: user already interacting", messageId)
+        deepLinkDebug("scrollToMessage bail: user already interacting", targetId)
         return false
       }
 
@@ -1462,7 +1476,7 @@ export function StreamContent({
 
       const scroller = virtuosoScrollerRef.current
       if (!scroller) {
-        deepLinkDebug("scrollToMessage bail: scroller not attached yet", messageId)
+        deepLinkDebug("scrollToMessage bail: scroller not attached yet", targetId)
         return false
       }
 
@@ -1499,25 +1513,43 @@ export function StreamContent({
           return
         }
 
-        const el = scroller.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`)
+        // Message rows carry both attributes; non-message rows (session cards,
+        // command groups, retitles) only data-event-id — one query serves any
+        // row the unread divider can anchor on.
+        const escaped = CSS.escape(targetId)
+        const el = scroller.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
 
         if (el) {
           // Target is rendered — scroll via DOM so we get pixel-precise positioning
           const sr = scroller.getBoundingClientRect()
           const er = el.getBoundingClientRect()
-          const elCenter = (er.top + er.bottom) / 2
           const scCenter = (sr.top + sr.bottom) / 2
-          const delta = elCenter - scCenter
+          // "start" pins the target's top near the viewport top (the unread
+          // marker open: a long first-unread message must read from its start,
+          // and centering can never satisfy fullyVisible for a row taller than
+          // the viewport). "center" is the deep-link behavior, unchanged.
+          const desiredTop = sr.top + UNREAD_MARKER_TOP_GAP_PX
+          const delta = align === "start" ? er.top - desiredTop : (er.top + er.bottom) / 2 - scCenter
           if (Math.abs(delta) > 2) {
             scroller.scrollTop += delta
           }
 
           // Re-measure after the scroll
           const er2 = el.getBoundingClientRect()
-          const fullyVisible = er2.top >= sr.top - 1 && er2.bottom <= sr.bottom + 1
           const hasScrollRoom = scroller.scrollHeight > scroller.clientHeight + 8
-          const centered = !hasScrollRoom || Math.abs((er2.top + er2.bottom) / 2 - scCenter) < 40
-          if (fullyVisible && centered) {
+          let settled: boolean
+          if (align === "start") {
+            // A target too close to the tail can't reach the top — the scroller
+            // clamps at max scroll. Visible-at-clamp counts as settled.
+            const atMaxScroll = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1
+            const topAligned = Math.abs(er2.top - desiredTop) < 4
+            settled = !hasScrollRoom || topAligned || (atMaxScroll && er2.top >= sr.top && er2.top <= sr.bottom)
+          } else {
+            const fullyVisible = er2.top >= sr.top - 1 && er2.bottom <= sr.bottom + 1
+            const centered = !hasScrollRoom || Math.abs((er2.top + er2.bottom) / 2 - scCenter) < 40
+            settled = fullyVisible && centered
+          }
+          if (settled) {
             stableFrames += 1
             if (stableFrames >= 2) {
               abort()
@@ -1533,14 +1565,17 @@ export function StreamContent({
           // makes react-virtuoso's offset-tree binary search dereference an
           // undefined node, throwing "Cannot read properties of undefined
           // (reading 'index')" which crashes the whole route.
-          const liveIdx = findMessageItemIndex(visibleItemsRef.current, messageId)
+          const liveIdx = findTimelineTargetIndex(visibleItemsRef.current, targetId)
           // liveIdx < 0 means the target is transiently out of the window
           // (e.g. a jump-window swap mid-flight). Skip this tick rather than
           // scroll to a wrong index; a later tick retries once it reappears,
           // and MAX_MS still bounds the loop if it never does.
           if (liveIdx >= 0) {
             try {
-              listRef.current?.scrollToIndex(liveIdx, { align: "center" })
+              listRef.current?.scrollToIndex(
+                liveIdx,
+                align === "start" ? { align: "start", offset: -UNREAD_MARKER_TOP_GAP_PX } : { align: "center" }
+              )
             } catch {
               // virtua can still throw internally on a freshly mounted,
               // not-yet-measured list. Non-fatal: the next tick retries once
@@ -1558,7 +1593,7 @@ export function StreamContent({
           abort()
         }
       }
-      deepLinkDebug("scrollToMessage: refine loop engaged", messageId)
+      deepLinkDebug("scrollToMessage: refine loop engaged", targetId)
       attempt()
       return true
     },
@@ -2038,7 +2073,7 @@ export function StreamContent({
       const idx = findEventItemIndex(visibleItems, dividerEventId)
       if (idx < 0) return
       try {
-        listRef.current?.scrollToIndex(idx, { align: "start", offset: -56 })
+        listRef.current?.scrollToIndex(idx, { align: "start", offset: -UNREAD_MARKER_TOP_GAP_PX })
       } catch {
         // A not-yet-measured virtua list can throw; the row is already rendered
         // by the time this button is clickable, so this is best-effort.
@@ -2084,11 +2119,12 @@ export function StreamContent({
     if (decision !== "scroll") return
     // Prefer scrollToMessage: its refine loop converges over rows virtua hasn't
     // measured yet (a one-shot scrollToIndex on a fresh window lands pages off
-    // target). Falls back to the one-shot path for non-message divider rows and
-    // the plain thread scroller, where all rows are real DOM already.
-    const dividerEvent = events.find((e) => e.id === dividerEventId)
-    const messageId = (dividerEvent?.payload as { messageId?: string } | null)?.messageId
-    if (!useVirtualized || !messageId || !scrollToMessage(messageId)) {
+    // target), and it targets the divider row by event id so non-message rows
+    // (session cards, retitles) get the same treatment. Top-aligned so a first
+    // unread message taller than the viewport reads from its start. Falls back
+    // to the one-shot path only for the plain thread scroller, where all rows
+    // are real DOM already.
+    if (!useVirtualized || !dividerEventId || !scrollToMessage(dividerEventId, { align: "start" })) {
       scrollToFirstUnread()
     }
   }, [
@@ -2101,7 +2137,6 @@ export function StreamContent({
     isJumpMode,
     skipInitialScroll,
     dividerEventId,
-    events,
     scrollToMessage,
     scrollToFirstUnread,
   ])
