@@ -39,7 +39,6 @@ function renderQuickLinks(props: Partial<Parameters<typeof SidebarQuickLinks>[0]
         isScheduledPage={false}
         scheduledCount={0}
         isActivityPage={false}
-        isBoardPage={false}
         isMemoryPage={false}
         isFilesPage={false}
         isLabelsPage={false}
@@ -109,7 +108,6 @@ describe("SidebarQuickLinks", () => {
           isScheduledPage={false}
           scheduledCount={0}
           isActivityPage={false}
-          isBoardPage={false}
           isMemoryPage={false}
           isFilesPage={false}
           isLabelsPage={false}

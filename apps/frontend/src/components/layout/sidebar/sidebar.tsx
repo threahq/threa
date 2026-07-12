@@ -38,6 +38,7 @@ import { SidebarSearchPanel, useSearchPanel } from "@/components/search"
 import { SidebarHeader } from "./sidebar-header"
 import { SidebarQuickLinks } from "./quick-links"
 import { BoardModeBlock } from "./board-mode-block"
+import { BoardLinkRow } from "./board-link-row"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
@@ -373,22 +374,24 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     quickLinksSlot = isBoardPage ? (
       <BoardModeBlock workspaceId={workspaceId} userId={user?.id ?? null} lensTotals={boardMode?.lensTotals ?? null} />
     ) : (
-      <SidebarQuickLinks
-        workspaceId={workspaceId}
-        quickLinks={sidebarConfig.quickLinks}
-        isDraftsPage={isDraftsPage}
-        draftCount={draftCount}
-        isSavedPage={isSavedPage}
-        savedCount={savedCount}
-        isScheduledPage={isScheduledPage}
-        scheduledCount={scheduledCount}
-        isActivityPage={isActivityPage}
-        isBoardPage={isBoardPage}
-        isMemoryPage={isMemoryPage}
-        isFilesPage={isFilesPage}
-        isLabelsPage={isLabelsPage}
-        unreadActivityCount={unreadActivityCount}
-      />
+      <>
+        <BoardLinkRow workspaceId={workspaceId} userId={user?.id ?? null} />
+        <SidebarQuickLinks
+          workspaceId={workspaceId}
+          quickLinks={sidebarConfig.quickLinks}
+          isDraftsPage={isDraftsPage}
+          draftCount={draftCount}
+          isSavedPage={isSavedPage}
+          savedCount={savedCount}
+          isScheduledPage={isScheduledPage}
+          scheduledCount={scheduledCount}
+          isActivityPage={isActivityPage}
+          isMemoryPage={isMemoryPage}
+          isFilesPage={isFilesPage}
+          isLabelsPage={isLabelsPage}
+          unreadActivityCount={unreadActivityCount}
+        />
+      </>
     )
   }
 
