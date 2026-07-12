@@ -9,6 +9,7 @@ import {
   findFirstMessageId,
   findMessageItemIndex,
   findEventItemIndex,
+  findTimelineTargetIndex,
   getTimelineItemKey,
   groupTimelineItems,
   injectGapItems,
@@ -565,6 +566,50 @@ describe("findEventItemIndex", () => {
 
   it("returns -1 when the event is not in the window so the cold-load scroll falls back to the bottom", () => {
     expect(findEventItemIndex([eventItem("evt_1")], "evt_gone")).toBe(-1)
+  })
+})
+
+describe("findTimelineTargetIndex", () => {
+  function messageItem(id: string, messageId: string): TimelineItem {
+    return {
+      type: "event",
+      event: createEvent({ id, sequence: id, eventType: "message_created", payload: { messageId } }),
+    }
+  }
+
+  it("resolves a message id like the deep-link lookup", () => {
+    const items: TimelineItem[] = [messageItem("evt_1", "msg_a"), messageItem("evt_2", "msg_b")]
+    expect(findTimelineTargetIndex(items, "msg_b")).toBe(1)
+  })
+
+  it("resolves a plain event id (a non-message divider anchor like a description row)", () => {
+    const items: TimelineItem[] = [
+      messageItem("evt_1", "msg_a"),
+      {
+        type: "event",
+        event: createEvent({ id: "evt_desc", sequence: "2", eventType: "description_set", payload: {} }),
+      },
+    ]
+    expect(findTimelineTargetIndex(items, "evt_desc")).toBe(1)
+  })
+
+  it("resolves a session group by its first event id — the marker-open case the message lookup misses", () => {
+    const items: TimelineItem[] = [
+      messageItem("evt_1", "msg_a"),
+      {
+        type: "session_group",
+        sessionId: "sess_1",
+        sessionVersion: 1,
+        events: [createEvent({ id: "evt_sess", sequence: "2", eventType: "message_created", payload: {} })],
+      },
+      messageItem("evt_3", "msg_c"),
+    ]
+    expect(findMessageItemIndex(items, "evt_sess")).toBe(-1)
+    expect(findTimelineTargetIndex(items, "evt_sess")).toBe(1)
+  })
+
+  it("returns -1 when the target is not in the window (never feed virtua a stale index)", () => {
+    expect(findTimelineTargetIndex([messageItem("evt_1", "msg_a")], "evt_gone")).toBe(-1)
   })
 })
 

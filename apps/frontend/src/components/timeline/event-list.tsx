@@ -426,6 +426,18 @@ export function findEventItemIndex(items: TimelineItem[], eventId: string): numb
   })
 }
 
+/**
+ * Index of the timeline item addressed by `targetId` — a message id, a plain
+ * event id, or the first-event id of a command/session group. The union of
+ * `findMessageItemIndex` and `findEventItemIndex`, for scroll targets that can
+ * be any row the unread divider anchors on (a session card's first unread is
+ * an `event_…` id inside a group, which the message lookup alone misses).
+ */
+export function findTimelineTargetIndex(items: TimelineItem[], targetId: string): number {
+  const idx = findMessageItemIndex(items, targetId)
+  return idx >= 0 ? idx : findEventItemIndex(items, targetId)
+}
+
 /** Returns a stable key string for a timeline item */
 export function getTimelineItemKey(item: TimelineItem): string {
   switch (item.type) {
@@ -753,7 +765,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
     <>
       {item.type === "day_divider" && <DayDivider dayStartMs={item.dayStartMs} />}
       {item.type === "command_group" && (
-        <div className="px-3 sm:px-6">
+        <div className="px-3 sm:px-6" data-event-id={item.events[0]?.id}>
           <CommandEvent events={item.events} />
         </div>
       )}
@@ -785,7 +797,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         </div>
       )}
       {item.type === "session_group" && !ctx.hideSessionCards && (
-        <div className="px-3 sm:px-6">
+        <div className="px-3 sm:px-6" data-event-id={item.events[0]?.id}>
           <AgentSessionEvent
             events={item.events}
             sessionVersion={item.sessionVersion}
