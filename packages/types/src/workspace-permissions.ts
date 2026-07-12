@@ -23,6 +23,8 @@ export const WORKSPACE_PERMISSION_SCOPES = {
   BOT_RUNTIME_WRITE: "bot-runtime:write",
   BOT_INVOCATIONS_READ: "bot-invocations:read",
   BOT_INVOCATIONS_WRITE: "bot-invocations:write",
+  DELEGATIONS_READ: "delegations:read",
+  DELEGATIONS_WRITE: "delegations:write",
   MEMBERS_WRITE: "members:write",
   WORKSPACE_ADMIN: "workspace:admin",
   WORKSPACE_OWNER: "workspace:owner",
@@ -135,6 +137,17 @@ export const WORKSPACE_PERMISSIONS: readonly WorkspacePermission[] = Object.free
     description: "Grants access to claim, complete, or fail bot invocations.",
   },
   {
+    slug: WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ,
+    name: "Read delegations",
+    description: "Grants access to list delegated tasks in accessible streams, including open tasks ready to claim.",
+  },
+  {
+    slug: WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE,
+    name: "Work delegations",
+    description:
+      "Grants an agent access to claim delegated tasks and report progress, completion (posting the result as the key's identity), or failure.",
+  },
+  {
     slug: WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE,
     name: "Manage members",
     description:
@@ -187,6 +200,8 @@ const READ_AND_SELF_SERVE: readonly WorkspacePermissionSlug[] = Object.freeze([
   WORKSPACE_PERMISSION_SCOPES.LABELS_READ,
   WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE,
   WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_PERSONAL,
+  WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ,
+  WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE,
 ])
 
 const ADMIN_ADDITIONS: readonly WorkspacePermissionSlug[] = Object.freeze([

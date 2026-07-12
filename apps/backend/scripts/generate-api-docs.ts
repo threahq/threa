@@ -71,6 +71,11 @@ const TAG_DEFS: { name: string; description: string }[] = [
     name: "Bot invocations",
     description: "Claim, renew, step through, complete, or fail the work a bot is summoned to do.",
   },
+  {
+    name: "Delegations",
+    description:
+      "Close the loop on delegated tasks: your local agent lists the open queue, claims a task, reports progress, and completes it with a result posted back to the stream.",
+  },
 ]
 
 function buildTags() {
@@ -130,7 +135,10 @@ function buildSpec() {
         parameters.push({
           name,
           in: "query",
-          required: required.has(name),
+          // zod-to-json-schema lists defaulted fields as required (the parsed
+          // OUTPUT always has them), but for a request parameter a default
+          // means the caller may omit it.
+          required: required.has(name) && (propSchema as { default?: unknown }).default === undefined,
           schema: propSchema,
         })
       }
@@ -198,6 +206,13 @@ function buildSpec() {
 
     if (route.canReturn404) {
       responses["404"] = { description: "Resource not found" }
+    }
+
+    if (route.canReturn409) {
+      responses["409"] = {
+        description: "Conflict — the resource is not in the state the operation requires",
+        content: { "application/json": { schema: errorJsonSchema } },
+      }
     }
 
     operation.responses = responses

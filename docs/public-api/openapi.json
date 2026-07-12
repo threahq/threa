@@ -3,7 +3,7 @@
   "info": {
     "title": "Threa Public API",
     "version": "1.0.0",
-    "description": "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer threa_uk_your_api_key_here\n```\n\nKeys use two prefixes. A **personal access key** (`threa_uk_…`) carries a member's own\nidentity and access; any member creates one in the Threa app under **Settings > API keys**.\nA **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace —\neither a personal bot or a shared workspace bot — and is minted from the bot's settings\n(personal bots by their owner, shared bots by an admin).\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\nHuman-readable docs: https://threa.io/developers (agent-friendly mirror: https://threa.io/llms.txt).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search` — Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read` — Grants access to list and search accessible streams in a workspace.\n- `messages:read` — Grants access to read messages in accessible streams.\n- `messages:write` — Grants access to send, update, and delete messages in accessible streams.\n- `users:read` — Grants access to list and search workspace users.\n- `memos:read` — Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read` — Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `attachments:write` — Grants access to upload and replace attachments in accessible streams.\n- `labels:read` — Grants access to list workspace labels and their assignments on accessible resources.\n- `labels:write` — Grants access to create, edit, archive, join, and apply labels to accessible resources such as streams.\n- `bot-runtime:read` — Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write` — Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read` — Grants access to read bot invocation state.\n- `bot-invocations:write` — Grants access to claim, complete, or fail bot invocations.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
+    "description": "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer threa_uk_your_api_key_here\n```\n\nKeys use two prefixes. A **personal access key** (`threa_uk_…`) carries a member's own\nidentity and access; any member creates one in the Threa app under **Settings > API keys**.\nA **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace —\neither a personal bot or a shared workspace bot — and is minted from the bot's settings\n(personal bots by their owner, shared bots by an admin).\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\nHuman-readable docs: https://threa.io/developers (agent-friendly mirror: https://threa.io/llms.txt).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search` — Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read` — Grants access to list and search accessible streams in a workspace.\n- `messages:read` — Grants access to read messages in accessible streams.\n- `messages:write` — Grants access to send, update, and delete messages in accessible streams.\n- `users:read` — Grants access to list and search workspace users.\n- `memos:read` — Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read` — Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `attachments:write` — Grants access to upload and replace attachments in accessible streams.\n- `labels:read` — Grants access to list workspace labels and their assignments on accessible resources.\n- `labels:write` — Grants access to create, edit, archive, join, and apply labels to accessible resources such as streams.\n- `bot-runtime:read` — Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write` — Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read` — Grants access to read bot invocation state.\n- `bot-invocations:write` — Grants access to claim, complete, or fail bot invocations.\n- `delegations:read` — Grants access to list delegated tasks in accessible streams, including open tasks ready to claim.\n- `delegations:write` — Grants an agent access to claim delegated tasks and report progress, completion (posting the result as the key's identity), or failure.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
   },
   "servers": [{ "url": "https://app.threa.io", "description": "Production" }],
   "security": [{ "apiKey": [] }],
@@ -2899,6 +2899,639 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/delegations": {
+      "get": {
+        "operationId": "listDelegations",
+        "summary": "List open delegations",
+        "tags": ["Delegations"],
+        "description": "List delegated tasks that are open to claim, filtered to what the key can access: a user-scoped key sees streams its user can access, a workspace key sees the bot's channel grants.",
+        "security": [{ "apiKey": ["delegations:read"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "default": "open", "type": "string", "const": "open" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "streamId": { "type": "string" },
+                          "title": { "type": "string" },
+                          "status": {
+                            "type": "string",
+                            "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                          },
+                          "claimedByLabel": { "type": "string" },
+                          "statusNote": { "type": "string" },
+                          "resultMessageId": { "type": "string" },
+                          "sourceConversationId": { "type": "string" },
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "statusChangedAt": { "type": "string", "format": "date-time" }
+                        },
+                        "required": ["id", "streamId", "title", "status", "createdAt", "statusChangedAt"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/claim": {
+      "post": {
+        "operationId": "claimDelegation",
+        "summary": "Claim an open delegation",
+        "tags": ["Delegations"],
+        "description": "Atomically claim an open delegation. Returns the brief, context refs, and the claim token (cleartext, exactly once — send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": { "claimedByLabel": { "type": "string", "minLength": 1, "maxLength": 200 } },
+                "required": ["claimedByLabel"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "streamId": { "type": "string" },
+                        "title": { "type": "string" },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimedByLabel": { "type": "string" },
+                        "statusNote": { "type": "string" },
+                        "resultMessageId": { "type": "string" },
+                        "sourceConversationId": { "type": "string" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "statusChangedAt": { "type": "string", "format": "date-time" },
+                        "brief": { "type": "string" },
+                        "contextRefs": { "type": "array", "items": { "type": "string" } },
+                        "claimToken": { "type": "string" },
+                        "claimExpiresAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": [
+                        "id",
+                        "streamId",
+                        "title",
+                        "status",
+                        "createdAt",
+                        "statusChangedAt",
+                        "brief",
+                        "contextRefs",
+                        "claimToken",
+                        "claimExpiresAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" },
+          "409": {
+            "description": "Conflict — the resource is not in the state the operation requires",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/heartbeat": {
+      "post": {
+        "operationId": "heartbeatDelegation",
+        "summary": "Renew a delegation claim",
+        "tags": ["Delegations"],
+        "description": "Push the claim's expiry forward while the local agent is still working. Liveness only — no status change on the card. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          },
+          {
+            "name": "X-Threa-Callback-Token",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Per-claim token from the delegation claim response (binds the caller to its claim)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": { "claimExpiresAt": { "type": "string", "format": "date-time" } },
+                      "required": ["claimExpiresAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/status": {
+      "post": {
+        "operationId": "reportDelegationStatus",
+        "summary": "Report delegation progress",
+        "tags": ["Delegations"],
+        "description": "Mark the delegation running and put a free-text progress note on its card (each report replaces the previous note; the claim TTL renews). Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          },
+          {
+            "name": "X-Threa-Callback-Token",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Per-claim token from the delegation claim response (binds the caller to its claim)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": { "statusNote": { "type": "string", "minLength": 1, "maxLength": 2000 } },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "streamId": { "type": "string" },
+                        "title": { "type": "string" },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimedByLabel": { "type": "string" },
+                        "statusNote": { "type": "string" },
+                        "resultMessageId": { "type": "string" },
+                        "sourceConversationId": { "type": "string" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "statusChangedAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": ["id", "streamId", "title", "status", "createdAt", "statusChangedAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/complete": {
+      "post": {
+        "operationId": "completeDelegation",
+        "summary": "Complete a delegation",
+        "tags": ["Delegations"],
+        "description": "Complete the claimed delegation. When resultMarkdown is given, the result is posted to the delegation's stream in the same transaction as the completion — authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. It enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          },
+          {
+            "name": "X-Threa-Callback-Token",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Per-claim token from the delegation claim response (binds the caller to its claim)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "resultMarkdown": { "type": "string", "minLength": 1, "maxLength": 50000 },
+                  "metadata": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-zA-Z0-9_.\\-:]+$"
+                    },
+                    "additionalProperties": { "type": "string", "maxLength": 256 }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "streamId": { "type": "string" },
+                        "title": { "type": "string" },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimedByLabel": { "type": "string" },
+                        "statusNote": { "type": "string" },
+                        "resultMessageId": { "type": "string" },
+                        "sourceConversationId": { "type": "string" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "statusChangedAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": ["id", "streamId", "title", "status", "createdAt", "statusChangedAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/fail": {
+      "post": {
+        "operationId": "failDelegation",
+        "summary": "Fail a delegation",
+        "tags": ["Delegations"],
+        "description": "Mark the claimed delegation failed, recording why on its card. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          },
+          {
+            "name": "X-Threa-Callback-Token",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Per-claim token from the delegation claim response (binds the caller to its claim)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": { "errorMessage": { "type": "string", "minLength": 1, "maxLength": 2000 } },
+                "required": ["errorMessage"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "streamId": { "type": "string" },
+                        "title": { "type": "string" },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimedByLabel": { "type": "string" },
+                        "statusNote": { "type": "string" },
+                        "resultMessageId": { "type": "string" },
+                        "sourceConversationId": { "type": "string" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "statusChangedAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": ["id", "streamId", "title", "status", "createdAt", "statusChangedAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/streams": {
       "get": {
         "operationId": "listStreams",
@@ -2920,7 +3553,7 @@
           {
             "name": "limit",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 200 }
           }
         ],
@@ -3208,7 +3841,7 @@
           {
             "name": "limit",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 200 }
           }
         ],
@@ -3298,7 +3931,7 @@
           {
             "name": "limit",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 100 }
           }
         ],
@@ -3952,7 +4585,7 @@
           {
             "name": "limit",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 200 }
           }
         ],
@@ -4851,6 +5484,10 @@
     {
       "name": "Bot invocations",
       "description": "Claim, renew, step through, complete, or fail the work a bot is summoned to do."
+    },
+    {
+      "name": "Delegations",
+      "description": "Close the loop on delegated tasks: your local agent lists the open queue, claims a task, reports progress, and completes it with a result posted back to the stream."
     }
   ]
 }

@@ -1,0 +1,353 @@
+import type { Request, Response } from "express"
+import type { Pool } from "pg"
+import type { PoolClient } from "pg"
+import {
+  AuthorTypes,
+  DelegationStatuses,
+  THREA_CALLBACK_TOKEN_HEADER,
+  sentViaApiKey,
+  type AuthorType,
+} from "@threa/types"
+import { HttpError } from "@threa/backend-common"
+import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
+import { withTransaction } from "../../db"
+import { validateRequest } from "../../lib/validation"
+import { normalizeMessage, toEmoji } from "../emoji"
+import type { EventService } from "../messaging"
+import type { StreamService } from "../streams"
+import { listAccessibleStreamIds } from "../streams"
+import { E2eStreamsRepository } from "../e2e-streams"
+import type { BotChannelService } from "../api-keys"
+import { hashCallbackToken } from "../agents"
+import { BotRepository } from "./bot-repository"
+import type { DelegatedTask, DelegationService } from "../delegations"
+import {
+  claimDelegationSchema,
+  completeDelegationSchema,
+  failDelegationSchema,
+  listDelegationsQuerySchema,
+  reportDelegationStatusSchema,
+} from "./schemas"
+
+interface DelegationPublicApiDeps {
+  pool: Pool
+  delegationService: DelegationService
+  eventService: EventService
+  streamService: StreamService
+  botChannelService: BotChannelService
+}
+
+/** Wire shape for a delegation on the public API. Claim-related secrets never appear here. */
+function serializeDelegation(delegation: DelegatedTask) {
+  return {
+    id: delegation.id,
+    streamId: delegation.streamId,
+    title: delegation.title,
+    status: delegation.status,
+    claimedByLabel: delegation.claimedByLabel ?? undefined,
+    statusNote: delegation.statusNote ?? undefined,
+    resultMessageId: delegation.resultMessageId ?? undefined,
+    sourceConversationId: delegation.sourceConversationId ?? undefined,
+    createdAt: delegation.createdAt.toISOString(),
+    statusChangedAt: delegation.statusChangedAt.toISOString(),
+  }
+}
+
+/**
+ * Public API for the delegation lifecycle (roadmap 5.3) — how an agent closes
+ * the loop on a `delegate_task` hand-off: list the open queue, claim one,
+ * report progress, and complete with a result message or fail.
+ *
+ * Identity model mirrors public `sendMessage`, two branches per key kind:
+ * a user-scoped key is the key owner's own local agent (INV-65) — the result
+ * message is authored as the user with `sentVia` API-key provenance; a
+ * workspace (bot) key is a shared runner — the result is authored as the bot
+ * entity. Access is symmetrical: user keys see streams the user can access,
+ * bot keys see the bot's channel grants. Either way the message enters the
+ * normal pipeline, so GAM memorizes the outcome.
+ *
+ * Claim binding: `claim` mints the token (returned once in cleartext; sha256
+ * at rest via the service); every later transition authenticates with the
+ * `X-Threa-Callback-Token` header — the sealed-claim pattern. A lapsed, stolen,
+ * or already-terminal claim makes the token-guarded CAS match nothing → 404,
+ * mirroring bot-invocation renew/complete. Claiming is CAS `open → claimed`
+ * only: an `expired` delegation stays terminal (the sweep's visible transition
+ * keeps its meaning) — re-claiming was considered and deliberately left out.
+ */
+export function createDelegationPublicApiHandlers({
+  pool,
+  delegationService,
+  eventService,
+  streamService,
+  botChannelService,
+}: DelegationPublicApiDeps) {
+  type KeyIdentity =
+    | { kind: "user"; userId: string; userName: string; apiKeyId: string }
+    | { kind: "bot"; botId: string }
+
+  function resolveKeyIdentity(req: Request): KeyIdentity {
+    if (req.userApiKey && req.user) {
+      return { kind: "user", userId: req.user.id, userName: req.user.name, apiKeyId: req.userApiKey.id }
+    }
+    if (req.botApiKey) {
+      return { kind: "bot", botId: req.botApiKey.botId }
+    }
+    throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  async function streamAccessibleFor(identity: KeyIdentity, workspaceId: string, streamId: string): Promise<boolean> {
+    if (identity.kind === "user") {
+      return (await streamService.tryAccess(streamId, workspaceId, identity.userId)) !== null
+    }
+    return botChannelService.isStreamAccessibleForBot(workspaceId, identity.botId, streamId)
+  }
+
+  /**
+   * Load a delegation the key may act on, or 404. Every lifecycle op gates on
+   * CURRENT stream access, not just claim time: a key that loses access
+   * mid-claim (revoked channel grant, removed member) can no longer drive the
+   * card — its status notes stop landing and its heartbeats lapse the claim to
+   * the visible `expired` instead of renewing a zombie it can never finish.
+   * 404 (not 403) so a non-member probing ids can't tell an existing
+   * delegation from a missing one, mirroring the first-party cancel handler.
+   */
+  async function resolveAccessibleDelegation(
+    identity: KeyIdentity,
+    workspaceId: string,
+    id: string
+  ): Promise<DelegatedTask> {
+    const delegation = await delegationService.getById({ workspaceId, id })
+    if (!delegation || !(await streamAccessibleFor(identity, workspaceId, delegation.streamId))) {
+      throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
+    }
+    return delegation
+  }
+
+  function requireCallbackToken(req: Request): string {
+    const token = req.header(THREA_CALLBACK_TOKEN_HEADER)
+    if (!token) {
+      throw new HttpError(`Missing ${THREA_CALLBACK_TOKEN_HEADER} header`, { status: 401, code: "UNAUTHORIZED" })
+    }
+    return token
+  }
+
+  return {
+    /** The claimable queue, filtered to streams the key's identity can access (INV-62 / channel grants). */
+    async listDelegations(req: Request, res: Response) {
+      const identity = resolveKeyIdentity(req)
+      const workspaceId = req.workspaceId!
+      validateRequest(listDelegationsQuerySchema, req.query)
+
+      const open = await delegationService.listOpen({ workspaceId })
+      const accessible =
+        identity.kind === "user"
+          ? await listAccessibleStreamIds(
+              pool,
+              workspaceId,
+              identity.userId,
+              open.map((d) => d.streamId)
+            )
+          : new Set(await botChannelService.getAccessibleStreamIdsForBot(workspaceId, identity.botId))
+      res.json({ data: open.filter((d) => accessible.has(d.streamId)).map(serializeDelegation) })
+    },
+
+    /**
+     * CAS `open → claimed`. Exactly one concurrent claimer wins; a lost race is
+     * 409 (the delegation exists but is not open), an invisible or missing id
+     * is 404. The response is the executor's full working set: the brief, the
+     * context refs, and the claim token (cleartext, returned exactly once).
+     */
+    async claimDelegation(req: Request, res: Response) {
+      const identity = resolveKeyIdentity(req)
+      const workspaceId = req.workspaceId!
+      const id = req.params.delegationId!
+      const { claimedByLabel } = validateRequest(claimDelegationSchema, req.body)
+
+      await resolveAccessibleDelegation(identity, workspaceId, id)
+
+      const result = await delegationService.claim({ workspaceId, id, claimedByLabel })
+      if (!result.ok) {
+        if (result.reason === "not_found") {
+          throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
+        }
+        throw new HttpError("Delegation is not open to claim", { status: 409, code: "DELEGATION_NOT_OPEN" })
+      }
+
+      res.json({
+        data: {
+          ...serializeDelegation(result.delegation),
+          brief: result.delegation.brief,
+          contextRefs: result.delegation.contextRefs,
+          claimToken: result.claimToken,
+          claimExpiresAt: result.delegation.claimExpiresAt!.toISOString(),
+        },
+      })
+    },
+
+    /** Push the claim TTL forward. Liveness only — no status change, no card event. */
+    async heartbeatDelegation(req: Request, res: Response) {
+      const identity = resolveKeyIdentity(req)
+      const claimToken = requireCallbackToken(req)
+      await resolveAccessibleDelegation(identity, req.workspaceId!, req.params.delegationId!)
+
+      const claimExpiresAt = await delegationService.heartbeat({
+        workspaceId: req.workspaceId!,
+        id: req.params.delegationId!,
+        claimToken,
+      })
+      if (!claimExpiresAt) {
+        throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+      }
+      res.json({ data: { claimExpiresAt: claimExpiresAt.toISOString() } })
+    },
+
+    /** Progress report: `claimed|running → running`, note lands on the card, TTL renews. */
+    async reportDelegationStatus(req: Request, res: Response) {
+      const identity = resolveKeyIdentity(req)
+      const claimToken = requireCallbackToken(req)
+      const { statusNote } = validateRequest(reportDelegationStatusSchema, req.body)
+      await resolveAccessibleDelegation(identity, req.workspaceId!, req.params.delegationId!)
+
+      const running = await delegationService.markRunning({
+        workspaceId: req.workspaceId!,
+        id: req.params.delegationId!,
+        claimToken,
+        statusNote,
+      })
+      if (!running) {
+        throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+      }
+      res.json({ data: serializeDelegation(running) })
+    },
+
+    /**
+     * Terminal success. When a result is given, the message insert and the
+     * `completed` CAS share one transaction, so a lost claim race (cancelled /
+     * expired under us) rolls the message back instead of leaving an orphan —
+     * the `completeBotInvocation` shape. The author follows the key kind:
+     * user key → the user (with via-API provenance), bot key → the bot.
+     */
+    async completeDelegation(req: Request, res: Response) {
+      const identity = resolveKeyIdentity(req)
+      const workspaceId = req.workspaceId!
+      const id = req.params.delegationId!
+      const claimToken = requireCallbackToken(req)
+      const { resultMarkdown, metadata } = validateRequest(completeDelegationSchema, req.body)
+
+      const delegation = await resolveAccessibleDelegation(identity, workspaceId, id)
+
+      // Idempotent retry: a completion can commit and then lose its response
+      // in transit. The terminal row keeps the claim token hash, so a retry
+      // bearing the same token gets the committed outcome back instead of a
+      // false 404 it has no other endpoint to disambiguate.
+      if (
+        delegation.status === DelegationStatuses.COMPLETED &&
+        delegation.claimTokenHash === hashCallbackToken(claimToken)
+      ) {
+        res.json({
+          data: { ...serializeDelegation(delegation), resultMessageId: delegation.resultMessageId ?? undefined },
+        })
+        return
+      }
+
+      let author: { authorId: string; authorType: AuthorType; sentVia?: string } | null = null
+      if (resultMarkdown) {
+        // Defensive: delegations are never created on sealed streams (the tool
+        // is absent there), but a plaintext write into an E2E stream would
+        // break the sealed timeline — fail before any insert.
+        if (await E2eStreamsRepository.isE2eStream(pool, workspaceId, delegation.streamId)) {
+          throw new HttpError("Stream is end-to-end encrypted; the public API cannot post plaintext to it", {
+            status: 400,
+            code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+          })
+        }
+        if (identity.kind === "user") {
+          author = {
+            authorId: identity.userId,
+            authorType: AuthorTypes.USER,
+            sentVia: sentViaApiKey(identity.apiKeyId),
+          }
+        } else {
+          const bot = await BotRepository.findById(pool, workspaceId, identity.botId)
+          if (!bot || bot.archivedAt) {
+            throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+          }
+          author = { authorId: bot.id, authorType: AuthorTypes.BOT }
+        }
+      }
+      const contentMarkdown = resultMarkdown ? normalizeMessage(resultMarkdown) : null
+      const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
+      const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
+
+      const { completed, resultMessageId } = await withTransaction(pool, async (client: PoolClient) => {
+        // Validate the claim BEFORE any write (FOR UPDATE, token-guarded): an
+        // invalid or lapsed token does no work, and the row lock serializes
+        // complete-vs-cancel — the findActiveClaimForUpdate shape.
+        const claim = await delegationService.findClaimedForUpdate(client, { workspaceId, id, claimToken })
+        if (!claim) {
+          throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+        }
+        let resultMessageId: string | undefined
+        if (contentMarkdown && contentJson && author) {
+          const { message } = await eventService.createMessageInTransaction(client, {
+            workspaceId,
+            streamId: delegation.streamId,
+            authorId: author.authorId,
+            authorType: author.authorType,
+            contentJson,
+            contentMarkdown,
+            attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+            clientMessageId: `delegation:${delegation.id}`,
+            sentVia: author.sentVia,
+            metadata,
+          })
+          resultMessageId = message.id
+        }
+        const completed = await delegationService.completeInTransaction(client, {
+          workspaceId,
+          id,
+          claimToken,
+          resultMessageId,
+        })
+        if (!completed) {
+          throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+        }
+        return { completed, resultMessageId }
+      })
+
+      res.json({ data: { ...serializeDelegation(completed), resultMessageId } })
+    },
+
+    /** Terminal failure: records why on the card. */
+    async failDelegation(req: Request, res: Response) {
+      const identity = resolveKeyIdentity(req)
+      const claimToken = requireCallbackToken(req)
+      const { errorMessage } = validateRequest(failDelegationSchema, req.body)
+      await resolveAccessibleDelegation(identity, req.workspaceId!, req.params.delegationId!)
+
+      const failed = await delegationService.fail({
+        workspaceId: req.workspaceId!,
+        id: req.params.delegationId!,
+        claimToken,
+        statusNote: errorMessage,
+      })
+      if (!failed) {
+        // Same lost-response retry story as complete: a fail that already
+        // committed answers the retry with its outcome, not a false 404.
+        const existing = await delegationService.getById({
+          workspaceId: req.workspaceId!,
+          id: req.params.delegationId!,
+        })
+        if (
+          existing?.status === DelegationStatuses.FAILED &&
+          existing.claimTokenHash === hashCallbackToken(claimToken)
+        ) {
+          res.json({ data: serializeDelegation(existing) })
+          return
+        }
+        throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+      }
+      res.json({ data: serializeDelegation(failed) })
+    },
+  }
+}

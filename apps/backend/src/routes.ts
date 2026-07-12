@@ -52,7 +52,7 @@ import {
 import { createLinkPreviewHandlers } from "./features/link-previews"
 import { createGiphyHandlers } from "./features/giphy"
 import { createWorkspaceIntegrationHandlers } from "./features/workspace-integrations"
-import { createPublicApiHandlers, createBotHandlers } from "./features/public-api"
+import { createPublicApiHandlers, createBotHandlers, createDelegationPublicApiHandlers } from "./features/public-api"
 import { BotRuntimeService, type BotRuntimeWriteOps } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
 import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from "./features/voice-transcription"
@@ -923,6 +923,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     pool,
     io: deps.io,
   })
+  const delegationPublicApi = createDelegationPublicApiHandlers({
+    pool,
+    delegationService,
+    eventService,
+    streamService,
+    botChannelService,
+  })
   const publicMiddleware = [rateLimits.publicApiWorkspace, rateLimits.publicApiKey, publicAuth] as const
 
   app.post(
@@ -1059,6 +1066,47 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
     publicApi.failBotInvocation
+  )
+
+  // Delegations (roadmap 5.3) — the agent lifecycle over delegated tasks.
+  // Both key kinds (identity resolved in the handlers: user key posts results
+  // as the user, workspace key as the bot); claim mints the token, later
+  // transitions authenticate via X-Threa-Callback-Token.
+  app.get(
+    "/api/v1/workspaces/:workspaceId/delegations",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ),
+    delegationPublicApi.listDelegations
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/claim",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    delegationPublicApi.claimDelegation
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/heartbeat",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    delegationPublicApi.heartbeatDelegation
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/status",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    delegationPublicApi.reportDelegationStatus
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/complete",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    delegationPublicApi.completeDelegation
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/delegations/:delegationId/fail",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE),
+    delegationPublicApi.failDelegation
   )
 
   app.get(
