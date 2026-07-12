@@ -4,7 +4,7 @@ import { createReadUrlTool, createWebSearchTool } from "@threa/agent-runtime"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
 import { createWorkspaceResearchTool } from "../../tools"
-import { buildSystemPrompt } from "./system-prompt"
+import { buildSystemPrompt, buildResponseStyleSection } from "./system-prompt"
 
 const persona: Persona = {
   id: "persona_ariadne",
@@ -19,6 +19,10 @@ const persona: Persona = {
   temperature: 0.2,
   maxTokens: 1000,
   enabledTools: null,
+  tonePreset: null,
+  brevityPreset: null,
+  tonePrompt: null,
+  brevityPrompt: null,
   managedBy: "system",
   status: "active",
   createdAt: new Date("2026-01-01T00:00:00Z"),
@@ -354,5 +358,63 @@ describe("buildSystemPrompt", () => {
 
     expect(absent).not.toContain("## Stream Brief")
     expect(blank).not.toContain("## Stream Brief")
+  })
+
+  const DEFAULT_STYLE =
+    "Be brief. Default to 1–3 sentences. Match the depth to what was asked — a simple question gets a simple answer. Only go longer when the topic genuinely requires it (step-by-step instructions, complex analysis the user requested, etc.). Avoid preamble, filler, and restating what the user said. Be friendly and warm in tone, but don't pad with extra words."
+
+  test("styleSlots absent → Response Style section is the verbatim pre-slot default", () => {
+    const prompt = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [])
+    expect(prompt).toContain(`## Response Style\n\n${DEFAULT_STYLE}`)
+  })
+
+  test("a set styleSlots preset fragment lands in the Response Style section", () => {
+    const prompt = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      undefined,
+      null,
+      null,
+      { tone: "TONE_FRAGMENT_MARKER", brevity: "BREVITY_FRAGMENT_MARKER" }
+    )
+    // Both aspects replaced, brevity-then-tone, still inside the same section.
+    expect(prompt).toContain("## Response Style\n\nBREVITY_FRAGMENT_MARKER TONE_FRAGMENT_MARKER")
+    expect(prompt).not.toContain(DEFAULT_STYLE)
+  })
+})
+
+describe("buildResponseStyleSection", () => {
+  const DEFAULT_BREVITY =
+    "Be brief. Default to 1–3 sentences. Match the depth to what was asked — a simple question gets a simple answer. Only go longer when the topic genuinely requires it (step-by-step instructions, complex analysis the user requested, etc.). Avoid preamble, filler, and restating what the user said."
+  const DEFAULT_TONE = "Be friendly and warm in tone, but don't pad with extra words."
+
+  test("no slots → both defaults, joined brevity-then-tone (byte-identical to the old block)", () => {
+    expect(buildResponseStyleSection()).toBe(`\n\n## Response Style\n\n${DEFAULT_BREVITY} ${DEFAULT_TONE}`)
+    expect(buildResponseStyleSection({})).toBe(`\n\n## Response Style\n\n${DEFAULT_BREVITY} ${DEFAULT_TONE}`)
+  })
+
+  test("tone set only → replaces tone, keeps default brevity text", () => {
+    expect(buildResponseStyleSection({ tone: "Be gruff." })).toBe(
+      `\n\n## Response Style\n\n${DEFAULT_BREVITY} Be gruff.`
+    )
+  })
+
+  test("brevity set only → replaces brevity, keeps default tone text", () => {
+    expect(buildResponseStyleSection({ brevity: "One word." })).toBe(
+      `\n\n## Response Style\n\nOne word. ${DEFAULT_TONE}`
+    )
+  })
+
+  test("blank/whitespace slot falls back to the default for that aspect", () => {
+    expect(buildResponseStyleSection({ tone: "   ", brevity: "" })).toBe(
+      `\n\n## Response Style\n\n${DEFAULT_BREVITY} ${DEFAULT_TONE}`
+    )
   })
 })

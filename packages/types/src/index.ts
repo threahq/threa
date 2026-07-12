@@ -56,6 +56,13 @@ export {
   type PersonaManagedBy,
   PERSONA_STATUSES,
   type PersonaStatus,
+  // Persona style slots (tone / brevity presets)
+  TONE_PRESETS,
+  type TonePreset,
+  TonePresets,
+  BREVITY_PRESETS,
+  type BrevityPreset,
+  BrevityPresets,
   // Attachments
   STORAGE_PROVIDERS,
   type StorageProvider,
@@ -830,6 +837,9 @@ export {
 export {
   type PersonaModelOption,
   PERSONA_SYSTEM_PROMPT_MAX_CHARS,
+  PERSONA_SLOT_MAX_CHARS,
+  SYSTEM_PERSONA_EDITABLE_FIELDS,
+  type SystemPersonaEditableField,
   personaConfigPatchSchema,
   type PersonaConfigPatch,
   personaConfigStatusSchema,

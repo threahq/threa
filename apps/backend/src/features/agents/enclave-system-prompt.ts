@@ -3,6 +3,7 @@ import type { UserPreferences } from "@threa/types"
 import type { Stream } from "../streams"
 import { buildStreamContext } from "./context-builder"
 import { buildSystemPrompt } from "./companion/prompt/system-prompt"
+import { resolvePersonaStyleSlots } from "./companion/config"
 import type { Persona } from "./persona-repository"
 import type { BuiltInAgentConfig } from "./built-in-agents"
 
@@ -63,7 +64,18 @@ export async function buildEnclaveSystemPrompt(params: {
     null,
     // No tool sections server-side: the enclave appends them from its real
     // toolset (see the module doc above).
-    []
+    [],
+    // ENCLAVE PARITY: the intervening positional args default undefined, but
+    // styleSlots MUST be passed explicitly — the enclave resolves the persona
+    // server-side, so a set tone/brevity preset has to reach the same prompt
+    // builder here or the encrypted turn silently diverges from the in-process
+    // companion's response style.
+    null,
+    null,
+    null,
+    null,
+    null,
+    resolvePersonaStyleSlots(enclavePersona)
   )
 
   // The shared prompt advertises the reduced toolset but never explains *why*

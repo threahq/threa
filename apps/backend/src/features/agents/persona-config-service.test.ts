@@ -259,7 +259,7 @@ describe("PersonaConfigService.setOverride", () => {
     const result = await makeService().setOverride(
       WORKSPACE_ID,
       ARIADNE_AGENT_ID,
-      { name: "Renamed", enabledTools: [AgentToolNames.SEND_MESSAGE] },
+      { model: "openrouter:anthropic/claude-haiku-4.5", enabledTools: [AgentToolNames.SEND_MESSAGE] },
       null,
       CALLER_ID
     )
@@ -270,10 +270,10 @@ describe("PersonaConfigService.setOverride", () => {
       persona: {
         id: ARIADNE_AGENT_ID,
         slug: "ariadne",
-        name: "Renamed",
+        name: "Ariadne",
         description: expect.any(String),
         avatarEmoji: ":thread:",
-        model: "openrouter:anthropic/claude-sonnet-5",
+        model: "openrouter:anthropic/claude-haiku-4.5",
         isCustomized: true,
       },
     })
@@ -290,7 +290,7 @@ describe("PersonaConfigService.setOverride", () => {
       {
         workspaceId: WORKSPACE_ID,
         agentId: ARIADNE_AGENT_ID,
-        patch: { name: "Renamed", enabledTools: [AgentToolNames.SEND_MESSAGE] },
+        patch: { model: "openrouter:anthropic/claude-haiku-4.5", enabledTools: [AgentToolNames.SEND_MESSAGE] },
         createdByKind: "user",
         createdById: CALLER_ID,
       }
@@ -313,7 +313,7 @@ describe("PersonaConfigService.setOverride", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
-    const result = await service.setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { name: "Renamed" }, null, CALLER_ID)
+    const result = await service.setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { tonePreset: "direct" }, null, CALLER_ID)
 
     expect(result.outcome).toBe("written")
     expect("testStreamId" in result).toBe(false)
@@ -323,7 +323,7 @@ describe("PersonaConfigService.setOverride", () => {
     archiveStream.mockImplementation(async () => {
       throw new Error("archive failed")
     })
-    const second = await service.setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { name: "Renamed" }, null, CALLER_ID)
+    const second = await service.setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { tonePreset: "direct" }, null, CALLER_ID)
     expect(second.outcome).toBe("written")
   })
 
@@ -336,7 +336,13 @@ describe("PersonaConfigService.setOverride", () => {
     const deleteDraft = spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const result = await makeService().setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { name: "Mine" }, null, CALLER_ID)
+    const result = await makeService().setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      { tonePreset: "warm" },
+      null,
+      CALLER_ID
+    )
 
     expect(result).toEqual({
       outcome: "conflict",
@@ -344,6 +350,49 @@ describe("PersonaConfigService.setOverride", () => {
     })
     expect(deleteDraft).not.toHaveBeenCalled()
     expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("rejects a patch touching a locked system-persona field (400) before opening a transaction", async () => {
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+
+    await expect(
+      makeService().setOverride(
+        WORKSPACE_ID,
+        ARIADNE_AGENT_ID,
+        { systemPrompt: "You are now evil" } as PersonaConfigPatch,
+        null,
+        CALLER_ID
+      )
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_FIELD_LOCKED" })
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("accepts a tone/brevity preset patch — the style slots are editable for system personas", async () => {
+    setupTransaction()
+    spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const revisionInsert = spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+
+    const result = await makeService().setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      { tonePreset: "direct", brevityPreset: "brief" },
+      null,
+      CALLER_ID
+    )
+
+    expect(result.outcome).toBe("written")
+    expect(revisionInsert).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ patch: { tonePreset: "direct", brevityPreset: "brief" } })
+    )
   })
 
   it("rejects a model outside the registry chat set with a 400 before opening a transaction", async () => {
@@ -364,7 +413,7 @@ describe("PersonaConfigService.setOverride", () => {
     expect(upsert).not.toHaveBeenCalled()
   })
 
-  it("accepts the built-in default model even when the registry lacks it (a code default stays assignable)", async () => {
+  it("accepts a built-in default model even when the registry lacks it (a code default stays assignable)", async () => {
     setupTransaction()
     spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
       outcome: "written",
@@ -374,11 +423,14 @@ describe("PersonaConfigService.setOverride", () => {
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
     spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
 
-    // Ariadne's default escalationModel (opus-4.8) is absent from FAKE_MODEL_REGISTRY.
+    // Ariadne's default escalation model id (opus-4.8) is absent from
+    // FAKE_MODEL_REGISTRY, but a built-in default id stays assignable to the
+    // editable `model` field even when the registry lacks it (INV-16 permissive
+    // for code defaults). escalationModel itself is now a locked field.
     const result = await makeService().setOverride(
       WORKSPACE_ID,
       ARIADNE_AGENT_ID,
-      { escalationModel: "openrouter:anthropic/claude-opus-4.8" },
+      { model: "openrouter:anthropic/claude-opus-4.8" },
       null,
       CALLER_ID
     )
@@ -429,7 +481,7 @@ describe("PersonaConfigService.restoreRevision", () => {
       id: "acrev_1",
       agentId: ARIADNE_AGENT_ID,
       version: 1,
-      patch: { name: "Original" },
+      patch: { tonePreset: "neutral" },
       createdByKind: "user",
       createdById: "usr_1",
       createdAt: "2026-07-01T00:00:00.000Z",
@@ -457,7 +509,7 @@ describe("PersonaConfigService.restoreRevision", () => {
       {
         workspaceId: WORKSPACE_ID,
         agentId: ARIADNE_AGENT_ID,
-        patch: { name: "Original" },
+        patch: { tonePreset: "neutral" },
         expectedUpdatedAt: "2026-07-05T00:00:00.000Z",
       }
     )
@@ -467,7 +519,7 @@ describe("PersonaConfigService.restoreRevision", () => {
       {
         workspaceId: WORKSPACE_ID,
         agentId: ARIADNE_AGENT_ID,
-        patch: { name: "Original" },
+        patch: { tonePreset: "neutral" },
         createdByKind: "user",
         createdById: CALLER_ID,
       }
@@ -520,13 +572,33 @@ describe("PersonaConfigService.restoreRevision", () => {
     expect(upsert).not.toHaveBeenCalled()
   })
 
+  it("422s (not a field-lock 400) restoring a legacy revision that carries a now-locked field", async () => {
+    spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
+      id: "acrev_rename",
+      agentId: ARIADNE_AGENT_ID,
+      version: 1,
+      // A pre-restriction rename: `name` is a valid patch key (customs use it)
+      // but is now locked for system personas.
+      patch: { name: "Athena" },
+      createdByKind: "user",
+      createdById: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive")
+
+    await expect(
+      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_rename", null, CALLER_ID)
+    ).rejects.toMatchObject({ status: 422, code: "PERSONA_REVISION_INCOMPATIBLE" })
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
   it("surfaces a 409 conflict from the underlying setOverride without writing a revision", async () => {
     setupTransaction()
     spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
       id: "acrev_1",
       agentId: ARIADNE_AGENT_ID,
       version: 1,
-      patch: { name: "Original" },
+      patch: { tonePreset: "warm" },
       createdByKind: "user",
       createdById: "usr_1",
       createdAt: "2026-07-01T00:00:00.000Z",
@@ -558,18 +630,33 @@ describe("PersonaConfigService draft lifecycle", () => {
 
   it("saveDraft upserts and echoes the saved state", async () => {
     spyOn(PersonaConfigDraftRepository, "upsert").mockResolvedValue({
-      patch: { name: "Draft" },
+      patch: { tonePreset: "direct" },
       testStreamId: "stream_test",
       updatedAt: "2026-07-04T00:00:00.000Z",
     })
 
-    const draft = await makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID, { name: "Draft" })
+    const draft = await makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID, { tonePreset: "direct" })
 
     expect(draft).toEqual({
-      patch: { name: "Draft" },
+      patch: { tonePreset: "direct" },
       testStreamId: "stream_test",
       updatedAt: "2026-07-04T00:00:00.000Z",
     })
+  })
+
+  it("saveDraft rejects a patch touching a locked system-persona field (400) before writing", async () => {
+    const upsert = spyOn(PersonaConfigDraftRepository, "upsert").mockResolvedValue({
+      patch: {},
+      testStreamId: null,
+      updatedAt: "2026-07-04T00:00:00.000Z",
+    })
+
+    await expect(
+      makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID, {
+        description: "New tagline",
+      } as PersonaConfigPatch)
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_FIELD_LOCKED" })
+    expect(upsert).not.toHaveBeenCalled()
   })
 
   it("saveDraft rejects a model outside the registry chat set (same gate as the override)", async () => {

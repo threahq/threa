@@ -1,3 +1,4 @@
+import type { TonePreset, BrevityPreset } from "@threa/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
@@ -48,6 +49,18 @@ export interface Persona {
   temperature: number | null
   maxTokens: number | null
   enabledTools: string[] | null
+  /**
+   * Style slots (roadmap 7.1). A built-in persona carries preset keys
+   * (`tonePreset`/`brevityPreset`); a custom persona carries the free-text
+   * `tonePrompt`/`brevityPrompt` instead. The two shapes are mutually exclusive
+   * — a built-in's text slots are null, a custom's presets are null.
+   * `resolvePersonaStyleSlots` (companion/config.ts) collapses whichever is set
+   * into the assembled `## Response Style` section.
+   */
+  tonePreset: TonePreset | null
+  brevityPreset: BrevityPreset | null
+  tonePrompt: string | null
+  brevityPrompt: string | null
   managedBy: "system" | "workspace"
   status: "active" | "disabled" | "archived"
   createdAt: Date
@@ -68,6 +81,14 @@ function mapRowToPersona(row: PersonaRow): Persona {
     temperature: row.temperature === null ? null : Number(row.temperature),
     maxTokens: row.max_tokens,
     enabledTools: row.enabled_tools,
+    // Custom personas never carry preset keys — only free-text slots.
+    tonePreset: null,
+    brevityPreset: null,
+    // The `tone_prompt`/`brevity_prompt` columns don't exist yet; step 2's
+    // append-only migration adds them, after which SELECT_FIELDS + PersonaRow
+    // gain them and these read `row.tone_prompt`/`row.brevity_prompt`.
+    tonePrompt: null,
+    brevityPrompt: null,
     managedBy: row.managed_by as "system" | "workspace",
     status: row.status as "active" | "disabled" | "archived",
     createdAt: row.created_at,
@@ -97,6 +118,10 @@ function mapBuiltInToPersona(agent: BuiltInAgentConfig): Persona {
     temperature: agent.temperature,
     maxTokens: agent.maxTokens,
     enabledTools: agent.enabledTools,
+    tonePreset: agent.tonePreset,
+    brevityPreset: agent.brevityPreset,
+    tonePrompt: agent.tonePrompt,
+    brevityPrompt: agent.brevityPrompt,
     managedBy: agent.managedBy,
     status: agent.status,
     createdAt: BUILT_IN_AGENT_CONFIG_TIMESTAMP,

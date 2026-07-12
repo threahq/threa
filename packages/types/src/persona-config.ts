@@ -7,7 +7,7 @@
 // `availableModels`; built-in defaults stay legal even if the registry lacks them.
 
 import { z } from "zod"
-import { AGENT_TOOL_NAMES } from "./constants"
+import { AGENT_TOOL_NAMES, TONE_PRESETS, BREVITY_PRESETS } from "./constants"
 
 /**
  * One selectable chat model for the persona editor's model / escalation-model
@@ -31,6 +31,31 @@ export interface PersonaModelOption {
 export const PERSONA_SYSTEM_PROMPT_MAX_CHARS = 8000
 
 /**
+ * Upper bound on a custom persona's free-text style slot (tone / brevity). A
+ * slot is a short imperative style directive spliced into the `## Response
+ * Style` section — not a document store — so it is bounded well below the system
+ * prompt. Enforced by the custom-persona write path (roadmap 7.1 step 2) and the
+ * resolved-config schema; surfaced as the slot editor's character counter.
+ * Built-in personas use preset keys, not free text, so their slots are unbounded
+ * by construction (the authored fragment is code, not user input).
+ */
+export const PERSONA_SLOT_MAX_CHARS = 500
+
+/**
+ * The fields of a system (built-in) persona an admin may edit. A `managed_by:
+ * "system"` persona's identity and prompt are locked — only its toolset, model,
+ * and the two style presets are configurable. The write path
+ * (`PersonaConfigService.setOverride` / `saveDraft`) rejects any other patch key
+ * with 400 `PERSONA_FIELD_LOCKED`; resolution of already-stored patches stays
+ * permissive (a legacy override carrying `systemPrompt` keeps applying — a v0
+ * restore clears it). Single source of truth so the frontend restricted editor
+ * offers exactly these fields (INV-33). Each entry is a key of
+ * {@link PersonaConfigPatch}.
+ */
+export const SYSTEM_PERSONA_EDITABLE_FIELDS = ["enabledTools", "model", "tonePreset", "brevityPreset"] as const
+export type SystemPersonaEditableField = (typeof SYSTEM_PERSONA_EDITABLE_FIELDS)[number]
+
+/**
  * The editable fields of a persona config, as a sparse patch. Field types
  * mirror the backend's full built-in config schema exactly so a patch that
  * validates here also survives the merge-and-reparse in
@@ -52,6 +77,11 @@ export const personaConfigPatchSchema = z
     temperature: z.number().min(0).max(2).nullable(),
     maxTokens: z.number().int().positive().nullable(),
     enabledTools: z.array(z.enum(AGENT_TOOL_NAMES)),
+    // Style presets (roadmap 7.1). Built-in personas only carry preset keys;
+    // customs use free-text slots (`tonePrompt`/`brevityPrompt` on the row, not
+    // in this patch). Null = no preset = that aspect keeps its default guidance.
+    tonePreset: z.enum(TONE_PRESETS).nullable(),
+    brevityPreset: z.enum(BREVITY_PRESETS).nullable(),
   })
   .partial()
   .strict()
@@ -86,6 +116,15 @@ export const personaResolvedConfigSchema = z.object({
   temperature: z.number().nullable(),
   maxTokens: z.number().int().positive().nullable(),
   enabledTools: z.array(z.enum(AGENT_TOOL_NAMES)),
+  // Style slots (roadmap 7.1). A built-in persona resolves TONE/BREVITY from the
+  // preset keys; a custom persona from the free-text `tonePrompt`/`brevityPrompt`
+  // columns. Both shapes ride the wire type now so step 2's custom write path
+  // doesn't re-touch the shared schema — for built-ins the text fields are always
+  // null, for customs the preset fields are always null.
+  tonePreset: z.enum(TONE_PRESETS).nullable(),
+  brevityPreset: z.enum(BREVITY_PRESETS).nullable(),
+  tonePrompt: z.string().max(PERSONA_SLOT_MAX_CHARS).nullable(),
+  brevityPrompt: z.string().max(PERSONA_SLOT_MAX_CHARS).nullable(),
   managedBy: z.literal("system"),
   status: personaConfigStatusSchema,
   visibility: personaConfigVisibilitySchema,

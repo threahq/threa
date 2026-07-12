@@ -2,6 +2,8 @@ import type { Pool } from "pg"
 import type { ModelRegistry } from "@threa/agent-runtime"
 import {
   personaConfigPatchSchema,
+  SYSTEM_PERSONA_EDITABLE_FIELDS,
+  type SystemPersonaEditableField,
   AuthorTypes,
   CompanionModes,
   MemoryModes,
@@ -44,6 +46,25 @@ export type SetPersonaOverrideResult =
   // (empty patch), which returns the persona to its built-in config.
   | { outcome: "written"; persona: PersonaListItem; updatedAt: string | null }
   | { outcome: "conflict"; current: AgentConfigOverrideDetail | null }
+
+/**
+ * Reject a write patch touching any field a system persona locks (identity,
+ * prompt, temperature, maxTokens, escalationModel). Only toolset, model, and the
+ * two style presets are editable for `managed_by: "system"` (roadmap 7.1 product
+ * spec). Applies to the WRITE paths only (`setOverride`/`saveDraft`); resolution
+ * of already-stored patches stays permissive so a legacy override keeps
+ * applying (INV-11 fail-safe — a v0 restore is how a workspace clears one).
+ */
+function assertSystemPersonaFieldsEditable(patch: PersonaConfigPatch): void {
+  const editable = new Set<string>(SYSTEM_PERSONA_EDITABLE_FIELDS as readonly SystemPersonaEditableField[])
+  const locked = Object.keys(patch).filter((key) => !editable.has(key))
+  if (locked.length > 0) {
+    throw new HttpError(`These fields are not editable for a system persona: ${locked.join(", ")}`, {
+      status: 400,
+      code: "PERSONA_FIELD_LOCKED",
+    })
+  }
+}
 
 function toPersonaListItem(config: PersonaResolvedConfig, isCustomized: boolean): PersonaListItem {
   return {
@@ -212,6 +233,7 @@ export class PersonaConfigService {
     if (!base) {
       throw new Error(`setOverride called for non-editable persona ${agentId}`)
     }
+    assertSystemPersonaFieldsEditable(patch)
     this.assertModelsAllowed(patch, base)
 
     // An empty patch means "identical to the built-in defaults" — remove the
@@ -356,7 +378,21 @@ export class PersonaConfigService {
         code: "PERSONA_REVISION_INCOMPATIBLE",
       })
     }
-    return this.setOverride(workspaceId, personaId, parsed.data, expectedUpdatedAt, callerId)
+    try {
+      return await this.setOverride(workspaceId, personaId, parsed.data, expectedUpdatedAt, callerId)
+    } catch (error) {
+      // A legacy revision may carry fields since locked for system personas
+      // (e.g. a pre-restriction rename). On a *restore* that is the same "no
+      // longer restorable" situation as schema drift — surface the incompatible
+      // semantic, not a confusing field-lock error on a history action.
+      if (error instanceof HttpError && error.code === "PERSONA_FIELD_LOCKED") {
+        throw new HttpError("This revision can no longer be restored — it changes fields that are now locked", {
+          status: 422,
+          code: "PERSONA_REVISION_INCOMPATIBLE",
+        })
+      }
+      throw error
+    }
   }
 
   /** Upsert the caller's draft patch (race-safe, INV-20). Returns its saved state. */
@@ -370,6 +406,7 @@ export class PersonaConfigService {
     if (!base) {
       throw new Error(`saveDraft called for non-editable persona ${agentId}`)
     }
+    assertSystemPersonaFieldsEditable(patch)
     this.assertModelsAllowed(patch, base)
 
     const detail = await PersonaConfigDraftRepository.upsert(this.pool, {

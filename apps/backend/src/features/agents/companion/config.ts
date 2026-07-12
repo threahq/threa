@@ -1,4 +1,6 @@
+import type { TonePreset, BrevityPreset } from "@threa/types"
 import { BUILT_IN_AGENTS, ARIADNE_AGENT_ID } from "../built-in-agents"
+import type { Persona } from "../persona-repository"
 
 export const COMPANION_MODEL_ID = BUILT_IN_AGENTS[ARIADNE_AGENT_ID].model
 
@@ -25,3 +27,46 @@ export const EPISODE_SUMMARY_MAX_TOKENS = 256
 
 // How many prior completed-session summaries a turn carries in its context.
 export const EPISODE_SUMMARY_INJECT_COUNT = 3
+
+// Persona style-slot fragments (roadmap 7.1). Each preset maps to an authored,
+// style-only prompt fragment that replaces its aspect's default guidance in the
+// `## Response Style` section (buildResponseStyleSection). Backend-only — the
+// frontend renders the preset key + a one-line description, never this text —
+// and co-located with the persona-style eval suite that asserts each fragment
+// shifts output (INV-44, one source). Deliberately capability-free: they steer
+// how the persona *sounds* and how *long* it goes, nothing about what it can do.
+// A fork materializes the source persona's preset into a custom's free-text slot
+// by copying the matching fragment.
+export const TONE_PRESET_FRAGMENTS: Record<TonePreset, string> = {
+  warm: "Be warm and encouraging. Acknowledge the person's effort or situation, and let genuine care come through in how you phrase things. Keep it natural — warmth lives in the wording, not in added flattery.",
+  neutral:
+    "Keep an even, professional tone. State things plainly, without emotional coloring, cheerleading, or hedging. Be courteous, and let the substance carry the message.",
+  direct:
+    "Be blunt and plainspoken. Lead with the point and skip the softening preamble. Say what you actually think, even when it is inconvenient, and don't cushion feedback in qualifiers.",
+}
+
+export const BREVITY_PRESET_FRAGMENTS: Record<BrevityPreset, string> = {
+  brief:
+    "Be terse. Answer in a sentence or two whenever the question allows, and cut every word that isn't load-bearing. Skip preamble, restatement, and closing pleasantries — give the answer and stop.",
+  balanced:
+    "Match the length to the question. Give a simple question a couple of sentences, and reserve fuller explanations for topics that genuinely need them. Don't pad, but don't strip out context that helps.",
+  thorough:
+    "Be comprehensive. Walk through the reasoning, cover the relevant edge cases, and lay out steps or alternatives in full when they matter. Prefer completeness over brevity, while still avoiding filler.",
+}
+
+/**
+ * Resolve a persona's tone/brevity style slots to the text that overrides each
+ * aspect's default `## Response Style` guidance. Built-in personas resolve their
+ * preset keys to the authored fragments above; custom personas pass their
+ * free-text slot content straight through (a fork already materialized any
+ * source preset into that text). An unset slot resolves to `undefined`, which
+ * `buildResponseStyleSection` reads as "keep the default guidance for this
+ * aspect". Free text wins over a preset if both are somehow present (customs
+ * never carry presets, so this only guards malformed input).
+ */
+export function resolvePersonaStyleSlots(persona: Persona): { tone?: string; brevity?: string } {
+  const tone = persona.tonePrompt ?? (persona.tonePreset ? TONE_PRESET_FRAGMENTS[persona.tonePreset] : undefined)
+  const brevity =
+    persona.brevityPrompt ?? (persona.brevityPreset ? BREVITY_PRESET_FRAGMENTS[persona.brevityPreset] : undefined)
+  return { tone, brevity }
+}

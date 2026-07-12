@@ -73,6 +73,13 @@ Keep responses short and direct. Default to a few sentences unless the user asks
       AgentToolNames.LINEAR_LIST_PROJECTS,
       AgentToolNames.LINEAR_GET_PROJECT,
     ],
+    // Style slots unset = today's default `## Response Style` guidance (no
+    // fragment). An admin sets a preset to shift tone/brevity; the free-text
+    // slots stay null for built-ins (customs use them instead).
+    tonePreset: null,
+    brevityPreset: null,
+    tonePrompt: null,
+    brevityPrompt: null,
     managedBy: "system",
     status: "active",
     visibility: "visible",
@@ -91,6 +98,10 @@ Keep responses short and direct. Default to a few sentences unless the user asks
     temperature: 0,
     maxTokens: null,
     enabledTools: [],
+    tonePreset: null,
+    brevityPreset: null,
+    tonePrompt: null,
+    brevityPrompt: null,
     managedBy: "system",
     status: "active",
     visibility: "internal",

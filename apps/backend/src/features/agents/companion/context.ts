@@ -21,6 +21,7 @@ import { buildStreamContext, type StreamContext } from "../context-builder"
 import type { ContextWindowPolicy } from "../context-window-policy"
 import type { ConversationSummaryService } from "../conversation-summary-service"
 import { buildSystemPrompt } from "./prompt/system-prompt"
+import { resolvePersonaStyleSlots } from "./config"
 import { loadTurnDigestPromptBlock } from "./turn-digests"
 import { loadEpisodeSummaryPromptBlock } from "./episode-summaries"
 import { loadConversationHighlight } from "./conversation-highlight"
@@ -428,7 +429,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       spawnedFromContext,
       followUp,
       previousSessionsBlock,
-      streamBrief?.content ?? null
+      streamBrief?.content ?? null,
+      resolvePersonaStyleSlots(persona)
     )
     if (turnDigestBlock) {
       systemPrompt += `\n\n${turnDigestBlock}`

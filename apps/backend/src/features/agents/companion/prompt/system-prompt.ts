@@ -8,6 +8,35 @@ import { buildPromptSectionForStreamType } from "./stream-context-sections"
 import { buildEarlyPurposeSection, buildLatePurposeSection } from "./turn-purpose-prompt"
 
 /**
+ * Default guidance for each aspect of the `## Response Style` section, used
+ * verbatim when a persona leaves that style slot unset. Splitting the original
+ * one-paragraph block into a brevity clause and a tone clause lets a set preset
+ * replace one aspect without disturbing the other; joined with a single space
+ * (brevity then tone) they reproduce the pre-slot paragraph byte-for-byte, so an
+ * unset persona is a behavioral no-op.
+ */
+const DEFAULT_BREVITY_GUIDANCE =
+  "Be brief. Default to 1–3 sentences. Match the depth to what was asked — a simple question gets a simple answer. Only go longer when the topic genuinely requires it (step-by-step instructions, complex analysis the user requested, etc.). Avoid preamble, filler, and restating what the user said."
+const DEFAULT_TONE_GUIDANCE = "Be friendly and warm in tone, but don't pad with extra words."
+
+/**
+ * The `## Response Style` section. Each aspect (tone, brevity) uses the
+ * persona's resolved slot text when set, else its default guidance. Ordered
+ * brevity-then-tone to match the original block. Returns the section prefixed
+ * with its two leading blank lines so it splices into the prompt exactly where
+ * the inline block used to.
+ */
+export function buildResponseStyleSection(style: { tone?: string; brevity?: string } = {}): string {
+  const brevity = style.brevity?.trim() || DEFAULT_BREVITY_GUIDANCE
+  const tone = style.tone?.trim() || DEFAULT_TONE_GUIDANCE
+  return `
+
+## Response Style
+
+${brevity} ${tone}`
+}
+
+/**
  * Build the system prompt for the persona agent.
  * Produces stream-type-specific context and the turn's purpose section (mention,
  * scheduled follow-up, or supersede reconciliation — dispatched in turn-purpose-prompt).
@@ -30,7 +59,8 @@ export function buildSystemPrompt(
   spawnedFromContext?: string | null,
   followUp?: { note: string; scheduledFor: Date } | null,
   previousSessions?: string | null,
-  streamBrief?: string | null
+  streamBrief?: string | null,
+  styleSlots?: { tone?: string; brevity?: string }
 ): string {
   if (!persona.systemPrompt) {
     throw new Error(`Persona "${persona.name}" (${persona.id}) has no system prompt configured`)
@@ -145,11 +175,9 @@ You already have the IDs you need most of the time — no extra tool call requir
 - **\`describe_memo\`** returns each source message's \`messageId\`, \`streamId\`, \`authorId\`, and \`authorType\` — directly composable into a pointer URL.
 - **\`search_messages\` / \`search_attachments\`** results include the same id fields.
 
-Never invent IDs — if you don't have one, paraphrase instead. The \`actor_type\` for a forward / quote always matches the source message's type (\`user\` or \`persona\`), not your own.
+Never invent IDs — if you don't have one, paraphrase instead. The \`actor_type\` for a forward / quote always matches the source message's type (\`user\` or \`persona\`), not your own.`
 
-## Response Style
-
-Be brief. Default to 1–3 sentences. Match the depth to what was asked — a simple question gets a simple answer. Only go longer when the topic genuinely requires it (step-by-step instructions, complex analysis the user requested, etc.). Avoid preamble, filler, and restating what the user said. Be friendly and warm in tone, but don't pad with extra words.`
+  prompt += buildResponseStyleSection(styleSlots)
 
   // Per-tool prose, from the definitions of the tools actually wired this turn.
   const toolSections = buildToolPromptSections(tools)
