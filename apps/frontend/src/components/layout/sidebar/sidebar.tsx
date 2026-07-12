@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
@@ -39,6 +39,7 @@ import { SidebarShell } from "./sidebar-shell"
 import { SidebarSearchPanel, useSearchPanel } from "@/components/search"
 import { SidebarHeader } from "./sidebar-header"
 import { SidebarQuickLinks } from "./quick-links"
+import { BoardModeBlock } from "./board-mode-block"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
@@ -325,6 +326,32 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // removing the section from the editor takes it out of both the normal list
   // (resolved as a positioned section) and the empty-streams state.
   const hasQuickLinksSection = sidebarConfig.sections.some((s) => s.spec.kind === "quicklinks")
+  // On `/board` (flag on) the board block replaces the quick-links block in place;
+  // every other surface keeps the unchanged quick links.
+  let quickLinksSlot: ReactNode
+  if (hasQuickLinksSection) {
+    quickLinksSlot =
+      isBoardPage && boardEnabled ? (
+        <BoardModeBlock workspaceId={workspaceId} userId={user?.id ?? null} />
+      ) : (
+        <SidebarQuickLinks
+          workspaceId={workspaceId}
+          quickLinks={boardQuickLinks}
+          isDraftsPage={isDraftsPage}
+          draftCount={draftCount}
+          isSavedPage={isSavedPage}
+          savedCount={savedCount}
+          isScheduledPage={isScheduledPage}
+          scheduledCount={scheduledCount}
+          isActivityPage={isActivityPage}
+          isBoardPage={isBoardPage}
+          isMemoryPage={isMemoryPage}
+          isFilesPage={isFilesPage}
+          isLabelsPage={isLabelsPage}
+          unreadActivityCount={unreadActivityCount}
+        />
+      )
+  }
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
@@ -598,26 +625,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onAssignStreamLabel={handleAssignStreamLabel}
             onStreamMovedFromLabel={handleStreamMovedFromLabel}
             homeHintFor={(id) => homeHintById.get(id) ?? null}
-            quickLinksSlot={
-              hasQuickLinksSection ? (
-                <SidebarQuickLinks
-                  workspaceId={workspaceId}
-                  quickLinks={boardQuickLinks}
-                  isDraftsPage={isDraftsPage}
-                  draftCount={draftCount}
-                  isSavedPage={isSavedPage}
-                  savedCount={savedCount}
-                  isScheduledPage={isScheduledPage}
-                  scheduledCount={scheduledCount}
-                  isActivityPage={isActivityPage}
-                  isBoardPage={isBoardPage}
-                  isMemoryPage={isMemoryPage}
-                  isFilesPage={isFilesPage}
-                  isLabelsPage={isLabelsPage}
-                  unreadActivityCount={unreadActivityCount}
-                />
-              ) : undefined
-            }
+            quickLinksSlot={quickLinksSlot}
             scrollContainerRef={scrollContainerRef}
           />
         }

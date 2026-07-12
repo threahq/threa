@@ -55,6 +55,25 @@ export function savedViewHref(workspaceId: string, view: BoardView, homeLens: Bo
   return qs ? `${base}?${qs}` : base
 }
 
+/** The lens's URL (INV-59): the viewer's home lens rests at the bare `/board`,
+ *  every other lens takes a segment (so `all` gets `/board/all` when it isn't
+ *  home). `search` rides along so switching lens keeps the scope (and an open
+ *  panel). When a saved view is the home, the bare `/board` bounces to that view,
+ *  so the home lens must keep its explicit segment or it'd be unreachable — omit
+ *  the segment only when no saved-view home is active. Sibling of
+ *  {@link savedViewHref}; shared by the filter bar's lens menu and the board-mode
+ *  sidebar block so the two can't drift (INV-35). */
+export function lensHref(
+  workspaceId: string,
+  lens: BoardLens,
+  search: string,
+  homeLens: BoardLens,
+  hasSavedViewHome: boolean
+): string {
+  const base = !hasSavedViewHome && lens === homeLens ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${lens}`
+  return `${base}${search}`
+}
+
 /** Order-independent membership equality — URL params carry no stable order, so
  *  `?in=a,b` and `?in=b,a` are the same selection. */
 function sameMembers(a: readonly string[], b: readonly string[]): boolean {
