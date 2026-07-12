@@ -102,8 +102,8 @@ function PersonaRevisionRow({
               <AlertDialogHeader>
                 <AlertDialogTitle>Restore version {revision.version}?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This re-commits this version as the persona's live configuration. It becomes a new revision, so the
-                  current version stays in history.
+                  Makes this version the persona&apos;s active configuration. It&apos;s saved as a new revision, so the
+                  current one stays in history.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -166,7 +166,7 @@ function PersonaDefaultRow({
               <AlertDialogHeader>
                 <AlertDialogTitle>Restore built-in defaults?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This removes the workspace&apos;s customizations and returns the persona to its shipped configuration.
+                  Removes this workspace&apos;s customizations and returns the persona to its built-in configuration.
                   Your earlier versions stay in history.
                 </AlertDialogDescription>
               </AlertDialogHeader>
@@ -178,7 +178,7 @@ function PersonaDefaultRow({
           </AlertDialog>
         )}
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">The configuration Ariadne ships with.</p>
+      <p className="mt-1 text-xs text-muted-foreground">The persona&apos;s built-in configuration.</p>
     </li>
   )
 }
@@ -258,8 +258,8 @@ export function PersonaHistoryPanel({
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Revision history</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
-            Every saved configuration, newest first. Restoring re-commits an earlier version as the current one —
-            nothing is lost.
+            Every saved configuration, newest first. Restoring makes an earlier version current and keeps the rest in
+            history.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
         <ResponsiveDialogBody className="py-2">
