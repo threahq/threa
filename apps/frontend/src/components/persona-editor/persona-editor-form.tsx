@@ -100,7 +100,11 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
   const promptEditorRef = useRef<RichEditorHandle>(null)
   const [promptFormatOpen, setPromptFormatOpen] = useState(false)
 
-  const defaults = config.defaults
+  // This form is the built-in (restricted) editor, which always carries
+  // `defaults`. The custom-persona branch (config.kind === "custom", defaults
+  // null) gets its own full editor in a later step; until then it never reaches
+  // this component.
+  const defaults = config.defaults!
   const savedValues = useMemo(() => applyPatch(defaults, config.overridePatch), [defaults, config.overridePatch])
 
   const [values, setValues] = useState<PersonaFormValues>(() =>
@@ -233,7 +237,8 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
               ...old,
               overridePatch: current?.patch ?? null,
               overrideUpdatedAt: current?.updatedAt ?? null,
-              resolved: { ...old.defaults, ...(current?.patch ?? {}) },
+              // Built-in editor only (defaults always present); the custom form is a later step.
+              resolved: { ...old.defaults!, ...(current?.patch ?? {}) },
             }
           : old
       )

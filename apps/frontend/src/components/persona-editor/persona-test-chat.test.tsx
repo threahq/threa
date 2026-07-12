@@ -57,6 +57,7 @@ function resolved(): PersonaResolvedConfig {
 function config(testStreamId: string | null): PersonaConfigResponse {
   const r = resolved()
   return {
+    kind: "builtin",
     defaults: r,
     overridePatch: null,
     overrideUpdatedAt: null,

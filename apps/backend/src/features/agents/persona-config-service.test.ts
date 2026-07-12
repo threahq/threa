@@ -6,8 +6,10 @@ import { PersonaConfigService } from "./persona-config-service"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
+import { PersonaRepository, type Persona } from "./persona-repository"
+import { TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS } from "./companion/config"
 import { OutboxRepository } from "../../lib/outbox"
-import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID } from "./built-in-agents"
+import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID, getVisibleBuiltInAgentConfig } from "./built-in-agents"
 import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "workspace_1"
@@ -64,13 +66,21 @@ function makeService(streamService: any = { getStreamById: mock(async (id: strin
 describe("PersonaConfigService.listVisible", () => {
   afterEach(() => mock.restore())
 
-  it("lists Ariadne as not-customized when no override exists", async () => {
+  it("lists Ariadne as a not-customized built-in when no override exists", async () => {
     spyOn(AgentConfigOverrideRepository, "listActiveByWorkspace").mockResolvedValue([])
+    spyOn(PersonaRepository, "listActiveCustoms").mockResolvedValue([])
 
     const personas = await makeService().listVisible(WORKSPACE_ID)
 
     expect(personas).toHaveLength(1)
-    expect(personas[0]).toMatchObject({ id: ARIADNE_AGENT_ID, slug: "ariadne", name: "Ariadne", isCustomized: false })
+    expect(personas[0]).toMatchObject({
+      id: ARIADNE_AGENT_ID,
+      slug: "ariadne",
+      name: "Ariadne",
+      kind: "builtin",
+      avatarUrl: null,
+      isCustomized: false,
+    })
     expect(personas[0]).not.toHaveProperty("systemPrompt")
   })
 
@@ -78,6 +88,7 @@ describe("PersonaConfigService.listVisible", () => {
     spyOn(AgentConfigOverrideRepository, "listActiveByWorkspace").mockResolvedValue([
       { agentId: ARIADNE_AGENT_ID, patch: { name: "Custom Ariadne" } },
     ])
+    spyOn(PersonaRepository, "listActiveCustoms").mockResolvedValue([])
 
     const personas = await makeService().listVisible(WORKSPACE_ID)
 
@@ -88,10 +99,45 @@ describe("PersonaConfigService.listVisible", () => {
     spyOn(AgentConfigOverrideRepository, "listActiveByWorkspace").mockResolvedValue([
       { agentId: ARIADNE_AGENT_ID, patch: { model: 42, bogus: true } },
     ])
+    spyOn(PersonaRepository, "listActiveCustoms").mockResolvedValue([])
 
     const personas = await makeService().listVisible(WORKSPACE_ID)
 
     expect(personas[0]).toMatchObject({ id: ARIADNE_AGENT_ID, name: "Ariadne", isCustomized: true })
+  })
+
+  it("appends active customs after the built-ins as kind:custom", async () => {
+    spyOn(AgentConfigOverrideRepository, "listActiveByWorkspace").mockResolvedValue([])
+    spyOn(PersonaRepository, "listActiveCustoms").mockResolvedValue([
+      {
+        id: "persona_custom_1",
+        workspaceId: WORKSPACE_ID,
+        slug: "helper",
+        name: "Helper",
+        description: "A helper",
+        avatarEmoji: ":sparkles:",
+        systemPrompt: "Help.",
+        model: "openrouter:anthropic/claude-haiku-4.5",
+        escalationModel: null,
+        temperature: null,
+        maxTokens: null,
+        enabledTools: [],
+        tonePreset: null,
+        brevityPreset: null,
+        tonePrompt: null,
+        brevityPrompt: null,
+        managedBy: "workspace",
+        status: "active",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ])
+
+    const personas = await makeService().listVisible(WORKSPACE_ID)
+
+    expect(personas.map((p) => p.id)).toEqual([ARIADNE_AGENT_ID, "persona_custom_1"])
+    expect(personas[1]).toMatchObject({ id: "persona_custom_1", kind: "custom", isCustomized: false })
+    expect(personas[1]).not.toHaveProperty("systemPrompt")
   })
 })
 
@@ -108,7 +154,7 @@ describe("PersonaConfigService.getConfig", () => {
       overridePatch: null,
       overrideUpdatedAt: null,
       draft: null,
-      resolved: { id: ARIADNE_AGENT_ID, model: config!.defaults.model },
+      resolved: { id: ARIADNE_AGENT_ID, model: config!.defaults!.model },
     })
   })
 
@@ -124,7 +170,7 @@ describe("PersonaConfigService.getConfig", () => {
     expect(config!.overridePatch).toEqual({ model: "openrouter:anthropic/claude-haiku-4.5" })
     expect(config!.overrideUpdatedAt).toBe("2026-07-01T00:00:00.000Z")
     expect(config!.resolved.model).toBe("openrouter:anthropic/claude-haiku-4.5")
-    expect(config!.defaults.model).toBe("openrouter:anthropic/claude-sonnet-5")
+    expect(config!.defaults!.model).toBe("openrouter:anthropic/claude-sonnet-5")
   })
 
   it("returns the caller's own draft (validated, no status) alongside the resolved config", async () => {
@@ -166,6 +212,8 @@ describe("PersonaConfigService.getConfig", () => {
   })
 
   it("returns null (→ 404) for the internal empty shell and unknown ids", async () => {
+    // Neither a visible built-in nor a workspace custom resolves.
+    spyOn(PersonaRepository, "findWorkspacePersona").mockResolvedValue(null)
     const service = makeService()
     expect(await service.getConfig(WORKSPACE_ID, EMPTY_AGENT_ID, CALLER_ID)).toBeNull()
     expect(await service.getConfig(WORKSPACE_ID, "persona_system_missing", CALLER_ID)).toBeNull()
@@ -274,6 +322,8 @@ describe("PersonaConfigService.setOverride", () => {
         description: expect.any(String),
         avatarEmoji: ":thread:",
         model: "openrouter:anthropic/claude-haiku-4.5",
+        kind: "builtin",
+        avatarUrl: null,
         isCustomized: true,
       },
     })
@@ -824,5 +874,254 @@ describe("PersonaConfigService draft lifecycle", () => {
       {},
       { workspaceId: WORKSPACE_ID, agentId: ARIADNE_AGENT_ID, createdBy: CALLER_ID, testStreamId: "stream_new" }
     )
+  })
+})
+
+function customPersona(overrides: Partial<Persona> = {}): Persona {
+  return {
+    id: "persona_custom_1",
+    workspaceId: WORKSPACE_ID,
+    slug: "helper",
+    name: "Helper",
+    description: "A helper",
+    avatarEmoji: ":sparkles:",
+    systemPrompt: "Help.",
+    model: "openrouter:anthropic/claude-sonnet-5",
+    escalationModel: null,
+    temperature: null,
+    maxTokens: null,
+    enabledTools: [AgentToolNames.SEND_MESSAGE],
+    tonePreset: null,
+    brevityPreset: null,
+    tonePrompt: null,
+    brevityPrompt: null,
+    managedBy: "workspace",
+    status: "active",
+    createdAt: new Date("2026-02-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-02-02T00:00:00.000Z"),
+    ...overrides,
+  }
+}
+
+describe("PersonaConfigService.forkPersona", () => {
+  afterEach(() => mock.restore())
+
+  it("materializes the source preset into the custom's free-text slots and writes a v1 revision + outbox", async () => {
+    setupTransaction()
+    // Source: a built-in-shaped persona carrying preset keys (no free text).
+    spyOn(PersonaRepository, "findById").mockResolvedValue(
+      customPersona({ managedBy: "system", tonePreset: "direct", brevityPreset: "brief", tonePrompt: null })
+    )
+    const inserted = customPersona({ id: "persona_custom_new", slug: "coach", name: "Coach" })
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(inserted)
+    const revision = spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const persona = await makeService().forkPersona(WORKSPACE_ID, "persona_system_ariadne", "Coach", CALLER_ID)
+
+    expect(persona).toMatchObject({ id: "persona_custom_new", kind: "custom" })
+    const insertArg = insert.mock.calls[0]![1] as {
+      slug: string
+      config: { tonePrompt: string; brevityPrompt: string }
+    }
+    expect(insertArg.slug).toBe("coach")
+    expect(insertArg.config.tonePrompt).toBe(TONE_PRESET_FRAGMENTS.direct)
+    expect(insertArg.config.brevityPrompt).toBe(BREVITY_PRESET_FRAGMENTS.brief)
+    expect(revision).toHaveBeenCalledTimes(1)
+    expect(outbox).toHaveBeenCalledWith(
+      {},
+      "agent_config:updated",
+      expect.objectContaining({ agentId: "persona_custom_new" })
+    )
+  })
+
+  it("copies a custom source's free-text slots verbatim", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "findById").mockResolvedValue(
+      customPersona({ tonePrompt: "Be blunt.", brevityPrompt: "Be terse." })
+    )
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(customPersona())
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Helper 2", CALLER_ID)
+
+    const insertArg = insert.mock.calls[0]![1] as { config: { tonePrompt: string; brevityPrompt: string } }
+    expect(insertArg.config.tonePrompt).toBe("Be blunt.")
+    expect(insertArg.config.brevityPrompt).toBe("Be terse.")
+  })
+
+  it("retries the slug with a -2 suffix on a unique-constraint collision", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "findById").mockResolvedValue(customPersona())
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona")
+      .mockImplementationOnce(async () => {
+        throw Object.assign(new Error("duplicate key"), { code: "23505" })
+      })
+      .mockImplementationOnce(async () => customPersona({ id: "persona_custom_new", slug: "helper-2" }))
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const persona = await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Helper", CALLER_ID)
+
+    expect(persona.id).toBe("persona_custom_new")
+    expect((insert.mock.calls[0]![1] as { slug: string }).slug).toBe("helper")
+    expect((insert.mock.calls[1]![1] as { slug: string }).slug).toBe("helper-2")
+  })
+
+  it("404s when the source persona does not resolve", async () => {
+    spyOn(PersonaRepository, "findById").mockResolvedValue(null)
+    await expect(makeService().forkPersona(WORKSPACE_ID, "persona_missing", "X", CALLER_ID)).rejects.toMatchObject({
+      status: 404,
+      code: "PERSONA_SOURCE_NOT_FOUND",
+    })
+  })
+
+  it("400s on an empty name", async () => {
+    await expect(makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "   ", CALLER_ID)).rejects.toMatchObject({
+      status: 400,
+    })
+  })
+})
+
+describe("PersonaConfigService.updateCustom", () => {
+  afterEach(() => mock.restore())
+
+  const validConfig = {
+    name: "Helper",
+    description: null,
+    avatarEmoji: null,
+    systemPrompt: "Help this workspace.",
+    model: "openrouter:anthropic/claude-haiku-4.5",
+    escalationModel: null,
+    temperature: null,
+    maxTokens: null,
+    enabledTools: [AgentToolNames.SEND_MESSAGE],
+    tonePrompt: "Be blunt.",
+    brevityPrompt: null,
+  }
+
+  it("writes the row, appends a revision, drops the draft, and broadcasts in one txn", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const written = customPersona({ name: "Helper", updatedAt: new Date("2026-02-03T00:00:00.000Z") })
+    spyOn(PersonaRepository, "updateWorkspacePersona").mockResolvedValue({
+      outcome: "written",
+      row: written,
+      updatedAt: "2026-02-03T00:00:00.000Z",
+    })
+    const deleteDraft = spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    const revision = spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 2 })
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await makeService().updateCustom(
+      WORKSPACE_ID,
+      "persona_custom_1",
+      validConfig,
+      "2026-02-02T00:00:00.000Z",
+      CALLER_ID
+    )
+
+    expect(result).toMatchObject({ outcome: "written", updatedAt: "2026-02-03T00:00:00.000Z" })
+    expect(deleteDraft).toHaveBeenCalled()
+    expect(revision).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ agentId: "persona_custom_1", patch: validConfig, createdByKind: "user" })
+    )
+    expect(outbox).toHaveBeenCalledWith(
+      {},
+      "agent_config:updated",
+      expect.objectContaining({ agentId: "persona_custom_1" })
+    )
+  })
+
+  it("surfaces an optimistic-concurrency conflict with the current row's config + token", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const current = customPersona({ name: "Theirs", updatedAt: new Date("2026-02-05T00:00:00.000Z") })
+    spyOn(PersonaRepository, "updateWorkspacePersona").mockResolvedValue({ outcome: "conflict", current })
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await makeService().updateCustom(
+      WORKSPACE_ID,
+      "persona_custom_1",
+      validConfig,
+      "1999-01-01T00:00:00.000Z",
+      CALLER_ID
+    )
+
+    expect(result.outcome).toBe("conflict")
+    expect(result).toMatchObject({
+      current: { updatedAt: "2026-02-05T00:00:00.000Z", config: { name: "Theirs", managedBy: "workspace" } },
+    })
+    expect(outbox).not.toHaveBeenCalled()
+  })
+
+  it("400s (PERSONA_NOT_CUSTOM) for a built-in id — the locked built-in path is untouched", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "builtin",
+      base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
+    })
+    await expect(
+      makeService().updateCustom(WORKSPACE_ID, ARIADNE_AGENT_ID, validConfig, null, CALLER_ID)
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
+  })
+
+  it("400s on an unassignable model (the row's current values stay legal)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    await expect(
+      makeService().updateCustom(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        { ...validConfig, model: "openrouter:openai/text-embedding-3-small" },
+        null,
+        CALLER_ID
+      )
+    ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
+  })
+})
+
+describe("PersonaConfigService custom getConfig + status", () => {
+  afterEach(() => mock.restore())
+
+  it("getConfig returns the custom shape (kind custom, defaults null, row as resolved, row updatedAt as token)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
+
+    const config = await makeService().getConfig(WORKSPACE_ID, "persona_custom_1", CALLER_ID)
+
+    expect(config).toMatchObject({
+      kind: "custom",
+      defaults: null,
+      overridePatch: null,
+      overrideUpdatedAt: "2026-02-02T00:00:00.000Z",
+      resolved: { id: "persona_custom_1", managedBy: "workspace", tonePreset: null },
+    })
+  })
+
+  it("setCustomStatus flips status and broadcasts for a custom", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaRepository, "setStatus").mockResolvedValue(customPersona({ status: "archived" }))
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const persona = await makeService().setCustomStatus(WORKSPACE_ID, "persona_custom_1", "archived", CALLER_ID)
+
+    expect(persona).toMatchObject({ id: "persona_custom_1", kind: "custom" })
+    expect(outbox).toHaveBeenCalledWith(
+      {},
+      "agent_config:updated",
+      expect.objectContaining({ agentId: "persona_custom_1" })
+    )
+  })
+
+  it("setCustomStatus 400s (PERSONA_NOT_CUSTOM) for a built-in", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "builtin",
+      base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
+    })
+    await expect(
+      makeService().setCustomStatus(WORKSPACE_ID, ARIADNE_AGENT_ID, "archived", CALLER_ID)
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
   })
 })

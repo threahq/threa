@@ -3,6 +3,9 @@ import type { Request, Response } from "express"
 import { createPersonaConfigHandlers } from "./persona-config-handlers"
 import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID } from "./built-in-agents"
 import type { PersonaConfigService } from "./persona-config-service"
+import { HttpError } from "../../lib/errors"
+
+const notFound = () => new HttpError("Persona not found", { status: 404, code: "PERSONA_NOT_FOUND" })
 
 function fakeReq(overrides: Partial<{ params: object; body: object }> = {}): Request {
   return {
@@ -113,8 +116,11 @@ describe("persona config handlers", () => {
     expect(res.body).toEqual({ persona, updatedAt: "2026-07-02T00:00:00.000Z" })
   })
 
-  it("GET revisions 404s for an id that is not an editable visible built-in", async () => {
-    const handlers = makeHandlers({})
+  it("GET revisions surfaces the service's 404 for a non-editable id", async () => {
+    const listRevisions = mock(async () => {
+      throw notFound()
+    })
+    const handlers = makeHandlers({ listRevisions } as unknown as Partial<PersonaConfigService>)
     await expect(
       handlers.listRevisions(fakeReq({ params: { personaId: EMPTY_AGENT_ID } }), fakeRes())
     ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
@@ -133,8 +139,11 @@ describe("persona config handlers", () => {
     expect(listRevisions).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID)
   })
 
-  it("POST restore 404s for the internal empty shell before touching the body", async () => {
-    const handlers = makeHandlers({})
+  it("POST restore surfaces the service's 404 for a non-editable id", async () => {
+    const restoreRevision = mock(async () => {
+      throw notFound()
+    })
+    const handlers = makeHandlers({ restoreRevision } as unknown as Partial<PersonaConfigService>)
     await expect(
       handlers.restoreRevision(
         fakeReq({ params: { personaId: EMPTY_AGENT_ID, revisionId: "acrev_1" }, body: { expectedUpdatedAt: null } }),
@@ -178,11 +187,74 @@ describe("persona config handlers", () => {
     expect(restoreRevision).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "acrev_1", null, "usr_1")
   })
 
-  it("PUT draft 404s for the internal empty shell", async () => {
-    const handlers = makeHandlers({})
+  it("PUT draft surfaces the service's 404 for a non-editable id", async () => {
+    const saveDraft = mock(async () => {
+      throw notFound()
+    })
+    const handlers = makeHandlers({ saveDraft } as unknown as Partial<PersonaConfigService>)
     await expect(
       handlers.putDraft(fakeReq({ params: { personaId: EMPTY_AGENT_ID }, body: { patch: {} } }), fakeRes())
     ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
+  })
+
+  it("POST create forks and 201s with the new persona", async () => {
+    const persona = { id: "persona_new", slug: "helper", name: "Helper", kind: "custom" }
+    const forkPersona = mock(async () => persona)
+    const res = fakeRes()
+
+    await makeHandlers({ forkPersona } as unknown as Partial<PersonaConfigService>).create(
+      fakeReq({ body: { sourcePersonaId: ARIADNE_AGENT_ID, name: "Helper" } }),
+      res
+    )
+
+    expect(res.statusCode).toBe(201)
+    expect(res.body).toEqual({ persona })
+    expect(forkPersona).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "Helper", "usr_1")
+  })
+
+  it("PUT update surfaces an optimistic-concurrency conflict as 409 with details.current", async () => {
+    const current = { config: { id: "persona_x" }, updatedAt: "2026-07-02T00:00:00.000Z" }
+    const updateCustom = mock(async () => ({ outcome: "conflict" as const, current }))
+    const handlers = makeHandlers({ updateCustom } as unknown as Partial<PersonaConfigService>)
+
+    const req = fakeReq({
+      params: { personaId: "persona_x" },
+      body: {
+        config: {
+          name: "Helper",
+          description: null,
+          avatarEmoji: null,
+          systemPrompt: "You help.",
+          model: "openrouter:anthropic/claude-sonnet-5",
+          escalationModel: null,
+          temperature: null,
+          maxTokens: null,
+          enabledTools: [],
+          tonePrompt: null,
+          brevityPrompt: null,
+        },
+        expectedUpdatedAt: "2026-07-01T00:00:00.000Z",
+      },
+    })
+    await expect(handlers.update(req, fakeRes())).rejects.toMatchObject({
+      status: 409,
+      code: "PERSONA_OVERRIDE_CONFLICT",
+      details: { current },
+    })
+  })
+
+  it("POST archive flips status and returns the persona", async () => {
+    const persona = { id: "persona_x", slug: "helper", name: "Helper", kind: "custom" }
+    const setCustomStatus = mock(async () => persona)
+    const res = fakeRes()
+
+    await makeHandlers({ setCustomStatus } as unknown as Partial<PersonaConfigService>).archive(
+      fakeReq({ params: { personaId: "persona_x" } }),
+      res
+    )
+
+    expect(res.body).toEqual({ persona })
+    expect(setCustomStatus).toHaveBeenCalledWith("workspace_1", "persona_x", "archived", "usr_1")
   })
 
   it("PUT draft returns the saved draft state", async () => {

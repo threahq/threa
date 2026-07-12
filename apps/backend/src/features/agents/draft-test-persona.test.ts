@@ -1,9 +1,32 @@
 import { describe, expect, test } from "bun:test"
 import { AgentToolNames } from "@threa/types"
-import { resolveDraftTestPersona } from "./persona-repository"
+import { resolveDraftTestPersona, type Persona } from "./persona-repository"
 import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID } from "./built-in-agents"
 
 const WORKSPACE_ID = "workspace_1"
+
+const customRow: Persona = {
+  id: "persona_custom_1",
+  workspaceId: WORKSPACE_ID,
+  slug: "helper",
+  name: "Helper",
+  description: null,
+  avatarEmoji: null,
+  systemPrompt: "Help.",
+  model: "openrouter:anthropic/claude-haiku-4.5",
+  escalationModel: null,
+  temperature: null,
+  maxTokens: null,
+  enabledTools: [AgentToolNames.SEND_MESSAGE],
+  tonePreset: null,
+  brevityPreset: null,
+  tonePrompt: null,
+  brevityPrompt: null,
+  managedBy: "workspace",
+  status: "active",
+  createdAt: new Date(),
+  updatedAt: new Date(),
+}
 
 describe("resolveDraftTestPersona", () => {
   test("runs the draft patch over the built-in base and strips durable-write tools", () => {
@@ -67,6 +90,47 @@ describe("resolveDraftTestPersona", () => {
       { workspaceId: WORKSPACE_ID, agentId: ARIADNE_AGENT_ID, patch: { model: 42, bogusKey: true } },
       ARIADNE_AGENT_ID,
       WORKSPACE_ID
+    )
+    expect(persona).toBeNull()
+  })
+
+  test("applies the draft over a CUSTOM row (base supplied) and strips durable-write tools", () => {
+    const persona = resolveDraftTestPersona(
+      {
+        workspaceId: WORKSPACE_ID,
+        agentId: "persona_custom_1",
+        patch: {
+          name: "Draft Helper",
+          systemPrompt: "Draft prompt.",
+          enabledTools: [AgentToolNames.SEND_MESSAGE, AgentToolNames.SAVE_MEMO],
+        },
+      },
+      "persona_custom_1",
+      WORKSPACE_ID,
+      customRow
+    )
+    expect(persona).not.toBeNull()
+    expect(persona!.name).toBe("Draft Helper")
+    expect(persona!.systemPrompt).toBe("Draft prompt.")
+    // save_memo stripped for the test turn; send_message kept.
+    expect(persona!.enabledTools).toEqual([AgentToolNames.SEND_MESSAGE])
+  })
+
+  test("returns null for a custom persona when no base row is supplied", () => {
+    const persona = resolveDraftTestPersona(
+      { workspaceId: WORKSPACE_ID, agentId: "persona_custom_1", patch: { name: "X" } },
+      "persona_custom_1",
+      WORKSPACE_ID
+    )
+    expect(persona).toBeNull()
+  })
+
+  test("returns null for a custom base belonging to another workspace", () => {
+    const persona = resolveDraftTestPersona(
+      { workspaceId: WORKSPACE_ID, agentId: "persona_custom_1", patch: {} },
+      "persona_custom_1",
+      WORKSPACE_ID,
+      { ...customRow, workspaceId: "workspace_other" }
     )
     expect(persona).toBeNull()
   })

@@ -437,6 +437,15 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // member-visible; reading a persona's full config and writing its override
   // are workspace-admin only. Gate at the route layer (not the handler).
   app.get("/api/workspaces/:workspaceId/personas", ...authed, persona.list)
+  // Fork a source persona into a new custom (admin). Custom lifecycle (create /
+  // full-field update / archive / unarchive) is admin-gated; the built-in
+  // override path stays on its own PUT below.
+  app.post(
+    "/api/workspaces/:workspaceId/personas",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.create
+  )
   app.get(
     "/api/workspaces/:workspaceId/personas/:personaId/config",
     ...authed,
@@ -448,6 +457,25 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
     persona.putOverride
+  )
+  // Full-field update of a custom persona (admin, customs only — built-ins 400).
+  app.put(
+    "/api/workspaces/:workspaceId/personas/:personaId",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.update
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/personas/:personaId/archive",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.archive
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/personas/:personaId/unarchive",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    persona.unarchive
   )
   // Revision history (roadmap 7.1): list a persona's committed override
   // revisions and restore one (re-commits an old patch as a new revision). Both

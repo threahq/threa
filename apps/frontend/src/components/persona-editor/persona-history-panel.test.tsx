@@ -102,6 +102,7 @@ function config(): PersonaConfigResponse {
   const d = defaults()
   const overridePatch = { name: "V2 name", model: "openrouter:anthropic/claude-opus-4.8" }
   return {
+    kind: "builtin",
     defaults: d,
     overridePatch,
     overrideUpdatedAt: "2026-07-11T02:00:00Z",

@@ -93,6 +93,7 @@ function defaults(): PersonaResolvedConfig {
 function config(overrides: Partial<PersonaConfigResponse> = {}): PersonaConfigResponse {
   const d = defaults()
   return {
+    kind: "builtin",
     defaults: d,
     overridePatch: null,
     overrideUpdatedAt: null,

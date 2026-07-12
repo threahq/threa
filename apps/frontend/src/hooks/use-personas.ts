@@ -32,7 +32,8 @@ function applyCommittedOverride(
           ...old,
           overridePatch: committed.patch,
           overrideUpdatedAt: committed.updatedAt,
-          resolved: { ...old.defaults, ...committed.patch },
+          // Built-in commit path (defaults always present); customs get their own updater later.
+          resolved: { ...old.defaults!, ...committed.patch },
           draft: null,
         }
       : old

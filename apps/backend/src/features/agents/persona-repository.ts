@@ -1,6 +1,8 @@
-import type { TonePreset, BrevityPreset } from "@threa/types"
+import type { TonePreset, BrevityPreset, PersonaConfigPatch, PersonaCustomConfig } from "@threa/types"
+import { personaConfigPatchSchema } from "@threa/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
+import { personaId as generatePersonaId } from "../../lib/id"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
 import {
   ARIADNE_AGENT_ID,
@@ -12,6 +14,13 @@ import {
 } from "./built-in-agents"
 import { stripDraftTestExcludedTools } from "./config"
 
+/**
+ * Result of resolving which persona an admin editor may write. A built-in is
+ * edited additively over `base`; a custom is the workspace-owned `row`. `null`
+ * (from {@link PersonaRepository.resolveEditable}) means neither — a 404.
+ */
+export type EditablePersona = { kind: "builtin"; base: BuiltInAgentConfig } | { kind: "custom"; row: Persona }
+
 interface PersonaRow {
   id: string
   workspace_id: string | null
@@ -21,9 +30,13 @@ interface PersonaRow {
   avatar_emoji: string | null
   system_prompt: string | null
   model: string
+  escalation_model: string | null
   temperature: number | null
   max_tokens: number | null
   enabled_tools: string[] | null
+  tone_prompt: string | null
+  brevity_prompt: string | null
+  avatar_url: string | null
   managed_by: string
   status: string
   created_at: Date
@@ -40,10 +53,9 @@ export interface Persona {
   systemPrompt: string | null
   model: string
   /**
-   * Stronger model for per-turn escalation (roadmap 2.3). Built-in personas
-   * only for now — DB personas have no column and resolve to null (escalation
-   * disabled); `resolveTurnModel` is the single consumer, so a column slots in
-   * without touching call sites when workspace personas need it.
+   * Stronger model for per-turn escalation (roadmap 2.3); null disables
+   * escalation. Built-ins carry it in code; customs in the `escalation_model`
+   * column. `resolveTurnModel` is the single consumer.
    */
   escalationModel: string | null
   temperature: number | null
@@ -77,18 +89,15 @@ function mapRowToPersona(row: PersonaRow): Persona {
     avatarEmoji: row.avatar_emoji,
     systemPrompt: row.system_prompt,
     model: row.model,
-    escalationModel: null,
+    escalationModel: row.escalation_model,
     temperature: row.temperature === null ? null : Number(row.temperature),
     maxTokens: row.max_tokens,
     enabledTools: row.enabled_tools,
     // Custom personas never carry preset keys — only free-text slots.
     tonePreset: null,
     brevityPreset: null,
-    // The `tone_prompt`/`brevity_prompt` columns don't exist yet; step 2's
-    // append-only migration adds them, after which SELECT_FIELDS + PersonaRow
-    // gain them and these read `row.tone_prompt`/`row.brevity_prompt`.
-    tonePrompt: null,
-    brevityPrompt: null,
+    tonePrompt: row.tone_prompt,
+    brevityPrompt: row.brevity_prompt,
     managedBy: row.managed_by as "system" | "workspace",
     status: row.status as "active" | "disabled" | "archived",
     createdAt: row.created_at,
@@ -169,27 +178,44 @@ function resolveBuiltInPersonaWithOverrides(
 export function resolveDraftTestPersona(
   draft: { workspaceId: string; agentId: string; patch: unknown } | null,
   personaId: string,
-  workspaceId: string
+  workspaceId: string,
+  customBase: Persona | null = null
 ): Persona | null {
   if (!draft || draft.workspaceId !== workspaceId || draft.agentId !== personaId) return null
-  const base = getVisibleBuiltInAgentConfig(personaId)
-  if (!base) return null
 
-  let resolved: BuiltInAgentConfig
+  const base = getVisibleBuiltInAgentConfig(personaId)
+  if (base) {
+    let resolved: BuiltInAgentConfig
+    try {
+      resolved = applyBuiltInAgentPatch(base, draft.patch, { workspaceId, agentId: personaId })
+    } catch {
+      // A corrupt stored patch must degrade to the saved config, not abort the
+      // live turn — the null contract above is total, not just for gone rows.
+      return null
+    }
+    const persona = mapBuiltInToPersona(resolved)
+    return { ...persona, enabledTools: stripDraftTestExcludedTools(persona.enabledTools) }
+  }
+
+  // Custom persona: apply the sparse draft over the saved row (same total-null
+  // contract — a gone/foreign/corrupt draft or a wrong-workspace row falls back
+  // to normal resolution). Presets never apply to a custom, so they are dropped.
+  if (!customBase || customBase.managedBy !== "workspace" || customBase.workspaceId !== workspaceId) return null
+  let parsed: PersonaConfigPatch
   try {
-    resolved = applyBuiltInAgentPatch(base, draft.patch, { workspaceId, agentId: personaId })
+    parsed = personaConfigPatchSchema.parse(draft.patch)
   } catch {
-    // A corrupt stored patch must degrade to the saved config, not abort the
-    // live turn — the null contract above is total, not just for gone rows.
     return null
   }
-  const persona = mapBuiltInToPersona(resolved)
-  return { ...persona, enabledTools: stripDraftTestExcludedTools(persona.enabledTools) }
+  const { tonePreset: _tonePreset, brevityPreset: _brevityPreset, ...customFields } = parsed
+  const merged: Persona = { ...customBase, ...customFields }
+  return { ...merged, enabledTools: stripDraftTestExcludedTools(merged.enabledTools) }
 }
 
 const SELECT_FIELDS = `
   id, workspace_id, slug, name, description, avatar_emoji,
-  system_prompt, model, temperature, max_tokens, enabled_tools,
+  system_prompt, model, escalation_model, temperature, max_tokens, enabled_tools,
+  tone_prompt, brevity_prompt, avatar_url,
   managed_by, status, created_at, updated_at
 `
 
@@ -390,4 +416,151 @@ export const PersonaRepository = {
     )
     return [...builtIns, ...result.rows.map(mapRowToPersona)]
   },
+
+  /**
+   * A workspace-owned custom persona by id, any status (active/archived), or
+   * null. Hard-scoped to `managed_by = 'workspace'` AND the caller workspace
+   * (INV-8) so a custom write/read path can never touch a system row or another
+   * workspace's persona. Archived customs resolve here (for history/actor
+   * rendering) but are excluded from {@link listActiveCustoms}.
+   */
+  async findWorkspacePersona(db: Querier, workspaceId: string, personaId: string): Promise<Persona | null> {
+    const result = await db.query<PersonaRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}
+      FROM personas
+      WHERE id = ${personaId}
+        AND workspace_id = ${workspaceId}
+        AND managed_by = 'workspace'
+    `)
+    return result.rows[0] ? mapRowToPersona(result.rows[0]) : null
+  },
+
+  /** Active custom personas for a workspace, alphabetical — the roster's custom tail. */
+  async listActiveCustoms(db: Querier, workspaceId: string): Promise<Persona[]> {
+    const result = await db.query<PersonaRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}
+      FROM personas
+      WHERE workspace_id = ${workspaceId}
+        AND managed_by = 'workspace'
+        AND status = 'active'
+      ORDER BY name ASC
+    `)
+    return result.rows.map(mapRowToPersona)
+  },
+
+  /**
+   * Resolve which persona an admin editor may write: a code-backed visible
+   * built-in (edited additively) or a workspace-owned custom row (any status).
+   * `null` = neither (a 404). The single gate that replaces the per-endpoint
+   * `getVisibleBuiltInAgentConfig` checks (roadmap 7.1 step 2). Built-in ids
+   * short-circuit with no DB read.
+   */
+  async resolveEditable(db: Querier, workspaceId: string, personaId: string): Promise<EditablePersona | null> {
+    const base = getVisibleBuiltInAgentConfig(personaId)
+    if (base) return { kind: "builtin", base }
+    const row = await this.findWorkspacePersona(db, workspaceId, personaId)
+    return row ? { kind: "custom", row } : null
+  },
+
+  /**
+   * Insert a new custom persona row (a fork). The caller supplies a
+   * workspace-scoped `slug`; a collision with the `(workspace_id, slug)` unique
+   * constraint surfaces as a raw 23505 for the caller to retry with a suffix
+   * (race-safe, INV-20). Always `managed_by = 'workspace'`, `status = 'active'`.
+   */
+  async insertWorkspacePersona(
+    db: Querier,
+    params: { workspaceId: string; slug: string; config: PersonaCustomConfig }
+  ): Promise<Persona> {
+    const { workspaceId, slug, config } = params
+    const result = await db.query<PersonaRow>(sql`
+      INSERT INTO personas (
+        id, workspace_id, slug, name, description, avatar_emoji,
+        system_prompt, model, escalation_model, temperature, max_tokens, enabled_tools,
+        tone_prompt, brevity_prompt, managed_by, status
+      ) VALUES (
+        ${generatePersonaId()}, ${workspaceId}, ${slug}, ${config.name}, ${config.description}, ${config.avatarEmoji},
+        ${config.systemPrompt}, ${config.model}, ${config.escalationModel}, ${config.temperature}, ${config.maxTokens}, ${config.enabledTools}::text[],
+        ${config.tonePrompt}, ${config.brevityPrompt}, 'workspace', 'active'
+      )
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return mapRowToPersona(result.rows[0]!)
+  },
+
+  /**
+   * Full-field update of a custom persona with optimistic concurrency. MUST run
+   * in a transaction: a `FOR UPDATE` lock on the scoped row serializes concurrent
+   * admins (INV-20), and `expectedUpdatedAt` must equal the row's `updated_at` or
+   * the write is a `conflict`. Hard-scoped to `managed_by = 'workspace'` AND the
+   * caller workspace (INV-8) — never touches a system row. `slug` is immutable and
+   * not written; `updated_at` is bumped by the table trigger.
+   */
+  async updateWorkspacePersona(
+    db: Querier,
+    params: { workspaceId: string; personaId: string; expectedUpdatedAt: string | null; config: PersonaCustomConfig }
+  ): Promise<UpdateWorkspacePersonaResult> {
+    const { workspaceId, personaId, expectedUpdatedAt, config } = params
+
+    const existing = await db.query<PersonaRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}
+      FROM personas
+      WHERE id = ${personaId}
+        AND workspace_id = ${workspaceId}
+        AND managed_by = 'workspace'
+      FOR UPDATE
+    `)
+    const current = existing.rows[0]
+    if (!current) return { outcome: "conflict", current: null }
+
+    const currentUpdatedAt = current.updated_at.toISOString()
+    if (expectedUpdatedAt !== currentUpdatedAt) {
+      return { outcome: "conflict", current: mapRowToPersona(current) }
+    }
+
+    const updated = await db.query<PersonaRow>(sql`
+      UPDATE personas SET
+        name = ${config.name},
+        description = ${config.description},
+        avatar_emoji = ${config.avatarEmoji},
+        system_prompt = ${config.systemPrompt},
+        model = ${config.model},
+        escalation_model = ${config.escalationModel},
+        temperature = ${config.temperature},
+        max_tokens = ${config.maxTokens},
+        enabled_tools = ${config.enabledTools}::text[],
+        tone_prompt = ${config.tonePrompt},
+        brevity_prompt = ${config.brevityPrompt}
+      WHERE id = ${personaId}
+        AND workspace_id = ${workspaceId}
+        AND managed_by = 'workspace'
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    const row = updated.rows[0]!
+    return { outcome: "written", row: mapRowToPersona(row), updatedAt: row.updated_at.toISOString() }
+  },
+
+  /**
+   * Flip a custom persona's status (archive/unarchive). Hard-scoped to
+   * `managed_by = 'workspace'` AND the caller workspace (INV-8). Returns the
+   * updated row, or null when no such custom exists (a 404).
+   */
+  async setStatus(
+    db: Querier,
+    params: { workspaceId: string; personaId: string; status: "active" | "archived" }
+  ): Promise<Persona | null> {
+    const { workspaceId, personaId, status } = params
+    const result = await db.query<PersonaRow>(sql`
+      UPDATE personas SET status = ${status}
+      WHERE id = ${personaId}
+        AND workspace_id = ${workspaceId}
+        AND managed_by = 'workspace'
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return result.rows[0] ? mapRowToPersona(result.rows[0]) : null
+  },
 }
+
+export type UpdateWorkspacePersonaResult =
+  | { outcome: "written"; row: Persona; updatedAt: string }
+  | { outcome: "conflict"; current: Persona | null }
