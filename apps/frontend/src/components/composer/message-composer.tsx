@@ -887,8 +887,11 @@ export function MessageComposer({
 
           <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10 flex items-center gap-1.5">
             {/* Action drawer — always visible on desktop; on touch (no hover) it
-                stays behind the + button and opens on tap. */}
+                stays behind the + button and opens on tap. `inert` while
+                collapsed on mobile so its buttons drop out of tab order instead
+                of sitting invisibly ahead of the visible "+" button. */}
             <div
+              inert={isMobile && !fabActionsOpen}
               className={cn(
                 "flex items-center gap-1 overflow-hidden transition-all duration-200 ease-out",
                 isMobile ? "max-w-0 opacity-0" : "max-w-[240px] opacity-100",

@@ -143,15 +143,23 @@ export function BoardFilterBar({
   // is the plain home lens, or (when set) the saved view they home on, so resting
   // on that view must also read as unfiltered even though it carries scope.
   const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
-  const isFiltered = !isBoardAtHome(homeLens, homeView, {
-    lens,
-    scopeStreamIds,
-    scopeStreamTypes,
-    scopeLabelIds,
-    excludeStreamIds,
-    excludeStreamTypes,
-    excludeLabelIds,
-  })
+  // `unreadOnly` narrows the feed like every other axis (unlike `showArchived`,
+  // which broadens it), so it must count toward "filtered" too — otherwise
+  // toggling Unread with nothing else selected hides "Clear filters" and the
+  // empty-state "Show everything" CTA even though the board is narrowed.
+  // `BoardViewSelection` itself stays unread-unaware (matching `showArchived`'s
+  // precedent): unread state churns on every read receipt, so it isn't
+  // meaningful to capture in a saved view.
+  const isFiltered =
+    !isBoardAtHome(homeLens, homeView, {
+      lens,
+      scopeStreamIds,
+      scopeStreamTypes,
+      scopeLabelIds,
+      excludeStreamIds,
+      excludeStreamTypes,
+      excludeLabelIds,
+    }) || unreadOnly
   const clearedSearch = useMemo(() => boardHomeSearch(location.search), [location.search])
   // "Clear filters" returns to the viewer's home: the saved-view home when one
   // resolves (straight to its URL — no bare `/board` detour that would blank-flash

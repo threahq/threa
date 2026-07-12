@@ -320,12 +320,15 @@ export function InlineComposerForm({
       composerRef={composerControlRef}
       autoFocus={autoFocus}
       initialMobileChromeOpen
-      // Desktop only: the floating (mobile) form's height-publish effect keys off
-      // its own mount lifecycle (`holdsFloatingSlot`), which an `expanded` escape
-      // hatch here would sidestep, leaving a stale reserved-space CSS var behind.
-      // Mobile already gets a roomy floating pill, so the expand affordance isn't
-      // worth that edge case there.
-      onExpandClick={floating ? undefined : () => setExpanded(true)}
+      // Desktop only — gated on `isMobile`, not `floating` (mobile without a
+      // floating anchor is still mobile: `floating` is `isMobile && anchor !==
+      // null`, so it's false there and would wrongly leave expand enabled). The
+      // floating form's height-publish effect keys off its own mount lifecycle
+      // (`holdsFloatingSlot`), which an `expanded` escape hatch here would
+      // sidestep, leaving a stale reserved-space CSS var behind. Mobile already
+      // gets a roomy floating pill, so the expand affordance isn't worth that
+      // edge case there.
+      onExpandClick={isMobile ? undefined : () => setExpanded(true)}
       onEscapeBlur={() => {
         const hadContent = !isEmptyRef.current
         void composer.flushDraft()

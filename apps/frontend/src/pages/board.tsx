@@ -17,6 +17,7 @@ import {
   useWorkspaceUsers,
   useWorkspaceDmPeers,
   useWorkspaceLabelAssignments,
+  useWorkspaceUnreadState,
 } from "@/stores/workspace-store"
 import { useStableBoardView, type BoardViewFilter, type BoardViewPost } from "@/hooks/use-stable-board-view"
 import { selectLabeledStreamIds } from "@/hooks/use-labels"
@@ -28,7 +29,6 @@ import {
   useUnmuteStream,
 } from "@/hooks/use-conversations"
 import { useBoardHiddenConversations, useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
-import { useUnreadCounts } from "@/hooks/use-unread-counts"
 import { useBoardRailsReady } from "@/hooks/use-board-card-messages"
 import { useBoardRevealLatch } from "@/hooks/use-board-reveal-latch"
 import { useConversationGraphReady } from "@/hooks/use-conversation-graph"
@@ -317,18 +317,25 @@ function BoardPageInner({
   // same "unread and not muted" membership the sidebar's Unread section uses —
   // no backend round-trip, so it stays live as things get read without a refetch.
   const unreadOnly = searchParams.get(BOARD_UNREAD_PARAM) === BOARD_UNREAD_ON
-  const { unreadCounts } = useUnreadCounts(workspaceId)
+  // `undefined` means the IDB row hasn't hydrated yet — distinct from a
+  // hydrated-but-empty `unreadCounts`. Conflating the two would fail CLOSED on
+  // a cold `?unread=true` load (every already-fetched post filtered out, empty
+  // state flashed) before the real counts arrive a beat later.
+  const unreadState = useWorkspaceUnreadState(workspaceId)
   // Mute-aware: a muted stream reads as "quiet" and must not resurface via the
   // unread filter, the same rule the sidebar's Unread section follows.
   const mutedStreamIds = useBoardMutedStreamIds(workspaceId)
   const unreadStreamIds = useMemo(() => {
-    if (!unreadOnly) return null
+    // Fail OPEN while unhydrated (mirrors matchesTypeScope's pre-field-row
+    // fail-open) — the board surfaces the not-yet-filtered feed rather than a
+    // false "caught up" empty state.
+    if (!unreadOnly || !unreadState) return null
     const ids = new Set<string>()
-    for (const [streamId, count] of Object.entries(unreadCounts)) {
+    for (const [streamId, count] of Object.entries(unreadState.unreadCounts)) {
       if (count > 0 && !mutedStreamIds.has(streamId)) ids.add(streamId)
     }
     return ids
-  }, [unreadOnly, unreadCounts, mutedStreamIds])
+  }, [unreadOnly, unreadState, mutedStreamIds])
   const scopeKey = useMemo(() => [...scopeStreamIds].sort().join(","), [scopeStreamIds])
   const excludeScopeKey = useMemo(() => [...excludeStreamIds].sort().join(","), [excludeStreamIds])
   const typeKey = useMemo(() => [...scopeStreamTypes].sort().join(","), [scopeStreamTypes])
@@ -548,7 +555,7 @@ function BoardPageInner({
   // Changing lens OR scope replaces the feed with a different (often much
   // shorter) subset, so jump to the top pre-paint — otherwise a viewer scrolled
   // down the All wall who taps Decisions lands past the end of a one-card list.
-  const resetKey = `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}`
+  const resetKey = `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}|${unreadOnly ? "unread" : ""}`
   useLayoutEffect(() => {
     if (scrollerRef.current) scrollerRef.current.scrollTop = 0
   }, [resetKey])
@@ -586,7 +593,8 @@ function BoardPageInner({
     excludeStreamIds.length > 0 ||
     excludeStreamTypes.length > 0 ||
     scopeLabelIds.length > 0 ||
-    excludeLabelIds.length > 0
+    excludeLabelIds.length > 0 ||
+    unreadOnly
   // The viewer's own just-posted card gets a brief gold-thread flash (the golden
   // thread motif, on the primary action). The flashed id lives in a module store
   // (`setBoardFlash`) that each card subscribes to by its own id, not in page

@@ -461,12 +461,16 @@ export function useStableBoardView(
       // so an involuntary drop (lost access, re-lensed by the viewer's own reply)
       // doesn't shift rows below it. But a VOLUNTARY hide/mute must drop NOW, not
       // wait for the next commit — so skip excluded ids here too, not just in the
-      // `live` filter. (The retained copy is pruned on the next `commit()`.)
+      // `live` filter. (The retained copy is pruned on the next `commit()`.) A
+      // card the viewer just read while sitting on `?unread=true` is the same
+      // class of voluntary action: reading it is the point of an unread-only
+      // view, so it must vanish immediately rather than linger until commit.
       if (isExcluded(post)) continue
+      if (!matchesUnread(post, unread)) continue
       out.push(post)
     }
     return out
-  }, [committed, live, isExcluded])
+  }, [committed, live, unread, isExcluded])
 
   return {
     posts,
