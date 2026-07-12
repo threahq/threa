@@ -486,6 +486,8 @@ function BoardPageInner({
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
+  // Peer user id per DM stream — feeds the card's leading avatar (sidebar parity).
+  const dmPeerByStreamId = useMemo(() => new Map(dmPeers.map((p) => [p.streamId, p.userId])), [dmPeers])
   const sections = useMemo(() => groupByRecency(posts, activityById, Date.now()), [posts, activityById])
 
   // The board feed is virtualized (`virtua`): ~430 active cards each mount
@@ -582,14 +584,17 @@ function BoardPageInner({
   // Stable per workspace-cache change so the row memo below only recomputes when a
   // label input actually changes, not on every parent re-render.
   const labelsFor = useCallback(
-    (conversation: ConversationWithStaleness): { contextLabel: string; streamType: string | undefined } => {
+    (
+      conversation: ConversationWithStaleness
+    ): { contextLabel: string; streamType: string | undefined; dmPeerUserId: string | null } => {
       const streamName = resolveStreamName(conversation.streamId, { streams, users, dmPeers }, "generic")
       return {
         contextLabel: streamName ?? "Unknown stream",
         streamType: streamById.get(conversation.streamId)?.type,
+        dmPeerUserId: dmPeerByStreamId.get(conversation.streamId) ?? null,
       }
     },
-    [streams, users, dmPeers, streamById]
+    [streams, users, dmPeers, streamById, dmPeerByStreamId]
   )
 
   // Flat if-chain, not a nested ternary (INV-47 / no-nested-ternary).
@@ -639,11 +644,12 @@ function BoardPageInner({
             <h2
               key={row.key}
               className={cn(
-                "px-1 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
+                "flex items-center gap-3 px-1 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
                 row.first ? "pt-2" : "pt-6"
               )}
             >
-              {row.label}
+              <span className="shrink-0">{row.label}</span>
+              <span className="h-px flex-1 bg-border" aria-hidden />
             </h2>
           )
         }
@@ -662,7 +668,7 @@ function BoardPageInner({
             </div>
           )
         }
-        const { contextLabel, streamType } = labelsFor(row.post.conversation)
+        const { contextLabel, streamType, dmPeerUserId } = labelsFor(row.post.conversation)
         return (
           <div key={row.key} className="pb-3">
             <BoardCard
@@ -670,6 +676,7 @@ function BoardPageInner({
               post={row.post}
               contextLabel={contextLabel}
               streamType={streamType}
+              dmPeerUserId={dmPeerUserId}
               scrollerRef={scrollerRef}
               listRef={listRef}
             />

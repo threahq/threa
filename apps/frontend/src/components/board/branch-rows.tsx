@@ -21,8 +21,8 @@ import type { BranchConversationView } from "@/lib/board/branch-grouping"
 /** Indent per thread boundary (spanning), applied on a wrapper so the shared
  *  `MessageItem` stays untouched. A left rail reads the nesting Reddit-style. */
 const INDENT_CLASS: Record<number, string> = {
-  1: "ml-3 border-l-2 border-border pl-2 sm:pl-3",
-  2: "ml-6 border-l-2 border-border pl-2 sm:pl-3",
+  1: "ml-3 border-l-2 border-muted-foreground/20 pl-2 sm:pl-3",
+  2: "ml-6 border-l-2 border-muted-foreground/20 pl-2 sm:pl-3",
 }
 
 /**
@@ -119,7 +119,7 @@ export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, ren
   const header = (
     <>
       <CornerDownRight className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">{branch.title}</span>
+      <span className="truncate font-medium text-foreground/75">{branch.title}</span>
     </>
   )
   return (
@@ -134,7 +134,7 @@ export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, ren
           {header}
         </Link>
       )}
-      <div className="mt-1 border-l-2 border-border pl-2 sm:pl-3 [&>*:first-child]:mt-0">
+      <div className="mt-1 border-l-2 border-muted-foreground/25 pl-2 sm:pl-3 [&>*:first-child]:mt-0">
         {renderBranchMessage &&
           branch.messages.map((message, index) => {
             const prev = index > 0 ? branch.messages[index - 1] : null

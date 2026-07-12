@@ -138,6 +138,10 @@ interface MessageItemProps {
    * on `surfaceClassName` so content stays aligned (board: `-mx-3 sm:-mx-4` +
    * `px-3 sm:px-4`; panel: `-mx-4` + `px-4`). Omit on the label page (no accent). */
   rowInsetClassName?: string
+  /** Suppress the per-row actor accent (tint + inset stripe). Set inside a nested
+   *  sub-conversation, where the branch's own spine carries the actor color at a
+   *  single 2px width — a per-message stripe there would double the bar. */
+  suppressRowAccent?: boolean
   /** Open a thread under this message and mint its child conversation (the declared
    * "New sub-topic" branch gesture). Passed already-guarded by the conversation
    * surfaces — set only when no thread yet exists under the message (adjustment D)
@@ -174,6 +178,7 @@ export function MessageItem({
   isHighlighted,
   surfaceClassName,
   rowInsetClassName,
+  suppressRowAccent,
   onNewSubtopic,
   onMoveToSubtopic,
 }: MessageItemProps) {
@@ -210,6 +215,9 @@ export function MessageItem({
   // to the sides and the stripe sits flush — the stream-view look — with content
   // kept aligned by the matching padding in `surfaceClassName`.
   const theme = actorRowTheme(message.authorType)
+  // Inside a nested sub-conversation the branch spine carries the actor color, so
+  // the per-row stripe is suppressed to avoid a doubled bar (the name color stays).
+  const rowAccentClass = suppressRowAccent ? "" : theme.rowAccent
   const attachments = message.attachments ?? []
   const linkPreviews = message.linkPreviews ?? []
   // The row's own stream — only to pick the "View in channel/thread/…" noun.
@@ -664,7 +672,7 @@ export function MessageItem({
             "group reveal-host relative flex gap-3",
             MESSAGE_ROW_CONTINUATION_PADDING,
             surfaceClassName,
-            theme.rowAccent,
+            rowAccentClass,
             longPress.isPressed && "opacity-70 transition-opacity",
             isHighlighted && "animate-highlight-flash"
           )}
@@ -721,7 +729,7 @@ export function MessageItem({
           "group reveal-host relative flex items-start gap-3",
           MESSAGE_ROW_HEAD_PADDING,
           surfaceClassName,
-          theme.rowAccent,
+          rowAccentClass,
           longPress.isPressed && "opacity-70 transition-opacity",
           isHighlighted && "animate-highlight-flash"
         )}
