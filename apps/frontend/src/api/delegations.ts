@@ -27,4 +27,13 @@ export const delegationsApi = {
   async cancel(workspaceId: string, id: string): Promise<{ cancelled: boolean }> {
     return api.post<{ cancelled: boolean }>(`/api/workspaces/${workspaceId}/delegations/${id}/cancel`, {})
   },
+
+  /**
+   * Mark a non-terminal delegation done — the close-the-loop affordance for
+   * work executed outside the API path (copy-paste into a local agent).
+   * Race-honest like cancel: `completed` is `false` when it was already terminal.
+   */
+  async markDone(workspaceId: string, id: string): Promise<{ completed: boolean }> {
+    return api.post<{ completed: boolean }>(`/api/workspaces/${workspaceId}/delegations/${id}/done`, {})
+  },
 }

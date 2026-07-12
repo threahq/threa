@@ -145,6 +145,31 @@ export class DelegationService {
   }
 
   /**
+   * A person's "Mark as done" from the card — the terminal transition for work
+   * executed outside the API loop (the copy-paste path). Same access model as
+   * cancel; the acting user is the event's actor. No result message is linked —
+   * the doer reports in chat like any human. Returns `null` when the delegation
+   * already reached a terminal state (the mark-done lost the race).
+   */
+  async markDone(params: {
+    workspaceId: string
+    id: string
+    streamId?: string
+    completedBy: { actorId: string; actorType: AuthorType }
+  }): Promise<DelegatedTask | null> {
+    return withTransaction(this.pool, async (client) => {
+      const done = await DelegatedTaskRepository.markDone(client, {
+        workspaceId: params.workspaceId,
+        id: params.id,
+        streamId: params.streamId,
+      })
+      if (!done) return null
+      await this.appendStatusEvent(client, done, params.completedBy)
+      return done
+    })
+  }
+
+  /**
    * Claim an open delegation for a local agent (the 5.3 claim endpoint's core).
    * Mints the claim token here — the cleartext goes back to the claimer once,
    * only its hash is stored (a DB read can never impersonate a claim).

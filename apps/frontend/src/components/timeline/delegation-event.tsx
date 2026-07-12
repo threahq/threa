@@ -31,11 +31,41 @@ interface DelegationEventProps {
  * Compile the card's payload into one paste-ready prompt for a local agent —
  * the zero-tooling hand-off path (roadmap 5.2). Everything comes from the
  * `delegation:created` payload, so no fetch is needed.
+ *
+ * With `opts`, the prompt is self-contained for the lifecycle too: it carries
+ * the delegation id, the API breadcrumb (claim → token header → status →
+ * complete), and an honest note that context refs resolve only through Threa —
+ * so an agent WITH an API key knows exactly how to claim and report, and one
+ * without knows to ask instead of hallucinating (adversarial-review finding).
  */
-export function buildDelegationPrompt(payload: DelegationCreatedEventPayload): string {
+export function buildDelegationPrompt(
+  payload: DelegationCreatedEventPayload,
+  opts?: { workspaceId: string; origin: string }
+): string {
   const parts = [`# ${payload.title}`, "", payload.brief]
   if (payload.contextRefs.length > 0) {
     parts.push("", "## Threa context refs", ...payload.contextRefs.map((ref) => `- ${ref}`))
+  }
+  if (opts) {
+    const base = `${opts.origin}/api/v1/workspaces/${opts.workspaceId}/delegations/${payload.delegationId}`
+    parts.push(
+      "",
+      "## Threa delegation lifecycle",
+      `This task is tracked as delegation ${payload.delegationId}. If you have a Threa API key`,
+      `(created in Threa under Settings > API keys, scopes delegations:read + delegations:write),`,
+      `work it through the API so the card tracks your progress:`,
+      "",
+      `1. Claim: POST ${base}/claim with body {"claimedByLabel":"<who/what you are>"}.`,
+      `   The response carries the brief, the resolved context refs, and a claimToken (shown once, 15-minute lease).`,
+      `2. Send the token as an X-Threa-Callback-Token header on every later call:`,
+      `   POST ${base}/heartbeat (renew the lease), POST ${base}/status {"statusNote":"..."} (progress on the card),`,
+      `   then POST ${base}/complete {"resultMarkdown":"..."} or POST ${base}/fail {"errorMessage":"..."}.`,
+      `   Completing posts your result into the conversation.`,
+      "",
+      `Without API access: the context refs above are Threa-internal pointers you cannot resolve —`,
+      `ask the requester to paste their content, and when the work is finished tell them so they`,
+      `can press "Mark done" on the delegation card.`
+    )
   }
   return parts.join("\n")
 }
@@ -47,39 +77,46 @@ export function buildDelegationPrompt(payload: DelegationCreatedEventPayload): s
  * `delegation:status_changed` patch advances it via `statusPatch`.
  *
  * Copy prompt confirms in place by swapping the icon to a checkmark — same
- * footprint, no toast, no layout shift (INV-63/21). Cancel is a button (it
- * mutates — INV-40) shown only while non-terminal; "View result" is a link
+ * footprint, no toast, no layout shift (INV-63/21). Cancel and Mark done are
+ * buttons (they mutate — INV-40) shown only while non-terminal; Mark done
+ * closes the loop for work executed outside the API path (copy-paste), which
+ * previously had no honest terminal transition. "View result" is a link
  * (navigation — INV-40) shown when completed with a linked result message.
- * The status from `statusPatch` is authoritative; the local optimistic flip
- * only fast-paths the clicking member's own cancel.
+ * The status from `statusPatch` is authoritative; the local optimistic flips
+ * only fast-path the clicking member's own action.
  */
 export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: DelegationEventProps) {
   const { getActorName } = useActors(workspaceId)
   const payload = event.payload as DelegationCreatedEventPayload | undefined
   const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false)
+  const [optimisticallyDone, setOptimisticallyDone] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [markingDone, setMarkingDone] = useState(false)
   const [copyDone, setCopyDone] = useState(false)
   const [briefOpen, setBriefOpen] = useState(false)
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   if (!payload) return null
 
-  const status: DelegationStatus = optimisticallyCancelled
-    ? DelegationStatuses.CANCELLED
-    : (statusPatch?.status ?? DelegationStatuses.OPEN)
+  let status: DelegationStatus = statusPatch?.status ?? DelegationStatuses.OPEN
+  if (optimisticallyDone) status = DelegationStatuses.COMPLETED
+  else if (optimisticallyCancelled) status = DelegationStatuses.CANCELLED
   const terminal = DELEGATION_TERMINAL.has(status)
+  const optimisticFlip = optimisticallyCancelled || optimisticallyDone
   const actorName = getActorName(event.actorId, event.actorType)
 
   const metaParts = [`${actorName} · ${DELEGATION_STATUS_LABEL[status]}`]
-  if (statusPatch?.claimedByLabel && !optimisticallyCancelled) metaParts.push(statusPatch.claimedByLabel)
-  const statusNote = !optimisticallyCancelled ? statusPatch?.statusNote : null
+  if (statusPatch?.claimedByLabel && !optimisticFlip) metaParts.push(statusPatch.claimedByLabel)
+  const statusNote = !optimisticFlip ? statusPatch?.statusNote : null
   const resultMessageId =
     status === DelegationStatuses.COMPLETED ? (statusPatch?.resultMessageId ?? undefined) : undefined
+
+  const promptText = () => buildDelegationPrompt(payload, { workspaceId, origin: window.location.origin })
 
   async function handleCopy() {
     if (!payload) return
     try {
-      await navigator.clipboard.writeText(buildDelegationPrompt(payload))
+      await navigator.clipboard.writeText(promptText())
     } catch {
       toast.error("Couldn't copy the prompt")
       return
@@ -87,6 +124,23 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
     setCopyDone(true)
     if (copyResetRef.current) clearTimeout(copyResetRef.current)
     copyResetRef.current = setTimeout(() => setCopyDone(false), 1200)
+  }
+
+  async function handleMarkDone() {
+    if (!payload || markingDone || terminal) return
+    setMarkingDone(true)
+    try {
+      const { completed } = await delegationsApi.markDone(workspaceId, payload.delegationId)
+      if (completed) {
+        setOptimisticallyDone(true)
+      } else {
+        toast.info("This delegation already finished or was cancelled")
+      }
+    } catch {
+      toast.error("Couldn't mark the delegation done")
+    } finally {
+      setMarkingDone(false)
+    }
   }
 
   async function handleCancel() {
@@ -119,6 +173,14 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
   let cancelIcon: ReactNode = null
   if (cancelling) cancelIcon = <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
   else if (cancelled) cancelIcon = <Check className="h-3 w-3" aria-hidden="true" />
+
+  // Mark done relabels in place only for the clicker's OWN flip; an API/other
+  // completion already shows the Completed pill (and View result), so adding a
+  // disabled "Done" chip there would be noise.
+  const showDoneSlot = !terminal || optimisticallyDone
+  let doneIcon: ReactNode = null
+  if (markingDone) doneIcon = <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+  else if (optimisticallyDone) doneIcon = <Check className="h-3 w-3" aria-hidden="true" />
 
   return (
     <div className="px-3 sm:px-6 py-1.5">
@@ -176,6 +238,23 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
               )}
               Copy prompt
             </button>
+            {showDoneSlot && (
+              <button
+                type="button"
+                onClick={handleMarkDone}
+                aria-disabled={optimisticallyDone || markingDone}
+                aria-busy={markingDone}
+                aria-live="polite"
+                title="Close the loop for work done outside the API (e.g. a pasted prompt)"
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors",
+                  optimisticallyDone || markingDone ? "cursor-default" : "hover:bg-muted hover:text-foreground"
+                )}
+              >
+                {doneIcon}
+                {optimisticallyDone ? "Done" : "Mark done"}
+              </button>
+            )}
             {showCancelSlot && (
               <button
                 type="button"
@@ -215,10 +294,11 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
             {/* The brief IS a prompt — show it as source text (mono, pre-wrap),
                 not rendered prose, so what you read is exactly what Copy ships. */}
             <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground/80">
-              {buildDelegationPrompt(payload)}
+              {promptText()}
             </pre>
             <p className="mt-1.5 text-[11px] text-muted-foreground">
-              Paste this into your local agent (Claude Code, etc.) to run the task on your machine.
+              Paste this into your local agent (Claude Code, etc.). An agent with a Threa API key can claim the task and
+              update this card; otherwise press Mark done when the work is finished.
             </p>
           </div>
         )}

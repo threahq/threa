@@ -321,6 +321,34 @@ export const DelegatedTaskRepository = {
   },
 
   /**
+   * CAS any non-terminal status → `completed`, no claim token — a person's
+   * "Mark as done" from the card, for work executed outside the API loop
+   * (copy-paste into a local agent, or just done by hand). Without this, the
+   * only affordance for finished paste-path work was Cancel, which lies.
+   * No result message is linked; the doer reports in chat like any human.
+   * Optionally stream-scoped like markCancelled. Returns `null` when already
+   * terminal (the mark-done lost the race).
+   */
+  async markDone(
+    db: Querier,
+    params: { workspaceId: string; id: string; streamId?: string }
+  ): Promise<DelegatedTask | null> {
+    const result = await db.query<DelegatedTaskRow>(sql`
+      UPDATE delegated_tasks SET
+        status = ${DelegationStatuses.COMPLETED},
+        status_note = NULL,
+        status_changed_at = NOW(),
+        updated_at = NOW()
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND (${params.streamId ?? null}::text IS NULL OR stream_id = ${params.streamId ?? null})
+        AND status IN (${DelegationStatuses.OPEN}, ${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING})
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
    * CAS any non-terminal status → `cancelled` (a person's action from the card
    * — no claim token; cancelling out from under a claimed agent is deliberate,
    * its next token-guarded write no-ops). Optionally stream-scoped so the

@@ -41,7 +41,8 @@ Use \`delegate_task\` when the user describes work that is long-horizon, code-he
 
 - The \`brief\` is everything the executor gets. Write it self-contained: the executor has repo access but no Threa context. Include the goal, the background it needs, and explicit acceptance criteria ("done when …").
 - Link sources with \`contextRefs\` pointer URLs (\`shared-message:\`, \`memo:\`, \`attachment:\`) rather than inlining long quotes — the hand-off carries the pointers.
-- The delegation appears as a card in this stream that anyone can see, cancel, or copy as a ready-to-paste prompt; a local agent can also claim it programmatically. Report to the user that you've prepared the hand-off — don't promise to do the work yourself.
+- The delegation appears as a card in this stream that anyone can see, cancel, mark done, or copy as a ready-to-paste prompt; a local agent can also claim it programmatically. Report to the user that you've prepared the hand-off — don't promise to do the work yourself.
+- Set expectations honestly: the card does not run by itself. Tell the user it waits for someone with a local coding agent (or a Threa API key) to pick it up, and that they can mark it done from the card if the work happens outside the API.
 - Offer delegation when it fits; don't delegate trivia the user just wants answered in chat.`
 
 /**
