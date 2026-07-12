@@ -28,6 +28,7 @@ import {
   BoardSavedViews,
   isBoardAtHome,
   isViewActive,
+  lensHref,
   savedViewHref,
   type BoardViewSelection,
 } from "@/components/board/board-saved-views"
@@ -35,36 +36,12 @@ import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
 import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
 import { usePreferences } from "@/contexts"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
+import { BOARD_STREAM_TYPE_LABELS as TYPE_LABELS } from "@/lib/board/stream-type-labels"
 import { cn } from "@/lib/utils"
 
 /** Stream types offered in the pickers: the board's root-stream grains (shared
  *  with the backend validator). */
 const SCOPE_STREAM_TYPES = new Set<string>(BOARD_SCOPE_STREAM_TYPES)
-
-/** Picker/chip labels per root-stream type, in `BOARD_SCOPE_STREAM_TYPES` order. */
-const TYPE_LABELS: Record<BoardScopeStreamType, string> = {
-  channel: "Channels",
-  dm: "DMs",
-  scratchpad: "Scratchpads",
-  system: "System",
-}
-
-/** The lens's URL (INV-59): the viewer's home lens rests at the bare `/board`,
- *  every other lens takes a segment (so `all` gets `/board/all` when it isn't
- *  home). `search` rides along so switching lens keeps the scope (and an open
- *  panel). When a saved view is the home, the bare `/board` bounces to that view,
- *  so the home lens must keep its explicit segment or it'd be unreachable from the
- *  menu — omit the segment only when no saved-view home is active. */
-function lensHref(
-  workspaceId: string,
-  lens: BoardLens,
-  search: string,
-  homeLens: BoardLens,
-  hasSavedViewHome: boolean
-): string {
-  const base = !hasSavedViewHome && lens === homeLens ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${lens}`
-  return `${base}${search}`
-}
 
 /** A dimension's include/exclude rewrite: both lists in one URL write. */
 type FilterChange<T> = (include: T[], exclude: T[]) => void
@@ -350,7 +327,7 @@ export function BoardFilterBar({
  * prefix + destructive tint, so a narrowed board and a vetoed stream can't be
  * confused at a glance.
  */
-function FilterChip({
+export function FilterChip({
   icon: Icon,
   label,
   excluded,

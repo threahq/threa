@@ -177,7 +177,7 @@ export { useCoarsePointer } from "./use-pointer"
 
 export { useSidebarSwipe } from "./use-sidebar-swipe"
 
-export { useLastStream, usePersistLastStream } from "./use-last-stream"
+export { useLastLocation, usePersistLastLocation } from "./use-last-location"
 
 export { usePullToRefresh } from "./use-pull-to-refresh"
 

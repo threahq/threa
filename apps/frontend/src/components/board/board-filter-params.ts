@@ -1,4 +1,4 @@
-import { BOARD_SCOPE_STREAM_TYPES, type BoardScopeStreamType } from "@threa/types"
+import { BOARD_SCOPE_STREAM_TYPES, MAX_BOARD_SCOPE_STREAMS, type BoardScopeStreamType } from "@threa/types"
 
 /**
  * The board's URL filter vocabulary — one source of truth (INV-33) for every
@@ -93,6 +93,119 @@ export function toggleInclude<T>(id: T, include: T[], exclude: T[]): { include: 
 export function toggleExclude<T>(id: T, include: T[], exclude: T[]): { include: T[]; exclude: T[] } {
   if (exclude.includes(id)) return { include, exclude: exclude.filter((x) => x !== id) }
   return { include: include.filter((x) => x !== id), exclude: [...exclude, id] }
+}
+
+/** Serialize a URLSearchParams back to a leading-`?` search string (or ""). */
+function toSearch(params: URLSearchParams): string {
+  const query = params.toString()
+  return query ? `?${query}` : ""
+}
+
+/** Write an id list to a param, deleting the param when the list is empty. */
+function writeIdList(params: URLSearchParams, param: string, ids: string[]): void {
+  if (ids.length > 0) params.set(param, ids.join(","))
+  else params.delete(param)
+}
+
+/** True when `?in=` is exactly this one stream — the focus-click clears the scope
+ *  instead of re-focusing when you click the stream you're already focused on. */
+export function isSoleInclude(search: string, streamId: string): boolean {
+  const ids = parseIdListParam(new URLSearchParams(search).get(BOARD_SCOPE_PARAM))
+  return ids.length === 1 && ids[0] === streamId
+}
+
+/**
+ * The board-mode row verb (board-centered-sidebar-exploration.md § "Click
+ * model"): FOCUS the board on one stream. Replaces the `?in=` scope with just
+ * this id and drops it from `?not-in=`, leaving every other axis (types, labels,
+ * archived, an open `?panel=`) untouched — only the stream axes change. Clicking
+ * the stream that is already the sole include clears `?in=` instead (a second
+ * focus-click on the focused stream un-focuses). Returns the search string; the
+ * caller pairs it with the current board pathname so the lens survives.
+ */
+export function focusScopeSearch(search: string, streamId: string): string {
+  const params = new URLSearchParams(search)
+  if (isSoleInclude(search, streamId)) {
+    params.delete(BOARD_SCOPE_PARAM)
+    return toSearch(params)
+  }
+  writeIdList(params, BOARD_SCOPE_PARAM, [streamId])
+  const excluded = parseIdListParam(params.get(BOARD_EXCLUDE_SCOPE_PARAM)).filter((id) => id !== streamId)
+  writeIdList(params, BOARD_EXCLUDE_SCOPE_PARAM, excluded)
+  return toSearch(params)
+}
+
+/** Additive include toggle over the stream axis (cmd/ctrl-click, the tile
+ *  checkbox, the "Add to filter" verb) — the accumulate model, distinct from
+ *  {@link focusScopeSearch}'s replace. Mirrors {@link toggleInclude} but rewrites
+ *  the URL directly, and no-ops past {@link MAX_BOARD_SCOPE_STREAMS} so it can't
+ *  build a URL the board would silently truncate. */
+export function toggleIncludeSearch(search: string, streamId: string): string {
+  const params = new URLSearchParams(search)
+  const include = parseIdListParam(params.get(BOARD_SCOPE_PARAM))
+  const exclude = parseIdListParam(params.get(BOARD_EXCLUDE_SCOPE_PARAM))
+  if (!include.includes(streamId) && include.length >= MAX_BOARD_SCOPE_STREAMS) return toSearch(params)
+  const next = toggleInclude(streamId, include, exclude)
+  writeIdList(params, BOARD_SCOPE_PARAM, next.include)
+  writeIdList(params, BOARD_EXCLUDE_SCOPE_PARAM, next.exclude)
+  return toSearch(params)
+}
+
+/** Additive exclude toggle over the stream axis (the "Exclude from board" verb).
+ *  Mirror of {@link toggleIncludeSearch}. */
+export function toggleExcludeSearch(search: string, streamId: string): string {
+  const params = new URLSearchParams(search)
+  const include = parseIdListParam(params.get(BOARD_SCOPE_PARAM))
+  const exclude = parseIdListParam(params.get(BOARD_EXCLUDE_SCOPE_PARAM))
+  if (!exclude.includes(streamId) && exclude.length >= MAX_BOARD_SCOPE_STREAMS) return toSearch(params)
+  const next = toggleExclude(streamId, include, exclude)
+  writeIdList(params, BOARD_SCOPE_PARAM, next.include)
+  writeIdList(params, BOARD_EXCLUDE_SCOPE_PARAM, next.exclude)
+  return toSearch(params)
+}
+
+/**
+ * The section-header "Scope all" verb (Unread / custom-section headers, board
+ * mode): replace the whole stream scope with every stream in one section at once.
+ * Generalizes {@link focusScopeSearch} from one id to a list — sets `?in=` to the
+ * ids (deduped, capped at {@link MAX_BOARD_SCOPE_STREAMS} keep-first) and drops
+ * those ids from `?not-in=`, leaving every other axis (types, labels, archived,
+ * the lens-carried params) untouched. The caller root-resolves threads to their
+ * root before passing ids, since the board scopes root streams.
+ */
+export function scopeAllSearch(search: string, streamIds: string[]): string {
+  const params = new URLSearchParams(search)
+  const ids = Array.from(new Set(streamIds.filter(Boolean))).slice(0, MAX_BOARD_SCOPE_STREAMS)
+  writeIdList(params, BOARD_SCOPE_PARAM, ids)
+  const included = new Set(ids)
+  const excluded = parseIdListParam(params.get(BOARD_EXCLUDE_SCOPE_PARAM)).filter((id) => !included.has(id))
+  writeIdList(params, BOARD_EXCLUDE_SCOPE_PARAM, excluded)
+  return toSearch(params)
+}
+
+/**
+ * The board-mode label-section header verb: FOCUS the board's label axis on one
+ * label (`?label=<id>`). Mirrors {@link focusScopeSearch} on the label axis —
+ * replaces the label include list with just this id and drops it from
+ * `?not-label`, leaving every other axis untouched. The board's label matching is
+ * anchor-or-root and stays live as assignments change, so this beats expanding a
+ * pinned label to stream ids (design doc § "Feature parity").
+ */
+export function labelFocusSearch(search: string, labelId: string): string {
+  const params = new URLSearchParams(search)
+  writeIdList(params, BOARD_LABEL_PARAM, [labelId])
+  const excluded = parseIdListParam(params.get(BOARD_EXCLUDE_LABEL_PARAM)).filter((id) => id !== labelId)
+  writeIdList(params, BOARD_EXCLUDE_LABEL_PARAM, excluded)
+  return toSearch(params)
+}
+
+/** Remove one value from any single filter axis (a chip's X). Works for every
+ *  id/type list param — the value is dropped, order and the other params kept. */
+export function removeAxisValueSearch(search: string, param: string, value: string): string {
+  const params = new URLSearchParams(search)
+  const kept = parseIdListParam(params.get(param)).filter((v) => v !== value)
+  writeIdList(params, param, kept)
+  return toSearch(params)
 }
 
 /** Parse a stream-type list param, dropping tokens outside the board's root

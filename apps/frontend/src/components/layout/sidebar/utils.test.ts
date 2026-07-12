@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threa/types"
-import { calculateUrgency, categorizeStream, isSidebarStreamVisible } from "./utils"
+import { buildVirtualDmDrafts, calculateUrgency, categorizeStream, isSidebarStreamVisible } from "./utils"
 
 function makeStream(overrides: Partial<StreamWithPreview> = {}): StreamWithPreview {
   return {
@@ -236,5 +236,42 @@ describe("isSidebarStreamVisible", () => {
   it("shows a non-public stream regardless of membership (access already gated by bootstrap)", () => {
     const stream = makeStream({ id: "stream_private", visibility: Visibilities.PRIVATE })
     expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(true)
+  })
+})
+
+describe("buildVirtualDmDrafts", () => {
+  const workspaceUsers = [
+    { id: "user_self", name: "Me" },
+    { id: "user_pierre", name: "Pierre" },
+    { id: "user_anna", name: "Anna" },
+  ]
+  const baseArgs = {
+    workspaceId: "workspace_1",
+    currentUserId: "user_self",
+    workspaceUsers,
+    dmPeerUserIds: [] as string[],
+  }
+
+  it("returns [] in board mode (DM drafts hidden on the board)", () => {
+    expect(buildVirtualDmDrafts({ ...baseArgs, isBoardMode: true })).toEqual([])
+  })
+
+  it("synthesizes a draft per member without a DM, excluding self, in chats mode", () => {
+    const drafts = buildVirtualDmDrafts({ ...baseArgs, isBoardMode: false })
+    expect(drafts.map((d) => d.dmPeerUserId)).toEqual(["user_anna", "user_pierre"])
+    expect(drafts.every((d) => d.type === StreamTypes.DM)).toBe(true)
+  })
+
+  it("skips members the viewer already has a DM stream with", () => {
+    const drafts = buildVirtualDmDrafts({
+      ...baseArgs,
+      isBoardMode: false,
+      dmPeerUserIds: ["user_pierre"],
+    })
+    expect(drafts.map((d) => d.dmPeerUserId)).toEqual(["user_anna"])
+  })
+
+  it("returns [] when there is no current user", () => {
+    expect(buildVirtualDmDrafts({ ...baseArgs, isBoardMode: false, currentUserId: null })).toEqual([])
   })
 })

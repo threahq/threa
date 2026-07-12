@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
@@ -10,7 +10,6 @@ import { useSealedNamePendingResolver } from "@/hooks/use-decrypted-stream-name"
 import {
   useActivityCounts,
   useDraftSummary,
-  createDmDraftId,
   useDraftScratchpads,
   useLiveSavedCount,
   useLiveScheduledCount,
@@ -39,6 +38,7 @@ import { SidebarShell } from "./sidebar-shell"
 import { SidebarSearchPanel, useSearchPanel } from "@/components/search"
 import { SidebarHeader } from "./sidebar-header"
 import { SidebarQuickLinks } from "./quick-links"
+import { BoardModeBlock } from "./board-mode-block"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
@@ -48,11 +48,31 @@ import { resolveSections } from "./resolve-sections"
 import { setStreamCustomSection } from "./sidebar-config"
 import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
-import { calculateUrgency, categorizeStream, isSidebarStreamVisible, isUnreadStream } from "./utils"
+import {
+  buildVirtualDmDrafts,
+  calculateUrgency,
+  categorizeStream,
+  isSidebarStreamVisible,
+  isUnreadStream,
+} from "./utils"
 import type { StreamItemData } from "./types"
 import { isUtilityStream, resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
-import { StreamTypes, Visibilities, LabelableResourceTypes, type SidebarQuickLinkKey } from "@threa/types"
+import { useMuteStream, useUnmuteStream } from "@/hooks/use-conversations"
+import { useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
+import {
+  BOARD_SCOPE_PARAM,
+  BOARD_EXCLUDE_SCOPE_PARAM,
+  focusScopeSearch,
+  labelFocusSearch,
+  parseIdListParam,
+  scopeAllSearch,
+  toggleExcludeSearch,
+  toggleIncludeSearch,
+} from "@/components/board/board-filter-params"
+import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
+import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
+import { StreamTypes, LabelableResourceTypes, type SidebarQuickLinkKey } from "@threa/types"
 
 /** The flag-gated Board quick-link key — one constant for the filter + the editor. */
 const BOARD_QUICK_LINK_KEY: SidebarQuickLinkKey = "board"
@@ -119,13 +139,19 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const isSavedPage = splat === "saved" || window.location.pathname.endsWith("/saved")
   const isScheduledPage = splat === "scheduled" || window.location.pathname.includes("/scheduled")
   const isActivityPage = splat === "activity" || window.location.pathname.endsWith("/activity")
-  const isBoardPage = splat === "board" || window.location.pathname.endsWith("/board")
+  // Reactive pathname (useLocation), and a real matcher: /board carries an
+  // optional lens segment, so a suffix check misses /board/active.
+  const isBoardPage = isBoardPath(location.pathname)
   // The Board is gated behind the board-view flag — hide its quick link (and its
   // editor row) for users without it, matching the route + endpoint gates.
   const boardEnabled = useFeatureFlag(workspaceId, "board-view") === "on"
   const boardQuickLinks = boardEnabled
     ? sidebarConfig.quickLinks
     : sidebarConfig.quickLinks.filter((link) => link.key !== BOARD_QUICK_LINK_KEY)
+  const isBoardMode = isBoardPage && boardEnabled
+  const boardMutedStreamIds = useBoardMutedStreamIds(workspaceId)
+  const muteStream = useMuteStream(workspaceId)
+  const unmuteStream = useUnmuteStream(workspaceId)
   const isMemoryPage = splat === "memory" || location.pathname.endsWith("/memory")
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
   const isLabelsPage = splat === "labels" || location.pathname.includes("/labels")
@@ -216,42 +242,17 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     s.type === StreamTypes.SYSTEM ? s.lastMessagePreview != null : s.type === StreamTypes.SCRATCHPAD
   )
 
-  // Users without existing DM streams are shown as virtual DM drafts.
-  const virtualDmStreams = useMemo(() => {
-    if (workspaceUsers.length === 0 || !currentUser) return []
-
-    const dmPeerIds = new Set(idbDmPeers.map((peer) => peer.userId))
-    const now = new Date().toISOString()
-
-    return workspaceUsers
-      .filter((workspaceUser) => workspaceUser.id !== currentUser.id)
-      .filter((workspaceUser) => !dmPeerIds.has(workspaceUser.id))
-      .map(
-        (workspaceUser): StreamItemData => ({
-          id: createDmDraftId(workspaceUser.id),
-          workspaceId,
-          type: StreamTypes.DM,
-          displayName: workspaceUser.name,
-          slug: null,
-          description: null,
-          visibility: Visibilities.PRIVATE,
-          parentStreamId: null,
-          parentMessageId: null,
-          rootStreamId: null,
-          companionMode: "off",
-          companionPersonaId: null,
-          createdBy: currentUser.id,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          lastMessagePreview: null,
-          urgency: "quiet",
-          section: "other",
-          dmPeerUserId: workspaceUser.id,
-        })
-      )
-      .sort((a, b) => (a.displayName ?? "").localeCompare(b.displayName ?? ""))
-  }, [workspaceUsers, idbDmPeers, currentUser, workspaceId])
+  const virtualDmStreams = useMemo(
+    () =>
+      buildVirtualDmDrafts({
+        isBoardMode,
+        workspaceId,
+        currentUserId: currentUser?.id ?? null,
+        workspaceUsers,
+        dmPeerUserIds: idbDmPeers.map((peer) => peer.userId),
+      }),
+    [workspaceUsers, idbDmPeers, currentUser, workspaceId, isBoardMode]
+  )
 
   const hasUserStreams = hasUserStreamsFromStreams || virtualDmStreams.length > 0
 
@@ -321,10 +322,87 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel, unreadStreamIds]
   )
 
+  // Board mode re-aims the stream rows: their verb changes from "open timeline"
+  // to "scope the board" (board-centered-sidebar-exploration.md § "Click model").
+  // Built once here — the muted set + URL/mute callbacks are shared, not per-row.
+  const boardSearch = location.search
+  const boardIncludedStreamIds = useMemo(
+    () => new Set(parseIdListParam(new URLSearchParams(boardSearch).get(BOARD_SCOPE_PARAM))),
+    [boardSearch]
+  )
+  const boardExcludedStreamIds = useMemo(
+    () => new Set(parseIdListParam(new URLSearchParams(boardSearch).get(BOARD_EXCLUDE_SCOPE_PARAM))),
+    [boardSearch]
+  )
+  // The single reactive topic-stats pass — one subscription for the whole board
+  // sidebar (rows + Lenses counts), gated on board mode so chats mode subscribes
+  // to nothing (perf contract in the exploration doc).
+  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardMode)
+  const boardMode = useMemo<SidebarBoardMode | null>(() => {
+    if (!isBoardMode) return null
+    return {
+      workspaceId,
+      includedStreamIds: boardIncludedStreamIds,
+      excludedStreamIds: boardExcludedStreamIds,
+      mutedStreamIds: boardMutedStreamIds,
+      focusHref: (streamId) => `${location.pathname}${focusScopeSearch(boardSearch, streamId)}`,
+      applyInclude: (streamId) => navigate(`${location.pathname}${toggleIncludeSearch(boardSearch, streamId)}`),
+      applyExclude: (streamId) => navigate(`${location.pathname}${toggleExcludeSearch(boardSearch, streamId)}`),
+      scopeAllHref: (streamIds) => `${location.pathname}${scopeAllSearch(boardSearch, streamIds)}`,
+      labelFocusHref: (labelId) => `${location.pathname}${labelFocusSearch(boardSearch, labelId)}`,
+      setMuted: (streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId)),
+      statsForStream: (streamId) =>
+        boardSidebarStats ? (boardSidebarStats.byStream.get(streamId) ?? ZERO_BOARD_STREAM_STATS) : null,
+      lensTotals: boardSidebarStats?.lensTotals ?? null,
+    }
+  }, [
+    isBoardMode,
+    workspaceId,
+    boardIncludedStreamIds,
+    boardExcludedStreamIds,
+    boardMutedStreamIds,
+    boardSearch,
+    location.pathname,
+    navigate,
+    muteStream,
+    unmuteStream,
+    boardSidebarStats,
+  ])
+
   // The Quick Links block renders only when the user keeps it in their layout —
   // removing the section from the editor takes it out of both the normal list
   // (resolved as a positioned section) and the empty-streams state.
   const hasQuickLinksSection = sidebarConfig.sections.some((s) => s.spec.kind === "quicklinks")
+  // On `/board` (flag on) the board block replaces the quick-links block in place;
+  // every other surface keeps the unchanged quick links.
+  let quickLinksSlot: ReactNode
+  if (hasQuickLinksSection) {
+    quickLinksSlot =
+      isBoardPage && boardEnabled ? (
+        <BoardModeBlock
+          workspaceId={workspaceId}
+          userId={user?.id ?? null}
+          lensTotals={boardMode?.lensTotals ?? null}
+        />
+      ) : (
+        <SidebarQuickLinks
+          workspaceId={workspaceId}
+          quickLinks={boardQuickLinks}
+          isDraftsPage={isDraftsPage}
+          draftCount={draftCount}
+          isSavedPage={isSavedPage}
+          savedCount={savedCount}
+          isScheduledPage={isScheduledPage}
+          scheduledCount={scheduledCount}
+          isActivityPage={isActivityPage}
+          isBoardPage={isBoardPage}
+          isMemoryPage={isMemoryPage}
+          isFilesPage={isFilesPage}
+          isLabelsPage={isLabelsPage}
+          unreadActivityCount={unreadActivityCount}
+        />
+      )
+  }
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
@@ -598,27 +676,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onAssignStreamLabel={handleAssignStreamLabel}
             onStreamMovedFromLabel={handleStreamMovedFromLabel}
             homeHintFor={(id) => homeHintById.get(id) ?? null}
-            quickLinksSlot={
-              hasQuickLinksSection ? (
-                <SidebarQuickLinks
-                  workspaceId={workspaceId}
-                  quickLinks={boardQuickLinks}
-                  isDraftsPage={isDraftsPage}
-                  draftCount={draftCount}
-                  isSavedPage={isSavedPage}
-                  savedCount={savedCount}
-                  isScheduledPage={isScheduledPage}
-                  scheduledCount={scheduledCount}
-                  isActivityPage={isActivityPage}
-                  isBoardPage={isBoardPage}
-                  isMemoryPage={isMemoryPage}
-                  isFilesPage={isFilesPage}
-                  isLabelsPage={isLabelsPage}
-                  unreadActivityCount={unreadActivityCount}
-                />
-              ) : undefined
-            }
+            quickLinksSlot={quickLinksSlot}
             scrollContainerRef={scrollContainerRef}
+            boardMode={boardMode}
           />
         }
         footer={

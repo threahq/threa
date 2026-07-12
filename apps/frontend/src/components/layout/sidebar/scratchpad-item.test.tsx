@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@/test"
 import { StreamTypes, Visibilities } from "@threa/types"
 import { ScratchpadItem } from "./scratchpad-item"
 import type { StreamItemData } from "./types"
+import type { SidebarBoardMode } from "./board-sidebar-mode"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as inputModeModule from "@/hooks/use-input-mode"
@@ -283,5 +284,124 @@ describe("ScratchpadItem", () => {
       expect(screen.getByTestId("location").textContent).toBe("/w/workspace_1")
     })
     expect(archiveStream).not.toHaveBeenCalled()
+  })
+
+  function boardMode(over: Partial<SidebarBoardMode> = {}): SidebarBoardMode {
+    return {
+      workspaceId: "workspace_1",
+      includedStreamIds: new Set<string>(),
+      excludedStreamIds: new Set<string>(),
+      mutedStreamIds: new Set<string>(),
+      focusHref: (id) => `/w/workspace_1/board?in=${id}`,
+      applyInclude: vi.fn(),
+      applyExclude: vi.fn(),
+      scopeAllHref: (ids) => `/w/workspace_1/board?in=${ids.join(",")}`,
+      labelFocusHref: (labelId) => `/w/workspace_1/board?label=${labelId}`,
+      setMuted: vi.fn(),
+      statsForStream: () => null,
+      lensTotals: null,
+      ...over,
+    }
+  }
+
+  it("board mode: the row Link focuses the board on this scratchpad", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "off" })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        boardMode={boardMode()}
+      />
+    )
+    expect(screen.getByRole("link", { name: /notes/i })).toHaveAttribute(
+      "href",
+      "/w/workspace_1/board?in=stream_scratchpad_1"
+    )
+  })
+
+  it("board mode: an included scratchpad shows a checked toggle and offers the filter verbs", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "off" })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        boardMode={boardMode({ includedStreamIds: new Set(["stream_scratchpad_1"]) })}
+      />
+    )
+    expect(screen.getByRole("button", { name: /Remove Notes from board filter/ })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    )
+    for (const label of ["Remove from filter", "Exclude from board", "Mute on board", "Open timeline", "Settings"]) {
+      expect(screen.getByText(label)).toBeInTheDocument()
+    }
+  })
+
+  it("board mode: a muted scratchpad dims with a bell-off glyph and the muted status line", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "off" })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        boardMode={boardMode({ mutedStreamIds: new Set(["stream_scratchpad_1"]) })}
+      />
+    )
+    expect(screen.getByLabelText("Muted on the board")).toBeInTheDocument()
+    expect(screen.getByText("Muted on the board")).toBeInTheDocument()
+    expect(screen.getByText("Unmute on board")).toBeInTheDocument()
+  })
+
+  it("board mode: an E2E scratchpad reads 'Not on the board', keeps its lock, and has no filter toggle", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "off", e2eEnabled: true })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        boardMode={boardMode()}
+      />
+    )
+    expect(screen.getByText("Not on the board")).toBeInTheDocument()
+    expect(screen.getByLabelText("Encrypted scratchpad")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /board filter/ })).not.toBeInTheDocument()
+    // Escape hatch stays; scope verbs don't apply to an off-board stream.
+    expect(screen.getByText("Open timeline")).toBeInTheDocument()
+    expect(screen.queryByText("Add to filter")).not.toBeInTheDocument()
+  })
+
+  it("board mode: an E2E scratchpad's row Link opens the timeline, not an empty board scope", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "off", e2eEnabled: true })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        boardMode={boardMode()}
+      />
+    )
+    expect(screen.getByRole("link", { name: /Notes/i })).toHaveAttribute("href", "/w/workspace_1/s/stream_scratchpad_1")
+  })
+
+  it("chats mode: no board verbs on the scratchpad", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "off" })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+    expect(screen.queryByText("Add to filter")).not.toBeInTheDocument()
+    expect(screen.queryByText("Open timeline")).not.toBeInTheDocument()
+    expect(screen.getByText("Settings")).toBeInTheDocument()
   })
 })
