@@ -534,11 +534,11 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
           continuation={continuation}
           conversationId={branch.conversationId}
           conversationRootStreamId={branch.threadStreamId}
-          // Break out to the branch rail's `pl-2 sm:pl-3` and pad back (net-zero),
-          // so a colored row's inset accent rail clears the text instead of sitting
-          // flush against it — same treatment as the top-level row above.
-          surfaceClassName="bg-background px-2 sm:px-3"
-          rowInsetClassName="-mx-2 sm:-mx-3"
+          // The branch spine (BranchGroup rail) carries the actor color, so the row
+          // suppresses its own accent stripe (no doubled bar) and stays padded
+          // inside the rail — no edge breakout that would paint over the spine.
+          surfaceClassName="bg-background"
+          suppressRowAccent
           onNewSubtopic={
             canBranch
               ? () => inlineComposer.openNewSubtopic(message.streamId ?? branch.threadStreamId, message.id)
