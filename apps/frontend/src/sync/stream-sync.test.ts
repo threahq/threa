@@ -611,6 +611,54 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     expect(await db.events.get("temp_conv")).toBeUndefined()
   })
 
+  it("seeds the decrypt cache from the optimistic plaintext when the bootstrap swaps in an encrypted server copy", async () => {
+    clearDecryptCache()
+    const streamId = "stream_reload_e2e"
+    const plaintextJson = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "secret" }] }] }
+
+    await db.events.put({
+      id: "temp_e2e",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "1752350000000",
+      _sequenceNum: 1752350000000,
+      eventType: "message_created",
+      payload: { messageId: "temp_e2e", contentMarkdown: "secret", contentJson: plaintextJson },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _cachedAt: Date.now(),
+    })
+    await db.pendingMessages.add({
+      clientId: "temp_e2e",
+      workspaceId: "ws_1",
+      streamId,
+      content: "secret",
+      contentFormat: "markdown",
+      createdAt: Date.now(),
+      retryCount: 0,
+    })
+
+    const serverCopy = makeEvent({ id: "evt_e2e_real", streamId, sequence: "100" })
+    serverCopy.payload = {
+      messageId: "msg_3",
+      clientMessageId: "temp_e2e",
+      contentMarkdown: "🔒 Encrypted",
+      contentJson: null,
+      ciphertext: "base64ciphertext",
+      envelope: { v: 2 },
+    }
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([serverCopy], streamId))
+
+    expect(await db.events.get("temp_e2e")).toBeUndefined()
+    expect(await db.events.get("evt_e2e_real")).toBeDefined()
+    const cached = getCachedDecryption("evt_e2e_real")
+    expect(cached?.status).toBe("decrypted")
+    expect(cached?.value?.contentMarkdown).toBe("secret")
+    expect(cached?.value?.contentJson).toEqual(plaintextJson)
+  })
+
   it("writes stream metadata to IDB", async () => {
     const streamId = "stream_meta"
     const bootstrap = makeBootstrap([], streamId)
