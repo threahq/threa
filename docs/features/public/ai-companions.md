@@ -3,7 +3,7 @@ title: AI Companions
 status: shipped
 audience: public
 since: 2026-05
-surfaces: [scratchpads, stream-settings, message-timeline, trace-view]
+surfaces: [scratchpads, stream-settings, workspace-settings, message-timeline, trace-view]
 public_site: true
 summary: >
   A per-stream on/off setting; when it's on, Ariadne reads each new message and
@@ -14,9 +14,13 @@ related: [architecture/agent-runtime.md]
 ## What it does
 
 A companion is an AI agent attached to a stream. Each stream carries a companion
-mode that is either on or off. With it on, Ariadne (Threa's built-in companion)
-reads each new message in the stream and replies in the thread. With it off, the
-stream is storage only and nothing runs.
+mode that is either on or off. With it on, the stream's companion agent reads each
+new message in the stream and replies in the thread. With it off, the stream is
+storage only and nothing runs.
+
+The default companion is Ariadne, Threa's built-in agent. A workspace can also
+create its own agents (see "Custom agents" below) and pick which one replies in
+each stream.
 
 Ariadne replies as a normal participant: its messages land in the stream next to
 yours and stay in the thread's history. It has a set of tools it can call while it
@@ -26,8 +30,9 @@ Linear when those integrations are connected.
 
 A companion runs in two cases:
 
-- **Companion mode on.** Ariadne responds to every new message in the stream. A
-  new scratchpad starts with companion mode on; a quick note starts with it off.
+- **Companion mode on.** The stream's companion agent responds to every new message
+  in the stream. A new scratchpad starts with companion mode on; a quick note starts
+  with it off.
 - **A mention.** Writing `@ariadne` in a message invokes Ariadne for that one
   message, regardless of the stream's companion mode.
 
@@ -40,8 +45,12 @@ that has it on runs the companion too, without being switched on per thread.
   Quick Note" makes the same kind of stream with it off. Either can be changed
   later.
 - **The toggle.** A stream's settings has a Companion / Quiet switch. Companion
-  means Ariadne reads new messages and replies; Quiet means storage only. It saves
-  immediately.
+  means the agent reads new messages and replies; Quiet means storage only. It
+  saves immediately.
+- **The agent picker.** Below the toggle, a stream's settings offers a Companion
+  agent select listing the built-in Ariadne plus any workspace custom agents.
+  Picking one sets which agent replies here; it saves immediately. Threads inherit
+  their scratchpad's agent.
 - **Indicators.** A scratchpad with companion mode on shows a sparkle marker in the
   sidebar and a companion indicator in its header.
 - **The activity card.** While a run is in progress, a card in the timeline shows
@@ -53,23 +62,41 @@ that has it on runs the companion too, without being switched on per thread.
   and stays available afterward.
 - **Stopping a run.** During a long research step the card shows a Stop button.
 
+## Custom agents
+
+Admins manage agents from workspace settings → **AI Agents**. The roster lists the
+built-in Ariadne and any workspace custom agents. Two kinds, with different editing
+scope:
+
+- **Ariadne (built-in) is bounded.** An admin can change her toolset, model, and
+  two style presets — a Tone (warm / neutral / direct) and a Brevity (brief /
+  balanced / thorough). Her name, avatar, and system prompt are fixed; the prompt
+  shows read-only.
+- **Custom agents are fully editable.** "New agent" forks an existing agent (Ariadne
+  or another custom) into an editable copy — its prompt, tools, model, and style
+  carry over. A custom agent has a full editor: name, description, avatar (emoji or
+  an uploaded image), free-form system prompt, free-text Tone and Brevity guidance,
+  tools, model, an optional escalation model, and temperature / max tokens. Custom
+  agents can be archived (and restored from an Archived list); a stream pointing at
+  an archived agent falls back to Ariadne.
+
+Both editors carry the same test-drive, draft, and revision-history behavior:
+edits sync into a server-side draft, a bound test scratchpad lets an admin talk to
+the candidate agent before saving, and every save appends a restorable revision.
+
 ## Boundaries
 
-- **Ariadne is the only companion today.** The persona model is data-driven (a
-  persona carries its own name, avatar, model, system prompt, and tool list), and
-  the schema supports workspace-specific personas, but there is no UI to create
-  them or to pick a different one. Companion mode always uses Ariadne. There is
-  also an internal "Empty Agent" shell that is not a product-facing companion.
-- **No persona picker.** A stream stores which persona its companion uses, and the
-  update API accepts one, but the settings screen only offers on/off. Choosing a
-  persona per stream is not exposed.
-- **End-to-end encrypted streams keep the companion off.** Ariadne can't read
-  ciphertext, so the toggle is informational there and replies never happen. The
-  separate enclave path that lets a companion serve an encrypted stream is
-  documented under e2e-encrypted-scratchpads, not here.
+- **Custom agents are workspace-only.** They live in the workspace that created
+  them; there is no cross-workspace or global agent. An internal "Empty Agent"
+  shell exists but is not a product-facing companion.
+- **End-to-end encrypted streams always run Ariadne.** The companion runs inside
+  the encryption enclave there and the agent picker is hidden — a custom agent's
+  pointer is ignored on an encrypted scratchpad. The enclave path is documented
+  under e2e-encrypted-scratchpads.
 - **External bots are a different feature.** The "bot status strip" that shows
   Available / Working / Not connected is for third-party bot runtimes, not for
-  Ariadne. Companion status shows as the in-timeline activity card described above.
+  companion agents. Companion status shows as the in-timeline activity card
+  described above.
 
 ## Related
 
