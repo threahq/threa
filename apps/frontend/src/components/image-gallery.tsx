@@ -401,6 +401,10 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // navigation within a session — if the user is reading raw markdown and
   // arrows over to the next markdown file, they probably want raw there too.
   const [rawMode, setRawMode] = useState(false)
+  // Touch layout: tapping the media toggles the gallery's own chrome (action
+  // bar, filename bar) so the image can be viewed with nothing on top of it.
+  // Persists across swipes; resets to visible on every open.
+  const [chromeVisible, setChromeVisible] = useState(true)
   // containerWidth drives both slide sizing and strip transform calculations on mobile
   const [containerWidth, setContainerWidth] = useState(0)
 
@@ -467,6 +471,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   useLayoutEffect(() => {
     if (isOpen && !prevOpen.current) {
       setCurrentIndex(initialIndex)
+      setChromeVisible(true)
       justOpened.current = true
     }
     prevOpen.current = isOpen
@@ -830,26 +835,37 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     [currentIndex, hasNext, hasPrev, items, onItemChange, onClose]
   )
 
-  // Touch: tap left/right zones to navigate (suppressed after a committed swipe
-  // and disabled while zoomed so taps inside a zoomed image don't navigate away).
+  // Touch: tap left/right zones to navigate; any other tap toggles the gallery
+  // chrome (suppressed after a committed swipe and disabled while zoomed so
+  // taps inside a zoomed image don't navigate or toggle).
   const handleMobileTap = useCallback(
     (e: React.MouseEvent) => {
-      if (!inputModeTouch || !isMultiple) return
+      if (!inputModeTouch) return
       if (isZoomedRef.current) return
-      // Tap-to-navigate inside the text panel would hijack link clicks, text
-      // selection, and code-block interactions. Taps in the surrounding margin
-      // still navigate — that's the only way to flip between text slides on
+      // Taps inside the text panel would hijack link clicks, text selection,
+      // and code-block interactions. Taps in the surrounding margin still
+      // navigate/toggle — that's the only way to flip between text slides on
       // mobile once swipe is relinquished to native scroll.
       const target = e.target as HTMLElement | null
       if (target?.closest("[data-gallery-text-viewer]")) return
+      // Taps on the native <video> controls are play/pause/seek, not toggles.
+      if (target?.closest("video")) return
       if (didSwipe.current) {
         didSwipe.current = false
         return
       }
       const rect = e.currentTarget.getBoundingClientRect()
       const zone = (e.clientX - rect.left) / rect.width
-      if (zone < 0.3 && hasPrev) goPrev()
-      else if (zone > 0.7 && hasNext) goNext()
+      if (isMultiple && zone < 0.3 && hasPrev) goPrev()
+      else if (isMultiple && zone > 0.7 && hasNext) goNext()
+      else {
+        // Hiding makes the action bar inert; if focus is still on one of its
+        // buttons (Radix focuses the first one on open) the browser ejects
+        // focus to <body>, which the dialog's dismissable layer reads as
+        // focus-outside and closes the gallery. Park focus here first.
+        ;(e.currentTarget as HTMLElement).focus({ preventScroll: true })
+        setChromeVisible((v) => !v)
+      }
     },
     [inputModeTouch, isMultiple, hasPrev, hasNext, goPrev, goNext]
   )
@@ -865,8 +881,18 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // panel chrome; the 0.75rem offsets (bumped by safe-area insets on notched
   // devices) give the pill visible breathing room from the screen edge instead
   // of kissing it.
+  const chromeHidden = inputModeTouch && !chromeVisible
   const actionBar = (
-    <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))] z-10 flex items-center gap-1 rounded-full bg-black/55 px-1 py-0.5 shadow-lg backdrop-blur-sm">
+    <div
+      className={cn(
+        "absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))] z-10 flex items-center gap-1 rounded-full bg-black/55 px-1 py-0.5 shadow-lg backdrop-blur-sm",
+        "transition-opacity duration-200",
+        chromeHidden && "pointer-events-none opacity-0"
+      )}
+      // inert (not just opacity-0) so hidden controls are unfocusable and
+      // invisible to assistive tech while the image is being viewed clean.
+      inert={chromeHidden || undefined}
+    >
       {!isMobile && current?.type === "image" && (
         <ZoomControls
           subscribeScale={subscribeScale}
@@ -984,7 +1010,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
                 <div
                   ref={setContainerNode}
-                  className="absolute inset-0 overflow-hidden"
+                  className="absolute inset-0 overflow-hidden outline-none"
+                  tabIndex={-1}
                   onTouchStart={handleTouchStart}
                   onTouchMove={handleTouchMove}
                   onTouchEnd={handleTouchEnd}
@@ -1013,7 +1040,14 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                 </div>
 
                 {/* Filename bar sits above the strip so it doesn't scroll with it */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pointer-events-none z-10">
+                <div
+                  className={cn(
+                    "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pointer-events-none z-10",
+                    "transition-opacity duration-200",
+                    chromeHidden && "opacity-0"
+                  )}
+                  aria-hidden={chromeHidden || undefined}
+                >
                   <span className="text-sm text-white">{current.filename}</span>
                 </div>
               </div>
