@@ -5,13 +5,14 @@ import CodeBlock from "../../components/CodeBlock.astro"
 
 <DocsLayout
   title="Recipes · Threa Developers"
-  description="Worked examples against the Threa API: memo search with provenance, CI notifications to a stream, mirroring search, wiring a local AI agent into your workspace, and connecting an end-to-end-encrypted agent."
+  description="Worked examples against the Threa API: memo search with provenance, CI notifications to a stream, mirroring search, wiring a local AI agent into your workspace, running a delegated task end to end, and connecting an end-to-end-encrypted agent."
   current="recipes"
   sections={[
     { id: "decisions", label: "Find what was decided" },
     { id: "ci-notify", label: "Notify a stream from CI" },
     { id: "mirror-search", label: "Mirror a search" },
     { id: "local-agent", label: "Connect a local agent" },
+    { id: "delegations", label: "Run a delegation" },
     { id: "sealed-agent", label: "Connect an encrypted agent" },
   ]}
 >
@@ -220,6 +221,92 @@ async function loop() {
     read history and search the same memory Ariadne uses while it works, so your
     local agent answers with the full workspace context behind the message that
     summoned it.
+  </p>
+
+  <h2 id="delegations">Run a delegation</h2>
+  <p>
+    When Threa's assistant is asked for work that needs a real machine (fix a bug
+    in a repo, run a migration), it doesn't pretend to do it in chat. It compiles a
+    self-contained brief and posts a <strong>delegation card</strong> in the stream.
+    The card waits, status <code>open</code>, until an agent claims it through this
+    API. Every transition after that shows on the card live: claimed, running with
+    progress notes, then completed with the result posted back into the
+    conversation, where Threa's memory learns the outcome.
+  </p>
+  <p>
+    Works with either key kind: a personal <code>threa_uk_</code> key posts the
+    result as you (with a via-API badge); a workspace bot key posts it as the bot,
+    the shared-runner setup. Both need the <code>delegations:read</code> and
+    <code>delegations:write</code> scopes.
+  </p>
+
+  <h3>1 · Find open work</h3>
+  <p>The queue is filtered to streams your key can access.</p>
+  <CodeBlock
+    lang="bash"
+    label="list open delegations"
+    code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations" \\
+  -H "Authorization: Bearer {{apiKey}}"`}
+    run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations" }}
+  />
+
+  <h3>2 · Claim it</h3>
+  <p>
+    The claim is atomic: exactly one claimer wins; a lost race returns
+    <code>409 DELEGATION_NOT_OPEN</code>. The response carries the full brief, the
+    resolved context refs, and a <code>claimToken</code> on a 15-minute lease. The
+    token is shown once and cannot be retrieved again.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="claim"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/claim \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "claimedByLabel": "build-box / my agent" }'`}
+  />
+
+  <h3>3 · Report progress, keep the lease alive</h3>
+  <p>
+    Send the token as an <code>X-Threa-Callback-Token</code> header on every later
+    call. <code>status</code> puts a note on the card and renews the lease;
+    <code>heartbeat</code> renews it silently. Let the lease lapse and the card
+    flips to <code>expired</code> so nobody waits on a dead runner.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="progress note"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/status \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "X-Threa-Callback-Token: CLAIM_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "statusNote": "Tests passing, writing the migration" }'`}
+  />
+
+  <h3>4 · Complete with the result</h3>
+  <p>
+    The result posts into the stream and the card flips in one transaction.
+    Optional <code>metadata</code> is stamped on the message (queryable later with
+    <code>find-by-metadata</code>). Retries are safe: a retried complete bearing the
+    same token returns the committed outcome instead of double-posting.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="complete"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/complete \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "X-Threa-Callback-Token: CLAIM_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "resultMarkdown": "Shipped in PR #42. All acceptance criteria pass.",
+    "metadata": { "github.pr": "https://github.com/acme/repo/pull/42" }
+  }'`}
+  />
+  <p>
+    Something went wrong instead? <code>POST …/fail</code> with an
+    <code>errorMessage</code> puts the reason on the card. And the card's own
+    <em>Copy prompt</em> button embeds these instructions with the real ids filled
+    in, so an agent that receives the pasted brief knows how to claim it.
   </p>
 
   <h2 id="sealed-agent">Connect an encrypted agent</h2>
