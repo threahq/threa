@@ -24,6 +24,9 @@ interface BoardModeBlockProps {
   workspaceId: string
   /** The viewer's auth id — keys the last-location record for the "← Chats" target. */
   userId: string | null
+  /** Per-lens workspace topic totals for the Lenses row counts, from the sidebar's
+   *  single stats pass; `null`/absent while it resolves (render no count). */
+  lensTotals?: Record<BoardLens, number> | null
 }
 
 const ROW_CLASS = "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
@@ -39,7 +42,7 @@ const SECTION_LABEL_CLASS =
  * the filter bar uses (`lensHref`, `savedViewHref`) so the two surfaces can't
  * drift (INV-35). The filter axes ride along a lens switch, so scoping survives.
  */
-export function BoardModeBlock({ workspaceId, userId }: BoardModeBlockProps) {
+export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlockProps) {
   const { collapseOnMobile } = useSidebar()
   const location = useLocation()
   const lensMatch = useMatch("/w/:workspaceId/board/:lens?")
@@ -101,6 +104,9 @@ export function BoardModeBlock({ workspaceId, userId }: BoardModeBlockProps) {
 
       {sortedViews.length > 0 && (
         <div className="pt-1">
+          {/* No count: a saved view is an arbitrary scope/type/label/lens predicate,
+              not a single lens total, so the sidebar's one-pass stats can't derive it
+              (see Piece 4 "where computable"). Lens rows below do get counts. */}
           <h3 className={SECTION_LABEL_CLASS}>Views</h3>
           {sortedViews.map((view) => {
             const active = view.id === activeViewId
@@ -131,6 +137,7 @@ export function BoardModeBlock({ workspaceId, userId }: BoardModeBlockProps) {
           const def = BOARD_LENS_DEFS[value]
           const Icon = def.icon
           const active = value === currentLens && activeViewId === null
+          const count = lensTotals?.[value] ?? null
           return (
             <Link
               key={value}
@@ -140,7 +147,12 @@ export function BoardModeBlock({ workspaceId, userId }: BoardModeBlockProps) {
               className={cn(ROW_CLASS, active ? "bg-primary/10" : "hover:bg-muted/50 text-muted-foreground")}
             >
               <Icon className="h-4 w-4 shrink-0" />
-              {def.label}
+              <span className="min-w-0 flex-1 truncate">{def.label}</span>
+              {count !== null && (
+                <span aria-hidden className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {count}
+                </span>
+              )}
             </Link>
           )
         })}

@@ -175,4 +175,23 @@ describe("BoardModeBlock", () => {
 
     expect(screen.getByLabelText("Board home")).toBeInTheDocument()
   })
+
+  it("renders per-lens counts from lensTotals, right-aligned inside each lens row", () => {
+    stub()
+    mountAt(`/w/${WS}/board`, {
+      lensTotals: { all: 14, active: 6, "needs-resolution": 2, decisions: 3, mine: 0 },
+    })
+
+    const all = screen.getByRole("link", { name: "All" })
+    expect(all).toHaveTextContent("14")
+    // A real zero is a computed count — shown, not hidden.
+    expect(screen.getByRole("link", { name: "Mine" })).toHaveTextContent("0")
+  })
+
+  it("renders no lens counts when lensTotals is null (stats not loaded)", () => {
+    stub()
+    mountAt(`/w/${WS}/board`, { lensTotals: null })
+
+    expect(screen.getByRole("link", { name: "Active" })).toHaveTextContent(/^Active$/)
+  })
 })

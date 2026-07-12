@@ -354,6 +354,8 @@ function makeBoardMode(over: Partial<SidebarBoardMode> = {}): SidebarBoardMode {
     applyInclude: vi.fn(),
     applyExclude: vi.fn(),
     setMuted: vi.fn(),
+    statsForStream: () => null,
+    lensTotals: null,
     ...over,
   }
 }
@@ -503,5 +505,43 @@ describe("StreamItem — board mode", () => {
     await act(async () => vi.advanceTimersByTime(500))
     expect(screen.queryByRole("button", { name: "Add to filter" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument()
+  })
+
+  it("shows the topic stats line in place of the message preview", () => {
+    const stream = createStream()
+    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 14, active: 6, needsResolution: 2 }) }))
+    expect(screen.getByText("14 topics · 6 active · 2 need resolution")).toBeInTheDocument()
+    expect(screen.queryByText("Latest update from the stream")).not.toBeInTheDocument()
+  })
+
+  it("uses singular grammar for a lone topic and resolution", () => {
+    const stream = createStream()
+    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 1, active: 1, needsResolution: 1 }) }))
+    expect(screen.getByText("1 topic · 1 active · 1 needs resolution")).toBeInTheDocument()
+  })
+
+  it("omits the resolution clause when nothing needs resolution", () => {
+    const stream = createStream()
+    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 3, active: 3, needsResolution: 0 }) }))
+    expect(screen.getByText("3 topics · 3 active")).toBeInTheDocument()
+  })
+
+  it("renders 'No topics yet' at zero topics", () => {
+    const stream = createStream()
+    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 0, active: 0, needsResolution: 0 }) }))
+    expect(screen.getByText("No topics yet")).toBeInTheDocument()
+  })
+
+  it("lets the muted status line take precedence over the stats line", () => {
+    const stream = createStream()
+    renderBoardRow(
+      stream,
+      makeBoardMode({
+        mutedStreamIds: new Set(["stream_general"]),
+        statsForStream: () => ({ topics: 14, active: 6, needsResolution: 2 }),
+      })
+    )
+    expect(screen.getByText("Muted on the board")).toBeInTheDocument()
+    expect(screen.queryByText(/14 topics/)).not.toBeInTheDocument()
   })
 })

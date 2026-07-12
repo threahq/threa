@@ -69,6 +69,7 @@ import {
   toggleIncludeSearch,
 } from "@/components/board/board-filter-params"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
+import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
 import { StreamTypes, LabelableResourceTypes, type SidebarQuickLinkKey } from "@threa/types"
 
 /** The flag-gated Board quick-link key — one constant for the filter + the editor. */
@@ -329,6 +330,10 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     () => new Set(parseIdListParam(new URLSearchParams(boardSearch).get(BOARD_EXCLUDE_SCOPE_PARAM))),
     [boardSearch]
   )
+  // The single reactive topic-stats pass — one subscription for the whole board
+  // sidebar (rows + Lenses counts), gated on board mode so chats mode subscribes
+  // to nothing (perf contract in the exploration doc).
+  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardMode)
   const boardMode = useMemo<SidebarBoardMode | null>(() => {
     if (!isBoardMode) return null
     return {
@@ -340,6 +345,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       applyInclude: (streamId) => navigate(`${location.pathname}${toggleIncludeSearch(boardSearch, streamId)}`),
       applyExclude: (streamId) => navigate(`${location.pathname}${toggleExcludeSearch(boardSearch, streamId)}`),
       setMuted: (streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId)),
+      statsForStream: (streamId) =>
+        boardSidebarStats ? (boardSidebarStats.byStream.get(streamId) ?? ZERO_BOARD_STREAM_STATS) : null,
+      lensTotals: boardSidebarStats?.lensTotals ?? null,
     }
   }, [
     isBoardMode,
@@ -352,6 +360,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     navigate,
     muteStream,
     unmuteStream,
+    boardSidebarStats,
   ])
 
   // The Quick Links block renders only when the user keeps it in their layout —
@@ -364,7 +373,11 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   if (hasQuickLinksSection) {
     quickLinksSlot =
       isBoardPage && boardEnabled ? (
-        <BoardModeBlock workspaceId={workspaceId} userId={user?.id ?? null} />
+        <BoardModeBlock
+          workspaceId={workspaceId}
+          userId={user?.id ?? null}
+          lensTotals={boardMode?.lensTotals ?? null}
+        />
       ) : (
         <SidebarQuickLinks
           workspaceId={workspaceId}

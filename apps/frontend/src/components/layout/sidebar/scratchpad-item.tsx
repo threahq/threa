@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react"
+import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react"
 import {
   Archive,
   Ban,
@@ -34,7 +34,14 @@ import {
   type SidebarActionItem,
   type SidebarActionPreview,
 } from "./sidebar-actions"
-import { UrgencyStrip, StreamItemAvatar, StreamItemPreview, BoardTileToggle, type BoardTileState } from "./stream-item"
+import {
+  UrgencyStrip,
+  StreamItemAvatar,
+  StreamItemPreview,
+  BoardTileToggle,
+  BoardStatsLine,
+  type BoardTileState,
+} from "./stream-item"
 import { StreamLabelDots } from "./sidebar-labels"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { truncateContent } from "./utils"
@@ -238,6 +245,27 @@ export function ScratchpadItem({
   else if (boardMuted) boardStatusLine = "Muted on the board"
   const boardDimmed = boardExcluded || boardMuted || (isE2e && !!boardMode)
 
+  // Second line: board status (muted/E2E — precedence), else board topic stats,
+  // else the chats-mode message preview. See {@link StreamItem}.
+  let previewNode: ReactNode
+  if (boardStatusLine) {
+    previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
+  } else if (boardMode) {
+    previewNode = <BoardStatsLine stats={boardMode.statsForStream(streamWithPreview.id)} />
+  } else {
+    previewNode = (
+      <StreamItemPreview
+        preview={preview}
+        getActorName={getActorName}
+        toEmoji={toEmoji}
+        compact={compact}
+        showPreviewOnHover={showPreviewOnHover}
+        isTouch={isTouchInput}
+        e2eEnabled={streamWithPreview.e2eEnabled}
+      />
+    )
+  }
+
   return (
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
@@ -303,19 +331,7 @@ export function ScratchpadItem({
                     <MentionIndicator count={mentionCount} />
                   </div>
                 </div>
-                {boardStatusLine ? (
-                  <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
-                ) : (
-                  <StreamItemPreview
-                    preview={preview}
-                    getActorName={getActorName}
-                    toEmoji={toEmoji}
-                    compact={compact}
-                    showPreviewOnHover={showPreviewOnHover}
-                    isTouch={isTouchInput}
-                    e2eEnabled={streamWithPreview.e2eEnabled}
-                  />
-                )}
+                {previewNode}
               </div>
             </div>
           </Link>

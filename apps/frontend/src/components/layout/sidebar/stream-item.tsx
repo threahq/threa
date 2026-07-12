@@ -52,6 +52,7 @@ import {
 } from "@threa/types"
 import type { StreamItemData, UrgencyLevel } from "./types"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
+import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
 import { ScratchpadItem } from "./scratchpad-item"
 
 export type BoardTileState = "included" | "excluded" | "neutral"
@@ -97,6 +98,24 @@ export function BoardTileToggle({
       {!included && !excluded && <Plus className="h-2.5 w-2.5" />}
     </button>
   )
+}
+
+/**
+ * The board-mode row preview line: the stream's topic tally in place of the last
+ * message ("14 topics · 6 active", "· 2 need resolution" only when > 0, "No
+ * topics yet" at zero). Same size/truncation as the message preview it replaces
+ * so swapping in board mode shifts nothing (INV-21). `null` stats = the single
+ * aggregation hasn't resolved yet; render nothing rather than flash "No topics".
+ */
+export function BoardStatsLine({ stats }: { stats: BoardStreamStats | null }) {
+  if (!stats) return null
+  if (stats.topics === 0) {
+    return <div className="truncate text-xs text-muted-foreground">No topics yet</div>
+  }
+  const parts = [`${stats.topics} ${stats.topics === 1 ? "topic" : "topics"}`, `${stats.active} active`]
+  if (stats.needsResolution > 0)
+    parts.push(`${stats.needsResolution} ${stats.needsResolution === 1 ? "needs" : "need"} resolution`)
+  return <div className="truncate text-xs text-muted-foreground">{parts.join(" · ")}</div>
 }
 
 export function UrgencyStrip({ urgency }: { urgency: UrgencyLevel }) {
@@ -467,6 +486,27 @@ export function StreamItem({
   else if (boardMuted) boardStatusLine = "Muted on the board"
   const boardDimmed = boardExcluded || boardMuted || (isE2e && !!boardMode)
 
+  // The row's second line: a board status line (muted/E2E — takes precedence),
+  // else the board topic stats (board mode), else the chats-mode message preview.
+  let previewNode: ReactNode
+  if (boardStatusLine) {
+    previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
+  } else if (boardMode) {
+    previewNode = <BoardStatsLine stats={boardMode.statsForStream(boardScopeId)} />
+  } else {
+    previewNode = (
+      <StreamItemPreview
+        preview={preview}
+        getActorName={getActorName}
+        toEmoji={toEmoji}
+        compact={compact}
+        showPreviewOnHover={showPreviewOnHover}
+        isTouch={isTouchInput}
+        e2eEnabled={stream.e2eEnabled}
+      />
+    )
+  }
+
   return (
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
@@ -546,19 +586,7 @@ export function StreamItem({
                     <MentionIndicator count={mentionCount} />
                   </div>
                 </div>
-                {boardStatusLine ? (
-                  <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
-                ) : (
-                  <StreamItemPreview
-                    preview={preview}
-                    getActorName={getActorName}
-                    toEmoji={toEmoji}
-                    compact={compact}
-                    showPreviewOnHover={showPreviewOnHover}
-                    isTouch={isTouchInput}
-                    e2eEnabled={stream.e2eEnabled}
-                  />
-                )}
+                {previewNode}
               </div>
             </div>
           </Link>

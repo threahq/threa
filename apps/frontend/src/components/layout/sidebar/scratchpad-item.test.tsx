@@ -296,6 +296,8 @@ describe("ScratchpadItem", () => {
       applyInclude: vi.fn(),
       applyExclude: vi.fn(),
       setMuted: vi.fn(),
+      statsForStream: () => null,
+      lensTotals: null,
       ...over,
     }
   }

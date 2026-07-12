@@ -1,10 +1,13 @@
+import type { BoardLens } from "@threa/types"
+import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
+
 /**
  * Board-mode descriptor threaded from the sidebar orchestrator into every stream
  * row (board-centered-sidebar-exploration.md § "Click model"). Present only on
  * `/board` with the flag on; `null` everywhere else, and every board branch in a
  * row is gated on it so chats mode renders byte-identically. Built once at the
- * list level (not per row) so the mute mutations, muted set, and URL callbacks
- * are shared rather than re-derived per row.
+ * list level (not per row) so the mute mutations, muted set, URL callbacks, and
+ * the single topic-stats aggregation are shared rather than re-derived per row.
  */
 export interface SidebarBoardMode {
   workspaceId: string
@@ -24,4 +27,10 @@ export interface SidebarBoardMode {
   applyExclude: (streamId: string) => void
   /** Mute / unmute a root stream on the board. */
   setMuted: (streamId: string, mute: boolean) => void
+  /** Per-root-stream topic tally for the row's board-mode preview line. `null`
+   *  until the single stats aggregation resolves; the row renders no line then.
+   *  A resolved-but-uncounted stream reads back {@link ZERO_BOARD_STREAM_STATS}. */
+  statsForStream: (streamId: string) => BoardStreamStats | null
+  /** Per-lens workspace totals for the Lenses rows, or `null` until stats resolve. */
+  lensTotals: Record<BoardLens, number> | null
 }
