@@ -22,6 +22,7 @@ function filterOf(over: Partial<BoardViewFilter> = {}): BoardViewFilter {
     excludeTypes: null,
     labels: null,
     excludeLabels: null,
+    unread: null,
     showArchived: false,
     ...over,
   }

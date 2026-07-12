@@ -28,6 +28,7 @@ import {
   useUnmuteStream,
 } from "@/hooks/use-conversations"
 import { useBoardHiddenConversations, useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
+import { useUnreadCounts } from "@/hooks/use-unread-counts"
 import { useBoardRailsReady } from "@/hooks/use-board-card-messages"
 import { useBoardRevealLatch } from "@/hooks/use-board-reveal-latch"
 import { useConversationGraphReady } from "@/hooks/use-conversation-graph"
@@ -50,6 +51,8 @@ import {
   BOARD_EXCLUDE_LABEL_PARAM,
   BOARD_ARCHIVED_PARAM,
   BOARD_ARCHIVED_ON,
+  BOARD_UNREAD_PARAM,
+  BOARD_UNREAD_ON,
   boardHomeSearch,
   parseIdListParam,
   parseTypeListParam,
@@ -310,6 +313,22 @@ function BoardPageInner({
   )
   // Archived is a broadening opt-in (`?archived=true`), not an id-list narrowing.
   const showArchived = searchParams.get(BOARD_ARCHIVED_PARAM) === BOARD_ARCHIVED_ON
+  // Unread is a narrowing opt-in (`?unread=true`), resolved client-side to the
+  // same "unread and not muted" membership the sidebar's Unread section uses —
+  // no backend round-trip, so it stays live as things get read without a refetch.
+  const unreadOnly = searchParams.get(BOARD_UNREAD_PARAM) === BOARD_UNREAD_ON
+  const { unreadCounts } = useUnreadCounts(workspaceId)
+  // Mute-aware: a muted stream reads as "quiet" and must not resurface via the
+  // unread filter, the same rule the sidebar's Unread section follows.
+  const mutedStreamIds = useBoardMutedStreamIds(workspaceId)
+  const unreadStreamIds = useMemo(() => {
+    if (!unreadOnly) return null
+    const ids = new Set<string>()
+    for (const [streamId, count] of Object.entries(unreadCounts)) {
+      if (count > 0 && !mutedStreamIds.has(streamId)) ids.add(streamId)
+    }
+    return ids
+  }, [unreadOnly, unreadCounts, mutedStreamIds])
   const scopeKey = useMemo(() => [...scopeStreamIds].sort().join(","), [scopeStreamIds])
   const excludeScopeKey = useMemo(() => [...excludeStreamIds].sort().join(","), [excludeStreamIds])
   const typeKey = useMemo(() => [...scopeStreamTypes].sort().join(","), [scopeStreamTypes])
@@ -340,6 +359,7 @@ function BoardPageInner({
       excludeTypes: excludeStreamTypes.length > 0 ? { key: excludeTypeKey, ids: new Set(excludeStreamTypes) } : null,
       labels: labelStreamIds ? { key: labelKey, streamIds: labelStreamIds } : null,
       excludeLabels: excludeLabelStreamIds ? { key: excludeLabelKey, streamIds: excludeLabelStreamIds } : null,
+      unread: unreadStreamIds ? { key: BOARD_UNREAD_ON, streamIds: unreadStreamIds } : null,
       showArchived,
     }),
     [
@@ -356,6 +376,7 @@ function BoardPageInner({
       labelStreamIds,
       excludeLabelKey,
       excludeLabelStreamIds,
+      unreadStreamIds,
       showArchived,
     ]
   )
@@ -390,6 +411,7 @@ function BoardPageInner({
       [BOARD_EXCLUDE_LABEL_PARAM, exclude],
     ])
   const setShowArchived = (next: boolean) => setParamLists([[BOARD_ARCHIVED_PARAM, next ? [BOARD_ARCHIVED_ON] : []]])
+  const setUnreadOnly = (next: boolean) => setParamLists([[BOARD_UNREAD_PARAM, next ? [BOARD_UNREAD_ON] : []]])
   const {
     containerRef,
     panelWidth,
@@ -826,6 +848,8 @@ function BoardPageInner({
         onToggleMute={(streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId))}
         showArchived={showArchived}
         onToggleArchived={setShowArchived}
+        unreadOnly={unreadOnly}
+        onToggleUnreadOnly={setUnreadOnly}
       />
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}

@@ -5,8 +5,9 @@
 //    the place it was headed — without it a restored draft re-pairs with the
 //    wrong stream (or none, disabling send with no explanation).
 //  - the **recents MRU** (`board:post-target-mru:<ws>`) is the small list of
-//    streams recently POSTED to, feeding the picker's Recents group + the default
-//    when there's no in-progress draft target.
+//    streams recently POSTED to, feeding the picker's Recents group. It does NOT
+//    seed the default target — a successful post clears the target so the next
+//    "New post" starts blank instead of re-defaulting to where the last one went.
 //
 // All best-effort: localStorage can throw (private mode / quota), so every read
 // falls back and every write no-ops on failure — this is convenience, not state.

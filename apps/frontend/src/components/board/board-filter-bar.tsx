@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { Archive, Ban, Bell, BellOff, Check, ChevronDown, Hash, Layers, Pin, Tag, X } from "lucide-react"
+import { Archive, Ban, Bell, BellOff, Check, ChevronDown, CircleDot, Hash, Layers, Pin, Tag, X } from "lucide-react"
 import {
   BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
@@ -81,6 +81,10 @@ interface BoardFilterBarProps {
   showArchived: boolean
   /** Toggle the archived opt-in; the page owns the URL write. */
   onToggleArchived: (next: boolean) => void
+  /** Whether the board is narrowed to unread conversations (`?unread=true`). */
+  unreadOnly: boolean
+  /** Toggle the unread-only opt-in; the page owns the URL write. */
+  onToggleUnreadOnly: (next: boolean) => void
 }
 
 /**
@@ -119,6 +123,8 @@ export function BoardFilterBar({
   onToggleMute,
   showArchived,
   onToggleArchived,
+  unreadOnly,
+  onToggleUnreadOnly,
 }: BoardFilterBarProps) {
   const location = useLocation()
   const streams = useWorkspaceStreams(workspaceId)
@@ -209,6 +215,18 @@ export function BoardFilterBar({
           onLabelFilterChange={onLabelFilterChange}
         />
       )}
+      <Button
+        type="button"
+        variant={unreadOnly ? "secondary" : "outline"}
+        size="sm"
+        onClick={() => onToggleUnreadOnly(!unreadOnly)}
+        aria-pressed={unreadOnly}
+        className="h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs font-normal"
+        aria-label={unreadOnly ? "Show every conversation" : "Show only unread conversations"}
+      >
+        <CircleDot className="h-3.5 w-3.5" />
+        Unread
+      </Button>
       <Button
         type="button"
         variant={showArchived ? "secondary" : "outline"}

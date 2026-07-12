@@ -51,11 +51,10 @@ export function BoardOverlayComposer({
   // which closes it), so recompute per open rather than every render.
   const recents = useMemo(() => readTargetMru(workspaceId), [workspaceId, open])
 
-  // Seed from the persisted in-progress draft target first (so a restored draft
-  // body pairs with the place it was headed), then the last-posted stream.
-  const [targetValue, setTargetValue] = useState(
-    () => defaultTarget ?? (readDraftTarget(workspaceId) || readTargetMru(workspaceId)[0] || "")
-  )
+  // Seed from the persisted in-progress draft target only — so a restored draft
+  // body pairs with the place it was headed. A successful post clears this (see
+  // handleSubmit), so a fresh "New post" always starts with no target selected.
+  const [targetValue, setTargetValue] = useState(() => defaultTarget ?? readDraftTarget(workspaceId))
 
   // Persist the target alongside the draft body so a reload restores both.
   const changeTarget = useCallback(
@@ -75,15 +74,15 @@ export function BoardOverlayComposer({
 
   // The overlay is a persistent app-level singleton (never remounts), so a stale
   // in-memory target survives close→reopen. On each open without an explicit
-  // target, re-seed from persistence — after a send the draft target is cleared,
-  // so this drops a just-used "New scratchpad" sentinel instead of defaulting the
-  // next post to minting another.
+  // target, re-seed from persistence only — after a send the draft target is
+  // cleared, so this drops a just-used "New scratchpad" sentinel (or wherever the
+  // last post went) instead of defaulting the next post to it.
   const prevOpenRef = useRef(open)
   useEffect(() => {
     const justOpened = open && !prevOpenRef.current
     prevOpenRef.current = open
     if (justOpened && !defaultTarget) {
-      setTargetValue(readDraftTarget(workspaceId) || readTargetMru(workspaceId)[0] || "")
+      setTargetValue(readDraftTarget(workspaceId))
     }
   }, [open, defaultTarget, workspaceId])
 

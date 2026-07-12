@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef } from "react"
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { CornerDownRight, X } from "lucide-react"
 import { toast } from "sonner"
 import {
   MessageComposer,
   FloatingComposerShell,
+  OverlayComposerShell,
   useFloatingComposerAnchor,
   FLOATING_COMPOSER_HEIGHT_VAR,
   type ComposerControlHandle,
@@ -14,8 +15,10 @@ import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline
 import { useDraftComposer } from "@/hooks"
 import { usePreferences } from "@/contexts"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
+import { useStreamName } from "@/hooks/use-stream-name"
 import { useWorkspaceStreams, type CachedStream } from "@/stores/workspace-store"
 import { useStreamFromStore } from "@/stores/stream-store"
+import { STREAM_ICONS } from "@/lib/streams"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import type { AttachmentSummary } from "@/hooks/create-optimistic-bootstrap"
@@ -118,6 +121,13 @@ export function InlineComposerForm({
   }, [pendingQuote, composer.isLoaded, onQuoteConsumed])
 
   const canSubmit = composer.canSend
+
+  // Fullscreen expand — the same overlay shell the timeline and the New Post
+  // composer use, so a long reply gets the same full-document editor instead of
+  // being stuck in the compact card-reply box.
+  const [expanded, setExpanded] = useState(false)
+  const overlayStreamName = useStreamName(workspaceId, streamId ?? "")
+  const OverlayStreamGlyph = hostStream ? STREAM_ICONS[hostStream.type] : null
 
   const containerRef = useRef<HTMLDivElement>(null)
   const isEmptyRef = useRef(true)
@@ -279,37 +289,77 @@ export function InlineComposerForm({
     </div>
   ) : null
 
+  // Shared by the inline editor and the fullscreen one below — same draft,
+  // same send path, same everything except layout.
+  const sharedComposerProps = {
+    content: composer.content,
+    onContentChange: composer.handleContentChange,
+    pendingAttachments: composer.pendingAttachments,
+    onRemoveAttachment: composer.handleRemoveAttachment,
+    onCancelAttachmentUpload: composer.handleCancelAttachmentUpload,
+    workspaceId,
+    streamId: hostStream?.id,
+    memoAnchorStreamId,
+    fileInputRef: composer.fileInputRef,
+    onFileSelect: composer.handleFileSelect,
+    onFileUpload: composer.uploadFile,
+    imageCount: composer.imageCount,
+    onSubmit: handleSubmit,
+    canSubmit,
+    isSubmitting: composer.isSending,
+    hasFailed: composer.hasFailed,
+    placeholder,
+    messageSendMode: preferences?.messageSendMode ?? "enter",
+    scopeId: draftKey,
+    streamContext,
+  } as const
+
   const editor = (
     <MessageComposer
+      {...sharedComposerProps}
       composerRef={composerControlRef}
-      content={composer.content}
-      onContentChange={composer.handleContentChange}
-      pendingAttachments={composer.pendingAttachments}
-      onRemoveAttachment={composer.handleRemoveAttachment}
-      onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
-      workspaceId={workspaceId}
-      streamId={hostStream?.id}
-      memoAnchorStreamId={memoAnchorStreamId}
-      fileInputRef={composer.fileInputRef}
-      onFileSelect={composer.handleFileSelect}
-      onFileUpload={composer.uploadFile}
-      imageCount={composer.imageCount}
-      onSubmit={handleSubmit}
-      canSubmit={canSubmit}
-      isSubmitting={composer.isSending}
-      hasFailed={composer.hasFailed}
-      placeholder={placeholder}
-      messageSendMode={preferences?.messageSendMode ?? "enter"}
       autoFocus={autoFocus}
       initialMobileChromeOpen
-      scopeId={draftKey}
-      streamContext={streamContext}
+      // Desktop only: the floating (mobile) form's height-publish effect keys off
+      // its own mount lifecycle (`holdsFloatingSlot`), which an `expanded` escape
+      // hatch here would sidestep, leaving a stale reserved-space CSS var behind.
+      // Mobile already gets a roomy floating pill, so the expand affordance isn't
+      // worth that edge case there.
+      onExpandClick={floating ? undefined : () => setExpanded(true)}
       onEscapeBlur={() => {
         const hadContent = !isEmptyRef.current
         void composer.flushDraft()
         onClose({ refocus: true, hadContent })
       }}
     />
+  )
+
+  // Fullscreen expand — the same overlay shell the timeline and New Post use, so
+  // a reply gets the same full-document editor instead of being stuck in the
+  // compact card-reply box. Desktop only (see `editor` above); `OverlayComposerShell`
+  // no-ops (renders nothing) while `expanded` is false.
+  const fullscreenEditor = (
+    <OverlayComposerShell
+      open={expanded}
+      onOpenChange={setExpanded}
+      title="Message editor"
+      header={
+        <div className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border bg-background px-3 text-sm font-medium">
+          {OverlayStreamGlyph && <OverlayStreamGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />}
+          <span className="truncate">{overlayStreamName ?? "This conversation"}</span>
+        </div>
+      }
+    >
+      <div className="min-h-0 flex-1">
+        <MessageComposer
+          {...sharedComposerProps}
+          expanded
+          hideExpandedClose
+          onCollapse={() => setExpanded(false)}
+          autoFocus
+        />
+      </div>
+    </OverlayComposerShell>
   )
 
   if (floating && anchorEl) {
@@ -345,7 +395,8 @@ export function InlineComposerForm({
   return (
     <div ref={containerRef} className="mt-3" onBlur={handleBlur}>
       {contextChipNode && <div className="mb-1">{contextChipNode}</div>}
-      {editor}
+      {fullscreenEditor}
+      {!expanded && editor}
     </div>
   )
 }

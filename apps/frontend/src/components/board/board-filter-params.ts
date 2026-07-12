@@ -40,6 +40,15 @@ export const BOARD_ARCHIVED_PARAM = "archived"
  *  `showArchived` flag). */
 export const BOARD_ARCHIVED_ON = "true"
 
+/** Unread opt-in (`?unread=true`) — narrows to conversations on a currently
+ *  unread (and unmuted) root stream. Client-resolved (mirrors the sidebar's own
+ *  Unread section membership), so it stays live as things get read/unread
+ *  instead of snapshotting ids the way the section header's old "Scope all" did. */
+export const BOARD_UNREAD_PARAM = "unread"
+
+/** The `?unread=` value that opts into the unread-only narrowing. */
+export const BOARD_UNREAD_ON = "true"
+
 /** Every board filter param, for clear-all sweeps. */
 export const BOARD_FILTER_PARAMS = [
   BOARD_SCOPE_PARAM,
@@ -49,6 +58,7 @@ export const BOARD_FILTER_PARAMS = [
   BOARD_LABEL_PARAM,
   BOARD_EXCLUDE_LABEL_PARAM,
   BOARD_ARCHIVED_PARAM,
+  BOARD_UNREAD_PARAM,
 ] as const
 
 /**
@@ -196,6 +206,30 @@ export function labelFocusSearch(search: string, labelId: string): string {
   writeIdList(params, BOARD_LABEL_PARAM, [labelId])
   const excluded = parseIdListParam(params.get(BOARD_EXCLUDE_LABEL_PARAM)).filter((id) => id !== labelId)
   writeIdList(params, BOARD_EXCLUDE_LABEL_PARAM, excluded)
+  return toSearch(params)
+}
+
+/**
+ * The board-mode type-section header verb: FOCUS the board's type axis on one
+ * root-stream type (`?is=<type>`). Mirrors {@link labelFocusSearch} on the type
+ * axis — replaces the type include list with just this one and drops it from
+ * `?not-is`, leaving every other axis untouched.
+ */
+export function typeFocusSearch(search: string, type: BoardScopeStreamType): string {
+  const params = new URLSearchParams(search)
+  writeIdList(params, BOARD_TYPE_PARAM, [type])
+  const excluded = parseTypeListParam(params.get(BOARD_EXCLUDE_TYPE_PARAM)).filter((t) => t !== type)
+  writeIdList(params, BOARD_EXCLUDE_TYPE_PARAM, excluded)
+  return toSearch(params)
+}
+
+/**
+ * The board-mode Unread-section header verb: FOCUS the board on unread
+ * conversations (`?unread=true`), leaving every other axis untouched.
+ */
+export function unreadFocusSearch(search: string): string {
+  const params = new URLSearchParams(search)
+  params.set(BOARD_UNREAD_PARAM, BOARD_UNREAD_ON)
   return toSearch(params)
 }
 

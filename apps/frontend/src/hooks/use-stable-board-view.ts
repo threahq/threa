@@ -72,6 +72,19 @@ export interface BoardLabelScope {
   streamIds: ReadonlySet<string>
 }
 
+/**
+ * The board's unread narrowing (`?unread=true`). `key` is the SELECTION (just
+ * "true" while active) — the view-reset key, so it never changes shape — while
+ * `streamIds` is the live resolution to currently-unread-and-unmuted root
+ * streams (mirrors the sidebar's own Unread section membership), re-derived as
+ * things get read/unread without resetting the frozen view. Same key/resolution
+ * split as {@link BoardLabelScope}.
+ */
+export interface BoardUnreadScope {
+  key: string
+  streamIds: ReadonlySet<string>
+}
+
 export interface BoardViewFilter {
   lens: BoardLens
   /** Root-stream scope, or null when unscoped (the whole workspace). */
@@ -86,6 +99,9 @@ export interface BoardViewFilter {
   labels: BoardLabelScope | null
   /** Label veto, or null. */
   excludeLabels: BoardLabelScope | null
+  /** Unread-only narrowing, or null when every conversation shows regardless of
+   *  read state. */
+  unread: BoardUnreadScope | null
   /**
    * Viewer opted into archived cards (`?archived=true`). A view SELECTION like
    * lens/scope — it rides the view-reset key, so toggling it re-commits the feed
@@ -168,6 +184,11 @@ function matchesLabelScope(post: CachedBoardPost, labels: BoardLabelScope | null
 function matchesExcludedLabels(post: CachedBoardPost, labels: BoardLabelScope | null): boolean {
   if (!labels) return true
   return !onLabeledStream(post, labels)
+}
+
+function matchesUnread(post: CachedBoardPost, unread: BoardUnreadScope | null): boolean {
+  if (!unread) return true
+  return unread.streamIds.has(post.rootStreamId ?? post.conversation.streamId)
 }
 
 function postId(post: CachedBoardPost): string {
@@ -307,7 +328,7 @@ export function useStableBoardView(
   filter: BoardViewFilter,
   exclusions: BoardExclusionState = NO_EXCLUSIONS
 ): StableBoardView {
-  const { lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, showArchived } = filter
+  const { lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, unread, showArchived } = filter
   const { hidden, muted, muteActive } = exclusions
   const rawLive = useBoardPosts(workspaceId)
 
@@ -361,11 +382,12 @@ export function useStableBoardView(
                 matchesExcludedTypes(post, excludeTypes) &&
                 matchesLabelScope(post, labels) &&
                 matchesExcludedLabels(post, excludeLabels) &&
+                matchesUnread(post, unread) &&
                 !isExcluded(post)
             ),
             (conversationId) => branchParentConversationId(conversationId, index, graph)
           ),
-    [rawLive, lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, isExcluded, graph, index]
+    [rawLive, lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, unread, isExcluded, graph, index]
   )
   const [committed, setCommitted] = useState<CommittedView>(EMPTY_VIEW)
   const [buffered, setBuffered] = useState<string[]>([])
@@ -392,7 +414,7 @@ export function useStableBoardView(
   // from EMPTY_VIEW and commit its own feed wholesale.
   // Label keys are the SELECTED ids, not the resolved streams — a live
   // re-resolution (an assignment changing) must not reset the frozen view.
-  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}|${excludeStreams?.key ?? ""}|${excludeTypes?.key ?? ""}|${labels?.key ?? ""}|${excludeLabels?.key ?? ""}|${showArchived ? "arch" : ""}`
+  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}|${excludeStreams?.key ?? ""}|${excludeTypes?.key ?? ""}|${labels?.key ?? ""}|${excludeLabels?.key ?? ""}|${unread?.key ?? ""}|${showArchived ? "arch" : ""}`
   const viewKeyRef = useRef(viewKey)
   let committedInput = committed
   let bufferedInput = buffered
