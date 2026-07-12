@@ -16,10 +16,11 @@ let state: ComposeOverlayState = { open: false }
 const listeners = new Set<() => void>()
 
 // The board registers what should happen after a successful post (reveal the new
-// card / bounce the lens). It's a plain ref, not reactive state: the mount reads
-// it imperatively when a post lands. Undefined when the board isn't mounted, so a
-// post from a non-board surface simply lands (its "N new" pill surfaces it later).
-let onPostedRef: (() => void) | undefined
+// card / flash it / bounce the lens), receiving the new conversation id. It's a
+// plain ref, not reactive state: the mount reads it imperatively when a post
+// lands. Undefined when the board isn't mounted, so a post from a non-board
+// surface simply lands (its "N new" pill surfaces it later).
+let onPostedRef: ((conversationId?: string) => void) | undefined
 
 function emit(): void {
   for (const listener of listeners) listener()
@@ -38,16 +39,16 @@ export function closeCompose(): void {
 }
 
 /** Register the post-success handler (the board does this while mounted). */
-export function registerComposeOnPosted(onPosted: () => void): () => void {
+export function registerComposeOnPosted(onPosted: (conversationId?: string) => void): () => void {
   onPostedRef = onPosted
   return () => {
     if (onPostedRef === onPosted) onPostedRef = undefined
   }
 }
 
-/** Invoke the registered post-success handler, if any. Called by the mount. */
-export function notifyComposePosted(): void {
-  onPostedRef?.()
+/** Invoke the registered post-success handler with the new conversation id, if any. */
+export function notifyComposePosted(conversationId?: string): void {
+  onPostedRef?.(conversationId)
 }
 
 /**

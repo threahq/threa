@@ -31,15 +31,16 @@ describe("compose overlay store", () => {
     expect(result.current).toEqual({ open: true, defaultTarget: undefined })
   })
 
-  it("invokes the registered onPosted, and stops after it unregisters", () => {
+  it("invokes the registered onPosted with the conversation id, and stops after it unregisters", () => {
     const onPosted = vi.fn()
     const unregister = registerComposeOnPosted(onPosted)
 
-    notifyComposePosted()
+    notifyComposePosted("conv_1")
     expect(onPosted).toHaveBeenCalledTimes(1)
+    expect(onPosted).toHaveBeenCalledWith("conv_1")
 
     unregister()
-    notifyComposePosted()
+    notifyComposePosted("conv_2")
     expect(onPosted).toHaveBeenCalledTimes(1)
   })
 })

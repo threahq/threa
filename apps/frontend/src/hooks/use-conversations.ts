@@ -301,7 +301,7 @@ export function useCreateBoardPost(workspaceId: string) {
             console.error("Failed to seed optimistic board post at composer-clear", err)
           }
         }
-        return
+        return conversationId
       }
 
       const { message, conversationId } = await messageService.create(workspaceId, target.streamId, {
@@ -339,6 +339,7 @@ export function useCreateBoardPost(workspaceId: string) {
           console.error("Failed to seed optimistic board post", err)
         }
       }
+      return conversationId
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [...conversationKeys.all, "workspaceList", workspaceId] })
