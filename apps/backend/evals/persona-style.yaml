@@ -1,0 +1,20 @@
+# Persona-style suite (roadmap 7.1): proves each Tone/Brevity slot fragment
+# shifts the companion's output style.
+#
+# Per-component config pins ONLY the companion persona's model, leaving the
+# ConfigResolver-backed sub-agents on their production models. The `-m` flag would
+# steamroll those too, which breaks providers with stricter structured-output rules.
+# The same model is the suite's `defaultPermutations`, so a plain
+# `-s persona-style` run is equivalent to this file.
+#
+# Run (needs OPENROUTER_API_KEY + DATABASE_URL from .env; dev DB, not prod):
+#   bun run eval -- -s persona-style --no-langfuse
+#   bun run eval -- --config evals/persona-style.yaml --no-langfuse
+
+suites:
+  - name: persona-style
+    title: claude-haiku-4.5
+    components:
+      companion:
+        model: openrouter:anthropic/claude-haiku-4.5
+        temperature: 0.7

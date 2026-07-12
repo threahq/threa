@@ -42,12 +42,12 @@ export const TONE_PRESET_FRAGMENTS: Record<TonePreset, string> = {
   neutral:
     "Keep an even, professional tone. State things plainly, without emotional coloring, cheerleading, or hedging. Be courteous, and let the substance carry the message.",
   direct:
-    "Be blunt and plainspoken. Lead with the point and skip the softening preamble. Say what you actually think, even when it is inconvenient, and don't cushion feedback in qualifiers.",
+    "Be blunt and plainspoken. Lead with your actual read of the situation, stated flatly — no empathetic opener, no reassurance, no validating the person's feelings. Skip softening qualifiers and hedges, say the inconvenient thing plainly, and go straight to what you'd do about it.",
 }
 
 export const BREVITY_PRESET_FRAGMENTS: Record<BrevityPreset, string> = {
   brief:
-    "Be terse. Answer in a sentence or two whenever the question allows, and cut every word that isn't load-bearing. Skip preamble, restatement, and closing pleasantries — give the answer and stop.",
+    "Be terse. Give the single most useful answer in a sentence or two and stop — cut every word that isn't load-bearing, and skip preamble, restatement, and closing pleasantries. Do not use headings, bullet lists, or multi-part structure; a couple of plain sentences is the whole reply. If the question truly needs more, add one short sentence, not a section.",
   balanced:
     "Match the length to the question. Give a simple question a couple of sentences, and reserve fuller explanations for topics that genuinely need them. Don't pad, but don't strip out context that helps.",
   thorough:
