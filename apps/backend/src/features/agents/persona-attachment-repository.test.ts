@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { PersonaAttachmentRepository } from "./persona-attachment-repository"
+import { personaAttachmentExtractionFailed, PersonaAttachmentRepository } from "./persona-attachment-repository"
 
 interface CapturedQuery {
   text: string
@@ -118,6 +118,53 @@ describe("PersonaAttachmentRepository.listForPersona", () => {
       fullTextChars: 1200,
       summaryChars: 80,
     })
+  })
+})
+
+describe("PersonaAttachmentRepository.listForPersonaWithContent", () => {
+  test("returns extraction content plus processing_status + has_extraction for the prompt/failure path", async () => {
+    const db = createDb([
+      [
+        {
+          attachment_id: "att_1",
+          filename: "runbook.md",
+          position: 0,
+          full_text: "STEP 1",
+          summary: "",
+          processing_status: "failed",
+          has_extraction: false,
+        },
+      ],
+    ])
+
+    const items = await PersonaAttachmentRepository.listForPersonaWithContent(db, "workspace_1", "persona_1")
+
+    const text = db.queries[0]!.text
+    expect(text).toContain("a.processing_status")
+    expect(text).toContain("(e.attachment_id IS NOT NULL) AS has_extraction")
+    expect(text).toContain("ORDER BY pa.position ASC")
+    expect(items[0]).toEqual({
+      attachmentId: "att_1",
+      filename: "runbook.md",
+      position: 0,
+      fullText: "STEP 1",
+      // '' summary normalizes to null so "has a summary" is a plain null-check.
+      summary: null,
+      processingStatus: "failed",
+      hasExtraction: false,
+    })
+  })
+})
+
+describe("personaAttachmentExtractionFailed", () => {
+  test("true only when there is no extraction AND a terminal (failed/skipped) status", () => {
+    expect(personaAttachmentExtractionFailed({ hasExtraction: false, processingStatus: "failed" })).toBe(true)
+    expect(personaAttachmentExtractionFailed({ hasExtraction: false, processingStatus: "skipped" })).toBe(true)
+    // An extraction that landed is never "failed", whatever the pipeline status.
+    expect(personaAttachmentExtractionFailed({ hasExtraction: true, processingStatus: "failed" })).toBe(false)
+    // Non-terminal statuses are still processing, not failed.
+    expect(personaAttachmentExtractionFailed({ hasExtraction: false, processingStatus: "processing" })).toBe(false)
+    expect(personaAttachmentExtractionFailed({ hasExtraction: false, processingStatus: "pending" })).toBe(false)
   })
 })
 

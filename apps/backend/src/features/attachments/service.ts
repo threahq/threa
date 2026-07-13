@@ -719,6 +719,19 @@ export class AttachmentService {
     return this.storage.getSignedDownloadUrl(attachment.storagePath, { responseContentDisposition })
   }
 
+  /**
+   * No FKs (INV-1): whoever deletes the attachments row owns the cascade to its
+   * child rows — extraction, upload tracking, and any persona context-attachment
+   * binding (else a dangling row eats a persona cap slot forever). One helper for
+   * every row-delete path so a new child table can't get cascaded in one deleter
+   * but not the other.
+   */
+  private async cascadeChildRows(client: PoolClient, id: string): Promise<void> {
+    await AttachmentExtractionRepository.deleteByAttachmentId(client, id)
+    await AttachmentUploadRepository.deleteByAttachmentId(client, id)
+    await AttachmentRepository.deletePersonaBindings(client, id)
+  }
+
   async delete(id: string): Promise<boolean> {
     const storagePath = await withTransaction(this.pool, async (client) => {
       const attachment = await AttachmentRepository.findByIdForUpdate(client, id)
@@ -726,8 +739,7 @@ export class AttachmentService {
         return null
       }
 
-      await AttachmentExtractionRepository.deleteByAttachmentId(client, id)
-      await AttachmentUploadRepository.deleteByAttachmentId(client, id)
+      await this.cascadeChildRows(client, id)
       const deleted = await AttachmentRepository.delete(client, id)
       if (!deleted) {
         throw new Error(`Attachment ${id} could not be deleted after row lock`)
@@ -742,6 +754,32 @@ export class AttachmentService {
 
     await this.storage.delete(storagePath)
     return true
+  }
+
+  /**
+   * Hard-delete an attachment ONLY while it is still free-floating (unbound to a
+   * message and a stream), race-safe against a concurrent `attachToMessage`
+   * (INV-20 — the predicate rides the DELETE). Used by the persona
+   * context-attachment paths, where the file must never be destroyed once a
+   * message has claimed it. Returns `{ deleted }`: `false` (extraction/upload
+   * rows and the S3 object left intact) when the row was already claimed or gone.
+   */
+  async deleteIfUnbound(id: string): Promise<{ deleted: boolean }> {
+    const storagePath = await withTransaction(this.pool, async (client) => {
+      const path = await AttachmentRepository.deleteIfUnbound(client, id)
+      if (path == null) {
+        return null
+      }
+      await this.cascadeChildRows(client, id)
+      return path
+    })
+
+    if (storagePath == null) {
+      return { deleted: false }
+    }
+
+    await this.storage.delete(storagePath)
+    return { deleted: true }
   }
 
   async recoverStalePendingScans(options?: { staleThresholdMs?: number; batchSize?: number }): Promise<number> {

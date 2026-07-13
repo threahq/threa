@@ -263,6 +263,36 @@ export const AttachmentRepository = {
   },
 
   /**
+   * Delete the row ONLY while it is still free-floating (bound to neither a
+   * message nor a stream), returning its storage path when it ran so the caller
+   * can drop the S3 object — and `null` when it did not, because a concurrent
+   * `attachToMessage` claimed it between the caller's checks (INV-20: the
+   * predicate is in the DELETE, not a check-then-act re-fetch). A `null` return
+   * means the file now has real message provenance and its bytes must be left
+   * intact.
+   */
+  async deleteIfUnbound(client: Querier, id: string): Promise<string | null> {
+    const result = await client.query<{ storage_path: string }>(sql`
+      DELETE FROM attachments
+      WHERE id = ${id} AND message_id IS NULL AND stream_id IS NULL
+      RETURNING storage_path
+    `)
+    return result.rows[0]?.storage_path ?? null
+  },
+
+  /**
+   * Cascade an attachment delete to its persona context-attachment binding
+   * (agents domain). No FKs (INV-1), so the attachments deleter owns the cascade;
+   * without it a hard-deleted persona file leaves a dangling `persona_attachments`
+   * row that silently eats a persona's attachment-cap slot forever. The
+   * cross-feature table name is deliberate — attachments must not import agents
+   * code — and stays scoped to this single chokepoint.
+   */
+  async deletePersonaBindings(client: Querier, id: string): Promise<void> {
+    await client.query(sql`DELETE FROM persona_attachments WHERE attachment_id = ${id}`)
+  },
+
+  /**
    * Batch-delete rows that never bound to a message (abandoned-reservation
    * sweep). The `message_id IS NULL` guard makes a race with a concurrent
    * send lose cleanly: a just-bound row is skipped, not deleted.

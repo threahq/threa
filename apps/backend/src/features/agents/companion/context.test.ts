@@ -145,8 +145,24 @@ describe("buildAgentContext persona knowledge (context attachments, decision 7)"
 
   it("injects the persona's attachments in position order, resolving them by the persona id", async () => {
     const listWithContent = spyOn(PersonaAttachmentRepository, "listForPersonaWithContent").mockResolvedValue([
-      { attachmentId: "att_1", filename: "guide.md", position: 0, fullText: "GUIDE CONTENT", summary: null },
-      { attachmentId: "att_2", filename: "spec.txt", position: 1, fullText: null, summary: "SPEC SUMMARY" },
+      {
+        attachmentId: "att_1",
+        filename: "guide.md",
+        position: 0,
+        fullText: "GUIDE CONTENT",
+        summary: null,
+        processingStatus: "completed",
+        hasExtraction: true,
+      },
+      {
+        attachmentId: "att_2",
+        filename: "spec.txt",
+        position: 1,
+        fullText: null,
+        summary: "SPEC SUMMARY",
+        processingStatus: "completed",
+        hasExtraction: true,
+      },
     ])
 
     const customPersona: Persona = { ...persona, id: "persona_custom", managedBy: "workspace", workspaceId: "ws_1" }

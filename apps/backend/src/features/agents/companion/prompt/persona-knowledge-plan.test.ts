@@ -2,12 +2,44 @@ import { describe, expect, test } from "bun:test"
 import { PERSONA_ATTACHMENT_BLOCK_MAX_CHARS, PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS } from "../../config"
 import {
   planPersonaKnowledge,
+  PERSONA_KNOWLEDGE_FAILURE_NOTE,
   PERSONA_KNOWLEDGE_PROCESSING_NOTE,
   type PersonaKnowledgeLengths,
+  type PersonaKnowledgePlan,
 } from "./persona-knowledge-plan"
 
 function lengths(overrides: Partial<PersonaKnowledgeLengths> = {}): PersonaKnowledgeLengths {
   return { fullTextChars: null, summaryChars: null, ...overrides }
+}
+
+/** The whole-body length one plan's source renders (0 for a marker-only row). */
+function wholeBodyLen(item: PersonaKnowledgeLengths, plan: PersonaKnowledgePlan): number {
+  switch (plan.source) {
+    case "fullText":
+      return item.fullTextChars ?? 0
+    case "summary":
+      return item.summaryChars ?? 0
+    case "processingNote":
+      return PERSONA_KNOWLEDGE_PROCESSING_NOTE.length
+    case "failureNote":
+      return PERSONA_KNOWLEDGE_FAILURE_NOTE.length
+    case "marker":
+      return 0
+  }
+}
+
+/**
+ * The content chars the plans spend against the block budget: a whole body's
+ * length, a truncated body's slice (`truncateAt`), and 0 for marker-only rows.
+ * Excludes the `…[truncated]` suffix and the marker sentinel — those are fixed
+ * structural chrome, like the `### filename` headings, not budgeted content.
+ */
+function spentChars(plans: PersonaKnowledgePlan[], items: PersonaKnowledgeLengths[]): number {
+  return plans.reduce((total, plan, index) => {
+    if (plan.source === "marker") return total
+    if (plan.truncated) return total + (plan.truncateAt ?? 0)
+    return total + wholeBodyLen(items[index]!, plan)
+  }, 0)
 }
 
 describe("planPersonaKnowledge — per-file selection (decision 6)", () => {
@@ -60,14 +92,35 @@ describe("planPersonaKnowledge — cumulative block budget walk", () => {
     })
   })
 
-  test("files after the crossing file degrade to summary-only (full text dropped), untruncated", () => {
+  test("budget-aware degradation: a full text that won't fit the remaining budget degrades to a WHOLE summary", () => {
+    // The first file's whole summary fits and leaves only 100 chars. The second
+    // file's full text (4000) overruns that remainder, but its summary (60) fits —
+    // a complete summary beats a truncated full text, so it degrades, untruncated.
+    const first = PERSONA_ATTACHMENT_BLOCK_MAX_CHARS - 100
     const plans = planPersonaKnowledge([
-      lengths({ summaryChars: PERSONA_ATTACHMENT_BLOCK_MAX_CHARS + 100 }),
+      lengths({ summaryChars: first }),
       lengths({ fullTextChars: 4000, summaryChars: 60 }),
     ])
-    expect(plans[0]!.truncated).toBe(true)
-    // The later file would have inlined its full text pre-budget, but now shows summary only.
+    expect(plans[0]).toEqual({ mode: "summary", truncated: false, source: "summary", truncateAt: null })
     expect(plans[1]).toEqual({ mode: "summary", truncated: false, source: "summary", truncateAt: null })
+  })
+
+  test("continuous walk: a summary tail renders only while budget remains, then markers — total within cap", () => {
+    // A near-limit first file leaves ~200 chars; the next 300-char summary can't
+    // fit whole, so it is the sole truncation and the remaining tail is markers.
+    const near = PERSONA_ATTACHMENT_BLOCK_MAX_CHARS - 200
+    const items = [
+      lengths({ summaryChars: near }),
+      lengths({ summaryChars: 300 }),
+      lengths({ summaryChars: 300 }),
+      lengths({ summaryChars: 300 }),
+    ]
+    const plans = planPersonaKnowledge(items)
+    expect(plans[0]).toEqual({ mode: "summary", truncated: false, source: "summary", truncateAt: null })
+    expect(plans[1]).toEqual({ mode: "summary", truncated: true, source: "summary", truncateAt: 200 })
+    expect(plans[2]).toEqual({ mode: "name_only", truncated: false, source: "marker", truncateAt: null })
+    expect(plans[3]).toEqual({ mode: "name_only", truncated: false, source: "marker", truncateAt: null })
+    expect(spentChars(plans, items)).toBeLessThanOrEqual(PERSONA_ATTACHMENT_BLOCK_MAX_CHARS)
   })
 
   test("a post-budget file with no summary renders the marker (name_only), never dropped", () => {
@@ -112,3 +165,58 @@ describe("planPersonaKnowledge — cumulative block budget walk", () => {
     expect(planPersonaKnowledge([])).toEqual([])
   })
 })
+
+describe("planPersonaKnowledge — failure note (T3)", () => {
+  test("content-less file with extractionFailed → the failure note (name_only), budget-accounted", () => {
+    const [plan] = planPersonaKnowledge([lengths({ extractionFailed: true })])
+    expect(plan).toEqual({ mode: "name_only", truncated: false, source: "failureNote", truncateAt: null })
+  })
+
+  test("content-less file still processing (no failure flag) → the processing note", () => {
+    const [plan] = planPersonaKnowledge([lengths({ extractionFailed: false })])
+    expect(plan).toEqual({ mode: "name_only", truncated: false, source: "processingNote", truncateAt: null })
+  })
+
+  test("extractionFailed is ignored once real content exists → the content wins", () => {
+    const [plan] = planPersonaKnowledge([lengths({ summaryChars: 40, extractionFailed: true })])
+    expect(plan).toEqual({ mode: "summary", truncated: false, source: "summary", truncateAt: null })
+  })
+
+  test("a failure note that can't fit the remaining budget is itself truncated like the processing note", () => {
+    const first = PERSONA_ATTACHMENT_BLOCK_MAX_CHARS - 4
+    const plans = planPersonaKnowledge([lengths({ summaryChars: first }), lengths({ extractionFailed: true })])
+    expect(PERSONA_KNOWLEDGE_FAILURE_NOTE.length).toBeGreaterThan(4)
+    expect(plans[1]).toEqual({ mode: "name_only", truncated: true, source: "failureNote", truncateAt: 4 })
+  })
+})
+
+describe("planPersonaKnowledge — budget invariant (T1)", () => {
+  test("for ANY input the spent content never exceeds the block budget and at most one file is truncated", () => {
+    const rng = mulberry32(0x5eed)
+    for (let iteration = 0; iteration < 500; iteration++) {
+      const count = Math.floor(rng() * 6) // 0..5, the real cap
+      const items: PersonaKnowledgeLengths[] = Array.from({ length: count }, () => ({
+        // Draw across the whole range: absent, tiny, near-cap, and over-cap bodies.
+        fullTextChars: rng() < 0.35 ? null : Math.floor(rng() * (PERSONA_ATTACHMENT_BLOCK_MAX_CHARS * 1.5)),
+        summaryChars: rng() < 0.35 ? null : Math.floor(rng() * (PERSONA_ATTACHMENT_BLOCK_MAX_CHARS * 1.5)),
+        extractionFailed: rng() < 0.5,
+      }))
+      const plans = planPersonaKnowledge(items)
+      expect(plans).toHaveLength(count)
+      expect(spentChars(plans, items)).toBeLessThanOrEqual(PERSONA_ATTACHMENT_BLOCK_MAX_CHARS)
+      expect(plans.filter((p) => p.truncated).length).toBeLessThanOrEqual(1)
+    }
+  })
+})
+
+/** Tiny deterministic PRNG so the property sweep is reproducible (no test flake). */
+function mulberry32(seed: number): () => number {
+  let a = seed
+  return () => {
+    a |= 0
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}

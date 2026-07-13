@@ -3,9 +3,16 @@ import { PERSONA_ATTACHMENT_BLOCK_MAX_CHARS, PERSONA_ATTACHMENT_INLINE_FULLTEXT_
 
 /**
  * The literal body rendered when a file has no usable extracted content yet
- * (extraction pending or produced nothing) and the block budget is still open.
+ * (extraction still in flight) and the block budget is still open.
  */
 export const PERSONA_KNOWLEDGE_PROCESSING_NOTE = "(processing — content not yet available)"
+
+/**
+ * The literal body rendered when a file's extraction pipeline gave up
+ * (terminal failed/skipped, no extraction row) — the persona is told the file
+ * exists but its content is unavailable, never silently dropped (INV-11).
+ */
+export const PERSONA_KNOWLEDGE_FAILURE_NOTE = "(extraction failed — content unavailable)"
 
 /** Marks a body cut short by the block budget — a file is degraded, never silently dropped. */
 export const PERSONA_KNOWLEDGE_TRUNCATION_MARKER = "…[truncated]"
@@ -16,14 +23,17 @@ export const PERSONA_KNOWLEDGE_TRUNCATION_MARKER = "…[truncated]"
  * extraction hasn't produced. This is the ONLY input to the planner: it never
  * sees the text itself, so the same logic drives the prompt renderer (which has
  * the content) and the config payload (which must not carry it — decision 6/7).
+ * `extractionFailed` distinguishes a content-less file whose pipeline gave up
+ * (renders the failure note) from one still processing (the processing note).
  */
 export interface PersonaKnowledgeLengths {
   fullTextChars: number | null
   summaryChars: number | null
+  extractionFailed?: boolean
 }
 
 /** Which extracted source the renderer should draw a file's body from. */
-export type PersonaKnowledgeSource = "fullText" | "summary" | "processingNote" | "marker"
+export type PersonaKnowledgeSource = "fullText" | "summary" | "processingNote" | "failureNote" | "marker"
 
 /**
  * The plan for rendering one attachment's body. `mode` is the user-facing context
@@ -43,6 +53,7 @@ const MODE_BY_SOURCE: Record<Exclude<PersonaKnowledgeSource, "marker">, PersonaA
   fullText: "full",
   summary: "summary",
   processingNote: "name_only",
+  failureNote: "name_only",
 }
 
 /** A column counts as present only when it has at least one character (an empty extraction is "absent"). */
@@ -50,62 +61,85 @@ function hasContent(chars: number | null): boolean {
   return chars != null && chars > 0
 }
 
+interface Candidate {
+  source: Exclude<PersonaKnowledgeSource, "marker">
+  len: number
+}
+
+/**
+ * The body sources one file could render, in descending priority: the inline
+ * full text (only when present and within the per-file cap), then the short
+ * summary, then — only when there is no extracted content at all — a one-line
+ * note (the failure note when the pipeline gave up, else the processing note).
+ */
+function candidatesFor(item: PersonaKnowledgeLengths): Candidate[] {
+  const candidates: Candidate[] = []
+  if (hasContent(item.fullTextChars) && item.fullTextChars! <= PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS) {
+    candidates.push({ source: "fullText", len: item.fullTextChars! })
+  }
+  if (hasContent(item.summaryChars)) {
+    candidates.push({ source: "summary", len: item.summaryChars! })
+  }
+  if (candidates.length === 0) {
+    candidates.push(
+      item.extractionFailed
+        ? { source: "failureNote", len: PERSONA_KNOWLEDGE_FAILURE_NOTE.length }
+        : { source: "processingNote", len: PERSONA_KNOWLEDGE_PROCESSING_NOTE.length }
+    )
+  }
+  return candidates
+}
+
 /**
  * The single source of truth for how a persona's context attachments map to
- * prompt bodies (INV-29/43): the selection rules (decision 6) and the cumulative
- * block-budget walk, expressed over content LENGTHS only. Both callers feed it
- * lengths — the prompt renderer from the content it is about to render, the
- * config service from `LENGTH(...)` columns — so the mode label the editor shows
- * is derived by the exact logic that builds the prompt and cannot drift from it.
+ * prompt bodies (INV-29/43): the selection rules (decision 6) and the block
+ * budget, expressed over content LENGTHS only. Both callers feed it lengths —
+ * the prompt renderer from the content it is about to render, the config service
+ * from `LENGTH(...)` columns — so the mode label the editor shows is derived by
+ * the exact logic that builds the prompt and cannot drift from it.
  *
- * Per file, in `position` (array) order:
- * - Full extracted text when present and within
- *   {@link PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS}; else the short summary;
- *   else a processing note.
- * - The chosen body spends the cumulative {@link PERSONA_ATTACHMENT_BLOCK_MAX_CHARS}
- *   budget. The file that crosses it is truncated with an explicit marker, and
- *   every later file degrades to its summary-only (or the marker when it has none)
- *   — a file is never silently dropped.
+ * ONE continuous budget walk over the files in `position` (array) order. The
+ * chosen body of each file spends the cumulative
+ * {@link PERSONA_ATTACHMENT_BLOCK_MAX_CHARS} budget:
+ * - Emit the highest-priority candidate that fits the remaining budget WHOLE and
+ *   spend its length. A too-big full text degrades to a whole summary rather than
+ *   being truncated — a complete gist beats a cut-off body.
+ * - If no candidate fits whole (but budget remains), truncate the SMALLEST
+ *   candidate to what's left with an explicit marker and spend the rest of the
+ *   budget.
+ * - Once the budget is exhausted, later files render a marker-only row (their
+ *   heading still appears) — a file is never silently dropped, and the total
+ *   rendered content stays within the cap (only one file is ever truncated).
  */
 export function planPersonaKnowledge(items: PersonaKnowledgeLengths[]): PersonaKnowledgePlan[] {
   const plans: PersonaKnowledgePlan[] = []
   let usedChars = 0
-  let budgetCrossed = false
 
   for (const item of items) {
-    if (budgetCrossed) {
-      // Budget already spent by an earlier file: degrade to the short summary so
-      // this file's gist still lands; the marker stands in when it has none.
-      if (hasContent(item.summaryChars)) {
-        plans.push({ mode: "summary", truncated: false, source: "summary", truncateAt: null })
-      } else {
-        plans.push({ mode: "name_only", truncated: false, source: "marker", truncateAt: null })
-      }
+    const remaining = PERSONA_ATTACHMENT_BLOCK_MAX_CHARS - usedChars
+    if (remaining <= 0) {
+      plans.push({ mode: "name_only", truncated: false, source: "marker", truncateAt: null })
       continue
     }
 
-    let source: Exclude<PersonaKnowledgeSource, "marker">
-    let bodyLen: number
-    if (hasContent(item.fullTextChars) && item.fullTextChars! <= PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS) {
-      source = "fullText"
-      bodyLen = item.fullTextChars!
-    } else if (hasContent(item.summaryChars)) {
-      source = "summary"
-      bodyLen = item.summaryChars!
-    } else {
-      source = "processingNote"
-      bodyLen = PERSONA_KNOWLEDGE_PROCESSING_NOTE.length
+    const candidates = candidatesFor(item)
+    const whole = candidates.find((candidate) => candidate.len <= remaining)
+    if (whole) {
+      usedChars += whole.len
+      plans.push({ mode: MODE_BY_SOURCE[whole.source], truncated: false, source: whole.source, truncateAt: null })
+      continue
     }
 
-    const remaining = PERSONA_ATTACHMENT_BLOCK_MAX_CHARS - usedChars
-    const mode = MODE_BY_SOURCE[source]
-    if (bodyLen > remaining) {
-      budgetCrossed = true
-      plans.push({ mode, truncated: true, source, truncateAt: remaining })
-    } else {
-      usedChars += bodyLen
-      plans.push({ mode, truncated: false, source, truncateAt: null })
-    }
+    // Nothing fits whole: truncate the smallest candidate to what's left and
+    // spend the rest of the budget (every later file becomes marker-only).
+    const smallest = candidates.reduce((a, b) => (b.len < a.len ? b : a))
+    usedChars = PERSONA_ATTACHMENT_BLOCK_MAX_CHARS
+    plans.push({
+      mode: MODE_BY_SOURCE[smallest.source],
+      truncated: true,
+      source: smallest.source,
+      truncateAt: remaining,
+    })
   }
 
   return plans

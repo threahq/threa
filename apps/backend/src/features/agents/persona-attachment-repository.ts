@@ -1,5 +1,22 @@
 import { sql, type Querier } from "../../db"
-import type { ProcessingStatus } from "@threa/types"
+import { ProcessingStatuses, type ProcessingStatus } from "@threa/types"
+
+/**
+ * A persona file whose extraction pipeline gave up: no extraction landed and the
+ * attachment reached a terminal state (failed scan/extraction, or an unsupported
+ * type skipped). The single predicate behind BOTH the config wire status
+ * (`failed`) and the prompt's failure note, so the editor label and the prompt
+ * body can never disagree about which files are unrecoverable.
+ */
+export function personaAttachmentExtractionFailed(item: {
+  hasExtraction: boolean
+  processingStatus: ProcessingStatus
+}): boolean {
+  return (
+    !item.hasExtraction &&
+    (item.processingStatus === ProcessingStatuses.FAILED || item.processingStatus === ProcessingStatuses.SKIPPED)
+  )
+}
 
 interface PersonaAttachmentBindingRow {
   attachment_id: string
@@ -87,6 +104,8 @@ interface PersonaAttachmentContentRow {
   position: number
   full_text: string | null
   summary: string | null
+  processing_status: string
+  has_extraction: boolean
 }
 
 /**
@@ -102,6 +121,8 @@ export interface PersonaAttachmentContentItem {
   position: number
   fullText: string | null
   summary: string | null
+  processingStatus: ProcessingStatus
+  hasExtraction: boolean
 }
 
 function mapContentRow(row: PersonaAttachmentContentRow): PersonaAttachmentContentItem {
@@ -114,6 +135,8 @@ function mapContentRow(row: PersonaAttachmentContentRow): PersonaAttachmentConte
     // empty string to null so the block's "has a summary" test is a plain
     // null-check.
     summary: row.summary && row.summary.length > 0 ? row.summary : null,
+    processingStatus: row.processing_status as ProcessingStatus,
+    hasExtraction: row.has_extraction,
   }
 }
 
@@ -202,7 +225,9 @@ export const PersonaAttachmentRepository = {
         a.filename,
         pa.position,
         e.full_text,
-        e.summary
+        e.summary,
+        a.processing_status,
+        (e.attachment_id IS NOT NULL) AS has_extraction
       FROM persona_attachments pa
       JOIN attachments a ON a.id = pa.attachment_id AND a.workspace_id = pa.workspace_id
       LEFT JOIN attachment_extractions e ON e.attachment_id = pa.attachment_id

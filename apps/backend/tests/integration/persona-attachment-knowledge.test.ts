@@ -7,7 +7,7 @@ import { PersonaAttachmentRepository } from "../../src/features/agents/persona-a
 import { buildSystemPrompt } from "../../src/features/agents/companion/prompt/system-prompt"
 import type { Persona } from "../../src/features/agents/persona-repository"
 import type { StreamContext } from "../../src/features/agents/context-builder"
-import { setupTestDatabase, withTestTransaction } from "./setup"
+import { setupTestDatabase, withTestTransaction, withTransaction } from "./setup"
 
 /**
  * End-to-end proof of the persona-context-attachments prompt path against a real
@@ -200,6 +200,176 @@ describe("persona context attachments → dispatch prompt (integration)", () => 
       )
       expect(withForeign).toBe(base)
       expect(base).not.toContain("## Knowledge")
+    })
+  })
+})
+
+/**
+ * Behavior proofs for the persona_attachments binding against the REAL database —
+ * the SQL-string unit tests can pass while the DB semantics are broken, so these
+ * exercise the actual concurrency, workspace scoping, and no-op paths.
+ */
+async function insertAttachmentRow(
+  db: Parameters<typeof PersonaAttachmentRepository.insertBinding>[0],
+  params: { id: string; workspaceId: string; personaId: string; uploadedBy: string; filename?: string }
+): Promise<void> {
+  await db.query(sql`
+    INSERT INTO attachments (
+      id, workspace_id, stream_id, message_id, filename, mime_type, size_bytes,
+      storage_provider, storage_path, processing_status, uploaded_by
+    ) VALUES (
+      ${params.id}, ${params.workspaceId}, NULL, NULL, ${params.filename ?? "file.md"}, 'text/markdown', 128,
+      's3', ${`personas/${params.personaId}/${params.id}`}, 'completed', ${params.uploadedBy}
+    )
+  `)
+}
+
+describe("persona_attachments binding invariants (integration)", () => {
+  test("concurrency: two adds at the cap boundary → exactly one binds, positions stay unique/dense", async () => {
+    // maxCount 2, one slot already taken → the two concurrent adds contend for the
+    // last slot. Committed data (advisory xact lock spans real transactions), so
+    // clean up explicitly afterwards.
+    const workspaceId = newWorkspaceId()
+    const personaRowId = personaId()
+    const creator = userId()
+    const seededId = attachmentId()
+    const contenderA = attachmentId()
+    const contenderB = attachmentId()
+
+    try {
+      await withTransaction(pool, async (client) => {
+        await PersonaAttachmentRepository.insertBinding(client, {
+          attachmentId: seededId,
+          workspaceId,
+          personaId: personaRowId,
+          createdBy: creator,
+          maxCount: 2,
+        })
+      })
+
+      const [a, b] = await Promise.all([
+        withTransaction(pool, (client) =>
+          PersonaAttachmentRepository.insertBinding(client, {
+            attachmentId: contenderA,
+            workspaceId,
+            personaId: personaRowId,
+            createdBy: creator,
+            maxCount: 2,
+          })
+        ),
+        withTransaction(pool, (client) =>
+          PersonaAttachmentRepository.insertBinding(client, {
+            attachmentId: contenderB,
+            workspaceId,
+            personaId: personaRowId,
+            createdBy: creator,
+            maxCount: 2,
+          })
+        ),
+      ])
+
+      // Exactly one of the two contenders won the last slot.
+      const winners = [a, b].filter((binding) => binding !== null)
+      expect(winners).toHaveLength(1)
+
+      const rows = await pool.query<{ position: number }>(sql`
+        SELECT position FROM persona_attachments
+        WHERE workspace_id = ${workspaceId} AND persona_id = ${personaRowId}
+        ORDER BY position ASC
+      `)
+      // Dense, unique positions: the seed at 0 and the single winner at 1.
+      expect(rows.rows.map((row) => row.position)).toEqual([0, 1])
+    } finally {
+      await pool.query(sql`DELETE FROM persona_attachments WHERE workspace_id = ${workspaceId}`)
+    }
+  })
+
+  test("cross-workspace isolation: identical persona id in two workspaces reads only its own rows", async () => {
+    await withTestTransaction(pool, async (client) => {
+      const wsA = newWorkspaceId()
+      const wsB = newWorkspaceId()
+      const sharedPersonaId = personaId()
+      const creator = userId()
+      const attA = attachmentId()
+      const attB = attachmentId()
+
+      for (const [ws, att, filename] of [
+        [wsA, attA, "a.md"],
+        [wsB, attB, "b.md"],
+      ] as const) {
+        await insertAttachmentRow(client, {
+          id: att,
+          workspaceId: ws,
+          personaId: sharedPersonaId,
+          uploadedBy: creator,
+          filename,
+        })
+        await PersonaAttachmentRepository.insertBinding(client, {
+          attachmentId: att,
+          workspaceId: ws,
+          personaId: sharedPersonaId,
+          createdBy: creator,
+          maxCount: PERSONA_ATTACHMENT_MAX_COUNT,
+        })
+        await client.query(sql`
+          INSERT INTO attachment_extractions (id, attachment_id, workspace_id, content_type, summary, full_text)
+          VALUES (${extractionId()}, ${att}, ${ws}, 'document', 'S', 'FULL')
+        `)
+      }
+
+      const listA = await PersonaAttachmentRepository.listForPersona(client, wsA, sharedPersonaId)
+      const listB = await PersonaAttachmentRepository.listForPersona(client, wsB, sharedPersonaId)
+      expect(listA.map((row) => row.attachmentId)).toEqual([attA])
+      expect(listB.map((row) => row.attachmentId)).toEqual([attB])
+
+      const contentA = await PersonaAttachmentRepository.listForPersonaWithContent(client, wsA, sharedPersonaId)
+      expect(contentA.map((row) => row.filename)).toEqual(["a.md"])
+    })
+  })
+
+  test("deleteBinding with a foreign persona id is a no-op (leaves the real binding intact)", async () => {
+    await withTestTransaction(pool, async (client) => {
+      const workspaceId = newWorkspaceId()
+      const personaRowId = personaId()
+      const otherPersonaId = personaId()
+      const creator = userId()
+      const attId = attachmentId()
+
+      await insertAttachmentRow(client, {
+        id: attId,
+        workspaceId,
+        personaId: personaRowId,
+        uploadedBy: creator,
+      })
+      await PersonaAttachmentRepository.insertBinding(client, {
+        attachmentId: attId,
+        workspaceId,
+        personaId: personaRowId,
+        createdBy: creator,
+        maxCount: PERSONA_ATTACHMENT_MAX_COUNT,
+      })
+
+      // Wrong persona id → no row matched.
+      const removedForeignPersona = await PersonaAttachmentRepository.deleteBinding(
+        client,
+        workspaceId,
+        otherPersonaId,
+        attId
+      )
+      expect(removedForeignPersona).toBe(false)
+
+      // Wrong attachment id → no row matched.
+      const removedForeignAttachment = await PersonaAttachmentRepository.deleteBinding(
+        client,
+        workspaceId,
+        personaRowId,
+        attachmentId()
+      )
+      expect(removedForeignAttachment).toBe(false)
+
+      // The real binding survives both no-ops.
+      const remaining = await PersonaAttachmentRepository.listForPersona(client, workspaceId, personaRowId)
+      expect(remaining.map((row) => row.attachmentId)).toEqual([attId])
     })
   })
 })

@@ -10,7 +10,6 @@ import {
   CompanionModes,
   MemoryModes,
   StreamPurposes,
-  ProcessingStatuses,
   PERSONA_ATTACHMENT_MAX_COUNT,
   PERSONA_ATTACHMENT_MAX_SIZE_BYTES,
   PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
@@ -31,7 +30,11 @@ import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
 import type { AttachmentService } from "../attachments"
-import { PersonaAttachmentRepository, type PersonaAttachmentListItem } from "./persona-attachment-repository"
+import {
+  personaAttachmentExtractionFailed,
+  PersonaAttachmentRepository,
+  type PersonaAttachmentListItem,
+} from "./persona-attachment-repository"
 import { planPersonaKnowledge, type PersonaKnowledgePlan } from "./companion/prompt/persona-knowledge-plan"
 import type { StreamService } from "../streams"
 import { AgentConfigOverrideRepository, type AgentConfigOverrideDetail } from "./agent-config-override-repository"
@@ -124,9 +127,7 @@ function personaAttachmentNotFound(): HttpError {
 /** Derive the structured wire status (INV-46) from the extraction/pipeline state. */
 function personaAttachmentProcessingStatus(item: PersonaAttachmentListItem): PersonaAttachmentProcessingStatus {
   if (item.hasExtraction) return "ready"
-  if (item.processingStatus === ProcessingStatuses.FAILED || item.processingStatus === ProcessingStatuses.SKIPPED) {
-    return "failed"
-  }
+  if (personaAttachmentExtractionFailed(item)) return "failed"
   return "processing"
 }
 
@@ -544,7 +545,11 @@ export class PersonaConfigService {
     // prompt uses, fed the extraction lengths in position order (INV-29/43) — the
     // label the editor shows can't drift from what the prompt actually carries.
     const plans = planPersonaKnowledge(
-      rows.map((row) => ({ fullTextChars: row.fullTextChars, summaryChars: row.summaryChars }))
+      rows.map((row) => ({
+        fullTextChars: row.fullTextChars,
+        summaryChars: row.summaryChars,
+        extractionFailed: personaAttachmentExtractionFailed(row),
+      }))
     )
     return rows.map((row, index) => toPersonaAttachmentItem(row, plans[index]!))
   }
@@ -1186,10 +1191,18 @@ export class PersonaConfigService {
       // Cap reached. A settled-but-unbound attachment is NEVER reaped by the
       // upload sweep — its `attachment_uploads` tracking row is deleted at settle,
       // and the sweep only reaps rows that still have one — so hard-delete it here
-      // to avoid a permanent orphan, matching the old cap-race cleanup.
-      await this.attachmentService.delete(attachmentId).catch((err) => {
-        logger.error({ err, attachmentId }, "failed to clean up persona attachment after cap race")
-      })
+      // to avoid a permanent orphan. `deleteIfUnbound` so a message that claimed
+      // the file between the cap check and now keeps its bytes (INV-20).
+      await this.attachmentService
+        .deleteIfUnbound(attachmentId)
+        .then((result) => {
+          if (!result.deleted) {
+            logger.info({ attachmentId }, "persona cap-race cleanup skipped — file was claimed by a message")
+          }
+        })
+        .catch((err) => {
+          logger.error({ err, attachmentId }, "failed to clean up persona attachment after cap race")
+        })
       throw personaAttachmentLimitReached()
     }
 
@@ -1210,10 +1223,10 @@ export class PersonaConfigService {
   /**
    * Remove a persona context attachment: verify the binding under the persona
    * edit gate, delete it, then hard-delete the attachment row + extraction + S3
-   * object ({@link AttachmentService.delete}). Persona files are never bound to a
-   * message, so a hard delete is safe. The binding delete runs first so a failure
-   * mid-way leaves at worst an unbound (invisible) attachment row, never a
-   * binding pointing at deleted bytes.
+   * object — but only while it is still unbound ({@link AttachmentService.deleteIfUnbound}),
+   * so a file a message claimed in the meantime keeps its bytes (INV-20). The
+   * binding delete runs first so a failure mid-way leaves at worst an unbound
+   * (invisible) attachment row, never a binding pointing at deleted bytes.
    */
   async removeAttachment(
     workspaceId: string,
@@ -1227,6 +1240,15 @@ export class PersonaConfigService {
     const deleted = await PersonaAttachmentRepository.deleteBinding(this.pool, workspaceId, personaId, attachmentId)
     if (!deleted) throw personaAttachmentNotFound()
 
-    await this.attachmentService.delete(attachmentId)
+    // The binding is gone — the user-visible action succeeded. Hard-delete the
+    // file only while it is still unbound: a message that claimed it between the
+    // binding delete and now keeps its bytes (INV-20), we just log the skip.
+    const result = await this.attachmentService.deleteIfUnbound(attachmentId)
+    if (!result.deleted) {
+      logger.info(
+        { workspaceId, personaId, attachmentId },
+        "persona attachment unbound but file left intact — claimed by a message"
+      )
+    }
   }
 }

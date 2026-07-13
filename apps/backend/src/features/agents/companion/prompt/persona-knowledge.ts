@@ -1,6 +1,10 @@
-import type { PersonaAttachmentContentItem } from "../../persona-attachment-repository"
+import {
+  personaAttachmentExtractionFailed,
+  type PersonaAttachmentContentItem,
+} from "../../persona-attachment-repository"
 import {
   planPersonaKnowledge,
+  PERSONA_KNOWLEDGE_FAILURE_NOTE,
   PERSONA_KNOWLEDGE_PROCESSING_NOTE,
   PERSONA_KNOWLEDGE_TRUNCATION_MARKER,
   type PersonaKnowledgePlan,
@@ -32,6 +36,10 @@ function renderBody(item: PersonaAttachmentContentItem, plan: PersonaKnowledgePl
       return plan.truncateAt == null
         ? PERSONA_KNOWLEDGE_PROCESSING_NOTE
         : truncateWithMarker(PERSONA_KNOWLEDGE_PROCESSING_NOTE, plan.truncateAt)
+    case "failureNote":
+      return plan.truncateAt == null
+        ? PERSONA_KNOWLEDGE_FAILURE_NOTE
+        : truncateWithMarker(PERSONA_KNOWLEDGE_FAILURE_NOTE, plan.truncateAt)
     case "marker":
       return PERSONA_KNOWLEDGE_TRUNCATION_MARKER
   }
@@ -55,6 +63,7 @@ export function buildPersonaKnowledgeSection(items: PersonaAttachmentContentItem
     items.map((item) => ({
       fullTextChars: item.fullText?.length ?? null,
       summaryChars: item.summary?.length ?? null,
+      extractionFailed: personaAttachmentExtractionFailed(item),
     }))
   )
 
