@@ -43,7 +43,9 @@ function cachedPersona(overrides: Partial<CachedPersona>): CachedPersona {
 }
 
 function config(kind: PersonaConfigResponse["kind"]): PersonaConfigResponse {
-  return { kind, resolved: { name: "Helper" }, draft: null } as unknown as PersonaConfigResponse
+  // `attachments` is a required field (persona-context-attachments); the page's
+  // usePersonaConfig refetchInterval reads it, so the mock must carry it.
+  return { kind, resolved: { name: "Helper" }, draft: null, attachments: [] } as unknown as PersonaConfigResponse
 }
 
 function renderPage(options: { viewerPermissions: WorkspacePermissionSlug[]; storePersonas?: CachedPersona[] }) {
