@@ -279,6 +279,15 @@ export function createDelegationPublicApiHandlers({
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
 
+      // The result is delivered as a compact anchor in the stream with the
+      // full payload as a thread reply under it (Kris's F1 ruling: no more
+      // wall-of-text in the timeline). The card's result_message_id points at
+      // the anchor — the row a viewer can see and deep-link to.
+      const anchorMarkdown = contentMarkdown
+        ? normalizeMessage(`✓ Completed: **${delegation.title}**. Result in thread.`)
+        : null
+      const anchorJson = anchorMarkdown ? parseMarkdown(anchorMarkdown, undefined, toEmoji) : null
+
       const { completed, resultMessageId } = await withTransaction(pool, async (client: PoolClient) => {
         // Validate the claim BEFORE any write (FOR UPDATE, token-guarded): an
         // invalid or lapsed token does no work, and the row lock serializes
@@ -288,20 +297,37 @@ export function createDelegationPublicApiHandlers({
           throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
         }
         let resultMessageId: string | undefined
-        if (contentMarkdown && contentJson && author) {
-          const { message } = await eventService.createMessageInTransaction(client, {
+        if (contentMarkdown && contentJson && anchorMarkdown && anchorJson && author) {
+          const { message: anchor } = await eventService.createMessageInTransaction(client, {
             workspaceId,
             streamId: delegation.streamId,
+            authorId: author.authorId,
+            authorType: author.authorType,
+            contentJson: anchorJson,
+            contentMarkdown: anchorMarkdown,
+            clientMessageId: `delegation:${delegation.id}`,
+            sentVia: author.sentVia,
+          })
+          const thread = await streamService.createThreadOn(client, {
+            workspaceId,
+            parentStreamId: delegation.streamId,
+            parentMessageId: anchor.id,
+            createdBy: author.authorId,
+            createdByType: author.authorType === AuthorTypes.BOT ? "bot" : "user",
+          })
+          await eventService.createMessageInTransaction(client, {
+            workspaceId,
+            streamId: thread.id,
             authorId: author.authorId,
             authorType: author.authorType,
             contentJson,
             contentMarkdown,
             attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-            clientMessageId: `delegation:${delegation.id}`,
+            clientMessageId: `delegation:${delegation.id}:result`,
             sentVia: author.sentVia,
             metadata,
           })
-          resultMessageId = message.id
+          resultMessageId = anchor.id
         }
         const completed = await delegationService.completeInTransaction(client, {
           workspaceId,
