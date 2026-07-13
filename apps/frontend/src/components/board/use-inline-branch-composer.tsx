@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { CornerDownRight, Pencil, Reply } from "lucide-react"
+import { CornerDownRight, Reply } from "lucide-react"
 import { StreamTypes } from "@threa/types"
 import { useQueueDraftMessage } from "@/hooks/use-queue-draft-message"
 import { useBoardSubtopicDraftIndex, useScopeDraftPreview, useStashParamDraftRow } from "@/hooks"
 import type { SubtopicDraftEntry } from "@/hooks"
+import { rescopeScopeDrafts } from "@/hooks/use-draft-message"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { DraftRestingPreview } from "@/components/board/board-reply-composer"
 import { createDraftPanelId } from "@/contexts"
@@ -66,9 +67,12 @@ function BranchTailAffordance({
 
 /**
  * Marks a message row whose "new sub-topic" gesture holds an unsent draft
- * while that composer is unmounted: the branch arrow + the draft's first line,
- * clickable to reopen the gesture with the draft in it. Without this the
- * draft is only discoverable through the context menu (Kris 2026-07-13).
+ * while that composer is unmounted: the branch arrow + the same draft pill the
+ * branch tail uses (one presentation for a sub-conversation draft whether or
+ * not the branch has materialized — Kris 2026-07-13), clickable to reopen the
+ * gesture with the draft in it. Rendered only while NO branch exists under the
+ * message; once one materializes, the draft is rescoped onto its tail (see the
+ * migration effect in the hook) so this and the branch never show together.
  */
 function SubtopicDraftIndicator({
   entry,
@@ -81,12 +85,11 @@ function SubtopicDraftIndicator({
     <button
       type="button"
       onClick={() => onOpen(entry.isCheckedOut ? null : entry.draftId)}
-      className="mt-2 flex w-fit min-w-0 max-w-full items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      className="mt-2 flex w-full min-w-0 items-center gap-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
     >
       <CornerDownRight className="h-3.5 w-3.5 shrink-0" />
-      <Pencil aria-label="Unsent sub-topic draft" className="h-3 w-3 shrink-0" />
-      <span className="min-w-0 truncate">
-        {entry.preview || `${entry.attachmentCount} attachment${entry.attachmentCount === 1 ? "" : "s"}`}
+      <span className="flex min-w-0 flex-1 items-center rounded-[16px] border border-input bg-card p-3">
+        <DraftRestingPreview draft={entry} />
       </span>
     </button>
   )
@@ -161,6 +164,26 @@ export function useInlineBranchComposer(params: {
   // Unsent sub-topic drafts by fork message id — marks the rows whose gesture
   // composer is unmounted but holds a draft (rendered by `renderAfterMessage`).
   const subtopicDraftIndex = useBoardSubtopicDraftIndex(workspaceId)
+
+  // A "new sub-topic" draft is a reply into a branch that doesn't exist yet;
+  // the moment the branch materializes they are the same target, so the draft
+  // follows it onto the branch scope (loaded pointer and stash siblings alike,
+  // server-mirrored). Without this a stash from before the branch existed
+  // lingers as a second "create a sub-conversation" affordance NEXT TO the
+  // branch it was for (Kris's screenshots, 2026-07-13). Skipped while this
+  // surface has an inline composer open — a live editor's flushes would race
+  // the move; the effect re-fires once it closes (or another surface, both are
+  // idempotent: the rescope no-ops on rows already moved).
+  useEffect(() => {
+    if (openComposer !== null) return
+    for (const entry of subtopicDraftIndex.values()) {
+      const thread = index.threadsByParentMessageId.get(entry.messageId)
+      if (!thread) continue
+      const branchPost = graph.conversationByAnchorStreamId.get(thread.id)
+      if (!branchPost) continue
+      void rescopeScopeDrafts(workspaceId, entry.scope, boardBranchReplyDraftKey(branchPost.id))
+    }
+  }, [subtopicDraftIndex, index, graph, workspaceId, openComposer])
 
   const memberKey = memberMessageIds.join(",")
   const branchStreamIds = useMemo(
@@ -330,6 +353,12 @@ export function useInlineBranchComposer(params: {
       }
       const entry = subtopicDraftIndex.get(messageId)
       if (entry) {
+        // A materialized branch owns this draft (the migration effect is moving
+        // it onto the tail); never render the "create a sub-conversation"
+        // affordance next to the sub-conversation it was for.
+        const thread = index.threadsByParentMessageId.get(messageId)
+        const materialized = thread !== undefined && graph.conversationByAnchorStreamId.has(thread.id)
+        if (materialized) return null
         return (
           <SubtopicDraftIndicator
             entry={entry}
@@ -339,7 +368,7 @@ export function useInlineBranchComposer(params: {
       }
       return null
     },
-    [openComposer, workspaceId, submitNewSubtopic, closeComposer, subtopicDraftIndex, openNewSubtopic]
+    [openComposer, workspaceId, submitNewSubtopic, closeComposer, subtopicDraftIndex, openNewSubtopic, index, graph]
   )
 
   const renderBranchTail = useCallback(
