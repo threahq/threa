@@ -1287,6 +1287,19 @@ a {
   .docs-nav-links {
     display: none;
   }
+  /* The top bar collapses to hamburger + brand + toggle + Credentials here.
+     The fixed-width theme toggle doesn't shrink, so on narrow phones the
+     brand's "Developers" tag would overflow into it — drop the tag and
+     tighten the gaps so the row fits down to ~320px. */
+  .docs-nav {
+    gap: 12px;
+  }
+  .docs-nav-right {
+    gap: 12px;
+  }
+  .docs-nav .brand .tag {
+    display: none;
+  }
 
   /* Side nav becomes an off-canvas drawer that slides in below the sticky
      top bar (which stays above it, so the hamburger keeps toggling it). */
