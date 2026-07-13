@@ -87,6 +87,12 @@ const CATCHUP_PAGE_LIMIT = 500
  *  when the board opens onto many unsynced thread/public streams at once. */
 const BOARD_SYNC_CONCURRENCY = 6
 
+const NON_SERVER_STREAM_ID_PREFIXES = ["draft_", "draft:", "conv:"] as const
+
+function isServerStreamId(streamId: string): boolean {
+  return !NON_SERVER_STREAM_ID_PREFIXES.some((prefix) => streamId.startsWith(prefix))
+}
+
 /**
  * Above this many missed entries on the first catch-up page, heal the whole
  * workspace with one atomic snapshot instead of replaying the gap entry by
@@ -230,8 +236,7 @@ export class SyncEngine {
     this.visibleStreamIds = ids
 
     for (const streamId of ids) {
-      if (previous.has(streamId)) continue
-      if (streamId.startsWith("draft_") || streamId.startsWith("draft:") || streamId.startsWith("conv:")) continue
+      if (previous.has(streamId) || !isServerStreamId(streamId)) continue
       void this.refreshStreamAfterNavigation(streamId)
     }
   }
@@ -263,8 +268,7 @@ export class SyncEngine {
     const next = new Set(ids)
     const toSync: string[] = []
     for (const streamId of next) {
-      if (this.boardStreamIds.has(streamId)) continue
-      if (streamId.startsWith("draft_") || streamId.startsWith("draft:")) continue
+      if (this.boardStreamIds.has(streamId) || !isServerStreamId(streamId)) continue
       toSync.push(streamId)
     }
     this.boardStreamIds = next
@@ -285,8 +289,7 @@ export class SyncEngine {
     const next = new Set(ids)
     const toSync: string[] = []
     for (const streamId of next) {
-      if (this.panelStreamIds.has(streamId)) continue
-      if (streamId.startsWith("draft_") || streamId.startsWith("draft:")) continue
+      if (this.panelStreamIds.has(streamId) || !isServerStreamId(streamId)) continue
       toSync.push(streamId)
     }
     this.panelStreamIds = next
@@ -366,9 +369,7 @@ export class SyncEngine {
       // stream's room (subscribeMemberStreams), but a fresh device has no
       // history for them — syncBoardStreams' persisted-window skip separates
       // the two, so warm streams cost one IDB probe and cold ones backfill.
-      const pending = [...this.boardStreamIds, ...this.panelStreamIds].filter(
-        (id) => !id.startsWith("draft_") && !id.startsWith("draft:")
-      )
+      const pending = [...this.boardStreamIds, ...this.panelStreamIds].filter(isServerStreamId)
       if (pending.length > 0) void this.syncBoardStreams([...new Set(pending)])
     }
 
@@ -943,9 +944,7 @@ export class SyncEngine {
       ...this.boardStreamIds,
       ...this.panelStreamIds,
     ]
-    return Array.from(
-      new Set(streamIds.filter((streamId) => !streamId.startsWith("draft_") && !streamId.startsWith("draft:")))
-    )
+    return Array.from(new Set(streamIds.filter(isServerStreamId)))
   }
 
   /**
@@ -1054,7 +1053,7 @@ export class SyncEngine {
   }
 
   private refreshStreamAfterNavigation(streamId: string): Promise<void> {
-    if (this.isDestroyed || streamId.startsWith("draft_") || streamId.startsWith("draft:")) {
+    if (this.isDestroyed || !isServerStreamId(streamId)) {
       return Promise.resolve()
     }
 
@@ -1124,7 +1123,7 @@ export class SyncEngine {
    * warm-up, not the sync authority, and must not flash loading chrome.
    */
   private warmStreamOverHttp(streamId: string): Promise<void> {
-    if (this.isDestroyed || streamId.startsWith("draft_") || streamId.startsWith("draft:")) {
+    if (this.isDestroyed || !isServerStreamId(streamId)) {
       return Promise.resolve()
     }
 
