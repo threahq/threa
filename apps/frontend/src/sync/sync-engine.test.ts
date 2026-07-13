@@ -6,6 +6,7 @@ import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow } from "@/sto
 import { SyncStatusStore } from "./sync-status"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
+import { streamKeys } from "@/hooks/use-streams"
 import { db } from "@/db"
 import {
   DEFAULT_USER_PREFERENCES,
@@ -759,6 +760,26 @@ describe("SyncEngine reconnect catch-up cursor (INV-53 gap safety)", () => {
 
     await vi.waitFor(() => {
       expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
+    })
+  })
+
+  it("catches up a newly visible thread panel even when its bootstrap query is cached", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    deps.streamService.bootstrap.mockClear()
+    deps.queryClient.setQueryData(streamKeys.bootstrap("ws_1", "thread_1"), makeStreamBootstrap("thread_1", "1"))
+    await seedEvent("thread_1", 1)
+
+    engine.setVisibleStreamIds(["thread_1"])
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_1", { after: "1" })
+    })
+    await vi.waitFor(async () => {
+      expect(await db.events.get("evt_2")).toMatchObject({ streamId: "thread_1", sequence: "2" })
     })
   })
 })
@@ -2205,23 +2226,22 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     engine.destroy()
   })
 
-  it("still fetches per-stream data for visible streams on a slim reconnect (per-stream cursor mechanism kept)", async () => {
+  it("refreshes real visible streams but excludes synthetic IDs on a slim reconnect", async () => {
     const deps = makeReconnectDeps()
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
 
     await engine.onConnect(asSocket(socket))
-    // Mark a stream visible after the first connect; the slim reconnect must
-    // still heal its timeline (a per-stream sequence, not the workspace
-    // sync-log), so the per-stream bootstrap fetch fires for it.
-    engine.setVisibleStreamIds(["stream_v"])
+    engine.setVisibleStreamIds(["stream_v", "draft_local", "draft:stream_parent:msg_1", "conv:conversation_1"])
+    await vi.waitFor(() =>
+      expect(deps.streamService.bootstrap.mock.calls.some((call) => call[1] === "stream_v")).toBe(true)
+    )
     deps.streamService.bootstrap.mockClear()
 
     await engine.onConnect(asSocket(socket))
 
-    await vi.waitFor(() =>
-      expect(deps.streamService.bootstrap.mock.calls.some((call) => call[1] === "stream_v")).toBe(true)
-    )
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalled())
+    expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toEqual(["stream_v"])
     engine.destroy()
   })
 
