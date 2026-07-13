@@ -176,12 +176,14 @@ right, so split the dials in two:
 
 **Structural lenses (same signal for everyone):**
 
-> **Per-user home lens (shipped):** which lens the bare `/board` opens on is the
-> `boardDefaultLens` preference — **All** for everyone who hasn't changed it. It
-> only moves the landing: every lens keeps its own URL (the home lens is the
-> segment-less one, so **All** takes `/board/all` for a viewer who homes
-> elsewhere), and the home lens is the viewer's baseline for filtered-state chrome
-> (no "Clear filters" on the plain home; "Clear filters" returns to it). The
+> **Per-user home lens (shipped):** where the bare query-less `/board` entry
+> redirects is the `boardDefaultLens` preference (or a pinned saved view via
+> `boardDefaultViewId`) — **All** for everyone who hasn't changed it. It only
+> moves the landing: the whole board view is query state (`?lens=all`,
+> `?lens=active&in=…`), every rendered board URL carries an explicit `?lens=`,
+> and the bare path is never rested on. Filtered-state chrome measures against
+> the absolute unfiltered All baseline, so even the viewer's own home is
+> clearable ("Clear filters" targets `?lens=all`). The
 > surfacing rule ("your own action always surfaces") still routes a fresh post to
 > **All** — the only lens that always contains it — _unless_ the current view
 > already does: an unfiltered `all` or `mine` (a self-authored post is `isMine`).

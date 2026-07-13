@@ -138,8 +138,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const isSavedPage = splat === "saved" || window.location.pathname.endsWith("/saved")
   const isScheduledPage = splat === "scheduled" || window.location.pathname.includes("/scheduled")
   const isActivityPage = splat === "activity" || window.location.pathname.endsWith("/activity")
-  // Reactive pathname (useLocation), and a real matcher: /board carries an
-  // optional lens segment, so a suffix check misses /board/active.
+  // Reactive pathname (useLocation), matched by the shared board predicate.
   const isBoardPage = isBoardPath(location.pathname)
   const boardMutedStreamIds = useBoardMutedStreamIds(workspaceId)
   const muteStream = useMuteStream(workspaceId)

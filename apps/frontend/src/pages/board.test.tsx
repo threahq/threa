@@ -117,7 +117,7 @@ function mountBoard(
     nextCursor?: string | null
     fail?: boolean
     failMessages?: boolean
-    /** URL to mount at — set `/w/<ws>/board/<lens>` to exercise a lens segment. */
+    /** URL to mount at — set `/w/<ws>/board?lens=<lens>` to exercise a lens. */
     entry?: string
     /** Seeds the saved-view list into the bootstrap cache (what `useBoardViews` reads). */
     boardViews?: BoardView[]
@@ -151,7 +151,7 @@ function mountBoard(
               <PanelProvider>
                 <LocationProbe />
                 <Routes>
-                  <Route path="/w/:workspaceId/board/:lens?" element={<BoardPage />} />
+                  <Route path="/w/:workspaceId/board" element={<BoardPage />} />
                 </Routes>
               </PanelProvider>
             </MemoryRouter>
@@ -208,8 +208,8 @@ beforeEach(() => {
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { timezone: "UTC", locale: "en-US" },
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
-  // BoardPage resolves the home lens (bare `/board`) from the preferences
-  // context; default to All so existing cases keep their unsegmented meaning.
+  // BoardPage resolves the home (bare `/board` entry alias) from the
+  // preferences context; default to All.
   vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
     preferences: { boardDefaultLens: "all" },
   } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
@@ -231,19 +231,19 @@ describe("BoardPage", () => {
   it("shows only the viewer's own conversations on the Mine lens", async () => {
     // Server precomputes `isMine`; the Mine lens is wired into the same
     // client filter (`matchesBoardLens`) the other lenses ride, keyed off the
-    // `/board/mine` URL segment.
+    // `?lens=mine` query param.
     const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
     const notMine = { ...makePost({ id: "conv_other" }, { contentMarkdown: "Someone else's topic." }), isMine: false }
-    mountBoard([mine, notMine], { entry: `/w/${WORKSPACE_ID}/board/mine` })
+    mountBoard([mine, notMine], { entry: `/w/${WORKSPACE_ID}/board?lens=mine` })
 
     expect(await screen.findByText("My own topic.")).toBeTruthy()
     expect(screen.queryByText("Someone else's topic.")).toBeNull()
   })
 
-  it("lands the bare `/board` on the viewer's home-lens preference", async () => {
-    // boardDefaultLens picks which lens bare `/board` resolves to; here Mine, so
-    // the unsegmented URL filters down to the viewer's own conversations without
-    // a `/board/mine` segment.
+  it("lands the bare `/board` entry alias on the viewer's home-lens preference", async () => {
+    // boardDefaultLens picks where the query-less entry redirects; here Mine, so
+    // the entry resolves to `?lens=mine` and filters down to the viewer's own
+    // conversations.
     vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
       preferences: { boardDefaultLens: "mine" },
     } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
@@ -263,13 +263,13 @@ describe("BoardPage", () => {
     } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
     mountBoard([], { boardViews: [makeBoardView()] })
     const probe = await screen.findByTestId("location")
-    await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board/active?is=channel`))
+    await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board?lens=active&is=channel`))
   })
 
-  it("hides 'Show everything' on an empty saved-view home landing", async () => {
-    // The viewer homes on a saved view; sitting on that view's own (empty) URL is
-    // their baseline, so no "Show everything" CTA — the empty-state resolves the
-    // baseline through isBoardAtHome, not raw isBoardFiltered.
+  it("offers 'Show everything' on the viewer's own empty saved-view home (its filters are clearable)", async () => {
+    // The saved-view home is itself a narrowing. The old home-relative baseline
+    // treated it as unfiltered — which made its filters unclearable (the bounce
+    // Kris hit). Absolute baseline: the CTA shows, targeting explicit ?lens=all.
     vi.mocked(contextsModule.usePreferences).mockReturnValue({
       preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
@@ -277,57 +277,47 @@ describe("BoardPage", () => {
       preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
     } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
     // The saved view's own URL (`makeBoardView` → active + `?is=channel`).
-    mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board/active?is=channel` })
+    mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board?lens=active&is=channel` })
     expect(await screen.findByText("Nothing here right now")).toBeTruthy()
-    expect(screen.queryByText("Show everything")).toBeNull()
-  })
-
-  it("points 'Show everything' at the explicit All lens for a saved-view-home viewer", async () => {
-    // With a saved-view home, bare `/board` bounces to the view — so the escape to
-    // "everything" must use the explicit `/board/all` segment, not bare `/board`.
-    vi.mocked(contextsModule.usePreferences).mockReturnValue({
-      preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
-    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
-      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-    // A narrowed, empty lens (not the saved-view home) → "Show everything" offered.
-    mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board/decisions` })
     const cta = await screen.findByRole("link", { name: "Show everything" })
-    expect(cta.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/board/all`)
+    expect(cta.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/board?lens=all`)
   })
 
-  it("preserves an open panel when clearing filters back to a saved-view home", async () => {
-    // Clearing filters returns to the saved-view home directly (no bare detour),
-    // and the surviving non-filter query — an open `?panel=` thread — rides along.
+  it("clears everything — including the saved-view home's own scope — keeping an open panel", async () => {
+    // "Clear filters" means everything (?lens=all), not "back to the home": the
+    // home's own filters must clear too, and the target is never the bare entry
+    // alias (which would bounce straight back). The open `?panel=` rides along.
     vi.mocked(contextsModule.usePreferences).mockReturnValue({
       preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
     vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
       preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
     } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-    // Narrowed off the saved-view home (extra `in=`), with an open panel.
     mountBoard([], {
       boardViews: [makeBoardView()],
-      entry: `/w/${WORKSPACE_ID}/board/active?is=channel&in=stream_x&panel=conv%3Aabc`,
+      entry: `/w/${WORKSPACE_ID}/board?lens=active&is=channel&in=stream_x&panel=conv%3Aabc`,
     })
     const clear = await screen.findByRole("link", { name: "Clear filters" })
-    const href = clear.getAttribute("href") ?? ""
-    expect(href).toContain("is=channel") // the saved view's own scope
-    expect(href).toContain("panel=conv") // the open thread survives
-    expect(href).not.toContain("in=stream_x") // the extra narrowing is cleared
+    const url = new URL(clear.getAttribute("href") ?? "", "http://x")
+    expect(url.pathname).toBe(`/w/${WORKSPACE_ID}/board`)
+    expect(url.searchParams.get("lens")).toBe("all") // explicit — never the bare alias
+    expect(url.searchParams.get("panel")).toBe("conv:abc") // the open thread survives
+    expect(url.searchParams.get("is")).toBeNull() // the home view's own scope clears
+    expect(url.searchParams.get("in")).toBeNull() // the extra narrowing clears
   })
 
-  it("keeps the board rendered when a saved view is pinned as home while resting on bare `/board`", async () => {
-    // Regression: pinning a view as home is a same-URL preference change. The
-    // redirect effect (once per `location.key`) correctly declines to navigate, so
-    // the render must keep the board visible rather than blank it waiting for a
-    // redirect that never comes.
+  it("stays put when a saved view is pinned as home while on an explicit board URL", async () => {
+    // Pinning a view as home is a preference change, not a navigation. Rendered
+    // board URLs always carry `?lens=`, so the entry-alias redirect (which only
+    // fires on the query-less path) can never yank the viewer off the page.
     vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
       preferences: { boardDefaultLens: "all", boardDefaultViewId: null },
     } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
     const post = makePost({ id: "conv_x" }, { contentMarkdown: "Board still here." })
-    const { tree, rerender } = mountBoard([post], { boardViews: [makeBoardView()] })
+    const { tree, rerender } = mountBoard([post], {
+      boardViews: [makeBoardView()],
+      entry: `/w/${WORKSPACE_ID}/board?lens=all`,
+    })
     expect(await screen.findByText("Board still here.")).toBeTruthy()
 
     // Pin a saved view as home — same URL, no navigation.
@@ -336,54 +326,38 @@ describe("BoardPage", () => {
     } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
     rerender(tree)
 
-    // Still on bare `/board`, board still rendered — not blanked, not navigated.
-    expect(screen.getByTestId("location").textContent).toBe(`/w/${WORKSPACE_ID}/board`)
+    expect(screen.getByTestId("location").textContent).toBe(`/w/${WORKSPACE_ID}/board?lens=all`)
     expect(screen.getByText("Board still here.")).toBeTruthy()
   })
 
-  it("shows no 'Clear filters' on the plain home lens (home is the baseline)", async () => {
-    // With a Mine home, the plain `/board` (lens=mine, no scope filters) is the
-    // viewer's untouched baseline — no filtered-state affordance.
-    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
-      preferences: { boardDefaultLens: "mine" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-    const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
-    mountBoard([mine], { entry: `/w/${WORKSPACE_ID}/board` })
-    await screen.findByText("My own topic.")
+  it("shows no 'Clear filters' on the unfiltered All lens (the absolute baseline)", async () => {
+    const post = makePost({ id: "conv_x" }, { contentMarkdown: "A topic." })
+    mountBoard([post], { entry: `/w/${WORKSPACE_ID}/board?lens=all` })
+    await screen.findByText("A topic.")
     expect(screen.queryByText("Clear filters")).toBeNull()
   })
 
-  it("shows 'Clear filters' once the lens is narrowed off the home lens", async () => {
-    // Home is Mine; `/board/all` is a different lens, i.e. a narrowing away from
-    // the baseline, so the clear-to-home affordance reappears.
+  it("shows 'Clear filters' on a non-All lens — even the viewer's own home lens", async () => {
+    // A Mine home landing is still a narrowing of everything; its lens must be
+    // clearable (the home-relative baseline hid the affordance here).
     vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
       preferences: { boardDefaultLens: "mine" },
     } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
     const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
-    mountBoard([mine], { entry: `/w/${WORKSPACE_ID}/board/all` })
+    mountBoard([mine], { entry: `/w/${WORKSPACE_ID}/board?lens=mine` })
     await screen.findByText("My own topic.")
     expect(screen.getByText("Clear filters")).toBeTruthy()
   })
 
-  it("shows the empty state without a 'Show everything' CTA on the plain home lens", async () => {
-    // Empty `/board` with a Mine home is the baseline coming up empty, not a
-    // filtered view — the lens empty copy shows, but the "Show everything" CTA
-    // (which reads as "you've narrowed something") must not.
-    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
-      preferences: { boardDefaultLens: "mine" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-    mountBoard([], { entry: `/w/${WORKSPACE_ID}/board` })
-    expect(await screen.findByText("Nothing here for you yet")).toBeTruthy()
+  it("shows the empty state without a 'Show everything' CTA on the unfiltered All lens", async () => {
+    mountBoard([], { entry: `/w/${WORKSPACE_ID}/board?lens=all` })
+    expect(await screen.findByText("Nothing on the board yet")).toBeTruthy()
     expect(screen.queryByText("Show everything")).toBeNull()
   })
 
-  it("shows 'Show everything' on an empty view narrowed off the home lens", async () => {
-    // Home is Mine; empty `/board/all` is a narrowing away from baseline, so the
-    // empty state offers the one-tap way back home.
-    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
-      preferences: { boardDefaultLens: "mine" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-    mountBoard([], { entry: `/w/${WORKSPACE_ID}/board/all` })
+  it("shows 'Show everything' on an empty non-All lens", async () => {
+    mountBoard([], { entry: `/w/${WORKSPACE_ID}/board?lens=mine` })
+    expect(await screen.findByText("Nothing here for you yet")).toBeTruthy()
     expect(await screen.findByText("Show everything")).toBeTruthy()
   })
 

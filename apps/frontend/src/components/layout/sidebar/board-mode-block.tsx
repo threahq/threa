@@ -38,11 +38,10 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
   const location = useLocation()
 
   // One shared URL derivation (INV-35) — the chips block reads the same hook.
-  const { homeLens, currentLens, selection } = useBoardSelection()
+  const { currentLens, selection } = useBoardSelection()
 
   const { data: views } = useBoardViews(workspaceId)
-  const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
-  const hasSavedViewHome = homeViewId !== null
+  const { view: homeView } = useBoardHome(workspaceId)
 
   // A saved view IS the selection when the live lens + every axis match it, so it
   // — not its base lens — reads as active; a lens is active only when no view is.
@@ -86,7 +85,7 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
             return (
               <Link
                 key={view.id}
-                to={savedViewHref(workspaceId, view, homeLens)}
+                to={savedViewHref(workspaceId, view)}
                 onClick={collapseOnMobile}
                 aria-current={active ? "true" : undefined}
                 className={cn(ROW_CLASS, active ? "bg-primary/10" : "hover:bg-muted/50 text-muted-foreground")}
@@ -113,7 +112,7 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
           return (
             <Link
               key={value}
-              to={lensHref(workspaceId, value, location.search, homeLens, hasSavedViewHome)}
+              to={lensHref(workspaceId, value, location.search)}
               onClick={collapseOnMobile}
               aria-current={active ? "true" : undefined}
               className={cn(ROW_CLASS, active ? "bg-primary/10" : "hover:bg-muted/50 text-muted-foreground")}

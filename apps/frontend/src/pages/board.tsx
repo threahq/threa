@@ -45,9 +45,11 @@ import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
 import { setBoardFlash } from "@/stores/board-flash-store"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
-import { boardHomeRedirectHref, isBoardAtHome } from "@/components/board/board-saved-views"
-import { useBoardViews, useBoardHome } from "@/hooks/use-board-views"
+import { boardHomeHref } from "@/components/board/board-saved-views"
+import { useBoardViews } from "@/hooks/use-board-views"
+import { isBoardFiltered } from "@/lib/board/filter-state"
 import {
+  BOARD_LENS_PARAM,
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
   BOARD_LABEL_PARAM,
@@ -58,13 +60,13 @@ import {
   BOARD_ARCHIVED_ON,
   BOARD_UNREAD_PARAM,
   BOARD_UNREAD_ON,
-  boardHomeSearch,
+  clearFiltersSearch,
   parseIdListParam,
+  parseLensParam,
   parseTypeListParam,
 } from "@/components/board/board-filter-params"
 import { cn } from "@/lib/utils"
 import {
-  BOARD_LENSES,
   DEFAULT_BOARD_LENS,
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
@@ -72,8 +74,6 @@ import {
   type BoardScopeStreamType,
   type ConversationWithStaleness,
 } from "@threa/types"
-
-const VALID_LENSES = new Set<string>(BOARD_LENSES)
 
 /** Lenses that always contain the viewer's own fresh post: `all` (everything)
  *  and `mine` (a self-authored conversation is `isMine`). The status/memo lenses
@@ -163,128 +163,47 @@ function groupByRecency(posts: BoardViewPost[], activityById: Map<string, number
  * The board: a cross-stream feed of posts (each conversation surfaced as a
  * message-led post) ordered by recent activity, grouped into recency sections.
  *
- * Route is `/w/:workspaceId/board/:lens?`. Bare `/board` rests on the viewer's
- * **home lens** — the `boardDefaultLens` preference, `all` for everyone who
- * hasn't changed it (everything, newest activity first, nothing hidden). The
- * other lenses (`/board/active`, `/board/needs-resolution`, `/board/decisions`,
- * `/board/mine`) are optional narrowings picked from the filter bar
- * (board-view-design.md § "Lenses"); the stream scope rides `?in=`. Refreshes,
- * back/forward, and shared links land on the same view (INV-59). Whichever lens
- * is home canonicalises to the unsegmented URL (keeping the query string) so
- * there aren't two URLs for it — so `all` takes the `/board/all` segment for a
- * viewer whose home is some other lens. An unknown segment redirects to home.
+ * Route is `/w/:workspaceId/board`; the whole view is query state (INV-59). The
+ * lens rides `?lens=` (`all`, `active`, `needs-resolution`, `decisions`, `mine`
+ * — board-view-design.md § "Lenses"; absent or unknown degrades to `all`), the
+ * stream scope rides `?in=`, and every rendered board URL carries an explicit
+ * `?lens=`. The bare query-less `/board` is only an entry alias: it redirects
+ * once to the viewer's home — the pinned saved view (`boardDefaultViewId`) or
+ * the home lens (`boardDefaultLens`) — expanded to its explicit URL. Because no
+ * rendered URL is ever the bare path, no filter affordance can re-trigger the
+ * home resolution: "Clear filters" targets `?lens=all` and sticks.
  */
 export function BoardPage() {
-  const { workspaceId, lens: lensParam } = useParams<{ workspaceId: string; lens?: string }>()
+  const { workspaceId } = useParams<{ workspaceId: string }>()
   const location = useLocation()
   const preferences = usePreferencesOptional()
   const homeLens = preferences?.preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
   const defaultViewId = preferences?.preferences?.boardDefaultViewId ?? null
   // Already mounted deeper (the lens menu), so this adds no fetch — it just lets
-  // the landing resolve a saved-view home.
+  // the entry alias resolve a saved-view home.
   const { data: boardViews, isError: boardViewsFailed } = useBoardViews(workspaceId ?? "")
   if (!workspaceId) return null
-  // A saved view is the board home iff its id still resolves; a stale/deleted id
-  // falls back to the plain home lens. When a view is home, `/board/<homeLens>` is
-  // a real destination reachable from the lens menu, NOT the canonical bare URL —
-  // so the home lens is not collapsed to bare here (which would just bounce back
-  // to the saved view). `savedViewReady` gates every home-resolution decision on
-  // the sources it needs: `usePreferencesOptional()` returns its context object as
-  // soon as the provider mounts, so read `.preferences` (the IDB data, null until
-  // it hydrates) — otherwise a cold load misreads a saved-view home as unset and
-  // never redirects. The saved-view LIST is only needed when a default view id is
-  // actually set, so a plain-lens landing (no `boardDefaultViewId`) doesn't block
-  // on the board-views query. A FAILED list also counts as "ready": the id can't
-  // resolve, so fall back to the lens and render rather than hold `/board` blank
-  // forever on a network blip.
-  const savedViewReady =
-    preferences?.preferences != null && (defaultViewId === null || boardViews !== undefined || boardViewsFailed)
-  const homeViewActive = !!defaultViewId && !!boardViews?.some((view) => view.id === defaultViewId)
-  const bareBoard = lensParam === undefined && location.search === ""
-  // Bare `/board` is a "resolve where home is" route: hold (render nothing) until
-  // the home is knowable, rather than paint the plain-lens board and then bounce
-  // to a saved-view home a frame later.
-  if (bareBoard && !savedViewReady) return null
-  // The bounce target for a bare `/board` arrival with a saved-view home. Resolved
-  // here but NAVIGATED inside BoardPageGate — at most once per navigation — so
-  // pinning a view as home while sitting on `/board` (a same-URL preference change)
-  // can't yank the user off the page.
-  const savedViewTarget =
-    bareBoard && savedViewReady ? boardHomeRedirectHref(workspaceId, defaultViewId, boardViews, homeLens) : null
-  // Collapse `/board/<homeLens>` to bare only once we know it isn't a saved-view
-  // home (else the home lens, a legitimate destination, would bounce to the view).
-  // Gate on `savedViewReady` so a stale `homeViewActive: false` during load can't
-  // fire the bounce prematurely.
-  if (
-    (savedViewReady && !homeViewActive && lensParam === homeLens) ||
-    (lensParam !== undefined && !VALID_LENSES.has(lensParam))
-  ) {
-    return <Navigate to={{ pathname: `/w/${workspaceId}/board`, search: location.search }} replace />
+  if (location.search === "") {
+    // The entry alias: resolve where home is, then redirect to its explicit URL.
+    // Hold (render nothing) until home is knowable rather than paint the default
+    // board and bounce a frame later. `usePreferencesOptional()` returns its
+    // context object as soon as the provider mounts, so read `.preferences` (the
+    // IDB data, null until it hydrates) — otherwise a cold load misreads a
+    // saved-view home as unset and lands on the wrong lens. The saved-view LIST
+    // is only needed when a default view id is actually set, so a plain-lens
+    // home doesn't block on the board-views query; a FAILED list also counts as
+    // "ready" (the id can't resolve — degrade to the home lens and render rather
+    // than hold `/board` blank forever on a network blip).
+    const homeReady =
+      preferences?.preferences != null && (defaultViewId === null || boardViews !== undefined || boardViewsFailed)
+    if (!homeReady) return null
+    return <Navigate to={boardHomeHref(workspaceId, defaultViewId, boardViews, homeLens)} replace />
   }
-  const lens: BoardLens = (lensParam as BoardLens | undefined) ?? homeLens
-  return (
-    <BoardPageGate
-      workspaceId={workspaceId}
-      lens={lens}
-      homeLens={homeLens}
-      savedViewTarget={savedViewTarget}
-      savedViewReady={savedViewReady}
-    />
-  )
+  const lens = parseLensParam(new URLSearchParams(location.search).get(BOARD_LENS_PARAM))
+  return <BoardPageInner workspaceId={workspaceId} lens={lens} />
 }
 
-/**
- * Handles the bare `/board` → saved-view-home redirect as a post-commit effect.
- * It lives in this child (not BoardPage) because a hook can't sit after
- * BoardPage's early returns. The redirect fires at most once per navigation; a
- * later same-URL re-render from pinning a view as home must not re-trigger it.
- */
-function BoardPageGate({
-  workspaceId,
-  lens,
-  homeLens,
-  savedViewTarget,
-  savedViewReady,
-}: {
-  workspaceId: string
-  lens: BoardLens
-  homeLens: BoardLens
-  savedViewTarget: string | null
-  savedViewReady: boolean
-}) {
-  const navigate = useNavigate()
-  const location = useLocation()
-  // Bounce a bare `/board` arrival to the saved-view home at most once per
-  // navigation (`location.key`): a later same-URL re-render from pinning a view
-  // as home must not re-trigger it, so the redirect follows navigation, not the
-  // live preference.
-  const handledKeyRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!savedViewReady) return
-    if (handledKeyRef.current === location.key) return
-    handledKeyRef.current = location.key
-    if (savedViewTarget) navigate(savedViewTarget, { replace: true })
-  }, [savedViewReady, savedViewTarget, location.key, navigate])
-  // A saved-view home is about to redirect (the effect above fires post-commit) —
-  // render nothing rather than paint one frame of the wrong lens board first. Gate
-  // this on the SAME "not yet handled this navigation" condition the effect uses:
-  // when the target only appears because the viewer pinned a view as home while
-  // sitting on `/board` (same `location.key`, already handled), the effect
-  // deliberately won't navigate — so blanking here would strand the board. Render
-  // it instead.
-  if (savedViewTarget && handledKeyRef.current !== location.key) return null
-  return <BoardPageInner workspaceId={workspaceId} lens={lens} homeLens={homeLens} />
-}
-
-function BoardPageInner({
-  workspaceId,
-  lens,
-  homeLens,
-}: {
-  workspaceId: string
-  lens: BoardLens
-  homeLens: BoardLens
-}) {
+function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
   const { isMobile } = useSidebar()
   const { isPanelOpen, closePanel } = usePanel()
   // The board's filters live in the URL (INV-59) — six params, three dimensions
@@ -588,25 +507,15 @@ function BoardPageInner({
   }
 
   const navigate = useNavigate()
-  // The surfacing baseline is **All**, not the home lens: a fresh post is no
-  // Decision (and needn't be Active), so only the widest lens guarantees the
-  // author's own card appears (design § "your own action always surfaces"). All
-  // rests at bare `/board` unless the viewer's home is another lens, in which
-  // case All takes the `/board/all` segment. The non-filter query state (an open
-  // `?panel=`) rides along so it survives clearing filters.
-  // The viewer's home baseline (plain home lens, or the saved view they home on)
-  // reads as unfiltered, so an empty home landing doesn't offer "Show everything".
-  const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
-  // "Show everything" / the own-post-must-surface bounce target the truly
-  // unfiltered All lens. When a saved-view home is CONFIGURED, bare `/board` bounces
-  // to that view once the list resolves, so All must take its explicit `/board/all`
-  // segment (keyed on the configured id, not the resolved view, so the escape is
-  // reachable even during the load window) or these land back on the saved view.
-  const allPathname =
-    homeLens === DEFAULT_BOARD_LENS && homeViewId === null
-      ? `/w/${workspaceId}/board`
-      : `/w/${workspaceId}/board/${DEFAULT_BOARD_LENS}`
-  const boardHome = { pathname: allPathname, search: boardHomeSearch(searchParams.toString()) }
+  // "Show everything" / the own-post-must-surface baseline is **All**, not the
+  // viewer's home: a fresh post is no Decision (and needn't be Active), so only
+  // the widest lens guarantees the author's own card appears (design § "your own
+  // action always surfaces"). Explicit `?lens=all` — never the bare entry alias —
+  // with the non-filter query state (an open `?panel=`) riding along.
+  const boardEverything = {
+    pathname: `/w/${workspaceId}/board`,
+    search: clearFiltersSearch(searchParams.toString()),
+  }
   const hasFilterParams =
     scopeStreamIds.length > 0 ||
     scopeStreamTypes.length > 0 ||
@@ -643,7 +552,7 @@ function BoardPageInner({
     if (currentViewSurfacesOwnPost) {
       if (scrollerRef.current) scrollerRef.current.scrollTop = 0
     } else {
-      navigate(boardHome)
+      navigate(boardEverything)
     }
     if (conversationId) {
       setBoardFlash(conversationId)
@@ -805,19 +714,19 @@ function BoardPageInner({
     } else {
       // A filtered-empty view is the FILTERS coming up empty, never the board
       // hiding things — so it always offers the one-tap way back to everything.
-      // Filtered is measured against the viewer's home lens, so a non-All home's
-      // own empty landing view shows the empty copy without a "Show everything"
-      // CTA (it's already at baseline).
+      // Filtered is absolute (narrower than the unfiltered All lens), so even a
+      // saved-view or non-All home's own empty landing offers the escape.
       const scoped = hasFilterParams
-      const isFiltered = !isBoardAtHome(homeLens, homeView, {
-        lens,
-        scopeStreamIds,
-        scopeStreamTypes,
-        scopeLabelIds,
-        excludeStreamIds,
-        excludeStreamTypes,
-        excludeLabelIds,
-      })
+      const isFiltered =
+        isBoardFiltered({
+          lens,
+          scopeStreamIds,
+          scopeStreamTypes,
+          scopeLabelIds,
+          excludeStreamIds,
+          excludeStreamTypes,
+          excludeLabelIds,
+        }) || unreadOnly
       const copy = scoped ? SCOPED_EMPTY_COPY : LENS_EMPTY_COPY[lens]
       stateContent = (
         <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
@@ -831,7 +740,7 @@ function BoardPageInner({
           <p className="text-sm font-medium">{copy.title}</p>
           <p className="max-w-sm text-sm text-muted-foreground">{copy.body}</p>
           {isFiltered && (
-            <Link to={boardHome} className={cn(buttonVariants({ variant: "outline" }), "mt-1 min-h-11")}>
+            <Link to={boardEverything} className={cn(buttonVariants({ variant: "outline" }), "mt-1 min-h-11")}>
               Show everything
             </Link>
           )}
@@ -862,7 +771,6 @@ function BoardPageInner({
       <BoardFilterBar
         workspaceId={workspaceId}
         lens={lens}
-        homeLens={homeLens}
         scopeStreamIds={scopeStreamIds}
         excludeStreamIds={excludeStreamIds}
         onStreamFilterChange={setStreamFilter}

@@ -58,11 +58,11 @@ describe("useLastLocation — board arm", () => {
     setLastLocation(USER, WS, {
       surface: "board",
       streamId: "stream_a",
-      board: { lens: "active", search: "?in=stream_a,stream_gone" },
+      board: { search: "?lens=active&in=stream_a,stream_gone" },
     })
     const { result } = renderHook(() => useLastLocation(WS))
     expect(result.current).toMatchObject({
-      boardHref: "/w/ws_1/board/active?in=stream_a",
+      boardHref: "/w/ws_1/board?lens=active&in=stream_a",
       redirectStreamId: null,
     })
   })
@@ -82,12 +82,12 @@ describe("usePersistLastLocation", () => {
   it("retains the prior stream id when writing a board surface", () => {
     setLastLocation(USER, WS, { surface: "stream", streamId: "stream_prior", board: null })
     renderHook(() => usePersistLastLocation(WS), {
-      wrapper: routerAt("/w/ws_1/board/active?in=stream_x&panel=stream_z"),
+      wrapper: routerAt("/w/ws_1/board?lens=active&in=stream_x&panel=stream_z"),
     })
     expect(getLastLocation(USER, WS)).toEqual({
       surface: "board",
       streamId: "stream_prior",
-      board: { lens: "active", search: "?in=stream_x" },
+      board: { search: "?lens=active&in=stream_x" },
     })
   })
 
@@ -95,13 +95,13 @@ describe("usePersistLastLocation", () => {
     setLastLocation(USER, WS, {
       surface: "board",
       streamId: null,
-      board: { lens: "active", search: "?in=stream_a" },
+      board: { search: "?lens=active&in=stream_a" },
     })
     renderHook(() => usePersistLastLocation(WS), { wrapper: routerAt("/w/ws_1/s/stream_new") })
     expect(getLastLocation(USER, WS)).toEqual({
       surface: "stream",
       streamId: "stream_new",
-      board: { lens: "active", search: "?in=stream_a" },
+      board: { search: "?lens=active&in=stream_a" },
     })
   })
 })

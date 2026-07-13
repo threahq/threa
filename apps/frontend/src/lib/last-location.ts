@@ -1,5 +1,10 @@
-import { BOARD_LENSES } from "@threa/types"
-import { BOARD_FILTER_PARAMS, BOARD_SCOPE_PARAM, parseIdListParam } from "@/components/board/board-filter-params"
+import {
+  BOARD_FILTER_PARAMS,
+  BOARD_LENS_PARAM,
+  BOARD_SCOPE_PARAM,
+  parseIdListParam,
+  parseLensParam,
+} from "@/components/board/board-filter-params"
 
 const STORAGE_PREFIX = "threa-last-location"
 const LEGACY_STREAM_PREFIX = "threa-last-stream"
@@ -7,7 +12,6 @@ const LEGACY_STREAM_PREFIX = "threa-last-stream"
 export type LastLocationSurface = "stream" | "board"
 
 export interface LastLocationBoard {
-  lens: string | null
   search: string
 }
 
@@ -27,13 +31,17 @@ function legacyKey(userId: string, workspaceId: string): string {
 
 /**
  * Keep only the board's own URL vocabulary in a persisted search string: the
- * six filter axes + `archived` ({@link BOARD_FILTER_PARAMS}). `?panel=` and
- * `?m=` are deliberately dropped — a cold start into a months-old panel is a
- * worse default than the filtered feed. Returns a leading-`?` string (or "").
+ * lens plus the filter axes + `archived` ({@link BOARD_FILTER_PARAMS}). `?panel=`
+ * and `?m=` are deliberately dropped — a cold start into a months-old panel is a
+ * worse default than the filtered feed. Returns a leading-`?` string (or "" for
+ * a record captured on the bare entry alias — restoring that resolves the
+ * viewer's home again, which is what landing there meant).
  */
 export function sanitizeBoardSearch(search: string): string {
   const src = new URLSearchParams(search)
   const out = new URLSearchParams()
+  const lens = src.get(BOARD_LENS_PARAM)
+  if (lens !== null) out.set(BOARD_LENS_PARAM, parseLensParam(lens))
   for (const param of BOARD_FILTER_PARAMS) {
     for (const value of src.getAll(param)) out.append(param, value)
   }
@@ -57,9 +65,8 @@ function parseRecord(raw: string): LastLocation | null {
   if (record.board !== null && record.board !== undefined) {
     if (typeof record.board !== "object") return null
     const b = record.board as Record<string, unknown>
-    if (b.lens !== null && typeof b.lens !== "string") return null
     if (typeof b.search !== "string") return null
-    board = { lens: (b.lens as string | null) ?? null, search: b.search }
+    board = { search: b.search }
   }
 
   return {
@@ -93,7 +100,7 @@ export function setLastLocation(userId: string, workspaceId: string, location: L
     const record: LastLocation = {
       surface: location.surface,
       streamId: location.streamId,
-      board: location.board ? { lens: location.board.lens, search: sanitizeBoardSearch(location.board.search) } : null,
+      board: location.board ? { search: sanitizeBoardSearch(location.board.search) } : null,
     }
     localStorage.setItem(key(userId, workspaceId), JSON.stringify(record))
     localStorage.removeItem(legacyKey(userId, workspaceId))
@@ -137,18 +144,16 @@ function sweepStaleStreamScope(search: string, knownStreamIds: readonly string[]
 }
 
 /**
- * Build the explicit board URL to restore from a persisted board state.
- * An unknown lens degrades to the bare `/board` (the home lens resolves there),
- * and stale stream ids are swept from the `in` axis. Writing the explicit URL
- * lets the board's own home-redirect run cleanly for a bare-board record.
+ * Build the board URL to restore from a persisted board state: `/board` plus the
+ * sanitized query (lens + filter axes), with stale stream ids swept from the
+ * `in` axis. An empty stored search restores the bare entry alias, which
+ * re-resolves the viewer's home — the meaning of having been there.
  */
 export function buildBoardHref(
   workspaceId: string,
   board: LastLocationBoard,
   knownStreamIds: readonly string[]
 ): string {
-  const lens = board.lens && (BOARD_LENSES as readonly string[]).includes(board.lens) ? board.lens : null
-  const pathname = lens ? `/w/${workspaceId}/board/${lens}` : `/w/${workspaceId}/board`
   const search = sweepStaleStreamScope(sanitizeBoardSearch(board.search), knownStreamIds)
-  return `${pathname}${search}`
+  return `/w/${workspaceId}/board${search}`
 }

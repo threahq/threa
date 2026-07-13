@@ -25,7 +25,7 @@ interface UseLastLocationResult {
  * surface (stream or board) the viewer was on.
  *
  * Board arm: a stored board record resolves straight to the board URL, with the
- * lens validated and stale scope ids swept inside {@link buildBoardHref}.
+ * query sanitized and stale scope ids swept inside {@link buildBoardHref}.
  *
  * Stream arm (unchanged): stored stream validated against bootstrap, most-
  * recently-active fallback, and `shouldOpenSidebar` only once bootstrap has
@@ -105,11 +105,10 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
 export function usePersistLastLocation(workspaceId: string | undefined) {
   const { user } = useAuth()
   const streamMatch = useMatch("/w/:workspaceId/s/:streamId")
-  const boardMatch = useMatch("/w/:workspaceId/board/:lens?")
+  const boardMatch = useMatch("/w/:workspaceId/board")
   const search = useLocation().search
 
   const streamId = streamMatch?.params.streamId
-  const lens = boardMatch?.params.lens ?? null
   const onBoard = boardMatch !== null
 
   useEffect(() => {
@@ -119,7 +118,7 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
       setLastLocation(user.id, workspaceId, {
         surface: "board",
         streamId: existing?.streamId ?? null,
-        board: { lens, search: sanitizeBoardSearch(search) },
+        board: { search: sanitizeBoardSearch(search) },
       })
       return
     }
@@ -131,7 +130,7 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
         board: existing?.board ?? null,
       })
     }
-  }, [user, workspaceId, streamId, lens, search, onBoard])
+  }, [user, workspaceId, streamId, search, onBoard])
 }
 
 function getMostRecentStreamId(streams: CachedStream[]): string {

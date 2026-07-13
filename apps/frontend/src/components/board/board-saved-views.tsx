@@ -28,6 +28,7 @@ import {
   useDeleteBoardView,
 } from "@/hooks/use-board-views"
 import {
+  BOARD_LENS_PARAM,
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
   BOARD_LABEL_PARAM,
@@ -39,39 +40,28 @@ import { isBoardFiltered, type BoardViewSelection } from "@/lib/board/filter-sta
 
 export type { BoardViewSelection }
 
-/** Expand a saved view into the canonical board URL it bookmarks (INV-59). The
- *  viewer's home lens is the segment-less one, so a saved All view addresses
- *  `/board/all` for anyone whose home is another lens. */
-export function savedViewHref(workspaceId: string, view: BoardView, homeLens: BoardLens): string {
-  const base = view.baseLens === homeLens ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${view.baseLens}`
+/** Expand a saved view into the canonical board URL it bookmarks (INV-59): the
+ *  explicit `?lens=` plus its filter axes. */
+export function savedViewHref(workspaceId: string, view: BoardView): string {
   const params = new URLSearchParams()
+  params.set(BOARD_LENS_PARAM, view.baseLens)
   if (view.scopeStreamIds.length > 0) params.set(BOARD_SCOPE_PARAM, view.scopeStreamIds.join(","))
   if (view.scopeStreamTypes.length > 0) params.set(BOARD_TYPE_PARAM, view.scopeStreamTypes.join(","))
   if (view.scopeLabelIds.length > 0) params.set(BOARD_LABEL_PARAM, view.scopeLabelIds.join(","))
   if (view.excludeStreamIds.length > 0) params.set(BOARD_EXCLUDE_SCOPE_PARAM, view.excludeStreamIds.join(","))
   if (view.excludeStreamTypes.length > 0) params.set(BOARD_EXCLUDE_TYPE_PARAM, view.excludeStreamTypes.join(","))
   if (view.excludeLabelIds.length > 0) params.set(BOARD_EXCLUDE_LABEL_PARAM, view.excludeLabelIds.join(","))
-  const qs = params.toString()
-  return qs ? `${base}?${qs}` : base
+  return `/w/${workspaceId}/board?${params.toString()}`
 }
 
-/** The lens's URL (INV-59): the viewer's home lens rests at the bare `/board`,
- *  every other lens takes a segment (so `all` gets `/board/all` when it isn't
- *  home). `search` rides along so switching lens keeps the scope (and an open
- *  panel). When a saved view is the home, the bare `/board` bounces to that view,
- *  so the home lens must keep its explicit segment or it'd be unreachable — omit
- *  the segment only when no saved-view home is active. Sibling of
+/** The lens's URL (INV-59): `?lens=` rewritten in the current search so the
+ *  filter axes (and an open `?panel=`) ride along a lens switch. Sibling of
  *  {@link savedViewHref}; shared by the filter bar's lens menu and the board-mode
  *  sidebar block so the two can't drift (INV-35). */
-export function lensHref(
-  workspaceId: string,
-  lens: BoardLens,
-  search: string,
-  homeLens: BoardLens,
-  hasSavedViewHome: boolean
-): string {
-  const base = !hasSavedViewHome && lens === homeLens ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${lens}`
-  return `${base}${search}`
+export function lensHref(workspaceId: string, lens: BoardLens, search: string): string {
+  const params = new URLSearchParams(search)
+  params.set(BOARD_LENS_PARAM, lens)
+  return `/w/${workspaceId}/board?${params.toString()}`
 }
 
 /** Order-independent membership equality — URL params carry no stable order, so
@@ -96,52 +86,26 @@ export function isViewActive(view: BoardView, selection: BoardViewSelection): bo
   )
 }
 
-/**
- * Whether the live selection is a baseline state where "Clear filters" / "Save
- * current view" / "Show everything" would be no-ops and should stay hidden. Two
- * such states, and the branch order is load-bearing:
- *   1. The plain unfiltered home lens (nothing narrowed → nothing to clear, save,
- *      or show-more), even when a saved view is the configured home. This lens is
- *      reachable explicitly (bare `/board` redirects to the view, but `/board/all`
- *      does not), and on it those three affordances are all meaningless.
- *   2. Exactly the saved-view home — itself a filtered selection, so
- *      `isBoardFiltered` alone would wrongly read it as narrowed and offer a
- *      "Clear filters" that just bounces back to the same view.
- * Checking the unfiltered case first is intentional: flipping to "resolve the
- * view first" would report the plain All lens as narrowed and wrongly surface
- * "Show everything" (on the everything lens) and "Save current view" (on an
- * unfiltered selection). Any genuinely narrowed selection makes `isBoardFiltered`
- * true and falls through to `isViewActive`, which is where the real work happens.
- */
-export function isBoardAtHome(homeLens: BoardLens, homeView: BoardView | null, selection: BoardViewSelection): boolean {
-  if (!isBoardFiltered(homeLens, selection)) return true
-  return homeView != null && isViewActive(homeView, selection)
-}
-
 /** Count phrase: `3 streams`, `1 label`. */
 function countOf(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`
 }
 
 /**
- * The URL the bare `/board` should bounce to for a viewer whose board home is a
- * saved view (`boardDefaultViewId`) rather than a plain lens. `null` when there's
- * nothing to redirect to: no default view, views not yet loaded, the id no longer
- * resolves (deleted view — degrade to the home lens), or the view expands to the
- * bare home URL anyway (guards against a redirect loop). Pure so the landing
- * decision is unit-testable without mounting the page.
+ * The explicit URL the bare query-less `/board` entry alias redirects to: the
+ * saved-view home when the configured `boardDefaultViewId` resolves, else the
+ * home lens. Always a `?lens=`-carrying URL, never the bare path — the redirect
+ * cannot loop. A stale/deleted view id degrades to the home lens. Pure so the
+ * landing decision is unit-testable without mounting the page.
  */
-export function boardHomeRedirectHref(
+export function boardHomeHref(
   workspaceId: string,
   defaultViewId: string | null,
   views: BoardView[] | undefined,
   homeLens: BoardLens
-): string | null {
-  if (!defaultViewId || !views) return null
-  const view = views.find((v) => v.id === defaultViewId)
-  if (!view) return null
-  const href = savedViewHref(workspaceId, view, homeLens)
-  return href === `/w/${workspaceId}/board` ? null : href
+): string {
+  const view = defaultViewId ? views?.find((v) => v.id === defaultViewId) : undefined
+  return view ? savedViewHref(workspaceId, view) : lensHref(workspaceId, homeLens, "")
 }
 
 /** A one-line summary of what a view filters to, under its name. */
@@ -163,8 +127,6 @@ interface BoardSavedViewsProps {
   workspaceId: string
   /** The board's live filter state — captured when saving "the current view". */
   lens: BoardLens
-  /** The viewer's home lens — the segment-less one when addressing a saved view. */
-  homeLens: BoardLens
   /** The saved view whose lens + filters match the live board, or `null`. Owned by
    *  the lens menu so the lens list and this list never both mark a row. */
   activeViewId: string | null
@@ -188,7 +150,6 @@ interface BoardSavedViewsProps {
 export function BoardSavedViews({
   workspaceId,
   lens,
-  homeLens,
   activeViewId,
   scopeStreamIds,
   scopeStreamTypes,
@@ -208,18 +169,20 @@ export function BoardSavedViews({
   // `null` closed; `{ id: null }` = save-current; `{ id }` = rename that view.
   const [editing, setEditing] = useState<{ id: string | null; name: string } | null>(null)
 
-  // Only offer "save current view" when there's actually a narrowing to bookmark
-  // — the viewer's home baseline (the plain home lens, or the saved view that is
-  // their home) is nothing worth saving.
-  const isFiltered = !isBoardAtHome(homeLens, homeView, {
-    lens,
-    scopeStreamIds,
-    scopeStreamTypes,
-    scopeLabelIds,
-    excludeStreamIds,
-    excludeStreamTypes,
-    excludeLabelIds,
-  })
+  // Only offer "save current view" when there's a narrowing to bookmark that
+  // isn't already bookmarked — the unfiltered baseline has nothing to save, and
+  // a selection that matches an existing view (activeViewId) IS that view.
+  const isFiltered =
+    activeViewId === null &&
+    isBoardFiltered({
+      lens,
+      scopeStreamIds,
+      scopeStreamTypes,
+      scopeLabelIds,
+      excludeStreamIds,
+      excludeStreamTypes,
+      excludeLabelIds,
+    })
 
   const submit = (name: string) => {
     if (editing?.id) update.mutate({ id: editing.id, input: { name } })
@@ -255,7 +218,7 @@ export function BoardSavedViews({
                 )}
               >
                 <Link
-                  to={savedViewHref(workspaceId, view, homeLens)}
+                  to={savedViewHref(workspaceId, view)}
                   onClick={onNavigate}
                   aria-current={active ? "true" : undefined}
                   className="flex min-w-0 flex-1 items-start gap-2.5"

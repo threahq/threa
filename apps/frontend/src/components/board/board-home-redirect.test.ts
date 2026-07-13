@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { BoardView } from "@threa/types"
-import { boardHomeRedirectHref } from "@/components/board/board-saved-views"
+import { boardHomeHref } from "@/components/board/board-saved-views"
 
 const WS = "ws_1"
 
@@ -20,32 +20,23 @@ function view(overrides: Partial<BoardView> = {}): BoardView {
   }
 }
 
-describe("boardHomeRedirectHref", () => {
-  it("expands the default view to its canonical filtered URL", () => {
-    expect(boardHomeRedirectHref(WS, "bview_1", [view()], "all")).toBe(`/w/${WS}/board/active?is=channel`)
+describe("boardHomeHref", () => {
+  it("expands the default view to its canonical query URL", () => {
+    expect(boardHomeHref(WS, "bview_1", [view()], "all")).toBe(`/w/${WS}/board?lens=active&is=channel`)
   })
 
-  it("uses the segment-less base for a view whose lens is the viewer's home", () => {
-    const v = view({ id: "bview_2", baseLens: "all", scopeStreamTypes: ["dm"] })
-    expect(boardHomeRedirectHref(WS, "bview_2", [v], "all")).toBe(`/w/${WS}/board?is=dm`)
+  it("targets the home lens when no default view is set", () => {
+    expect(boardHomeHref(WS, null, [view()], "mine")).toBe(`/w/${WS}/board?lens=mine`)
   })
 
-  it("returns null when no default view is set", () => {
-    expect(boardHomeRedirectHref(WS, null, [view()], "all")).toBeNull()
+  it("falls back to the home lens when the default id no longer resolves", () => {
+    expect(boardHomeHref(WS, "bview_gone", [view()], "all")).toBe(`/w/${WS}/board?lens=all`)
   })
 
-  it("returns null while views are still loading", () => {
-    expect(boardHomeRedirectHref(WS, "bview_1", undefined, "all")).toBeNull()
-  })
-
-  it("falls back to the lens (null) when the default id no longer resolves", () => {
-    expect(boardHomeRedirectHref(WS, "bview_gone", [view()], "all")).toBeNull()
-  })
-
-  it("returns null when the view expands to the bare home URL (no redirect loop)", () => {
-    // A view on the home lens with no filters would address `/board` itself —
-    // redirecting there from bare `/board` would loop, so the helper declines.
+  it("never emits the bare entry alias, even for an unfiltered all-lens view", () => {
+    // Bare `/board` IS the redirecting entry — targeting it would loop. The
+    // explicit `?lens=` guarantees the redirect terminates in one hop.
     const bare = view({ id: "bview_bare", baseLens: "all", scopeStreamTypes: [] })
-    expect(boardHomeRedirectHref(WS, "bview_bare", [bare], "all")).toBeNull()
+    expect(boardHomeHref(WS, "bview_bare", [bare], "all")).toBe(`/w/${WS}/board?lens=all`)
   })
 })

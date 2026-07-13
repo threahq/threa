@@ -1,9 +1,9 @@
 import { useMemo } from "react"
-import { useLocation, useMatch } from "react-router-dom"
-import { DEFAULT_BOARD_LENS, type BoardLens } from "@threa/types"
-import { usePreferencesOptional } from "@/contexts"
+import { useLocation } from "react-router-dom"
+import type { BoardLens } from "@threa/types"
 import type { BoardViewSelection } from "@/components/board/board-saved-views"
 import {
+  BOARD_LENS_PARAM,
   BOARD_SCOPE_PARAM,
   BOARD_EXCLUDE_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
@@ -11,13 +11,12 @@ import {
   BOARD_LABEL_PARAM,
   BOARD_EXCLUDE_LABEL_PARAM,
   parseIdListParam,
+  parseLensParam,
   parseTypeListParam,
 } from "@/components/board/board-filter-params"
 
 export interface BoardSelectionState {
-  /** The viewer's home lens (the one the bare `/board` URL resolves to). */
-  homeLens: BoardLens
-  /** The lens the current URL is on (route segment, falling back to home). */
+  /** The lens the current URL is on (`?lens=`, degrading to the default). */
   currentLens: BoardLens
   /** The live six-axis filter selection parsed off the URL. */
   selection: BoardViewSelection
@@ -31,9 +30,7 @@ export interface BoardSelectionState {
  */
 export function useBoardSelection(): BoardSelectionState {
   const location = useLocation()
-  const lensMatch = useMatch("/w/:workspaceId/board/:lens?")
-  const homeLens: BoardLens = usePreferencesOptional()?.preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
-  const currentLens: BoardLens = (lensMatch?.params.lens as BoardLens | undefined) ?? homeLens
+  const currentLens = parseLensParam(new URLSearchParams(location.search).get(BOARD_LENS_PARAM))
 
   const selection = useMemo<BoardViewSelection>(() => {
     const params = new URLSearchParams(location.search)
@@ -48,5 +45,5 @@ export function useBoardSelection(): BoardSelectionState {
     }
   }, [location.search, currentLens])
 
-  return { homeLens, currentLens, selection }
+  return { currentLens, selection }
 }

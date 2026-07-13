@@ -4,6 +4,7 @@ import { Archive, Ban, Bell, BellOff, Check, ChevronDown, CircleDot, Hash, Layer
 import {
   BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
+  DEFAULT_BOARD_LENS,
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
   type BoardLens,
@@ -24,16 +25,10 @@ import {
 } from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks/use-labels"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
-import {
-  BoardSavedViews,
-  isBoardAtHome,
-  isViewActive,
-  lensHref,
-  savedViewHref,
-  type BoardViewSelection,
-} from "@/components/board/board-saved-views"
+import { BoardSavedViews, isViewActive, lensHref, type BoardViewSelection } from "@/components/board/board-saved-views"
 import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
-import { boardHomeSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
+import { clearFiltersSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
+import { isBoardFiltered } from "@/lib/board/filter-state"
 import { usePreferences } from "@/contexts"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import { BOARD_STREAM_TYPE_LABELS as TYPE_LABELS } from "@/lib/board/stream-type-labels"
@@ -52,9 +47,6 @@ type FilterIcon = ComponentType<{ className?: string }>
 interface BoardFilterBarProps {
   workspaceId: string
   lens: BoardLens
-  /** The viewer's home lens (bare `/board`) — decides which lens is segment-less
-   *  and where "Clear filters" returns (the All surfacing baseline). */
-  homeLens: BoardLens
   /** Included scope stream ids (root streams), in URL order. */
   scopeStreamIds: string[]
   /** Excluded stream ids (anchor-or-root veto), in URL order. */
@@ -92,9 +84,8 @@ interface BoardFilterBarProps {
  * optional narrowings over the always-available All home. Deliberately a
  * filter control — not a tab strip — so the lenses read as suggestions you can
  * reach for (like the search page's stream-type filter), not as the prescribed
- * ways to use the board. Every filter lives in the URL (lens as a route
- * segment, the rest as query params), so refresh/back/share reproduce the view
- * (INV-59).
+ * ways to use the board. Every filter lives in the URL as query params — the
+ * lens included (`?lens=`) — so refresh/back/share reproduce the view (INV-59).
  *
  * Each picker row is tri-state: the row toggles INCLUDE (checkbox), the ban
  * button on its right toggles EXCLUDE — include narrows, exclude vetoes, and
@@ -109,7 +100,6 @@ interface BoardFilterBarProps {
 export function BoardFilterBar({
   workspaceId,
   lens,
-  homeLens,
   scopeStreamIds,
   excludeStreamIds,
   onStreamFilterChange,
@@ -138,20 +128,15 @@ export function BoardFilterBar({
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
   const labelById = useMemo(() => new Map(myLabels.map((l) => [l.id, l])), [myLabels])
 
-  // The viewer's home baseline is NOT "filtered" — otherwise the home shows a
-  // permanent "Clear filters" affordance on its own untouched landing. The home
-  // is the plain home lens, or (when set) the saved view they home on, so resting
-  // on that view must also read as unfiltered even though it carries scope.
-  const { view: homeView, configuredId: homeViewId } = useBoardHome(workspaceId)
+  // The baseline is absolute — the unfiltered All lens — so any narrowing offers
+  // "Clear filters", including the viewer's own saved-view or non-All home (its
+  // filters must be clearable too; the home-relative baseline made them not be).
   // `unreadOnly` narrows the feed like every other axis (unlike `showArchived`,
-  // which broadens it), so it must count toward "filtered" too — otherwise
-  // toggling Unread with nothing else selected hides "Clear filters" and the
-  // empty-state "Show everything" CTA even though the board is narrowed.
-  // `BoardViewSelection` itself stays unread-unaware (matching `showArchived`'s
-  // precedent): unread state churns on every read receipt, so it isn't
-  // meaningful to capture in a saved view.
+  // which broadens it), so it counts toward "filtered"; `BoardViewSelection`
+  // itself stays unread-unaware (matching `showArchived`'s precedent): unread
+  // state churns on every read receipt, so it isn't meaningful in a saved view.
   const isFiltered =
-    !isBoardAtHome(homeLens, homeView, {
+    isBoardFiltered({
       lens,
       scopeStreamIds,
       scopeStreamTypes,
@@ -160,20 +145,14 @@ export function BoardFilterBar({
       excludeStreamTypes,
       excludeLabelIds,
     }) || unreadOnly
-  const clearedSearch = useMemo(() => boardHomeSearch(location.search), [location.search])
-  // "Clear filters" returns to the viewer's home: the saved-view home when one
-  // resolves (straight to its URL — no bare `/board` detour that would blank-flash
-  // through the redirect), else the plain home lens (explicit segment while a home
-  // view is configured-but-still-loading, so it stays reachable). Either way the
-  // surviving non-filter query — an open `?panel=` — rides along, per the
-  // `boardHomeSearch` contract, so clearing filters never drops the open thread.
-  const clearFiltersTo = useMemo(() => {
-    if (!homeView) return lensHref(workspaceId, homeLens, clearedSearch, homeLens, homeViewId !== null)
-    const href = savedViewHref(workspaceId, homeView, homeLens)
-    const extra = clearedSearch.replace(/^\?/, "")
-    if (!extra) return href
-    return href.includes("?") ? `${href}&${extra}` : `${href}?${extra}`
-  }, [homeView, homeViewId, workspaceId, homeLens, clearedSearch])
+  // "Clear filters" shows everything: explicit `?lens=all` with no filter axes —
+  // never the bare `/board` entry alias, which would bounce to the viewer's home.
+  // The surviving non-filter query — an open `?panel=` — rides along, per the
+  // `clearFiltersSearch` contract, so clearing filters never drops the open thread.
+  const clearFiltersTo = useMemo(
+    () => `/w/${workspaceId}/board${clearFiltersSearch(location.search)}`,
+    [workspaceId, location.search]
+  )
 
   const labelFor = (streamId: string) =>
     resolveStreamName(streamId, { streams, users, dmPeers }, "generic") ?? "Unknown stream"
@@ -193,7 +172,6 @@ export function BoardFilterBar({
       <BoardLensMenu
         workspaceId={workspaceId}
         lens={lens}
-        homeLens={homeLens}
         scopeStreamIds={scopeStreamIds}
         excludeStreamIds={excludeStreamIds}
         scopeStreamTypes={scopeStreamTypes}
@@ -467,7 +445,6 @@ function ExcludeToggle({ excluded, onToggle, subject }: { excluded: boolean; onT
 function BoardLensMenu({
   workspaceId,
   lens,
-  homeLens,
   scopeStreamIds,
   excludeStreamIds,
   scopeStreamTypes,
@@ -477,7 +454,6 @@ function BoardLensMenu({
 }: {
   workspaceId: string
   lens: BoardLens
-  homeLens: BoardLens
   scopeStreamIds: string[]
   excludeStreamIds: string[]
   scopeStreamTypes: BoardScopeStreamType[]
@@ -506,14 +482,10 @@ function BoardLensMenu({
   }
   const activeViewId = views?.find((view) => isViewActive(view, selection))?.id ?? null
 
-  // Two distinct signals: whether a saved-view home is CONFIGURED (known from the
-  // preference before the list loads) drives the lens links — the home lens must
-  // keep its explicit segment as soon as a view is set, or a click during the load
-  // window emits bare `/board` and gets bounced to the saved view (unreachable
-  // fallback lens). Whether it RESOLVES drives the pin fill: no lens reads as home
-  // while a real saved-view home exists.
-  const { view: homeMenuView, configuredId: homeMenuViewId } = useBoardHome(workspaceId)
-  const hasConfiguredHomeView = homeMenuViewId !== null
+  // The pin fill: the home lens preference marks a lens row, but no lens reads
+  // as home while a saved-view home resolves (the view's pin is the home then).
+  const homeLens = usePreferences().preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
+  const { view: homeMenuView } = useBoardHome(workspaceId)
   const homeViewActive = homeMenuView != null
 
   const content = (
@@ -533,7 +505,7 @@ function BoardLensMenu({
               )}
             >
               <Link
-                to={lensHref(workspaceId, value, search, homeLens, hasConfiguredHomeView)}
+                to={lensHref(workspaceId, value, search)}
                 onClick={() => setOpen(false)}
                 aria-current={selected ? "true" : undefined}
                 className="flex min-w-0 flex-1 items-start gap-2.5 rounded-item px-2.5 py-2"
@@ -568,7 +540,6 @@ function BoardLensMenu({
       <BoardSavedViews
         workspaceId={workspaceId}
         lens={lens}
-        homeLens={homeLens}
         activeViewId={activeViewId}
         scopeStreamIds={scopeStreamIds}
         excludeStreamIds={excludeStreamIds}
@@ -583,7 +554,7 @@ function BoardLensMenu({
 
   const trigger = (
     <Button
-      variant={lens === homeLens ? "outline" : "secondary"}
+      variant={lens === DEFAULT_BOARD_LENS ? "outline" : "secondary"}
       size="sm"
       className="h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs font-normal"
       aria-label={`Board lens: ${current.label}`}
