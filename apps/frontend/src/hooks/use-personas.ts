@@ -1,4 +1,3 @@
-import { useEffect } from "react"
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import type {
   PersonaConfigPatch,
@@ -119,40 +118,14 @@ function removeFromList(queryClient: QueryClient, key: readonly unknown[], perso
   queryClient.setQueryData<PersonaListItem[]>(key, (old) => old?.filter((p) => p.id !== personaId))
 }
 
-const PERSONA_LIST_STALE_TIME = 30_000
-/** Session-long retention: the roster is tiny, every companion picker needs it
- *  instantly on open, and mutation reconciles keep the cached rows fresh — so
- *  don't let the default 5-min gc evict it between picker opens. */
-const PERSONA_LIST_GC_TIME = 60 * 60_000
-
 /** Member-visible persona list (no systemPrompt). Powers the settings tab. */
 export function usePersonas(workspaceId: string, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: personaKeys.list(workspaceId),
     queryFn: () => personasApi.list(workspaceId),
     enabled: !!workspaceId && (opts?.enabled ?? true),
-    staleTime: PERSONA_LIST_STALE_TIME,
-    gcTime: PERSONA_LIST_GC_TIME,
+    staleTime: 30_000,
   })
-}
-
-/**
- * Warm the roster cache at workspace mount so the companion pickers (stream
- * popover/sheet, draft settings, settings tabs) render their options on first
- * open instead of popping in after a fetch — the pop-in is user-visible on
- * mobile latency.
- */
-export function usePrefetchPersonas(workspaceId: string | undefined) {
-  const queryClient = useQueryClient()
-  useEffect(() => {
-    if (!workspaceId) return
-    void queryClient.prefetchQuery({
-      queryKey: personaKeys.list(workspaceId),
-      queryFn: () => personasApi.list(workspaceId),
-      staleTime: PERSONA_LIST_STALE_TIME,
-      gcTime: PERSONA_LIST_GC_TIME,
-    })
-  }, [queryClient, workspaceId])
 }
 
 /**
