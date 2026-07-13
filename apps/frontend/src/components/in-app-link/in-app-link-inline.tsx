@@ -118,7 +118,15 @@ export function DelegationLinkInline({ href, workspaceId }: { href: string; work
   const label = (data?.kind === "delegation" && data.title) || "Delegation"
   const chip = <InAppLinkChip icon={TerminalSquare} label={label} />
 
-  const internalPath = resolveInternalAppPath(href)
+  // Once resolved, navigate straight to the card's timeline row — the same
+  // deep-link the preview card uses — instead of bouncing through the
+  // /delegations/:id redirect (route loader + an uncached fetch). The
+  // canonical href stays on the anchor for copy/open-in-new-tab.
+  let internalPath = resolveInternalAppPath(href)
+  if (data?.kind === "delegation" && data.streamId) {
+    const base = `/w/${workspaceId}/s/${data.streamId}`
+    internalPath = data.createdEventId ? `${base}?m=${data.createdEventId}` : base
+  }
   if (!internalPath) return chip
 
   const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {

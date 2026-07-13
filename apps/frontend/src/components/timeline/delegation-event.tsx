@@ -252,7 +252,8 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
               ) : (
                 <Copy className="h-3 w-3" aria-hidden="true" />
               )}
-              Copy prompt
+              {/* Icon-only below sm: four text buttons crush the title column at 390px. */}
+              <span className="hidden sm:inline">Copy prompt</span>
             </button>
             <button
               type="button"
@@ -267,7 +268,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
               ) : (
                 <Link2 className="h-3 w-3" aria-hidden="true" />
               )}
-              Copy link
+              <span className="hidden sm:inline">Copy link</span>
             </button>
             {showDoneSlot && (
               <button
