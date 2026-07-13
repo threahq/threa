@@ -18,6 +18,7 @@ const sources: PersonaListItem[] = [
     avatarEmoji: null,
     model: "openrouter:anthropic/claude-sonnet-4.6",
     kind: "builtin",
+    ownerUserId: null,
     avatarUrl: null,
     isCustomized: false,
     status: "active",

@@ -288,7 +288,7 @@ export const InvitationStatuses = {
   REVOKED: "revoked",
 } as const satisfies Record<string, InvitationStatus>
 
-export const PERSONA_MANAGED_BY = ["system", "workspace"] as const
+export const PERSONA_MANAGED_BY = ["system", "workspace", "user"] as const
 export type PersonaManagedBy = (typeof PERSONA_MANAGED_BY)[number]
 
 export const PERSONA_STATUSES = ["pending", "active", "disabled", "archived"] as const

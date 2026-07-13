@@ -733,9 +733,12 @@ export class StreamService {
     streamId: string,
     workspaceId: string,
     companionMode: CompanionMode,
-    companionPersonaId?: string | null
+    companionPersonaId?: string | null,
+    actingUserId?: string
   ): Promise<Stream> {
-    await assertAssignablePersona(this.pool, companionPersonaId, workspaceId)
+    // The acting user may pin their own personal persona but not another user's
+    // (user-scoped-personas); the handler threads the caller's id.
+    await assertAssignablePersona(this.pool, companionPersonaId, workspaceId, { callerUserId: actingUserId })
     return withTransaction(this.pool, async (client) => {
       const stream = await StreamRepository.update(client, streamId, {
         companionMode,

@@ -38,6 +38,7 @@ interface PersonaRow {
   brevity_prompt: string | null
   avatar_url: string | null
   managed_by: string
+  owner_user_id: string | null
   status: string
   created_at: Date
   updated_at: Date
@@ -80,7 +81,13 @@ export interface Persona {
   brevityPreset: BrevityPreset | null
   tonePrompt: string | null
   brevityPrompt: string | null
-  managedBy: "system" | "workspace"
+  managedBy: "system" | "workspace" | "user"
+  /**
+   * Owning user for a personal (`managedBy: "user"`) persona; null for system
+   * and workspace personas. Paired with `managedBy` by the
+   * `personas_owner_user_id_shape` CHECK (user-scoped-personas).
+   */
+  ownerUserId: string | null
   status: "active" | "disabled" | "archived"
   createdAt: Date
   updatedAt: Date
@@ -106,7 +113,8 @@ function mapRowToPersona(row: PersonaRow): Persona {
     brevityPreset: null,
     tonePrompt: row.tone_prompt,
     brevityPrompt: row.brevity_prompt,
-    managedBy: row.managed_by as "system" | "workspace",
+    managedBy: row.managed_by as "system" | "workspace" | "user",
+    ownerUserId: row.owner_user_id,
     status: row.status as "active" | "disabled" | "archived",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -141,6 +149,7 @@ function mapBuiltInToPersona(agent: BuiltInAgentConfig): Persona {
     tonePrompt: agent.tonePrompt,
     brevityPrompt: agent.brevityPrompt,
     managedBy: agent.managedBy,
+    ownerUserId: null,
     status: agent.status,
     createdAt: BUILT_IN_AGENT_CONFIG_TIMESTAMP,
     updatedAt: BUILT_IN_AGENT_CONFIG_TIMESTAMP,
@@ -225,7 +234,7 @@ const SELECT_FIELDS = `
   id, workspace_id, slug, name, description, avatar_emoji,
   system_prompt, model, escalation_model, temperature, max_tokens, enabled_tools,
   tone_prompt, brevity_prompt, avatar_url,
-  managed_by, status, created_at, updated_at
+  managed_by, owner_user_id, status, created_at, updated_at
 `
 
 export const PersonaRepository = {
@@ -286,7 +295,12 @@ export const PersonaRepository = {
     return [...builtIns, ...result.rows.map(mapRowToPersona)]
   },
 
-  async findBySlug(db: Querier, slug: string, workspaceId?: string | null): Promise<Persona | null> {
+  async findBySlug(
+    db: Querier,
+    slug: string,
+    workspaceId?: string | null,
+    viewerUserId?: string
+  ): Promise<Persona | null> {
     const builtInBySlug = listVisibleBuiltInAgentConfigs().find((agent) => agent.slug === slug)
 
     // System personas have null workspace_id
@@ -305,15 +319,27 @@ export const PersonaRepository = {
       return result.rows[0] ? mapRowToPersona(result.rows[0]) : null
     }
 
-    // Look for workspace-specific first, fall back to system
+    // Look for workspace-specific first, fall back to system. A personal
+    // (`managed_by = 'user'`) row resolves only for its owner (user-scoped-
+    // personas); absent a viewer, personal rows never match.
     const workspaceResult = await db.query<PersonaRow>(
-      sql`
-        SELECT ${sql.raw(SELECT_FIELDS)}
-        FROM personas
-        WHERE slug = ${slug} AND workspace_id = ${workspaceId}
-          AND status = 'active'
-        LIMIT 1
-      `
+      viewerUserId
+        ? sql`
+            SELECT ${sql.raw(SELECT_FIELDS)}
+            FROM personas
+            WHERE slug = ${slug} AND workspace_id = ${workspaceId}
+              AND status = 'active'
+              AND (managed_by <> 'user' OR owner_user_id = ${viewerUserId})
+            LIMIT 1
+          `
+        : sql`
+            SELECT ${sql.raw(SELECT_FIELDS)}
+            FROM personas
+            WHERE slug = ${slug} AND workspace_id = ${workspaceId}
+              AND status = 'active'
+              AND managed_by <> 'user'
+            LIMIT 1
+          `
     )
     if (workspaceResult.rows[0]) return mapRowToPersona(workspaceResult.rows[0])
 
@@ -340,7 +366,12 @@ export const PersonaRepository = {
    * which wins over a system (`workspace_id IS NULL`) row. Slugs are matched
    * case-insensitively.
    */
-  async findBySlugs(db: Querier, slugs: string[], workspaceId?: string | null): Promise<Persona[]> {
+  async findBySlugs(
+    db: Querier,
+    slugs: string[],
+    workspaceId?: string | null,
+    viewerUserId?: string
+  ): Promise<Persona[]> {
     if (slugs.length === 0) return []
 
     const lowered = slugs.map((slug) => slug.toLowerCase())
@@ -380,14 +411,27 @@ export const PersonaRepository = {
       .filter((persona) => persona.status === "active")
     for (const persona of builtIns) consider(persona, 1)
 
+    // A personal (`managed_by = 'user'`) row resolves by slug only for its owner
+    // (user-scoped-personas); a non-owner (or a viewer-less resolve, e.g.
+    // backfill) never sees it, so the slug stays plain text.
     const result = await db.query<PersonaRow>(
-      sql`
-        SELECT ${sql.raw(SELECT_FIELDS)}
-        FROM personas
-        WHERE LOWER(slug) = ANY(${lowered})
-          AND (workspace_id = ${workspaceId} OR workspace_id IS NULL)
-          AND status = 'active'
-      `
+      viewerUserId
+        ? sql`
+            SELECT ${sql.raw(SELECT_FIELDS)}
+            FROM personas
+            WHERE LOWER(slug) = ANY(${lowered})
+              AND (workspace_id = ${workspaceId} OR workspace_id IS NULL)
+              AND status = 'active'
+              AND (managed_by <> 'user' OR owner_user_id = ${viewerUserId})
+          `
+        : sql`
+            SELECT ${sql.raw(SELECT_FIELDS)}
+            FROM personas
+            WHERE LOWER(slug) = ANY(${lowered})
+              AND (workspace_id = ${workspaceId} OR workspace_id IS NULL)
+              AND status = 'active'
+              AND managed_by <> 'user'
+          `
     )
     for (const row of result.rows) {
       // Workspace-specific rows beat built-in/system; system rows are the fallback.
@@ -405,9 +449,13 @@ export const PersonaRepository = {
   },
 
   /**
-   * List all personas available to a workspace (system + workspace-specific).
+   * List all personas available to a workspace for a given viewer (system +
+   * workspace customs + the viewer's own active personal personas). A personal
+   * (`managed_by = 'user'`) row is included only when `owner_user_id` is the
+   * viewer (user-scoped-personas) — INV-8 workspace scope stays, the owner
+   * filter is in addition.
    */
-  async listForWorkspace(db: Querier, workspaceId: string): Promise<Persona[]> {
+  async listForWorkspace(db: Querier, workspaceId: string, viewerUserId: string): Promise<Persona[]> {
     const overrides = await AgentConfigOverrideRepository.listActiveByWorkspace(db, workspaceId)
     const overridesByAgentId = new Map(overrides.map((override) => [override.agentId, override.patch]))
     const builtIns = listVisibleBuiltInAgentConfigs()
@@ -420,6 +468,7 @@ export const PersonaRepository = {
         FROM personas
         WHERE workspace_id = ${workspaceId}
           AND status = 'active'
+          AND (managed_by <> 'user' OR owner_user_id = ${viewerUserId})
         ORDER BY managed_by ASC, name ASC
       `
     )
@@ -428,19 +477,40 @@ export const PersonaRepository = {
 
   /**
    * A workspace-owned custom persona by id, any status (active/archived), or
-   * null. Hard-scoped to `managed_by = 'workspace'` AND the caller workspace
-   * (INV-8) so a custom write/read path can never touch a system row or another
-   * workspace's persona. Archived customs resolve here (for history/actor
-   * rendering) but are excluded from {@link listActiveCustoms}.
+   * null. Hard-scoped to the caller workspace (INV-8) so it can never touch a
+   * system row or another workspace's persona. Without `viewer` it resolves only
+   * `managed_by = 'workspace'` rows; pass `viewer` to also resolve the caller's
+   * own personal (`managed_by = 'user'`) row (user-scoped-personas). Archived
+   * rows resolve here (for history/actor rendering) but are excluded from
+   * {@link listActiveCustoms}.
    */
-  async findWorkspacePersona(db: Querier, workspaceId: string, personaId: string): Promise<Persona | null> {
-    const result = await db.query<PersonaRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)}
-      FROM personas
-      WHERE id = ${personaId}
-        AND workspace_id = ${workspaceId}
-        AND managed_by = 'workspace'
-    `)
+  async findWorkspacePersona(
+    db: Querier,
+    workspaceId: string,
+    personaId: string,
+    viewer?: { userId: string }
+  ): Promise<Persona | null> {
+    // Without a viewer, only workspace customs resolve (existing behavior). With
+    // a viewer, the caller's own personal (`managed_by = 'user'`) row also
+    // resolves — another user's personal persona stays invisible (user-scoped-
+    // personas). INV-8 workspace scope holds either way.
+    const result = await db.query<PersonaRow>(
+      viewer
+        ? sql`
+            SELECT ${sql.raw(SELECT_FIELDS)}
+            FROM personas
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND (managed_by = 'workspace' OR (managed_by = 'user' AND owner_user_id = ${viewer.userId}))
+          `
+        : sql`
+            SELECT ${sql.raw(SELECT_FIELDS)}
+            FROM personas
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND managed_by = 'workspace'
+          `
+    )
     return result.rows[0] ? mapRowToPersona(result.rows[0]) : null
   },
 
@@ -457,16 +527,52 @@ export const PersonaRepository = {
     return result.rows.map(mapRowToPersona)
   },
 
-  /** Archived custom personas — the roster's Archived disclosure (unarchive targets). */
-  async listArchivedCustoms(db: Querier, workspaceId: string): Promise<Persona[]> {
-    const result = await db.query<PersonaRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)}
-      FROM personas
-      WHERE workspace_id = ${workspaceId}
-        AND managed_by = 'workspace'
-        AND status = 'archived'
-      ORDER BY name ASC
-    `)
+  /**
+   * Archived custom/personal personas — the roster's Archived disclosure
+   * (unarchive targets). `includeWorkspace` returns `managed_by = 'workspace'`
+   * archived rows (the admin roster); `ownerUserId` returns that user's own
+   * archived personal (`managed_by = 'user'`) rows (user-scoped-personas). The
+   * two selectors compose (a member with admin rights gets both); with neither
+   * requested there is nothing to return.
+   */
+  async listArchivedCustoms(
+    db: Querier,
+    workspaceId: string,
+    opts: { includeWorkspace: boolean; ownerUserId?: string }
+  ): Promise<Persona[]> {
+    const { includeWorkspace, ownerUserId } = opts
+    if (!includeWorkspace && !ownerUserId) return []
+
+    let result
+    if (includeWorkspace && ownerUserId) {
+      result = await db.query<PersonaRow>(sql`
+        SELECT ${sql.raw(SELECT_FIELDS)}
+        FROM personas
+        WHERE workspace_id = ${workspaceId}
+          AND status = 'archived'
+          AND (managed_by = 'workspace' OR (managed_by = 'user' AND owner_user_id = ${ownerUserId}))
+        ORDER BY name ASC
+      `)
+    } else if (includeWorkspace) {
+      result = await db.query<PersonaRow>(sql`
+        SELECT ${sql.raw(SELECT_FIELDS)}
+        FROM personas
+        WHERE workspace_id = ${workspaceId}
+          AND managed_by = 'workspace'
+          AND status = 'archived'
+        ORDER BY name ASC
+      `)
+    } else {
+      result = await db.query<PersonaRow>(sql`
+        SELECT ${sql.raw(SELECT_FIELDS)}
+        FROM personas
+        WHERE workspace_id = ${workspaceId}
+          AND managed_by = 'user'
+          AND owner_user_id = ${ownerUserId}
+          AND status = 'archived'
+        ORDER BY name ASC
+      `)
+    }
     return result.rows.map(mapRowToPersona)
   },
 
@@ -477,10 +583,19 @@ export const PersonaRepository = {
    * `getVisibleBuiltInAgentConfig` checks (roadmap 7.1 step 2). Built-in ids
    * short-circuit with no DB read.
    */
-  async resolveEditable(db: Querier, workspaceId: string, personaId: string): Promise<EditablePersona | null> {
+  async resolveEditable(
+    db: Querier,
+    workspaceId: string,
+    personaId: string,
+    viewer?: { userId: string }
+  ): Promise<EditablePersona | null> {
     const base = getVisibleBuiltInAgentConfig(personaId)
     if (base) return { kind: "builtin", base }
-    const row = await this.findWorkspacePersona(db, workspaceId, personaId)
+    // A personal persona is full-field editable exactly like a workspace custom,
+    // but only for its owner — `findWorkspacePersona` with `viewer` returns the
+    // caller's own personal row and never another user's (user-scoped-personas),
+    // so an absent/non-matching viewer yields null → a 404 upstream.
+    const row = await this.findWorkspacePersona(db, workspaceId, personaId, viewer)
     return row ? { kind: "custom", row } : null
   },
 
@@ -488,22 +603,26 @@ export const PersonaRepository = {
    * Insert a new custom persona row (a fork). The caller supplies a
    * workspace-scoped `slug`; a collision with the `(workspace_id, slug)` unique
    * constraint surfaces as a raw 23505 for the caller to retry with a suffix
-   * (race-safe, INV-20). Always `managed_by = 'workspace'`, `status = 'active'`.
+   * (race-safe, INV-20). `status = 'active'`. When `ownerUserId` is supplied the
+   * row is a personal persona (`managed_by = 'user'`, owner set); otherwise a
+   * workspace custom (`managed_by = 'workspace'`, owner null) — the
+   * `personas_owner_user_id_shape` CHECK ties the two together.
    */
   async insertWorkspacePersona(
     db: Querier,
-    params: { workspaceId: string; slug: string; config: PersonaCustomConfig }
+    params: { workspaceId: string; slug: string; config: PersonaCustomConfig; ownerUserId?: string }
   ): Promise<Persona> {
-    const { workspaceId, slug, config } = params
+    const { workspaceId, slug, config, ownerUserId } = params
+    const managedBy = ownerUserId ? "user" : "workspace"
     const result = await db.query<PersonaRow>(sql`
       INSERT INTO personas (
         id, workspace_id, slug, name, description, avatar_emoji,
         system_prompt, model, escalation_model, temperature, max_tokens, enabled_tools,
-        tone_prompt, brevity_prompt, managed_by, status
+        tone_prompt, brevity_prompt, managed_by, owner_user_id, status
       ) VALUES (
         ${generatePersonaId()}, ${workspaceId}, ${slug}, ${config.name}, ${config.description}, ${config.avatarEmoji},
         ${config.systemPrompt}, ${config.model}, ${config.escalationModel}, ${config.temperature}, ${config.maxTokens}, ${config.enabledTools}::text[],
-        ${config.tonePrompt}, ${config.brevityPrompt}, 'workspace', 'active'
+        ${config.tonePrompt}, ${config.brevityPrompt}, ${managedBy}, ${ownerUserId ?? null}, 'active'
       )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)

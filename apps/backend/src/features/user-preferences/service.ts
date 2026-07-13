@@ -137,7 +137,7 @@ export class UserPreferencesService {
     userId: string,
     updates: UpdateUserPreferencesInput
   ): Promise<UserPreferences> {
-    await assertAssignablePersona(this.pool, updates.defaultCompanionPersonaId, workspaceId)
+    await assertAssignablePersona(this.pool, updates.defaultCompanionPersonaId, workspaceId, { callerUserId: userId })
     return withTransaction(this.pool, async (client) => {
       const currentOverrides =
         updates.keyboardShortcuts !== undefined ? await UserPreferencesRepository.findOverrides(client, userId) : null

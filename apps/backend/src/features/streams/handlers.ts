@@ -30,7 +30,14 @@ import {
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threa/types"
 import type { Pool } from "pg"
-import { PersonaRepository, assertRefAccess, fetchStreamBag, contextBagSchema, resolveDefaultPersona } from "../agents"
+import {
+  PersonaRepository,
+  assertAssignablePersona,
+  assertRefAccess,
+  fetchStreamBag,
+  contextBagSchema,
+  resolveDefaultPersona,
+} from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
@@ -607,6 +614,16 @@ export function createStreamHandlers({
         resolvedCompanionMode = CompanionModes.ON
         resolvedPersonaId = ariadne.id
       }
+      // A client-supplied companion pin is otherwise unvalidated at create — a
+      // pre-existing gap that becomes a cross-user leak once personal personas
+      // exist. Validate it against the caller (INV-11) so a foreign, archived,
+      // or another user's personal persona is rejected here rather than
+      // degrading at dispatch. The e2e/contextBag branches force/omit the id
+      // server-side (validated or Ariadne), and the default-resolution branch
+      // below only runs when no explicit id was given, so those stay untouched.
+      if (companionPersonaId != null && !e2eEnabled && !contextBag) {
+        await assertAssignablePersona(pool, companionPersonaId, workspaceId, { callerUserId: userId })
+      }
       if (type === StreamTypes.SCRATCHPAD && !e2eEnabled && !resolvedPersonaId) {
         // No explicit pick: resolve the creator's default (user pref → workspace
         // setting → Ariadne) NOW and pin the concrete id. Scratchpads are locked
@@ -779,7 +796,13 @@ export function createStreamHandlers({
         return res.status(403).json({ error: "Not a member of this stream" })
       }
 
-      const updated = await streamService.updateCompanionMode(streamId, workspaceId, companionMode, companionPersonaId)
+      const updated = await streamService.updateCompanionMode(
+        streamId,
+        workspaceId,
+        companionMode,
+        companionPersonaId,
+        userId
+      )
 
       res.json({ stream: updated })
     },

@@ -252,7 +252,14 @@ export interface CachedPersona {
   temperature: number | null
   maxTokens: number | null
   enabledTools: string[] | null
-  managedBy: "system" | "workspace"
+  managedBy: "system" | "workspace" | "user"
+  /**
+   * Owning user for a personal (`managedBy: "user"`) persona; null otherwise. A
+   * personal persona is visible only to its owner — the server already scopes
+   * bootstrap/sync rows, so this rides along for kind/section placement
+   * (user-scoped-personas).
+   */
+  ownerUserId: string | null
   status: "pending" | "active" | "disabled" | "archived"
   createdAt: string
   updatedAt: string

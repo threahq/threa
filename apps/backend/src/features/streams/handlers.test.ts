@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { LinkPreviewSummary } from "@threa/types"
 import type { Request, Response } from "express"
 import type { StreamEvent } from "./event-repository"
@@ -284,13 +284,26 @@ describe("createStreamHandlers.create — allowedToolCategories", () => {
   }
 
   let resolveSpy: ReturnType<typeof spyOn<typeof agentsBarrel, "resolveDefaultPersona">>
+  let assertSpy: ReturnType<typeof spyOn<typeof agentsBarrel, "assertAssignablePersona">>
 
   beforeEach(() => {
     // A persona-less scratchpad create resolves the default and pins it. The
-    // spy is shared across tests (bun returns the same instance) — clear it.
+    // spies are shared across tests (bun returns the same instance) — clear them.
     resolveSpy = spyOn(agentsBarrel, "resolveDefaultPersona")
     resolveSpy.mockClear()
     resolveSpy.mockResolvedValue({ id: "persona_system_ariadne", status: "active" } as never)
+    // An explicit client-supplied pin is validated against the caller before
+    // create; default-allow so the non-personal-persona paths keep passing.
+    assertSpy = spyOn(agentsBarrel, "assertAssignablePersona")
+    assertSpy.mockClear()
+    assertSpy.mockResolvedValue(undefined)
+  })
+
+  // The barrel spies replace live `../agents` bindings that sibling suites
+  // (service.test.ts) call for real — restore them so the mock never leaks.
+  afterEach(() => {
+    resolveSpy.mockRestore()
+    assertSpy.mockRestore()
   })
 
   it("threads allowedToolCategories to the service when creating a scratchpad", async () => {
@@ -330,7 +343,7 @@ describe("createStreamHandlers.create — allowedToolCategories", () => {
     expect(create.mock.calls[0]![0].companionPersonaId).toBe("persona_pinned_default")
   })
 
-  it("keeps an explicit pick verbatim (no default resolution)", async () => {
+  it("keeps an explicit pick verbatim (no default resolution) after validating it against the caller", async () => {
     const create = mock(async (_params: { companionPersonaId?: string }) => ({ id: "stream_sp" }))
     const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
     const { res } = makeRes()
@@ -338,7 +351,36 @@ describe("createStreamHandlers.create — allowedToolCategories", () => {
     await handlers.create(makeCreateReq({ type: "scratchpad", companionPersonaId: "persona_explicit" }), res)
 
     expect(resolveSpy).not.toHaveBeenCalled()
+    // The client-supplied pin is validated against the caller (own personal
+    // persona allowed, another user's rejected) before it reaches the service.
+    expect(assertSpy).toHaveBeenCalledWith({}, "persona_explicit", "ws_1", { callerUserId: "user_owner" })
     expect(create.mock.calls[0]![0].companionPersonaId).toBe("persona_explicit")
+  })
+
+  it("rejects an explicit pin the caller may not assign (foreign / another user's personal) and never creates", async () => {
+    const create = mock(async () => ({ id: "stream_sp" }))
+    assertSpy.mockRejectedValue(
+      Object.assign(new Error("Persona not available"), { status: 400, code: "PERSONA_NOT_AVAILABLE" })
+    )
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res } = makeRes()
+
+    await expect(
+      handlers.create(makeCreateReq({ type: "scratchpad", companionPersonaId: "persona_foreign" }), res)
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_AVAILABLE" })
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it("pins the caller's own explicit personal persona (assignment guard passes)", async () => {
+    const create = mock(async (_params: { companionPersonaId?: string }) => ({ id: "stream_sp" }))
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res, captured } = makeRes()
+
+    await handlers.create(makeCreateReq({ type: "scratchpad", companionPersonaId: "persona_mine" }), res)
+
+    expect(captured.status).toBe(201)
+    expect(assertSpy).toHaveBeenCalledWith({}, "persona_mine", "ws_1", { callerUserId: "user_owner" })
+    expect(create.mock.calls[0]![0].companionPersonaId).toBe("persona_mine")
   })
 
   it("does not resolve a default for non-scratchpad creates", async () => {

@@ -182,8 +182,12 @@ export const personaResolvedConfigSchema = z.object({
 
 export type PersonaResolvedConfig = z.infer<typeof personaResolvedConfigSchema>
 
-/** Whether a persona is a code-backed built-in or a workspace-created custom (roadmap 7.1 step 2). */
-export type PersonaKind = "builtin" | "custom"
+/**
+ * Whether a persona is a code-backed built-in, a workspace-created custom, or a
+ * user-owned personal persona (user-scoped-personas). `personal` maps from
+ * `managed_by = 'user'` and is visible only to its owner.
+ */
+export type PersonaKind = "builtin" | "custom" | "personal"
 
 /** Light persona row for the member-visible list (no systemPrompt). */
 export interface PersonaListItem {
@@ -193,8 +197,14 @@ export interface PersonaListItem {
   description: string | null
   avatarEmoji: string | null
   model: string
-  /** Built-in vs custom — the roster and editor branch on this. */
+  /** Built-in vs custom vs personal — the roster and editor branch on this. */
   kind: PersonaKind
+  /**
+   * Owning user for a `personal` persona; null for built-in and custom. Load-
+   * bearing for delivery-group routing: the `agent_config:updated` broadcast
+   * reuses this shape, and a personal persona's update must reach only its owner.
+   */
+  ownerUserId: string | null
   /**
    * Base path of an uploaded avatar image, or null (emoji/initials fallback).
    * Only a custom persona can carry one; a built-in always resolves to null.

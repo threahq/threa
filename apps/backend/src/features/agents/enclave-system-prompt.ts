@@ -49,6 +49,7 @@ export async function buildEnclaveSystemPrompt(params: {
   // name/systemPrompt; createdAt/updatedAt fill out the Persona shape).
   const enclavePersona: Persona = {
     ...persona,
+    ownerUserId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   }

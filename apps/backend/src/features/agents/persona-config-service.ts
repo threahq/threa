@@ -151,7 +151,10 @@ function customRowToListItem(row: Persona): PersonaListItem {
     description: row.description,
     avatarEmoji: row.avatarEmoji,
     model: row.model,
-    kind: "custom",
+    // A personal (`managed_by = 'user'`) row is a `personal` kind; a workspace
+    // custom is `custom` (user-scoped-personas).
+    kind: row.managedBy === "user" ? "personal" : "custom",
+    ownerUserId: row.ownerUserId,
     avatarUrl: row.avatarUrl,
     isCustomized: false,
     status: row.status,
@@ -186,6 +189,7 @@ function toPersonaListItem(config: PersonaResolvedConfig, isCustomized: boolean)
     avatarEmoji: config.avatarEmoji,
     model: config.model,
     kind: "builtin",
+    ownerUserId: null,
     avatarUrl: null,
     isCustomized,
     // Only visible (non-hidden) built-ins reach list surfaces, and a built-in
@@ -312,7 +316,7 @@ export class PersonaConfigService {
 
   /** Archived custom personas — the roster's Archived disclosure. */
   async listArchived(workspaceId: string): Promise<PersonaListItem[]> {
-    const rows = await PersonaRepository.listArchivedCustoms(this.pool, workspaceId)
+    const rows = await PersonaRepository.listArchivedCustoms(this.pool, workspaceId, { includeWorkspace: true })
     return rows.map((row) => customRowToListItem(row))
   }
 

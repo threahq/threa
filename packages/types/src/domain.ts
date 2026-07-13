@@ -594,6 +594,13 @@ export interface Persona {
   maxTokens: number | null
   enabledTools: string[] | null
   managedBy: PersonaManagedBy
+  /**
+   * Owning user for a personal (`managedBy: "user"`) persona; null for system
+   * and workspace personas. A personal persona is visible/invokable only to its
+   * owner (user-scoped-personas). Paired with `managedBy` by the
+   * `personas_owner_user_id_shape` CHECK.
+   */
+  ownerUserId: string | null
   status: PersonaStatus
   createdAt: string
   updatedAt: string

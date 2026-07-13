@@ -31,9 +31,19 @@ const workspacePersonaRow = {
   brevity_prompt: null,
   avatar_url: null,
   managed_by: "workspace",
+  owner_user_id: null,
   status: "active",
   created_at: new Date("2026-01-01T00:00:00Z"),
   updated_at: new Date("2026-01-01T00:00:00Z"),
+}
+
+const personalPersonaRow = {
+  ...workspacePersonaRow,
+  id: "persona_personal_helper",
+  slug: "mine",
+  name: "My Helper",
+  managed_by: "user",
+  owner_user_id: "user_owner",
 }
 
 const customConfig = {
@@ -165,7 +175,11 @@ describe("PersonaRepository built-in agent config", () => {
   })
 
   test("lists visible built-ins and workspace personas but not internal built-ins", async () => {
-    const personas = await PersonaRepository.listForWorkspace(createDb([[], [workspacePersonaRow]]), "workspace_1")
+    const personas = await PersonaRepository.listForWorkspace(
+      createDb([[], [workspacePersonaRow]]),
+      "workspace_1",
+      "user_viewer"
+    )
 
     expect(personas.map((persona) => persona.id)).toEqual([ARIADNE_AGENT_ID, "persona_workspace_helper"])
     expect(personas.some((persona) => persona.id === EMPTY_AGENT_ID)).toBe(false)
@@ -174,6 +188,19 @@ describe("PersonaRepository built-in agent config", () => {
       managedBy: "workspace",
       systemPrompt: "Help this workspace.",
     })
+  })
+
+  test("listForWorkspace scopes personal rows to the viewer (owner filter in the SQL + bound viewer id)", async () => {
+    const db = createDb([[], [workspacePersonaRow, personalPersonaRow]])
+    const personas = await PersonaRepository.listForWorkspace(db, "workspace_1", "user_owner")
+
+    // The overrides read runs first; the personas read is the second query.
+    const personasQuery = db.queries[1] as { text: string; values: unknown[] }
+    expect(personasQuery.text).toContain("managed_by <> 'user' OR owner_user_id =")
+    expect(personasQuery.values).toContain("user_owner")
+    // The repo trusts the SQL filter; both rows the DB returned are mapped through.
+    expect(personas.map((p) => p.id)).toEqual([ARIADNE_AGENT_ID, "persona_workspace_helper", "persona_personal_helper"])
+    expect(personas[2]).toMatchObject({ managedBy: "user", ownerUserId: "user_owner" })
   })
 
   test("maps the new custom columns (escalation/slots) through mapRowToPersona", async () => {
@@ -221,7 +248,7 @@ describe("PersonaRepository custom write layer", () => {
     expect(await PersonaRepository.resolveEditable(db, "workspace_1", "persona_other")).toBeNull()
   })
 
-  test("insertWorkspacePersona writes managed_by=workspace/status=active and the config columns", async () => {
+  test("insertWorkspacePersona writes managed_by=workspace/owner=null/status=active and the config columns", async () => {
     const db = createDb([[workspacePersonaRow]])
     const persona = await PersonaRepository.insertWorkspacePersona(db, {
       workspaceId: "workspace_1",
@@ -230,10 +257,27 @@ describe("PersonaRepository custom write layer", () => {
     })
     const query = db.queries[0] as { text: string; values: unknown[] }
     expect(query.text).toContain("INSERT INTO personas")
-    expect(query.text).toContain("'workspace', 'active'")
+    expect(query.text).toContain("owner_user_id")
+    // managed_by is now a bound param (workspace vs user); status stays a literal.
+    expect(query.text).toContain(", 'active'")
+    expect(query.values).toContain("workspace")
     expect(query.values).toContain("workspace_1")
     expect(query.values).toContain("helper")
     expect(persona).toMatchObject({ id: "persona_workspace_helper", managedBy: "workspace" })
+  })
+
+  test("insertWorkspacePersona writes managed_by=user + owner_user_id when ownerUserId is supplied", async () => {
+    const db = createDb([[personalPersonaRow]])
+    const persona = await PersonaRepository.insertWorkspacePersona(db, {
+      workspaceId: "workspace_1",
+      slug: "mine",
+      config: customConfig,
+      ownerUserId: "user_owner",
+    })
+    const query = db.queries[0] as { text: string; values: unknown[] }
+    expect(query.values).toContain("user")
+    expect(query.values).toContain("user_owner")
+    expect(persona).toMatchObject({ managedBy: "user", ownerUserId: "user_owner" })
   })
 
   test("updateWorkspacePersona conflicts when expectedUpdatedAt mismatches the locked row", async () => {
@@ -317,5 +361,99 @@ describe("PersonaRepository custom write layer", () => {
     expect(
       await PersonaRepository.updateAvatarUrl(db, { workspaceId: "workspace_1", personaId: "x", avatarUrl: null })
     ).toBeNull()
+  })
+})
+
+describe("PersonaRepository personal-persona visibility (user-scoped-personas)", () => {
+  test("findBySlugs with a viewer scopes personal rows to the owner (owner clause + bound id)", async () => {
+    const db = createDb([[], [personalPersonaRow]]) // overrides read, then personas read
+    const personas = await PersonaRepository.findBySlugs(db, ["mine"], "workspace_1", "user_owner")
+
+    const q = db.queries[1] as { text: string; values: unknown[] }
+    expect(q.text).toContain("managed_by <> 'user' OR owner_user_id =")
+    expect(q.values).toContain("user_owner")
+    expect(personas.map((p) => p.slug)).toEqual(["mine"])
+  })
+
+  test("findBySlugs without a viewer excludes personal rows entirely", async () => {
+    const db = createDb([[], []])
+    await PersonaRepository.findBySlugs(db, ["mine"], "workspace_1")
+
+    const q = db.queries[1] as { text: string }
+    expect(q.text).toContain("managed_by <> 'user'")
+    expect(q.text).not.toContain("owner_user_id =")
+  })
+
+  test("findBySlug without a viewer excludes personal rows; with a viewer scopes to the owner", async () => {
+    const noViewer = createDb([[]])
+    await PersonaRepository.findBySlug(noViewer, "mine", "workspace_1")
+    expect((noViewer.queries[0] as { text: string }).text).toContain("managed_by <> 'user'")
+    expect((noViewer.queries[0] as { text: string }).text).not.toContain("owner_user_id =")
+
+    const withViewer = createDb([[personalPersonaRow]])
+    const persona = await PersonaRepository.findBySlug(withViewer, "mine", "workspace_1", "user_owner")
+    const q = withViewer.queries[0] as { text: string; values: unknown[] }
+    expect(q.text).toContain("managed_by <> 'user' OR owner_user_id =")
+    expect(q.values).toContain("user_owner")
+    expect(persona).toMatchObject({ managedBy: "user", ownerUserId: "user_owner" })
+  })
+
+  test("findWorkspacePersona with a viewer resolves the caller's own personal row", async () => {
+    const db = createDb([[personalPersonaRow]])
+    const row = await PersonaRepository.findWorkspacePersona(db, "workspace_1", "persona_personal_helper", {
+      userId: "user_owner",
+    })
+    const q = db.queries[0] as { text: string; values: unknown[] }
+    expect(q.text).toContain("managed_by = 'user' AND owner_user_id =")
+    expect(q.values).toEqual(["persona_personal_helper", "workspace_1", "user_owner"])
+    expect(row).toMatchObject({ managedBy: "user", ownerUserId: "user_owner" })
+  })
+
+  test("resolveEditable owner matrix: viewer clause present with a viewer, workspace-only without", async () => {
+    // With a viewer, a returned personal row is editable as kind:custom.
+    const owned = createDb([[personalPersonaRow]])
+    const editable = await PersonaRepository.resolveEditable(owned, "workspace_1", "persona_personal_helper", {
+      userId: "user_owner",
+    })
+    expect(editable).toMatchObject({ kind: "custom", row: { managedBy: "user", ownerUserId: "user_owner" } })
+    expect((owned.queries[0] as { text: string }).text).toContain("managed_by = 'user' AND owner_user_id =")
+
+    // A non-matching / absent viewer never resolves a personal row: the SQL is
+    // workspace-only and the DB returns nothing → null (a 404 upstream).
+    const foreign = createDb([[]])
+    expect(await PersonaRepository.resolveEditable(foreign, "workspace_1", "persona_personal_helper")).toBeNull()
+    expect((foreign.queries[0] as { text: string }).text).not.toContain("managed_by = 'user'")
+  })
+
+  test("listArchivedCustoms selectors: workspace-only, owner-only, both, and neither", async () => {
+    const workspaceOnly = createDb([[workspacePersonaRow]])
+    await PersonaRepository.listArchivedCustoms(workspaceOnly, "workspace_1", { includeWorkspace: true })
+    const wq = workspaceOnly.queries[0] as { text: string }
+    expect(wq.text).toContain("managed_by = 'workspace'")
+    expect(wq.text).not.toContain("owner_user_id =")
+
+    const ownerOnly = createDb([[personalPersonaRow]])
+    await PersonaRepository.listArchivedCustoms(ownerOnly, "workspace_1", {
+      includeWorkspace: false,
+      ownerUserId: "user_owner",
+    })
+    const oq = ownerOnly.queries[0] as { text: string; values: unknown[] }
+    expect(oq.text).toContain("managed_by = 'user'")
+    expect(oq.values).toContain("user_owner")
+
+    const both = createDb([[workspacePersonaRow, personalPersonaRow]])
+    await PersonaRepository.listArchivedCustoms(both, "workspace_1", {
+      includeWorkspace: true,
+      ownerUserId: "user_owner",
+    })
+    const bq = both.queries[0] as { text: string; values: unknown[] }
+    expect(bq.text).toContain("managed_by = 'workspace'")
+    expect(bq.text).toContain("managed_by = 'user'")
+    expect(bq.values).toContain("user_owner")
+
+    // Neither selector requested: no query at all, empty result.
+    const neither = createDb([])
+    expect(await PersonaRepository.listArchivedCustoms(neither, "workspace_1", { includeWorkspace: false })).toEqual([])
+    expect(neither.queries).toHaveLength(0)
   })
 })
