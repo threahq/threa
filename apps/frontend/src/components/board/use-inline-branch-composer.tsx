@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Reply } from "lucide-react"
 import { StreamTypes } from "@threa/types"
 import { useQueueDraftMessage } from "@/hooks/use-queue-draft-message"
+import { useStashParamDraftRow } from "@/hooks"
+import { parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { createDraftPanelId } from "@/contexts"
 import { collectBranchThreadStreamIds } from "@/hooks/use-conversation-graph"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
@@ -90,6 +92,33 @@ export function useInlineBranchComposer(params: {
     // memberMessageIds captured via memberKey (stable string, not the array ref).
     [conversationId, memberKey, index, graph]
   )
+
+  // A drafts-explorer deep link (`?stash=<draftId>`) targeting a branch-tail or
+  // new-sub-topic draft lands with those composers unmounted (they exist only
+  // while their gesture is open), so this surface opens the right one when the
+  // named draft's scope belongs to a branch/member of THIS conversation —
+  // ownership is structural (the branch threads this surface renders / the
+  // fork message's owning conversation), since sub-topic conversations carry no
+  // `parentConversationId`. The mounted form's own `useStashComposer` then
+  // restores the row and strips the param; the panel's bottom reply handles
+  // `board:reply:*` the same way.
+  const stashTarget = useStashParamDraftRow(workspaceId)
+  const consumedStashRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!stashTarget || consumedStashRef.current === stashTarget.draftId) return
+    const parsed = parseBoardDraftKey(stashTarget.scope)
+    if (!parsed || parsed.kind === "reply") return
+    if (parsed.kind === "branch-reply") {
+      const threadStreamId = graph.conversationById.get(parsed.conversationId)?.conversation.streamId
+      if (!threadStreamId || !branchStreamIds.includes(threadStreamId)) return
+      consumedStashRef.current = stashTarget.draftId
+      setOpenComposer({ kind: "branch-reply", conversationId: parsed.conversationId, threadStreamId })
+      return
+    }
+    if (graph.conversationIdByMemberMessageId.get(parsed.messageId) !== conversationId) return
+    consumedStashRef.current = stashTarget.draftId
+    setOpenComposer({ kind: "new-subtopic", streamId: parsed.streamId, messageId: parsed.messageId })
+  }, [stashTarget, graph, branchStreamIds, conversationId])
 
   // A pending sub-topic is handed to the graph path only once BOTH its thread
   // stream exists (promotion) AND the child conversation is cached — dropping it
@@ -230,13 +259,23 @@ export function useInlineBranchComposer(params: {
       if (openComposer?.kind === "branch-reply" && openComposer.conversationId === branch.conversationId) {
         // A pending branch's thread may not exist yet — host the composer on the
         // parent stream (mention context + E2E gate), like the opening gesture.
-        const hostStreamId = pendingEntryFor(branch)?.streamId ?? branch.threadStreamId
+        const pendingEntry = pendingEntryFor(branch)
+        const hostStreamId = pendingEntry?.streamId ?? branch.threadStreamId
         return (
           <InlineComposerForm
             workspaceId={workspaceId}
             streamId={hostStreamId}
             memoAnchorStreamId={hostStreamId}
-            draftKey={boardBranchReplyDraftKey(branch.conversationId)}
+            // A pending branch's conversation id is a synthetic draft-panel id
+            // that dies when the echo lands — a draft keyed by it would orphan
+            // at promotion. Key by the fork message (the sub-topic scope, the
+            // one stable identity across the hand-off); the send routes through
+            // the same converging sub-topic path either way.
+            draftKey={
+              pendingEntry
+                ? boardSubtopicDraftKey(pendingEntry.streamId, pendingEntry.messageId)
+                : boardBranchReplyDraftKey(branch.conversationId)
+            }
             placeholder="Reply…"
             // A pending branch's `title` is the "New sub-topic" placeholder (the
             // real topic isn't extracted until the echo), so name the target

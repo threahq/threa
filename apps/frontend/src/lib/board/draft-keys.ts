@@ -25,7 +25,8 @@ export function boardSubtopicDraftKey(streamId: string, messageId: string): stri
 }
 
 export type ParsedBoardDraftKey =
-  | { kind: "reply" | "branch-reply"; conversationId: string }
+  | { kind: "reply"; conversationId: string }
+  | { kind: "branch-reply"; conversationId: string }
   | { kind: "subtopic"; streamId: string; messageId: string }
 
 export function parseBoardDraftKey(key: string): ParsedBoardDraftKey | null {

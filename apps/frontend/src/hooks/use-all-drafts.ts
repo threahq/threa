@@ -204,28 +204,46 @@ function streamDraftType(stream: CachedStream | undefined): DraftType {
 
 /**
  * Location resolution for `board:*` draft scopes (the board's inline reply
- * composers). Reply drafts deep-link to the conversation panel on the anchor
- * stream's route (`?panel=conv:<id>`), which hosts the same composer scope and
- * consumes a `?stash=` restore; sub-topic drafts link to the fork message in
- * its timeline. A conversation not yet in the local cache (a roamed draft on a
- * fresh device) keeps a generic label but still links — via the board route,
- * whose panel fetches the post by id — so cross-device pickup never dead-ends.
+ * composers). Every kind deep-links to the conversation panel that HOSTS the
+ * draft's composer — a reply to its own conversation, a branch reply to the
+ * branch's parent, a sub-topic to the conversation containing the fork message
+ * — so the `?stash=` restore always lands where a consumer can auto-open the
+ * form. A conversation not yet in the local cache (a roamed draft on a fresh
+ * device) keeps a generic label but still links via the board route, whose
+ * panel fetches the post by id, so cross-device pickup never dead-ends.
+ * `supportsStashRestore` is false only where no consumer surface is known (a
+ * branch whose parent isn't resolvable, a fork message in no cached
+ * conversation) — those rows navigate plainly for manual pickup.
  */
 function resolveBoardDraftLocation(
   parsed: ParsedBoardDraftKey,
   workspaceId: string,
   streamMap: Map<string, CachedStream>,
-  boardPostMap: Map<string, CachedBoardPost>
-): ResolvedDraftLocation {
+  boardPostMap: Map<string, CachedBoardPost>,
+  subtopicHostByMessageId: Map<string, CachedBoardPost>,
+  parentPostByBranchConversationId: Map<string, CachedBoardPost>
+): ResolvedDraftLocation & { supportsStashRestore: boolean } {
+  const panelHref = (conversationId: string, anchorStreamId: string | null) => {
+    const panelParam = `panel=${encodeURIComponent(createConversationPanelId(conversationId))}`
+    return anchorStreamId
+      ? `/w/${workspaceId}/s/${anchorStreamId}?${panelParam}`
+      : `/w/${workspaceId}/board?${panelParam}`
+  }
+
   if (parsed.kind === "subtopic") {
+    const host = subtopicHostByMessageId.get(parsed.messageId)
     const stream = streamMap.get(parsed.streamId)
-    const displayName = stream ? `New sub-topic in ${streamLabel(stream, "sidebar")}` : "New sub-topic"
+    const context = host?.conversation.topicSummary ?? (stream ? streamLabel(stream, "sidebar") : null)
+    const displayName = context ? `New sub-topic in ${context}` : "New sub-topic"
     return {
       draftType: streamDraftType(stream),
       streamId: parsed.streamId,
       displayName,
-      href: `/w/${workspaceId}/s/${parsed.streamId}?m=${parsed.messageId}`,
+      href: host
+        ? panelHref(host.id, host.conversation.streamId)
+        : `/w/${workspaceId}/s/${parsed.streamId}?m=${parsed.messageId}`,
       groupLabel: displayName,
+      supportsStashRestore: host !== undefined,
     }
   }
 
@@ -234,17 +252,21 @@ function resolveBoardDraftLocation(
   const stream = anchorStreamId ? streamMap.get(anchorStreamId) : undefined
   const target = post?.conversation.topicSummary ?? (stream ? streamLabel(stream, "sidebar") : null)
   const displayName = target ? `Reply in ${target}` : "Conversation reply"
-  const panelParam = `panel=${encodeURIComponent(createConversationPanelId(parsed.conversationId))}`
-  const href = anchorStreamId
-    ? `/w/${workspaceId}/s/${anchorStreamId}?${panelParam}`
-    : `/w/${workspaceId}/board?${panelParam}`
-  return {
-    draftType: streamDraftType(stream),
-    streamId: anchorStreamId,
-    displayName,
-    href,
-    groupLabel: displayName,
+  const shared = { draftType: streamDraftType(stream), streamId: anchorStreamId, displayName, groupLabel: displayName }
+
+  if (parsed.kind === "branch-reply") {
+    // The branch-tail composer lives on the parent conversation's surface —
+    // derived structurally (anchor thread's parent message → its conversation).
+    const parent = parentPostByBranchConversationId.get(parsed.conversationId)
+    if (parent) {
+      return { ...shared, href: panelHref(parent.id, parent.conversation.streamId), supportsStashRestore: true }
+    }
+    // Parent unresolvable (branch or its thread not cached): the branch's own
+    // panel at least shows the conversation for manual pickup.
+    return { ...shared, href: panelHref(parsed.conversationId, anchorStreamId), supportsStashRestore: false }
   }
+
+  return { ...shared, href: panelHref(parsed.conversationId, anchorStreamId), supportsStashRestore: true }
 }
 
 /**
@@ -353,15 +375,86 @@ export function useAllDrafts(workspaceId: string) {
     return [...ids].sort().join(",")
   }, [scopesSignature])
 
-  const cachedBoardPosts = useLiveQuery(
-    async () => {
-      if (!boardConversationIdKey) return []
-      const rows = await db.conversations.bulkGet(boardConversationIdKey.split(","))
-      return rows.filter((row): row is CachedBoardPost => row !== undefined && row.workspaceId === workspaceId)
-    },
-    [boardConversationIdKey, workspaceId],
+  const boardBranchConversationIdKey = useMemo(() => {
+    const ids = new Set<string>()
+    for (const scope of scopesSignature.split("|")) {
+      const parsed = parseBoardDraftKey(scope)
+      if (parsed?.kind === "branch-reply") ids.add(parsed.conversationId)
+    }
+    return [...ids].sort().join(",")
+  }, [scopesSignature])
+
+  // Sub-topic drafts name only their fork message; branch drafts name a child
+  // conversation whose parent must be derived structurally (its anchor thread's
+  // parent message → the conversation holding it — sub-topic conversations
+  // carry no `parentConversationId`). Both resolve to the HOSTING conversation
+  // the explorer deep-links to, since that surface hosts the draft's composer.
+  const subtopicMessageIdKey = useMemo(() => {
+    const ids = new Set<string>()
+    for (const scope of scopesSignature.split("|")) {
+      const parsed = parseBoardDraftKey(scope)
+      if (parsed?.kind === "subtopic") ids.add(parsed.messageId)
+    }
+    return [...ids].sort().join(",")
+  }, [scopesSignature])
+
+  const emptyBoardContext = useMemo(
+    () => ({
+      posts: [] as CachedBoardPost[],
+      hostPostByMessageId: new Map<string, CachedBoardPost>(),
+      parentPostByBranchConversationId: new Map<string, CachedBoardPost>(),
+    }),
     []
   )
+
+  const boardDraftContext = useLiveQuery(
+    async () => {
+      if (!boardConversationIdKey && !subtopicMessageIdKey) return emptyBoardContext
+      const convIds = boardConversationIdKey ? boardConversationIdKey.split(",") : []
+      const branchIds = new Set(boardBranchConversationIdKey ? boardBranchConversationIdKey.split(",") : [])
+      const referencedRows = convIds.length > 0 ? await db.conversations.bulkGet(convIds) : []
+      const referenced = referencedRows.filter(
+        (row): row is CachedBoardPost => row !== undefined && row.workspaceId === workspaceId
+      )
+
+      const forkMessageIds = new Set(subtopicMessageIdKey ? subtopicMessageIdKey.split(",") : [])
+      const branchPosts = referenced.filter((row) => branchIds.has(row.id))
+      const threadRows =
+        branchPosts.length > 0 ? await db.streams.bulkGet(branchPosts.map((row) => row.conversation.streamId)) : []
+      const forkByBranchConversationId = new Map<string, string>()
+      branchPosts.forEach((row, i) => {
+        const parentMessageId = threadRows[i]?.parentMessageId
+        if (parentMessageId) {
+          forkByBranchConversationId.set(row.id, parentMessageId)
+          forkMessageIds.add(parentMessageId)
+        }
+      })
+
+      const hostPostByMessageId = new Map<string, CachedBoardPost>()
+      let hostRows: CachedBoardPost[] = []
+      if (forkMessageIds.size > 0) {
+        const rows = await db.conversations.where("workspaceId").equals(workspaceId).toArray()
+        hostRows = rows.filter((row) => row.conversation.messageIds?.some((id: string) => forkMessageIds.has(id)))
+        for (const post of hostRows) {
+          for (const id of post.conversation.messageIds ?? []) {
+            if (forkMessageIds.has(id)) hostPostByMessageId.set(id, post)
+          }
+        }
+      }
+      const parentPostByBranchConversationId = new Map<string, CachedBoardPost>()
+      for (const [branchId, forkId] of forkByBranchConversationId) {
+        const host = hostPostByMessageId.get(forkId)
+        if (host) parentPostByBranchConversationId.set(branchId, host)
+      }
+      return { posts: [...referenced, ...hostRows], hostPostByMessageId, parentPostByBranchConversationId }
+    },
+    [boardConversationIdKey, boardBranchConversationIdKey, subtopicMessageIdKey, workspaceId, emptyBoardContext],
+    emptyBoardContext
+  )
+
+  const cachedBoardPosts = boardDraftContext.posts
+  const subtopicHostByMessageId = boardDraftContext.hostPostByMessageId
+  const parentPostByBranchConversationId = boardDraftContext.parentPostByBranchConversationId
 
   const boardPostMap = useMemo(() => {
     const map = new Map<string, CachedBoardPost>()
@@ -463,19 +556,27 @@ export function useAllDrafts(workspaceId: string) {
 
       if (!draftHasPayload(draft)) continue
 
+      const boardResolved = board
+        ? resolveBoardDraftLocation(
+            board,
+            workspaceId,
+            streamMap,
+            boardPostMap,
+            subtopicHostByMessageId,
+            parentPostByBranchConversationId
+          )
+        : null
       const resolved = parsed
         ? resolveDraftLocation(parsed, workspaceId, streamMap, messageToStreamMap)
-        : resolveBoardDraftLocation(board!, workspaceId, streamMap, boardPostMap)
+        : boardResolved!
       const isStashed = (loadedByScope.get(draft.scope) ?? null) !== draft.id
 
       // A stashed row deep-links via `?stash=<draftId>` so the composer host
-      // pops + restores it on mount; the loaded (ambient) row navigates plainly
-      // since its content is already checked out. Only surfaces with a mounted
-      // consumer get the param: the stream composer, the thread panel, and the
-      // conversation panel's reply — a branch-tail or sub-topic composer is
-      // unmounted until its gesture opens, so those rows navigate plainly and
-      // the draft is picked up from that composer's own pile.
-      const supportsStashRestore = parsed !== null || board!.kind === "reply"
+      // pops + restores it on arrival; the loaded (ambient) row navigates
+      // plainly since its content is already checked out. Board rows carry the
+      // param only when a consumer surface was resolved (see
+      // `resolveBoardDraftLocation`).
+      const supportsStashRestore = parsed !== null || boardResolved!.supportsStashRestore
       const href =
         isStashed && resolved.href && supportsStashRestore
           ? resolved.href + (resolved.href.includes("?") ? "&" : "?") + `stash=${encodeURIComponent(draft.id)}`
@@ -509,6 +610,8 @@ export function useAllDrafts(workspaceId: string) {
     streamMap,
     messageToStreamMap,
     boardPostMap,
+    subtopicHostByMessageId,
+    parentPostByBranchConversationId,
     previewMap,
     workspaceId,
   ])

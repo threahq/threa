@@ -68,6 +68,7 @@ beforeEach(async () => {
   await db.pendingOperations.clear()
   await db.draftScratchpads.clear()
   await db.conversations.clear()
+  await db.streams.clear()
   // The drafts explorer now decrypts E2E previews via the shared cache, which
   // reads the viewer id + session; default them to "no viewer / locked" so these
   // plaintext-draft tests run without an AuthProvider (INV-48 namespace spyOn).
@@ -83,13 +84,18 @@ beforeEach(async () => {
 })
 
 describe("useAllDrafts board-composer drafts", () => {
-  async function seedConversation(conversationId: string, streamId: string, topicSummary: string | null) {
+  async function seedConversation(
+    conversationId: string,
+    streamId: string,
+    topicSummary: string | null,
+    extra: { parentConversationId?: string; messageIds?: string[] } = {}
+  ) {
     await db.conversations.put({
       id: conversationId,
       workspaceId,
       _lastActivityMs: 1,
       _cachedAt: 1,
-      conversation: { id: conversationId, streamId, topicSummary },
+      conversation: { id: conversationId, streamId, topicSummary, ...extra },
     } as unknown as Parameters<typeof db.conversations.put>[0])
   }
 
@@ -143,6 +149,48 @@ describe("useAllDrafts board-composer drafts", () => {
       displayName: "Conversation reply",
       href: `/w/${workspaceId}/board?panel=${encodeURIComponent("conv:conv_uncached")}&stash=draft_b4`,
     })
+  })
+
+  it("deep-links a branch reply to its PARENT conversation's panel with the stash restore", async () => {
+    // Parenthood is structural: the branch's anchor thread forks off a message
+    // that is a member of the parent conversation (no parentConversationId).
+    await seedConversation("conv_parent", "stream_9", "GPU budget", { messageIds: ["msg_fork_b"] })
+    await seedConversation("conv_branch", "stream_thread_1", "Sub topic")
+    await db.streams.put({
+      id: "stream_thread_1",
+      workspaceId,
+      type: "thread",
+      parentStreamId: "stream_9",
+      parentMessageId: "msg_fork_b",
+    } as unknown as Parameters<typeof db.streams.put>[0])
+    await db.drafts.add(syncedDraft({ id: "draft_b6", scope: "board:branch-reply:conv_branch" }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() =>
+      expect(result.current.drafts[0]).toMatchObject({
+        id: "draft_b6",
+        displayName: "Reply in Sub topic",
+        href: `/w/${workspaceId}/s/stream_9?panel=${encodeURIComponent("conv:conv_parent")}&stash=draft_b6`,
+      })
+    )
+  })
+
+  it("deep-links a sub-topic draft to the conversation hosting its fork message, with the stash restore", async () => {
+    await seedConversation("conv_host", "stream_9", "GPU budget", { messageIds: ["msg_fork"] })
+    await db.drafts.add(syncedDraft({ id: "draft_b7", scope: "board:subtopic:stream_9:msg_fork" }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() =>
+      expect(result.current.drafts[0]).toMatchObject({
+        id: "draft_b7",
+        displayName: "New sub-topic in GPU budget",
+        href: `/w/${workspaceId}/s/stream_9?panel=${encodeURIComponent("conv:conv_host")}&stash=draft_b7`,
+      })
+    )
   })
 
   it("counts board drafts in the sidebar summary without flagging a stream hint", async () => {
