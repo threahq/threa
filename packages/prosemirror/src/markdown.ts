@@ -507,6 +507,7 @@ export interface ParseMarkdownOptions {
 interface ParseOptions extends ParseMarkdownOptions {
   getMentionType?: MentionTypeLookup
   getEmoji?: EmojiLookup
+  balancedLinkHrefs?: Map<string, string>
 }
 
 export function parseMarkdown(
@@ -934,7 +935,10 @@ function stripMentionSigil(label: string, sigil: string): string {
   return text.startsWith(sigil) ? text.slice(sigil.length) : text
 }
 
-function tokenizeBalancedLinkDestinations(text: string): {
+function tokenizeBalancedLinkDestinations(
+  text: string,
+  hrefByToken: Map<string, string>
+): {
   text: string
   hrefByToken: Map<string, string>
 } {
@@ -959,14 +963,19 @@ function tokenizeBalancedLinkDestinations(text: string): {
       }
     }
 
-    if (hrefEnd === -1) continue
+    if (hrefEnd === -1) break
     const href = text.slice(hrefStart, hrefEnd)
-    if (href.startsWith("attachment:") || href.startsWith("memo:")) {
+    if (href.startsWith("attachment:") || href.startsWith("memo:") || hrefByToken.has(href)) {
       linkStart.lastIndex = hrefEnd + 1
       continue
     }
 
-    const token = `\uE000${replacements.length}\uE001`
+    let tokenIndex = hrefByToken.size + replacements.length
+    let token = `\uE000${tokenIndex}\uE001`
+    while (text.includes(token) || hrefByToken.has(token)) {
+      tokenIndex++
+      token = `\uE000${tokenIndex}\uE001`
+    }
     replacements.push({
       start: match.index,
       end: hrefEnd + 1,
@@ -977,9 +986,8 @@ function tokenizeBalancedLinkDestinations(text: string): {
     linkStart.lastIndex = hrefEnd + 1
   }
 
-  if (replacements.length === 0) return { text, hrefByToken: new Map() }
+  if (replacements.length === 0) return { text, hrefByToken }
 
-  const hrefByToken = new Map<string, string>()
   let cursor = 0
   let tokenized = ""
   for (const replacement of replacements) {
@@ -1032,8 +1040,9 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     processText = text.slice(commandMatch[0].length)
   }
 
-  const tokenizedLinks = tokenizeBalancedLinkDestinations(processText)
+  const tokenizedLinks = tokenizeBalancedLinkDestinations(processText, options.balancedLinkHrefs ?? new Map())
   processText = tokenizedLinks.text
+  options = { ...options, balancedLinkHrefs: tokenizedLinks.hrefByToken }
   const inlinePattern = new RegExp(INLINE_MARKDOWN_PATTERN, "g")
 
   let lastIndex = 0

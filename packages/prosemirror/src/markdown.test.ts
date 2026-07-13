@@ -12,6 +12,30 @@ describe("@threa/prosemirror markdown links", () => {
       marks: [{ type: "link", attrs: { href: "https://en.wikipedia.org/wiki/Foo_(bar_(baz_(qux)))" } }],
     })
   })
+
+  it("preserves balanced link destinations through recursive inline formatting", () => {
+    const parsed = parseMarkdown("**[one](https://example.com/a_(b))** and *[two](https://example.com/c_(d))*")
+
+    expect(parsed.content?.[0]?.content).toEqual([
+      {
+        type: "text",
+        text: "one",
+        marks: [{ type: "link", attrs: { href: "https://example.com/a_(b)" } }, { type: "bold" }],
+      },
+      { type: "text", text: " and " },
+      {
+        type: "text",
+        text: "two",
+        marks: [{ type: "link", attrs: { href: "https://example.com/c_(d)" } }, { type: "italic" }],
+      },
+    ])
+  })
+
+  it("does not leak link tokens from malformed outer links", () => {
+    const parsed = parseMarkdown("[bad](not-a-url and [good](https://example.com)")
+
+    expect(JSON.stringify(parsed)).not.toContain("\uE000")
+  })
 })
 
 describe("@threa/prosemirror markdown attachment metadata", () => {
