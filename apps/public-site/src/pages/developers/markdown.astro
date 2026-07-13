@@ -52,6 +52,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   <p>
     Common GitHub-flavored markdown renders as you'd expect. Supported:
   </p>
+  <div class="docs-table-wrap">
   <table class="docs-table">
     <thead><tr><th>Element</th><th>Syntax</th></tr></thead>
     <tbody>
@@ -64,6 +65,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
       <tr><td>Links</td><td><code>[text](https://…)</code></td></tr>
     </tbody>
   </table>
+  </div>
   <div class="note">
     <strong>Reserved schemes</strong>
     A link whose target starts with one of the schemes below (for example
@@ -137,6 +139,7 @@ curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/mes
     label as readable text. The ones you'll write are the first group; the rest
     you'll mostly encounter on reads.
   </p>
+  <div class="docs-table-wrap">
   <table class="docs-table">
     <thead><tr><th>Scheme</th><th>Reference</th><th>Example</th></tr></thead>
     <tbody>
@@ -151,6 +154,7 @@ curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/mes
       <tr><td><code>shared-message:</code></td><td>cross-stream share (read)</td><td><code>[Alice](shared-message:stream_…/msg_…)</code></td></tr>
     </tbody>
   </table>
+  </div>
 
   <h2 id="structure">Why the schemes exist</h2>
   <p>
