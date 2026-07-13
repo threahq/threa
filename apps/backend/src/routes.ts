@@ -491,6 +491,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // so there is one frontend upload path (INV-35/37). The list rides the config
   // GET — no separate GET route.
   app.post("/api/workspaces/:workspaceId/personas/:personaId/attachments", ...authed, persona.bindAttachment)
+  // Knowledge-by-reference: copy an existing readable workspace file into a fresh
+  // persona-owned attachment (copy-on-attach). The service authorizes + copies.
+  app.post(
+    "/api/workspaces/:workspaceId/personas/:personaId/attachments/from-existing",
+    ...authed,
+    persona.attachFromExisting
+  )
   app.delete(
     "/api/workspaces/:workspaceId/personas/:personaId/attachments/:attachmentId",
     ...authed,

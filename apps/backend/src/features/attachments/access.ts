@@ -32,3 +32,18 @@ export async function isAttachmentReadableViaShareOrReference(
   }
   return AttachmentReferenceRepository.hasViewerAccessByReference(db, workspaceId, userId, attachment.id)
 }
+
+/**
+ * An UNBOUND attachment (no `stream_id`) is private to its uploader: no stream
+ * gates it, so only the uploader may read it. Returns `true` when the caller
+ * must be BLOCKED — a foreign user reading someone else's pending/persona-owned
+ * upload. Bound attachments (stream set) are gated by stream access upstream and
+ * never reach this check. Shared by the download/content handlers and the
+ * persona copy-on-attach readability gate (one definition, INV-35).
+ */
+export function unboundAttachmentBlockedForCaller(
+  attachment: Pick<Attachment, "streamId" | "uploadedBy">,
+  userId: string
+): boolean {
+  return !attachment.streamId && !!attachment.uploadedBy && attachment.uploadedBy !== userId
+}

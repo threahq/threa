@@ -139,6 +139,36 @@ export const AttachmentExtractionRepository = {
     return mapRowToExtraction(result.rows[0])
   },
 
+  /**
+   * Copy an existing extraction to a NEW attachment id in one `INSERT ... SELECT`
+   * (persona knowledge-by-reference copy-on-attach): the copied file has identical
+   * content, so its `summary_embedding` carries over natively — no re-embed job.
+   * `search_vector` is GENERATED and never copied. Workspace-scoped on the source
+   * read (INV-8). Returns `true` when a source row existed and was copied; `false`
+   * when the source has no extraction yet (the caller kicks the pipeline instead).
+   */
+  async copyForAttachment(
+    client: Querier,
+    params: { id: string; sourceAttachmentId: string; attachmentId: string; workspaceId: string }
+  ): Promise<boolean> {
+    const result = await client.query(sql`
+      INSERT INTO attachment_extractions (
+        id, attachment_id, workspace_id,
+        content_type, summary, full_text, structured_data,
+        source_type, pdf_metadata, text_metadata, word_metadata, excel_metadata,
+        summary_embedding
+      )
+      SELECT
+        ${params.id}, ${params.attachmentId}, ${params.workspaceId},
+        content_type, summary, full_text, structured_data,
+        source_type, pdf_metadata, text_metadata, word_metadata, excel_metadata,
+        summary_embedding
+      FROM attachment_extractions
+      WHERE attachment_id = ${params.sourceAttachmentId} AND workspace_id = ${params.workspaceId}
+    `)
+    return (result.rowCount ?? 0) > 0
+  },
+
   async findByAttachmentId(client: Querier, attachmentId: string): Promise<AttachmentExtraction | null> {
     const result = await client.query<AttachmentExtractionRow>(
       sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachment_extractions WHERE attachment_id = ${attachmentId}`

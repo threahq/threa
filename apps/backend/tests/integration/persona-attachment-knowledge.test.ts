@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { PERSONA_ATTACHMENT_MAX_COUNT, StreamTypes } from "@threa/types"
+import { AttachmentSafetyStatuses, PERSONA_ATTACHMENT_MAX_COUNT, StreamTypes } from "@threa/types"
 import { sql } from "../../src/db"
 import { attachmentId, extractionId, personaId, workspaceId as newWorkspaceId, userId } from "../../src/lib/id"
 import { PersonaAttachmentRepository } from "../../src/features/agents/persona-attachment-repository"
+import { PersonaConfigService } from "../../src/features/agents/persona-config-service"
+import { PersonaRepository } from "../../src/features/agents/persona-repository"
+import { AttachmentService, AttachmentExtractionRepository } from "../../src/features/attachments"
 import { buildSystemPrompt } from "../../src/features/agents/companion/prompt/system-prompt"
 import type { Persona } from "../../src/features/agents/persona-repository"
 import type { StreamContext } from "../../src/features/agents/context-builder"
@@ -371,5 +374,189 @@ describe("persona_attachments binding invariants (integration)", () => {
       const remaining = await PersonaAttachmentRepository.listForPersona(client, workspaceId, personaRowId)
       expect(remaining.map((row) => row.attachmentId)).toEqual([attId])
     })
+  })
+})
+
+/**
+ * End-to-end proof for F1 (knowledge-by-reference copy-on-attach) against the
+ * real database: seed a CLEAN source attachment WITH an extraction row (and a
+ * summary embedding), run the REAL `PersonaConfigService.attachFromExisting`
+ * service path (only the S3 StorageProvider is an in-memory fake that records
+ * `copyObject`), then compose the REAL system prompt and assert the persona now
+ * carries the COPIED content. Proves the copy is independent: deleting the SOURCE
+ * row leaves the persona's copy + its extraction (and embedding) intact.
+ *
+ * Uses committed data (the service opens its own transactions on the pool), so it
+ * cleans up explicitly in `finally`.
+ */
+describe("PersonaConfigService.attachFromExisting → copy-on-attach (integration)", () => {
+  function inMemoryStorage() {
+    const copied: Array<{ src: string; dest: string }> = []
+    const deleted: string[] = []
+    const storage = {
+      copyObject: async (src: string, dest: string) => {
+        copied.push({ src, dest })
+      },
+      delete: async (key: string) => {
+        deleted.push(key)
+      },
+      getObjectSize: async () => 0,
+      getObjectStat: async () => ({ sizeBytes: 0, etag: "stub" }),
+      getSignedDownloadUrl: async () => "https://example.test/x",
+      getObject: async () => Buffer.from(""),
+      getObjectRange: async () => Buffer.from(""),
+      getObjectStream: async () => Buffer.from("") as never,
+      getObjectContent: async () => ({ stream: Buffer.from("") as never }),
+      putObject: async () => {},
+    } as never
+    return { storage, copied, deleted }
+  }
+
+  function makeService(pool: Pool, storage: never) {
+    const attachmentService = new AttachmentService(pool, storage, {
+      scan: async () => ({ status: AttachmentSafetyStatuses.CLEAN }),
+    } as never)
+    const service = new PersonaConfigService({
+      pool,
+      // Unbound source owned by the caller resolves via the uploader-only gate,
+      // so `tryAccess` is never reached (this stub is defensive, not exercised).
+      streamService: { tryAccess: async () => null } as never,
+      modelRegistry: {} as never,
+      attachmentService,
+    })
+    return { service, attachmentService }
+  }
+
+  test("copies bytes + extraction under the persona; the copy is independent of the source", async () => {
+    const workspaceId = newWorkspaceId()
+    const caller = userId()
+    const sourceId = attachmentId()
+    const sourceText = "RUNBOOK: 1) rotate key 2) redeploy 3) verify health"
+    const embeddingLiteral = `[${Array(1536).fill(0.0123).join(",")}]`
+
+    const { storage, copied } = inMemoryStorage()
+    const { service, attachmentService } = makeService(pool, storage)
+
+    try {
+      // A workspace custom persona to attach to (real row via the repo layer).
+      const personaRow = await withTransaction(pool, (client) =>
+        PersonaRepository.insertWorkspacePersona(client, {
+          workspaceId,
+          slug: `helper-${sourceId.slice(-6)}`,
+          config: {
+            name: "Helper",
+            description: null,
+            avatarEmoji: null,
+            systemPrompt: "Base system prompt",
+            model: "openai/gpt-5.4",
+            escalationModel: null,
+            temperature: null,
+            maxTokens: null,
+            enabledTools: [],
+            tonePrompt: null,
+            brevityPrompt: null,
+          },
+        })
+      )
+
+      // Seed the SOURCE: a CLEAN, unbound (uploader-readable), caller-owned file
+      // with fake bytes recorded in the DB, plus its extraction + a real embedding.
+      await pool.query(sql`
+        INSERT INTO attachments (
+          id, workspace_id, stream_id, message_id, filename, mime_type, size_bytes,
+          storage_provider, storage_path, processing_status, safety_status, uploaded_by
+        ) VALUES (
+          ${sourceId}, ${workspaceId}, NULL, NULL, 'runbook.md', 'text/markdown', 512,
+          's3', ${`${workspaceId}/${sourceId}/runbook.md`}, 'completed', 'clean', ${caller}
+        )
+      `)
+      await pool.query(sql`
+        INSERT INTO attachment_extractions (
+          id, attachment_id, workspace_id, content_type, summary, full_text, summary_embedding
+        ) VALUES (
+          ${extractionId()}, ${sourceId}, ${workspaceId}, 'document', 'A short runbook.', ${sourceText},
+          ${embeddingLiteral}::vector
+        )
+      `)
+
+      const item = await service.attachFromExisting(
+        workspaceId,
+        personaRow.id,
+        { userId: caller, isAdmin: true },
+        sourceId
+      )
+
+      // A ready copy with a real context mode (extraction was copied, not kicked).
+      expect(item.processingStatus).toBe("ready")
+      expect(item.contextMode).toBe("full")
+      expect(item.id).not.toBe(sourceId)
+      const copyId = item.id
+
+      // The S3 object was server-side copied source → the new key.
+      expect(copied).toHaveLength(1)
+      expect(copied[0]!.src).toBe(`${workspaceId}/${sourceId}/runbook.md`)
+      expect(copied[0]!.dest).toBe(`${workspaceId}/${copyId}/runbook.md`)
+
+      // The copy row: uploader = caller, unbound (stream/message NULL), CLEAN.
+      const copyRow = await pool.query<{
+        uploaded_by: string
+        stream_id: string | null
+        message_id: string | null
+        safety_status: string
+      }>(sql`SELECT uploaded_by, stream_id, message_id, safety_status FROM attachments WHERE id = ${copyId}`)
+      expect(copyRow.rows[0]).toMatchObject({
+        uploaded_by: caller,
+        stream_id: null,
+        message_id: null,
+        safety_status: "clean",
+      })
+
+      // The copied extraction carries the content AND the embedding (no re-embed).
+      const copyExtraction = await AttachmentExtractionRepository.findByAttachmentId(pool, copyId)
+      expect(copyExtraction?.fullText).toBe(sourceText)
+      expect(copyExtraction?.hasSummaryEmbedding).toBe(true)
+
+      // The REAL prompt path carries the copied content under the persona.
+      const knowledge = await PersonaAttachmentRepository.listForPersonaWithContent(pool, workspaceId, personaRow.id)
+      const prompt = buildSystemPrompt(
+        { ...persona, id: personaRow.id, workspaceId, systemPrompt: "Base system prompt" },
+        scratchpadContext,
+        null,
+        undefined,
+        undefined,
+        null,
+        [],
+        null,
+        null,
+        null,
+        null,
+        null,
+        undefined,
+        knowledge
+      )
+      expect(prompt).toContain("## Knowledge")
+      expect(prompt).toContain("### runbook.md")
+      expect(prompt).toContain(sourceText)
+
+      // INDEPENDENCE: delete the SOURCE row + its extraction; the copy survives.
+      const sourceDeleted = await attachmentService.delete(sourceId)
+      expect(sourceDeleted).toBe(true)
+      const sourceGone = await pool.query(sql`SELECT 1 FROM attachments WHERE id = ${sourceId}`)
+      expect(sourceGone.rows).toHaveLength(0)
+
+      const survivingExtraction = await AttachmentExtractionRepository.findByAttachmentId(pool, copyId)
+      expect(survivingExtraction?.fullText).toBe(sourceText)
+      const survivingKnowledge = await PersonaAttachmentRepository.listForPersonaWithContent(
+        pool,
+        workspaceId,
+        personaRow.id
+      )
+      expect(survivingKnowledge.map((k) => k.fullText)).toEqual([sourceText])
+    } finally {
+      await pool.query(sql`DELETE FROM persona_attachments WHERE workspace_id = ${workspaceId}`)
+      await pool.query(sql`DELETE FROM attachment_extractions WHERE workspace_id = ${workspaceId}`)
+      await pool.query(sql`DELETE FROM attachments WHERE workspace_id = ${workspaceId}`)
+      await pool.query(sql`DELETE FROM personas WHERE workspace_id = ${workspaceId}`)
+    }
   })
 })

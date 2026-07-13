@@ -42,6 +42,7 @@ function createService() {
   const storage = {
     getObjectSize: mock(async () => 0),
     getSignedDownloadUrl: mock(async () => "https://example.com/file"),
+    copyObject: mock(async () => {}),
     delete: mock(async () => {}),
   } as any
 
@@ -555,5 +556,127 @@ describe("parseE2eUploadFlag", () => {
     expect(parseE2eUploadFlag({ e2e: "false" })).toBe(false)
     expect(parseE2eUploadFlag({})).toBe(false)
     expect(parseE2eUploadFlag(undefined)).toBe(false)
+  })
+})
+
+describe("AttachmentService.copyForPersona", () => {
+  afterEach(() => mock.restore())
+
+  function setupCopyTransaction() {
+    spyOn(db, "withTransaction").mockImplementation((async (_db: unknown, fn: (client: any) => Promise<any>) =>
+      fn({})) as any)
+  }
+
+  const SOURCE = makeAttachment({
+    id: "attach_src",
+    workspaceId: "ws_1",
+    streamId: "stream_origin",
+    messageId: "msg_origin",
+    filename: "runbook.md",
+    mimeType: "text/markdown",
+    sizeBytes: 512,
+    storagePath: "ws_1/attach_src/runbook.md",
+    processingStatus: "completed",
+    thumbnailStoragePath: null,
+    width: null,
+    height: null,
+  })
+
+  it("server-side copies the object to the new key and inserts an unbound CLEAN row with copied processing status", async () => {
+    setupCopyTransaction()
+    const { service, storage } = createService()
+    const insert = spyOn(AttachmentRepository, "insert").mockResolvedValue(
+      makeAttachment({ id: "attach_copy", storagePath: "ws_1/attach_copy/runbook.md" })
+    )
+    spyOn(AttachmentExtractionRepository, "copyForAttachment").mockResolvedValue(true)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.copyForPersona({ source: SOURCE, newId: "attach_copy", uploadedBy: "usr_caller" })
+
+    expect(storage.copyObject).toHaveBeenCalledWith("ws_1/attach_src/runbook.md", "ws_1/attach_copy/runbook.md")
+    expect(insert.mock.calls[0]![1]).toMatchObject({
+      id: "attach_copy",
+      workspaceId: "ws_1",
+      uploadedBy: "usr_caller",
+      filename: "runbook.md",
+      mimeType: "text/markdown",
+      sizeBytes: 512,
+      storagePath: "ws_1/attach_copy/runbook.md",
+      safetyStatus: AttachmentSafetyStatuses.CLEAN,
+      processingStatus: "completed",
+    })
+    // stream/message are never set on a persona copy (owned outright).
+    expect(insert.mock.calls[0]![1].streamId).toBeUndefined()
+    // Extraction was copied → the normal pipeline is NOT kicked (no re-embed).
+    expect(outbox).not.toHaveBeenCalled()
+  })
+
+  it("carries the extraction via copyForAttachment (embedding rides the INSERT…SELECT) and emits no event", async () => {
+    setupCopyTransaction()
+    const { service } = createService()
+    spyOn(AttachmentRepository, "insert").mockResolvedValue(makeAttachment({ id: "attach_copy" }))
+    const copyExtraction = spyOn(AttachmentExtractionRepository, "copyForAttachment").mockResolvedValue(true)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.copyForPersona({ source: SOURCE, newId: "attach_copy", uploadedBy: "usr_caller" })
+
+    expect(copyExtraction.mock.calls[0]![1]).toMatchObject({
+      sourceAttachmentId: "attach_src",
+      attachmentId: "attach_copy",
+      workspaceId: "ws_1",
+    })
+    expect(outbox).not.toHaveBeenCalled()
+  })
+
+  it("kicks the pipeline exactly once when the source has no extraction (in the copy transaction)", async () => {
+    setupCopyTransaction()
+    const { service } = createService()
+    spyOn(AttachmentRepository, "insert").mockResolvedValue(makeAttachment({ id: "attach_copy" }))
+    spyOn(AttachmentExtractionRepository, "copyForAttachment").mockResolvedValue(false)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.copyForPersona({ source: SOURCE, newId: "attach_copy", uploadedBy: "usr_caller" })
+
+    const uploadedEvents = outbox.mock.calls.filter((call) => call[1] === "attachment:uploaded")
+    expect(uploadedEvents).toHaveLength(1)
+    expect(uploadedEvents[0]![2]).toMatchObject({ workspaceId: "ws_1", attachmentId: "attach_copy" })
+  })
+
+  it("copies the thumbnail object + variant metadata when the source carries one", async () => {
+    setupCopyTransaction()
+    const { service, storage } = createService()
+    spyOn(AttachmentRepository, "insert").mockResolvedValue(makeAttachment({ id: "attach_copy" }))
+    const updateVariant = spyOn(AttachmentRepository, "updateImageVariant").mockResolvedValue(true)
+    spyOn(AttachmentExtractionRepository, "copyForAttachment").mockResolvedValue(true)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const withThumb = makeAttachment({
+      ...SOURCE,
+      thumbnailStoragePath: "ws_1/attach_src/thumbnail.webp",
+      width: 800,
+      height: 600,
+    })
+    await service.copyForPersona({ source: withThumb, newId: "attach_copy", uploadedBy: "usr_caller" })
+
+    expect(storage.copyObject).toHaveBeenCalledWith("ws_1/attach_src/thumbnail.webp", "ws_1/attach_copy/thumbnail.webp")
+    expect(updateVariant.mock.calls[0]![2]).toMatchObject({
+      thumbnailStoragePath: "ws_1/attach_copy/thumbnail.webp",
+      width: 800,
+      height: 600,
+    })
+  })
+
+  it("best-effort deletes the copied object when the insert transaction throws (never orphan the bytes)", async () => {
+    setupCopyTransaction()
+    const { service, storage } = createService()
+    spyOn(AttachmentRepository, "insert").mockRejectedValue(new Error("insert boom"))
+
+    await expect(
+      service.copyForPersona({ source: SOURCE, newId: "attach_copy", uploadedBy: "usr_caller" })
+    ).rejects.toThrow("insert boom")
+
+    // The S3 copy already ran, so the object must be cleaned up.
+    expect(storage.copyObject).toHaveBeenCalledWith("ws_1/attach_src/runbook.md", "ws_1/attach_copy/runbook.md")
+    expect(storage.delete).toHaveBeenCalledWith("ws_1/attach_copy/runbook.md")
   })
 })

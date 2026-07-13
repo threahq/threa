@@ -3,7 +3,7 @@ import type { NextFunction, Request, Response } from "express"
 import { z } from "zod"
 import type { Pool } from "pg"
 import { buildContentDisposition, buildUploadParams, parseE2eUploadFlag, type AttachmentService } from "./service"
-import { isAttachmentReadableViaShareOrReference } from "./access"
+import { isAttachmentReadableViaShareOrReference, unboundAttachmentBlockedForCaller } from "./access"
 import {
   AttachmentRepository,
   type Attachment,
@@ -32,20 +32,6 @@ interface Dependencies {
   streamService: StreamService
   storage: StorageProvider
   pool: Pool
-}
-
-/**
- * An attachment not yet bound to a message (null stream) has no stream ACL to
- * gate the generic serving path on, so only its uploader may read it. This
- * closes the persona-context-attachments leak: a persona file keeps `stream_id`
- * NULL forever, so without this any workspace member holding the (ULID) id could
- * fetch another user's private persona knowledge or its extracted text. Bound
- * attachments (stream set) are gated by stream access upstream and never reach
- * this check. Composer previews still work — the uploader reads their own
- * pending upload.
- */
-function unboundAttachmentBlockedForCaller(attachment: Attachment, userId: string): boolean {
-  return !attachment.streamId && !!attachment.uploadedBy && attachment.uploadedBy !== userId
 }
 
 const reserveAttachmentSchema = z.object({

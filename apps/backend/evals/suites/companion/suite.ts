@@ -405,6 +405,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       },
       putObject: async () => {},
       delete: async () => {},
+      copyObject: async () => {},
     }
 
     // Create PersonaAgent with real dependencies

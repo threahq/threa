@@ -73,6 +73,10 @@ const bindAttachmentSchema = z.object({
   attachmentId: z.string().min(1),
 })
 
+const attachFromExistingSchema = z.object({
+  sourceAttachmentId: z.string().min(1),
+})
+
 function personaNotFound(): HttpError {
   return new HttpError("Persona not found", { status: 404, code: "PERSONA_NOT_FOUND" })
 }
@@ -304,6 +308,31 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
         personaId,
         resolveCaller(req),
         attachmentId
+      )
+      res.status(201).json({ attachment })
+    },
+
+    /**
+     * POST /api/workspaces/:workspaceId/personas/:personaId/attachments/from-existing
+     *
+     * Attach an EXISTING workspace file to a persona as context knowledge by
+     * COPYING it (knowledge-by-reference). JSON `{ sourceAttachmentId }` — the
+     * caller picks a file they can already read; the service copies its bytes +
+     * extraction into a fresh persona-owned row (copy-on-attach). Custom/personal
+     * personas only. The service authorizes and returns structured errors
+     * (404 unreadable/missing source, 400 ineligible source, 400 cap reached).
+     */
+    async attachFromExisting(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const personaId = req.params.personaId!
+
+      const { sourceAttachmentId } = validateRequest(attachFromExistingSchema, req.body)
+
+      const attachment = await personaConfigService.attachFromExisting(
+        workspaceId,
+        personaId,
+        resolveCaller(req),
+        sourceAttachmentId
       )
       res.status(201).json({ attachment })
     },

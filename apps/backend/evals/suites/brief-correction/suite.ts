@@ -224,6 +224,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
       },
       putObject: async () => {},
       delete: async () => {},
+      copyObject: async () => {},
     }
     const attachmentService = new AttachmentService(
       ctx.pool,
