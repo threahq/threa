@@ -73,6 +73,13 @@ interface InlineComposerFormProps {
    * a new sub-topic or a still-pending branch — and the affordance is absent.
    */
   scheduleTarget?: { streamId: string; conversationId: string }
+  /**
+   * Stash row to check out once the composer mounts. Set by a resting
+   * affordance that advertised a stashed/roamed draft (the loaded pointer is
+   * device-local, so the row won't hydrate by itself) — opening must surface
+   * the very draft the affordance showed. Consumed once, on mount.
+   */
+  restoreStashedIdOnMount?: string | null
   /** Perform the send. Throws to keep the composer open and restore the draft. */
   onSubmit: (input: InlineComposerSubmit) => Promise<void>
   /** Collapse the composer (Escape / after-send / blur-when-empty). */
@@ -99,6 +106,7 @@ export function InlineComposerForm({
   onQuoteConsumed,
   rejectE2e,
   scheduleTarget,
+  restoreStashedIdOnMount,
   onSubmit,
   onClose,
 }: InlineComposerFormProps) {
@@ -120,6 +128,16 @@ export function InlineComposerForm({
   // switching cards without hijacking the ambient draft slot.
   const stash = useStashComposer(composer, workspaceId, draftKey)
   const scheduleMessage = useScheduleMessage(workspaceId)
+
+  // Check out the advertised stash row once (mount-captured; the guard ref, not
+  // the effect deps, enforces once — `stash` is a fresh object every render).
+  const restoreOnMountRef = useRef(restoreStashedIdOnMount ?? null)
+  useEffect(() => {
+    const id = restoreOnMountRef.current
+    if (!id || !composer.isLoaded) return
+    restoreOnMountRef.current = null
+    void stash.handleRestoreStashed(id)
+  }, [composer.isLoaded, stash])
 
   const composerControlRef = useRef<ComposerControlHandle | null>(null)
   const composerRef = useRef(composer)

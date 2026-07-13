@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { renderHook, waitFor } from "@testing-library/react"
+import { fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { createElement, type ReactNode } from "react"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
-import { upsertLoadedDraft, purgeScopeDrafts } from "@/hooks/use-draft-message"
+import { upsertLoadedDraft, purgeScopeDrafts, stashLoadedDraft } from "@/hooks/use-draft-message"
 import { useInlineBranchComposer } from "./use-inline-branch-composer"
 import type { ConversationGraph, StreamStructuralIndex } from "@/hooks/use-conversation-graph"
 
@@ -95,6 +95,28 @@ describe("useInlineBranchComposer ?stash= deep-link consumer", () => {
     const { result } = mountHook(draftId)
     await waitFor(() =>
       expect(result.current.openComposer).toEqual({ kind: "new-subtopic", streamId: "stream_9", messageId: "msg_fork" })
+    )
+  })
+
+  it("marks a fork message carrying an unsent sub-topic draft and reopens the gesture with a restore", async () => {
+    const draftId = await seedDraft("board:subtopic:stream_9:msg_fork")
+    // Detach the loaded pointer — the row is a stash (roamed-draft shape), so
+    // reopening must carry it for an explicit check-out.
+    await stashLoadedDraft(workspaceId, "board:subtopic:stream_9:msg_fork")
+    const { result } = mountHook("draft_none")
+
+    // The indicator renders under the fork message once the index resolves.
+    await waitFor(() => expect(result.current.renderAfterMessage("msg_fork")).not.toBeNull())
+    render(<MemoryRouter>{result.current.renderAfterMessage("msg_fork")}</MemoryRouter>)
+    fireEvent.click(screen.getByText("hi"))
+
+    await waitFor(() =>
+      expect(result.current.openComposer).toEqual({
+        kind: "new-subtopic",
+        streamId: "stream_9",
+        messageId: "msg_fork",
+        restoreStashedId: draftId,
+      })
     )
   })
 

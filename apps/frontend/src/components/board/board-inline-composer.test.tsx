@@ -70,6 +70,7 @@ function stashComposerStub() {
 
 let flushDraft: ReturnType<typeof vi.fn>
 let composerStub: ReturnType<typeof draftComposerStub>
+let stashStub: ReturnType<typeof stashComposerStub>
 let scheduleMutateAsync: ReturnType<typeof vi.fn>
 // vi.fn wrapper so tests can read the props the form rendered the editor with.
 let editorSpy: ReturnType<typeof vi.fn>
@@ -85,7 +86,8 @@ beforeEach(() => {
   // `useStashComposer` reaches for `useSearchParams` (the `?stash=` deep-link
   // restore) and `useScheduleMessage` for the query client / sync engine — both
   // out of scope here, so they're stubbed like the draft composer above.
-  const stash = stashComposerStub()
+  stashStub = stashComposerStub()
+  const stash = stashStub
   spyOnExport(hooksModule, "useStashComposer").mockReturnValue((() => stash) as never)
   scheduleMutateAsync = vi.fn().mockResolvedValue(undefined)
   spyOnExport(hooksModule, "useScheduleMessage").mockReturnValue((() => ({
@@ -214,6 +216,24 @@ describe("InlineComposerForm fullscreen expand", () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
     render(<Anchored>{form()}</Anchored>)
     expect(screen.queryByRole("button", { name: "Expand" })).toBeNull()
+  })
+})
+
+describe("InlineComposerForm restore-on-mount", () => {
+  beforeEach(() => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+  })
+
+  it("checks out the advertised stash row once the composer loads", async () => {
+    render(<Anchored>{form({ restoreStashedIdOnMount: "draft_adv" })}</Anchored>)
+    await waitFor(() => expect(stashStub.handleRestoreStashed).toHaveBeenCalledWith("draft_adv"))
+    expect(stashStub.handleRestoreStashed).toHaveBeenCalledTimes(1)
+  })
+
+  it("does nothing without a restore id", async () => {
+    render(<Anchored>{form()}</Anchored>)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(stashStub.handleRestoreStashed).not.toHaveBeenCalled()
   })
 })
 

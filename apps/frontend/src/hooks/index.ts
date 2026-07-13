@@ -58,6 +58,13 @@ export { useStashedDrafts, type UseStashedDraftsResult, type CachedDraft } from 
 export { useStashComposer, useStashParamDraftRow, type UseStashComposerResult } from "./use-stash-composer"
 
 export {
+  useScopeDraftPreview,
+  useBoardSubtopicDraftIndex,
+  type ScopeDraftPreview,
+  type SubtopicDraftEntry,
+} from "./use-scope-draft-preview"
+
+export {
   useDecryptedDraftPreviews,
   type DraftPreview,
   type DraftPreviewStatus,
