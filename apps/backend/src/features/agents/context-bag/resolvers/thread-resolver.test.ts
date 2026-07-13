@@ -3,6 +3,7 @@ import { ContextIntents, ContextRefKinds, Visibilities } from "@threa/types"
 import { ThreadResolver } from "./thread-resolver"
 import { AttachmentRepository, type Attachment } from "../../../attachments"
 import { MessageRepository } from "../../../messaging"
+import { LinkPreviewRepository } from "../../../link-previews"
 import { StreamRepository, StreamMemberRepository } from "../../../streams"
 import { UserRepository } from "../../../workspaces"
 import { PersonaRepository } from "../../persona-repository"
@@ -11,6 +12,7 @@ import { PersonaRepository } from "../../persona-repository"
 // tests that care about attachment rendering override locally.
 beforeEach(() => {
   spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
+  spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(new Map())
 })
 
 function makeStream(overrides: Record<string, any> = {}): any {

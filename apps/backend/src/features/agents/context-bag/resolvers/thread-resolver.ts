@@ -1,7 +1,14 @@
 import type { Querier } from "../../../../db"
-import { ContextIntents, ContextRefKinds, type AttachmentSummary, type ContextRef } from "@threa/types"
+import {
+  ContextIntents,
+  ContextRefKinds,
+  LinkPreviewStatuses,
+  type AttachmentSummary,
+  type ContextRef,
+} from "@threa/types"
 import { HttpError } from "../../../../lib/errors"
 import { AttachmentRepository } from "../../../attachments"
+import { LinkPreviewRepository, renderLinkPreviewContext } from "../../../link-previews"
 import type { Message } from "../../../messaging"
 import { MessageRepository } from "../../../messaging"
 import { StreamRepository, checkStreamAccess } from "../../../streams"
@@ -93,7 +100,7 @@ export const ThreadResolver: Resolver<ThreadRef> = {
 
     const authorIds = new Set(withRoot.map((m) => m.authorId))
     const messageIds = withRoot.map((m) => m.id)
-    const [authorNames, attachmentsByMessage] = await Promise.all([
+    const [authorNames, attachmentsByMessage, linkPreviewsByMessage] = await Promise.all([
       resolveActorNames(db, stream.workspaceId, authorIds),
       // Without this the focal message in a "Discuss with Ariadne" window
       // loses its attachments — the trace shows only the text and the model
@@ -101,6 +108,7 @@ export const ThreadResolver: Resolver<ThreadRef> = {
       // inline below; full extraction content stays behind the existing
       // attachment tools so we don't duplicate the heavy enrichment path.
       AttachmentRepository.findByMessageIds(db, messageIds),
+      LinkPreviewRepository.findByMessageIds(db, stream.workspaceId, messageIds),
     ])
 
     const items: RenderableMessage[] = withRoot.map((m) => {
@@ -120,6 +128,9 @@ export const ThreadResolver: Resolver<ThreadRef> = {
                 sizeBytes: a.sizeBytes,
               }))
           : undefined
+      const linkPreviews = (linkPreviewsByMessage.get(m.id) ?? []).filter(
+        (preview) => preview.status === LinkPreviewStatuses.COMPLETED
+      )
       return {
         messageId: m.id,
         authorId: m.authorId,
@@ -129,6 +140,7 @@ export const ThreadResolver: Resolver<ThreadRef> = {
         editedAt: m.editedAt?.toISOString() ?? null,
         sequence: m.sequence,
         ...(attachments && { attachments }),
+        ...(linkPreviews.length > 0 && { linkPreviews }),
       }
     })
 
@@ -140,7 +152,7 @@ export const ThreadResolver: Resolver<ThreadRef> = {
     // fingerprint stays put — the cache would silently serve a stale summary.
     const inputs: SummaryInput[] = items.map((item) => ({
       messageId: item.messageId,
-      contentFingerprint: fingerprintContent(item.contentMarkdown),
+      contentFingerprint: fingerprintContent(item.contentMarkdown + renderLinkPreviewContext(item.linkPreviews ?? [])),
       editedAt: item.editedAt,
       deleted: false,
     }))

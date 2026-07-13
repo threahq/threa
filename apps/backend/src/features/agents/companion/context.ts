@@ -17,6 +17,7 @@ import {
   type StreamBrief,
 } from "../../streams"
 import { awaitAttachmentProcessing } from "../../attachments"
+import { awaitLinkPreviewProcessing } from "../../link-previews"
 import { buildStreamContext, type StreamContext } from "../context-builder"
 import type { ContextWindowPolicy } from "../context-window-policy"
 import type { ConversationSummaryService } from "../conversation-summary-service"
@@ -145,6 +146,10 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     ])
   }
 
+  const linkPreviewProcessing = triggerMessage
+    ? awaitLinkPreviewProcessing(db, workspaceId, [triggerMessage])
+    : Promise.resolve()
+
   // Await attachment processing for trigger message so agent can access extracted content
   if (triggerMessage) {
     const triggerAttachments = await AttachmentRepository.findByMessageId(db, messageId)
@@ -166,6 +171,11 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     }
   }
 
+  // Link-preview extraction is an independent outbox peer, so its junction row
+  // may not exist yet when the companion job starts. Bound the wait; timeout
+  // still gives the agent the original URL and any previews that did finish.
+  await linkPreviewProcessing
+
   // Compute accessible streams once, here — used by both quote-reply resolution
   // below and by the workspace-tool deps wiring in persona-agent.ts. Bot turns
   // (no invoking user) get `null`; downstream consumers decide how to treat it.
@@ -186,6 +196,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     maxChars: policy.maxChars,
     triggerMessageId: messageId,
     includeAttachments: true,
+    includeLinkPreviews: true,
   })
 
   const streamScopedMessages = streamContext.conversationHistory.filter((m) => m.streamId === stream.id)

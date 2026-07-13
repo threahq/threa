@@ -14,3 +14,12 @@ export { extractUrls, normalizeUrl, detectContentType, isBlockedUrl, parseInAppL
 export type { InAppLinkRef } from "./url-utils"
 
 export { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"
+
+export {
+  awaitLinkPreviewProcessing,
+  enrichMessagesWithLinkPreviews,
+  enrichMessagesWithLinkPreviewMap,
+  renderLinkPreviewContext,
+  DEFAULT_LINK_PREVIEW_PROCESSING_TIMEOUT_MS,
+} from "./ai-context"
+export type { AwaitLinkPreviewProcessingResult, LinkPreviewContextMessage } from "./ai-context"

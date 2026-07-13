@@ -23,6 +23,7 @@ import { MessageRepository, type Message } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { AttachmentRepository } from "../attachments"
 import { AttachmentExtractionRepository, type PdfMetadata, type PdfSection } from "../attachments"
+import { enrichMessagesWithLinkPreviews } from "../link-previews"
 import { getUtcOffset, type TemporalContext, type ParticipantTemporal } from "../../lib/temporal"
 import { DEFAULT_CONTEXT_WINDOW_MESSAGES } from "./context-window-policy"
 
@@ -167,6 +168,8 @@ export interface BuildStreamContextOptions {
   triggerMessageId?: string
   /** Whether to include attachment context */
   includeAttachments?: boolean
+  /** Whether to append completed link-preview card metadata to each message. */
+  includeLinkPreviews?: boolean
   /**
    * Storage provider for loading image data.
    * Required when loadImages is true.
@@ -282,6 +285,13 @@ export async function buildStreamContext(
       storage: options.storage,
       loadImages: options.loadImages,
     })
+  }
+  if (options?.includeLinkPreviews) {
+    context.conversationHistory = await enrichMessagesWithLinkPreviews(
+      db,
+      stream.workspaceId,
+      context.conversationHistory
+    )
   }
 
   return context

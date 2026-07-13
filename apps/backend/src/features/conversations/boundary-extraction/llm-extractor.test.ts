@@ -709,6 +709,47 @@ describe("LLMBoundaryExtractor", () => {
     })
   })
 
+  describe("link preview context", () => {
+    test("includes completed card metadata in the classification prompt", async () => {
+      const newMessage = createMockMessage({ id: "msg_link", contentMarkdown: "https://x.com/example/status/123" })
+      const existingConv = createMockConversation({ id: "conv_existing" })
+      const context = createMockContext({
+        streamType: "channel",
+        newMessage,
+        recentMessages: [newMessage],
+        activeConversations: [existingConv],
+        linkPreviewsByMessageId: new Map([
+          [
+            newMessage.id,
+            [
+              {
+                url: "https://x.com/example/status/123",
+                title: "Pierre on agent context",
+                description: "Agents should receive the subject of linked posts.",
+                siteName: "X",
+                status: "completed",
+              } as never,
+            ],
+          ],
+        ]),
+      })
+      mockGenerateObject.mockResolvedValueOnce({
+        value: { assignments: [{ conversationId: "conv_existing", isPrimary: true }], confidence: 0.9 },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      await extractor.extract(context)
+
+      const calls = mockGenerateObject.mock.calls as unknown as Array<
+        [{ messages: { role: string; content: string }[] }]
+      >
+      const prompt = calls[0]?.[0].messages.find((message) => message.role === "user")?.content ?? ""
+      expect(prompt).toContain('title="Pierre on agent context"')
+      expect(prompt).toContain("Agents should receive the subject of linked posts.")
+    })
+  })
+
   describe("temporal context in prompt", () => {
     test("renders message ages and conversation last-activity relative to the new message", async () => {
       const now = new Date("2026-07-01T12:00:00Z")

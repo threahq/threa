@@ -14,6 +14,7 @@ import type {
   SplitGroup,
 } from "./types"
 import type { Message } from "../../messaging"
+import { renderLinkPreviewContext } from "../../link-previews"
 import { logger } from "../../../lib/logger"
 import { StreamTypes } from "@threa/types"
 import {
@@ -289,19 +290,23 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
         : "No active conversations in this stream yet."
 
     const attachmentsByMessageId = context.attachmentsByMessageId ?? new Map()
+    const linkPreviewsByMessageId = context.linkPreviewsByMessageId ?? new Map()
 
     const recentSection = context.recentMessages
       .map((m) => {
         const head = `[${m.id}] (${formatRelativeAge(m.createdAt, now)}) ${m.authorType}:${m.authorId.slice(-8)}: ${m.contentMarkdown.slice(0, 200)}${m.contentMarkdown.length > 200 ? "..." : ""}`
         const atts = attachmentsByMessageId.get(m.id)
         const attBlock = atts && atts.length > 0 ? `\n${this.renderAttachments(atts, RECENT_ATTACHMENT_CHARS)}` : ""
-        return head + attBlock
+        const previewBlock = renderLinkPreviewContext(linkPreviewsByMessageId.get(m.id) ?? [])
+        return head + attBlock + (previewBlock ? `\n${previewBlock}` : "")
       })
       .join("\n")
 
     const newMessageAtts = attachmentsByMessageId.get(context.newMessage.id) ?? []
     const newMessageAttachmentSection =
       newMessageAtts.length > 0 ? `\n${this.renderAttachments(newMessageAtts, NEW_MESSAGE_ATTACHMENT_CHARS)}` : ""
+    const newMessagePreviewBlock = renderLinkPreviewContext(linkPreviewsByMessageId.get(context.newMessage.id) ?? [])
+    const newMessagePreviewSection = newMessagePreviewBlock ? `\n${newMessagePreviewBlock}` : ""
 
     const replyTargets = context.replyTargets ?? []
     const replySection =
@@ -317,7 +322,10 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
     return BOUNDARY_EXTRACTION_PROMPT.replace("{{CONVERSATIONS}}", convSection)
       .replace("{{RECENT_MESSAGES}}", recentSection || "No recent messages.")
       .replace("{{AUTHOR}}", `${context.newMessage.authorType}:${context.newMessage.authorId.slice(-8)}`)
-      .replace("{{CONTENT}}", context.newMessage.contentMarkdown + newMessageAttachmentSection)
+      .replace(
+        "{{CONTENT}}",
+        context.newMessage.contentMarkdown + newMessageAttachmentSection + newMessagePreviewSection
+      )
       .replace("{{REPLY_CONTEXT}}", replySection)
   }
 

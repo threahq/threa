@@ -3,6 +3,7 @@ import { ContextRefKinds, Visibilities } from "@threa/types"
 import { ConversationResolver } from "./conversation-resolver"
 import { AttachmentRepository } from "../../../attachments"
 import { MessageRepository } from "../../../messaging"
+import { LinkPreviewRepository } from "../../../link-previews"
 import { ConversationRepository } from "../../../conversations"
 import { StreamRepository, StreamMemberRepository } from "../../../streams"
 import { UserRepository } from "../../../workspaces"
@@ -10,6 +11,7 @@ import { PersonaRepository } from "../../persona-repository"
 
 beforeEach(() => {
   spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
+  spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(new Map())
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Author" }] as any)
   spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
 })

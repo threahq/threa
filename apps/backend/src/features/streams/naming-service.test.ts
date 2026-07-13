@@ -3,6 +3,7 @@ import { StreamNamingService } from "./naming-service"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
 import { AttachmentRepository } from "../attachments"
 import { MessageRepository } from "../messaging"
+import { LinkPreviewRepository } from "../link-previews"
 import { StreamRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import * as dbModule from "../../db"
@@ -84,6 +85,7 @@ describe("StreamNamingService", () => {
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByMessageIdsWithExtractions").mockResolvedValue(new Map())
+    spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(new Map())
 
     service = new StreamNamingService(mockPool, mockAI as AI, mockConfigResolver, mockMessageFormatter)
   })

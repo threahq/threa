@@ -5,6 +5,7 @@ import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository, type Stream } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExtraction } from "../attachments"
+import { awaitLinkPreviewProcessing, LinkPreviewRepository } from "../link-previews"
 import type {
   AttachmentExtractContext,
   BoundaryExtractor,
@@ -22,7 +23,7 @@ import { addStalenessFields } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
-import { AuthorTypes, ConversationStatuses, StreamTypes } from "@threa/types"
+import { AuthorTypes, ConversationStatuses, LinkPreviewStatuses, StreamTypes } from "@threa/types"
 import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5
@@ -272,6 +273,7 @@ export class BoundaryExtractionService {
     // connection held (INV-41), then fetch extractions on the pool (INV-30).
     let extractionContext: ExtractionContext | null = null
     if (extractionContextBase && attachmentTargetIds) {
+      const linkPreviewProcessing = awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
       if (newMessageAttachmentIds && newMessageAttachmentIds.length > 0) {
         logger.debug(
           { messageId, attachmentCount: newMessageAttachmentIds.length },
@@ -291,13 +293,21 @@ export class BoundaryExtractionService {
         }
       }
 
-      const attachmentsByMessage = await AttachmentRepository.findByMessageIdsWithExtractions(
-        this.pool,
-        attachmentTargetIds
-      )
-      const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)
+      await linkPreviewProcessing
 
-      extractionContext = { ...extractionContextBase, attachmentsByMessageId }
+      const [attachmentsByMessage, previewRowsByMessage] = await Promise.all([
+        AttachmentRepository.findByMessageIdsWithExtractions(this.pool, attachmentTargetIds),
+        LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, attachmentTargetIds),
+      ])
+      const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)
+      const linkPreviewsByMessageId = new Map(
+        [...previewRowsByMessage].map(([targetMessageId, previews]) => [
+          targetMessageId,
+          previews.filter((preview) => preview.status === LinkPreviewStatuses.COMPLETED),
+        ])
+      )
+
+      extractionContext = { ...extractionContextBase, attachmentsByMessageId, linkPreviewsByMessageId }
     }
 
     // Phase 2: determine conversation (AI call only for channels/threads).

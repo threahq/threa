@@ -1,7 +1,8 @@
 import type { Querier } from "../../../../db"
-import { ContextRefKinds, type AttachmentSummary, type ConversationContextRef } from "@threa/types"
+import { ContextRefKinds, LinkPreviewStatuses, type AttachmentSummary, type ConversationContextRef } from "@threa/types"
 import { HttpError } from "../../../../lib/errors"
 import { AttachmentRepository } from "../../../attachments"
+import { LinkPreviewRepository, renderLinkPreviewContext } from "../../../link-previews"
 import { MessageRepository } from "../../../messaging"
 import { ConversationRepository } from "../../../conversations"
 import { checkStreamAccess } from "../../../streams"
@@ -96,9 +97,10 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
 
     const authorIds = new Set(windowed.map((m) => m.authorId))
     const messageIds = windowed.map((m) => m.id)
-    const [authorNames, attachmentsByMessage] = await Promise.all([
+    const [authorNames, attachmentsByMessage, linkPreviewsByMessage] = await Promise.all([
       resolveActorNames(db, conversation.workspaceId, authorIds),
       AttachmentRepository.findByMessageIds(db, messageIds),
+      LinkPreviewRepository.findByMessageIds(db, conversation.workspaceId, messageIds),
     ])
 
     const items: RenderableMessage[] = windowed.map((m) => {
@@ -117,6 +119,9 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
                 sizeBytes: a.sizeBytes,
               }))
           : undefined
+      const linkPreviews = (linkPreviewsByMessage.get(m.id) ?? []).filter(
+        (preview) => preview.status === LinkPreviewStatuses.COMPLETED
+      )
       return {
         messageId: m.id,
         authorId: m.authorId,
@@ -126,12 +131,13 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
         editedAt: m.editedAt?.toISOString() ?? null,
         sequence: m.sequence,
         ...(attachments && { attachments }),
+        ...(linkPreviews.length > 0 && { linkPreviews }),
       }
     })
 
     const inputs: SummaryInput[] = items.map((item) => ({
       messageId: item.messageId,
-      contentFingerprint: fingerprintContent(item.contentMarkdown),
+      contentFingerprint: fingerprintContent(item.contentMarkdown + renderLinkPreviewContext(item.linkPreviews ?? [])),
       editedAt: item.editedAt,
       deleted: false,
     }))

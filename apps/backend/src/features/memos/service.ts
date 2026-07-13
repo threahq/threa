@@ -3,6 +3,7 @@ import { withTransaction, withClient, type Querier } from "../../db"
 import { StreamStateRepository, StreamEventRepository, StreamRepository, type Stream } from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository, type Message } from "../messaging"
+import { enrichMessagesWithLinkPreviews } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
@@ -319,26 +320,7 @@ export class MemoService implements MemoServiceLike {
         }
       }
 
-      // Pre-format all messages while we have database access (INV-41)
-      // Formatting requires resolving author names from the database.
-      // includeIds: the memorizer and suggestion collector must cite source
-      // message ids; without ids in the prompt the model can't reference them and
-      // every memo falls back to the whole conversation (mis-attribution).
-      // Anchor relative ages to one "now" for the whole batch so the classifier
-      // and memorizer can weigh durability (live vs. stale content) without
-      // reasoning over absolute timestamps.
-      const now = new Date()
       const formattedConversations = new Map<string, string>()
-      for (const [convId, msgs] of conversationMessages) {
-        const messagesArray = Array.from(msgs.values()).filter((m): m is Message => m !== null)
-        if (messagesArray.length > 0) {
-          const formatted = await this.messageFormatter.formatMessages(client, workspaceId, messagesArray, {
-            includeIds: true,
-            relativeTo: now,
-          })
-          formattedConversations.set(convId, formatted)
-        }
-      }
 
       // Fetch author timezones for date anchoring in memos
       const authorIds = new Set<string>()
@@ -384,6 +366,28 @@ export class MemoService implements MemoServiceLike {
 
     if (!fetchedData) {
       return { processed: 0, memosCreated: 0 }
+    }
+
+    // Format completed preview-card metadata into the same transcript consumed
+    // by classification, suggestions, and memorization. Memo accumulation is
+    // delayed, so unlike send-time AI consumers it does not need to poll.
+    const relativeTo = new Date()
+    const allMessageRows = [...fetchedData.conversationMessages.values()].flatMap((messages) =>
+      [...messages.values()].filter((message): message is Message => message !== null)
+    )
+    const enrichedMessages = await enrichMessagesWithLinkPreviews(this.pool, workspaceId, allMessageRows)
+    const enrichedById = new Map(enrichedMessages.map((message) => [message.id, message]))
+
+    for (const [conversationId, messages] of fetchedData.conversationMessages) {
+      const messageRows = [...messages.values()]
+        .filter((message): message is Message => message !== null)
+        .map((message) => enrichedById.get(message.id) ?? message)
+      if (messageRows.length === 0) continue
+      const formatted = await this.messageFormatter.formatMessages(this.pool, workspaceId, messageRows, {
+        includeIds: true,
+        relativeTo,
+      })
+      fetchedData.formattedConversations.set(conversationId, formatted)
     }
 
     const memoryContext = fetchedData.existingMemos.map((m) => m.abstract)

@@ -1,5 +1,6 @@
 import type { LastRenderedSnapshot, RenderableMessage, SummaryInput } from "./types"
 import type { DiffResult } from "./diff"
+import { renderLinkPreviewContext } from "../../link-previews"
 
 export interface StableRenderInput {
   preamble: string
@@ -73,7 +74,9 @@ function formatInlineMessage(item: RenderableMessage, options?: { focal?: boolea
   // attachment tools, keeping the stable region small.
   const attachments =
     item.attachments && item.attachments.length > 0 ? `\n  ${formatAttachments(item.attachments)}` : ""
-  return `${bullet} [${item.messageId}] ${item.authorName} at ${ts}${edited}:\n  ${item.contentMarkdown.replaceAll("\n", "\n  ")}${attachments}`
+  const previewContext = renderLinkPreviewContext(item.linkPreviews ?? [])
+  const linkPreviews = previewContext ? `\n  ${previewContext.replaceAll("\n", "\n  ")}` : ""
+  return `${bullet} [${item.messageId}] ${item.authorName} at ${ts}${edited}:\n  ${item.contentMarkdown.replaceAll("\n", "\n  ")}${attachments}${linkPreviews}`
 }
 
 function formatAttachments(attachments: NonNullable<RenderableMessage["attachments"]>): string {

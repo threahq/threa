@@ -13,6 +13,7 @@ import { StreamEventRepository, StreamStateRepository, StreamRepository, type St
 import type { StreamEvent } from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository } from "../messaging"
+import { LinkPreviewRepository } from "../link-previews"
 import { UserRepository } from "../workspaces"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
 import * as dbModule from "../../db"
@@ -122,6 +123,7 @@ function setupService(options: { memoContents: MemoContent[] }) {
   spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
   spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
   spyOn(MessageRepository, "findByIds").mockResolvedValue(fakeMessages())
+  spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(new Map())
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_1", timezone: "UTC" }] as never)
   spyOn(StreamStateRepository, "markProcessed").mockResolvedValue(undefined as never)
   const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
