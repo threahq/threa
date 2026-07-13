@@ -11,6 +11,7 @@ import {
   type BotSessionArchivedOutboxPayload,
   type BotSessionRestoredOutboxPayload,
   type StreamDelegationCreatedOutboxPayload,
+  type StreamBotAccessStatusChangedOutboxPayload,
 } from "./repository"
 import { resolveDeliveryGroups, emitToGroups } from "./delivery-groups"
 import { logger } from "../logger"
@@ -222,6 +223,28 @@ export class BroadcastHandler implements OutboxHandler {
         delegationId: created.delegationId,
         title: created.title,
       })
+    }
+
+    // An approved access request that carries a delegation re-emits the same
+    // workspace-wide nudge (F3): the runtime that filed the request — now
+    // granted — retries its claim. Fan-out is race-safe by design (the claim CAS
+    // handles staleness), so we do NOT re-check the delegation's status here.
+    if (isOutboxEventType(event, "stream:bot_access_status_changed")) {
+      const payload = event.payload as StreamBotAccessStatusChangedOutboxPayload
+      const changed = payload.event.payload as {
+        status?: string
+        delegationId?: string
+        delegationTitle?: string
+      }
+      // Gate on delegationId only — the runner claims by id; title is display.
+      if (changed.status === "approved" && changed.delegationId) {
+        this.botNamespace.to(`bot:${payload.workspaceId}`).emit("delegation:available", {
+          workspaceId: payload.workspaceId,
+          streamId: payload.streamId,
+          delegationId: changed.delegationId,
+          title: changed.delegationTitle,
+        })
+      }
     }
   }
 

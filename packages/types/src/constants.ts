@@ -138,6 +138,8 @@ export const EVENT_TYPES = [
   "brief_updated",
   "delegation:created",
   "delegation:status_changed",
+  "bot_access:requested",
+  "bot_access:status_changed",
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -191,6 +193,11 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   // A delegated task was handed off (roadmap 5.1): every member sees the
   // delegation card, so it takes a broadcast slot like `agent:follow_up_scheduled`.
   "delegation:created",
+  // A bot filed an access request (F3): every member sees the request card, so
+  // it takes a broadcast slot like `delegation:created`. `bot_access:status_changed`
+  // is deliberately NOT here — it is a patch on the request card, like the
+  // delegation status change below.
+  "bot_access:requested",
   // `agent:follow_up_cancelled` and `delegation:status_changed` are deliberately
   // NOT here: each is a patch on its originating card (cancel flips the
   // scheduled card; a delegation status change flips the created card), not a
@@ -748,6 +755,19 @@ export const DELEGATION_TERMINAL_STATUSES = [
   "cancelled",
   "expired",
 ] as const satisfies readonly DelegationStatus[]
+
+// Bot access-request lifecycle (F3): a bot runtime that lacks stream access
+// files a request; a stream member approves (granting access + re-nudging the
+// runner) or denies. `open` until a member resolves it; `approved`/`denied` are
+// terminal. Approve/deny CAS on `open` in application code (INV-3/20).
+export const BOT_ACCESS_REQUEST_STATUSES = ["open", "approved", "denied"] as const
+export type BotAccessRequestStatus = (typeof BOT_ACCESS_REQUEST_STATUSES)[number]
+
+export const BotAccessRequestStatuses = {
+  OPEN: "open",
+  APPROVED: "approved",
+  DENIED: "denied",
+} as const satisfies Record<string, BotAccessRequestStatus>
 
 // Agent session event types (stream events for session lifecycle)
 export const AGENT_SESSION_EVENT_TYPES = [

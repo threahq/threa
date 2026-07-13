@@ -516,6 +516,72 @@ describe("BroadcastHandler", () => {
     })
   })
 
+  it("re-nudges the workspace runtime room when an approved bot_access request carries a delegation (F3)", async () => {
+    const event = makeEvent(1n, "stream:bot_access_status_changed", {
+      workspaceId: "ws_1",
+      streamId: "stream_a",
+      event: {
+        id: "event_1",
+        streamId: "stream_a",
+        eventType: "bot_access:status_changed",
+        payload: {
+          requestId: "bareq_1",
+          status: "approved",
+          resolvedBy: "usr_kris",
+          delegationId: "dlg_1",
+          delegationTitle: "Fix the build",
+        },
+      },
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    // Viewers get the full patch event on the stream room.
+    expect(emitChains.some((e) => e.room === "ws:ws_1:stream:stream_a")).toBe(true)
+    // The granted runtime gets the same nudge shape as delegation:created.
+    expect(emitChains).toContainEqual({
+      room: "bot:ws_1",
+      eventType: "delegation:available",
+      payload: { workspaceId: "ws_1", streamId: "stream_a", delegationId: "dlg_1", title: "Fix the build" },
+      namespace: "/bot",
+    })
+  })
+
+  it("does NOT re-nudge on a denied request or an approval without a delegation (F3)", async () => {
+    const denied = makeEvent(1n, "stream:bot_access_status_changed", {
+      workspaceId: "ws_1",
+      streamId: "stream_a",
+      event: {
+        id: "event_1",
+        streamId: "stream_a",
+        eventType: "bot_access:status_changed",
+        payload: { requestId: "bareq_1", status: "denied", resolvedBy: "usr_kris" },
+      },
+    })
+    const approvedNoDelegation = makeEvent(2n, "stream:bot_access_status_changed", {
+      workspaceId: "ws_1",
+      streamId: "stream_a",
+      event: {
+        id: "event_2",
+        streamId: "stream_a",
+        eventType: "bot_access:status_changed",
+        payload: { requestId: "bareq_2", status: "approved", resolvedBy: "usr_kris" },
+      },
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([denied, approvedNoDelegation])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains.some((e) => e.eventType === "delegation:available")).toBe(false)
+  })
+
   // Bot-scoped events route into the `/bot` namespace using the narrowest room
   // a payload supports — see `BroadcastHandler.dispatchBotEvent`.
   it("routes bot_invocation:available with no steering to the per-bot room", async () => {

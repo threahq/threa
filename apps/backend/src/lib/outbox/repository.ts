@@ -84,6 +84,8 @@ export type OutboxEventType =
   | "stream:brief_updated"
   | "stream:delegation_created"
   | "stream:delegation_status_changed"
+  | "stream:bot_access_requested"
+  | "stream:bot_access_status_changed"
   | "invitation:sent"
   | "invitation:link-created"
   | "invitation:link-claimed"
@@ -140,6 +142,8 @@ export type StreamScopedEventType =
   | "stream:brief_updated"
   | "stream:delegation_created"
   | "stream:delegation_status_changed"
+  | "stream:bot_access_requested"
+  | "stream:bot_access_status_changed"
   | "stream:activity"
   | "conversation:created"
   | "conversation:updated"
@@ -353,6 +357,22 @@ export interface StreamDelegationCreatedOutboxPayload extends StreamScopedPayloa
 }
 
 export interface StreamDelegationStatusChangedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+/**
+ * Carries a `bot_access:requested` / `bot_access:status_changed` timeline event
+ * (F3) to the stream's room. Same envelope shape as the delegation events: the
+ * full stream event rides along so clients append it without a fetch (requested
+ * renders the card; status_changed patches it). The status event additionally
+ * feeds the broadcast-handler re-nudge branch — an approved request carrying a
+ * delegation re-emits `delegation:available` from the event payload alone.
+ */
+export interface StreamBotAccessRequestedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+export interface StreamBotAccessStatusChangedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -1001,6 +1021,8 @@ export interface OutboxEventPayloadMap {
   "stream:brief_updated": StreamBriefUpdatedOutboxPayload
   "stream:delegation_created": StreamDelegationCreatedOutboxPayload
   "stream:delegation_status_changed": StreamDelegationStatusChangedOutboxPayload
+  "stream:bot_access_requested": StreamBotAccessRequestedOutboxPayload
+  "stream:bot_access_status_changed": StreamBotAccessStatusChangedOutboxPayload
   "stream:read": StreamReadOutboxPayload
   "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
@@ -1118,6 +1140,8 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:brief_updated",
   "stream:delegation_created",
   "stream:delegation_status_changed",
+  "stream:bot_access_requested",
+  "stream:bot_access_status_changed",
   "stream:activity",
   "conversation:created",
   "conversation:updated",

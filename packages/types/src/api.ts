@@ -1269,6 +1269,45 @@ export interface DelegationStatusChangedEventPayload {
 }
 
 /**
+ * Payload for `bot_access:requested` timeline events (F3): appended when a bot
+ * runtime that received the workspace-wide `delegation:available` nudge but lacks
+ * stream access files a request, in the same transaction as the
+ * `bot_access_requests` row insert (INV-4/7). The card renders entirely from this
+ * payload: `botName`/`delegationTitle` are SNAPSHOTS because a non-member
+ * approver cannot resolve an ungranted personal bot (bot visibility is
+ * grant-based), so the card must not depend on the roster.
+ */
+export interface BotAccessRequestedEventPayload {
+  requestId: string
+  botId: string
+  /** Bot display name, snapshot at request time (roster-independent). */
+  botName: string
+  /** The delegation the bot is trying to claim, when the request carries one. */
+  delegationId?: string
+  /** Delegation title, snapshot at request time. */
+  delegationTitle?: string
+  /** The runner's human-readable label, e.g. "Kris's MacBook". */
+  requestedByLabel?: string
+}
+
+/**
+ * Payload for `bot_access:status_changed` events (F3): appended in the same
+ * transaction as the approve/deny CAS so the request card can never sit on stale
+ * state. This is a patch, not a visible row: the matching `bot_access:requested`
+ * card advances to `status`. `delegationId`/`delegationTitle` are duplicated from
+ * the request so the broadcast-handler re-nudge branch (approved + delegation →
+ * re-emit `delegation:available`) needs no DB read.
+ */
+export interface BotAccessStatusChangedEventPayload {
+  requestId: string
+  status: "approved" | "denied"
+  /** The user who approved or denied. */
+  resolvedBy?: string
+  delegationId?: string
+  delegationTitle?: string
+}
+
+/**
  * A member-facing snapshot of a delegation for list surfaces (the "In this
  * stream" panel). Statuses live in `delegation:status_changed` patch events, so
  * a view derived from the loaded timeline window would freeze out-of-window
