@@ -215,9 +215,12 @@ export class DelegationRunner {
    */
   private async requestAccessOnce(id: string): Promise<void> {
     if (this.accessRequested.has(id)) return
-    this.accessRequested.add(id)
     try {
       await this.client.requestAccess(id, { requestedByLabel: this.claimedByLabel })
+      // Mark AFTER success: a transient failure must stay retryable on the next
+      // nudge or the card is silently never filed — the failure F3 exists to
+      // fix. The server insert is idempotent, so a duplicate attempt is safe.
+      this.accessRequested.add(id)
       this.log(`delegation ${id} not claimable (no access) — filed an access request`)
     } catch (error) {
       this.log(`delegation ${id} access request failed: ${error instanceof Error ? error.message : String(error)}`)

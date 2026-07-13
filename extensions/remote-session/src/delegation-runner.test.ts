@@ -243,6 +243,35 @@ describe("DelegationRunner", () => {
     expect(calls.accessRequests).toEqual(["dlg_nudged"])
   })
 
+  it("retries the access request on a later nudge after a transient filing failure", async () => {
+    const { client, calls } = stubClient({
+      queue: [[]],
+      claimError: (id) => (id === "dlg_retry" ? new ThreaApiError("gone", 404, "NOT_FOUND") : null),
+    })
+    let failFirst = true
+    client.requestAccess = async (id: string) => {
+      if (failFirst) {
+        failFirst = false
+        throw new ThreaApiError("boom", 500, "INTERNAL")
+      }
+      calls.accessRequests.push(id)
+      return { requestId: `bar_${id}`, status: "open" }
+    }
+    const runner = makeRunner(client, async () => ({}))
+
+    runner.start()
+    await flush()
+    runner.notifyAvailable({ delegationId: "dlg_retry" })
+    await flush()
+    expect(calls.accessRequests).toEqual([])
+    // The transient failure must not poison the id: the next nudge re-files.
+    runner.notifyAvailable({ delegationId: "dlg_retry" })
+    await flush()
+    runner.stop()
+
+    expect(calls.accessRequests).toEqual(["dlg_retry"])
+  })
+
   it("does not file an access request when a nudged claim loses the race (409)", async () => {
     const { client, calls } = stubClient({
       queue: [[]],
