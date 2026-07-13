@@ -132,6 +132,28 @@ function resolveRootStreamId(
   return streamMap.get(parsed.id)?.rootStreamId ?? parsed.id
 }
 
+/**
+ * Whether a stream is archived — directly, or because it descends from an
+ * archived root. Archiving marks only the root row (a thread stays "active" and
+ * inherits archival via `rootStreamId`), so a thread at any depth under an
+ * archived root resolves as archived here; this mirrors the sidebar's
+ * `isSidebarStreamVisible` archived rule. Callers pass a draft's resolved host
+ * stream id (channel/DM/thread-parent/board-anchor). An unresolved id (`null`,
+ * or a stream not in cache) is treated as not-archived, so a draft is never
+ * hidden on missing data.
+ */
+function isStreamArchived(
+  streamId: string | null,
+  streamMap: Map<string, CachedStream>,
+  archivedStreamIds: ReadonlySet<string>
+): boolean {
+  if (!streamId) return false
+  const stream = streamMap.get(streamId)
+  if (!stream) return false
+  if (stream.archivedAt) return true
+  return stream.rootStreamId != null && archivedStreamIds.has(stream.rootStreamId)
+}
+
 interface ResolvedDraftLocation {
   draftType: DraftType
   streamId: string | null
@@ -363,6 +385,14 @@ export function useAllDrafts(workspaceId: string) {
     return map
   }, [cachedStreams])
 
+  // Ids of directly-archived streams; a thread inherits archival via its root
+  // (see `isStreamArchived`). Drives the archived-draft filter in the loop below.
+  const archivedStreamIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const stream of cachedStreams ?? []) if (stream.archivedAt) ids.add(stream.id)
+    return ids
+  }, [cachedStreams])
+
   // Conversations referenced by board-scoped drafts (`board:reply:` /
   // `board:branch-reply:`), for location resolution. Keyed on the id set (not
   // the drafts array) so a body keystroke doesn't re-fire the query.
@@ -569,6 +599,12 @@ export function useAllDrafts(workspaceId: string) {
       const resolved = parsed
         ? resolveDraftLocation(parsed, workspaceId, streamMap, messageToStreamMap)
         : boardResolved!
+
+      // Hide drafts whose host stream is archived — a channel/DM directly, a
+      // thread or board reply via its resolved parent/anchor stream, and any
+      // nested thread through the root check inside `isStreamArchived`.
+      if (isStreamArchived(resolved.streamId, streamMap, archivedStreamIds)) continue
+
       const isStashed = (loadedByScope.get(draft.scope) ?? null) !== draft.id
 
       // A stashed row deep-links via `?stash=<draftId>` so the composer host
@@ -608,6 +644,7 @@ export function useAllDrafts(workspaceId: string) {
     draftsById,
     loadedByScope,
     streamMap,
+    archivedStreamIds,
     messageToStreamMap,
     boardPostMap,
     subtopicHostByMessageId,
@@ -670,12 +707,18 @@ export interface DraftSummary {
  * NO preview building, sealed-body decryption, location resolution, or sort, so
  * a keystroke's debounced draft save doesn't rebuild the full {@link useAllDrafts}
  * explorer model (which it does on every change) just to read two values off it.
- * Shares {@link draftHasPayload} with the explorer so the count never drifts.
+ * Shares {@link draftHasPayload} and {@link isStreamArchived} with the explorer,
+ * so archived channel/DM drafts are hidden from the badge and the list alike.
+ * Thread and board drafts resolve their host stream only in the explorer (via a
+ * `db.events` / conversation lookup that would be too heavy for the always-
+ * mounted sidebar), so the badge can over-count one whose root is archived —
+ * rare, and the explorer still hides it.
  */
 export function useDraftSummary(workspaceId: string): DraftSummary {
   const draftScratchpads = useDraftScratchpadsFromStore(workspaceId)
   const allDrafts = useDraftsFromStore(workspaceId)
   const composerLoaded = useComposerLoadedFromStore(workspaceId)
+  const cachedStreams = useWorkspaceStreams(workspaceId)
 
   const loadedByScope = useMemo(() => {
     const map = new Map<string, string | null>()
@@ -688,6 +731,21 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
     for (const draft of allDrafts) map.set(draft.id, draft)
     return map
   }, [allDrafts])
+
+  // Stream map + archived-id set from the already-loaded workspace streams
+  // (cheap; no events/conversation queries), so the badge filters archived
+  // channel/DM drafts in step with the explorer.
+  const streamMap = useMemo(() => {
+    const map = new Map<string, CachedStream>()
+    for (const stream of cachedStreams ?? []) map.set(stream.id, stream)
+    return map
+  }, [cachedStreams])
+
+  const archivedStreamIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const stream of cachedStreams ?? []) if (stream.archivedAt) ids.add(stream.id)
+    return ids
+  }, [cachedStreams])
 
   return useMemo(() => {
     let draftCount = 0
@@ -712,6 +770,10 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
       // Scratchpad-scoped rows are counted above; skip them and their siblings.
       if (parsed.type === "stream" && isDraftId(parsed.id)) continue
       if (!draftHasPayload(draft)) continue
+      // Hide archived channel/DM drafts (`parsed.id` is the stream). Thread
+      // drafts aren't resolved here (no events scan), so one under an archived
+      // root stays counted — the explorer still hides it.
+      if (parsed.type === "stream" && isStreamArchived(parsed.id, streamMap, archivedStreamIds)) continue
       draftCount++
       // A non-thread stream draft that is the loaded (not stashed) one for its
       // scope surfaces as the per-row "unsent draft" hint — mirrors
@@ -722,5 +784,5 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
     }
 
     return { draftCount, loadedDraftStreamIdSignature: [...loadedDraftStreamIds].sort().join(",") }
-  }, [draftScratchpads, allDrafts, loadedByScope, draftsById])
+  }, [draftScratchpads, allDrafts, loadedByScope, draftsById, streamMap, archivedStreamIds])
 }

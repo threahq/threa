@@ -60,6 +60,34 @@ async function pendingDeleteIds(): Promise<string[]> {
   return ops.map((op) => op.payload.draftId as string)
 }
 
+function seedStream(overrides: { id: string } & Partial<Record<string, unknown>>): Promise<unknown> {
+  return db.streams.put({
+    workspaceId,
+    type: "channel",
+    visibility: "private",
+    rootStreamId: null,
+    parentMessageId: null,
+    archivedAt: null,
+    ...overrides,
+  } as never)
+}
+
+function seedMessageEvent(messageId: string, streamId: string, seq: number): Promise<unknown> {
+  return db.events.put({
+    id: `evt_${messageId}`,
+    workspaceId,
+    streamId,
+    sequence: String(seq),
+    _sequenceNum: seq,
+    eventType: "message_created",
+    payload: { messageId, contentMarkdown: "x", reactions: {} },
+    actorId: "usr_1",
+    actorType: "user",
+    createdAt: new Date(seq).toISOString(),
+    _cachedAt: seq,
+  } as never)
+}
+
 beforeEach(async () => {
   vi.restoreAllMocks()
   resetDraftStoreCache()
@@ -69,6 +97,7 @@ beforeEach(async () => {
   await db.draftScratchpads.clear()
   await db.conversations.clear()
   await db.streams.clear()
+  await db.events.clear()
   // The drafts explorer now decrypts E2E previews via the shared cache, which
   // reads the viewer id + session; default them to "no viewer / locked" so these
   // plaintext-draft tests run without an AuthProvider (INV-48 namespace spyOn).
@@ -313,6 +342,93 @@ describe("useAllDrafts E2E drafts", () => {
 
     await waitFor(() => expect(result.current.drafts.some((d) => d.id === "draft_locked")).toBe(true))
     expect(result.current.drafts.find((d) => d.id === "draft_locked")!.preview).toBe("Encrypted draft")
+  })
+})
+
+describe("useAllDrafts archived streams", () => {
+  it("hides a draft whose stream is archived and keeps one whose stream is active", async () => {
+    await seedStream({ id: "stream_active" })
+    await seedStream({ id: "stream_archived", archivedAt: "2026-01-01T00:00:00Z" })
+    await db.drafts.bulkAdd([
+      syncedDraft({ id: "draft_active", scope: "stream:stream_active", contentJson: makeDoc("keep me") }),
+      syncedDraft({ id: "draft_archived", scope: "stream:stream_archived", contentJson: makeDoc("hide me") }),
+    ])
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts.map((d) => d.id)).toEqual(["draft_active"]))
+  })
+
+  it("hides a thread-reply draft whose root stream is archived, at any nesting depth", async () => {
+    // root (archived) -> mid thread -> deep thread. The reply draft targets a
+    // message inside the deepest thread; archival is marked only on the root.
+    await seedStream({ id: "stream_root", archivedAt: "2026-01-01T00:00:00Z" })
+    await seedStream({ id: "stream_mid", type: "thread", rootStreamId: "stream_root" })
+    await seedStream({ id: "stream_deep", type: "thread", rootStreamId: "stream_root" })
+    await seedMessageEvent("msg_deep", "stream_deep", 1)
+    await db.drafts.add(syncedDraft({ id: "draft_thread", scope: "thread:msg_deep", contentJson: makeDoc("reply") }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    // The gated events query resolves the reply's parent stream; once it does,
+    // the thread draft is hidden because its root (`stream_root`) is archived.
+    await waitFor(() => expect(result.current.drafts).toHaveLength(0))
+  })
+
+  it("keeps a thread-reply draft whose root stream is active", async () => {
+    await seedStream({ id: "stream_root_active" })
+    await seedStream({ id: "stream_thread", type: "thread", rootStreamId: "stream_root_active" })
+    await seedMessageEvent("msg_active", "stream_thread", 1)
+    await db.drafts.add(
+      syncedDraft({ id: "draft_thread_ok", scope: "thread:msg_active", contentJson: makeDoc("reply") })
+    )
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts.map((d) => d.id)).toEqual(["draft_thread_ok"]))
+  })
+
+  it("keeps the summary badge count in step with the hidden list for channel/DM drafts", async () => {
+    await seedStream({ id: "stream_keep" })
+    await seedStream({ id: "stream_gone", archivedAt: "2026-01-01T00:00:00Z" })
+    await db.drafts.bulkAdd([
+      syncedDraft({ id: "draft_keep", scope: "stream:stream_keep", contentJson: makeDoc("keep") }),
+      syncedDraft({ id: "draft_gone", scope: "stream:stream_gone", contentJson: makeDoc("gone") }),
+    ])
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }), {
+      wrapper,
+    })
+
+    await waitFor(() => expect(result.current.all.drafts.length).toBe(1))
+    expect(result.current.summary.draftCount).toBe(1)
+    expect(result.current.summary.draftCount).toBe(result.current.all.drafts.length)
+  })
+
+  it("badge still counts a thread draft under an archived root (deliberate: no events scan in the sidebar)", async () => {
+    // The explorer resolves the thread's stream via a db.events scan and hides
+    // the draft; the summary skips that scan to keep the always-mounted sidebar
+    // off a query that churns on every message, so it over-counts this rare case.
+    await seedStream({ id: "stream_root_arch", archivedAt: "2026-01-01T00:00:00Z" })
+    await seedStream({ id: "stream_thr", type: "thread", rootStreamId: "stream_root_arch" })
+    await seedMessageEvent("msg_x", "stream_thr", 1)
+    await db.drafts.add(syncedDraft({ id: "draft_thr", scope: "thread:msg_x", contentJson: makeDoc("reply") }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }), {
+      wrapper,
+    })
+
+    // Steady state: the explorer hides it while the badge still counts it.
+    // Asserted together so we read the settled state, not a co-mount transient.
+    await waitFor(() => {
+      expect(result.current.all.drafts).toHaveLength(0)
+      expect(result.current.summary.draftCount).toBe(1)
+    })
   })
 })
 
