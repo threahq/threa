@@ -96,6 +96,7 @@ import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
 import type { AgentFollowUpService, PersonaConfigService } from "./features/agents"
 import { createDelegationHandlers, type DelegationService } from "./features/delegations"
+import { BotAccessRequestService, createBotAccessRequestHandlers } from "./features/bot-access-requests"
 import type { DraftsService } from "./features/drafts"
 import type { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import type { PushService } from "./features/push"
@@ -326,6 +327,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const agentSession = createAgentSessionHandlers({ pool })
   const agentFollowUps = createAgentFollowUpHandlers({ pool, agentFollowUpService })
   const delegations = createDelegationHandlers({ pool, delegationService })
+  const botAccessRequestService = new BotAccessRequestService({ pool, streamService })
+  const botAccessRequests = createBotAccessRequestHandlers({ botAccessRequestService, streamService })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
   const giphy = createGiphyHandlers({ giphyService })
@@ -752,6 +755,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/delegations/:id/cancel", ...authed, delegations.cancel)
   app.post("/api/workspaces/:workspaceId/delegations/:id/done", ...authed, delegations.markDone)
 
+  // Bot access requests — a stream member approves or denies a bot's request to
+  // access the stream so it can claim a delegation (F3). Approve applies the
+  // grant; both are member-gated (stricter than delegation cancel).
+  app.post("/api/workspaces/:workspaceId/bot-access-requests/:id/approve", ...authed, botAccessRequests.approve)
+  app.post("/api/workspaces/:workspaceId/bot-access-requests/:id/deny", ...authed, botAccessRequests.deny)
+
   // Drafts — centralized, local-first composer payloads that roam across the
   // author's devices. Private to the author; never timeline-broadcast.
   app.get("/api/workspaces/:workspaceId/drafts", ...authed, drafts.list)
@@ -941,6 +950,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     eventService,
     streamService,
     botChannelService,
+    botAccessRequestService,
   })
   const publicMiddleware = [rateLimits.publicApiWorkspace, rateLimits.publicApiKey, publicAuth] as const
 
@@ -973,6 +983,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     reportDelegationStatus: delegationPublicApi.reportDelegationStatus,
     completeDelegation: delegationPublicApi.completeDelegation,
     failDelegation: delegationPublicApi.failDelegation,
+    requestDelegationAccess: delegationPublicApi.requestDelegationAccess,
     listStreams: publicApi.listStreams,
     getStream: publicApi.getStream,
     updateStream: publicApi.updateStream,

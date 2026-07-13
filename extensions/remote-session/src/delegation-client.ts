@@ -144,4 +144,21 @@ export class DelegationClient {
       claimToken,
     })
   }
+
+  /**
+   * Ask a stream member to grant this bot access to the delegation's stream
+   * (F3). Called when a claim 404s for lack of a channel grant — files a card a
+   * member approves or denies. No claim token: the bot has no claim yet. Returns
+   * `{ status: "already_granted" }` (no `requestId`) when the bot already had
+   * access, else `{ requestId, status: "open" }`; idempotent per (bot, stream).
+   */
+  async requestAccess(
+    delegationId: string,
+    opts?: { requestedByLabel?: string }
+  ): Promise<{ requestId?: string; status: string }> {
+    return this.request(this.path(`/${delegationId}/request-access`), {
+      method: "POST",
+      body: JSON.stringify(opts?.requestedByLabel ? { requestedByLabel: opts.requestedByLabel } : {}),
+    })
+  }
 }

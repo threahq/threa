@@ -432,3 +432,8 @@ export const completeDelegationSchema = z.object({
 export const failDelegationSchema = z.object({
   errorMessage: z.string().min(1).max(2000),
 })
+
+export const requestDelegationAccessSchema = z.object({
+  /** Human-readable identity of the requesting runner, shown on the access-request card (e.g. "Kris's MacBook"). */
+  requestedByLabel: z.string().max(200).optional(),
+})

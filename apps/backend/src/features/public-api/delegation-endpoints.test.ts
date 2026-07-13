@@ -8,6 +8,7 @@ import { E2eStreamsRepository } from "../e2e-streams"
 import { hashCallbackToken } from "../agents"
 import type { BotChannelService } from "../api-keys"
 import type { DelegatedTask, DelegationService } from "../delegations"
+import type { BotAccessRequestService } from "../bot-access-requests"
 import type { EventService } from "../messaging"
 import type { StreamService } from "../streams"
 import { BotRepository } from "./bot-repository"
@@ -79,6 +80,7 @@ function makeHandlers(overrides: {
   eventService?: Partial<EventService>
   streamService?: Partial<StreamService>
   botChannelService?: Partial<BotChannelService>
+  botAccessRequestService?: Partial<BotAccessRequestService>
 }) {
   return createDelegationPublicApiHandlers({
     pool: { __pool: true } as unknown as Pool,
@@ -86,6 +88,7 @@ function makeHandlers(overrides: {
     eventService: (overrides.eventService ?? {}) as EventService,
     streamService: (overrides.streamService ?? {}) as StreamService,
     botChannelService: (overrides.botChannelService ?? {}) as BotChannelService,
+    botAccessRequestService: (overrides.botAccessRequestService ?? {}) as BotAccessRequestService,
   })
 }
 
@@ -504,5 +507,101 @@ describe("failDelegation retry", () => {
     await handlers.failDelegation(makeRequest({ token: "tok", body: { errorMessage: "boom" } }), res)
 
     expect((payloads[0] as { data: { status: string } }).data.status).toBe(DelegationStatuses.FAILED)
+  })
+})
+
+describe("requestDelegationAccess", () => {
+  function accessRequest(overrides: { id?: string; status?: string } = {}) {
+    return { id: overrides.id ?? "bar_1", status: overrides.status ?? "open" }
+  }
+
+  it("400s a user key — its access follows the user, not a bot grant", async () => {
+    const handlers = makeHandlers({})
+    const { res } = createResponse()
+    await expect(handlers.requestDelegationAccess(makeRequest(), res)).rejects.toMatchObject({
+      status: 400,
+      code: "USER_KEY_CANNOT_REQUEST_ACCESS",
+    })
+  })
+
+  it("404s an unknown delegation id (existence-hiding carve-out)", async () => {
+    const handlers = makeHandlers({ delegationService: { getById: mock(async () => null) } })
+    const { res } = createResponse()
+    await expect(
+      handlers.requestDelegationAccess(makeRequest({ userKey: false, botKey: true }), res)
+    ).rejects.toMatchObject({ status: 404 })
+  })
+
+  it("short-circuits with already_granted and files no request when the bot already has access", async () => {
+    const request = mock(async () => ({ request: accessRequest(), created: true }))
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => makeDelegation()) },
+      botChannelService: { isStreamAccessibleForBot: mock(async () => true) },
+      botAccessRequestService: { request } as unknown as Partial<BotAccessRequestService>,
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.requestDelegationAccess(makeRequest({ userKey: false, botKey: true }), res)
+
+    expect((payloads[0] as { data: { status: string } }).data).toEqual({ status: "already_granted" })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it("creates a request with the bot name snapshotted from the roster", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Runner", archivedAt: null } as never)
+    const request = mock(async () => ({ request: accessRequest(), created: true }))
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => makeDelegation()) },
+      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+      botAccessRequestService: { request } as unknown as Partial<BotAccessRequestService>,
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.requestDelegationAccess(
+      makeRequest({ userKey: false, botKey: true, body: { requestedByLabel: "Kris's MacBook" } }),
+      res
+    )
+
+    expect((request.mock.calls[0] as unknown[])[0]).toMatchObject({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      botId: "bot_1",
+      botName: "Runner",
+      delegationId: "dlg_1",
+      delegationTitle: "Add rate limiting",
+      requestedByLabel: "Kris's MacBook",
+    })
+    expect((payloads[0] as { data: object }).data).toEqual({ requestId: "bar_1", status: "open" })
+  })
+
+  it("404s when the bot is archived (cannot snapshot its name)", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Runner", archivedAt: new Date() } as never)
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => makeDelegation()) },
+      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+    })
+    const { res } = createResponse()
+    await expect(
+      handlers.requestDelegationAccess(makeRequest({ userKey: false, botKey: true }), res)
+    ).rejects.toMatchObject({ status: 404 })
+  })
+
+  it("returns the same requestId on an idempotent re-request", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Runner", archivedAt: null } as never)
+    let calls = 0
+    const request = mock(async () => ({ request: accessRequest({ id: "bar_stable" }), created: calls++ === 0 }))
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => makeDelegation()) },
+      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+      botAccessRequestService: { request } as unknown as Partial<BotAccessRequestService>,
+    })
+
+    const first = createResponse()
+    await handlers.requestDelegationAccess(makeRequest({ userKey: false, botKey: true }), first.res)
+    const second = createResponse()
+    await handlers.requestDelegationAccess(makeRequest({ userKey: false, botKey: true }), second.res)
+
+    expect((first.payloads[0] as { data: { requestId?: string } }).data.requestId).toBe("bar_stable")
+    expect((second.payloads[0] as { data: { requestId?: string } }).data.requestId).toBe("bar_stable")
   })
 })

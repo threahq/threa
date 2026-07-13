@@ -32,13 +32,22 @@ interface StubCalls {
   fails: Array<{ id: string; token: string; errorMessage: string }>
   statuses: Array<{ id: string; note: string }>
   heartbeats: number
+  accessRequests: string[]
 }
 
 function stubClient(overrides: { queue?: DelegationSummary[][]; claimError?: (id: string) => Error | null }): {
   client: DelegationClient
   calls: StubCalls
 } {
-  const calls: StubCalls = { listOpen: 0, claims: [], completes: [], fails: [], statuses: [], heartbeats: 0 }
+  const calls: StubCalls = {
+    listOpen: 0,
+    claims: [],
+    completes: [],
+    fails: [],
+    statuses: [],
+    heartbeats: 0,
+    accessRequests: [],
+  }
   const queue = overrides.queue ?? [[]]
   const client = {
     listOpen: async () => {
@@ -71,6 +80,10 @@ function stubClient(overrides: { queue?: DelegationSummary[][]; claimError?: (id
     fail: async (id: string, token: string, errorMessage: string) => {
       calls.fails.push({ id, token, errorMessage })
       return { ...summary(id), status: "failed" }
+    },
+    requestAccess: async (id: string) => {
+      calls.accessRequests.push(id)
+      return { requestId: `bar_${id}`, status: "open" }
     },
   } as unknown as DelegationClient
   return { client, calls }
@@ -208,6 +221,58 @@ describe("DelegationRunner", () => {
     runner.stop()
 
     expect(calls.listOpen).toBeGreaterThan(baseline)
+  })
+
+  it("files an access request exactly once when a nudged id 404s (no stream grant)", async () => {
+    const { client, calls } = stubClient({
+      queue: [[]],
+      claimError: (id) => (id === "dlg_nudged" ? new ThreaApiError("gone", 404, "NOT_FOUND") : null),
+    })
+    const runner = makeRunner(client, async () => ({}))
+
+    runner.start()
+    await flush()
+    runner.notifyAvailable({ delegationId: "dlg_nudged" })
+    await flush()
+    // Re-nudge for the same id: claim 404s again, but the request is not re-filed.
+    runner.notifyAvailable({ delegationId: "dlg_nudged" })
+    await flush()
+    runner.stop()
+
+    expect(calls.claims.map((c) => c.id)).toEqual(["dlg_nudged", "dlg_nudged"])
+    expect(calls.accessRequests).toEqual(["dlg_nudged"])
+  })
+
+  it("does not file an access request when a nudged claim loses the race (409)", async () => {
+    const { client, calls } = stubClient({
+      queue: [[]],
+      claimError: (id) => (id === "dlg_nudged" ? new ThreaApiError("conflict", 409, "DELEGATION_NOT_OPEN") : null),
+    })
+    const runner = makeRunner(client, async () => ({}))
+
+    runner.start()
+    await flush()
+    runner.notifyAvailable({ delegationId: "dlg_nudged" })
+    await flush()
+    runner.stop()
+
+    expect(calls.claims.map((c) => c.id)).toEqual(["dlg_nudged"])
+    expect(calls.accessRequests).toEqual([])
+  })
+
+  it("does not file an access request for a plain list-path 404 (only nudge-carried ids)", async () => {
+    const { client, calls } = stubClient({
+      queue: [[summary("dlg_listed")], []],
+      claimError: (id) => (id === "dlg_listed" ? new ThreaApiError("gone", 404, "NOT_FOUND") : null),
+    })
+    const runner = makeRunner(client, async () => ({}))
+
+    runner.start()
+    await flush()
+    runner.stop()
+
+    expect(calls.claims.map((c) => c.id)).toEqual(["dlg_listed"])
+    expect(calls.accessRequests).toEqual([])
   })
 
   it("does nothing after stop()", async () => {

@@ -275,7 +275,7 @@ export class ChannelServer {
       config,
       client,
       transport,
-      onDelegationAvailable: () => this.delegations?.notifyAvailable(),
+      onDelegationAvailable: (payload) => this.delegations?.notifyAvailable(payload),
       log,
       runtime: {
         kind: RUNTIME_KIND,
