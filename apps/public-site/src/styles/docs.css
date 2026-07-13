@@ -1290,6 +1290,30 @@ a {
   text-transform: uppercase;
   color: hsl(var(--muted));
 }
+.docs-foot-brand {
+  flex-shrink: 0;
+}
+/* Links as a real list: flex-wrap keeps whole items together (no wrapping
+   mid-separator), and the "·" is a pseudo-element between items rather than a
+   non-breaking-space glyph that could strand a lone dot on its own line. */
+.docs-foot-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.docs-foot-links li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.docs-foot-links li + li::before {
+  content: "·";
+  color: hsl(var(--line));
+}
 .docs-foot a {
   color: hsl(var(--muted));
   text-decoration: none;
@@ -1401,6 +1425,15 @@ a {
   }
   .keytype-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* Stack the footer: brand over links, both left-aligned. space-between +
+     mono-uppercase links crammed to the right wrapped mid-separator on narrow
+     phones. */
+  .docs-foot {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
   }
 }
 

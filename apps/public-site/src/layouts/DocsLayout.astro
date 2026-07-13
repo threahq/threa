@@ -230,20 +230,15 @@ const schema: Record<string, unknown>[] = [
         </article>
 
         <footer class="docs-foot">
-          <span>Threa · Developers</span>
-          <span>
+          <span class="docs-foot-brand">Threa · Developers</span>
+          <ul class="docs-foot-links">
             {markdownHref && (
-              <>
-                <a href={markdownHref}>View as Markdown</a>
-                &nbsp;·&nbsp;
-              </>
+              <li><a href={markdownHref}>View as Markdown</a></li>
             )}
-            <a href="/llms.txt">llms.txt</a>
-            &nbsp;·&nbsp;
-            <a href="/developers/feature-requests">Request a feature</a>
-            &nbsp;·&nbsp;
-            <a href="/">threa.io</a>
-          </span>
+            <li><a href="/llms.txt">llms.txt</a></li>
+            <li><a href="/developers/feature-requests">Request a feature</a></li>
+            <li><a href="/">threa.io</a></li>
+          </ul>
         </footer>
       </main>
     </div>
