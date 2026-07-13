@@ -186,6 +186,47 @@ describe("InAppLinkPreviewCard", () => {
     await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument())
   })
 
+  it("renders a full-access delegation link with title, status pill, claimer, and stream deep-link", async () => {
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([
+      { id: "stream_src", type: "channel", slug: "eng", displayName: null },
+    ] as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
+
+    renderWith(
+      {
+        kind: "delegation",
+        accessTier: "full",
+        delegationId: "dlg_1",
+        title: "Add rate limiting to the webhook",
+        status: "running",
+        claimedByLabel: "Kris's MacBook / Claude Code",
+        streamId: "stream_src",
+        createdEventId: "evt_created",
+      },
+      makePreview({ contentType: "delegation_link", url: "https://app.threa.io/w/ws_123/delegations/dlg_1" })
+    )
+
+    await waitFor(() => expect(screen.getByText("Add rate limiting to the webhook")).toBeInTheDocument())
+    expect(screen.getByText("Kris's MacBook / Claude Code")).toBeInTheDocument()
+    // Status pill carries the shared in-flight color (delegationStatusPillClass).
+    expect(screen.getByText("Running")).toHaveClass("text-amber-600")
+    expect(screen.getByText("#eng")).toBeInTheDocument()
+    // Whole card links straight to the card's timeline row, not the redirect route.
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/w/ws_123/s/stream_src?m=evt_created")
+  })
+
+  it("shows a minimal card for a private delegation without leaking the title", async () => {
+    renderWith(
+      { kind: "delegation", accessTier: "private" },
+      makePreview({ contentType: "delegation_link", url: "https://app.threa.io/w/ws_123/delegations/dlg_1" })
+    )
+
+    await waitFor(() => expect(screen.getByText("Private delegation")).toBeInTheDocument())
+    expect(screen.queryByText("Add rate limiting to the webhook")).not.toBeInTheDocument()
+    expect(screen.queryByRole("link")).not.toBeInTheDocument()
+  })
+
   it("shows a minimal card for a cross-workspace memo", async () => {
     renderWith(
       { kind: "memo", accessTier: "cross_workspace" },

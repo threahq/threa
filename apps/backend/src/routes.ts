@@ -759,6 +759,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/agent-follow-ups/:id/cancel", ...authed, agentFollowUps.cancel)
 
   app.get("/api/workspaces/:workspaceId/delegations", ...authed, delegations.list)
+  app.get("/api/workspaces/:workspaceId/delegations/:id", ...authed, delegations.get)
   app.post("/api/workspaces/:workspaceId/delegations/:id/cancel", ...authed, delegations.cancel)
   app.post("/api/workspaces/:workspaceId/delegations/:id/done", ...authed, delegations.markDone)
 

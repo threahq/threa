@@ -49,6 +49,20 @@ describe("classifyDraftLink", () => {
     })
   })
 
+  it("classifies a delegation link at this origin", () => {
+    expect(classifyDraftLink(`${ORIGIN}/w/ws_1/delegations/dlg_1`, ORIGIN)).toEqual({
+      kind: "delegation",
+      url: `${ORIGIN}/w/ws_1/delegations/dlg_1`,
+      workspaceId: "ws_1",
+      delegationId: "dlg_1",
+    })
+    // A trailing segment isn't a delegation permalink → falls through to a web chip.
+    expect(classifyDraftLink(`${ORIGIN}/w/ws_1/delegations/dlg_1/edit`, ORIGIN)).toMatchObject({
+      kind: "web",
+      host: "app.threa.io",
+    })
+  })
+
   it("treats a board URL without a conversation panel as a web link", () => {
     expect(classifyDraftLink(`${ORIGIN}/w/ws_1/board`, ORIGIN)).toMatchObject({ kind: "web", host: "app.threa.io" })
     expect(classifyDraftLink(`${ORIGIN}/w/ws_1/board?panel=stream:stream_1`, ORIGIN)).toMatchObject({

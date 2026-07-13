@@ -1,5 +1,5 @@
 import { type MouseEvent } from "react"
-import { MessageSquare, MessagesSquare, Globe, Lock } from "lucide-react"
+import { MessageSquare, MessagesSquare, Globe, Lock, TerminalSquare } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { useInAppLinkChip } from "@/hooks/use-in-app-link-chip"
@@ -78,6 +78,45 @@ export function ConversationLinkInline({ href, workspaceId }: { href: string; wo
 
   const label = (data?.kind === "conversation" && data.topicSummary) || "Conversation"
   const chip = <InAppLinkChip icon={MessagesSquare} label={label} />
+
+  const internalPath = resolveInternalAppPath(href)
+  if (!internalPath) return chip
+
+  const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    e.preventDefault()
+    navigate(internalPath)
+  }
+
+  return (
+    <a href={href} onClick={handleClick} className="no-underline">
+      {chip}
+    </a>
+  )
+}
+
+/**
+ * Posted-message rendering of an in-app delegation link as a compact chip
+ * (`▢ {title}`), the inline sibling of the below-message delegation card.
+ * Resolves its title through the same access-tiered resolver the card uses
+ * (shared query cache), so the chip and card never round-trip twice. A restricted
+ * tier (cross-workspace / private) renders a non-navigable placeholder chip; a
+ * cold resolve shows the generic "Delegation" label behind the same glyph, so
+ * resolving only swaps the text, never the icon (INV-21).
+ */
+export function DelegationLinkInline({ href, workspaceId }: { href: string; workspaceId: string }) {
+  const navigate = useNavigate()
+  const { data } = useResolvedInAppLink(workspaceId, undefined, href, true)
+
+  if (data?.accessTier === "cross_workspace") {
+    return <InAppLinkChip icon={Globe} label="Another workspace" />
+  }
+  if (data?.accessTier === "private") {
+    return <InAppLinkChip icon={Lock} label="Private delegation" />
+  }
+
+  const label = (data?.kind === "delegation" && data.title) || "Delegation"
+  const chip = <InAppLinkChip icon={TerminalSquare} label={label} />
 
   const internalPath = resolveInternalAppPath(href)
   if (!internalPath) return chip

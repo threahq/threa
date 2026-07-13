@@ -427,6 +427,7 @@ export type {
   StreamLinkPreviewData,
   MemoLinkPreviewData,
   ConversationLinkPreviewData,
+  DelegationLinkPreviewData,
   InAppLinkPreviewData,
 } from "./domain"
 

@@ -58,6 +58,29 @@ export function createDelegationHandlers({ pool, delegationService }: Dependenci
       res.json(response)
     },
 
+    /**
+     * Read one delegation by id — the canonical `/delegations/:id` link's
+     * redirect resolver and any card that fetches its live status. Same access
+     * model and 404-hiding as cancel/markDone, but read-only.
+     */
+    async get(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const id = req.params.id!
+
+      const delegation = await delegationService.getByIdWithEvent({ workspaceId, id })
+      if (!delegation) {
+        throw new HttpError("Delegation not found", { status: 404, code: "DELEGATION_NOT_FOUND" })
+      }
+
+      const access = await checkStreamAccess(pool, delegation.streamId, workspaceId, userId)
+      if (!access) {
+        throw new HttpError("Delegation not found", { status: 404, code: "DELEGATION_NOT_FOUND" })
+      }
+
+      res.json(toSummary(delegation))
+    },
+
     async cancel(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
