@@ -140,6 +140,12 @@ const createThreadParamsSchema = z.object({
   parentStreamId: z.string(),
   parentMessageId: z.string(),
   createdBy: z.string(),
+  /**
+   * Bots are never stream_members (their access resolves via the root grant),
+   * so a bot-created thread skips the creator membership insert. Omitted =
+   * "user".
+   */
+  createdByType: z.enum(["user", "bot"]).optional(),
 })
 
 export type CreateThreadParams = z.infer<typeof createThreadParamsSchema>
@@ -619,114 +625,123 @@ export class StreamService {
   }
 
   async createThread(params: CreateThreadParams): Promise<Stream> {
-    return withTransaction(this.pool, async (client) => {
-      const parentStream = await StreamRepository.findById(client, params.parentStreamId)
-      if (!parentStream || parentStream.workspaceId !== params.workspaceId) {
-        throw new StreamNotFoundError()
+    return withTransaction(this.pool, (client) => this.createThreadOn(client, params))
+  }
+
+  /**
+   * Same as {@link createThread} but runs inside a caller-owned transaction.
+   * Use when the thread must be atomic with other writes (e.g. a delegation
+   * completion posting its anchor + threaded result + status CAS as one unit).
+   */
+  async createThreadOn(client: Querier, params: CreateThreadParams): Promise<Stream> {
+    const parentStream = await StreamRepository.findById(client, params.parentStreamId)
+    if (!parentStream || parentStream.workspaceId !== params.workspaceId) {
+      throw new StreamNotFoundError()
+    }
+
+    const parentMessage = await MessageRepository.findById(client, params.parentMessageId)
+    if (!parentMessage || parentMessage.streamId !== params.parentStreamId) {
+      throw new MessageNotFoundError()
+    }
+
+    // Root is either the parent's root (if parent is a thread) or the parent itself
+    const rootStreamId = parentStream.rootStreamId ?? parentStream.id
+
+    const id = streamId()
+
+    // Inherit visibility from the root stream — threads in public channels
+    // are public, threads in private DMs/scratchpads stay private.
+    const rootStream =
+      rootStreamId === parentStream.id ? parentStream : await StreamRepository.findById(client, rootStreamId)
+    const inheritedVisibility = rootStream?.visibility ?? Visibilities.PRIVATE
+    const inheritedCompanionMode =
+      rootStream?.type === StreamTypes.SCRATCHPAD ? rootStream.companionMode : CompanionModes.OFF
+    const inheritedCompanionPersonaId =
+      rootStream?.type === StreamTypes.SCRATCHPAD ? (rootStream.companionPersonaId ?? undefined) : undefined
+    // Threads carry no memory setting of their own — the memo gate resolves to
+    // the root (INV-62) — but copy the root's value onto the thread row at
+    // creation so the persisted row matches its effective behavior.
+    const inheritedMemoryMode = rootStream?.memoryMode ?? MemoryModes.AUTO
+
+    const { stream, created } = await StreamRepository.insertThreadOrFind(client, {
+      id,
+      workspaceId: params.workspaceId,
+      type: StreamTypes.THREAD,
+      parentStreamId: params.parentStreamId,
+      parentMessageId: params.parentMessageId,
+      rootStreamId,
+      visibility: inheritedVisibility,
+      companionMode: inheritedCompanionMode,
+      companionPersonaId: inheritedCompanionPersonaId,
+      memoryMode: inheritedMemoryMode,
+      createdBy: params.createdBy,
+    })
+
+    // INV-E1: a thread under an E2E scratchpad must itself be E2E, or its
+    // replies would be stored server-readable plaintext (the encryption
+    // guarantee silently breaks one reply deep). The thread shares the root's
+    // SSK: mark it E2E (so `e2eEnabled` is true the instant the thread is, and
+    // the composer/sink/dispatch all treat it like the root) and copy the
+    // actors (so the enclave-actor dispatch gate fires for the thread).
+    //
+    // The key-WRAPS are deliberately NOT copied. A wrap is HPKE-sealed bound by
+    // AAD to its `(streamId, generation, recipientKeyId)` slot (buildWrapAad),
+    // so a wrap copied onto the thread's id can't be unwrapped under the thread
+    // id — and it would also go stale on the next root key-roll. Instead, every
+    // reader resolves the thread's SSK against the ROOT's wraps (frontend
+    // decrypt + seal pass the root; the enclave worker fetches the root's
+    // wraps). The thread therefore needs no wraps of its own.
+    // Only on first creation: a found-existing thread already carries it.
+    if (created && rootStream?.e2eEnabled === true) {
+      const rootE2e = await E2eStreamsRepository.getByStreamId(client, params.workspaceId, rootStreamId)
+      if (!rootE2e) {
+        // The stream row says e2eEnabled but the e2e_streams row is gone:
+        // refuse rather than create a plaintext thread under a sealed root.
+        throw new Error(`E2E root ${rootStreamId} has no e2e_streams row; cannot seal thread ${stream.id}`)
       }
-
-      const parentMessage = await MessageRepository.findById(client, params.parentMessageId)
-      if (!parentMessage || parentMessage.streamId !== params.parentStreamId) {
-        throw new MessageNotFoundError()
-      }
-
-      // Root is either the parent's root (if parent is a thread) or the parent itself
-      const rootStreamId = parentStream.rootStreamId ?? parentStream.id
-
-      const id = streamId()
-
-      // Inherit visibility from the root stream — threads in public channels
-      // are public, threads in private DMs/scratchpads stay private.
-      const rootStream =
-        rootStreamId === parentStream.id ? parentStream : await StreamRepository.findById(client, rootStreamId)
-      const inheritedVisibility = rootStream?.visibility ?? Visibilities.PRIVATE
-      const inheritedCompanionMode =
-        rootStream?.type === StreamTypes.SCRATCHPAD ? rootStream.companionMode : CompanionModes.OFF
-      const inheritedCompanionPersonaId =
-        rootStream?.type === StreamTypes.SCRATCHPAD ? (rootStream.companionPersonaId ?? undefined) : undefined
-      // Threads carry no memory setting of their own — the memo gate resolves to
-      // the root (INV-62) — but copy the root's value onto the thread row at
-      // creation so the persisted row matches its effective behavior.
-      const inheritedMemoryMode = rootStream?.memoryMode ?? MemoryModes.AUTO
-
-      const { stream, created } = await StreamRepository.insertThreadOrFind(client, {
-        id,
+      await E2eStreamsRepository.markStreamE2e(client, {
+        streamId: stream.id,
         workspaceId: params.workspaceId,
-        type: StreamTypes.THREAD,
-        parentStreamId: params.parentStreamId,
-        parentMessageId: params.parentMessageId,
-        rootStreamId,
-        visibility: inheritedVisibility,
-        companionMode: inheritedCompanionMode,
-        companionPersonaId: inheritedCompanionPersonaId,
-        memoryMode: inheritedMemoryMode,
-        createdBy: params.createdBy,
+        ownerUserId: rootE2e.ownerUserId,
+        ownerUserKeyId: rootE2e.ownerUserKeyId,
+        currentKeyGeneration: rootE2e.currentKeyGeneration,
       })
+      await E2eStreamActorsRepository.copyToStream(client, {
+        workspaceId: params.workspaceId,
+        fromStreamId: rootStreamId,
+        toStreamId: stream.id,
+      })
+      // Re-read so the returned/broadcast stream carries e2eEnabled + actors
+      // in the canonical shape (StreamRepository LEFT JOINs e2e_streams).
+      const sealed = await StreamRepository.findById(client, stream.id)
+      if (sealed) Object.assign(stream, sealed)
+    }
 
-      // INV-E1: a thread under an E2E scratchpad must itself be E2E, or its
-      // replies would be stored server-readable plaintext (the encryption
-      // guarantee silently breaks one reply deep). The thread shares the root's
-      // SSK: mark it E2E (so `e2eEnabled` is true the instant the thread is, and
-      // the composer/sink/dispatch all treat it like the root) and copy the
-      // actors (so the enclave-actor dispatch gate fires for the thread).
-      //
-      // The key-WRAPS are deliberately NOT copied. A wrap is HPKE-sealed bound by
-      // AAD to its `(streamId, generation, recipientKeyId)` slot (buildWrapAad),
-      // so a wrap copied onto the thread's id can't be unwrapped under the thread
-      // id — and it would also go stale on the next root key-roll. Instead, every
-      // reader resolves the thread's SSK against the ROOT's wraps (frontend
-      // decrypt + seal pass the root; the enclave worker fetches the root's
-      // wraps). The thread therefore needs no wraps of its own.
-      // Only on first creation: a found-existing thread already carries it.
-      if (created && rootStream?.e2eEnabled === true) {
-        const rootE2e = await E2eStreamsRepository.getByStreamId(client, params.workspaceId, rootStreamId)
-        if (!rootE2e) {
-          // The stream row says e2eEnabled but the e2e_streams row is gone:
-          // refuse rather than create a plaintext thread under a sealed root.
-          throw new Error(`E2E root ${rootStreamId} has no e2e_streams row; cannot seal thread ${stream.id}`)
-        }
-        await E2eStreamsRepository.markStreamE2e(client, {
-          streamId: stream.id,
-          workspaceId: params.workspaceId,
-          ownerUserId: rootE2e.ownerUserId,
-          ownerUserKeyId: rootE2e.ownerUserKeyId,
-          currentKeyGeneration: rootE2e.currentKeyGeneration,
-        })
-        await E2eStreamActorsRepository.copyToStream(client, {
-          workspaceId: params.workspaceId,
-          fromStreamId: rootStreamId,
-          toStreamId: stream.id,
-        })
-        // Re-read so the returned/broadcast stream carries e2eEnabled + actors
-        // in the canonical shape (StreamRepository LEFT JOINs e2e_streams).
-        const sealed = await StreamRepository.findById(client, stream.id)
-        if (sealed) Object.assign(stream, sealed)
-      }
-
+    if (params.createdByType !== "bot") {
       const isMember = await StreamMemberRepository.isMember(client, stream.id, params.createdBy)
       if (!isMember) {
         await StreamMemberRepository.insert(client, stream.id, params.createdBy)
       }
+    }
 
-      // Add parent message author as member and emit stream:member_added so they
-      // discover the thread in real-time (the stream:created event only surfaces
-      // private streams for the creator, not for other members).
-      if (parentMessage.authorType === "user" && parentMessage.authorId !== params.createdBy) {
-        await this.addToStream(client, stream, parentMessage.authorId, params.createdBy)
-      }
+    // Add parent message author as member and emit stream:member_added so they
+    // discover the thread in real-time (the stream:created event only surfaces
+    // private streams for the creator, not for other members).
+    if (parentMessage.authorType === "user" && parentMessage.authorId !== params.createdBy) {
+      await this.addToStream(client, stream, parentMessage.authorId, params.createdBy)
+    }
 
-      if (created) {
-        // Broadcast stream:created to PARENT stream's room (not the new thread's room)
-        // This lets watchers of the parent see the thread indicator appear
-        await OutboxRepository.insert(client, "stream:created", {
-          workspaceId: params.workspaceId,
-          streamId: params.parentStreamId,
-          stream,
-        })
-      }
+    if (created) {
+      // Broadcast stream:created to PARENT stream's room (not the new thread's room)
+      // This lets watchers of the parent see the thread indicator appear
+      await OutboxRepository.insert(client, "stream:created", {
+        workspaceId: params.workspaceId,
+        streamId: params.parentStreamId,
+        stream,
+      })
+    }
 
-      return stream
-    })
+    return stream
   }
 
   async updateCompanionMode(

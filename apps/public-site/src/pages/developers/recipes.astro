@@ -285,8 +285,9 @@ async function loop() {
 
   <h3>4 · Complete with the result</h3>
   <p>
-    The result posts into the stream and the card flips in one transaction.
-    Optional <code>metadata</code> is stamped on the message (queryable later with
+    Completion posts a compact anchor into the stream with the full result as a
+    thread reply under it, and the card flips in the same transaction. Optional
+    <code>metadata</code> is stamped on the result message (queryable later with
     <code>find-by-metadata</code>). Retries are safe: a retried complete bearing the
     same token returns the committed outcome instead of double-posting.
   </p>
