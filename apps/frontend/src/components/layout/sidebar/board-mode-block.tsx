@@ -147,15 +147,17 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
                   )}
                   <span className="min-w-0 flex-1 truncate">{view.name}</span>
                 </Link>
-                {/* Fixed-footprint trigger — always laid out, transparent until
-                    hover/focus/open — so revealing the actions never shifts the
-                    row (INV-21). Management verbs are actions, not navigation. */}
+                {/* Faint-but-visible resting state (same treatment as the lens
+                    pin below): the sidebar is the ONLY surface managing views
+                    now, and touch has no hover to reveal a hidden trigger.
+                    Fixed footprint per INV-21. Management verbs are actions,
+                    not navigation. */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
                       aria-label={`Actions for ${view.name}`}
-                      className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                      className="shrink-0 rounded p-1.5 text-muted-foreground/40 transition-colors hover:text-foreground focus-visible:text-foreground group-hover:text-muted-foreground data-[state=open]:text-foreground"
                     >
                       <MoreHorizontal className="h-4 w-4" />
                     </button>
