@@ -24,6 +24,7 @@ const customRow: Persona = {
   tonePrompt: null,
   brevityPrompt: null,
   managedBy: "workspace",
+  ownerUserId: null,
   status: "active",
   createdAt: new Date(),
   updatedAt: new Date(),

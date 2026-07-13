@@ -174,7 +174,7 @@ export function createWorkspaceHandlers({
         workspaceService.getWorkspaceById(workspaceId),
         workspaceService.getUsers(workspaceId),
         streamService.listWithPreviews(workspaceId, userId),
-        workspaceService.getPersonasForWorkspace(workspaceId),
+        workspaceService.getPersonasForWorkspace(workspaceId, userId),
         BotRepository.listVisibleTo(pool, workspaceId, userId),
         workspaceService.getEmojiWeights(workspaceId, userId),
         userPreferencesService.getPreferences(workspaceId, userId),

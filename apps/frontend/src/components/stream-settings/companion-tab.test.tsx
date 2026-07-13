@@ -21,6 +21,7 @@ function persona(overrides: Partial<PersonaListItem> & Pick<PersonaListItem, "id
     avatarEmoji: null,
     model: "openrouter:anthropic/claude-haiku-4.5",
     kind: "custom",
+    ownerUserId: null,
     avatarUrl: null,
     isCustomized: false,
     status: "active",

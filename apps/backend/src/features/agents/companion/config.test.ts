@@ -23,6 +23,7 @@ function persona(overrides: Partial<Persona> = {}): Persona {
     tonePrompt: null,
     brevityPrompt: null,
     managedBy: "system",
+    ownerUserId: null,
     status: "active",
     createdAt: new Date(),
     updatedAt: new Date(),

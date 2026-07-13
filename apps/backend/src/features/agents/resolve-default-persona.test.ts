@@ -42,6 +42,23 @@ describe("resolveDefaultPersona", () => {
     expect(systemDefault).not.toHaveBeenCalled()
   })
 
+  it("resolves the owner's personal persona as their personal default (user tier, findById returns it active)", async () => {
+    // The stored pointer was owner-validated at write time (assertAssignablePersona
+    // with the caller's id), so a personal id can legitimately sit in the user
+    // tier; findById is workspace-scoped and returns the personal row.
+    const personal = { id: "persona_personal", status: "active", managedBy: "user", ownerUserId: OWNER_ID } as Persona
+    stubUserOverride("persona_personal")
+    stubWorkspaceOverride("persona_workspace")
+    const findById = spyOn(PersonaRepository, "findById").mockResolvedValue(personal)
+    const systemDefault = spyOn(PersonaRepository, "getSystemDefault")
+
+    const result = await resolveDefaultPersona(db, WORKSPACE_ID, OWNER_ID)
+
+    expect(result).toEqual(personal)
+    expect(findById).toHaveBeenCalledWith(db, "persona_personal", WORKSPACE_ID)
+    expect(systemDefault).not.toHaveBeenCalled()
+  })
+
   it("uses the workspace setting when the user preference is absent", async () => {
     stubUserOverride(null)
     stubWorkspaceOverride("persona_workspace")

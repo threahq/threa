@@ -519,7 +519,14 @@ export class EventService {
     // outbox payload. No-op when ids are already resolved (rich-client writes).
     // When resolution changes an id, re-derive the markdown so the wire form
     // (`[@slug](user:usr_x)`) stays consistent with the JSON.
-    const resolvedCreate = await resolveMentionContent(client, params.workspaceId, params.contentJson)
+    const resolvedCreate = await resolveMentionContent(
+      client,
+      params.workspaceId,
+      params.contentJson,
+      // A personal persona resolves by slug only for its owner: pass the author
+      // when they are a user; a persona/bot/system author resolves none.
+      params.authorType === "user" ? params.authorId : undefined
+    )
     if (resolvedCreate.changed) {
       params.contentJson = resolvedCreate.contentJson
       params.contentMarkdown = deriveContentMarkdown(resolvedCreate.contentJson)
@@ -860,7 +867,13 @@ export class EventService {
       // Resolve slug-only mention/channel ids before the edited body feeds the
       // event payload, projection, and outbox (INV-64). When resolution changes
       // an id, re-derive the markdown so the stored wire form matches the JSON.
-      const resolvedEdit = await resolveMentionContent(client, params.workspaceId, params.contentJson)
+      const resolvedEdit = await resolveMentionContent(
+        client,
+        params.workspaceId,
+        params.contentJson,
+        // Personal personas resolve by slug only for their owner (see create).
+        actorType === "user" ? params.actorId : undefined
+      )
       if (resolvedEdit.changed) {
         params.contentJson = resolvedEdit.contentJson
         params.contentMarkdown = deriveContentMarkdown(resolvedEdit.contentJson)

@@ -26,7 +26,7 @@ import {
 // Re-exported so components/pages can type the values these store hooks return
 // (e.g. `useWorkspaceStreams(): CachedStream[]`) without importing `@/db`
 // directly, which the component layer is barred from (INV-15).
-export type { CachedBot, CachedStream } from "@/db"
+export type { CachedBot, CachedPersona, CachedStream } from "@/db"
 
 // In-memory cache — populated by applyWorkspaceBootstrap, used as the default
 // value for useLiveQuery so the first synchronous render returns real data
@@ -350,6 +350,23 @@ export function useWorkspaceDmPeers(workspaceId: string | undefined): CachedDmPe
     [workspaceId],
     cached
   )
+}
+
+/**
+ * Incrementally upsert one persona into the in-memory cache (and IDB) so a store
+ * reader sees it on the next synchronous render — ahead of the owner-room
+ * `agent_config:updated` broadcast. Used by the fork mutation so a just-created
+ * personal persona is already owned-by-the-viewer when the editor's ownership gate
+ * runs on navigate. Idempotent by id; bumps the cache version so subscribers
+ * re-render.
+ */
+export function upsertWorkspacePersonaCache(workspaceId: string, persona: CachedPersona): void {
+  const rows = cache.personas.get(workspaceId) ?? []
+  const idx = rows.findIndex((p) => p.id === persona.id)
+  cache.personas.set(workspaceId, idx >= 0 ? rows.map((p) => (p.id === persona.id ? persona : p)) : [...rows, persona])
+  cacheVersion.set(workspaceId, (cacheVersion.get(workspaceId) ?? 0) + 1)
+  emitWorkspaceCacheChange(workspaceId)
+  void db.personas.put(persona)
 }
 
 export function useWorkspacePersonas(workspaceId: string | undefined): CachedPersona[] {

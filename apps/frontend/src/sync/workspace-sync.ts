@@ -37,8 +37,8 @@ import type {
   DraftUpsertedPayload,
   DraftDeletedPayload,
   PersonaListItem,
-  Persona,
 } from "@threa/types"
+import { cachedPersonaFromListItem } from "@/lib/personas"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { personaKeys } from "@/hooks/use-personas"
@@ -1434,32 +1434,16 @@ export function registerWorkspaceSocketHandlers(
   const handleAgentConfigUpdated = (payload: { workspaceId: string; agentId: string; persona: PersonaListItem }) => {
     if (payload.workspaceId !== workspaceId) return
 
-    const { id, slug, name, description, avatarEmoji, avatarUrl, model, kind, status } = payload.persona
+    const { id, slug, name, description, avatarEmoji, avatarUrl, model, status } = payload.persona
     // status rides along so an archive/unarchive flips the cached row — the
     // store-backed companion roster filters on it without a refetch.
     const patch = { slug, name, description, avatarEmoji, avatarUrl, model, status }
-    // A fork broadcasts a NEW custom that no existing row covers — upsert it so the
-    // roster and actor rendering reflect it live (the list payload lacks the full
-    // row, so synthesize the non-display fields; a bootstrap resync fills them in).
-    const nowIso = new Date().toISOString()
-    const synthesized: Persona = {
-      id,
-      workspaceId: kind === "custom" ? workspaceId : null,
-      slug,
-      name,
-      description,
-      avatarEmoji,
-      avatarUrl,
-      systemPrompt: null,
-      model,
-      temperature: null,
-      maxTokens: null,
-      enabledTools: null,
-      managedBy: kind === "custom" ? "workspace" : "system",
-      status,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    }
+    // A fork broadcasts a NEW custom/personal row that no existing row covers —
+    // upsert it so the roster and actor rendering reflect it live (the list
+    // payload lacks the full row, so synthesize the non-display fields; a
+    // bootstrap resync fills them in). A personal (`kind: "personal"`) row is
+    // workspace-scoped and owned; only its owner ever receives the broadcast.
+    const synthesized = cachedPersonaFromListItem(payload.persona, workspaceId)
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
       const personas = old.personas ?? []
       if (personas.some((persona) => persona.id === id)) {
@@ -1473,7 +1457,7 @@ export function registerWorkspaceSocketHandlers(
         void db.personas.update(id, { ...patch, _cachedAt: Date.now() })
         return
       }
-      void db.personas.put({ ...synthesized, _cachedAt: Date.now() })
+      void db.personas.put(synthesized)
     })
 
     queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, payload.agentId) })

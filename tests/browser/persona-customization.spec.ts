@@ -1,5 +1,11 @@
-import { test, expect } from "@playwright/test"
-import { expectApiOk, loginAndCreateWorkspace } from "./helpers"
+import { test, expect, type BrowserContext, type Page } from "@playwright/test"
+import {
+  expectApiOk,
+  generateTestId,
+  loginAndCreateWorkspace,
+  loginInNewContext,
+  waitForWorkspaceProvisioned,
+} from "./helpers"
 
 /**
  * Persona roster + editors E2E (roadmap 7.1/7.2). Covers the shipped model:
@@ -267,4 +273,219 @@ test.describe("Persona roster + editors", () => {
       timeout: 10000,
     })
   })
+
+  /**
+   * User-scoped personas cross-user contract (user-scoped-personas step 4).
+   *
+   * A workspace admin (user A) creates the workspace; a plain member (user B)
+   * forks a personal persona. Two invariants are proven end to end against real
+   * store-driven UI (no live AI turn):
+   *
+   *  - OWNER lifecycle + visibility: the member forks from a built-in, edits and
+   *    saves in the editor, sees the row under "My personas", picks it as a
+   *    scratchpad companion (with the muted "Personal" tag) and the pin persists,
+   *    sees it in their own @mention suggestions, then archives it (it leaves the
+   *    picker) and unarchives it from the "My personas" archived disclosure.
+   *  - CROSS-USER INVISIBILITY: while that personal persona is active, the admin
+   *    never sees it — not in the AI Agents roster, not in the workspace-default
+   *    picker options, not in their own scratchpad companion picker, not in their
+   *    @mention suggestions. The admin's Ariadne rows/options are asserted present
+   *    as positive controls so an absent-personal check can't pass on a dead menu.
+   *
+   * One spec composes both flows so the two-user workspace is provisioned once.
+   */
+  test("personal persona: owner lifecycle + visibility, invisible to the workspace admin", async ({
+    page,
+    browser,
+  }) => {
+    test.setTimeout(180000)
+
+    // ──── User A: admin (workspace creator, default page fixture) ────
+    const adminPage = page
+    let memberCtx: { context: BrowserContext; page: Page } | undefined
+
+    try {
+      await loginAndCreateWorkspace(adminPage, "persona-admin")
+      const workspaceId = adminPage.url().match(/\/w\/(ws_[^/]+)/)![1]
+
+      // ──── User B: plain member joins the workspace ────
+      memberCtx = await loginInNewContext(browser, `persona-member-${generateTestId()}@example.com`, "Persona Member")
+      const memberPage = memberCtx.page
+      const joinRes = await memberPage.request.post(`/api/dev/workspaces/${workspaceId}/join`, {
+        data: { role: "member" },
+      })
+      await expectApiOk(joinRes, "Member join workspace")
+      await waitForWorkspaceProvisioned(memberPage, workspaceId)
+
+      const testId = generateTestId()
+      const personaName = `Nightowl ${testId}`
+      const personaDescription = `Personal night-shift companion ${testId}`
+
+      // ════════════ OWNER: fork a personal persona through "My personas" ════════════
+
+      await memberPage.goto(`/w/${workspaceId}?settings=ai`)
+      // The "New persona" button lives in the My personas section (personal fork).
+      await expect(memberPage.getByRole("heading", { name: "My personas" })).toBeVisible({ timeout: 10000 })
+      await memberPage.getByRole("button", { name: "New persona" }).click()
+
+      const forkDialog = memberPage.getByRole("dialog").filter({ hasText: "Fork an existing persona" })
+      await expect(forkDialog).toBeVisible({ timeout: 10000 })
+      // Pick the built-in Ariadne as the fork source explicitly. Selecting it (vs
+      // relying on the default) also waits out the just-joined member's persona
+      // store hydrating — before it does, the source list is empty and Create is
+      // disabled.
+      await forkDialog.getByRole("combobox").click()
+      await memberPage.getByRole("option", { name: "Ariadne" }).click()
+      await forkDialog.getByRole("textbox", { name: "Name" }).fill(personaName)
+      const createButton = forkDialog.getByRole("button", { name: "Create" })
+      await expect(createButton).toBeEnabled({ timeout: 10000 })
+      await createButton.click()
+
+      // Lands in the full custom editor for the just-forked personal persona.
+      await expect(memberPage).toHaveURL(/\/settings\/personas\/persona_/, { timeout: 10000 })
+      await expect(memberPage.getByRole("heading", { name: `Edit ${personaName}` })).toBeVisible({ timeout: 10000 })
+      const personaId = memberPage.url().match(/\/settings\/personas\/(persona_[^/?]+)/)![1]
+
+      // ──── Edit a plain field and save ────
+      await memberPage.getByRole("textbox", { name: "Description" }).fill(personaDescription)
+      const save = memberPage.getByRole("button", { name: "Save" })
+      await expect(save).toBeEnabled()
+      // Save disables the moment the mutation STARTS, so wait for the config
+      // PUT to succeed before navigating away — otherwise a failed save would
+      // slip past (the later name assertions hold from the fork seed alone).
+      const saved = memberPage.waitForResponse(
+        (r) => r.url().includes(`/personas/${personaId}`) && r.request().method() === "PUT" && r.ok()
+      )
+      await save.click()
+      await saved
+
+      // ──── Back on My personas the saved row shows the EDITED description ────
+      await memberPage.goto(`/w/${workspaceId}?settings=ai`)
+      await expect(
+        memberPage.getByRole("listitem").filter({ hasText: personaName }).getByText(personaDescription)
+      ).toBeVisible({ timeout: 10000 })
+
+      // ════════════ OWNER: pick it as a scratchpad companion (with "Personal" tag) ════════════
+
+      const padRes = await memberPage.request.post(`/api/workspaces/${workspaceId}/streams`, {
+        data: { type: "scratchpad", displayName: `owner-pad-${testId}` },
+      })
+      await expectApiOk(padRes, "Member scratchpad creation")
+      const streamId = ((await padRes.json()) as { stream: { id: string } }).stream.id
+
+      const companionUrl = `/w/${workspaceId}/s/${streamId}?stream-settings=companion&sid=${streamId}`
+      await memberPage.goto(companionUrl)
+      const memberPicker = memberPage.getByRole("combobox", { name: "Companion agent" })
+      await expect(memberPicker).toBeVisible({ timeout: 10000 })
+      await memberPicker.click()
+      const personalOption = memberPage.getByRole("option", { name: new RegExp(personaName) })
+      await expect(personalOption).toBeVisible({ timeout: 10000 })
+      // The muted "Personal" tag marks a user-owned persona in the picker.
+      await expect(personalOption).toContainText("Personal")
+      await personalOption.click()
+      await expect(memberPicker).toContainText(personaName)
+
+      // Reload: the personal companion pointer persisted on the scratchpad row.
+      await memberPage.goto(companionUrl)
+      await expect(memberPage.getByRole("combobox", { name: "Companion agent" })).toContainText(personaName, {
+        timeout: 10000,
+      })
+
+      // ════════════ OWNER: it appears in their own @mention suggestions ════════════
+
+      await memberPage.goto(`/w/${workspaceId}/s/${streamId}`)
+      await typeMention(memberPage, personaName.split(" ")[0])
+      await expect(
+        memberPage.locator("[aria-label='Mention suggestions']").getByRole("option", { name: new RegExp(personaName) })
+      ).toBeVisible({ timeout: 10000 })
+
+      // ════════════ ADMIN: the personal persona is invisible everywhere ════════════
+
+      // (1) Not in the AI Agents workspace roster.
+      await adminPage.goto(`/w/${workspaceId}?ws-settings=ai-agents`)
+      const adminSettings = adminPage.getByRole("dialog")
+      await expect(adminSettings.getByRole("listitem").filter({ hasText: "Ariadne" })).toBeVisible({ timeout: 10000 })
+      await expect(adminSettings.getByText(personaName)).toHaveCount(0)
+
+      // (2) Not among the workspace-default picker options (Ariadne present).
+      const wsDefaultPicker = adminSettings.getByRole("combobox", { name: "Companion agent" })
+      await expect(wsDefaultPicker).toBeEnabled({ timeout: 10000 })
+      await wsDefaultPicker.click()
+      await expect(adminPage.getByRole("option", { name: /Ariadne/ })).toBeVisible({ timeout: 10000 })
+      await expect(adminPage.getByRole("option", { name: new RegExp(personaName) })).toHaveCount(0)
+      await adminPage.keyboard.press("Escape")
+
+      // (3) Not in the admin's own scratchpad companion picker (Ariadne present).
+      const adminPadRes = await adminPage.request.post(`/api/workspaces/${workspaceId}/streams`, {
+        data: { type: "scratchpad", displayName: `admin-pad-${testId}` },
+      })
+      await expectApiOk(adminPadRes, "Admin scratchpad creation")
+      const adminStreamId = ((await adminPadRes.json()) as { stream: { id: string } }).stream.id
+      await adminPage.goto(`/w/${workspaceId}/s/${adminStreamId}?stream-settings=companion&sid=${adminStreamId}`)
+      const adminPicker = adminPage.getByRole("combobox", { name: "Companion agent" })
+      await expect(adminPicker).toBeVisible({ timeout: 10000 })
+      await adminPicker.click()
+      await expect(adminPage.getByRole("option", { name: /Ariadne/ })).toBeVisible({ timeout: 10000 })
+      await expect(adminPage.getByRole("option", { name: new RegExp(personaName) })).toHaveCount(0)
+      await adminPage.keyboard.press("Escape")
+
+      // (4) Not in the admin's @mention suggestions (Ariadne present as control).
+      await adminPage.goto(`/w/${workspaceId}/s/${adminStreamId}`)
+      await typeMention(adminPage, "Ariadne")
+      await expect(
+        adminPage.locator("[aria-label='Mention suggestions']").getByRole("option", { name: /Ariadne/ })
+      ).toBeVisible({ timeout: 10000 })
+      await clearComposer(adminPage)
+      await typeMention(adminPage, personaName.split(" ")[0])
+      await expect(adminPage.getByRole("option", { name: new RegExp(personaName) })).toHaveCount(0)
+
+      // ════════════ OWNER: archive removes it from the picker, unarchive restores it ════════════
+
+      await memberPage.goto(`/w/${workspaceId}/settings/personas/${personaId}`)
+      await expect(memberPage.getByRole("heading", { name: `Edit ${personaName}` })).toBeVisible({ timeout: 10000 })
+      await memberPage.getByRole("button", { name: "Archive", exact: true }).click()
+      const confirm = memberPage.getByRole("alertdialog")
+      await confirm.getByRole("button", { name: "Archive", exact: true }).click()
+      // A personal persona returns its owner to personal AI settings.
+      await expect(memberPage).toHaveURL(/settings=ai/, { timeout: 10000 })
+
+      // Archived: the scratchpad companion picker no longer offers it.
+      await memberPage.goto(companionUrl)
+      const memberPickerAfterArchive = memberPage.getByRole("combobox", { name: "Companion agent" })
+      await expect(memberPickerAfterArchive).toBeVisible({ timeout: 10000 })
+      await memberPickerAfterArchive.click()
+      await expect(memberPage.getByRole("option", { name: /Ariadne/ })).toBeVisible({ timeout: 10000 })
+      await expect(memberPage.getByRole("option", { name: new RegExp(personaName) })).toHaveCount(0)
+      await memberPage.keyboard.press("Escape")
+
+      // Unarchive from the "My personas" Archived disclosure returns it to the active roster.
+      await memberPage.goto(`/w/${workspaceId}?settings=ai`)
+      const archivedToggle = memberPage.getByRole("button", { name: /Archived/ })
+      await expect(archivedToggle).toBeVisible({ timeout: 10000 })
+      await archivedToggle.click()
+      await memberPage.getByRole("button", { name: "Unarchive" }).click()
+      // Back as an active row with an Edit link.
+      await expect(
+        memberPage.getByRole("listitem").filter({ hasText: personaName }).getByRole("link", { name: "Edit" })
+      ).toBeVisible({ timeout: 10000 })
+    } finally {
+      await memberCtx?.context.close()
+    }
+  })
 })
+
+/** Focus the main composer and type an @-mention trigger, opening the suggestion popup. */
+async function typeMention(page: Page, query: string): Promise<void> {
+  const composer = page.locator("[data-editor-zone='main'] [contenteditable='true']").last()
+  await expect(composer).toBeVisible({ timeout: 15000 })
+  await composer.click()
+  await page.keyboard.type(`@${query}`)
+}
+
+/** Clear the main composer between two mention probes. */
+async function clearComposer(page: Page): Promise<void> {
+  const composer = page.locator("[data-editor-zone='main'] [contenteditable='true']").last()
+  await composer.click()
+  await composer.press("ControlOrMeta+a")
+  await page.keyboard.press("Backspace")
+}

@@ -61,6 +61,7 @@ function MentionItem({ item }: { item: Mentionable }) {
           >
             {typeLabels[item.type]}
           </span>
+          {item.isPersonal && <span className="shrink-0 text-[10px] text-muted-foreground">Personal</span>}
         </div>
         <span className="text-xs text-muted-foreground truncate w-full">@{item.slug}</span>
       </div>

@@ -32,6 +32,7 @@ import {
   type LabelDeletedOutboxPayload,
   type LabelAssignedOutboxPayload,
   type LabelUnassignedOutboxPayload,
+  type AgentConfigUpdatedOutboxPayload,
 } from "./repository"
 
 /**
@@ -288,6 +289,19 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
       if (threadId !== payload.streamId) groups.push(streamGroup(threadId))
     }
     return groups
+  }
+
+  // Persona config updates for a PERSONAL persona reach only its owner
+  // (user-scoped-personas): the persona is invisible to every other member, so
+  // its create/update/archive broadcast must not leak into the workspace room.
+  // Built-in and workspace-custom updates carry a null `ownerUserId` and fall
+  // through to the whole-workspace default below (every member inherits them).
+  if (isOutboxEventType(event, "agent_config:updated")) {
+    const payload = event.payload as AgentConfigUpdatedOutboxPayload
+    if (payload.persona.ownerUserId) {
+      return [userGroup(payload.persona.ownerUserId)]
+    }
+    return [WORKSPACE_GROUP]
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to

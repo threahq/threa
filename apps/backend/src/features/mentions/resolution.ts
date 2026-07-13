@@ -90,7 +90,8 @@ export function applyMentionResolution(
 export async function buildMentionResolutionMaps(
   querier: Querier,
   workspaceId: string,
-  input: { mentionSlugs: string[]; channelSlugs: string[] }
+  input: { mentionSlugs: string[]; channelSlugs: string[] },
+  authorUserId?: string
 ): Promise<MentionResolutionMaps> {
   const mentionSlugToActor = new Map<string, { id: string; actorType: MentionActorType }>()
   const channelSlugToStreamId = new Map<string, string>()
@@ -109,7 +110,11 @@ export async function buildMentionResolutionMaps(
   }
 
   if (pending.size > 0) {
-    const personas = await PersonaRepository.findBySlugs(querier, [...pending], workspaceId)
+    // A personal persona resolves by slug only for its owner (user-scoped-
+    // personas); `authorUserId` is the mentioning message's author when they are
+    // a user. Absent (agent/system author, or backfill) → personal rows are
+    // skipped and the slug stays plain text.
+    const personas = await PersonaRepository.findBySlugs(querier, [...pending], workspaceId, authorUserId)
     for (const persona of personas) {
       const key = persona.slug.toLowerCase()
       if (pending.has(key)) {
@@ -152,7 +157,8 @@ export async function buildMentionResolutionMaps(
 export async function resolveMentionContent(
   querier: Querier,
   workspaceId: string,
-  contentJson: JSONContent
+  contentJson: JSONContent,
+  authorUserId?: string
 ): Promise<{ contentJson: JSONContent; changed: boolean }> {
   const mentionSlugs = collectUnresolvedMentionSlugs(contentJson)
   const channelSlugs = collectUnresolvedChannelLinkSlugs(contentJson)
@@ -163,7 +169,7 @@ export async function resolveMentionContent(
     return { contentJson, changed: false }
   }
 
-  const maps = await buildMentionResolutionMaps(querier, workspaceId, { mentionSlugs, channelSlugs })
+  const maps = await buildMentionResolutionMaps(querier, workspaceId, { mentionSlugs, channelSlugs }, authorUserId)
   return applyMentionResolution(contentJson, maps)
 }
 

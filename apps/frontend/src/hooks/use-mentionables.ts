@@ -188,6 +188,7 @@ export function useMentionables(streamContext?: MentionStreamContext) {
         type: "persona",
         avatarEmoji: emoji ?? undefined,
         avatarUrl: getPersonaAvatarUrl(workspaceId ?? "", persona.avatarUrl, 64),
+        isPersonal: persona.managedBy === "user",
       }
     })
 

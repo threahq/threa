@@ -7,7 +7,7 @@
 // `availableModels`; built-in defaults stay legal even if the registry lacks them.
 
 import { z } from "zod"
-import { AGENT_TOOL_NAMES, TONE_PRESETS, BREVITY_PRESETS, type PersonaStatus } from "./constants"
+import { AGENT_TOOL_NAMES, TONE_PRESETS, BREVITY_PRESETS, PERSONA_MANAGED_BY, type PersonaStatus } from "./constants"
 
 /**
  * One selectable chat model for the persona editor's model / escalation-model
@@ -174,7 +174,9 @@ export const personaResolvedConfigSchema = z.object({
   brevityPreset: z.enum(BREVITY_PRESETS).nullable(),
   tonePrompt: z.string().max(PERSONA_SLOT_MAX_CHARS).nullable(),
   brevityPrompt: z.string().max(PERSONA_SLOT_MAX_CHARS).nullable(),
-  managedBy: z.enum(["system", "workspace"]),
+  // `user` is a personal persona (user-scoped-personas), resolved only for its
+  // owner; a built-in is `system`, a workspace custom is `workspace`.
+  managedBy: z.enum(PERSONA_MANAGED_BY),
   status: personaConfigStatusSchema,
   visibility: personaConfigVisibilitySchema,
   e2eCapable: z.boolean(),
@@ -182,8 +184,12 @@ export const personaResolvedConfigSchema = z.object({
 
 export type PersonaResolvedConfig = z.infer<typeof personaResolvedConfigSchema>
 
-/** Whether a persona is a code-backed built-in or a workspace-created custom (roadmap 7.1 step 2). */
-export type PersonaKind = "builtin" | "custom"
+/**
+ * Whether a persona is a code-backed built-in, a workspace-created custom, or a
+ * user-owned personal persona (user-scoped-personas). `personal` maps from
+ * `managed_by = 'user'` and is visible only to its owner.
+ */
+export type PersonaKind = "builtin" | "custom" | "personal"
 
 /** Light persona row for the member-visible list (no systemPrompt). */
 export interface PersonaListItem {
@@ -193,8 +199,14 @@ export interface PersonaListItem {
   description: string | null
   avatarEmoji: string | null
   model: string
-  /** Built-in vs custom — the roster and editor branch on this. */
+  /** Built-in vs custom vs personal — the roster and editor branch on this. */
   kind: PersonaKind
+  /**
+   * Owning user for a `personal` persona; null for built-in and custom. Load-
+   * bearing for delivery-group routing: the `agent_config:updated` broadcast
+   * reuses this shape, and a personal persona's update must reach only its owner.
+   */
+  ownerUserId: string | null
   /**
    * Base path of an uploaded avatar image, or null (emoji/initials fallback).
    * Only a custom persona can carry one; a built-in always resolves to null.
@@ -302,6 +314,12 @@ export interface ForkPersonaInput {
    */
   sourcePersonaId: string | null
   name: string
+  /**
+   * Fork target scope: `workspace` (admin-only, a shared custom) or `personal`
+   * (any member, private to the caller — user-scoped-personas). Omitted defaults
+   * to `workspace` server-side, so existing callers are unchanged.
+   */
+  scope?: "workspace" | "personal"
 }
 
 /** Request body for PUT update-a-custom-persona (full-field write + optimistic concurrency). */

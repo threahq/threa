@@ -310,8 +310,8 @@ export class WorkspaceService {
     return UserRepository.isMember(this.pool, workspaceId, workosUserId)
   }
 
-  async getPersonasForWorkspace(workspaceId: string): Promise<Persona[]> {
-    return PersonaRepository.listForWorkspace(this.pool, workspaceId)
+  async getPersonasForWorkspace(workspaceId: string, userId: string): Promise<Persona[]> {
+    return PersonaRepository.listForWorkspace(this.pool, workspaceId, userId)
   }
 
   async getEmojiWeights(workspaceId: string, userId: string): Promise<Record<string, number>> {
