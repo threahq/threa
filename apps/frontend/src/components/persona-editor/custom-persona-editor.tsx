@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { FileText, Upload, X } from "lucide-react"
+import { FileText, Paperclip, Upload, X } from "lucide-react"
 import {
   getPersonaAvatarUrl,
   isPersonaAttachmentMimeAllowed,
@@ -53,6 +53,7 @@ import {
   useUpdatePersonaCustom,
   useUploadPersonaAvatar,
 } from "@/hooks/use-personas"
+import { AttachExistingDialog } from "./attach-existing-dialog"
 import { buildModelOptions, toCustomConfig, CUSTOM_EDITABLE_FIELDS } from "./persona-form"
 import type { SyncState } from "./persona-form"
 import { usePersonaDraftEditor } from "./use-persona-draft-editor"
@@ -122,6 +123,7 @@ export function CustomPersonaEditor({
   const disableSelectionToolbar = useInputMode() === "touch"
   const promptEditorRef = useRef<RichEditorHandle>(null)
   const [promptFormatOpen, setPromptFormatOpen] = useState(false)
+  const [attachExistingOpen, setAttachExistingOpen] = useState(false)
 
   const resolved = config.resolved
   const editor = usePersonaDraftEditor({
@@ -521,6 +523,16 @@ export function CustomPersonaEditor({
             <Upload className="mr-1 h-3.5 w-3.5" />
             Add file
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setAttachExistingOpen(true)}
+            disabled={atAttachmentCap}
+          >
+            <Paperclip className="mr-1 h-3.5 w-3.5" />
+            Attach existing
+          </Button>
           <span className="text-xs text-muted-foreground">
             {attachmentCount} of {PERSONA_ATTACHMENT_MAX_COUNT} files
           </span>
@@ -532,6 +544,12 @@ export function CustomPersonaEditor({
           accept={PERSONA_ATTACHMENT_ACCEPT}
           className="hidden"
           onChange={handleAttachmentFile}
+        />
+        <AttachExistingDialog
+          workspaceId={workspaceId}
+          personaId={personaId}
+          open={attachExistingOpen}
+          onOpenChange={setAttachExistingOpen}
         />
       </div>
 

@@ -16,6 +16,8 @@ interface ExplorerListProps {
   fetchNextPage: () => void
   selectedId: string | null
   onSelect: (id: string) => void
+  /** Picker override forwarded to each {@link ExplorerRow}; see its prop doc. */
+  onSelectAttachment?: (item: AttachmentSearchItem) => void
   onClearFilters?: () => void
   onWidenScope?: () => void
   hasFilters: boolean
@@ -65,6 +67,7 @@ export function ExplorerList({
   fetchNextPage,
   selectedId,
   onSelect,
+  onSelectAttachment,
   onClearFilters,
   onWidenScope,
   hasFilters,
@@ -130,6 +133,7 @@ export function ExplorerList({
                   item={item}
                   isSelected={selectedId === item.id}
                   onSelect={onSelect}
+                  onSelectAttachment={onSelectAttachment}
                 />
               </div>
             ))}

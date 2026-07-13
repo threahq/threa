@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import type {
+  PersonaAttachmentItem,
   PersonaConfigPatch,
   PersonaConfigResponse,
   PersonaCustomConfig,
@@ -394,24 +395,53 @@ export function useRemovePersonaAvatar(workspaceId: string, personaId: string) {
 }
 
 /**
+ * The single "a new persona attachment landed" cache reconcile shared by bind
+ * (upload path) and attach-from-existing (copy path): append the returned row so
+ * it renders immediately (INV-63 — the row appearing IS the signal, no toast),
+ * then invalidate the config query so the server-authoritative position/ordering
+ * reconciles and the gated 3s `refetchInterval` takes over polling while a
+ * `processing` copy's extraction runs. One home so the two writers can't drift.
+ */
+function appendPersonaAttachment(
+  queryClient: QueryClient,
+  workspaceId: string,
+  personaId: string,
+  attachment: PersonaAttachmentItem
+) {
+  queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
+    old ? { ...old, attachments: [...old.attachments, attachment] } : old
+  )
+  void queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, personaId) })
+}
+
+/**
  * Bind an already-uploaded workspace attachment to a custom/personal persona as
  * context knowledge — the persona-ness step after the shared upload transport
- * settled the bytes (INV-35/37). The returned row is appended to the config cache
- * so it renders immediately (INV-63 — the row appearing IS the signal, no toast);
- * the config query is then invalidated so the server-authoritative position/
- * ordering reconciles, and its gated refetchInterval takes over polling while
- * extraction runs.
+ * settled the bytes (INV-35/37). Shares {@link appendPersonaAttachment} with the
+ * attach-from-existing path.
  */
 export function useBindPersonaAttachment(workspaceId: string, personaId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (attachmentId: string) => personasApi.bindAttachment(workspaceId, personaId, attachmentId),
-    onSuccess: (attachment) => {
-      queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
-        old ? { ...old, attachments: [...old.attachments, attachment] } : old
-      )
-      void queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, personaId) })
-    },
+    onSuccess: (attachment) => appendPersonaAttachment(queryClient, workspaceId, personaId, attachment),
+  })
+}
+
+/**
+ * Attach an EXISTING workspace file to a custom/personal persona by copying it
+ * (knowledge-by-reference). Mirrors {@link useBindPersonaAttachment} — the
+ * server-created copy row is appended to the config cache so it renders
+ * immediately (INV-63 no success toast) and the gated refetch resolves a copy
+ * whose extraction is still `processing`. The caller toasts the server's
+ * structured message (INV-11) on an ineligible/unreadable source or a full cap.
+ */
+export function useAttachPersonaAttachmentFromExisting(workspaceId: string, personaId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (sourceAttachmentId: string) =>
+      personasApi.attachFromExisting(workspaceId, personaId, sourceAttachmentId),
+    onSuccess: (attachment) => appendPersonaAttachment(queryClient, workspaceId, personaId, attachment),
   })
 }
 

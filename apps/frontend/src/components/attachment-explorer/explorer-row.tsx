@@ -13,9 +13,16 @@ interface ExplorerRowProps {
   item: AttachmentSearchItem
   isSelected: boolean
   onSelect: (id: string) => void
+  /**
+   * Picker override: when set, a row click hands back the whole attachment
+   * instead of driving the explorer's URL-state selection (`onSelect`). Lets a
+   * host (the persona Attach-existing dialog) reuse the row rendering as a
+   * one-shot chooser without forking it (INV-35/37).
+   */
+  onSelectAttachment?: (item: AttachmentSearchItem) => void
 }
 
-export function ExplorerRow({ workspaceId, item, isSelected, onSelect }: ExplorerRowProps) {
+export function ExplorerRow({ workspaceId, item, isSelected, onSelect, onSelectAttachment }: ExplorerRowProps) {
   const { formatTime, formatRelative } = useFormattedDate()
   const category = categoryFromMime(item.mimeType)
   const meta = CATEGORY_META[category]
@@ -45,7 +52,7 @@ export function ExplorerRow({ workspaceId, item, isSelected, onSelect }: Explore
   return (
     <button
       type="button"
-      onClick={() => onSelect(item.id)}
+      onClick={() => (onSelectAttachment ? onSelectAttachment(item) : onSelect(item.id))}
       className={cn(
         "group/row reveal-host flex w-full items-center gap-3 rounded-item px-3 py-2 text-left transition-colors",
         "hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -88,7 +95,7 @@ export function ExplorerRow({ workspaceId, item, isSelected, onSelect }: Explore
           <span className="flex-none">{formatFileSize(item.sizeBytes)}</span>
         </div>
       </div>
-      {sourceUrl ? (
+      {sourceUrl && !onSelectAttachment ? (
         <Link
           to={sourceUrl}
           onClick={(e) => e.stopPropagation()}

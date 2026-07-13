@@ -14,6 +14,7 @@ import {
 } from "@threa/types"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"
+import * as attachmentsApiModule from "@/api/attachments"
 import { spyOnExport } from "@/test/spy"
 import * as editorModule from "@/components/editor"
 import * as uploadManager from "@/lib/uploads/upload-manager"
@@ -475,9 +476,21 @@ describe("CustomPersonaEditor", () => {
       renderEditor(config({ attachments }))
 
       expect(screen.getByRole("button", { name: /Add file/ })).toBeDisabled()
+      expect(screen.getByRole("button", { name: "Attach existing" })).toBeDisabled()
       expect(
         screen.getByText(`${PERSONA_ATTACHMENT_MAX_COUNT} of ${PERSONA_ATTACHMENT_MAX_COUNT} files`)
       ).toBeInTheDocument()
+    })
+
+    it("opens the Attach existing picker from the Knowledge section", async () => {
+      vi.spyOn(attachmentsApiModule.attachmentsApi, "search").mockResolvedValue({ items: [], nextCursor: null })
+      const user = userEvent.setup()
+      renderEditor()
+
+      expect(screen.queryByText("Attach existing file")).not.toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "Attach existing" }))
+
+      expect(await screen.findByText("Attach existing file")).toBeInTheDocument()
     })
   })
 })
