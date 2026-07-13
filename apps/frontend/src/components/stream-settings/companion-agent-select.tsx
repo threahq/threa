@@ -34,6 +34,12 @@ export function companionDefaultOptionLabel(defaultPersona: PersonaListItem | un
   return `Default (${defaultPersona?.name ?? "Ariadne"})`
 }
 
+/** Map a picker value back to the stored pointer: the synthetic inherit row
+ *  round-trips as null; any other value is a concrete persona id (a pin). */
+export function companionPointerFromPickerValue(value: string): string | null {
+  return value === COMPANION_DEFAULT_OPTION_VALUE ? null : value
+}
+
 /**
  * Resolve a stream's companion-persona pointer against the roster. A null
  * pointer resolves to the effective default (user → workspace → Ariadne) at

@@ -11,7 +11,8 @@ import { usePersonas } from "@/hooks/use-personas"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
 import {
   CompanionAgentSelect,
-  COMPANION_DEFAULT_OPTION_VALUE,
+  companionPickerValue,
+  companionPointerFromPickerValue,
 } from "@/components/stream-settings/companion-agent-select"
 import { type JSONContent } from "@threa/types"
 
@@ -25,17 +26,16 @@ const MODIFIER_LABEL =
  * workspace default. Mirrors `BoardHomeSection`'s sentinel-value technique.
  */
 export function PersonalDefaultCompanionSection({ workspaceId }: { workspaceId: string }) {
-  const { preferences, updatePreference } = usePreferences()
+  const { preferences, updatePreference, isLoading } = usePreferences()
   const { data: personas } = usePersonas(workspaceId)
   const { workspaceDefault } = useDefaultCompanionPersona(workspaceId)
 
-  const storedId = preferences?.defaultCompanionPersonaId ?? null
-  // Degrade an override that no longer resolves (archived persona) to the
+  // An override that no longer resolves (archived persona) degrades to the
   // synthetic "workspace default" rather than showing an empty trigger.
-  const value = storedId && personas?.some((p) => p.id === storedId) ? storedId : COMPANION_DEFAULT_OPTION_VALUE
+  const value = companionPickerValue(personas, preferences?.defaultCompanionPersonaId)
 
   const onChange = (next: string) => {
-    void updatePreference("defaultCompanionPersonaId", next === COMPANION_DEFAULT_OPTION_VALUE ? null : next)
+    void updatePreference("defaultCompanionPersonaId", companionPointerFromPickerValue(next))
   }
 
   if (!personas || personas.length === 0) return null
@@ -55,6 +55,7 @@ export function PersonalDefaultCompanionSection({ workspaceId }: { workspaceId: 
         value={value}
         onChange={onChange}
         defaultOption={{ label: `Workspace default (${workspaceDefault?.name ?? "Ariadne"})` }}
+        disabled={isLoading}
         triggerClassName="w-full sm:w-72"
       />
     </section>

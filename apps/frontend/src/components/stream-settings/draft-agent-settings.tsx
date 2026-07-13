@@ -4,9 +4,9 @@ import { usePersonas } from "@/hooks/use-personas"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
 import { AgentSettingsPanel } from "./agent-settings-panel"
 import {
-  COMPANION_DEFAULT_OPTION_VALUE,
   companionDefaultOptionLabel,
   companionPickerValue,
+  companionPointerFromPickerValue,
 } from "./companion-agent-select"
 
 interface DraftAgentSettingsProps {
@@ -51,7 +51,7 @@ export function DraftAgentSettings({
               onChange: (personaId) =>
                 updateScratchpad(draftId, {
                   // Dexie removes a key set to undefined — inherit means no stored pointer.
-                  companionPersonaId: personaId === COMPANION_DEFAULT_OPTION_VALUE ? undefined : personaId,
+                  companionPersonaId: companionPointerFromPickerValue(personaId) ?? undefined,
                 }),
               defaultOption: { label: companionDefaultOptionLabel(effectiveDefault) },
             }

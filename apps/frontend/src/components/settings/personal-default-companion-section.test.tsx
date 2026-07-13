@@ -77,6 +77,14 @@ describe("PersonalDefaultCompanionSection", () => {
     expect(updatePreference).toHaveBeenCalledWith("defaultCompanionPersonaId", "persona_coach")
   })
 
+  it("degrades an archived (off-roster) override to the workspace-default option", () => {
+    mockPreferences("persona_archived")
+    renderSection()
+    expect(screen.getByRole("combobox", { name: /companion agent/i })).toHaveTextContent(
+      /Workspace default \(Ariadne\)/i
+    )
+  })
+
   it("stores null when the workspace-default option is chosen", async () => {
     mockPreferences("persona_coach")
     const user = userEvent.setup()

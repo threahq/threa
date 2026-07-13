@@ -14,10 +14,10 @@ import {
   type ToolPrivacyPolicy,
 } from "@threa/types"
 import {
-  COMPANION_DEFAULT_OPTION_VALUE,
   CompanionAgentSelect,
   companionDefaultOptionLabel,
   companionPickerValue,
+  companionPointerFromPickerValue,
   resolveCompanionSelection,
 } from "./companion-agent-select"
 import { ToolPolicyPicker } from "./tool-policy-picker"
@@ -83,7 +83,7 @@ export function CompanionTab({
     try {
       await updateCompanionMode({
         companionMode: stream.companionMode,
-        companionPersonaId: personaId === COMPANION_DEFAULT_OPTION_VALUE ? null : personaId,
+        companionPersonaId: companionPointerFromPickerValue(personaId),
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update companion agent"

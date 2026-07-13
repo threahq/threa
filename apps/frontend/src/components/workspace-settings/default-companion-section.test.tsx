@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { toast } from "sonner"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
   WORKSPACE_PERMISSION_SCOPES,
@@ -76,6 +77,22 @@ describe("DefaultCompanionSection", () => {
     await user.click(await screen.findByRole("option", { name: /Coach/i }))
 
     await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { defaultCompanionPersonaId: "persona_coach" }))
+  })
+
+  it("rolls the optimistic cache patch back and toasts on a rejected save", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], null)
+    vi.spyOn(workspaceSettingsApi, "update").mockRejectedValue(new Error("Persona not available"))
+    const toastError = vi.spyOn(toast, "error").mockReturnValue("" as ReturnType<typeof toast.error>)
+    const user = userEvent.setup()
+
+    renderSection(queryClient)
+    await user.click(screen.getByRole("combobox", { name: /companion agent/i }))
+    await user.click(await screen.findByRole("option", { name: /Coach/i }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Failed to save the default companion"))
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.workspaceSettings?.defaultCompanionPersonaId).toBeNull()
   })
 
   it("shows the resolved default read-only to a non-admin", () => {

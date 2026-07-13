@@ -9,9 +9,9 @@ import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { AgentSettingsPanel } from "./agent-settings-panel"
 import {
-  COMPANION_DEFAULT_OPTION_VALUE,
   companionDefaultOptionLabel,
   companionPickerValue,
+  companionPointerFromPickerValue,
 } from "./companion-agent-select"
 
 interface LiveAgentSettingsProps {
@@ -65,7 +65,7 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
     try {
       await updateCompanionMode({
         companionMode,
-        companionPersonaId: personaId === COMPANION_DEFAULT_OPTION_VALUE ? null : personaId,
+        companionPersonaId: companionPointerFromPickerValue(personaId),
       })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update companion agent")

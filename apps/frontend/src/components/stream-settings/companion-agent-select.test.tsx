@@ -21,38 +21,50 @@ const ROSTER = [ARIADNE, COACH, SCRIBE]
 
 describe("resolveCompanionSelection", () => {
   it("uses the supplied default for a null pointer instead of Ariadne", () => {
-    const result = resolveCompanionSelection(ROSTER, null, COACH)
-    expect(result.selectedPersonaId).toBe("persona_coach")
-    expect(result.companionName).toBe("Coach")
+    expect(resolveCompanionSelection(ROSTER, null, COACH)).toEqual({
+      selectedPersonaId: "persona_coach",
+      selectedPersona: COACH,
+      companionName: "Coach",
+    })
   })
 
   it("prefers an explicit pointer over the supplied default", () => {
-    const result = resolveCompanionSelection(ROSTER, "persona_scribe", COACH)
-    expect(result.selectedPersonaId).toBe("persona_scribe")
-    expect(result.companionName).toBe("Scribe")
+    expect(resolveCompanionSelection(ROSTER, "persona_scribe", COACH)).toEqual({
+      selectedPersonaId: "persona_scribe",
+      selectedPersona: SCRIBE,
+      companionName: "Scribe",
+    })
   })
 
   it("degrades an off-roster pointer to the supplied default", () => {
-    const result = resolveCompanionSelection(ROSTER, "persona_archived", COACH)
-    expect(result.selectedPersonaId).toBe("persona_coach")
-    expect(result.companionName).toBe("Coach")
+    expect(resolveCompanionSelection(ROSTER, "persona_archived", COACH)).toEqual({
+      selectedPersonaId: "persona_coach",
+      selectedPersona: COACH,
+      companionName: "Coach",
+    })
   })
 
   it("falls back to the Ariadne-slug lookup when no default is supplied (unchanged legacy behavior)", () => {
-    const result = resolveCompanionSelection(ROSTER, null)
-    expect(result.selectedPersonaId).toBe("persona_ariadne")
-    expect(result.companionName).toBe("Ariadne")
+    expect(resolveCompanionSelection(ROSTER, null)).toEqual({
+      selectedPersonaId: "persona_ariadne",
+      selectedPersona: ARIADNE,
+      companionName: "Ariadne",
+    })
   })
 
   it("degrades to Ariadne by slug when the supplied default is undefined and the pointer is off-roster", () => {
-    const result = resolveCompanionSelection(ROSTER, "persona_archived", undefined)
-    expect(result.selectedPersonaId).toBe("persona_ariadne")
-    expect(result.companionName).toBe("Ariadne")
+    expect(resolveCompanionSelection(ROSTER, "persona_archived", undefined)).toEqual({
+      selectedPersonaId: "persona_ariadne",
+      selectedPersona: ARIADNE,
+      companionName: "Ariadne",
+    })
   })
 
   it("returns the 'Ariadne' name literal when the roster is empty and no default is supplied", () => {
-    const result = resolveCompanionSelection(undefined, null)
-    expect(result.selectedPersonaId).toBeUndefined()
-    expect(result.companionName).toBe("Ariadne")
+    expect(resolveCompanionSelection(undefined, null)).toEqual({
+      selectedPersonaId: undefined,
+      selectedPersona: undefined,
+      companionName: "Ariadne",
+    })
   })
 })
