@@ -43,6 +43,18 @@ interface Dependencies {
   modelRegistry: ModelRegistry
 }
 
+/**
+ * The authenticated caller acting on a persona. `isAdmin` is workspace-admin,
+ * resolved in the handler from the same JWT-permission/role fallback the route
+ * middleware used (user-scoped-personas). Built-in and workspace personas need
+ * `isAdmin`; a personal persona needs only ownership (enforced by resolving with
+ * `userId` as the viewer), so a non-owner — admin included — never sees it.
+ */
+export interface PersonaCaller {
+  userId: string
+  isAdmin: boolean
+}
+
 /** Cap on the revision history list; older revisions are omitted (and logged) past this. */
 const REVISION_LIST_LIMIT = 50
 
@@ -67,6 +79,17 @@ function isUniqueViolation(error: unknown): boolean {
 
 function personaNotFound(): HttpError {
   return new HttpError("Persona not found", { status: 404, code: "PERSONA_NOT_FOUND" })
+}
+
+/**
+ * Non-admin acting on a built-in or workspace persona. Matches
+ * `requireWorkspacePermission`'s error shape (403 FORBIDDEN) so opening the
+ * routes to plain `authed` keeps API behavior equivalent for non-admins. A
+ * non-owner acting on a PERSONAL persona gets 404 instead (invisible means
+ * invisible) — that path never reaches here because the row won't resolve.
+ */
+function forbidden(): HttpError {
+  return new HttpError("Insufficient permissions", { status: 403, code: "FORBIDDEN" })
 }
 
 function customsOnly(): HttpError {
@@ -97,7 +120,10 @@ function customRowToResolvedConfig(row: Persona): PersonaResolvedConfig {
     brevityPreset: null,
     tonePrompt: row.tonePrompt,
     brevityPrompt: row.brevityPrompt,
-    managedBy: "workspace",
+    // A personal row resolves as `managed_by = 'user'`; a workspace custom as
+    // `workspace` (user-scoped-personas). The editor branches on the response's
+    // `kind`, not this, but it must round-trip the true value.
+    managedBy: row.managedBy,
     status: row.status,
     visibility: "visible",
     e2eCapable: false,
@@ -314,9 +340,17 @@ export class PersonaConfigService {
     return stream && !stream.archivedAt ? stream.id : null
   }
 
-  /** Archived custom personas — the roster's Archived disclosure. */
-  async listArchived(workspaceId: string): Promise<PersonaListItem[]> {
-    const rows = await PersonaRepository.listArchivedCustoms(this.pool, workspaceId, { includeWorkspace: true })
+  /**
+   * Archived personas — the roster's Archived disclosure. Caller-aware
+   * (user-scoped-personas): an admin gets workspace-archived customs ∪ their own
+   * archived personal personas; a non-admin gets only their own archived
+   * personal personas.
+   */
+  async listArchived(workspaceId: string, caller: PersonaCaller): Promise<PersonaListItem[]> {
+    const rows = await PersonaRepository.listArchivedCustoms(this.pool, workspaceId, {
+      includeWorkspace: caller.isAdmin,
+      ownerUserId: caller.userId,
+    })
     return rows.map((row) => customRowToListItem(row))
   }
 
@@ -348,11 +382,35 @@ export class PersonaConfigService {
     return [...builtIns, ...customs.map(customRowToListItem)]
   }
 
-  /** Resolve which persona is editable (built-in or workspace custom), or 404. */
-  private async resolveEditableOr404(workspaceId: string, personaId: string): Promise<EditablePersona> {
-    const editable = await PersonaRepository.resolveEditable(this.pool, workspaceId, personaId)
+  /**
+   * Resolve a persona the caller may edit, or throw. Built-in and workspace rows
+   * resolve for anyone but require workspace-admin (403 otherwise); a personal
+   * row resolves ONLY for its owner (viewer-scoped) — a non-owner (admin
+   * included) gets a 404, never a 403, so a personal persona's existence never
+   * leaks (user-scoped-personas). The single lifecycle authorization gate shared
+   * by config read, update, archive, avatar, revisions, drafts, and test-drive.
+   */
+  private async authorizeEditableOr404(
+    workspaceId: string,
+    personaId: string,
+    caller: PersonaCaller
+  ): Promise<EditablePersona> {
+    const editable = await PersonaRepository.resolveEditable(this.pool, workspaceId, personaId, {
+      userId: caller.userId,
+    })
     if (!editable) throw personaNotFound()
+    this.assertMayEdit(editable, caller)
     return editable
+  }
+
+  /**
+   * The shared per-persona rule: a resolved personal row means the caller is its
+   * owner (viewer scope guaranteed it), so no admin needed; a built-in or
+   * workspace custom is admin-managed.
+   */
+  private assertMayEdit(editable: EditablePersona, caller: PersonaCaller): void {
+    if (editable.kind === "custom" && editable.row.managedBy === "user") return
+    if (!caller.isAdmin) throw forbidden()
   }
 
   /**
@@ -361,18 +419,27 @@ export class PersonaConfigService {
    * ids and the internal empty shell). `draft` is the CALLER's own unsaved draft
    * (per `(workspace, agent, caller)`), or null if they have none.
    */
-  async getConfig(workspaceId: string, personaId: string, callerId: string): Promise<PersonaConfigResponse | null> {
-    const editable = await PersonaRepository.resolveEditable(this.pool, workspaceId, personaId)
+  async getConfig(
+    workspaceId: string,
+    personaId: string,
+    caller: PersonaCaller
+  ): Promise<PersonaConfigResponse | null> {
+    const editable = await PersonaRepository.resolveEditable(this.pool, workspaceId, personaId, {
+      userId: caller.userId,
+    })
     if (!editable) return null
+    this.assertMayEdit(editable, caller)
 
-    const draft = await this.loadCallerDraft(workspaceId, personaId, callerId)
+    const draft = await this.loadCallerDraft(workspaceId, personaId, caller.userId)
 
     if (editable.kind === "custom") {
       // A custom has no defaults baseline: no per-field customized badge, no
-      // reset-to-default. `overrideUpdatedAt` is the row's own OCC token.
+      // reset-to-default. `overrideUpdatedAt` is the row's own OCC token. A
+      // personal row is `kind: 'personal'`, a workspace custom `kind: 'custom'`
+      // (user-scoped-personas).
       const { row } = editable
       return {
-        kind: "custom",
+        kind: row.managedBy === "user" ? "personal" : "custom",
         defaults: null,
         overridePatch: null,
         overrideUpdatedAt: row.updatedAt.toISOString(),
@@ -545,8 +612,8 @@ export class PersonaConfigService {
    * nor a workspace custom. `patch`/`createdById` are returned raw for the
    * frontend to render and resolve (INV-46).
    */
-  async listRevisions(workspaceId: string, agentId: string): Promise<PersonaConfigRevision[]> {
-    await this.resolveEditableOr404(workspaceId, agentId)
+  async listRevisions(workspaceId: string, agentId: string, caller: PersonaCaller): Promise<PersonaConfigRevision[]> {
+    await this.authorizeEditableOr404(workspaceId, agentId, caller)
     // Fetch one past the cap so "were older revisions omitted?" is exact rather
     // than a false positive at exactly REVISION_LIST_LIMIT rows.
     const records = await PersonaConfigRevisionRepository.listByWorkspaceAndAgent(
@@ -577,9 +644,9 @@ export class PersonaConfigService {
     personaId: string,
     revisionId: string,
     expectedUpdatedAt: string | null,
-    callerId: string
+    caller: PersonaCaller
   ): Promise<SetPersonaOverrideResult | UpdateCustomPersonaResult> {
-    const editable = await this.resolveEditableOr404(workspaceId, personaId)
+    const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
     const revision = await PersonaConfigRevisionRepository.findById(this.pool, workspaceId, revisionId)
     if (!revision || revision.agentId !== personaId) {
       throw new HttpError("Persona revision not found", { status: 404, code: "PERSONA_REVISION_NOT_FOUND" })
@@ -596,7 +663,7 @@ export class PersonaConfigService {
       // through the update path so it appends a new revision like any edit.
       const parsed = personaCustomConfigSchema.safeParse(revision.patch)
       if (!parsed.success) throw incompatible()
-      return this.updateCustom(workspaceId, personaId, parsed.data, expectedUpdatedAt, callerId)
+      return this.updateCustom(workspaceId, personaId, parsed.data, expectedUpdatedAt, caller)
     }
 
     // The stored JSONB is opaque; re-validate through the shared schema before
@@ -607,7 +674,7 @@ export class PersonaConfigService {
     const parsed = personaConfigPatchSchema.safeParse(revision.patch)
     if (!parsed.success) throw incompatible()
     try {
-      return await this.setOverride(workspaceId, personaId, parsed.data, expectedUpdatedAt, callerId)
+      return await this.setOverride(workspaceId, personaId, parsed.data, expectedUpdatedAt, caller.userId)
     } catch (error) {
       // A legacy revision may carry fields since locked for system personas
       // (e.g. a pre-restriction rename). On a *restore* that is the same "no
@@ -627,10 +694,10 @@ export class PersonaConfigService {
   async saveDraft(
     workspaceId: string,
     agentId: string,
-    callerId: string,
+    caller: PersonaCaller,
     patch: PersonaConfigPatch
   ): Promise<PersonaDraftState> {
-    const editable = await this.resolveEditableOr404(workspaceId, agentId)
+    const editable = await this.authorizeEditableOr404(workspaceId, agentId, caller)
     if (editable.kind === "custom") {
       // A custom draft is a sparse diff over the ROW; presets are locked (free
       // text only) and any model it names must be assignable.
@@ -643,7 +710,7 @@ export class PersonaConfigService {
     const detail = await PersonaConfigDraftRepository.upsert(this.pool, {
       workspaceId,
       agentId,
-      createdBy: callerId,
+      createdBy: caller.userId,
       patch,
     })
     return { patch, testStreamId: detail.testStreamId, updatedAt: detail.updatedAt }
@@ -653,7 +720,9 @@ export class PersonaConfigService {
    * Discard the caller's draft and archive its bound test stream. Idempotent: a
    * missing draft is a no-op.
    */
-  async discardDraft(workspaceId: string, agentId: string, callerId: string): Promise<void> {
+  async discardDraft(workspaceId: string, agentId: string, caller: PersonaCaller): Promise<void> {
+    await this.authorizeEditableOr404(workspaceId, agentId, caller)
+    const callerId = caller.userId
     const draft = await PersonaConfigDraftRepository.findByOwner(this.pool, workspaceId, agentId, callerId)
     if (!draft) return
     // Archive the bound test stream BEFORE deleting the draft row (the row is the
@@ -676,8 +745,9 @@ export class PersonaConfigService {
    * row (empty patch when the editor hasn't saved yet) without touching an existing
    * patch, so no separate read-then-write of the draft is needed here (INV-20).
    */
-  async ensureTestStream(workspaceId: string, agentId: string, callerId: string): Promise<{ streamId: string }> {
-    const editable = await this.resolveEditableOr404(workspaceId, agentId)
+  async ensureTestStream(workspaceId: string, agentId: string, caller: PersonaCaller): Promise<{ streamId: string }> {
+    const editable = await this.authorizeEditableOr404(workspaceId, agentId, caller)
+    const callerId = caller.userId
     const personaName = editable.kind === "custom" ? editable.row.name : editable.base.name
 
     const draft = await PersonaConfigDraftRepository.findByOwner(this.pool, workspaceId, agentId, callerId)
@@ -720,15 +790,23 @@ export class PersonaConfigService {
     workspaceId: string,
     sourcePersonaId: string | null,
     name: string,
-    callerId: string
+    scope: "workspace" | "personal",
+    caller: PersonaCaller
   ): Promise<PersonaListItem> {
+    // A workspace fork is admin-managed; a personal fork is available to any
+    // member and lands owned by the caller (user-scoped-personas).
+    if (scope === "workspace" && !caller.isAdmin) throw forbidden()
+
     const trimmedName = name.trim()
     if (trimmedName.length === 0) {
       throw new HttpError("Persona name is required", { status: 400, code: "VALIDATION_ERROR" })
     }
 
+    // Personal scope stamps the owner (→ `managed_by = 'user'`); workspace scope
+    // leaves it null (→ `managed_by = 'workspace'`), per insertWorkspacePersona.
+    const ownerUserId = scope === "personal" ? caller.userId : undefined
     const config = sourcePersonaId
-      ? await this.forkConfigFromSource(workspaceId, sourcePersonaId, trimmedName)
+      ? await this.forkConfigFromSource(workspaceId, sourcePersonaId, trimmedName, caller)
       : blankPersonaConfig(trimmedName)
     const baseSlug = generateSlug(trimmedName) || "persona"
 
@@ -736,13 +814,18 @@ export class PersonaConfigService {
       const slug = attempt === 0 ? baseSlug : `${baseSlug}-${attempt + 1}`
       try {
         return await withTransaction(this.pool, async (client) => {
-          const row = await PersonaRepository.insertWorkspacePersona(client, { workspaceId, slug, config })
+          const row = await PersonaRepository.insertWorkspacePersona(client, {
+            workspaceId,
+            slug,
+            config,
+            ownerUserId,
+          })
           await PersonaConfigRevisionRepository.insert(client, {
             workspaceId,
             agentId: row.id,
             patch: customRowToConfig(row),
             createdByKind: AuthorTypes.USER,
-            createdById: callerId,
+            createdById: caller.userId,
           })
           const persona = customRowToListItem(row)
           await OutboxRepository.insert(client, "agent_config:updated", { workspaceId, agentId: row.id, persona })
@@ -762,10 +845,16 @@ export class PersonaConfigService {
   private async forkConfigFromSource(
     workspaceId: string,
     sourcePersonaId: string,
-    name: string
+    name: string,
+    caller: PersonaCaller
   ): Promise<PersonaCustomConfig> {
+    // Forkable sources: built-ins (with any workspace override applied) and
+    // workspace customs, plus the caller's OWN personal personas. `findById` is
+    // workspace-scoped and returns personal rows unconditionally (it serves
+    // dispatch), so filter another user's personal persona out here — it must
+    // 404 as a source, never leak its config (user-scoped-personas).
     const source = await PersonaRepository.findById(this.pool, sourcePersonaId, workspaceId)
-    if (!source) {
+    if (!source || (source.managedBy === "user" && source.ownerUserId !== caller.userId)) {
       throw new HttpError("Source persona not found", { status: 404, code: "PERSONA_SOURCE_NOT_FOUND" })
     }
     const slots = resolvePersonaStyleSlots(source)
@@ -798,9 +887,10 @@ export class PersonaConfigService {
     personaId: string,
     config: PersonaCustomConfig,
     expectedUpdatedAt: string | null,
-    callerId: string
+    caller: PersonaCaller
   ): Promise<UpdateCustomPersonaResult> {
-    const editable = await this.resolveEditableOr404(workspaceId, personaId)
+    const callerId = caller.userId
+    const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
     if (editable.kind !== "custom") throw customsOnly()
     this.assertCustomModelsAllowed(config, editable.row)
 
@@ -810,6 +900,7 @@ export class PersonaConfigService {
         personaId,
         expectedUpdatedAt,
         config,
+        viewer: { userId: callerId },
       })
       if (result.outcome === "conflict") {
         const current = result.current
@@ -868,13 +959,18 @@ export class PersonaConfigService {
     workspaceId: string,
     personaId: string,
     status: "active" | "archived",
-    _callerId: string
+    caller: PersonaCaller
   ): Promise<PersonaListItem> {
-    const editable = await this.resolveEditableOr404(workspaceId, personaId)
+    const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
     if (editable.kind !== "custom") throw customsOnly()
 
     return withTransaction(this.pool, async (client) => {
-      const row = await PersonaRepository.setStatus(client, { workspaceId, personaId, status })
+      const row = await PersonaRepository.setStatus(client, {
+        workspaceId,
+        personaId,
+        status,
+        viewer: { userId: caller.userId },
+      })
       if (!row) throw personaNotFound()
       const persona = customRowToListItem(row)
       await OutboxRepository.insert(client, "agent_config:updated", { workspaceId, agentId: personaId, persona })
@@ -895,9 +991,9 @@ export class PersonaConfigService {
     workspaceId: string,
     personaId: string,
     avatarBasePath: string | null,
-    _callerId: string
+    caller: PersonaCaller
   ): Promise<{ persona: PersonaListItem; previousAvatarUrl: string | null; updatedAt: string }> {
-    const editable = await this.resolveEditableOr404(workspaceId, personaId)
+    const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
     if (editable.kind !== "custom") throw customsOnly()
 
     const previousAvatarUrl = editable.row.avatarUrl
@@ -918,6 +1014,7 @@ export class PersonaConfigService {
         workspaceId,
         personaId,
         avatarUrl: avatarBasePath,
+        viewer: { userId: caller.userId },
       })
       if (!row) throw personaNotFound()
       const item = customRowToListItem(row)

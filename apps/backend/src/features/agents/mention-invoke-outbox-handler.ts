@@ -84,6 +84,22 @@ export class MentionInvokeHandler extends DebouncedOutboxHandler {
         continue
       }
 
+      // A personal persona (user-scoped-personas) is invisible to everyone but
+      // its owner and only they may invoke it. `findByIds` is workspace-scoped
+      // (it serves display of already-authorized pins), so an id-form mention —
+      // which can arrive pre-resolved from a rich client or the API, bypassing
+      // slug-side viewer filtering — is gated here. `triggeredBy` is the
+      // author's user id (actorType is USER, checked above); a persona mentioned
+      // by anyone else is silently skipped while other mentioned personas in the
+      // same message still dispatch.
+      if (persona.managedBy === "user" && persona.ownerUserId !== triggeredBy) {
+        logger.debug(
+          { streamId, personaId: persona.id, ownerUserId: persona.ownerUserId, triggeredBy },
+          "MentionInvokeHandler: skipping personal persona mentioned by a non-owner"
+        )
+        continue
+      }
+
       logger.info(
         {
           streamId,

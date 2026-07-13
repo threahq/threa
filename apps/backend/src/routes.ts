@@ -441,108 +441,49 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceSettings.update
   )
 
-  // Personas (built-in agent config editing; roadmap 7.1/7.2). List is
-  // member-visible; reading a persona's full config and writing its override
-  // are workspace-admin only. Gate at the route layer (not the handler).
+  // Personas (config editing; roadmap 7.1/7.2, user-scoped-personas). The list
+  // is member-visible. Every lifecycle route below is plain `authed` and
+  // authorized per-persona in the service — workspace-admin for built-in and
+  // workspace rows, ownership for personal rows (a non-owner 404s, never sees
+  // it). The one exception is the built-in override PUT, which is inherently
+  // admin-managed and keeps its route-level admin gate.
   app.get("/api/workspaces/:workspaceId/personas", ...authed, persona.list)
-  app.get(
-    "/api/workspaces/:workspaceId/personas/archived",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.listArchived
-  )
-  // Fork a source persona into a new custom (admin). Custom lifecycle (create /
-  // full-field update / archive / unarchive) is admin-gated; the built-in
-  // override path stays on its own PUT below.
-  app.post(
-    "/api/workspaces/:workspaceId/personas",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.create
-  )
-  app.get(
-    "/api/workspaces/:workspaceId/personas/:personaId/config",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.getConfig
-  )
+  app.get("/api/workspaces/:workspaceId/personas/archived", ...authed, persona.listArchived)
+  // Fork a source persona into a new workspace custom (admin) or personal
+  // persona (any member); the service enforces the scope rule.
+  app.post("/api/workspaces/:workspaceId/personas", ...authed, persona.create)
+  app.get("/api/workspaces/:workspaceId/personas/:personaId/config", ...authed, persona.getConfig)
+  // Built-in override write stays admin-only at the route layer (built-ins are
+  // inherently admin-managed).
   app.put(
     "/api/workspaces/:workspaceId/personas/:personaId/override",
     ...authed,
     requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
     persona.putOverride
   )
-  // Full-field update of a custom persona (admin, customs only — built-ins 400).
-  app.put(
-    "/api/workspaces/:workspaceId/personas/:personaId",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.update
-  )
-  app.post(
-    "/api/workspaces/:workspaceId/personas/:personaId/archive",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.archive
-  )
-  app.post(
-    "/api/workspaces/:workspaceId/personas/:personaId/unarchive",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.unarchive
-  )
-  // Revision history (roadmap 7.1): list a persona's committed override
-  // revisions and restore one (re-commits an old patch as a new revision). Both
-  // workspace-admin only.
-  app.get(
-    "/api/workspaces/:workspaceId/personas/:personaId/revisions",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.listRevisions
-  )
+  // Full-field update of a custom/personal persona (customs only — built-ins 400).
+  app.put("/api/workspaces/:workspaceId/personas/:personaId", ...authed, persona.update)
+  app.post("/api/workspaces/:workspaceId/personas/:personaId/archive", ...authed, persona.archive)
+  app.post("/api/workspaces/:workspaceId/personas/:personaId/unarchive", ...authed, persona.unarchive)
+  // Revision history (roadmap 7.1): list a persona's committed revisions and
+  // restore one (re-commits an old patch as a new revision).
+  app.get("/api/workspaces/:workspaceId/personas/:personaId/revisions", ...authed, persona.listRevisions)
   app.post(
     "/api/workspaces/:workspaceId/personas/:personaId/revisions/:revisionId/restore",
     ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
     persona.restoreRevision
   )
   // Draft lifecycle (test-drive substrate, per caller): upsert own draft,
   // discard (archives the bound test stream), and idempotently create-or-return
-  // the bound test scratchpad. All workspace-admin only.
-  app.put(
-    "/api/workspaces/:workspaceId/personas/:personaId/draft",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.putDraft
-  )
-  app.delete(
-    "/api/workspaces/:workspaceId/personas/:personaId/draft",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.deleteDraft
-  )
-  app.post(
-    "/api/workspaces/:workspaceId/personas/:personaId/draft/test-stream",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.createTestStream
-  )
-  // Custom persona avatar image (admin, customs only — a built-in id 400s in the
-  // service). Upload/remove mirror the bot avatar flow; serving is unauthenticated
-  // by path (S3 keys carry unguessable ULIDs).
-  app.post(
-    "/api/workspaces/:workspaceId/personas/:personaId/avatar",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    avatarUpload,
-    persona.uploadAvatar
-  )
-  app.delete(
-    "/api/workspaces/:workspaceId/personas/:personaId/avatar",
-    ...authed,
-    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
-    persona.removeAvatar
-  )
+  // the bound test scratchpad.
+  app.put("/api/workspaces/:workspaceId/personas/:personaId/draft", ...authed, persona.putDraft)
+  app.delete("/api/workspaces/:workspaceId/personas/:personaId/draft", ...authed, persona.deleteDraft)
+  app.post("/api/workspaces/:workspaceId/personas/:personaId/draft/test-stream", ...authed, persona.createTestStream)
+  // Custom/personal persona avatar image (customs only — a built-in id 400s in
+  // the service). Upload/remove mirror the bot avatar flow; serving is
+  // unauthenticated by path (S3 keys carry unguessable ULIDs).
+  app.post("/api/workspaces/:workspaceId/personas/:personaId/avatar", ...authed, avatarUpload, persona.uploadAvatar)
+  app.delete("/api/workspaces/:workspaceId/personas/:personaId/avatar", ...authed, persona.removeAvatar)
   app.get("/api/workspaces/:workspaceId/personas/:personaId/avatar/:file", persona.serveAvatarFile)
 
   // Sidebar config (per-user, per-workspace layout)

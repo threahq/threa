@@ -362,6 +362,44 @@ describe("PersonaRepository custom write layer", () => {
       await PersonaRepository.updateAvatarUrl(db, { workspaceId: "workspace_1", personaId: "x", avatarUrl: null })
     ).toBeNull()
   })
+
+  test("write methods widen the scope to the caller's own personal row when a viewer is passed (user-scoped-personas)", async () => {
+    const updateDb = createDb([[workspacePersonaRow], [workspacePersonaRow]])
+    await PersonaRepository.updateWorkspacePersona(updateDb, {
+      workspaceId: "workspace_1",
+      personaId: "persona_personal_1",
+      expectedUpdatedAt: workspacePersonaRow.updated_at.toISOString(),
+      config: customConfig,
+      viewer: { userId: "user_owner" },
+    })
+    // Both the FOR UPDATE select and the UPDATE carry the owner clause.
+    for (const q of updateDb.queries as Array<{ text: string; values: unknown[] }>) {
+      expect(q.text).toContain("managed_by = 'user' AND owner_user_id =")
+      expect(q.values).toContain("user_owner")
+    }
+
+    const statusDb = createDb([[{ ...workspacePersonaRow, status: "archived" }]])
+    await PersonaRepository.setStatus(statusDb, {
+      workspaceId: "workspace_1",
+      personaId: "persona_personal_1",
+      status: "archived",
+      viewer: { userId: "user_owner" },
+    })
+    const statusQuery = statusDb.queries[0] as { text: string; values: unknown[] }
+    expect(statusQuery.text).toContain("managed_by = 'user' AND owner_user_id =")
+    expect(statusQuery.values).toContain("user_owner")
+
+    const avatarDb = createDb([[workspacePersonaRow]])
+    await PersonaRepository.updateAvatarUrl(avatarDb, {
+      workspaceId: "workspace_1",
+      personaId: "persona_personal_1",
+      avatarUrl: "avatars/x/222",
+      viewer: { userId: "user_owner" },
+    })
+    const avatarQuery = avatarDb.queries[0] as { text: string; values: unknown[] }
+    expect(avatarQuery.text).toContain("managed_by = 'user' AND owner_user_id =")
+    expect(avatarQuery.values).toContain("user_owner")
+  })
 })
 
 describe("PersonaRepository personal-persona visibility (user-scoped-personas)", () => {

@@ -639,18 +639,39 @@ export const PersonaRepository = {
    */
   async updateWorkspacePersona(
     db: Querier,
-    params: { workspaceId: string; personaId: string; expectedUpdatedAt: string | null; config: PersonaCustomConfig }
+    params: {
+      workspaceId: string
+      personaId: string
+      expectedUpdatedAt: string | null
+      config: PersonaCustomConfig
+      viewer?: { userId: string }
+    }
   ): Promise<UpdateWorkspacePersonaResult> {
-    const { workspaceId, personaId, expectedUpdatedAt, config } = params
+    const { workspaceId, personaId, expectedUpdatedAt, config, viewer } = params
 
-    const existing = await db.query<PersonaRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)}
-      FROM personas
-      WHERE id = ${personaId}
-        AND workspace_id = ${workspaceId}
-        AND managed_by = 'workspace'
-      FOR UPDATE
-    `)
+    // Without a viewer only workspace customs are writable (existing behavior);
+    // with a viewer the caller's own personal (`managed_by = 'user'`) row is too
+    // (user-scoped-personas). Another user's personal row never matches. The
+    // service pre-authorizes ownership; this scope is defense-in-depth.
+    const existing = await db.query<PersonaRow>(
+      viewer
+        ? sql`
+            SELECT ${sql.raw(SELECT_FIELDS)}
+            FROM personas
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND (managed_by = 'workspace' OR (managed_by = 'user' AND owner_user_id = ${viewer.userId}))
+            FOR UPDATE
+          `
+        : sql`
+            SELECT ${sql.raw(SELECT_FIELDS)}
+            FROM personas
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND managed_by = 'workspace'
+            FOR UPDATE
+          `
+    )
     const current = existing.rows[0]
     if (!current) return { outcome: "conflict", current: null }
 
@@ -659,24 +680,45 @@ export const PersonaRepository = {
       return { outcome: "conflict", current: mapRowToPersona(current) }
     }
 
-    const updated = await db.query<PersonaRow>(sql`
-      UPDATE personas SET
-        name = ${config.name},
-        description = ${config.description},
-        avatar_emoji = ${config.avatarEmoji},
-        system_prompt = ${config.systemPrompt},
-        model = ${config.model},
-        escalation_model = ${config.escalationModel},
-        temperature = ${config.temperature},
-        max_tokens = ${config.maxTokens},
-        enabled_tools = ${config.enabledTools}::text[],
-        tone_prompt = ${config.tonePrompt},
-        brevity_prompt = ${config.brevityPrompt}
-      WHERE id = ${personaId}
-        AND workspace_id = ${workspaceId}
-        AND managed_by = 'workspace'
-      RETURNING ${sql.raw(SELECT_FIELDS)}
-    `)
+    const updated = await db.query<PersonaRow>(
+      viewer
+        ? sql`
+            UPDATE personas SET
+              name = ${config.name},
+              description = ${config.description},
+              avatar_emoji = ${config.avatarEmoji},
+              system_prompt = ${config.systemPrompt},
+              model = ${config.model},
+              escalation_model = ${config.escalationModel},
+              temperature = ${config.temperature},
+              max_tokens = ${config.maxTokens},
+              enabled_tools = ${config.enabledTools}::text[],
+              tone_prompt = ${config.tonePrompt},
+              brevity_prompt = ${config.brevityPrompt}
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND (managed_by = 'workspace' OR (managed_by = 'user' AND owner_user_id = ${viewer.userId}))
+            RETURNING ${sql.raw(SELECT_FIELDS)}
+          `
+        : sql`
+            UPDATE personas SET
+              name = ${config.name},
+              description = ${config.description},
+              avatar_emoji = ${config.avatarEmoji},
+              system_prompt = ${config.systemPrompt},
+              model = ${config.model},
+              escalation_model = ${config.escalationModel},
+              temperature = ${config.temperature},
+              max_tokens = ${config.maxTokens},
+              enabled_tools = ${config.enabledTools}::text[],
+              tone_prompt = ${config.tonePrompt},
+              brevity_prompt = ${config.brevityPrompt}
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND managed_by = 'workspace'
+            RETURNING ${sql.raw(SELECT_FIELDS)}
+          `
+    )
     const row = updated.rows[0]!
     return { outcome: "written", row: mapRowToPersona(row), updatedAt: row.updated_at.toISOString() }
   },
@@ -688,16 +730,26 @@ export const PersonaRepository = {
    */
   async setStatus(
     db: Querier,
-    params: { workspaceId: string; personaId: string; status: "active" | "archived" }
+    params: { workspaceId: string; personaId: string; status: "active" | "archived"; viewer?: { userId: string } }
   ): Promise<Persona | null> {
-    const { workspaceId, personaId, status } = params
-    const result = await db.query<PersonaRow>(sql`
-      UPDATE personas SET status = ${status}
-      WHERE id = ${personaId}
-        AND workspace_id = ${workspaceId}
-        AND managed_by = 'workspace'
-      RETURNING ${sql.raw(SELECT_FIELDS)}
-    `)
+    const { workspaceId, personaId, status, viewer } = params
+    const result = await db.query<PersonaRow>(
+      viewer
+        ? sql`
+            UPDATE personas SET status = ${status}
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND (managed_by = 'workspace' OR (managed_by = 'user' AND owner_user_id = ${viewer.userId}))
+            RETURNING ${sql.raw(SELECT_FIELDS)}
+          `
+        : sql`
+            UPDATE personas SET status = ${status}
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND managed_by = 'workspace'
+            RETURNING ${sql.raw(SELECT_FIELDS)}
+          `
+    )
     return result.rows[0] ? mapRowToPersona(result.rows[0]) : null
   },
 
@@ -710,16 +762,26 @@ export const PersonaRepository = {
    */
   async updateAvatarUrl(
     db: Querier,
-    params: { workspaceId: string; personaId: string; avatarUrl: string | null }
+    params: { workspaceId: string; personaId: string; avatarUrl: string | null; viewer?: { userId: string } }
   ): Promise<Persona | null> {
-    const { workspaceId, personaId, avatarUrl } = params
-    const result = await db.query<PersonaRow>(sql`
-      UPDATE personas SET avatar_url = ${avatarUrl}
-      WHERE id = ${personaId}
-        AND workspace_id = ${workspaceId}
-        AND managed_by = 'workspace'
-      RETURNING ${sql.raw(SELECT_FIELDS)}
-    `)
+    const { workspaceId, personaId, avatarUrl, viewer } = params
+    const result = await db.query<PersonaRow>(
+      viewer
+        ? sql`
+            UPDATE personas SET avatar_url = ${avatarUrl}
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND (managed_by = 'workspace' OR (managed_by = 'user' AND owner_user_id = ${viewer.userId}))
+            RETURNING ${sql.raw(SELECT_FIELDS)}
+          `
+        : sql`
+            UPDATE personas SET avatar_url = ${avatarUrl}
+            WHERE id = ${personaId}
+              AND workspace_id = ${workspaceId}
+              AND managed_by = 'workspace'
+            RETURNING ${sql.raw(SELECT_FIELDS)}
+          `
+    )
     return result.rows[0] ? mapRowToPersona(result.rows[0]) : null
   },
 }

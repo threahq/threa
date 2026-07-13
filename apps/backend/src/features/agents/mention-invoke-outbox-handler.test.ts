@@ -222,6 +222,48 @@ describe("MentionInvokeHandler", () => {
     expect(send).not.toHaveBeenCalled()
   })
 
+  it("dispatches a personal persona mentioned by its owner", async () => {
+    // Author (actorId "usr_author") owns the personal persona.
+    const event = makeMessageCreatedEvent(1n, {
+      contentJson: mentionDoc(["persona_mine", "mine"]),
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([
+      { id: "persona_mine", slug: "mine", status: "active", managedBy: "user", ownerUserId: "usr_author" },
+    ] as any)
+
+    const { handler, send } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(JobQueues.PERSONA_AGENT, expect.objectContaining({ personaId: "persona_mine" }))
+  })
+
+  it("skips a personal persona mentioned by a non-owner while still dispatching other mentioned personas", async () => {
+    const event = makeMessageCreatedEvent(1n, {
+      contentJson: mentionDoc(["persona_theirs", "theirs"], ["persona_ariadne", "ariadne"]),
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([
+      { id: "persona_theirs", slug: "theirs", status: "active", managedBy: "user", ownerUserId: "usr_someone_else" },
+      { ...ACTIVE_PERSONA },
+    ] as any)
+
+    const { handler, send } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    // The other user's personal persona is skipped; the workspace built-in still runs.
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(
+      JobQueues.PERSONA_AGENT,
+      expect.objectContaining({ personaId: "persona_ariadne" })
+    )
+  })
+
   it("skips non-user actors and E2E streams", async () => {
     const personaEvent = makeMessageCreatedEvent(1n, { actorType: AuthorTypes.PERSONA })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([personaEvent] as any)

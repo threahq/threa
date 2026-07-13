@@ -174,7 +174,9 @@ export const personaResolvedConfigSchema = z.object({
   brevityPreset: z.enum(BREVITY_PRESETS).nullable(),
   tonePrompt: z.string().max(PERSONA_SLOT_MAX_CHARS).nullable(),
   brevityPrompt: z.string().max(PERSONA_SLOT_MAX_CHARS).nullable(),
-  managedBy: z.enum(["system", "workspace"]),
+  // `user` is a personal persona (user-scoped-personas), resolved only for its
+  // owner; a built-in is `system`, a workspace custom is `workspace`.
+  managedBy: z.enum(["system", "workspace", "user"]),
   status: personaConfigStatusSchema,
   visibility: personaConfigVisibilitySchema,
   e2eCapable: z.boolean(),

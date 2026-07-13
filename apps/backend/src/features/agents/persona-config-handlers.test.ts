@@ -9,9 +9,13 @@ import { HttpError } from "../../lib/errors"
 
 const notFound = () => new HttpError("Persona not found", { status: 404, code: "PERSONA_NOT_FOUND" })
 
+// The caller the handlers resolve from `req.user.role` (admin here) and pass to
+// the service (user-scoped-personas).
+const CALLER = { userId: "usr_1", isAdmin: true }
+
 function fakeReq(overrides: Partial<{ params: object; body: object }> = {}): Request {
   return {
-    user: { id: "usr_1" },
+    user: { id: "usr_1", role: "admin" },
     workspaceId: "workspace_1",
     params: { personaId: ARIADNE_AGENT_ID },
     body: {},
@@ -147,7 +151,7 @@ describe("persona config handlers", () => {
     await makeHandlers({ listRevisions } as unknown as Partial<PersonaConfigService>).listRevisions(fakeReq(), res)
 
     expect(res.body).toEqual({ revisions })
-    expect(listRevisions).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID)
+    expect(listRevisions).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, CALLER)
   })
 
   it("POST restore surfaces the service's 404 for a non-editable id", async () => {
@@ -195,7 +199,7 @@ describe("persona config handlers", () => {
     )
 
     expect(res.body).toEqual({ persona, updatedAt: "2026-07-06T00:00:00.000Z" })
-    expect(restoreRevision).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "acrev_1", null, "usr_1")
+    expect(restoreRevision).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "acrev_1", null, CALLER)
   })
 
   it("PUT draft surfaces the service's 404 for a non-editable id", async () => {
@@ -220,7 +224,7 @@ describe("persona config handlers", () => {
 
     expect(res.statusCode).toBe(201)
     expect(res.body).toEqual({ persona })
-    expect(forkPersona).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "Helper", "usr_1")
+    expect(forkPersona).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "Helper", "workspace", CALLER)
   })
 
   it("PUT update surfaces an optimistic-concurrency conflict as 409 with details.current", async () => {
@@ -265,7 +269,7 @@ describe("persona config handlers", () => {
     )
 
     expect(res.body).toEqual({ persona })
-    expect(setCustomStatus).toHaveBeenCalledWith("workspace_1", "persona_x", "archived", "usr_1")
+    expect(setCustomStatus).toHaveBeenCalledWith("workspace_1", "persona_x", "archived", CALLER)
   })
 
   it("PUT draft returns the saved draft state", async () => {
@@ -288,7 +292,7 @@ describe("persona config handlers", () => {
     await makeHandlers({ discardDraft } as unknown as Partial<PersonaConfigService>).deleteDraft(fakeReq(), res)
 
     expect(res.statusCode).toBe(204)
-    expect(discardDraft).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "usr_1")
+    expect(discardDraft).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, CALLER)
   })
 
   it("POST test-stream returns the ensured stream id", async () => {
@@ -301,7 +305,7 @@ describe("persona config handlers", () => {
     )
 
     expect(res.body).toEqual({ streamId: "stream_test" })
-    expect(ensureTestStream).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, "usr_1")
+    expect(ensureTestStream).toHaveBeenCalledWith("workspace_1", ARIADNE_AGENT_ID, CALLER)
   })
 })
 
@@ -312,7 +316,7 @@ describe("persona config avatar handlers", () => {
 
   function avatarReq(overrides: { params?: object; file?: unknown } = {}): Request {
     return {
-      user: { id: "usr_1" },
+      user: { id: "usr_1", role: "admin" },
       workspaceId: "workspace_1",
       params: { personaId: CUSTOM_ID },
       body: {},
@@ -354,7 +358,7 @@ describe("persona config avatar handlers", () => {
     const basePath = "avatars/workspace_1/personas/persona_custom_1/222"
     expect(uploadImages).toHaveBeenCalled()
     expect(deleteRawFile).toHaveBeenCalledWith("avatars/workspace_1/personas/persona_custom_1/222.original")
-    expect(setCustomAvatar).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, basePath, "usr_1")
+    expect(setCustomAvatar).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, basePath, CALLER)
     // Old files cleaned up only after the commit succeeds.
     expect(deleteAvatarFiles).toHaveBeenCalledWith("avatars/workspace_1/personas/persona_custom_1/111")
     expect(res.body).toEqual({
@@ -407,7 +411,7 @@ describe("persona config avatar handlers", () => {
     const res = fakeRes()
     await handlers.removeAvatar(avatarReq(), res)
 
-    expect(setCustomAvatar).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, null, "usr_1")
+    expect(setCustomAvatar).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, null, CALLER)
     expect(deleteAvatarFiles).toHaveBeenCalledWith("avatars/workspace_1/personas/persona_custom_1/111")
     expect(res.body).toEqual({ persona: { id: CUSTOM_ID, avatarUrl: null }, updatedAt: "2026-07-12T10:00:00.000Z" })
   })

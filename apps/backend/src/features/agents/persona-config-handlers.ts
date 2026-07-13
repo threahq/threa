@@ -1,10 +1,16 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import { personaConfigPatchSchema, personaCustomConfigSchema, PERSONA_NAME_MAX_CHARS } from "@threa/types"
+import {
+  personaConfigPatchSchema,
+  personaCustomConfigSchema,
+  permissionsForRole,
+  PERSONA_NAME_MAX_CHARS,
+  WORKSPACE_PERMISSION_SCOPES,
+} from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { getVisibleBuiltInAgentConfig } from "./built-in-agents"
-import type { PersonaConfigService } from "./persona-config-service"
+import type { PersonaCaller, PersonaConfigService } from "./persona-config-service"
 import type { AvatarService } from "../workspaces"
 
 interface Dependencies {
@@ -28,7 +34,31 @@ const restoreRevisionSchema = z.object({
 const forkPersonaSchema = z.object({
   sourcePersonaId: z.string().min(1).nullable(),
   name: z.string().min(1).max(PERSONA_NAME_MAX_CHARS),
+  // A workspace fork is admin-only; a personal fork lands owned by the caller
+  // (user-scoped-personas). Defaults to workspace so existing callers are
+  // unchanged.
+  scope: z.enum(["workspace", "personal"]).default("workspace"),
 })
+
+/**
+ * Whether the caller holds workspace-admin, resolved with the same JWT-claim ›
+ * role-fallback order as `requireWorkspacePermission` so opening the persona
+ * routes to plain `authed` keeps non-admin behavior on built-in/workspace rows
+ * equivalent (user-scoped-personas). Persona routes are session-only (`authed`),
+ * so the API-key branches don't apply.
+ */
+function callerIsWorkspaceAdmin(req: Request): boolean {
+  const admin = WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN
+  return (
+    req.authUser?.permissions?.includes(admin) ??
+    (req.user != null && (permissionsForRole(req.user.role) as readonly string[]).includes(admin)) ??
+    false
+  )
+}
+
+function resolveCaller(req: Request): PersonaCaller {
+  return { userId: req.user!.id, isAdmin: callerIsWorkspaceAdmin(req) }
+}
 
 const putCustomSchema = z.object({
   config: personaCustomConfigSchema,
@@ -48,10 +78,12 @@ function overrideConflict(current: unknown): HttpError {
 }
 
 /**
- * HTTP surface for persona (built-in agent) config editing (roadmap 7.1/7.2).
- * The list is member-visible; config read and override write are admin-gated at
- * the route layer. An id that is not an editable visible built-in (unknown, or
- * the internal empty shell) is a 404 everywhere.
+ * HTTP surface for persona config editing (roadmap 7.1/7.2, user-scoped-
+ * personas). The list is member-visible. The built-in override write stays
+ * admin-gated at the route layer; every other lifecycle route is plain `authed`
+ * and authorized per-persona in the service (admin for built-in/workspace rows,
+ * owner for personal rows) via the `caller` this surface resolves. An id that
+ * resolves to no persona the caller may edit is a 404.
  */
 export function createPersonaConfigHandlers({ personaConfigService, avatarService }: Dependencies) {
   return {
@@ -64,9 +96,8 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
     async getConfig(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
-      const callerId = req.user!.id
 
-      const config = await personaConfigService.getConfig(workspaceId, personaId, callerId)
+      const config = await personaConfigService.getConfig(workspaceId, personaId, resolveCaller(req))
       if (!config) throw personaNotFound()
       res.json(config)
     },
@@ -86,15 +117,21 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
       res.json({ persona: result.persona, updatedAt: result.updatedAt })
     },
 
-    // Fork a source persona into a new custom (admin). Customs are resolved by
-    // the service, so no built-in gate here.
+    // Fork a source persona into a new custom or personal persona. The service
+    // authorizes by scope (workspace fork → admin; personal fork → any member),
+    // so no route-level admin gate.
     async create(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
-      const callerId = req.user!.id
 
-      const { sourcePersonaId, name } = validateRequest(forkPersonaSchema, req.body)
+      const { sourcePersonaId, name, scope } = validateRequest(forkPersonaSchema, req.body)
 
-      const persona = await personaConfigService.forkPersona(workspaceId, sourcePersonaId, name, callerId)
+      const persona = await personaConfigService.forkPersona(
+        workspaceId,
+        sourcePersonaId,
+        name,
+        scope,
+        resolveCaller(req)
+      )
       res.status(201).json({ persona })
     },
 
@@ -103,7 +140,6 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
     async update(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
-      const callerId = req.user!.id
 
       const { config, expectedUpdatedAt } = validateRequest(putCustomSchema, req.body)
 
@@ -112,7 +148,7 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
         personaId,
         config,
         expectedUpdatedAt,
-        callerId
+        resolveCaller(req)
       )
       if (result.outcome === "conflict") throw overrideConflict(result.current)
 
@@ -122,26 +158,25 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
     async archive(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
-      const callerId = req.user!.id
 
-      const persona = await personaConfigService.setCustomStatus(workspaceId, personaId, "archived", callerId)
+      const persona = await personaConfigService.setCustomStatus(workspaceId, personaId, "archived", resolveCaller(req))
       res.json({ persona })
     },
 
     async unarchive(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
-      const callerId = req.user!.id
 
-      const persona = await personaConfigService.setCustomStatus(workspaceId, personaId, "active", callerId)
+      const persona = await personaConfigService.setCustomStatus(workspaceId, personaId, "active", resolveCaller(req))
       res.json({ persona })
     },
 
-    // The gate for the endpoints below lives in the service (resolveEditable →
-    // 404), which covers both built-ins and workspace customs.
+    // Authorization lives in the service (authorizeEditableOr404): an admin sees
+    // workspace-archived ∪ their own archived personal personas; a non-admin only
+    // their own (user-scoped-personas).
     async listArchived(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
-      const personas = await personaConfigService.listArchived(workspaceId)
+      const personas = await personaConfigService.listArchived(workspaceId, resolveCaller(req))
       res.json({ personas })
     },
 
@@ -149,7 +184,7 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
 
-      const revisions = await personaConfigService.listRevisions(workspaceId, personaId)
+      const revisions = await personaConfigService.listRevisions(workspaceId, personaId, resolveCaller(req))
       res.json({ revisions })
     },
 
@@ -157,7 +192,6 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
       const revisionId = req.params.revisionId!
-      const callerId = req.user!.id
 
       const { expectedUpdatedAt } = validateRequest(restoreRevisionSchema, req.body)
 
@@ -166,7 +200,7 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
         personaId,
         revisionId,
         expectedUpdatedAt,
-        callerId
+        resolveCaller(req)
       )
       if (result.outcome === "conflict") throw overrideConflict(result.current)
 
@@ -176,29 +210,26 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
     async putDraft(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
-      const callerId = req.user!.id
 
       const { patch } = validateRequest(putDraftSchema, req.body)
 
-      const draft = await personaConfigService.saveDraft(workspaceId, personaId, callerId, patch)
+      const draft = await personaConfigService.saveDraft(workspaceId, personaId, resolveCaller(req), patch)
       res.json({ draft })
     },
 
     async deleteDraft(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
-      const callerId = req.user!.id
 
-      await personaConfigService.discardDraft(workspaceId, personaId, callerId)
+      await personaConfigService.discardDraft(workspaceId, personaId, resolveCaller(req))
       res.status(204).end()
     },
 
     async createTestStream(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
-      const callerId = req.user!.id
 
-      const result = await personaConfigService.ensureTestStream(workspaceId, personaId, callerId)
+      const result = await personaConfigService.ensureTestStream(workspaceId, personaId, resolveCaller(req))
       res.json(result)
     },
 
@@ -213,7 +244,7 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
     async uploadAvatar(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
-      const callerId = req.user!.id
+      const caller = resolveCaller(req)
 
       if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" })
@@ -233,7 +264,7 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
       // just-uploaded processed images so they don't leak.
       let result
       try {
-        result = await personaConfigService.setCustomAvatar(workspaceId, personaId, basePath, callerId)
+        result = await personaConfigService.setCustomAvatar(workspaceId, personaId, basePath, caller)
       } catch (error) {
         avatarService.deleteAvatarFiles(basePath)
         throw error
@@ -249,9 +280,8 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
     async removeAvatar(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
-      const callerId = req.user!.id
 
-      const result = await personaConfigService.setCustomAvatar(workspaceId, personaId, null, callerId)
+      const result = await personaConfigService.setCustomAvatar(workspaceId, personaId, null, resolveCaller(req))
       if (result.previousAvatarUrl) {
         avatarService.deleteAvatarFiles(result.previousAvatarUrl)
       }

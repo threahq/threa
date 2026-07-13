@@ -60,6 +60,42 @@ describe("resolveDeliveryGroups — enclave re-wrap nudges", () => {
   })
 })
 
+describe("resolveDeliveryGroups — agent_config:updated (user-scoped-personas)", () => {
+  it("routes a personal persona's update to its owner's room only, never the workspace", () => {
+    const groups = resolveDeliveryGroups(
+      event("agent_config:updated", {
+        workspaceId: "ws_1",
+        agentId: "persona_personal_1",
+        persona: { id: "persona_personal_1", kind: "personal", ownerUserId: "usr_owner" },
+      })
+    )
+    expect(groups).toEqual([userGroup("usr_owner")])
+    expect(groups).not.toContain(WORKSPACE_GROUP)
+  })
+
+  it("routes a workspace-custom update to the whole workspace (ownerUserId null)", () => {
+    const groups = resolveDeliveryGroups(
+      event("agent_config:updated", {
+        workspaceId: "ws_1",
+        agentId: "persona_custom_1",
+        persona: { id: "persona_custom_1", kind: "custom", ownerUserId: null },
+      })
+    )
+    expect(groups).toEqual([WORKSPACE_GROUP])
+  })
+
+  it("routes a built-in override update to the whole workspace (ownerUserId null)", () => {
+    const groups = resolveDeliveryGroups(
+      event("agent_config:updated", {
+        workspaceId: "ws_1",
+        agentId: "persona_system_ariadne",
+        persona: { id: "persona_system_ariadne", kind: "builtin", ownerUserId: null },
+      })
+    )
+    expect(groups).toEqual([WORKSPACE_GROUP])
+  })
+})
+
 describe("resolveDeliveryGroups — board exclusions (hide & mute)", () => {
   it("routes a hide change to the viewer's user group only, never the workspace", () => {
     const groups = resolveDeliveryGroups(

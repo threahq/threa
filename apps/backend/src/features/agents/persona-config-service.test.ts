@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
 import type { ModelCapabilities, ModelRegistry } from "@threa/agent-runtime"
 import { AgentToolNames, CompanionModes, MemoryModes, StreamPurposes, type PersonaConfigPatch } from "@threa/types"
-import { PersonaConfigService } from "./persona-config-service"
+import { PersonaConfigService, type PersonaCaller } from "./persona-config-service"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
@@ -14,6 +14,10 @@ import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "workspace_1"
 const CALLER_ID = "usr_1"
+// The existing lifecycle suites all acted as a workspace admin (the routes were
+// admin-gated pre user-scoped-personas); CALLER carries that. Personal-persona
+// suites below build their own member/owner callers.
+const CALLER: PersonaCaller = { userId: CALLER_ID, isAdmin: true }
 
 // Minimal registry: two assignable chat models, plus an embedding and a realtime
 // STT model that isChatModel must exclude from `availableModels` and assignment.
@@ -151,7 +155,7 @@ describe("PersonaConfigService.listArchived", () => {
       customPersona({ status: "archived" }),
     ])
 
-    const personas = await makeService().listArchived(WORKSPACE_ID)
+    const personas = await makeService().listArchived(WORKSPACE_ID, CALLER)
 
     expect(listSpy.mock.calls[0][1]).toBe(WORKSPACE_ID)
     expect(personas).toHaveLength(1)
@@ -167,7 +171,7 @@ describe("PersonaConfigService.getConfig", () => {
     spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
 
-    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(config).toMatchObject({
       overridePatch: null,
@@ -184,7 +188,7 @@ describe("PersonaConfigService.getConfig", () => {
     })
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
 
-    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(config!.overridePatch).toEqual({ model: "openrouter:anthropic/claude-haiku-4.5" })
     expect(config!.overrideUpdatedAt).toBe("2026-07-01T00:00:00.000Z")
@@ -200,7 +204,7 @@ describe("PersonaConfigService.getConfig", () => {
       updatedAt: "2026-07-03T00:00:00.000Z",
     })
 
-    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(config!.draft).toEqual({
       patch: { name: "Draft Ariadne" },
@@ -220,29 +224,29 @@ describe("PersonaConfigService.getConfig", () => {
     const archived = makeService({
       getStreamById: mock(async () => ({ id: "stream_test", archivedAt: "2026-07-03T01:00:00.000Z" })),
     })
-    expect((await archived.getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID))!.draft).toEqual({
+    expect((await archived.getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER))!.draft).toEqual({
       patch: { name: "Draft Ariadne" },
       testStreamId: null,
       updatedAt: "2026-07-03T00:00:00.000Z",
     })
 
     const gone = makeService({ getStreamById: mock(async () => null) })
-    expect((await gone.getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID))!.draft!.testStreamId).toBeNull()
+    expect((await gone.getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER))!.draft!.testStreamId).toBeNull()
   })
 
   it("returns null (→ 404) for the internal empty shell and unknown ids", async () => {
     // Neither a visible built-in nor a workspace custom resolves.
     spyOn(PersonaRepository, "findWorkspacePersona").mockResolvedValue(null)
     const service = makeService()
-    expect(await service.getConfig(WORKSPACE_ID, EMPTY_AGENT_ID, CALLER_ID)).toBeNull()
-    expect(await service.getConfig(WORKSPACE_ID, "persona_system_missing", CALLER_ID)).toBeNull()
+    expect(await service.getConfig(WORKSPACE_ID, EMPTY_AGENT_ID, CALLER)).toBeNull()
+    expect(await service.getConfig(WORKSPACE_ID, "persona_system_missing", CALLER)).toBeNull()
   })
 
   it("returns registry-derived chat models as availableModels (excludes embeddings and realtime STT)", async () => {
     spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
 
-    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(config!.availableModels).toEqual([
       { id: "openrouter:anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
@@ -526,7 +530,7 @@ describe("PersonaConfigService.listRevisions", () => {
       },
     ])
 
-    const revisions = await makeService().listRevisions(WORKSPACE_ID, ARIADNE_AGENT_ID)
+    const revisions = await makeService().listRevisions(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     // Fetches cap+1 to detect exact truncation.
     expect(list).toHaveBeenCalledWith({}, WORKSPACE_ID, ARIADNE_AGENT_ID, 51)
@@ -570,7 +574,7 @@ describe("PersonaConfigService.restoreRevision", () => {
       ARIADNE_AGENT_ID,
       "acrev_1",
       "2026-07-05T00:00:00.000Z",
-      CALLER_ID
+      CALLER
     )
 
     expect(result).toMatchObject({ outcome: "written", updatedAt: "2026-07-06T00:00:00.000Z" })
@@ -610,7 +614,7 @@ describe("PersonaConfigService.restoreRevision", () => {
     const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive")
 
     await expect(
-      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_9", null, CALLER_ID)
+      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_9", null, CALLER)
     ).rejects.toMatchObject({ status: 404, code: "PERSONA_REVISION_NOT_FOUND" })
     expect(upsert).not.toHaveBeenCalled()
   })
@@ -619,7 +623,7 @@ describe("PersonaConfigService.restoreRevision", () => {
     spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue(null)
 
     await expect(
-      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_missing", null, CALLER_ID)
+      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_missing", null, CALLER)
     ).rejects.toMatchObject({ status: 404, code: "PERSONA_REVISION_NOT_FOUND" })
   })
 
@@ -638,7 +642,7 @@ describe("PersonaConfigService.restoreRevision", () => {
     const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive")
 
     await expect(
-      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_old", null, CALLER_ID)
+      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_old", null, CALLER)
     ).rejects.toMatchObject({ status: 422, code: "PERSONA_REVISION_INCOMPATIBLE" })
     expect(upsert).not.toHaveBeenCalled()
   })
@@ -658,7 +662,7 @@ describe("PersonaConfigService.restoreRevision", () => {
     const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive")
 
     await expect(
-      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_rename", null, CALLER_ID)
+      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_rename", null, CALLER)
     ).rejects.toMatchObject({ status: 422, code: "PERSONA_REVISION_INCOMPATIBLE" })
     expect(upsert).not.toHaveBeenCalled()
   })
@@ -685,7 +689,7 @@ describe("PersonaConfigService.restoreRevision", () => {
       ARIADNE_AGENT_ID,
       "acrev_1",
       "2026-07-05T00:00:00.000Z",
-      CALLER_ID
+      CALLER
     )
 
     expect(result).toEqual({
@@ -706,7 +710,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       updatedAt: "2026-07-04T00:00:00.000Z",
     })
 
-    const draft = await makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID, { tonePreset: "direct" })
+    const draft = await makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER, { tonePreset: "direct" })
 
     expect(draft).toEqual({
       patch: { tonePreset: "direct" },
@@ -723,7 +727,7 @@ describe("PersonaConfigService draft lifecycle", () => {
     })
 
     await expect(
-      makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID, {
+      makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER, {
         description: "New tagline",
       } as PersonaConfigPatch)
     ).rejects.toMatchObject({ status: 400, code: "PERSONA_FIELD_LOCKED" })
@@ -738,7 +742,7 @@ describe("PersonaConfigService draft lifecycle", () => {
     })
 
     await expect(
-      makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID, {
+      makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER, {
         model: "openrouter:elevenlabs/scribe",
       })
     ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
@@ -766,7 +770,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
-    await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(archiveStream).toHaveBeenCalledWith("stream_test", CALLER_ID)
     expect(deleteByOwner).toHaveBeenCalledWith({}, WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
@@ -784,7 +788,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
-    await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(archiveStream).not.toHaveBeenCalled()
     expect(deleteByOwner).not.toHaveBeenCalled()
@@ -804,7 +808,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
-    await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(archiveStream).not.toHaveBeenCalled()
     expect(deleteByOwner).toHaveBeenCalledWith({}, WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
@@ -824,7 +828,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
-    const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(result).toEqual({ streamId: "stream_existing" })
     expect(createScratchpad).not.toHaveBeenCalled()
@@ -844,7 +848,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
-    const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(result).toEqual({ streamId: "stream_new" })
     expect(createScratchpad).toHaveBeenCalledWith(
@@ -885,7 +889,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
     })
 
-    const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
+    const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(result).toEqual({ streamId: "stream_new" })
     // No empty-patch upsert (INV-20): binding is the only draft write, and it never
@@ -940,7 +944,13 @@ describe("PersonaConfigService.forkPersona", () => {
     const revision = spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const persona = await makeService().forkPersona(WORKSPACE_ID, "persona_system_ariadne", "Coach", CALLER_ID)
+    const persona = await makeService().forkPersona(
+      WORKSPACE_ID,
+      "persona_system_ariadne",
+      "Coach",
+      "workspace",
+      CALLER
+    )
 
     expect(persona).toMatchObject({ id: "persona_custom_new", kind: "custom" })
     const insertArg = insert.mock.calls[0]![1] as {
@@ -967,7 +977,7 @@ describe("PersonaConfigService.forkPersona", () => {
     spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const persona = await makeService().forkPersona(WORKSPACE_ID, null, "Scribe", CALLER_ID)
+    const persona = await makeService().forkPersona(WORKSPACE_ID, null, "Scribe", "workspace", CALLER)
 
     expect(persona).toMatchObject({ id: "persona_custom_blank", kind: "custom" })
     expect(findById).not.toHaveBeenCalled()
@@ -992,7 +1002,7 @@ describe("PersonaConfigService.forkPersona", () => {
     spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Helper 2", CALLER_ID)
+    await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Helper 2", "workspace", CALLER)
 
     const insertArg = insert.mock.calls[0]![1] as { config: { tonePrompt: string; brevityPrompt: string } }
     expect(insertArg.config.tonePrompt).toBe("Be blunt.")
@@ -1010,7 +1020,7 @@ describe("PersonaConfigService.forkPersona", () => {
     spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const persona = await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Helper", CALLER_ID)
+    const persona = await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Helper", "workspace", CALLER)
 
     expect(persona.id).toBe("persona_custom_new")
     expect((insert.mock.calls[0]![1] as { slug: string }).slug).toBe("helper")
@@ -1019,14 +1029,18 @@ describe("PersonaConfigService.forkPersona", () => {
 
   it("404s when the source persona does not resolve", async () => {
     spyOn(PersonaRepository, "findById").mockResolvedValue(null)
-    await expect(makeService().forkPersona(WORKSPACE_ID, "persona_missing", "X", CALLER_ID)).rejects.toMatchObject({
+    await expect(
+      makeService().forkPersona(WORKSPACE_ID, "persona_missing", "X", "workspace", CALLER)
+    ).rejects.toMatchObject({
       status: 404,
       code: "PERSONA_SOURCE_NOT_FOUND",
     })
   })
 
   it("400s on an empty name", async () => {
-    await expect(makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "   ", CALLER_ID)).rejects.toMatchObject({
+    await expect(
+      makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "   ", "workspace", CALLER)
+    ).rejects.toMatchObject({
       status: 400,
     })
   })
@@ -1067,7 +1081,7 @@ describe("PersonaConfigService.updateCustom", () => {
       "persona_custom_1",
       validConfig,
       "2026-02-02T00:00:00.000Z",
-      CALLER_ID
+      CALLER
     )
 
     expect(result).toMatchObject({ outcome: "written", updatedAt: "2026-02-03T00:00:00.000Z" })
@@ -1095,7 +1109,7 @@ describe("PersonaConfigService.updateCustom", () => {
       "persona_custom_1",
       validConfig,
       "1999-01-01T00:00:00.000Z",
-      CALLER_ID
+      CALLER
     )
 
     expect(result.outcome).toBe("conflict")
@@ -1111,7 +1125,7 @@ describe("PersonaConfigService.updateCustom", () => {
       base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
     })
     await expect(
-      makeService().updateCustom(WORKSPACE_ID, ARIADNE_AGENT_ID, validConfig, null, CALLER_ID)
+      makeService().updateCustom(WORKSPACE_ID, ARIADNE_AGENT_ID, validConfig, null, CALLER)
     ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
   })
 
@@ -1123,7 +1137,7 @@ describe("PersonaConfigService.updateCustom", () => {
         "persona_custom_1",
         { ...validConfig, model: "openrouter:openai/text-embedding-3-small" },
         null,
-        CALLER_ID
+        CALLER
       )
     ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
   })
@@ -1136,7 +1150,7 @@ describe("PersonaConfigService custom getConfig + status", () => {
     spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
 
-    const config = await makeService().getConfig(WORKSPACE_ID, "persona_custom_1", CALLER_ID)
+    const config = await makeService().getConfig(WORKSPACE_ID, "persona_custom_1", CALLER)
 
     expect(config).toMatchObject({
       kind: "custom",
@@ -1153,7 +1167,7 @@ describe("PersonaConfigService custom getConfig + status", () => {
     spyOn(PersonaRepository, "setStatus").mockResolvedValue(customPersona({ status: "archived" }))
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const persona = await makeService().setCustomStatus(WORKSPACE_ID, "persona_custom_1", "archived", CALLER_ID)
+    const persona = await makeService().setCustomStatus(WORKSPACE_ID, "persona_custom_1", "archived", CALLER)
 
     expect(persona).toMatchObject({ id: "persona_custom_1", kind: "custom" })
     expect(outbox).toHaveBeenCalledWith(
@@ -1169,7 +1183,7 @@ describe("PersonaConfigService custom getConfig + status", () => {
       base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
     })
     await expect(
-      makeService().setCustomStatus(WORKSPACE_ID, ARIADNE_AGENT_ID, "archived", CALLER_ID)
+      makeService().setCustomStatus(WORKSPACE_ID, ARIADNE_AGENT_ID, "archived", CALLER)
     ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
   })
 
@@ -1184,7 +1198,7 @@ describe("PersonaConfigService custom getConfig + status", () => {
     const update = spyOn(PersonaRepository, "updateAvatarUrl").mockResolvedValue(customPersona({ avatarUrl: next }))
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const result = await makeService().setCustomAvatar(WORKSPACE_ID, "persona_custom_1", next, CALLER_ID)
+    const result = await makeService().setCustomAvatar(WORKSPACE_ID, "persona_custom_1", next, CALLER)
 
     expect(result).toEqual({
       persona: expect.objectContaining({ id: "persona_custom_1", kind: "custom", avatarUrl: next }),
@@ -1193,7 +1207,7 @@ describe("PersonaConfigService custom getConfig + status", () => {
     })
     expect(update).toHaveBeenCalledWith(
       {},
-      { workspaceId: WORKSPACE_ID, personaId: "persona_custom_1", avatarUrl: next }
+      { workspaceId: WORKSPACE_ID, personaId: "persona_custom_1", avatarUrl: next, viewer: { userId: CALLER_ID } }
     )
     expect(outbox).toHaveBeenCalledWith(
       {},
@@ -1208,7 +1222,7 @@ describe("PersonaConfigService custom getConfig + status", () => {
       base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
     })
     await expect(
-      makeService().setCustomAvatar(WORKSPACE_ID, ARIADNE_AGENT_ID, "avatars/x", CALLER_ID)
+      makeService().setCustomAvatar(WORKSPACE_ID, ARIADNE_AGENT_ID, "avatars/x", CALLER)
     ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
   })
 
@@ -1220,10 +1234,268 @@ describe("PersonaConfigService custom getConfig + status", () => {
     const update = spyOn(PersonaRepository, "updateAvatarUrl").mockResolvedValue(customPersona())
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const result = await makeService().setCustomAvatar(WORKSPACE_ID, "persona_custom_1", null, CALLER_ID)
+    const result = await makeService().setCustomAvatar(WORKSPACE_ID, "persona_custom_1", null, CALLER)
 
     expect(result.previousAvatarUrl).toBeNull()
     expect(update).not.toHaveBeenCalled()
     expect(outbox).not.toHaveBeenCalled()
+  })
+})
+
+// ── user-scoped personas ─────────────────────────────────────────────────────
+
+const MEMBER: PersonaCaller = { userId: "usr_member", isAdmin: false }
+const OWNER: PersonaCaller = { userId: "usr_owner", isAdmin: false }
+
+function personalPersona(overrides: Partial<Persona> = {}): Persona {
+  return customPersona({
+    id: "persona_personal_1",
+    slug: "my-helper",
+    name: "My Helper",
+    managedBy: "user",
+    ownerUserId: OWNER.userId,
+    ...overrides,
+  })
+}
+
+describe("PersonaConfigService.forkPersona — scope (user-scoped-personas)", () => {
+  afterEach(() => mock.restore())
+
+  it("rejects a non-admin workspace fork with 403 before writing", async () => {
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona")
+    await expect(makeService().forkPersona(WORKSPACE_ID, null, "Helper", "workspace", MEMBER)).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+    })
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("lets any member fork a personal persona: managed_by='user', owner=caller, broadcast carries ownerUserId", async () => {
+    setupTransaction()
+    // Source: a workspace custom the member can resolve.
+    spyOn(PersonaRepository, "findById").mockResolvedValue(customPersona())
+    const inserted = personalPersona({ id: "persona_personal_new", slug: "helper", ownerUserId: MEMBER.userId })
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(inserted)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const persona = await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Helper", "personal", MEMBER)
+
+    expect(persona).toMatchObject({ id: "persona_personal_new", kind: "personal", ownerUserId: MEMBER.userId })
+    expect((insert.mock.calls[0]![1] as { ownerUserId?: string }).ownerUserId).toBe(MEMBER.userId)
+    // The broadcast payload carries ownerUserId → delivery-groups routes it to the owner only.
+    expect(outbox).toHaveBeenCalledWith(
+      {},
+      "agent_config:updated",
+      expect.objectContaining({ persona: expect.objectContaining({ ownerUserId: MEMBER.userId, kind: "personal" }) })
+    )
+  })
+
+  it("blank personal fork stamps the owner without a source lookup", async () => {
+    setupTransaction()
+    const findById = spyOn(PersonaRepository, "findById").mockResolvedValue(null)
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(
+      personalPersona({ id: "persona_personal_blank", slug: "scribe", ownerUserId: MEMBER.userId })
+    )
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await makeService().forkPersona(WORKSPACE_ID, null, "Scribe", "personal", MEMBER)
+
+    expect(findById).not.toHaveBeenCalled()
+    expect((insert.mock.calls[0]![1] as { ownerUserId?: string }).ownerUserId).toBe(MEMBER.userId)
+  })
+
+  it("404s when the source is another user's personal persona (invisible → not forkable)", async () => {
+    // findById is workspace-scoped and returns the row; the service filters it
+    // out because its owner is not the caller.
+    spyOn(PersonaRepository, "findById").mockResolvedValue(personalPersona({ ownerUserId: "usr_other" }))
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona")
+    await expect(
+      makeService().forkPersona(WORKSPACE_ID, "persona_personal_1", "Steal", "personal", MEMBER)
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_SOURCE_NOT_FOUND" })
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("lets a member fork their OWN personal persona as a source", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "findById").mockResolvedValue(personalPersona({ ownerUserId: OWNER.userId }))
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(
+      personalPersona({ id: "persona_personal_copy", slug: "my-helper-2" })
+    )
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await makeService().forkPersona(WORKSPACE_ID, "persona_personal_1", "My Helper 2", "personal", OWNER)
+
+    expect(insert).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("PersonaConfigService lifecycle authorization (user-scoped-personas)", () => {
+  afterEach(() => mock.restore())
+
+  const validConfig = {
+    name: "Helper",
+    description: null,
+    avatarEmoji: null,
+    systemPrompt: "Help this workspace.",
+    model: "openrouter:anthropic/claude-haiku-4.5",
+    escalationModel: null,
+    temperature: null,
+    maxTokens: null,
+    enabledTools: [AgentToolNames.SEND_MESSAGE],
+    tonePrompt: null,
+    brevityPrompt: null,
+  }
+
+  it("member acting on a workspace custom gets 403 (equivalent to the old admin gate)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    await expect(
+      makeService().updateCustom(WORKSPACE_ID, "persona_custom_1", validConfig, null, MEMBER)
+    ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" })
+  })
+
+  it("member acting on a built-in gets 403", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "builtin",
+      base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
+    })
+    await expect(makeService().listRevisions(WORKSPACE_ID, ARIADNE_AGENT_ID, MEMBER)).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+    })
+  })
+
+  it("a non-owner (or admin) acting on someone else's personal persona gets 404, never 403", async () => {
+    // Viewer-scoped resolveEditable returns null for a persona the caller can't
+    // see — invisible means invisible.
+    const resolve = spyOn(PersonaRepository, "resolveEditable").mockResolvedValue(null)
+    const admin: PersonaCaller = { userId: "usr_admin", isAdmin: true }
+    await expect(
+      makeService().updateCustom(WORKSPACE_ID, "persona_personal_1", validConfig, null, admin)
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
+    // resolveEditable was called with the caller as the viewer (not undefined).
+    expect(resolve.mock.calls[0]![3]).toEqual({ userId: "usr_admin" })
+  })
+
+  it("owner updates their personal persona: passes the viewer to the write and broadcasts kind:personal", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: personalPersona() })
+    const update = spyOn(PersonaRepository, "updateWorkspacePersona").mockResolvedValue({
+      outcome: "written",
+      row: personalPersona({ name: "Helper" }),
+      updatedAt: "2026-02-03T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 2 })
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await makeService().updateCustom(WORKSPACE_ID, "persona_personal_1", validConfig, null, OWNER)
+
+    expect(result).toMatchObject({ outcome: "written" })
+    expect(update.mock.calls[0]![1]).toMatchObject({ viewer: { userId: OWNER.userId } })
+    expect(outbox).toHaveBeenCalledWith(
+      {},
+      "agent_config:updated",
+      expect.objectContaining({ persona: expect.objectContaining({ kind: "personal", ownerUserId: OWNER.userId }) })
+    )
+  })
+
+  it("owner archives their personal persona (setStatus gets the viewer)", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: personalPersona() })
+    const setStatus = spyOn(PersonaRepository, "setStatus").mockResolvedValue(personalPersona({ status: "archived" }))
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const persona = await makeService().setCustomStatus(WORKSPACE_ID, "persona_personal_1", "archived", OWNER)
+
+    expect(persona).toMatchObject({ kind: "personal", status: "archived" })
+    expect(setStatus.mock.calls[0]![1]).toMatchObject({ viewer: { userId: OWNER.userId } })
+  })
+
+  it("member archiving a workspace custom gets 403", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    await expect(
+      makeService().setCustomStatus(WORKSPACE_ID, "persona_custom_1", "archived", MEMBER)
+    ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" })
+  })
+
+  it("owner sets their personal persona avatar (updateAvatarUrl gets the viewer)", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: personalPersona() })
+    const update = spyOn(PersonaRepository, "updateAvatarUrl").mockResolvedValue(
+      personalPersona({ avatarUrl: "avatars/x/222" })
+    )
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await makeService().setCustomAvatar(WORKSPACE_ID, "persona_personal_1", "avatars/x/222", OWNER)
+
+    expect(update.mock.calls[0]![1]).toMatchObject({ viewer: { userId: OWNER.userId } })
+  })
+
+  it("getConfig for a personal persona returns kind:'personal' and managedBy:'user' for its owner", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: personalPersona() })
+    spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
+
+    const config = await makeService().getConfig(WORKSPACE_ID, "persona_personal_1", OWNER)
+
+    expect(config).toMatchObject({ kind: "personal", resolved: { managedBy: "user" } })
+  })
+
+  it("member getConfig on a workspace custom gets 403", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    await expect(makeService().getConfig(WORKSPACE_ID, "persona_custom_1", MEMBER)).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+    })
+  })
+
+  it("owner saves a draft on their personal persona; a member on a workspace custom gets 403", async () => {
+    const owns = spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "custom",
+      row: personalPersona(),
+    })
+    spyOn(PersonaConfigDraftRepository, "upsert").mockResolvedValue({
+      patch: {},
+      testStreamId: null,
+      updatedAt: "2026-07-04T00:00:00.000Z",
+    })
+    await makeService().saveDraft(WORKSPACE_ID, "persona_personal_1", OWNER, {})
+
+    owns.mockResolvedValue({ kind: "custom", row: customPersona() })
+    await expect(makeService().saveDraft(WORKSPACE_ID, "persona_custom_1", MEMBER, {})).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+    })
+  })
+
+  it("discardDraft authorizes the persona: a member on a workspace custom gets 403", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const findByOwner = spyOn(PersonaConfigDraftRepository, "findByOwner")
+    await expect(makeService().discardDraft(WORKSPACE_ID, "persona_custom_1", MEMBER)).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+    })
+    expect(findByOwner).not.toHaveBeenCalled()
+  })
+})
+
+describe("PersonaConfigService.listArchived — caller-aware (user-scoped-personas)", () => {
+  afterEach(() => mock.restore())
+
+  it("admin gets workspace-archived ∪ own archived personal (includeWorkspace true + ownerUserId)", async () => {
+    const list = spyOn(PersonaRepository, "listArchivedCustoms").mockResolvedValue([])
+    await makeService().listArchived(WORKSPACE_ID, CALLER)
+    expect(list.mock.calls[0]![2]).toEqual({ includeWorkspace: true, ownerUserId: CALLER.userId })
+  })
+
+  it("non-admin gets only their own archived personal (includeWorkspace false)", async () => {
+    const list = spyOn(PersonaRepository, "listArchivedCustoms").mockResolvedValue([
+      personalPersona({ status: "archived", ownerUserId: MEMBER.userId }),
+    ])
+    const personas = await makeService().listArchived(WORKSPACE_ID, MEMBER)
+    expect(list.mock.calls[0]![2]).toEqual({ includeWorkspace: false, ownerUserId: MEMBER.userId })
+    expect(personas[0]).toMatchObject({ kind: "personal", ownerUserId: MEMBER.userId })
   })
 })
