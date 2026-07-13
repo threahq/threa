@@ -67,6 +67,7 @@ beforeEach(async () => {
   await db.composerLoaded.clear()
   await db.pendingOperations.clear()
   await db.draftScratchpads.clear()
+  await db.conversations.clear()
   // The drafts explorer now decrypts E2E previews via the shared cache, which
   // reads the viewer id + session; default them to "no viewer / locked" so these
   // plaintext-draft tests run without an AuthProvider (INV-48 namespace spyOn).
@@ -79,6 +80,82 @@ beforeEach(async () => {
     deviceTrusted: false,
     error: null,
   } as ReturnType<typeof e2eSessionStore.useE2eSession>)
+})
+
+describe("useAllDrafts board-composer drafts", () => {
+  async function seedConversation(conversationId: string, streamId: string, topicSummary: string | null) {
+    await db.conversations.put({
+      id: conversationId,
+      workspaceId,
+      _lastActivityMs: 1,
+      _cachedAt: 1,
+      conversation: { id: conversationId, streamId, topicSummary },
+    } as unknown as Parameters<typeof db.conversations.put>[0])
+  }
+
+  it("lists a stashed board reply with a panel deep link that carries the stash restore", async () => {
+    await seedConversation("conv_1", "stream_9", "GPU budget")
+    await db.drafts.add(syncedDraft({ id: "draft_b1", scope: "board:reply:conv_1" }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts).toHaveLength(1))
+    expect(result.current.drafts[0]).toMatchObject({
+      id: "draft_b1",
+      displayName: "Reply in GPU budget",
+      streamId: "stream_9",
+      isStashed: true,
+      href: `/w/${workspaceId}/s/stream_9?panel=${encodeURIComponent("conv:conv_1")}&stash=draft_b1`,
+    })
+  })
+
+  it("lists a branch reply and a sub-topic draft, navigable but without a stash param (no mounted consumer)", async () => {
+    await seedConversation("conv_2", "stream_thread_1", "Sub topic")
+    await db.drafts.add(syncedDraft({ id: "draft_b2", scope: "board:branch-reply:conv_2" }))
+    await db.drafts.add(syncedDraft({ id: "draft_b3", scope: "board:subtopic:stream_9:msg_1", clientUpdatedAt: 900 }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts).toHaveLength(2))
+    expect(result.current.drafts[0]).toMatchObject({
+      id: "draft_b2",
+      displayName: "Reply in Sub topic",
+      href: `/w/${workspaceId}/s/stream_thread_1?panel=${encodeURIComponent("conv:conv_2")}`,
+    })
+    expect(result.current.drafts[1]).toMatchObject({
+      id: "draft_b3",
+      displayName: "New sub-topic",
+      href: `/w/${workspaceId}/s/stream_9?m=msg_1`,
+    })
+  })
+
+  it("still links (via the board route) while the conversation isn't cached, so roamed pickup never dead-ends", async () => {
+    await db.drafts.add(syncedDraft({ id: "draft_b4", scope: "board:reply:conv_uncached" }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts).toHaveLength(1))
+    expect(result.current.drafts[0]).toMatchObject({
+      id: "draft_b4",
+      displayName: "Conversation reply",
+      href: `/w/${workspaceId}/board?panel=${encodeURIComponent("conv:conv_uncached")}&stash=draft_b4`,
+    })
+  })
+
+  it("counts board drafts in the sidebar summary without flagging a stream hint", async () => {
+    await db.drafts.add(syncedDraft({ id: "draft_b5", scope: "board:reply:conv_1" }))
+    await db.drafts.add(syncedDraft({ id: "draft_s9", scope: "stream:stream_1" }))
+    await db.composerLoaded.put({ scope: "stream:stream_1", workspaceId, draftId: "draft_s9" })
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useDraftSummary(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.draftCount).toBe(2))
+    expect(result.current.loadedDraftStreamIdSignature).toBe("stream_1")
+  })
 })
 
 describe("useAllDrafts deleteDraft", () => {

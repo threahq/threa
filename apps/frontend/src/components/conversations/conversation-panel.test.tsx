@@ -24,6 +24,8 @@ import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as shareHandoffModule from "@/stores/share-handoff-store"
 import * as boardReplyComposerModule from "@/components/board/board-reply-composer"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
+import * as stashedDraftsModule from "@/hooks/use-stashed-drafts"
+import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import {
   requestConversationReplyOpen,
   resetConversationReplyOpenStoreCache,
@@ -95,6 +97,8 @@ function mountPanel(opts: {
   getBoardMessages?: () => Promise<BoardPostMessage[]>
   /** `?m=` deep-link target appended to the panel URL. */
   highlightMessageId?: string
+  /** `?stash=` drafts-explorer restore param appended to the panel URL. */
+  stashParam?: string
 }) {
   const getBoardPost = vi.fn(opts.getBoardPost ?? (async () => makePost()))
   const getBoardMessages = vi.fn(
@@ -102,7 +106,9 @@ function mountPanel(opts: {
   )
   vi.spyOn(boardStoreModule, "useBoardPost").mockReturnValue(opts.cached as never)
 
-  const mParam = opts.highlightMessageId ? `&m=${opts.highlightMessageId}` : ""
+  const mParam =
+    (opts.highlightMessageId ? `&m=${opts.highlightMessageId}` : "") +
+    (opts.stashParam ? `&stash=${opts.stashParam}` : "")
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
@@ -196,6 +202,46 @@ describe("ConversationPanel", () => {
       return <></>
     })
     mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    expect(captured).toBe(0)
+  })
+
+  it("opens the reply composer for a ?stash= deep link whose row belongs to its reply scope", async () => {
+    // The drafts explorer deep-links a stashed board reply to the panel; the
+    // collapsed resting affordance mounts no composer, so the panel itself must
+    // open the form for the stash restore to have a consumer.
+    vi.spyOn(stashedDraftsModule, "useStashedDrafts").mockImplementation(
+      (_ws, scope) =>
+        ({
+          drafts: scope === boardReplyDraftKey(CONVERSATION_ID) ? [{ id: "draft_owned" }] : [],
+          isLoaded: true,
+          deleteStashedDraft: vi.fn(),
+        }) as unknown as ReturnType<typeof stashedDraftsModule.useStashedDrafts>
+    )
+    let captured: number | undefined
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      captured = props.openReplySignal
+      return <></>
+    })
+    mountPanel({ cached: asCached(makePost()), stashParam: "draft_owned" })
+    await screen.findByText("Opening message body.")
+    await waitFor(() => expect(captured).toBe(1))
+  })
+
+  it("ignores a ?stash= param whose row is not in its reply scope's pile", async () => {
+    // A foreign scope's stash id (e.g. a thread draft on the same route) must be
+    // left for its own host — opening here would strand the restore.
+    vi.spyOn(stashedDraftsModule, "useStashedDrafts").mockReturnValue({
+      drafts: [],
+      isLoaded: true,
+      deleteStashedDraft: vi.fn(),
+    } as unknown as ReturnType<typeof stashedDraftsModule.useStashedDrafts>)
+    let captured: number | undefined
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      captured = props.openReplySignal
+      return <></>
+    })
+    mountPanel({ cached: asCached(makePost()), stashParam: "draft_foreign" })
     await screen.findByText("Opening message body.")
     expect(captured).toBe(0)
   })

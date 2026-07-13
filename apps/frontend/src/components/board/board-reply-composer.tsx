@@ -3,6 +3,7 @@ import { useQuoteReply, type QuoteReplyData } from "@/components/timeline/quote-
 import { useReplyToBoardPost } from "@/hooks/use-conversations"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
+import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import type { BoardPost } from "@threa/types"
 
 // Resting-affordance state. `draft` signals a persisted-but-collapsed reply, so
@@ -160,7 +161,7 @@ function BoardReplyComposerForm({
       workspaceId={workspaceId}
       streamId={streamId}
       memoAnchorStreamId={streamId}
-      draftKey={`board:reply:${post.conversation.id}`}
+      draftKey={boardReplyDraftKey(post.conversation.id)}
       placeholder="Write a reply…"
       contextChip={isMobile && contextChip ? `Replying in ${contextChip}` : undefined}
       pendingQuote={pendingQuote}

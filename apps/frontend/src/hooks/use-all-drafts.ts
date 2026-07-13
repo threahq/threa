@@ -1,6 +1,8 @@
 import { useLiveQuery } from "dexie-react-hooks"
 import { useCallback, useMemo } from "react"
-import { db, type CachedDraft, type CachedStream } from "@/db"
+import { db, type CachedBoardPost, type CachedDraft, type CachedStream } from "@/db"
+import { createConversationPanelId } from "@/contexts"
+import { parseBoardDraftKey, type ParsedBoardDraftKey } from "@/lib/board/draft-keys"
 import {
   deleteDraftScratchpadFromCache,
   useComposerLoadedFromStore,
@@ -195,6 +197,56 @@ function resolveDraftLocation(
   }
 }
 
+/** A board draft's host stream type, for the explorer's type-driven rendering. */
+function streamDraftType(stream: CachedStream | undefined): DraftType {
+  return stream && isValidDraftType(stream.type) ? stream.type : "channel"
+}
+
+/**
+ * Location resolution for `board:*` draft scopes (the board's inline reply
+ * composers). Reply drafts deep-link to the conversation panel on the anchor
+ * stream's route (`?panel=conv:<id>`), which hosts the same composer scope and
+ * consumes a `?stash=` restore; sub-topic drafts link to the fork message in
+ * its timeline. A conversation not yet in the local cache (a roamed draft on a
+ * fresh device) keeps a generic label but still links — via the board route,
+ * whose panel fetches the post by id — so cross-device pickup never dead-ends.
+ */
+function resolveBoardDraftLocation(
+  parsed: ParsedBoardDraftKey,
+  workspaceId: string,
+  streamMap: Map<string, CachedStream>,
+  boardPostMap: Map<string, CachedBoardPost>
+): ResolvedDraftLocation {
+  if (parsed.kind === "subtopic") {
+    const stream = streamMap.get(parsed.streamId)
+    const displayName = stream ? `New sub-topic in ${streamLabel(stream, "sidebar")}` : "New sub-topic"
+    return {
+      draftType: streamDraftType(stream),
+      streamId: parsed.streamId,
+      displayName,
+      href: `/w/${workspaceId}/s/${parsed.streamId}?m=${parsed.messageId}`,
+      groupLabel: displayName,
+    }
+  }
+
+  const post = boardPostMap.get(parsed.conversationId)
+  const anchorStreamId = post?.conversation.streamId ?? null
+  const stream = anchorStreamId ? streamMap.get(anchorStreamId) : undefined
+  const target = post?.conversation.topicSummary ?? (stream ? streamLabel(stream, "sidebar") : null)
+  const displayName = target ? `Reply in ${target}` : "Conversation reply"
+  const panelParam = `panel=${encodeURIComponent(createConversationPanelId(parsed.conversationId))}`
+  const href = anchorStreamId
+    ? `/w/${workspaceId}/s/${anchorStreamId}?${panelParam}`
+    : `/w/${workspaceId}/board?${panelParam}`
+  return {
+    draftType: streamDraftType(stream),
+    streamId: anchorStreamId,
+    displayName,
+    href,
+    groupLabel: displayName,
+  }
+}
+
 /**
  * Stream ids whose composer holds a *loaded* (checked-in, non-stashed) draft,
  * derived from {@link useAllDrafts} output. A stashed draft holds no composer
@@ -289,6 +341,34 @@ export function useAllDrafts(workspaceId: string) {
     return map
   }, [cachedStreams])
 
+  // Conversations referenced by board-scoped drafts (`board:reply:` /
+  // `board:branch-reply:`), for location resolution. Keyed on the id set (not
+  // the drafts array) so a body keystroke doesn't re-fire the query.
+  const boardConversationIdKey = useMemo(() => {
+    const ids = new Set<string>()
+    for (const scope of scopesSignature.split("|")) {
+      const parsed = parseBoardDraftKey(scope)
+      if (parsed && parsed.kind !== "subtopic") ids.add(parsed.conversationId)
+    }
+    return [...ids].sort().join(",")
+  }, [scopesSignature])
+
+  const cachedBoardPosts = useLiveQuery(
+    async () => {
+      if (!boardConversationIdKey) return []
+      const rows = await db.conversations.bulkGet(boardConversationIdKey.split(","))
+      return rows.filter((row): row is CachedBoardPost => row !== undefined && row.workspaceId === workspaceId)
+    },
+    [boardConversationIdKey, workspaceId],
+    []
+  )
+
+  const boardPostMap = useMemo(() => {
+    const map = new Map<string, CachedBoardPost>()
+    for (const post of cachedBoardPosts ?? []) map.set(post.id, post)
+    return map
+  }, [cachedBoardPosts])
+
   // Build a map of messageId -> streamId for looking up parent messages
   // Thread drafts use payload.messageId as key, not event.id
   const messageToStreamMap = useMemo(() => {
@@ -369,26 +449,35 @@ export function useAllDrafts(workspaceId: string) {
       }
     }
 
-    // Every other draft — channels, DMs, threads — loaded (ambient) or stashed.
+    // Every other draft — channels, DMs, threads, board replies — loaded
+    // (ambient) or stashed.
     for (const draft of allDrafts) {
       const parsed = parseDraftMessageKey(draft.scope)
-      if (!parsed) continue
+      const board = parsed ? null : parseBoardDraftKey(draft.scope)
+      if (!parsed && !board) continue
 
       // Scratchpad-scoped drafts: the loaded one is handled above; any stash
       // siblings are skipped in the explorer until the scratchpad flow itself
       // supports them.
-      if (parsed.type === "stream" && isDraftId(parsed.id)) continue
+      if (parsed && parsed.type === "stream" && isDraftId(parsed.id)) continue
 
       if (!draftHasPayload(draft)) continue
 
-      const resolved = resolveDraftLocation(parsed, workspaceId, streamMap, messageToStreamMap)
+      const resolved = parsed
+        ? resolveDraftLocation(parsed, workspaceId, streamMap, messageToStreamMap)
+        : resolveBoardDraftLocation(board!, workspaceId, streamMap, boardPostMap)
       const isStashed = (loadedByScope.get(draft.scope) ?? null) !== draft.id
 
       // A stashed row deep-links via `?stash=<draftId>` so the composer host
       // pops + restores it on mount; the loaded (ambient) row navigates plainly
-      // since its content is already checked out.
+      // since its content is already checked out. Only surfaces with a mounted
+      // consumer get the param: the stream composer, the thread panel, and the
+      // conversation panel's reply — a branch-tail or sub-topic composer is
+      // unmounted until its gesture opens, so those rows navigate plainly and
+      // the draft is picked up from that composer's own pile.
+      const supportsStashRestore = parsed !== null || board!.kind === "reply"
       const href =
-        isStashed && resolved.href
+        isStashed && resolved.href && supportsStashRestore
           ? resolved.href + (resolved.href.includes("?") ? "&" : "?") + `stash=${encodeURIComponent(draft.id)}`
           : resolved.href
 
@@ -412,7 +501,17 @@ export function useAllDrafts(workspaceId: string) {
     result.sort((a, b) => b.updatedAt - a.updatedAt)
 
     return result
-  }, [draftScratchpads, allDrafts, draftsById, loadedByScope, streamMap, messageToStreamMap, previewMap, workspaceId])
+  }, [
+    draftScratchpads,
+    allDrafts,
+    draftsById,
+    loadedByScope,
+    streamMap,
+    messageToStreamMap,
+    boardPostMap,
+    previewMap,
+    workspaceId,
+  ])
 
   // Delete a draft by its `UnifiedDraft.id`. Scratchpad rows carry a scratchpad
   // id; every other row carries a unified draft id — both `draft_`-prefixed, so
@@ -500,7 +599,13 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
 
     for (const draft of allDrafts) {
       const parsed = parseDraftMessageKey(draft.scope)
-      if (!parsed) continue
+      if (!parsed) {
+        // Board-composer drafts count toward the badge like any other (the
+        // explorer lists them), but carry no per-stream sidebar hint — the
+        // draft belongs to a conversation composer, not the stream's own.
+        if (parseBoardDraftKey(draft.scope) && draftHasPayload(draft)) draftCount++
+        continue
+      }
       // Scratchpad-scoped rows are counted above; skip them and their siblings.
       if (parsed.type === "stream" && isDraftId(parsed.id)) continue
       if (!draftHasPayload(draft)) continue

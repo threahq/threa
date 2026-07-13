@@ -5,6 +5,7 @@ import { useQueueDraftMessage } from "@/hooks/use-queue-draft-message"
 import { createDraftPanelId } from "@/contexts"
 import { collectBranchThreadStreamIds } from "@/hooks/use-conversation-graph"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
+import { boardBranchReplyDraftKey, boardSubtopicDraftKey } from "@/lib/board/draft-keys"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
 import type { ConversationGraph, StreamStructuralIndex } from "@/hooks/use-conversation-graph"
 import type { RenderableMessage } from "@/components/message/message-item"
@@ -213,7 +214,7 @@ export function useInlineBranchComposer(params: {
           workspaceId={workspaceId}
           streamId={streamId}
           memoAnchorStreamId={streamId}
-          draftKey={`board:subtopic:${streamId}:${messageId}`}
+          draftKey={boardSubtopicDraftKey(streamId, messageId)}
           placeholder="Start a sub-topic…"
           rejectE2e={E2E_SUBTOPIC_MESSAGE}
           onSubmit={(sendInput) => submitNewSubtopic(streamId, messageId, sendInput)}
@@ -235,7 +236,7 @@ export function useInlineBranchComposer(params: {
             workspaceId={workspaceId}
             streamId={hostStreamId}
             memoAnchorStreamId={hostStreamId}
-            draftKey={`board:branch-reply:${branch.conversationId}`}
+            draftKey={boardBranchReplyDraftKey(branch.conversationId)}
             placeholder="Reply…"
             // A pending branch's `title` is the "New sub-topic" placeholder (the
             // real topic isn't extracted until the echo), so name the target

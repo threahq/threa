@@ -55,6 +55,8 @@ import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { SidebarToggle } from "@/components/layout"
 import { useActors, useVisibleStreams } from "@/hooks"
+import { useStashedDrafts } from "@/hooks/use-stashed-drafts"
+import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useConversationService, usePanel, parseConversationPanel, useSidebar } from "@/contexts"
@@ -111,6 +113,24 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
     bump()
     return subscribeConversationReplyOpen(conversationId, bump)
   }, [conversationId])
+
+  // A drafts-explorer deep link (`?panel=conv:<id>&stash=<draftId>`) lands here
+  // with the reply form collapsed — no composer is mounted, so nothing would
+  // consume the restore. When the stash id belongs to THIS panel's reply scope,
+  // open the composer; the mounted form's own `useStashComposer` then restores
+  // the row and strips the param. Ownership-checked so a foreign scope's param
+  // (e.g. a thread draft on the same route) is left for its own host.
+  const [searchParams] = useSearchParams()
+  const stashParam = searchParams.get("stash")
+  const replyScope = conversationId ? boardReplyDraftKey(conversationId) : undefined
+  const stashedReplyDrafts = useStashedDrafts(workspaceId, stashParam ? replyScope : undefined)
+  const stashOpenedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!stashParam || stashOpenedRef.current === stashParam) return
+    if (!stashedReplyDrafts.drafts.some((draft) => draft.id === stashParam)) return
+    stashOpenedRef.current = stashParam
+    setOpenReplySignal((n) => n + 1)
+  }, [stashParam, stashedReplyDrafts.drafts])
 
   // Keep the conversation's streams (root + threads) caught up + joined while the
   // panel is open, so the rail is live and offline-first. Its own SyncEngine slot,
