@@ -1,5 +1,5 @@
 import { HttpError } from "@threa/backend-common"
-import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion, type VersionChange } from "./types"
+import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion, type OpenApiSpec, type VersionChange } from "./types"
 
 /** Ascending by version. Startup assertion enforces ordering + known dates. */
 export const VERSION_CHANGES: VersionChange[] = [
@@ -35,5 +35,29 @@ export function changesAfter(clientVersion: ApiVersion, changes: readonly Versio
   return changes.filter((c) => c.version > clientVersion)
 }
 
+/**
+ * Derives the OpenAPI spec as it stood at `version` from the current-version
+ * `canonical` spec. Applies each newer change's `downgradeSpec` newest→oldest —
+ * the same order and predicate the request path uses for `downgradeResponse`
+ * (see middleware/api-version.ts) — then stamps `info.version`. Operates on a
+ * clone, so the canonical spec is never mutated. The documentation analog of the
+ * runtime response downgrade; the OpenAPI generator uses it to emit one spec per
+ * version.
+ */
+export function deriveVersionSpec(
+  canonical: OpenApiSpec,
+  version: ApiVersion,
+  changes: readonly VersionChange[] = VERSION_CHANGES
+): OpenApiSpec {
+  const pending = changesAfter(version, changes)
+  let spec = structuredClone(canonical)
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const change = pending[i]
+    if (change.downgradeSpec) spec = change.downgradeSpec(spec)
+  }
+  spec.info = { ...(spec.info as Record<string, unknown>), version }
+  return spec
+}
+
 export { API_VERSIONS, CURRENT_API_VERSION }
-export type { ApiVersion, VersionChange, VersionChangeContext } from "./types"
+export type { ApiVersion, OpenApiSpec, VersionChange, VersionChangeContext } from "./types"

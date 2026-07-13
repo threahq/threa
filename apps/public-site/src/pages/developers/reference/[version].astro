@@ -1,0 +1,38 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro"
+import ApiReference from "../../../components/ApiReference.astro"
+import { buildReferenceModel } from "../../../lib/reference-model"
+import { listApiVersions, currentApiVersion, readApiVersionSpec } from "../../../lib/api-versions"
+
+// One page per dated version, rendered from docs/public-api/versions/<version>.json.
+// The current version lives at /developers/reference (the canonical page), so it
+// is excluded here to avoid a duplicate. With a single version today this builds
+// no extra pages; the substrate is in place for the first breaking change.
+export function getStaticPaths() {
+  const current = currentApiVersion()
+  return listApiVersions()
+    .filter((version) => version !== current)
+    .map((version) => ({ params: { version } }))
+}
+
+const { version } = Astro.params
+const currentVersion = currentApiVersion()
+const versions = listApiVersions()
+const spec = readApiVersionSpec(version!)
+const { groups, sections } = buildReferenceModel(spec)
+---
+
+<DocsLayout
+  title={`API reference (${version}) · Threa Developers`}
+  description={`The Threa API reference as it stood at version ${version}: every endpoint, parameter, request and response shape, and required scopes, generated from that version's OpenAPI spec.`}
+  current="reference"
+  sections={sections}
+  wide
+>
+  <ApiReference
+    groups={groups}
+    versions={versions}
+    currentVersion={currentVersion}
+    selectedVersion={version!}
+  />
+</DocsLayout>

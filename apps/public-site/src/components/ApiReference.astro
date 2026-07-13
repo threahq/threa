@@ -1,0 +1,88 @@
+---
+/*
+ * The API reference body: intro, the version picker, a newer-version notice on
+ * older pages, and the endpoint groups. Rendered by both the latest reference
+ * page and the per-version pages from the same spec-derived model, so the two
+ * can't drift.
+ */
+import ApiEndpoint from "./ApiEndpoint.astro"
+import type { ReferenceGroup } from "../lib/reference-model"
+
+interface Props {
+  groups: ReferenceGroup[]
+  versions: string[]
+  currentVersion: string
+  selectedVersion: string
+}
+const { groups, versions, currentVersion, selectedVersion } = Astro.props
+const isLatest = selectedVersion === currentVersion
+
+// The latest version lives at /developers/reference; every older version at
+// /developers/reference/<version>. One href builder keeps the picker and the
+// notice pointing at the same URLs.
+const hrefFor = (version: string) =>
+  version === currentVersion ? "/developers/reference" : `/developers/reference/${version}`
+---
+
+<p class="eyebrow">Reference</p>
+<h1>API <span class="accent">reference</span>.</h1>
+<p class="lead">
+  Every endpoint, generated from the <a class="link" href="/openapi.json">OpenAPI spec</a>
+  we ship. Set your workspace ID and key in the Credentials panel (top right) and
+  the read-only examples run against your own workspace as you read.
+</p>
+<p>
+  The base is <code>https://app.threa.io</code>, under the stable
+  <code>/api/v1</code> prefix and scoped to a workspace:
+  <code>/api/v1/workspaces/&#123;workspaceId&#125;/…</code>. The <code>v1</code>
+  segment does not move as the API evolves; versions are dated and selected with
+  the <code>Threa-Version</code> header, described in
+  <a class="link" href="/developers/versioning">Versioning</a>. Every request
+  authenticates with <code>Authorization: Bearer &lt;key&gt;</code>. Error
+  shapes, paging, idempotency, and rate limits live in
+  <a class="link" href="/developers/operations">Operations</a>.
+</p>
+
+<div class="version-picker">
+  <span class="version-picker-label">Version</span>
+  <div class="version-picker-list">
+    {versions.map((v) => (
+      <a
+        href={hrefFor(v)}
+        class={`version-pick${v === selectedVersion ? " current" : ""}`}
+        aria-current={v === selectedVersion ? "page" : undefined}
+      >
+        {v}
+        {v === currentVersion && <span class="version-pick-tag">latest</span>}
+      </a>
+    ))}
+  </div>
+</div>
+
+{!isLatest && (
+  <div class="note">
+    <strong>Older version</strong>
+    You are reading the <code>{selectedVersion}</code> reference. The latest version is
+    <code>{currentVersion}</code>. See the <a class="link" href={hrefFor(currentVersion)}>latest reference</a>.
+    A specific version applies per request through the <code>Threa-Version</code> header, described in
+    <a class="link" href="/developers/versioning">Versioning</a>.
+  </div>
+)}
+
+{groups.map((g) => (
+  <section class="api-group">
+    <h2 id={g.slug}>{g.tag}</h2>
+    {g.desc && <p class="api-group-desc">{g.desc}</p>}
+    {g.recipes && (
+      <p class="api-recipes">
+        <span class="api-recipes-label">Recipes</span>
+        {g.recipes.map((r) => (
+          <a href={r.href}>{r.label} →</a>
+        ))}
+      </p>
+    )}
+    {g.ops.map((o) => (
+      <ApiEndpoint method={o.method} path={o.path} anchor={o.anchor} op={o.op} run={o.run} hint={o.hint} />
+    ))}
+  </section>
+))}

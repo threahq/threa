@@ -201,6 +201,14 @@ if (data.apiVersion.resolved !== data.apiVersion.current) {
     Each dated version is listed here with what changed. The current version is
     <code>{currentVersion}</code>.
   </p>
+  <p>
+    Each version has its own OpenAPI spec at
+    <code>/openapi/&lt;version&gt;.json</code>, and
+    <a class="link" href="/openapi.json">/openapi.json</a> is the current one. The
+    <a class="link" href="/developers/reference">reference</a> renders each
+    version at <code>/developers/reference/&lt;version&gt;</code>, with a version
+    picker at the top.
+  </p>
   {changelog.map((entry) => (
     <Fragment>
       <h3 id={`v-${entry.version}`}>{entry.version}</h3>
