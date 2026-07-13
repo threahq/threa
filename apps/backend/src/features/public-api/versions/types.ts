@@ -1,9 +1,10 @@
 import type { OperationId } from "../routes"
+import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion } from "@threa/types"
 
-/** Dated public API versions, ascending. The first entry is the epoch. */
-export const API_VERSIONS = ["2026-07-12"] as const
-export type ApiVersion = (typeof API_VERSIONS)[number]
-export const CURRENT_API_VERSION: ApiVersion = API_VERSIONS[API_VERSIONS.length - 1]
+// Version list lives in @threa/types so the frontend key-pin UI shares one
+// source of truth; the change-registry machinery below stays backend-only
+// because it references OperationId.
+export { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion }
 
 export interface VersionChangeContext {
   operationId: OperationId

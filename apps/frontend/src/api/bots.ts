@@ -76,6 +76,18 @@ export const botsApi = {
     return res.data
   },
 
+  async updateKeyVersion(
+    workspaceId: string,
+    botId: string,
+    keyId: string,
+    apiVersion: string | null
+  ): Promise<BotApiKey> {
+    const res = await api.patch<{ data: BotApiKey }>(`/api/workspaces/${workspaceId}/bots/${botId}/keys/${keyId}`, {
+      apiVersion,
+    })
+    return res.data
+  },
+
   async revokeKey(workspaceId: string, botId: string, keyId: string): Promise<void> {
     await api.post(`/api/workspaces/${workspaceId}/bots/${botId}/keys/${keyId}/revoke`)
   },

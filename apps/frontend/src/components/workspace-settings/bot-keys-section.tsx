@@ -29,6 +29,7 @@ import {
   type BotApiKey,
 } from "@threa/types"
 import { Check, ChevronDown, Copy, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react"
+import { ApiKeyVersionControl } from "./api-key-version-control"
 
 const SCOPE_LABELS: Record<string, string> = Object.fromEntries(WORKSPACE_PERMISSIONS.map((p) => [p.slug, p.name]))
 
@@ -78,6 +79,14 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
     onSuccess: () => {
       setEditTarget(null)
       setEditScopes(new Set())
+      queryClient.invalidateQueries({ queryKey: keysQueryKey })
+    },
+  })
+
+  const updateVersionMutation = useMutation({
+    mutationFn: (params: { keyId: string; apiVersion: string | null }) =>
+      botsApi.updateKeyVersion(workspaceId, botId, params.keyId, params.apiVersion),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keysQueryKey })
     },
   })
@@ -286,6 +295,13 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                     </>
                   )}
                 </p>
+                <div className="mt-1">
+                  <ApiKeyVersionControl
+                    apiVersion={key.apiVersion}
+                    disabled={updateVersionMutation.isPending}
+                    onChange={(apiVersion) => updateVersionMutation.mutate({ keyId: key.id, apiVersion })}
+                  />
+                </div>
               </div>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -349,6 +365,9 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
 
       {updateScopesMutation.error && (
         <p className="text-sm text-destructive">Failed to update key scopes. Please try again.</p>
+      )}
+      {updateVersionMutation.error && (
+        <p className="text-sm text-destructive">Failed to update API version. Please try again.</p>
       )}
       {revokeKeyMutation.error && <p className="text-sm text-destructive">Failed to revoke key. Please try again.</p>}
 

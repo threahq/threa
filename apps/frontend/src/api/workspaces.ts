@@ -173,6 +173,13 @@ export const workspacesApi = {
     return res.key
   },
 
+  async updateUserApiKeyVersion(workspaceId: string, keyId: string, apiVersion: string | null): Promise<UserApiKey> {
+    const res = await api.patch<{ key: UserApiKey }>(`/api/workspaces/${workspaceId}/user-api-keys/${keyId}`, {
+      apiVersion,
+    })
+    return res.key
+  },
+
   async revokeUserApiKey(workspaceId: string, keyId: string): Promise<void> {
     await api.post(`/api/workspaces/${workspaceId}/user-api-keys/${keyId}/revoke`)
   },
