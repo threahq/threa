@@ -7,6 +7,7 @@ export type {
   BotHelloBootstrap,
   BotRuntimeTransportCallbacks,
   BotRuntimeTransportOptions,
+  DelegationAvailableNudge,
 } from "./types"
 export {
   BikKeystore,

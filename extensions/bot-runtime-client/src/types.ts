@@ -52,9 +52,19 @@ export interface BotHelloBootstrap {
 }
 
 /** Wakeup/hint callbacks the transport fires from server→client socket events. */
+/** Slim nudge emitted to the workspace runtime room when a delegation is created (roadmap 5.4). */
+export interface DelegationAvailableNudge {
+  workspaceId: string
+  streamId: string
+  delegationId?: string
+  title?: string
+}
+
 export interface BotRuntimeTransportCallbacks {
   /** New work is claimable — the runtime should drain its claim loop. */
   onInvocationAvailable?: () => void
+  /** A delegation was created somewhere in the workspace — a delegation runner should drain. */
+  onDelegationAvailable?: (payload: DelegationAvailableNudge) => void
   /** Another instance claimed an invocation (stop racing). */
   onInvocationClaimed?: (payload: unknown) => void
   /** The active scratchpad actor changed for some stream. */

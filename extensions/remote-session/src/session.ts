@@ -290,6 +290,12 @@ export interface RemoteSessionOptions {
   runtime: RuntimeDescriptor
   /** Injectable for tests. */
   transport?: BotRuntimeTransport
+  /**
+   * Tap for the workspace-wide `delegation:available` socket nudge (roadmap
+   * 5.4) — wire it to a `DelegationRunner.notifyAvailable()`. Only fires on
+   * the SDK-constructed transport; an injected transport owns its callbacks.
+   */
+  onDelegationAvailable?: () => void
   log?: (message: string) => void
   /** Override the archive→restore grace window (tests). */
   archiveGraceMs?: number
@@ -364,6 +370,7 @@ export class RemoteSession {
         hello: this.hello,
         callbacks: {
           onInvocationAvailable: () => void this.claimDrain(),
+          ...(options.onDelegationAvailable ? { onDelegationAvailable: options.onDelegationAvailable } : {}),
           onBootstrap: (bootstrap) => {
             if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) void this.claimDrain()
           },

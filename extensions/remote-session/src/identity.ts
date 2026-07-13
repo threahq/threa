@@ -45,6 +45,14 @@ export interface RemoteSessionConfig {
    * default — an encrypted scratchpad opts out of GAM memory extraction.
    */
   e2e?: boolean
+  /**
+   * Run the workspace delegation queue on this connector (claim → execute →
+   * complete, see delegation-runner.ts). Off by default: delegations are
+   * workspace-wide and claimed first-come-first-served, so with several
+   * connectors running only the one(s) the user explicitly opted in should
+   * race for them.
+   */
+  delegations?: boolean
 }
 
 /**
@@ -101,6 +109,7 @@ export interface RawConfig {
   bikPath?: unknown
   e2e?: unknown
   sealedFullTrace?: unknown
+  delegations?: unknown
 }
 
 export function parseConfigFile(text: string): RawConfig {
@@ -188,6 +197,7 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       bikPath: str(env.THREA_BIK_PATH) ?? str(file.bikPath),
       e2e: parseBool(env.THREA_E2E ?? file.e2e, false),
       sealedFullTrace: parseBool(env.THREA_SEALED_FULL_TRACE ?? file.sealedFullTrace, true),
+      delegations: parseBool(env.THREA_DELEGATIONS ?? file.delegations, false),
     },
   }
 }

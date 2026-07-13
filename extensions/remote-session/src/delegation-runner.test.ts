@@ -1,0 +1,224 @@
+import { describe, expect, it } from "bun:test"
+import { ThreaApiError } from "./client"
+import type { ClaimedDelegation, DelegationClient, DelegationSummary } from "./delegation-client"
+import { DelegationRunner, type DelegationExecutor } from "./delegation-runner"
+
+function summary(id: string): DelegationSummary {
+  return {
+    id,
+    streamId: "stream_1",
+    title: `Task ${id}`,
+    status: "open",
+    createdAt: "2026-07-12T10:00:00.000Z",
+    statusChangedAt: "2026-07-12T10:00:00.000Z",
+  }
+}
+
+function claimed(id: string): ClaimedDelegation {
+  return {
+    ...summary(id),
+    status: "claimed",
+    brief: "Do the thing.",
+    contextRefs: [],
+    claimToken: `token-${id}`,
+    claimExpiresAt: "2026-07-12T10:15:00.000Z",
+  }
+}
+
+interface StubCalls {
+  listOpen: number
+  claims: Array<{ id: string; idempotencyKey?: string }>
+  completes: Array<{ id: string; token: string; resultMarkdown?: string; metadata?: Record<string, string> }>
+  fails: Array<{ id: string; token: string; errorMessage: string }>
+  statuses: Array<{ id: string; note: string }>
+  heartbeats: number
+}
+
+function stubClient(overrides: { queue?: DelegationSummary[][]; claimError?: (id: string) => Error | null }): {
+  client: DelegationClient
+  calls: StubCalls
+} {
+  const calls: StubCalls = { listOpen: 0, claims: [], completes: [], fails: [], statuses: [], heartbeats: 0 }
+  const queue = overrides.queue ?? [[]]
+  const client = {
+    listOpen: async () => {
+      const batch = queue[Math.min(calls.listOpen, queue.length - 1)]
+      calls.listOpen += 1
+      return batch
+    },
+    claim: async (id: string, body: { claimedByLabel: string; idempotencyKey?: string }) => {
+      calls.claims.push({ id, idempotencyKey: body.idempotencyKey })
+      const error = overrides.claimError?.(id)
+      if (error) throw error
+      return claimed(id)
+    },
+    heartbeat: async () => {
+      calls.heartbeats += 1
+      return { claimExpiresAt: "2026-07-12T10:30:00.000Z" }
+    },
+    reportStatus: async (id: string, _token: string, note: string) => {
+      calls.statuses.push({ id, note })
+      return summary(id)
+    },
+    complete: async (
+      id: string,
+      token: string,
+      body: { resultMarkdown?: string; metadata?: Record<string, string> }
+    ) => {
+      calls.completes.push({ id, token, ...body })
+      return { ...summary(id), status: "completed" }
+    },
+    fail: async (id: string, token: string, errorMessage: string) => {
+      calls.fails.push({ id, token, errorMessage })
+      return { ...summary(id), status: "failed" }
+    },
+  } as unknown as DelegationClient
+  return { client, calls }
+}
+
+function makeRunner(
+  client: DelegationClient,
+  executor: DelegationExecutor,
+  opts: Partial<ConstructorParameters<typeof DelegationRunner>[0]> = {}
+) {
+  return new DelegationRunner({
+    client,
+    executor,
+    claimedByLabel: "Test rig",
+    // Long intervals: tests drive the runner via notifyAvailable(), never timers.
+    pollMs: 60 * 60 * 1000,
+    heartbeatMs: 60 * 60 * 1000,
+    ...opts,
+  })
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 20))
+
+describe("DelegationRunner", () => {
+  it("claims with a fresh idempotency key (persisted first) and completes with the executor's result", async () => {
+    const { client, calls } = stubClient({ queue: [[summary("dlg_1")], []] })
+    const persisted: Array<{ id: string; key: string }> = []
+    const runner = makeRunner(
+      client,
+      async (task, ctx) => {
+        await ctx.reportStatus("working")
+        return { resultMarkdown: `Done: ${task.title}`, metadata: { "github.pr": "https://x/1" } }
+      },
+      { persistIdempotencyKey: (id, key) => void persisted.push({ id, key }) }
+    )
+
+    runner.start()
+    await flush()
+    runner.stop()
+
+    expect(calls.claims).toHaveLength(1)
+    expect(calls.claims[0]?.idempotencyKey).toBeTruthy()
+    expect(persisted[0]).toMatchObject({ id: "dlg_1", key: calls.claims[0]?.idempotencyKey })
+    expect(calls.statuses).toEqual([{ id: "dlg_1", note: "working" }])
+    expect(calls.completes).toEqual([
+      {
+        id: "dlg_1",
+        token: "token-dlg_1",
+        resultMarkdown: "Done: Task dlg_1",
+        metadata: { "github.pr": "https://x/1" },
+      },
+    ])
+    expect(calls.fails).toHaveLength(0)
+  })
+
+  it("fails the delegation with the executor's error message", async () => {
+    const { client, calls } = stubClient({ queue: [[summary("dlg_1")], []] })
+    const runner = makeRunner(client, async () => {
+      throw new Error("build exploded")
+    })
+
+    runner.start()
+    await flush()
+    runner.stop()
+
+    expect(calls.fails).toEqual([{ id: "dlg_1", token: "token-dlg_1", errorMessage: "build exploded" }])
+    expect(calls.completes).toHaveLength(0)
+  })
+
+  it("skips quietly past lost claim races (409) and vanished tasks (404), claiming the next", async () => {
+    const { client, calls } = stubClient({
+      queue: [[summary("dlg_taken"), summary("dlg_gone"), summary("dlg_ours")], []],
+      claimError: (id) => {
+        if (id === "dlg_taken") return new ThreaApiError("conflict", 409, "DELEGATION_NOT_OPEN")
+        if (id === "dlg_gone") return new ThreaApiError("gone", 404, "NOT_FOUND")
+        return null
+      },
+    })
+    const runner = makeRunner(client, async () => ({ resultMarkdown: "ok" }))
+
+    runner.start()
+    await flush()
+    runner.stop()
+
+    expect(calls.claims.map((c) => c.id)).toEqual(["dlg_taken", "dlg_gone", "dlg_ours"])
+    expect(calls.completes.map((c) => c.id)).toEqual(["dlg_ours"])
+  })
+
+  it("runs one delegation at a time and drains the rest afterwards", async () => {
+    const order: string[] = []
+    const { client } = stubClient({ queue: [[summary("dlg_1"), summary("dlg_2")], [summary("dlg_2")], []] })
+    const runner = makeRunner(client, async (task) => {
+      order.push(`start:${task.id}`)
+      await new Promise((r) => setTimeout(r, 5))
+      order.push(`end:${task.id}`)
+      return { resultMarkdown: "ok" }
+    })
+
+    runner.start()
+    await flush()
+    await flush()
+    runner.stop()
+
+    // Strict serialization: dlg_1 finishes before dlg_2 starts.
+    expect(order).toEqual(["start:dlg_1", "end:dlg_1", "start:dlg_2", "end:dlg_2"])
+  })
+
+  it("renews the lease on the heartbeat interval while executing", async () => {
+    const { client, calls } = stubClient({ queue: [[summary("dlg_1")], []] })
+    const runner = makeRunner(
+      client,
+      async () => {
+        await new Promise((r) => setTimeout(r, 40))
+        return { resultMarkdown: "ok" }
+      },
+      { heartbeatMs: 10 }
+    )
+
+    runner.start()
+    await new Promise((r) => setTimeout(r, 80))
+    runner.stop()
+
+    expect(calls.heartbeats).toBeGreaterThanOrEqual(2)
+  })
+
+  it("notifyAvailable() triggers a drain without waiting for the poll timer", async () => {
+    const { client, calls } = stubClient({ queue: [[]] })
+    const runner = makeRunner(client, async () => ({}))
+
+    runner.start()
+    await flush()
+    const baseline = calls.listOpen
+    runner.notifyAvailable()
+    await flush()
+    runner.stop()
+
+    expect(calls.listOpen).toBeGreaterThan(baseline)
+  })
+
+  it("does nothing after stop()", async () => {
+    const { client, calls } = stubClient({ queue: [[summary("dlg_1")], []] })
+    const runner = makeRunner(client, async () => ({}))
+    runner.start()
+    await flush()
+    runner.stop()
+    const baseline = calls.listOpen
+    runner.notifyAvailable()
+    await flush()
+    expect(calls.listOpen).toBe(baseline)
+  })
+})

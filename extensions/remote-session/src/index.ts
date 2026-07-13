@@ -51,4 +51,16 @@ export {
   type SelectedAttachment,
 } from "./attachments"
 export { wireLifecycle, type LifecycleOptions, type LifecycleProcess } from "./lifecycle"
+export {
+  DelegationClient,
+  type DelegationClientOptions,
+  type DelegationSummary,
+  type ClaimedDelegation,
+} from "./delegation-client"
+export {
+  DelegationRunner,
+  type DelegationRunnerOptions,
+  type DelegationExecutor,
+  type DelegationExecutorContext,
+} from "./delegation-runner"
 export type { StepFrame } from "@threa/bot-runtime-client"
