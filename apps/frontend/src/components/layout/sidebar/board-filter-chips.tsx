@@ -19,7 +19,7 @@ import {
   BOARD_EXCLUDE_TYPE_PARAM,
   BOARD_LABEL_PARAM,
   BOARD_EXCLUDE_LABEL_PARAM,
-  boardHomeSearch,
+  clearFiltersSearch,
   removeAxisValueSearch,
 } from "@/components/board/board-filter-params"
 
@@ -31,7 +31,7 @@ interface BoardFilterChipsProps {
  * The board-mode "Filtering the board" block (board-centered-sidebar-exploration.md
  * § V1). One chip per active include/exclude across the stream, type, and label
  * axes; each chip's X removes just that entry through the URL-vocabulary SSOT.
- * "Clear" returns to the lens base and "Save view" bookmarks the live selection
+ * "Clear" shows everything (`?lens=all`, no axes) and "Save view" bookmarks the live selection
  * via the shared save dialog. The whole block only mounts when something is
  * filtered (the sidebar gates it), so success is silent (INV-63) — the chips are
  * the feedback.
@@ -125,7 +125,7 @@ export function BoardFilterChips({ workspaceId }: BoardFilterChipsProps) {
       </div>
       <div className="mt-1.5 flex items-center gap-3 px-1">
         <Link
-          to={`${location.pathname}${boardHomeSearch(location.search)}`}
+          to={`${location.pathname}${clearFiltersSearch(location.search)}`}
           className="text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           Clear

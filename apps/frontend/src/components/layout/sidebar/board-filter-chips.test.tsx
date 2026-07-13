@@ -55,11 +55,13 @@ describe("BoardFilterChips", () => {
     expect(loc()).toBe(`/w/${WS}/board?label=label_a`)
   })
 
-  it("Clear returns to the lens base, dropping every filter param", () => {
+  it("Clear shows everything: every filter param dropped, lens reset to all explicitly", () => {
     stubStores()
-    mountAt(`/w/${WS}/board/active?in=stream_1&label=label_a`)
+    mountAt(`/w/${WS}/board?lens=active&in=stream_1&label=label_a`)
     fireEvent.click(screen.getByRole("link", { name: "Clear" }))
-    expect(loc()).toBe(`/w/${WS}/board/active`)
+    // Never the bare query-less /board — that's the home-redirect entry alias,
+    // and targeting it is the clear-filters bounce this URL scheme prevents.
+    expect(loc()).toBe(`/w/${WS}/board?lens=all`)
   })
 
   it("Save view opens the save-view dialog", () => {

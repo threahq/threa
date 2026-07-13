@@ -12,13 +12,12 @@ export function boardScopeStreamId(stream: { type: StreamType; id: string; rootS
 }
 
 /**
- * Whether a workspace-relative location is the board surface — bare `/board` OR
- * a lens segment (`/board/active`). A suffix `endsWith("/board")` check misses
- * the lens form, which turned the sidebar back to chats mode the moment a lens
- * was active (caught live; no full-Sidebar mount harness covers the swap).
+ * Whether a workspace-relative location is the board surface. The whole board
+ * view is query state (`?lens=` + filter axes), so the pathname is exactly
+ * `/w/:workspaceId/board` — no lens segment exists anymore.
  */
 export function isBoardPath(pathname: string): boolean {
-  return /^\/w\/[^/]+\/board(\/[^/]*)?$/.test(pathname)
+  return /^\/w\/[^/]+\/board$/.test(pathname)
 }
 
 /**

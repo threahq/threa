@@ -5,13 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardView } from "@threa/types"
 import { ServicesProvider } from "@/contexts"
-import {
-  BoardSavedViews,
-  savedViewHref,
-  isViewActive,
-  isBoardAtHome,
-  type BoardViewSelection,
-} from "./board-saved-views"
+import { BoardSavedViews, savedViewHref, isViewActive, type BoardViewSelection } from "./board-saved-views"
 
 const view = (over: Partial<BoardView> = {}): BoardView => ({
   id: "boardview_1",
@@ -36,7 +30,6 @@ function mount(boardViews: Record<string, unknown>, props: Partial<Parameters<ty
           <BoardSavedViews
             workspaceId="ws_1"
             lens="mine"
-            homeLens="all"
             activeViewId={null}
             scopeStreamIds={["stream_1"]}
             scopeStreamTypes={[]}
@@ -81,57 +74,19 @@ describe("isViewActive", () => {
   })
 })
 
-describe("isBoardAtHome", () => {
-  const selection = (over: Partial<BoardViewSelection> = {}): BoardViewSelection => ({
-    lens: "all",
-    scopeStreamIds: [],
-    scopeStreamTypes: [],
-    scopeLabelIds: [],
-    excludeStreamIds: [],
-    excludeStreamTypes: [],
-    excludeLabelIds: [],
-    ...over,
-  })
-
-  it("is home on the plain home lens with no narrowing", () => {
-    expect(isBoardAtHome("all", null, selection())).toBe(true)
-  })
-
-  it("is home when the selection exactly matches the saved-view home (though filtered)", () => {
-    const homeView = view({ baseLens: "mine", scopeStreamIds: ["stream_1"] })
-    expect(isBoardAtHome("all", homeView, selection({ lens: "mine", scopeStreamIds: ["stream_1"] }))).toBe(true)
-  })
-
-  it("is not home when narrowed off the saved-view home", () => {
-    const homeView = view({ baseLens: "mine", scopeStreamIds: ["stream_1"] })
-    expect(isBoardAtHome("all", homeView, selection({ lens: "mine", scopeStreamIds: ["stream_2"] }))).toBe(false)
-  })
-
-  it("is not home when narrowed off the plain home lens with no saved-view home", () => {
-    expect(isBoardAtHome("all", null, selection({ lens: "active" }))).toBe(false)
-  })
-})
-
 describe("savedViewHref", () => {
-  it("expands a saved view into its canonical board URL", () => {
-    const href = savedViewHref("ws_1", view({ scopeStreamIds: ["s1", "s2"], scopeStreamTypes: ["channel"] }), "all")
+  it("expands a saved view into its canonical query URL, lens included", () => {
+    const href = savedViewHref("ws_1", view({ scopeStreamIds: ["s1", "s2"], scopeStreamTypes: ["channel"] }))
     const url = new URL(href, "http://x")
-    expect(url.pathname).toBe("/w/ws_1/board/mine")
+    expect(url.pathname).toBe("/w/ws_1/board")
+    expect(url.searchParams.get("lens")).toBe("mine")
     expect(url.searchParams.get("in")).toBe("s1,s2")
     expect(url.searchParams.get("is")).toBe("channel")
   })
 
-  it("uses the bare board path for the home lens with no scope", () => {
-    expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }), "all")).toBe(
-      "/w/ws_1/board"
-    )
-  })
-
-  it("segments the All lens when the viewer's home lens is something else", () => {
-    // Home is Active, so bare `/board` is Active; a saved All view must address
-    // its own `/board/all` segment to reproduce, not collapse to the home.
-    expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }), "active")).toBe(
-      "/w/ws_1/board/all"
+  it("never emits the bare entry alias, even for an unfiltered all-lens view", () => {
+    expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }))).toBe(
+      "/w/ws_1/board?lens=all"
     )
   })
 
@@ -145,11 +100,11 @@ describe("savedViewHref", () => {
         excludeStreamIds: ["s9"],
         excludeStreamTypes: ["system"],
         excludeLabelIds: ["label_b"],
-      }),
-      "all"
+      })
     )
     const url = new URL(href, "http://x")
     expect(url.pathname).toBe("/w/ws_1/board")
+    expect(url.searchParams.get("lens")).toBe("all")
     expect(url.searchParams.get("label")).toBe("label_a")
     expect(url.searchParams.get("not-in")).toBe("s9")
     expect(url.searchParams.get("not-is")).toBe("system")
@@ -168,7 +123,7 @@ describe("BoardSavedViews", () => {
   it("lists saved views linking to their expanded URL", async () => {
     mount({ ...base })
     const link = await screen.findByRole("link", { name: /Design work/ })
-    expect(link.getAttribute("href")).toContain("/w/ws_1/board/mine")
+    expect(link.getAttribute("href")).toContain("/w/ws_1/board?lens=mine")
   })
 
   it("saves the current filter state as a named view", async () => {

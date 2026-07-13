@@ -32,7 +32,6 @@ function stub(
   opts: {
     views?: BoardView[]
     homeView?: BoardView | null
-    configuredId?: string | null
     boardDefaultLens?: string | null
   } = {}
 ) {
@@ -51,7 +50,6 @@ function stub(
   } as unknown as ReturnType<typeof BoardViewsHooks.useBoardViews>)
   vi.spyOn(BoardViewsHooks, "useBoardHome").mockReturnValue({
     view: opts.homeView ?? null,
-    configuredId: opts.configuredId ?? null,
   })
 }
 
@@ -93,7 +91,7 @@ describe("BoardModeBlock", () => {
 
   it("points ← Chats at the retained last stream", () => {
     stub()
-    setLastLocation(USER, WS, { surface: "board", streamId: "stream_9", board: { lens: null, search: "" } })
+    setLastLocation(USER, WS, { surface: "board", streamId: "stream_9", board: { search: "" } })
     mountAt(`/w/${WS}/board`)
     expect(hrefOf("Chats")).toBe(`/w/${WS}/s/stream_9`)
   })
@@ -106,38 +104,33 @@ describe("BoardModeBlock", () => {
 
   it("carries the current filters across every lens link", () => {
     stub()
-    mountAt(`/w/${WS}/board/active?in=stream_1&label=label_a`)
+    mountAt(`/w/${WS}/board?lens=active&in=stream_1&label=label_a`)
 
     const all = new URL(hrefOf("All"), "http://x")
+    expect(all.searchParams.get("lens")).toBe("all")
     expect(all.searchParams.get("in")).toBe("stream_1")
     expect(all.searchParams.get("label")).toBe("label_a")
 
     const decisions = new URL(hrefOf("Decisions"), "http://x")
-    expect(decisions.pathname).toBe(`/w/${WS}/board/decisions`)
+    expect(decisions.pathname).toBe(`/w/${WS}/board`)
+    expect(decisions.searchParams.get("lens")).toBe("decisions")
     expect(decisions.searchParams.get("in")).toBe("stream_1")
   })
 
-  it("canonicalizes the home lens to bare /board and segments the others", () => {
-    // Default home lens is All.
+  it("every lens link carries an explicit ?lens=, never the bare entry alias", () => {
     stub()
-    mountAt(`/w/${WS}/board`)
+    mountAt(`/w/${WS}/board?lens=all`)
 
-    expect(new URL(hrefOf("All"), "http://x").pathname).toBe(`/w/${WS}/board`)
-    expect(new URL(hrefOf("Active"), "http://x").pathname).toBe(`/w/${WS}/board/active`)
-  })
-
-  it("segments the All lens when the viewer homes on a different lens", () => {
-    stub({ boardDefaultLens: "active" })
-    mountAt(`/w/${WS}/board/active`)
-
-    expect(new URL(hrefOf("All"), "http://x").pathname).toBe(`/w/${WS}/board/all`)
-    // The home lens (Active) collapses to bare /board.
-    expect(new URL(hrefOf("Active"), "http://x").pathname).toBe(`/w/${WS}/board`)
+    const all = new URL(hrefOf("All"), "http://x")
+    expect(all.pathname).toBe(`/w/${WS}/board`)
+    expect(all.searchParams.get("lens")).toBe("all")
+    const active = new URL(hrefOf("Active"), "http://x")
+    expect(active.searchParams.get("lens")).toBe("active")
   })
 
   it("marks the current lens active", () => {
     stub()
-    mountAt(`/w/${WS}/board/active`)
+    mountAt(`/w/${WS}/board?lens=active`)
 
     expect(screen.getByRole("link", { name: "Active" })).toHaveAttribute("aria-current", "true")
     expect(screen.getByRole("link", { name: "All" })).not.toHaveAttribute("aria-current")
@@ -155,13 +148,13 @@ describe("BoardModeBlock", () => {
       .map((l) => l.textContent)
       .filter((t) => t === "First" || t === "Second")
     expect(rendered).toEqual(["First", "Second"])
-    expect(hrefOf("First")).toContain(`/w/${WS}/board/mine`)
+    expect(hrefOf("First")).toContain(`/w/${WS}/board?lens=mine`)
   })
 
   it("marks the matching saved view active and no lens active", () => {
     const v = view({ baseLens: "mine", scopeStreamIds: ["stream_1"] })
     stub({ views: [v] })
-    mountAt(`/w/${WS}/board/mine?in=stream_1`)
+    mountAt(`/w/${WS}/board?lens=mine&in=stream_1`)
 
     expect(screen.getByRole("link", { name: /Design work/ })).toHaveAttribute("aria-current", "true")
     // The view is the selection, so the underlying Mine lens is NOT marked active.
@@ -170,7 +163,7 @@ describe("BoardModeBlock", () => {
 
   it("shows the board-home indicator on the pinned view", () => {
     const v = view()
-    stub({ views: [v], homeView: v, configuredId: v.id })
+    stub({ views: [v], homeView: v })
     mountAt(`/w/${WS}/board`)
 
     expect(screen.getByLabelText("Board home")).toBeInTheDocument()

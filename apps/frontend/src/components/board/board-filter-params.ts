@@ -1,15 +1,30 @@
-import { BOARD_SCOPE_STREAM_TYPES, MAX_BOARD_SCOPE_STREAMS, type BoardScopeStreamType } from "@threa/types"
+import {
+  BOARD_LENSES,
+  BOARD_SCOPE_STREAM_TYPES,
+  DEFAULT_BOARD_LENS,
+  MAX_BOARD_SCOPE_STREAMS,
+  type BoardLens,
+  type BoardScopeStreamType,
+} from "@threa/types"
 
 /**
  * The board's URL filter vocabulary — one source of truth (INV-33) for every
  * writer/reader of the board's query params: the page (parse), the filter bar
  * (toggles), and saved views (expand a bookmark back into a URL).
  *
- * Six params, three dimensions × include/exclude. `in`/`is` follow the search
- * syntax's vocabulary; the `not-` prefix is the negation. Include narrows,
- * exclude vetoes; when both name the same id the veto wins (the backend ANDs
- * the two conditions).
+ * The lens plus six filter params, three dimensions × include/exclude. `in`/`is`
+ * follow the search syntax's vocabulary; the `not-` prefix is the negation.
+ * Include narrows, exclude vetoes; when both name the same id the veto wins
+ * (the backend ANDs the two conditions).
  */
+
+/** The lens (`?lens=all,active,…`). The whole board view is query state: every
+ *  rendered board URL carries an explicit `?lens=`, and the bare query-less
+ *  `/board` is only an entry alias that redirects to the viewer's home — so no
+ *  URL a filter affordance produces can re-trigger the home resolution (the old
+ *  path-segment scheme made bare `/board` double as the "cleared" URL, which
+ *  bounced Clear filters straight back into a saved-view home's filters). */
+export const BOARD_LENS_PARAM = "lens"
 
 /** Stream scope (`?in=<id>,<id>` — root-stream ids). */
 export const BOARD_SCOPE_PARAM = "in"
@@ -61,19 +76,28 @@ export const BOARD_FILTER_PARAMS = [
   BOARD_UNREAD_PARAM,
 ] as const
 
+/** Parse `?lens=`: a valid lens, anything else (absent, unknown) degrades to
+ *  the default `all` — a hand-built URL renders the widest view rather than
+ *  erroring. */
+export function parseLensParam(value: string | null): BoardLens {
+  return value && (BOARD_LENSES as readonly string[]).includes(value) ? (value as BoardLens) : DEFAULT_BOARD_LENS
+}
+
 /**
- * The search string for a link back to the unfiltered board home: the current
- * query minus the filter params. Every "clear the filters" affordance (the
- * bar's Clear filters, the empty state's Show everything, the
- * post-from-filtered-view navigation) must route through this so clearing
- * filters never has the side effect of dropping unrelated URL state — an open
- * `?panel=` must survive.
+ * The search string for "show everything, unfiltered": the current query minus
+ * every filter param, with the lens reset to the default `all` — explicitly, so
+ * the result is never the bare query-less `/board` (which is the home-redirect
+ * entry alias; emitting it here is exactly the clear-filters bounce this scheme
+ * exists to prevent). Every "clear the filters" affordance (the bar's Clear
+ * filters, the empty state's Show everything, the post-from-filtered-view
+ * navigation, the sidebar chips' Clear) routes through this, and unrelated URL
+ * state — an open `?panel=` — survives.
  */
-export function boardHomeSearch(search: string): string {
+export function clearFiltersSearch(search: string): string {
   const params = new URLSearchParams(search)
   for (const param of BOARD_FILTER_PARAMS) params.delete(param)
-  const query = params.toString()
-  return query ? `?${query}` : ""
+  params.set(BOARD_LENS_PARAM, DEFAULT_BOARD_LENS)
+  return `?${params.toString()}`
 }
 
 /** Parse a comma-separated id list param: trimmed, deduped, order-preserving. */

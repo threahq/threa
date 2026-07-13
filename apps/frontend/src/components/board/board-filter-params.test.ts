@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { MAX_BOARD_SCOPE_STREAMS } from "@threa/types"
 import {
-  boardHomeSearch,
+  clearFiltersSearch,
   focusScopeSearch,
   isSoleInclude,
   labelFocusSearch,
@@ -15,14 +15,17 @@ import {
   toggleIncludeSearch,
 } from "./board-filter-params"
 
-describe("boardHomeSearch", () => {
-  it("strips every filter param and keeps unrelated URL state", () => {
-    const search = "?in=a,b&not-in=c&is=dm&not-is=system&label=l1&not-label=l2&panel=conv_1"
-    expect(boardHomeSearch(search)).toBe("?panel=conv_1")
+describe("clearFiltersSearch", () => {
+  it("strips every filter param, resets the lens to all, and keeps unrelated URL state", () => {
+    const search = "?lens=active&in=a,b&not-in=c&is=dm&not-is=system&label=l1&not-label=l2&panel=conv_1"
+    expect(clearFiltersSearch(search)).toBe("?lens=all&panel=conv_1")
   })
 
-  it("returns an empty string when nothing survives", () => {
-    expect(boardHomeSearch("?in=a")).toBe("")
+  it("is never the bare (query-less) URL — the explicit lens survives", () => {
+    // Bare `/board` is the home-redirect entry alias; emitting it from a clear
+    // affordance is the filters-bounce this scheme exists to prevent.
+    expect(clearFiltersSearch("?in=a")).toBe("?lens=all")
+    expect(clearFiltersSearch("")).toBe("?lens=all")
   })
 })
 
