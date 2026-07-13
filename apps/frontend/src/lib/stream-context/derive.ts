@@ -137,41 +137,19 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
     const messageId = payload.messageId
     const snippet = firstLine(payload.contentMarkdown)
 
-    // ── Links: rich previews first, then any bare markdown URLs not covered.
-    const seenInMessage = new Set<string>()
+    // ── Links: the structured document owns the href; server previews only
+    // enrich an exact normalized match. This keeps a stale/malformed preview
+    // row from replacing the URL the message actually contains.
+    const previewsByUrl = new Map<string, LinkPreviewSummary>()
     for (const preview of payload.linkPreviews ?? []) {
-      // In-app links (message / stream / memo) point at other workspace
-      // resources, not the web — they belong to "related", not the external-links list.
-      if (isInAppLinkContentType(preview.contentType)) continue
-      // The href renders into an <a> (React does not sanitize href), and unlike
-      // the bare/markdown passes this URL never went through an http(s) regex —
-      // gate the scheme so a non-http preview url can't reach the anchor.
+      // Preview hrefs render into <a> elements, so never admit a custom scheme.
       if (!/^https?:\/\//i.test(preview.url)) continue
       const norm = normalizeUrl(preview.url)
-      seenInMessage.add(norm)
-      const existing = links.get(norm)
-      if (existing) {
-        existing.refCount += 1
-        continue
-      }
-      const { previewKind, badge } = linkBadge(preview.previewType)
-      links.set(norm, {
-        key: `link:${norm}`,
-        category: "link",
-        createdAt,
-        sourceMessageId: messageId,
-        snippet,
-        url: preview.url,
-        title: preview.title,
-        siteName: preview.siteName,
-        faviconUrl: preview.faviconUrl,
-        imageUrl: preview.imageUrl,
-        previewKind,
-        badge,
-        refCount: 1,
-      })
+      if (!previewsByUrl.has(norm)) previewsByUrl.set(norm, preview)
     }
-    const addBareLink = (url: string) => {
+
+    const seenInMessage = new Set<string>()
+    const addLink = (url: string, preview?: LinkPreviewSummary) => {
       const norm = normalizeUrl(url)
       if (seenInMessage.has(norm)) return
       seenInMessage.add(norm)
@@ -180,6 +158,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         existing.refCount += 1
         return
       }
+      const { previewKind, badge } = linkBadge(preview?.previewType)
       links.set(norm, {
         key: `link:${norm}`,
         category: "link",
@@ -187,22 +166,32 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         sourceMessageId: messageId,
         snippet,
         url,
-        title: null,
-        siteName: null,
-        faviconUrl: null,
-        imageUrl: null,
-        previewKind: "generic",
-        badge: null,
+        title: preview?.title ?? null,
+        siteName: preview?.siteName ?? null,
+        faviconUrl: preview?.faviconUrl ?? null,
+        imageUrl: preview?.imageUrl ?? null,
+        previewKind,
+        badge,
         refCount: 1,
       })
     }
-    // Body links + inline media read from the structured document (INV-58),
-    // never the serialized markdown — a regex over `**[x](url)**` leaks the
-    // bold markers into the URL. E2E messages whose content isn't decrypted
-    // carry a placeholder doc and simply contribute nothing here.
+
+    // Body links read from the structured document (INV-58), never serialized
+    // markdown. A regex over `**[x](url)**` can leak bold markers into the URL.
+    // Events without a document retain the legacy preview-only fallback.
     const contentJson = payload.contentJson
     if (contentJson) {
-      for (const url of collectLinkUrls(contentJson)) addBareLink(url)
+      for (const url of collectLinkUrls(contentJson)) {
+        const preview = previewsByUrl.get(normalizeUrl(url))
+        // In-app resources belong to "related", not the external-links list.
+        if (preview && isInAppLinkContentType(preview.contentType)) continue
+        addLink(url, preview)
+      }
+    } else {
+      for (const preview of previewsByUrl.values()) {
+        if (isInAppLinkContentType(preview.contentType)) continue
+        addLink(preview.url, preview)
+      }
     }
 
     // ── Attachments → media (image/gif/video) or files (everything else).
