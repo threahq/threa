@@ -5,6 +5,7 @@ import {
   annotateConversationRevivals,
   collectCancelledFollowUpIds,
   collectDelegationStatusPatches,
+  collectBotAccessStatusPatches,
   filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
@@ -741,6 +742,34 @@ describe("collectDelegationStatusPatches", () => {
   })
 })
 
+describe("collectBotAccessStatusPatches", () => {
+  const patchItem = (id: string, requestId: string, status: "approved" | "denied"): TimelineItem => ({
+    type: "event",
+    event: createEvent({
+      id,
+      sequence: "5",
+      eventType: "bot_access:status_changed",
+      payload: { requestId, status },
+    }),
+  })
+
+  it("keeps the LAST patch per request — items are in sequence order, so later transitions win", () => {
+    const patches = collectBotAccessStatusPatches([
+      patchItem("evt_1", "bar_1", "denied"),
+      patchItem("evt_2", "bar_1", "approved"),
+      patchItem("evt_3", "bar_2", "denied"),
+    ])
+    expect(patches.get("bar_1")).toMatchObject({ status: "approved" })
+    expect(patches.get("bar_2")).toMatchObject({ status: "denied" })
+  })
+
+  it("must run on pre-filter items — filterVisibleItems strips the zero-height status patch", () => {
+    const items = [patchItem("evt_1", "bar_1", "approved")]
+    expect(collectBotAccessStatusPatches(items).has("bar_1")).toBe(true)
+    expect(collectBotAccessStatusPatches(filterVisibleItems(items)).has("bar_1")).toBe(false)
+  })
+})
+
 describe("OLDER_SKELETON_ITEMS (older-page skeleton rows)", () => {
   it("provides the configured number of skeleton items with stable, distinct keys", () => {
     expect(OLDER_SKELETON_ITEMS).toHaveLength(OLDER_SKELETON_COUNT)
@@ -769,6 +798,7 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
       sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: new Map(),
+      botAccessStatusPatches: new Map(),
       ...overrides,
     }
   }
@@ -909,6 +939,38 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     const prev = { item, ctx: makeCtx({ newMessageIds: new Set(["evt_x"]) }), deferSecondaryHydration: false }
     const next = { item, ctx: makeCtx({ newMessageIds: new Set(["evt_y"]) }), deferSecondaryHydration: false }
     expect(timelineRowPropsEqual(prev, next)).toBe(true)
+  })
+
+  const botAccessRequestItem: TimelineItem = {
+    type: "event",
+    event: createEvent({
+      id: "evt_bar",
+      sequence: "300",
+      eventType: "bot_access:requested",
+      payload: { requestId: "bar_1", botId: "bot_1", botName: "Runner" },
+    }),
+  }
+
+  it("bot-access card: repaints when its own status patch changes; equal when unchanged", () => {
+    const patch = (status: "approved" | "denied") =>
+      makeCtx({ botAccessStatusPatches: new Map([["bar_1", { requestId: "bar_1", status }]]) })
+    const row = (ctx: TimelineItemRenderContext) => ({
+      item: botAccessRequestItem,
+      ctx,
+      deferSecondaryHydration: false,
+    })
+    expect(timelineRowPropsEqual(row(patch("approved")), row(patch("approved")))).toBe(true)
+    expect(timelineRowPropsEqual(row(patch("approved")), row(patch("denied")))).toBe(false)
+  })
+
+  it("bot-access card: repaints when viewer membership flips (gates Approve/Deny)", () => {
+    const row = (viewerIsMember: boolean) => ({
+      item: botAccessRequestItem,
+      ctx: makeCtx({ viewerIsMember }),
+      deferSecondaryHydration: false,
+    })
+    expect(timelineRowPropsEqual(row(false), row(true))).toBe(false)
+    expect(timelineRowPropsEqual(row(true), row(true))).toBe(true)
   })
 })
 

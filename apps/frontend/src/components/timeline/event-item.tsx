@@ -1,4 +1,4 @@
-import type { DelegationStatusChangedEventPayload, StreamEvent } from "@threa/types"
+import type { BotAccessStatusChangedEventPayload, DelegationStatusChangedEventPayload, StreamEvent } from "@threa/types"
 import type { MessageAgentActivity } from "@/hooks"
 import type { BatchTimelineState } from "./event-list"
 import type { ConversationRevival } from "./conversation-overlay/model"
@@ -8,6 +8,7 @@ import { MessagesMovedEvent } from "./messages-moved-event"
 import { MemoCapturedEvent } from "./memo-captured-event"
 import { FollowUpScheduledEvent } from "./follow-up-event"
 import { DelegationEvent } from "./delegation-event"
+import { BotAccessEvent } from "./bot-access-event"
 import { BriefUpdatedEvent } from "./brief-updated-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { SystemEvent } from "./system-event"
@@ -28,6 +29,10 @@ interface EventItemProps {
   cancelledFollowUpIds?: Set<string>
   /** Latest status patch per delegationId within the loaded window — drives the delegation card's state. */
   delegationStatusPatches?: Map<string, DelegationStatusChangedEventPayload>
+  /** Latest status patch per bot-access requestId within the loaded window — drives the request card's state. */
+  botAccessStatusPatches?: Map<string, BotAccessStatusChangedEventPayload>
+  /** True when the viewer is a stream member — gates the request card's Approve/Deny buttons. */
+  viewerIsMember?: boolean
   /** Defer non-critical per-message hydration until coordinated reveal completes */
   deferSecondaryHydration?: boolean
   /**
@@ -61,6 +66,8 @@ export function EventItem({
   isNew,
   cancelledFollowUpIds,
   delegationStatusPatches,
+  botAccessStatusPatches,
+  viewerIsMember,
   deferSecondaryHydration = false,
   groupContinuation = false,
   isFirstMessage = false,
@@ -186,6 +193,26 @@ export function EventItem({
     case "delegation:status_changed":
       // Patch, not a row: it advances the matching delegation card via
       // delegationStatusPatches (collected in event-list) — renders nothing.
+      return null
+
+    case "bot_access:requested": {
+      const requestId = (event.payload as { requestId?: string })?.requestId
+      const statusPatch = requestId ? botAccessStatusPatches?.get(requestId) : undefined
+      return (
+        <div data-event-id={event.id}>
+          <BotAccessEvent
+            event={event}
+            workspaceId={workspaceId}
+            statusPatch={statusPatch}
+            viewerIsMember={viewerIsMember}
+          />
+        </div>
+      )
+    }
+
+    case "bot_access:status_changed":
+      // Patch, not a row: it resolves the matching request card via
+      // botAccessStatusPatches (collected in event-list) — renders nothing.
       return null
 
     case "agent:follow_up_cancelled":

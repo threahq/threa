@@ -1252,6 +1252,12 @@ export function registerStreamSocketHandlers(
   socket.on("stream:agent_follow_up_cancelled", handleAppendEvent)
   socket.on("stream:delegation_created", handleDelegationEvent)
   socket.on("stream:delegation_status_changed", handleDelegationEvent)
+  // Bot-access request/resolution rows append to the timeline like any other
+  // broadcast/patch event; there is no list hook behind them (the card renders
+  // from the payload snapshot + the in-window status patch), so a plain append
+  // is all that's needed.
+  socket.on("stream:bot_access_requested", handleAppendEvent)
+  socket.on("stream:bot_access_status_changed", handleAppendEvent)
   socket.on("stream:brief_updated", handleAppendEvent)
   socket.on("stream:archived", handleAppendEvent)
   socket.on("stream:unarchived", handleAppendEvent)
@@ -1285,6 +1291,8 @@ export function registerStreamSocketHandlers(
     socket.off("stream:agent_follow_up_cancelled", handleAppendEvent)
     socket.off("stream:delegation_created", handleDelegationEvent)
     socket.off("stream:delegation_status_changed", handleDelegationEvent)
+    socket.off("stream:bot_access_requested", handleAppendEvent)
+    socket.off("stream:bot_access_status_changed", handleAppendEvent)
     socket.off("stream:brief_updated", handleAppendEvent)
     socket.off("stream:archived", handleAppendEvent)
     socket.off("stream:unarchived", handleAppendEvent)

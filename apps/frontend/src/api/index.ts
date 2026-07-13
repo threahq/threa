@@ -66,5 +66,6 @@ export { labelsApi, type CreateLabelInput, type UpdateLabelInput } from "./label
 export { draftsApi } from "./drafts"
 export { agentFollowUpsApi } from "./agent-follow-ups"
 export { delegationsApi } from "./delegations"
+export { botAccessApi } from "./bot-access"
 export { streamBriefsApi, type StreamBrief } from "./stream-briefs"
 export { personasApi, type PersonaOverrideConflict, type PersonaCustomConflict } from "./personas"

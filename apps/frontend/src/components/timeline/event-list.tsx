@@ -8,6 +8,7 @@ import {
   type CommandCompletedPayload,
   type CommandFailedPayload,
   type DelegationStatusChangedEventPayload,
+  type BotAccessStatusChangedEventPayload,
 } from "@threa/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import type { MessageAgentActivity } from "@/hooks"
@@ -43,6 +44,8 @@ interface EventListProps {
   hideSessionCards?: boolean
   /** Event IDs that just arrived via socket and should flash briefly */
   newMessageIds?: Set<string>
+  /** True when the viewer is a member of this stream — gates the bot-access card's Approve/Deny. */
+  viewerIsMember?: boolean
   batch?: BatchTimelineState
   /** Set while the conversation overlay is active; decorates message rows. */
   conversationOverlay?: ConversationOverlayContext
@@ -319,6 +322,8 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "agent:follow_up_cancelled",
   // Status changes patch the delegation card (collectDelegationStatusPatches).
   "delegation:status_changed",
+  // Status changes patch the bot-access request card (collectBotAccessStatusPatches).
+  "bot_access:status_changed",
 ])
 
 /**
@@ -386,6 +391,22 @@ export function collectDelegationStatusPatches(
     if (item.type !== "event" || item.event.eventType !== "delegation:status_changed") continue
     const payload = item.event.payload as DelegationStatusChangedEventPayload | undefined
     if (payload?.delegationId) patches.set(payload.delegationId, payload)
+  }
+  return patches
+}
+
+/**
+ * Collect the latest `bot_access:status_changed` payload per requestId in the
+ * loaded window (items are in sequence order, so the last patch wins). A
+ * request card reads its entry to render the authoritative terminal state for
+ * every viewer — approved / denied — without a fetch.
+ */
+export function collectBotAccessStatusPatches(items: TimelineItem[]): Map<string, BotAccessStatusChangedEventPayload> {
+  const patches = new Map<string, BotAccessStatusChangedEventPayload>()
+  for (const item of items) {
+    if (item.type !== "event" || item.event.eventType !== "bot_access:status_changed") continue
+    const payload = item.event.payload as BotAccessStatusChangedEventPayload | undefined
+    if (payload?.requestId) patches.set(payload.requestId, payload)
   }
   return patches
 }
@@ -694,6 +715,14 @@ export interface TimelineItemRenderContext {
   cancelledFollowUpIds: Set<string>
   /** Latest `delegation:status_changed` payload per delegationId in the loaded window. */
   delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
+  /** Latest `bot_access:status_changed` payload per requestId in the loaded window. */
+  botAccessStatusPatches: Map<string, BotAccessStatusChangedEventPayload>
+  /**
+   * True when the viewer is a member of this stream. Gates the bot-access
+   * request card's Approve/Deny buttons — a non-member sees the card and its
+   * status but cannot grant a bot standing access (brief decision 4).
+   */
+  viewerIsMember?: boolean
   batch?: BatchTimelineState
   /** Set while the conversation overlay is active; decorates message rows. */
   conversationOverlay?: ConversationOverlayContext
@@ -732,6 +761,8 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         deferSecondaryHydration={deferSecondaryHydration}
         cancelledFollowUpIds={ctx.cancelledFollowUpIds}
         delegationStatusPatches={ctx.delegationStatusPatches}
+        botAccessStatusPatches={ctx.botAccessStatusPatches}
+        viewerIsMember={ctx.viewerIsMember}
         batch={ctx.batch}
         // Continuations directly under an UnreadDivider promote back to head so
         // the first unread message in a run still reads as a fresh turn for the
@@ -956,6 +987,15 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
       return false
   }
 
+  // A bot-access request card repaints when its own latest patch changes or when
+  // the viewer's membership (which gates the Approve/Deny buttons) flips.
+  if (item.event.eventType === "bot_access:requested") {
+    if (p.viewerIsMember !== n.viewerIsMember) return false
+    const rid = (item.event.payload as { requestId?: string })?.requestId
+    if (rid !== undefined && !botAccessPatchEqual(p.botAccessStatusPatches.get(rid), n.botAccessStatusPatches.get(rid)))
+      return false
+  }
+
   const messageId = getEventMessageId(item.event)
   if ((p.highlightMessageId === messageId) !== (n.highlightMessageId === messageId)) return false
   if ((p.firstMessageId === messageId) !== (n.firstMessageId === messageId)) return false
@@ -993,6 +1033,15 @@ function delegationPatchEqual(
   )
 }
 
+function botAccessPatchEqual(
+  a: BotAccessStatusChangedEventPayload | undefined,
+  b: BotAccessStatusChangedEventPayload | undefined
+): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.status === b.status
+}
+
 /**
  * Memoized timeline row. The timeline's inputs churn identity constantly
  * (Dexie liveQuery re-emits all-new arrays on any events write; ctx is
@@ -1017,6 +1066,7 @@ export function EventList({
   agentActivity,
   hideSessionCards,
   newMessageIds,
+  viewerIsMember,
   batch,
   conversationOverlay,
 }: EventListProps) {
@@ -1079,6 +1129,7 @@ export function EventList({
   const firstMessageId = findFirstMessageId(timelineItems)
   const cancelledFollowUpIds = collectCancelledFollowUpIds(timelineItems)
   const delegationStatusPatches = collectDelegationStatusPatches(timelineItems)
+  const botAccessStatusPatches = collectBotAccessStatusPatches(timelineItems)
 
   if (timelineItems.length === 0) {
     return (
@@ -1106,6 +1157,8 @@ export function EventList({
     onStopSession: handleStopSession,
     cancelledFollowUpIds,
     delegationStatusPatches,
+    botAccessStatusPatches,
+    viewerIsMember,
     batch,
     conversationOverlay,
   }
