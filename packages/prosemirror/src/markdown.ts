@@ -944,6 +944,7 @@ function tokenizeBalancedLinkDestinations(
 } {
   const linkStart = /\[([^\]]+)\]\(/g
   const replacements: Array<{ start: number; end: number; label: string; href: string; token: string }> = []
+  const reservedTokens = new Set(hrefByToken.keys())
   let match: RegExpExecArray | null
 
   while ((match = linkStart.exec(text)) !== null) {
@@ -972,10 +973,11 @@ function tokenizeBalancedLinkDestinations(
 
     let tokenIndex = hrefByToken.size + replacements.length
     let token = `\uE000${tokenIndex}\uE001`
-    while (text.includes(token) || hrefByToken.has(token)) {
+    while (text.includes(token) || reservedTokens.has(token)) {
       tokenIndex++
       token = `\uE000${tokenIndex}\uE001`
     }
+    reservedTokens.add(token)
     replacements.push({
       start: match.index,
       end: hrefEnd + 1,

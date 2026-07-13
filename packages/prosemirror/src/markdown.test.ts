@@ -36,6 +36,25 @@ describe("@threa/prosemirror markdown links", () => {
 
     expect(JSON.stringify(parsed)).not.toContain("\uE000")
   })
+
+  it("keeps generated link tokens unique when source text contains the token alphabet", () => {
+    const rawHref = "\uE0000\uE001"
+    const parsed = parseMarkdown(`[raw](${rawHref}) **[nested](https://example.com/a_(b))**`)
+
+    expect(parsed.content?.[0]?.content).toEqual([
+      {
+        type: "text",
+        text: "raw",
+        marks: [{ type: "link", attrs: { href: rawHref } }],
+      },
+      { type: "text", text: " " },
+      {
+        type: "text",
+        text: "nested",
+        marks: [{ type: "link", attrs: { href: "https://example.com/a_(b)" } }, { type: "bold" }],
+      },
+    ])
+  })
 })
 
 describe("@threa/prosemirror markdown attachment metadata", () => {
