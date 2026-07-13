@@ -966,8 +966,83 @@ describe("SyncEngine.setBoardStreamIds", () => {
 
     engine.setBoardStreamIds(["stream_open"])
 
-    // Give any errant async sync a chance to fire before asserting it didn't.
-    await Promise.resolve()
+    // Give any errant async sync a chance to fire before asserting it didn't —
+    // the persisted-window probe is an IDB read, so a microtask isn't enough.
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(deps.streamService.bootstrap).not.toHaveBeenCalled()
+  })
+
+  it("backfills a member stream whose room was joined at bootstrap but whose history was never synced (fresh device)", async () => {
+    const deps = makeDeps()
+    const now = new Date().toISOString()
+    deps.workspaceService.bootstrap.mockResolvedValue({
+      ...makeWorkspaceBootstrap(),
+      streamMemberships: [
+        {
+          streamId: "stream_member",
+          memberId: "user_1",
+          notificationLevel: null,
+          lastReadEventId: null,
+          lastReadAt: null,
+          joinedAt: now,
+        },
+      ],
+    })
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+    // Bootstrap joined the member room but fetched no history for it — the
+    // fresh-device state where the board card's rail would stay empty.
+    expect(deps.streamService.bootstrap).not.toHaveBeenCalledWith("ws_1", "stream_member", undefined)
+
+    engine.setBoardStreamIds(["stream_member"])
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_member", undefined)
+    })
+  })
+
+  it("skips a subscribed member stream whose window is already local — an IDB probe, no fetch", async () => {
+    const deps = makeDeps()
+    const now = new Date().toISOString()
+    deps.workspaceService.bootstrap.mockResolvedValue({
+      ...makeWorkspaceBootstrap(),
+      streamMemberships: [
+        {
+          streamId: "stream_member",
+          memberId: "user_1",
+          notificationLevel: null,
+          lastReadEventId: null,
+          lastReadAt: null,
+          joinedAt: now,
+        },
+      ],
+    })
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+    await db.events.put({
+      id: "evt_member_1",
+      workspaceId: "ws_1",
+      streamId: "stream_member",
+      sequence: "1",
+      eventType: "message_created",
+      payload: {
+        messageId: "msg_member_1",
+        contentMarkdown: "old",
+        contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+      },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: now,
+      _sequenceNum: 1,
+      _cachedAt: Date.now(),
+    })
+    deps.streamService.bootstrap.mockClear()
+
+    engine.setBoardStreamIds(["stream_member"])
+
+    await new Promise((resolve) => setTimeout(resolve, 25))
     expect(deps.streamService.bootstrap).not.toHaveBeenCalled()
   })
 

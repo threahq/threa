@@ -233,17 +233,18 @@ export class SyncEngine {
    *
    * It is additive and must NEVER route through setVisibleStreamIds — that set is
    * the sidebar's and is replaced wholesale (clobbering it would drop the
-   * sidebar's reconnect catch-up). Newly-declared streams not already subscribed
-   * are caught up + bootstrapped here, concurrency-capped so opening the board
-   * doesn't fire a fetch burst across dozens of unsynced streams. Board streams
-   * join the reconnect / connectivity-resume re-sync set (getVisibleServerStreamIds)
-   * so they stay live across drops while the board is open.
+   * sidebar's reconnect catch-up). Newly-declared streams are caught up +
+   * bootstrapped here unless their history is already local (syncBoardStreams'
+   * persisted-window skip), concurrency-capped so opening the board doesn't fire
+   * a fetch burst across dozens of unsynced streams. Board streams join the
+   * reconnect / connectivity-resume re-sync set (getVisibleServerStreamIds) so
+   * they stay live across drops while the board is open.
    *
    * Subscriptions are NOT torn down per card: clearing on unmount only shrinks the
    * reconnect set (so a closed board doesn't re-fetch on reconnect), while the
-   * already-subscribed skip below means reopening the board re-syncs nothing. We
-   * never unsubscribe a board stream — that would race a card click that navigates
-   * into the very stream being torn down.
+   * persisted-window skip means reopening the board costs one IDB probe per
+   * stream and no network. We never unsubscribe a board stream — that would race
+   * a card click that navigates into the very stream being torn down.
    */
   setBoardStreamIds(ids: string[]): void {
     const next = new Set(ids)
@@ -251,10 +252,12 @@ export class SyncEngine {
     for (const streamId of next) {
       if (this.boardStreamIds.has(streamId)) continue
       if (streamId.startsWith("draft_") || streamId.startsWith("draft:")) continue
-      if (this.subscribedStreams.has(streamId)) continue
       toSync.push(streamId)
     }
     this.boardStreamIds = next
+    // Newly-declared streams INCLUDING already-subscribed ones: a bootstrap room
+    // join is not history, so `syncBoardStreams` decides per stream whether a
+    // fetch is actually needed (see its persisted-window skip).
     if (toSync.length > 0) void this.syncBoardStreams(toSync)
   }
 
@@ -271,7 +274,6 @@ export class SyncEngine {
     for (const streamId of next) {
       if (this.panelStreamIds.has(streamId)) continue
       if (streamId.startsWith("draft_") || streamId.startsWith("draft:")) continue
-      if (this.subscribedStreams.has(streamId)) continue
       toSync.push(streamId)
     }
     this.panelStreamIds = next
@@ -347,8 +349,12 @@ export class SyncEngine {
     // the fresh bootstrap didn't join — otherwise their cards wouldn't go live
     // until the next reconnect.
     if (!isReconnect && (this.boardStreamIds.size > 0 || this.panelStreamIds.size > 0)) {
+      // Subscribed streams stay in the set: bootstrap just joined every member
+      // stream's room (subscribeMemberStreams), but a fresh device has no
+      // history for them — syncBoardStreams' persisted-window skip separates
+      // the two, so warm streams cost one IDB probe and cold ones backfill.
       const pending = [...this.boardStreamIds, ...this.panelStreamIds].filter(
-        (id) => !this.subscribedStreams.has(id) && !id.startsWith("draft_") && !id.startsWith("draft:")
+        (id) => !id.startsWith("draft_") && !id.startsWith("draft:")
       )
       if (pending.length > 0) void this.syncBoardStreams([...new Set(pending)])
     }
@@ -960,6 +966,17 @@ export class SyncEngine {
     const worker = async (): Promise<void> => {
       while (cursor < streamIds.length && !this.isDestroyed) {
         const streamId = streamIds[cursor++]
+        // "Subscribed" means the room is joined, not that history is local:
+        // subscribeMemberStreams joins every member stream at bootstrap, so on
+        // a fresh device a member stream is subscribed with an EMPTY events
+        // store — skipping it here left board branch groups bodiless ("N more
+        // replies") until the stream was opened. Skip only when a persisted
+        // window exists; the room join plus the workspace catch-up cursor keep
+        // that window current, so re-fetching it would be redundant network.
+        // Reading the sequence as an emptiness probe is safe outside
+        // joinStreamForCatchUp's cursor-before-join rule: nothing is ordered
+        // against a join, and the refresh below re-derives its own cursor.
+        if (this.subscribedStreams.has(streamId) && (await getLatestPersistedSequence(streamId)) !== null) continue
         await this.refreshStreamAfterNavigation(streamId)
       }
     }
