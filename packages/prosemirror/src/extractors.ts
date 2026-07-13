@@ -188,7 +188,20 @@ export function collectQuoteReplyMessageIds(content: JSONContent): string[] {
   return ordered
 }
 
-const BARE_URL_IN_TEXT = /https?:\/\/[^\s<>()[\]]+/g
+const BARE_URL_IN_TEXT = /https?:\/\/[^\s<>"[\]]+/g
+
+function trimPlaintextUrl(url: string): string {
+  let trimmed = url
+  while (true) {
+    const withoutPunctuation = trimmed.replace(/[.,;:!?]+$/, "")
+    const opens = (withoutPunctuation.match(/\(/g) ?? []).length
+    const closes = (withoutPunctuation.match(/\)/g) ?? []).length
+    const next =
+      closes > opens && withoutPunctuation.endsWith(")") ? withoutPunctuation.slice(0, -1) : withoutPunctuation
+    if (next === trimmed) return trimmed
+    trimmed = next
+  }
+}
 
 /**
  * An inline Giphy embed lifted from the node tree. Mirrors the `giphyEmbed`
@@ -264,7 +277,7 @@ export function collectLinkUrls(content: JSONContent): string[] {
           if (typeof href === "string" && /^https?:\/\//i.test(href)) urls.push(href)
         }
       } else {
-        for (const match of node.text.matchAll(BARE_URL_IN_TEXT)) urls.push(match[0].replace(/[.,;:!?]+$/, ""))
+        for (const match of node.text.matchAll(BARE_URL_IN_TEXT)) urls.push(trimPlaintextUrl(match[0]))
       }
     }
     if (node.content) {

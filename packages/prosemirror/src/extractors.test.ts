@@ -617,6 +617,29 @@ describe("collectLinkUrls", () => {
     expect(collectLinkUrls(doc)).toEqual(["https://example.com/docs"])
   })
 
+  it("preserves balanced parentheses and trims prose parentheses and punctuation in plain-text URLs", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: "See https://en.wikipedia.org/wiki/Foo_(bar_(baz)) (or https://example.com/docs). Also (https://example.org/guide.)",
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual([
+      "https://en.wikipedia.org/wiki/Foo_(bar_(baz))",
+      "https://example.com/docs",
+      "https://example.org/guide",
+    ])
+  })
+
   it("does not scan a linked text node's display text for stray URLs", () => {
     const doc: JSONContent = {
       type: "doc",

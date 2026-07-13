@@ -1,4 +1,5 @@
-import type { LinkPreviewContentType } from "@threa/types"
+import { collectLinkUrls } from "@threa/prosemirror"
+import type { JSONContent, LinkPreviewContentType } from "@threa/types"
 
 /**
  * A parsed reference to an in-app resource linked from a message.
@@ -237,7 +238,12 @@ const SKIP_PATTERNS = [
  * Returns unique URLs in order of first appearance.
  * Known app origins are allowlisted to bypass SSRF checks (internal message permalinks).
  */
-export function extractUrls(markdown: string, appOrigins?: string[]): string[] {
+export function extractUrls(markdown: string, appOrigins?: string[], contentJson?: JSONContent | null): string[] {
+  if (contentJson) {
+    return filterAndDeduplicateUrls(collectLinkUrls(contentJson), appOrigins)
+  }
+
+  // Compatibility path for link-preview jobs queued before contentJson was included.
   // Match URLs in markdown links [text](url) and bare URLs.
   // Markdown-link group supports one level of balanced parentheses for Wikipedia-style URLs.
   // Bare URL group allows parens; unbalanced trailing parens are stripped post-match.
@@ -281,6 +287,32 @@ export function extractUrls(markdown: string, appOrigins?: string[]): string[] {
   }
 
   return urls
+}
+
+function filterAndDeduplicateUrls(urls: string[], appOrigins?: string[]): string[] {
+  const seen = new Set<string>()
+  const filtered: string[] = []
+  const originSet = appOrigins ? new Set(appOrigins) : null
+
+  for (const url of urls) {
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      continue
+    }
+
+    const isKnownOrigin = originSet?.has(parsed.origin) ?? false
+    if (!isKnownOrigin && isBlockedUrl(url)) continue
+
+    const normalized = normalizeUrl(url)
+    if (!seen.has(normalized)) {
+      seen.add(normalized)
+      filtered.push(url)
+    }
+  }
+
+  return filtered
 }
 
 /**

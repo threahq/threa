@@ -9,6 +9,7 @@ import type {
   LinkPreviewContentType,
   LinkPreviewSummary,
   MessageLinkPreviewData,
+  JSONContent,
 } from "@threa/types"
 import { getAvatarUrl, isInAppLinkContentType, stripMarkdownToInline } from "@threa/types"
 import { LinkPreviewRepository, type LinkPreview, type UpdateLinkPreviewParams } from "./repository"
@@ -114,10 +115,11 @@ export class LinkPreviewService {
   async extractAndCreatePending(
     workspaceId: string,
     messageId: string,
-    contentMarkdown: string
+    contentMarkdown: string,
+    contentJson?: JSONContent | null
   ): Promise<Array<{ id: string; url: string }>> {
     const appOrigins = getAppOrigins()
-    const urls = extractUrls(contentMarkdown, appOrigins).slice(0, MAX_PREVIEWS_PER_MESSAGE)
+    const urls = extractUrls(contentMarkdown, appOrigins, contentJson).slice(0, MAX_PREVIEWS_PER_MESSAGE)
     if (urls.length === 0) return []
 
     return withTransaction(this.deps.pool, async (client) => {
@@ -150,10 +152,11 @@ export class LinkPreviewService {
   async replacePreviewsForMessage(
     workspaceId: string,
     messageId: string,
-    contentMarkdown: string
+    contentMarkdown: string,
+    contentJson?: JSONContent | null
   ): Promise<Array<{ id: string; url: string }>> {
     const appOrigins = getAppOrigins()
-    const urls = extractUrls(contentMarkdown, appOrigins).slice(0, MAX_PREVIEWS_PER_MESSAGE)
+    const urls = extractUrls(contentMarkdown, appOrigins, contentJson).slice(0, MAX_PREVIEWS_PER_MESSAGE)
 
     return withTransaction(this.deps.pool, async (client) => {
       await LinkPreviewRepository.unlinkAllFromMessage(client, workspaceId, messageId)

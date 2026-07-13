@@ -507,6 +507,7 @@ export interface ParseMarkdownOptions {
 interface ParseOptions extends ParseMarkdownOptions {
   getMentionType?: MentionTypeLookup
   getEmoji?: EmojiLookup
+  balancedLinkHrefs?: Map<string, string>
 }
 
 export function parseMarkdown(
@@ -934,6 +935,74 @@ function stripMentionSigil(label: string, sigil: string): string {
   return text.startsWith(sigil) ? text.slice(sigil.length) : text
 }
 
+function tokenizeBalancedLinkDestinations(
+  text: string,
+  hrefByToken: Map<string, string>
+): {
+  text: string
+  hrefByToken: Map<string, string>
+} {
+  const linkStart = /\[([^\]]+)\]\(/g
+  const replacements: Array<{ start: number; end: number; label: string; href: string; token: string }> = []
+  const reservedTokens = new Set(hrefByToken.keys())
+  let match: RegExpExecArray | null
+
+  while ((match = linkStart.exec(text)) !== null) {
+    const hrefStart = match.index + match[0].length
+    let depth = 0
+    let hrefEnd = -1
+
+    for (let i = hrefStart; i < text.length; i++) {
+      if (text[i] === "(") {
+        depth++
+      } else if (text[i] === ")") {
+        if (depth === 0) {
+          hrefEnd = i
+          break
+        }
+        depth--
+      }
+    }
+
+    if (hrefEnd === -1) break
+    const href = text.slice(hrefStart, hrefEnd)
+    if (href.startsWith("attachment:") || href.startsWith("memo:") || hrefByToken.has(href)) {
+      linkStart.lastIndex = hrefEnd + 1
+      continue
+    }
+
+    let tokenIndex = hrefByToken.size + replacements.length
+    let token = `\uE000${tokenIndex}\uE001`
+    while (text.includes(token) || reservedTokens.has(token)) {
+      tokenIndex++
+      token = `\uE000${tokenIndex}\uE001`
+    }
+    reservedTokens.add(token)
+    replacements.push({
+      start: match.index,
+      end: hrefEnd + 1,
+      label: match[1],
+      href,
+      token,
+    })
+    linkStart.lastIndex = hrefEnd + 1
+  }
+
+  if (replacements.length === 0) return { text, hrefByToken }
+
+  let cursor = 0
+  let tokenized = ""
+  for (const replacement of replacements) {
+    tokenized += text.slice(cursor, replacement.start)
+    tokenized += `[${replacement.label}](${replacement.token})`
+    hrefByToken.set(replacement.token, replacement.href)
+    cursor = replacement.end
+  }
+  tokenized += text.slice(cursor)
+
+  return { text: tokenized, hrefByToken }
+}
+
 function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONContent[] {
   if (!text) return []
 
@@ -973,6 +1042,9 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     processText = text.slice(commandMatch[0].length)
   }
 
+  const tokenizedLinks = tokenizeBalancedLinkDestinations(processText, options.balancedLinkHrefs ?? new Map())
+  processText = tokenizedLinks.text
+  options = { ...options, balancedLinkHrefs: tokenizedLinks.hrefByToken }
   const inlinePattern = new RegExp(INLINE_MARKDOWN_PATTERN, "g")
 
   let lastIndex = 0
@@ -1012,7 +1084,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     } else if (match[8]) {
       // Link: [text](url)
       const linkText = match[9]
-      const linkUrl = match[10]
+      const linkUrl = tokenizedLinks.hrefByToken.get(match[10]) ?? match[10]
       // `giphy:` pointer links round-trip back to an inline GIF embed rather
       // than a plain link. Detected here (inside the generic link branch) so no
       // dedicated regex group is needed; the encoded URL never contains a `)`.
