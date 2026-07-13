@@ -58,6 +58,7 @@ import {
 } from "@/hooks"
 import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
 import { usePageResume } from "@/hooks/use-page-resume"
+import { usePrefetchPersonas } from "@/hooks/use-personas"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
@@ -423,6 +424,9 @@ export function WorkspaceLayout() {
   const streams = useWorkspaceStreams(workspaceId ?? "")
 
   usePersistLastLocation(workspaceId)
+  // Warm the persona roster so companion pickers open with options already
+  // cached instead of popping in after a fetch (mobile-visible latency).
+  usePrefetchPersonas(workspaceId)
 
   // Remember the workspace the user is in so the `/` entry route can redirect
   // straight here on a returning launch (renders from IndexedDB) instead of
