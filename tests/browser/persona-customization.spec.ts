@@ -474,12 +474,13 @@ test.describe("Persona roster + editors", () => {
   })
 
   /**
-   * Knowledge section (persona context attachments, step 4). A forked custom
-   * persona's editor uploads a small text file through the Knowledge section's
-   * hidden file input, the row appears with its filename and the cap hint moves
-   * to "1 of 50 files", the processing badge clears once the (stub-free, local)
-   * text extraction lands, then a remove deletes the row and the cap hint returns
-   * to "0 of 50 files".
+   * Knowledge section (persona context attachments). A forked custom persona's
+   * editor uploads TWO small text files in one pick through the Knowledge
+   * section's hidden (multi-file) input — proving the shared composer upload
+   * transport (reserve → content → bind), not a one-shot multipart POST. Both
+   * rows appear, the cap hint moves to "2 of 50 files", each processing badge
+   * clears once the (stub-free, local) text extraction lands, then a remove
+   * deletes one row and the cap hint returns to "1 of 50 files".
    *
    * The persona is a custom (workspace) fork rather than a personal one only to
    * keep this single-context and fast — the Knowledge surface is byte-identical
@@ -488,7 +489,7 @@ test.describe("Persona roster + editors", () => {
    * content is NOT asserted (flaky); the prompt injection is proven by the
    * backend integration test.
    */
-  test("Knowledge section: upload a file, see it listed, extraction clears, then remove it", async ({ page }) => {
+  test("Knowledge section: upload two files, see them listed, extraction clears, then remove one", async ({ page }) => {
     test.setTimeout(60000)
 
     const { testId } = await loginAndCreateWorkspace(page, "persona-knowledge")
@@ -511,37 +512,51 @@ test.describe("Persona roster + editors", () => {
     await expect(knowledge).toBeVisible()
     await expect(page.getByText("0 of 50 files")).toBeVisible()
 
-    // ──── Upload a small markdown file through the hidden attachment input ────
+    // ──── Upload two small markdown files in one pick through the hidden input ────
 
-    // The attachment input is the hidden file input whose `accept` lists the
-    // knowledge mime allowlist (application/pdf among them) — distinct from the
-    // avatar input, which accepts image types only.
-    const fileName = `runbook-${testId}.md`
+    // The attachment input is the hidden (multi-file) input whose `accept` lists
+    // the knowledge mime allowlist (application/pdf among them) — distinct from
+    // the avatar input, which accepts image types only. The bytes stream through
+    // the app-level upload manager (reserve → content), then each settled
+    // attachment is bound to the persona — one frontend upload path (INV-35/37).
+    const fileNameA = `runbook-a-${testId}.md`
+    const fileNameB = `runbook-b-${testId}.md`
     const attachmentInput = page.locator('input[type="file"][accept*="application/pdf"]')
-    await attachmentInput.setInputFiles({
-      name: fileName,
-      mimeType: "text/markdown",
-      buffer: Buffer.from(`# Deploy runbook ${testId}\n\nStep 1: rotate the key.\nStep 2: redeploy.\n`),
-    })
+    await attachmentInput.setInputFiles([
+      {
+        name: fileNameA,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(`# Deploy runbook ${testId}\n\nStep 1: rotate the key.\nStep 2: redeploy.\n`),
+      },
+      {
+        name: fileNameB,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(`# Rollback runbook ${testId}\n\nStep 1: pin the last good build.\n`),
+      },
+    ])
 
-    // The row appears with its filename, and the cap hint moves to "1 of 50 files".
-    await expect(page.getByText(fileName)).toBeVisible({ timeout: 15000 })
-    await expect(page.getByText("1 of 50 files")).toBeVisible({ timeout: 10000 })
+    // Both rows appear with their filenames, and the cap hint moves to "2 of 50 files".
+    await expect(page.getByText(fileNameA)).toBeVisible({ timeout: 20000 })
+    await expect(page.getByText(fileNameB)).toBeVisible({ timeout: 20000 })
+    await expect(page.getByText("2 of 50 files")).toBeVisible({ timeout: 15000 })
 
-    // ──── The processing badge clears once extraction lands (config-refetch poll) ────
+    // ──── Each processing badge clears once extraction lands (config-refetch poll) ────
 
     // A tiny text file extracts locally (small tier → no AI), so the muted
-    // "Processing…" note disappears within the poll interval.
-    const attachmentRow = page.getByRole("listitem").filter({ hasText: fileName })
-    await expect(attachmentRow.getByText("Processing…")).toHaveCount(0, { timeout: 30000 })
-    // Extraction succeeded, not failed.
-    await expect(attachmentRow.getByText("Couldn't read this file")).toHaveCount(0)
+    // "Processing…" note disappears within the poll interval, and neither failed.
+    const rowA = page.getByRole("listitem").filter({ hasText: fileNameA })
+    const rowB = page.getByRole("listitem").filter({ hasText: fileNameB })
+    await expect(rowA.getByText("Processing…")).toHaveCount(0, { timeout: 30000 })
+    await expect(rowB.getByText("Processing…")).toHaveCount(0, { timeout: 30000 })
+    await expect(rowA.getByText("Couldn't read this file")).toHaveCount(0)
+    await expect(rowB.getByText("Couldn't read this file")).toHaveCount(0)
 
-    // ──── Remove the file: the row disappears and the cap hint resets ────
+    // ──── Remove one file: its row disappears and the cap hint drops to "1 of 50 files" ────
 
-    await page.getByRole("button", { name: `Remove ${fileName}` }).click()
-    await expect(page.getByText(fileName)).toHaveCount(0, { timeout: 10000 })
-    await expect(page.getByText("0 of 50 files")).toBeVisible({ timeout: 10000 })
+    await page.getByRole("button", { name: `Remove ${fileNameA}` }).click()
+    await expect(page.getByText(fileNameA)).toHaveCount(0, { timeout: 10000 })
+    await expect(page.getByText(fileNameB)).toBeVisible()
+    await expect(page.getByText("1 of 50 files")).toBeVisible({ timeout: 10000 })
   })
 })
 

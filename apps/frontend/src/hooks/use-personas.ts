@@ -394,16 +394,18 @@ export function useRemovePersonaAvatar(workspaceId: string, personaId: string) {
 }
 
 /**
- * Add a context attachment to a custom/personal persona. The returned row is
- * appended to the config cache so it renders immediately (INV-63 — the row
- * appearing IS the signal, no toast); the config query is then invalidated so the
- * server-authoritative position/ordering reconciles, and its gated refetchInterval
- * takes over polling while extraction runs.
+ * Bind an already-uploaded workspace attachment to a custom/personal persona as
+ * context knowledge — the persona-ness step after the shared upload transport
+ * settled the bytes (INV-35/37). The returned row is appended to the config cache
+ * so it renders immediately (INV-63 — the row appearing IS the signal, no toast);
+ * the config query is then invalidated so the server-authoritative position/
+ * ordering reconciles, and its gated refetchInterval takes over polling while
+ * extraction runs.
  */
-export function useUploadPersonaAttachment(workspaceId: string, personaId: string) {
+export function useBindPersonaAttachment(workspaceId: string, personaId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (file: File) => personasApi.uploadAttachment(workspaceId, personaId, file),
+    mutationFn: (attachmentId: string) => personasApi.bindAttachment(workspaceId, personaId, attachmentId),
     onSuccess: (attachment) => {
       queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
         old ? { ...old, attachments: [...old.attachments, attachment] } : old

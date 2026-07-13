@@ -1,4 +1,4 @@
-import { api, postAvatarUpload, postMultipartFile } from "./client"
+import { api, postAvatarUpload } from "./client"
 import type {
   ForkPersonaInput,
   PersonaAttachmentItem,
@@ -117,17 +117,18 @@ export const personasApi = {
   },
 
   /**
-   * Add a context attachment to a custom/personal persona (multipart, `file`
-   * field). Returns the created {@link PersonaAttachmentItem} (`processingStatus`
-   * starts `processing` until extraction lands). A mime/size/cap rejection throws
-   * an `ApiError` whose message names the constraint (INV-11).
+   * Bind an already-uploaded workspace attachment to a custom/personal persona as
+   * context knowledge (persona-context-attachments). The bytes reach S3 through the
+   * shared composer upload transport (reserve → content); this is the persona-ness
+   * step only, so there is ONE frontend upload path (INV-35/37). Returns the created
+   * {@link PersonaAttachmentItem} (`processingStatus` starts `processing` until
+   * extraction lands). A mime/size/cap/settle rejection throws an `ApiError` whose
+   * message names the constraint (INV-11).
    */
-  async uploadAttachment(workspaceId: string, personaId: string, file: File): Promise<PersonaAttachmentItem> {
-    const { attachment } = await postMultipartFile<{ attachment: PersonaAttachmentItem }>(
+  async bindAttachment(workspaceId: string, personaId: string, attachmentId: string): Promise<PersonaAttachmentItem> {
+    const { attachment } = await api.post<{ attachment: PersonaAttachmentItem }>(
       `/api/workspaces/${workspaceId}/personas/${personaId}/attachments`,
-      file,
-      "file",
-      { code: "PERSONA_ATTACHMENT_UPLOAD_ERROR", message: "Failed to add file" }
+      { attachmentId }
     )
     return attachment
   },

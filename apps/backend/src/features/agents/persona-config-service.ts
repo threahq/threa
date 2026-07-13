@@ -30,9 +30,7 @@ import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
-import { buildUploadParams, type AttachmentService } from "../attachments"
-import type { StorageProvider } from "../../lib/storage/s3-client"
-import { attachmentId as generateAttachmentId } from "../../lib/id"
+import type { AttachmentService } from "../attachments"
 import { PersonaAttachmentRepository, type PersonaAttachmentListItem } from "./persona-attachment-repository"
 import { planPersonaKnowledge, type PersonaKnowledgePlan } from "./companion/prompt/persona-knowledge-plan"
 import type { StreamService } from "../streams"
@@ -54,7 +52,6 @@ interface Dependencies {
   streamService: StreamService
   modelRegistry: ModelRegistry
   attachmentService: AttachmentService
-  storage: StorageProvider
 }
 
 /**
@@ -299,10 +296,6 @@ export class PersonaConfigService {
 
   private get attachmentService(): AttachmentService {
     return this.deps.attachmentService
-  }
-
-  private get storage(): StorageProvider {
-    return this.deps.storage
   }
 
   /** Registry-derived chat models an admin may assign (INV-16), labelled by the registry name. */
@@ -1103,101 +1096,97 @@ export class PersonaConfigService {
   }
 
   /**
-   * Add a context attachment to a custom/personal persona (persona-context-
-   * attachments). Authorization is the persona edit gate exactly
-   * ({@link authorizeEditableOr404}): a workspace persona needs admin, a personal
-   * persona needs its owner (a non-owner — admin included — already 404'd); a
-   * built-in has no owned row → 400 `PERSONA_NOT_CUSTOM`.
+   * Bind an already-uploaded workspace attachment to a custom/personal persona as
+   * context knowledge (persona-context-attachments). The bytes reach S3 through the
+   * shared composer upload transport (reserve → content → scan/extract), so this is
+   * the persona-ness step only — there is exactly ONE frontend upload path (INV-35/37).
+   * Authorization is the persona edit gate exactly ({@link authorizeEditableOr404}):
+   * a workspace persona needs admin, a personal persona needs its owner (a non-owner —
+   * admin included — already 404'd); a built-in has no owned row → 400 `PERSONA_NOT_CUSTOM`.
    *
-   * The caller (handler) buffers the file in memory and authorizes BEFORE any S3
-   * write, so a rejected upload never leaves an orphaned object. Here: validate
-   * mime/size, put the bytes to S3, run the reused sync creation
-   * ({@link AttachmentService.createForUpload} — malware scan + `attachment:uploaded`
-   * outbox event that drives extraction), then bind the row under the race-safe
-   * count cap. A cap loss (concurrent adds) hard-deletes the just-created
-   * attachment + S3 object so nothing orphans.
+   * The attachment must be the caller's OWN unbound, settled, allowed-type upload:
+   * a foreign / cross-workspace / other-user row 404s (never leak another's unbound
+   * upload, matching the generic serve gate), a message-bound row 400s, a not-yet-
+   * settled (`pending_upload`) or quarantined row 400s (a client cannot bind mid-
+   * upload), and the persona mime/size rules — which the generic reserve path does
+   * NOT enforce (it allows 100MB / any type) — are applied here against the stored
+   * row. Binding is cap-guarded race-safely by {@link PersonaAttachmentRepository.insertBinding}
+   * (INV-20).
    */
-  async addAttachment(
+  async bindAttachment(
     workspaceId: string,
     personaId: string,
     caller: PersonaCaller,
-    file: { buffer: Buffer; filename: string; mimeType: string; sizeBytes: number }
+    attachmentId: string
   ): Promise<PersonaAttachmentItem> {
     const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
     if (editable.kind !== "custom") throw customsOnly()
 
-    if (!isPersonaAttachmentMimeAllowed(file.mimeType)) {
+    const attachment = await this.attachmentService.getById(attachmentId)
+    // A missing row, a cross-workspace row, or one uploaded by someone else all
+    // 404 — never leak (or bind) another user's private unbound upload, matching
+    // `unboundAttachmentBlockedForCaller` on the generic serve path.
+    if (!attachment || attachment.workspaceId !== workspaceId || attachment.uploadedBy !== caller.userId) {
+      throw personaAttachmentNotFound()
+    }
+    // Only a free-floating workspace upload is bindable — never a file already
+    // attached to a message (which carries real message provenance).
+    if (attachment.streamId || attachment.messageId) {
+      throw new HttpError("This file is already attached to a message", {
+        status: 400,
+        code: "PERSONA_ATTACHMENT_BOUND",
+      })
+    }
+    // Must be a settled, scanned-clean upload: `getSharingBlockReason` is the same
+    // settled-and-safe predicate the send path uses (INV-35), so a `pending_upload`
+    // (mid-transfer) or quarantined row is rejected rather than bound.
+    const blockReason = this.attachmentService.getSharingBlockReason(attachment)
+    if (blockReason) {
+      throw new HttpError(blockReason, { status: 400, code: "PERSONA_ATTACHMENT_NOT_SETTLED" })
+    }
+    // The generic reserve path allows 100MB / any mime; the persona rules apply
+    // here at bind, against the stored row's real metadata (INV-11 — loud).
+    if (!isPersonaAttachmentMimeAllowed(attachment.mimeType)) {
       throw new HttpError(
-        `File type "${file.mimeType}" is not allowed. Allowed: text/*, ${PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES.join(", ")}`,
+        `File type "${attachment.mimeType}" is not allowed. Allowed: text/*, ${PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES.join(", ")}`,
         { status: 400, code: "PERSONA_ATTACHMENT_INVALID_TYPE" }
       )
     }
-    if (file.sizeBytes > PERSONA_ATTACHMENT_MAX_SIZE_BYTES) {
+    if (attachment.sizeBytes > PERSONA_ATTACHMENT_MAX_SIZE_BYTES) {
       throw new HttpError(`File exceeds the ${PERSONA_ATTACHMENT_MAX_SIZE_BYTES}-byte limit`, {
         status: 400,
         code: "PERSONA_ATTACHMENT_TOO_LARGE",
       })
     }
 
-    // Fast pre-check to avoid an S3 write + scan when the persona is obviously
-    // already full. Not the enforced guard — the race-safe insert below is
-    // (INV-20) — so a concurrent add slipping past here is caught and cleaned up.
-    const existing = await PersonaAttachmentRepository.listForPersona(this.pool, workspaceId, personaId)
-    if (existing.length >= PERSONA_ATTACHMENT_MAX_COUNT) throw personaAttachmentLimitReached()
-
-    const attachmentId = generateAttachmentId()
-    const storagePath = `${workspaceId}/${attachmentId}/${file.filename}`
-    await this.storage.putObject(storagePath, file.buffer, file.mimeType)
-
-    let created
+    let binding
     try {
-      // Persona uploads are plaintext-only, so the e2e flag is always false.
-      created = await this.attachmentService.createForUpload(
-        buildUploadParams(
-          {
-            id: attachmentId,
-            workspaceId,
-            uploadedBy: caller.userId,
-            filename: file.filename,
-            mimeType: file.mimeType,
-            sizeBytes: file.sizeBytes,
-            storagePath,
-          },
-          false
-        )
+      binding = await withTransaction(this.pool, async (client) =>
+        PersonaAttachmentRepository.insertBinding(client, {
+          attachmentId,
+          workspaceId,
+          personaId,
+          createdBy: caller.userId,
+          maxCount: PERSONA_ATTACHMENT_MAX_COUNT,
+        })
       )
     } catch (error) {
-      // createForUpload's create() may throw before it inserts the row (e.g. the
-      // scan errored); the object we just put would otherwise orphan.
-      await this.storage.delete(storagePath).catch((err) => {
-        logger.error({ err, storagePath }, "failed to clean up persona attachment object after create error")
-      })
+      // The attachment id is already the PK of a persona_attachments row (bound
+      // to this or another persona). Do NOT delete it — it belongs to that
+      // binding; surface a clean 409 for the client to repick.
+      if (isUniqueViolation(error)) {
+        throw new HttpError("This file is already attached to a persona", {
+          status: 409,
+          code: "PERSONA_ATTACHMENT_ALREADY_BOUND",
+        })
+      }
       throw error
     }
-
-    if (created.status === "blocked") {
-      // createForUpload already hard-deleted the attachment row + S3 object.
-      throw new HttpError(created.reason, { status: 400, code: "PERSONA_ATTACHMENT_BLOCKED" })
-    }
-    if (created.status === "cleanup_failed") {
-      throw new HttpError("Attachment was blocked and cleanup failed", {
-        status: 500,
-        code: "PERSONA_ATTACHMENT_CLEANUP_FAILED",
-      })
-    }
-
-    const binding = await withTransaction(this.pool, async (client) =>
-      PersonaAttachmentRepository.insertBinding(client, {
-        attachmentId,
-        workspaceId,
-        personaId,
-        createdBy: caller.userId,
-        maxCount: PERSONA_ATTACHMENT_MAX_COUNT,
-      })
-    )
     if (!binding) {
-      // Lost the cap race — undo the attachment we created (deletes row +
-      // extraction + S3 object) so nothing orphans, then fail loudly.
+      // Cap reached. A settled-but-unbound attachment is NEVER reaped by the
+      // upload sweep — its `attachment_uploads` tracking row is deleted at settle,
+      // and the sweep only reaps rows that still have one — so hard-delete it here
+      // to avoid a permanent orphan, matching the old cap-race cleanup.
       await this.attachmentService.delete(attachmentId).catch((err) => {
         logger.error({ err, attachmentId }, "failed to clean up persona attachment after cap race")
       })
@@ -1206,11 +1195,11 @@ export class PersonaConfigService {
 
     return {
       id: attachmentId,
-      filename: file.filename,
-      mimeType: file.mimeType,
-      sizeBytes: file.sizeBytes,
-      // Extraction was just dispatched via the outbox event — not ready yet, so
-      // no content mode can be planned.
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      // Extraction runs off the upload's settle event; it may still be in flight,
+      // so no content mode can be planned yet. The config refetch reconciles.
       processingStatus: "processing",
       contextMode: null,
       position: binding.position,

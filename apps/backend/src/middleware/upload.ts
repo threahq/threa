@@ -2,11 +2,6 @@ import multer from "multer"
 import multerS3 from "multer-s3"
 import { S3Client } from "@aws-sdk/client-s3"
 import type { Request, RequestHandler } from "express"
-import {
-  PERSONA_ATTACHMENT_MAX_SIZE_BYTES,
-  PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
-  isPersonaAttachmentMimeAllowed,
-} from "@threa/types"
 import type { S3Config } from "../lib/env"
 import { attachmentId } from "../lib/id"
 
@@ -117,37 +112,6 @@ export function createAvatarUploadMiddleware(): RequestHandler {
   })
 
   return upload.single("avatar")
-}
-
-/**
- * Persona context attachments (persona-context-attachments). Memory storage so
- * the handler authorizes the caller against the persona BEFORE any byte reaches
- * S3 — nothing to orphan on a rejected upload — then puts the buffer to S3
- * itself. The size cap bounds memory; the fileFilter is the first line of the
- * mime allowlist (the service re-checks, INV-11). A rejection message contains
- * "not allowed" so the error handler maps it to a 400.
- */
-export function createPersonaAttachmentUploadMiddleware(): RequestHandler {
-  const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: {
-      fileSize: PERSONA_ATTACHMENT_MAX_SIZE_BYTES,
-      files: 1,
-    },
-    fileFilter: (_req, file, cb) => {
-      if (isPersonaAttachmentMimeAllowed(file.mimetype)) {
-        cb(null, true)
-      } else {
-        cb(
-          new Error(
-            `File type "${file.mimetype}" is not allowed. Allowed: text/*, ${PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES.join(", ")}`
-          )
-        )
-      }
-    },
-  })
-
-  return upload.single("file")
 }
 
 export { MAX_FILE_SIZE }

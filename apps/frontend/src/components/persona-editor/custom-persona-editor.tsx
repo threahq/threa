@@ -5,9 +5,11 @@ import { toast } from "sonner"
 import { FileText, Upload, X } from "lucide-react"
 import {
   getPersonaAvatarUrl,
+  isPersonaAttachmentMimeAllowed,
   PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES,
   PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
   PERSONA_ATTACHMENT_MAX_COUNT,
+  PERSONA_ATTACHMENT_MAX_SIZE_BYTES,
   PERSONA_DESCRIPTION_MAX_CHARS,
   PERSONA_NAME_MAX_CHARS,
   PERSONA_SLOT_MAX_CHARS,
@@ -49,12 +51,12 @@ import {
   useDeletePersonaAttachment,
   useRemovePersonaAvatar,
   useUpdatePersonaCustom,
-  useUploadPersonaAttachment,
   useUploadPersonaAvatar,
 } from "@/hooks/use-personas"
 import { buildModelOptions, toCustomConfig, CUSTOM_EDITABLE_FIELDS } from "./persona-form"
 import type { SyncState } from "./persona-form"
 import { usePersonaDraftEditor } from "./use-persona-draft-editor"
+import { usePersonaKnowledgeUploads } from "./use-persona-knowledge-uploads"
 import { PersonaConflictBanner } from "./persona-conflict-banner"
 import { PersonaEditorFooter } from "./persona-editor-footer"
 import { ToolChecklist } from "./tool-checklist"
@@ -155,12 +157,16 @@ export function CustomPersonaEditor({
   const update = useUpdatePersonaCustom(workspaceId, personaId)
   const uploadAvatar = useUploadPersonaAvatar(workspaceId, personaId)
   const removeAvatar = useRemovePersonaAvatar(workspaceId, personaId)
-  const uploadAttachment = useUploadPersonaAttachment(workspaceId, personaId)
+  const knowledge = usePersonaKnowledgeUploads(workspaceId, personaId)
   const deleteAttachment = useDeletePersonaAttachment(workspaceId, personaId)
   const archive = useArchivePersona(workspaceId)
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
-  const atAttachmentCap = config.attachments.length >= PERSONA_ATTACHMENT_MAX_COUNT
+  // The cap counts committed rows AND in-flight uploads, so rapid picks can't
+  // overrun it while binds are still landing.
+  const attachmentCount = config.attachments.length + knowledge.rows.length
+  const remainingSlots = PERSONA_ATTACHMENT_MAX_COUNT - attachmentCount
+  const atAttachmentCap = remainingSlots <= 0
 
   const modelOptions = useMemo(
     () => buildModelOptions(config.availableModels, [values.model, resolved.model]),
@@ -252,15 +258,27 @@ export function CustomPersonaEditor({
   const avatarImageUrl = getPersonaAvatarUrl(workspaceId, resolved.avatarUrl, 64)
 
   const handleAttachmentFile = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (file) {
-      uploadAttachment.mutate(file, {
-        // Surface the server's mime/size/cap message verbatim (INV-11); no success
-        // toast — the row appearing is the signal (INV-63).
-        onError: (error) => toast.error(error instanceof Error ? error.message : "Failed to add file"),
-      })
-    }
+    const picked = Array.from(event.target.files ?? [])
     event.target.value = ""
+    if (picked.length === 0) return
+
+    // Pre-check against the same mime/size rules the server enforces so a doomed
+    // upload never starts (INV-11 — loud, no silent drops).
+    const valid: File[] = []
+    const rejected: string[] = []
+    for (const file of picked) {
+      if (!isPersonaAttachmentMimeAllowed(file.type)) rejected.push(`${file.name} (unsupported type)`)
+      else if (file.size > PERSONA_ATTACHMENT_MAX_SIZE_BYTES) rejected.push(`${file.name} (over 20MB)`)
+      else valid.push(file)
+    }
+    if (rejected.length > 0) toast.error(`Can't add ${rejected.join(", ")}`)
+
+    // Never overrun the cap: take the first N that fit and say what was dropped.
+    const accepted = valid.slice(0, Math.max(remainingSlots, 0))
+    if (accepted.length < valid.length) {
+      toast.error(`Only ${remainingSlots} more file${remainingSlots === 1 ? "" : "s"} can be added`)
+    }
+    knowledge.addFiles(accepted)
   }
   const handleRemoveAttachment = (attachmentId: string) => {
     deleteAttachment.mutate(attachmentId, { onError: () => toast.error("Failed to remove file") })
@@ -419,7 +437,7 @@ export function CustomPersonaEditor({
         <p className="text-xs text-muted-foreground">
           Files the persona always carries in its context. Text, PDF, Word, Excel, or JSON.
         </p>
-        {config.attachments.length > 0 && (
+        {(config.attachments.length > 0 || knowledge.rows.length > 0) && (
           <ul className="space-y-1.5">
             {config.attachments.map((attachment) => (
               <li
@@ -453,6 +471,42 @@ export function CustomPersonaEditor({
                 </Button>
               </li>
             ))}
+            {knowledge.rows.map((row) => (
+              <li key={row.jobId} className="flex items-center gap-3 rounded-lg border border-input bg-card px-3 py-2">
+                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{row.filename}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatFileSize(row.sizeBytes)}
+                    {row.status === "uploading" && ` · Uploading… ${Math.round(row.progress * 100)}%`}
+                    {row.status === "error" && (
+                      <span className="text-destructive"> · {row.error ?? "Upload failed"}</span>
+                    )}
+                  </p>
+                </div>
+                {row.status === "error" && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 shrink-0"
+                    onClick={() => knowledge.retry(row.jobId)}
+                  >
+                    Retry
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-muted-foreground"
+                  aria-label={`Cancel ${row.filename}`}
+                  onClick={() => knowledge.cancel(row.jobId)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </li>
+            ))}
           </ul>
         )}
         <div className="flex items-center gap-3">
@@ -461,18 +515,19 @@ export function CustomPersonaEditor({
             variant="outline"
             size="sm"
             onClick={() => attachmentInputRef.current?.click()}
-            disabled={atAttachmentCap || uploadAttachment.isPending}
+            disabled={atAttachmentCap}
           >
             <Upload className="mr-1 h-3.5 w-3.5" />
-            {uploadAttachment.isPending ? "Adding…" : "Add file"}
+            Add file
           </Button>
           <span className="text-xs text-muted-foreground">
-            {config.attachments.length} of {PERSONA_ATTACHMENT_MAX_COUNT} files
+            {attachmentCount} of {PERSONA_ATTACHMENT_MAX_COUNT} files
           </span>
         </div>
         <input
           ref={attachmentInputRef}
           type="file"
+          multiple
           accept={PERSONA_ATTACHMENT_ACCEPT}
           className="hidden"
           onChange={handleAttachmentFile}

@@ -524,7 +524,6 @@ export async function startServer(): Promise<ServerInstance> {
     streamService,
     modelRegistry,
     attachmentService,
-    storage,
   })
   const streamBriefService = new StreamBriefService({ pool })
   const delegationService = new DelegationService({ pool })

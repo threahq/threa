@@ -69,6 +69,10 @@ const attachmentParamsSchema = z.object({
   attachmentId: z.string().min(1),
 })
 
+const bindAttachmentSchema = z.object({
+  attachmentId: z.string().min(1),
+})
+
 function personaNotFound(): HttpError {
   return new HttpError("Persona not found", { status: 404, code: "PERSONA_NOT_FOUND" })
 }
@@ -283,25 +287,24 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
     /**
      * POST /api/workspaces/:workspaceId/personas/:personaId/attachments
      *
-     * Add a context attachment (persona-context-attachments). Custom/personal
-     * personas only (a built-in id 400s PERSONA_NOT_CUSTOM in the service). The
-     * persona-attachment multer instance buffered the file in memory; the service
-     * authorizes against the persona BEFORE writing to S3.
+     * Bind an already-uploaded workspace attachment as persona context knowledge
+     * (persona-context-attachments). JSON `{ attachmentId }` — the bytes reached S3
+     * through the shared composer upload transport (reserve → content), so this is
+     * the persona-ness step only, one upload path (INV-35/37). Custom/personal
+     * personas only (a built-in id 400s PERSONA_NOT_CUSTOM in the service).
      */
-    async uploadAttachment(req: Request, res: Response) {
+    async bindAttachment(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const personaId = req.params.personaId!
 
-      if (!req.file) {
-        throw new HttpError("No file uploaded", { status: 400, code: "VALIDATION_ERROR" })
-      }
+      const { attachmentId } = validateRequest(bindAttachmentSchema, req.body)
 
-      const attachment = await personaConfigService.addAttachment(workspaceId, personaId, resolveCaller(req), {
-        buffer: req.file.buffer,
-        filename: req.file.originalname,
-        mimeType: req.file.mimetype,
-        sizeBytes: req.file.size,
-      })
+      const attachment = await personaConfigService.bindAttachment(
+        workspaceId,
+        personaId,
+        resolveCaller(req),
+        attachmentId
+      )
       res.status(201).json({ attachment })
     },
 
