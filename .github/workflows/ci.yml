@@ -6,6 +6,7 @@ on:
     paths:
       - "apps/**"
       - "packages/**"
+      - "extensions/**"
       - "tests/**"
       - "scripts/**"
       - "package.json"
@@ -143,6 +144,58 @@ jobs:
 
       - name: Run enclave tests
         run: bun run --cwd apps/enclave test
+
+  extension-tests:
+    name: Extension Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for extension changes
+        if: github.event_name == 'pull_request'
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            extensions:
+              - 'extensions/**'
+              - '.github/workflows/ci.yml'
+
+      - name: Setup Bun
+        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Extensions live outside the root Bun workspaces (apps/*, packages/*):
+      # each is a standalone package with its own bun.lock, linked by file:
+      # deps (bot-runtime-client → remote-session → claude-code-remote), so
+      # installs must run per-package in dependency order. pi-remote is a
+      # pi-package with no test/typecheck scripts (deferred per #1153).
+      - name: Install extension dependencies
+        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
+        run: |
+          bun install --cwd extensions/bot-runtime-client
+          bun install --cwd extensions/remote-session
+          bun install --cwd extensions/claude-code-remote
+          bun install --cwd extensions/harness-daemon
+
+      - name: Typecheck extensions
+        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
+        run: |
+          bun run --cwd extensions/bot-runtime-client typecheck
+          bun run --cwd extensions/remote-session typecheck
+          bun run --cwd extensions/claude-code-remote typecheck
+          bun run --cwd extensions/harness-daemon typecheck
+
+      - name: Run extension tests
+        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
+        run: |
+          bun run --cwd extensions/bot-runtime-client test
+          bun run --cwd extensions/remote-session test
+          bun run --cwd extensions/claude-code-remote test
+          bun run --cwd extensions/harness-daemon test
 
   workos-permissions:
     name: WorkOS Permissions
