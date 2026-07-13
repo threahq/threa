@@ -36,6 +36,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   }
 }`}
   />
+  <div class="docs-table-wrap">
   <table class="docs-table">
     <thead><tr><th>Status</th><th>Means</th></tr></thead>
     <tbody>
@@ -47,6 +48,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
       <tr><td><code>429</code></td><td>Rate limited. See below.</td></tr>
     </tbody>
   </table>
+  </div>
 
   <h2 id="pagination">Pagination</h2>
   <p>
@@ -110,6 +112,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
     clear all of them, so the tightest one that applies is what you actually feel.
     These are the current defaults and may be tuned.
   </p>
+  <div class="docs-table-wrap">
   <table class="docs-table">
     <thead><tr><th>Limit</th><th>Window</th><th>Scope</th><th>Applies to</th></tr></thead>
     <tbody>
@@ -119,6 +122,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
       <tr><td><strong>20 requests</strong></td><td>60s</td><td>per caller</td><td>attachment uploads</td></tr>
     </tbody>
   </table>
+  </div>
   <p>
     For a single key on a single host, the <strong>60/min per key</strong> limit is
     the one you'll hit first. The per-IP baseline matters when many keys share one

@@ -775,11 +775,36 @@ a {
 }
 
 /* parameter / scope tables */
+/* Cells hold unbreakable code strings, so a table wider than its column would
+   push the page past the viewport. The wrapper clips that to a horizontal
+   scroll; the scrollbar is thin and overlay-style so it isn't always visible. */
+.docs-table-wrap {
+  max-width: 100%;
+  margin: 18px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--line)) transparent;
+}
+.docs-table-wrap::-webkit-scrollbar {
+  height: 6px;
+}
+.docs-table-wrap::-webkit-scrollbar-thumb {
+  background: hsl(var(--line));
+  border-radius: 3px;
+}
+.docs-table-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
 .docs-table {
   width: 100%;
   border-collapse: collapse;
   margin: 18px 0;
   font-size: 14px;
+}
+/* Margins live on the wrapper when present; avoid double vertical spacing. */
+.docs-table-wrap > .docs-table {
+  margin: 0;
 }
 .docs-table th {
   text-align: left;
