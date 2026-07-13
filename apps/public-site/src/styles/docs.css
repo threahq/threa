@@ -570,10 +570,15 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px 12px;
   padding: 7px 12px;
   border-bottom: 1px solid hsl(var(--line));
   background: hsl(var(--paper-warm));
   border-radius: 6px 6px 0 0;
+  /* The label carries the full "VERB /path" on the reference side rail; without
+     wrap it refuses to shrink and shoves the Copy/Run buttons off the block's
+     right edge (no scroll — the buttons become untappable on narrow phones). */
+  flex-wrap: wrap;
 }
 .pg-lang {
   font-family: var(--font-mono);
@@ -581,6 +586,8 @@ a {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: hsl(var(--muted));
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .pg-actions {
   display: flex;
