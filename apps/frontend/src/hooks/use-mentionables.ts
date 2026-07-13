@@ -192,6 +192,10 @@ export function useMentionables(streamContext?: MentionStreamContext) {
       }
     })
 
+    // The viewer's workspace-scoped id (bot ownership is recorded against it,
+    // not the WorkOS id).
+    const viewerWorkspaceUserId = workspaceUsers.find((u) => u.workosUserId === currentUserId)?.id
+
     const bots: Mentionable[] = workspaceBots
       .filter((b) => b.slug !== null && b.archivedAt === null)
       .map((bot) => ({
@@ -201,6 +205,7 @@ export function useMentionables(streamContext?: MentionStreamContext) {
         type: "bot",
         avatarEmoji: bot.avatarEmoji ?? undefined,
         avatarUrl: bot.avatarUrl ?? undefined,
+        mentionOnly: bot.type === "personal" && bot.ownerUserId !== viewerWorkspaceUserId,
       }))
 
     // In invite mode, only users and bots that are NOT already members are shown.

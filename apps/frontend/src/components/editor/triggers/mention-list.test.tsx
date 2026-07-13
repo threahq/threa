@@ -59,3 +59,27 @@ describe("MentionList persona rows", () => {
     expect(queryAllByText("Personal")).toHaveLength(1)
   })
 })
+
+describe("MentionList mention-only bots", () => {
+  it("badges another user's personal bot as mention-only with the owner hint", () => {
+    const items: Mentionable[] = [
+      { id: "bot_theirs", slug: "kris-bot", name: "Kris's Bot", type: "bot", mentionOnly: true },
+    ]
+
+    const { getByText } = render(<MentionList items={items} clientRect={() => new DOMRect()} command={() => {}} />)
+
+    expect(getByText("Mention only")).toBeInTheDocument()
+    expect(getByText(/only its owner can invoke it/)).toBeInTheDocument()
+  })
+
+  it("keeps the plain Bot badge for invocable bots", () => {
+    const items: Mentionable[] = [{ id: "bot_own", slug: "my-bot", name: "My Bot", type: "bot" }]
+
+    const { getByText, queryByText } = render(
+      <MentionList items={items} clientRect={() => new DOMRect()} command={() => {}} />
+    )
+
+    expect(getByText("Bot")).toBeInTheDocument()
+    expect(queryByText("Mention only")).not.toBeInTheDocument()
+  })
+})

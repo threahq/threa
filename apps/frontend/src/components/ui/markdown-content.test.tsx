@@ -156,6 +156,8 @@ describe("MarkdownContent", () => {
       { id: "usr_1", slug: "pierre", name: "Pierre", type: "user" },
       { id: "usr_me", slug: "self", name: "Me", type: "user", isCurrentUser: true },
       { id: "persona_1", slug: "ariadne", name: "Ariadne", type: "persona" },
+      { id: "bot_own", slug: "my-bot", name: "My Bot", type: "bot" },
+      { id: "bot_theirs", slug: "kris-bot", name: "Kris's Bot", type: "bot", mentionOnly: true },
     ]
     const STREAMS = [{ id: "stream_1", type: StreamTypes.CHANNEL, slug: "general" }]
 
@@ -203,6 +205,20 @@ describe("MarkdownContent", () => {
     it("upgrades the current user's own mention to the 'me' styling", () => {
       renderPointer("[@self](user:usr_me)")
       expect(screen.getByText("@self")).toHaveClass("font-semibold")
+    })
+
+    it("marks another user's personal bot mention as mention-only (won't invoke)", () => {
+      renderPointer("[@kris-bot](bot:bot_theirs)")
+      const chip = screen.getByText("@kris-bot")
+      expect(chip).toHaveClass("decoration-dashed")
+      expect(chip).toHaveAttribute("title", expect.stringContaining("only its owner can invoke"))
+    })
+
+    it("renders an invocable bot mention without the mention-only signal", () => {
+      renderPointer("[@my-bot](bot:bot_own)")
+      const chip = screen.getByText("@my-bot")
+      expect(chip).not.toHaveClass("decoration-dashed")
+      expect(chip).not.toHaveAttribute("title")
     })
   })
 

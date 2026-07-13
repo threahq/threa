@@ -57,13 +57,19 @@ function MentionItem({ item }: { item: Mentionable }) {
             {item.isCurrentUser && <span className="text-muted-foreground font-normal"> (me)</span>}
           </span>
           <span
-            className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0", typeBadgeStyles[item.type])}
+            className={cn(
+              "text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0",
+              item.mentionOnly ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" : typeBadgeStyles[item.type]
+            )}
           >
-            {typeLabels[item.type]}
+            {item.mentionOnly ? "Mention only" : typeLabels[item.type]}
           </span>
           {item.isPersonal && <span className="shrink-0 text-[10px] text-muted-foreground">Personal</span>}
         </div>
-        <span className="text-xs text-muted-foreground truncate w-full">@{item.slug}</span>
+        <span className="text-xs text-muted-foreground truncate w-full">
+          @{item.slug}
+          {item.mentionOnly && " · only its owner can invoke it"}
+        </span>
       </div>
     </>
   )

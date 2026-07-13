@@ -15,6 +15,12 @@ export interface Mentionable {
    * disambiguate two identically-labelled `@slug` entries (user-scoped-personas).
    */
   isPersonal?: boolean
+  /**
+   * A personal bot owned by someone else: the mention renders and resolves,
+   * but the backend dispatches invocations for the owner only — surfaces must
+   * signal that mentioning it will not trigger a response.
+   */
+  mentionOnly?: boolean
 }
 
 export interface ChannelItem {

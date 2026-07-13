@@ -204,28 +204,24 @@ export const BotRepository = {
     return result.rows.map(mapRowToBot)
   },
 
-  async findVisibleBySlugs(db: Querier, workspaceId: string, userId: string, slugs: string[]): Promise<Bot[]> {
-    if (slugs.length === 0) return []
-
-    const result = await db.query<BotRow>(composeSql`
-      ${sql`SELECT ${sql.raw(BOT_COLUMNS)} FROM bots`}
-      WHERE workspace_id = ${workspaceId}
-        AND slug = ANY(${slugs})
-        AND archived_at IS NULL
-        AND ${visibleBotPredicateSql(workspaceId, userId)}
-    `)
-    return result.rows.map(mapRowToBot)
-  },
-
-  async findVisibleByIds(db: Querier, workspaceId: string, userId: string, ids: string[]): Promise<Bot[]> {
+  /**
+   * The bots the given user may INVOKE, filtered from a candidate id set.
+   * Deliberately narrower than visibility: anyone who can read a stream sees
+   * and may mention a granted personal bot, but a personal bot executes on
+   * its owner's machine (often with elevated access), so only the owner's
+   * mentions dispatch a turn — a non-owner's mention renders and notifies but
+   * hard-stops here. Shared bots are invocable by everyone.
+   */
+  async findInvocableByIds(db: Querier, workspaceId: string, invokerUserId: string, ids: string[]): Promise<Bot[]> {
     if (ids.length === 0) return []
 
-    const result = await db.query<BotRow>(composeSql`
-      ${sql`SELECT ${sql.raw(BOT_COLUMNS)} FROM bots`}
+    const result = await db.query<BotRow>(sql`
+      SELECT ${sql.raw(BOT_COLUMNS)}
+      FROM bots
       WHERE workspace_id = ${workspaceId}
         AND id = ANY(${ids})
         AND archived_at IS NULL
-        AND ${visibleBotPredicateSql(workspaceId, userId)}
+        AND (type = ${BotTypes.SHARED} OR owner_user_id = ${invokerUserId})
     `)
     return result.rows.map(mapRowToBot)
   },

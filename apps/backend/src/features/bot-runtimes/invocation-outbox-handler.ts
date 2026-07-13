@@ -166,7 +166,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const hasMentionedPersona = mentionRefs.some((ref) => ref.actorType === "persona")
     const mentionedBots =
       mentionedBotIds.length > 0
-        ? await BotRepository.findVisibleByIds(this.pool, message.workspaceId, message.event.actorId, mentionedBotIds)
+        ? await BotRepository.findInvocableByIds(this.pool, message.workspaceId, message.event.actorId, mentionedBotIds)
         : []
     const mentionableBots = mentionedBots.filter((mentionedBot) => botHasCapability(mentionedBot, "mentionable"))
 
