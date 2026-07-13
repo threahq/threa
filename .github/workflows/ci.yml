@@ -173,9 +173,13 @@ jobs:
       # deps (bot-runtime-client → remote-session → claude-code-remote), so
       # installs must run per-package in dependency order. pi-remote is a
       # pi-package with no test/typecheck scripts (deferred per #1153).
+      # The root install is also required: bot-runtime-client's crypto parity
+      # test typechecks against the canonical packages/crypto sources, whose
+      # deps (@hpke/*) resolve from the root node_modules.
       - name: Install extension dependencies
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
         run: |
+          bun install
           bun install --cwd extensions/bot-runtime-client
           bun install --cwd extensions/remote-session
           bun install --cwd extensions/claude-code-remote
