@@ -1,5 +1,6 @@
 import type { Querier } from "../../db"
 import { MessageRepository, type Message } from "../messaging"
+import { enrichMessagesWithLinkPreviews } from "../link-previews"
 import { agentConversationSummaryId } from "../../lib/id"
 import type { AI } from "@threa/agent-runtime"
 import {
@@ -83,6 +84,7 @@ export class ConversationSummaryService {
       })
       if (batch.length === 0) break
 
+      const enrichedBatch = await enrichMessagesWithLinkPreviews(db, workspaceId, batch)
       try {
         currentSummary = await foldRollingSummary({
           ai: this.deps.ai,
@@ -90,7 +92,7 @@ export class ConversationSummaryService {
           modelString: this.deps.modelId,
           temperature: this.deps.temperature,
           existingSummary: currentSummary,
-          newMessages: batch.map(toSummaryMessage),
+          newMessages: enrichedBatch.map(toSummaryMessage),
           telemetry: { functionId: "summary-update" },
           context: { workspaceId, origin: "system" },
         })

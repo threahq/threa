@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:t
 import type { AI } from "@threa/agent-runtime"
 import type { Message } from "../messaging"
 import { MessageRepository } from "../messaging"
+import { LinkPreviewRepository } from "../link-previews"
 import { ConversationSummaryRepository } from "./conversation-summary-repository"
 import { ConversationSummaryService } from "./conversation-summary-service"
 
@@ -59,6 +60,7 @@ describe("ConversationSummaryService", () => {
   const upsertSummarySpy = spyOn(ConversationSummaryRepository, "upsert")
   const listMessagesSpy = spyOn(MessageRepository, "list")
   const listByRangeSpy = spyOn(MessageRepository, "listBySequenceRange")
+  const linkPreviewsSpy = spyOn(LinkPreviewRepository, "findByMessageIds")
 
   beforeEach(() => {
     mockGenerateText.mockClear()
@@ -66,6 +68,8 @@ describe("ConversationSummaryService", () => {
     upsertSummarySpy.mockClear()
     listMessagesSpy.mockClear()
     listByRangeSpy.mockClear()
+    linkPreviewsSpy.mockClear()
+    linkPreviewsSpy.mockResolvedValue(new Map())
     findSummarySpy.mockResolvedValue(null)
     upsertSummarySpy.mockResolvedValue({
       id: "agsum_1",

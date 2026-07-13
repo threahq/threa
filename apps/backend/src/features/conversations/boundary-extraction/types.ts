@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { CONVERSATION_STATUSES } from "@threa/types"
 import type { Message } from "../../messaging"
+import type { LinkPreview } from "../../link-previews"
 
 /**
  * Internal Zod schemas for boundary extraction output shapes.
@@ -154,6 +155,8 @@ export interface ExtractionContext {
    * relevant attachments exist.
    */
   attachmentsByMessageId?: Map<string, AttachmentExtractContext[]>
+  /** Completed link-preview card metadata, keyed by source message id. */
+  linkPreviewsByMessageId?: Map<string, LinkPreview[]>
   /** Workspace ID for cost tracking - required for cost attribution */
   workspaceId: string
 }

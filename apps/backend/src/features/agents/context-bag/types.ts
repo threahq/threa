@@ -1,5 +1,6 @@
 import type { AttachmentSummary, ContextBag, ContextIntent, ContextRef, ContextRefKind } from "@threa/types"
 import type { Querier } from "../../../db"
+import type { LinkPreview } from "../../link-previews"
 import type { AI, CostContext } from "@threa/agent-runtime"
 
 /**
@@ -57,6 +58,8 @@ export interface RenderableMessage {
   sequence: bigint
   /** Attachments on this source message, if any. Omitted when the message has none. */
   attachments?: AttachmentSummary[]
+  /** Completed preview-card metadata on this source message. */
+  linkPreviews?: LinkPreview[]
 }
 
 /**
