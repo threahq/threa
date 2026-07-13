@@ -134,6 +134,7 @@ export function AttachExistingDialog({ workspaceId, personaId, open, onOpenChang
                 further picks and say so while it runs, without shifting layout. */}
             {attach.isPending && (
               <div
+                role="status"
                 className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-background/60 text-sm text-muted-foreground"
                 data-testid="attach-existing-pending"
               >

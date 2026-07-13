@@ -37,13 +37,15 @@ export async function isAttachmentReadableViaShareOrReference(
  * An UNBOUND attachment (no `stream_id`) is private to its uploader: no stream
  * gates it, so only the uploader may read it. Returns `true` when the caller
  * must be BLOCKED — a foreign user reading someone else's pending/persona-owned
- * upload. Bound attachments (stream set) are gated by stream access upstream and
- * never reach this check. Shared by the download/content handlers and the
- * persona copy-on-attach readability gate (one definition, INV-35).
+ * upload. A legacy row with no `uploaded_by` (predates the column) has no owner
+ * to match, so it is blocked for everyone rather than readable by anyone —
+ * fail-closed. Bound attachments (stream set) are gated by stream access
+ * upstream and never reach this check. Shared by the download/content handlers
+ * and the persona copy-on-attach readability gate (one definition, INV-35).
  */
 export function unboundAttachmentBlockedForCaller(
   attachment: Pick<Attachment, "streamId" | "uploadedBy">,
   userId: string
 ): boolean {
-  return !attachment.streamId && !!attachment.uploadedBy && attachment.uploadedBy !== userId
+  return !attachment.streamId && attachment.uploadedBy !== userId
 }

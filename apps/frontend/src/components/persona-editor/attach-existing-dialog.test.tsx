@@ -136,4 +136,26 @@ describe("AttachExistingDialog", () => {
     await waitFor(() => expect(errorToast).toHaveBeenCalledWith("This file hasn’t finished a safety scan yet."))
     expect(onOpenChange).not.toHaveBeenCalledWith(false)
   })
+
+  it("shows the pending overlay while the copy runs and ignores further picks", async () => {
+    vi.spyOn(attachmentsApiModule.attachmentsApi, "search").mockResolvedValue({
+      items: [makeItem(), makeItem({ id: "attach_b", filename: "notes.md" })],
+      nextCursor: null,
+    })
+    // A copy that never settles pins the mutation in `isPending`.
+    const attachSpy = vi.spyOn(personasApi, "attachFromExisting").mockReturnValue(new Promise(() => undefined))
+    const { onOpenChange } = renderDialog()
+
+    await screen.findByText("handbook.md")
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: /handbook\.md/i }))
+
+    const overlay = await screen.findByTestId("attach-existing-pending")
+    expect(overlay).toHaveTextContent("Attaching…")
+
+    // A second pick while pending is a no-op — one copy in flight at a time.
+    await user.click(screen.getByRole("button", { name: /notes\.md/i }))
+    expect(attachSpy).toHaveBeenCalledTimes(1)
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+  })
 })

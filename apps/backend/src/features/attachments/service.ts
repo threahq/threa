@@ -683,15 +683,18 @@ export class AttachmentService {
   async copyForPersona(params: { source: Attachment; newId: string; uploadedBy: string }): Promise<Attachment> {
     const { source, newId, uploadedBy } = params
     const newStoragePath = `${source.workspaceId}/${newId}/${source.filename}`
-    await this.storage.copyObject(source.storagePath, newStoragePath)
-
     let newThumbnailStoragePath: string | null = null
-    if (source.thumbnailStoragePath) {
-      newThumbnailStoragePath = `${source.workspaceId}/${newId}/thumbnail.webp`
-      await this.storage.copyObject(source.thumbnailStoragePath, newThumbnailStoragePath)
-    }
 
+    // The cleanup guard starts BEFORE the first copy: a thumbnail copy that
+    // rejects after the primary landed must still reap the primary object.
     try {
+      await this.storage.copyObject(source.storagePath, newStoragePath)
+
+      if (source.thumbnailStoragePath) {
+        newThumbnailStoragePath = `${source.workspaceId}/${newId}/thumbnail.webp`
+        await this.storage.copyObject(source.thumbnailStoragePath, newThumbnailStoragePath)
+      }
+
       return await withTransaction(this.pool, async (client) => {
         const attachment = await AttachmentRepository.insert(client, {
           id: newId,
