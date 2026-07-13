@@ -43,7 +43,7 @@ import {
   toAttachmentSummary,
 } from "../attachments"
 import type { LabelService, LabelAssignmentService } from "../labels"
-import { BotRepository, type Bot } from "./bot-repository"
+import { BotRepository, serializeBot, type Bot } from "./bot-repository"
 import {
   AgentSessionStatuses,
   AttachmentSafetyStatuses,
@@ -104,7 +104,6 @@ import type {
   WireSearchResult,
   WireUser,
   WireMember,
-  WireBot,
   WirePrincipal,
   WireMemoSearchResult,
   WireMemoDetail,
@@ -278,25 +277,7 @@ async function resolveLabelActor(req: Request, pool: Pool): Promise<LabelActor> 
   throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
 }
 
-export function serializeBot(bot: Bot): WireBot {
-  const common = {
-    id: bot.id,
-    workspaceId: bot.workspaceId,
-    traits: bot.traits,
-    slug: bot.slug,
-    name: bot.name,
-    description: bot.description,
-    avatarEmoji: bot.avatarEmoji,
-    avatarUrl: bot.avatarUrl,
-    archivedAt: bot.archivedAt?.toISOString() ?? null,
-    createdAt: bot.createdAt.toISOString(),
-    updatedAt: bot.updatedAt.toISOString(),
-  }
-  if (bot.type === "personal") {
-    return { ...common, type: "personal", ownerUserId: bot.ownerUserId }
-  }
-  return { ...common, type: "shared", ownerUserId: null }
-}
+export { serializeBot } from "./bot-repository"
 
 function serializeUser(user: {
   id: string

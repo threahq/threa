@@ -1190,6 +1190,7 @@ export function registerWorkspaceSocketHandlers(
     memberId: string
     stream: Stream
     event: StreamEvent
+    bot?: Bot
   }) => {
     if (payload.workspaceId !== workspaceId) return
     // Same exclusion as handleStreamCreated: the creator's own member_added for a
@@ -1197,6 +1198,19 @@ export function registerWorkspaceSocketHandlers(
     // the second add path and the one that leaked the test scratchpad.
     if (payload.stream.purpose === StreamPurposes.PERSONA_TEST) return
     let shouldSubscribeStream = false
+
+    // A bot joining may be a personal bot the viewer's roster doesn't hold
+    // (visibility-scoped) — upsert the carried metadata so the new participant
+    // renders with its name/avatar instead of the generic bot fallback.
+    if (payload.bot) {
+      const bot = payload.bot
+      updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
+        const exists = old.bots?.some((b) => b.id === bot.id)
+        if (exists) return old
+        return { ...old, bots: [...(old.bots ?? []), bot] }
+      })
+      db.bots.put({ ...bot, _cachedAt: Date.now() })
+    }
 
     // Update stream bootstrap members list (humans) or botMemberIds (bots)
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.streamId), (old: unknown) => {

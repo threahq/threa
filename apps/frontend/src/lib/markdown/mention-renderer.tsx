@@ -2,7 +2,7 @@ import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { ActorHrefPointer } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
-import { useMentionType, useMentionClick } from "./mention-context"
+import { useMentionType, useMentionClick, useIsMentionOnlyBot } from "./mention-context"
 import { useChannelUrl, useChannelUrlById } from "./channel-link-context"
 import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand } from "./command-list-context"
@@ -26,11 +26,21 @@ interface TriggerChipProps {
 
 export const chipBase = "inline px-1 py-px rounded font-medium"
 
+/**
+ * A personal bot the viewer doesn't own: mentionable, never invocable by them
+ * (the backend dispatches owner mentions only). Amber + dashed underline so
+ * the chip itself signals it; the title explains on hover.
+ */
+const mentionOnlyStyle =
+  "bg-amber-500/10 text-amber-600 dark:text-amber-400 underline decoration-dashed underline-offset-2"
+const mentionOnlyTitle = "Personal bot: you can mention it, but only its owner can invoke it. It won't respond to you."
+
 /** Channel chips render as links; mentions and commands render as spans. */
 function TriggerChip({ type, text }: TriggerChipProps) {
   const getMentionType = useMentionType()
   const getChannelUrl = useChannelUrl()
   const onMentionClick = useMentionClick()
+  const isMentionOnlyBot = useIsMentionOnlyBot()
 
   if (type === "channel") {
     const url = getChannelUrl(text)
@@ -76,8 +86,12 @@ function TriggerChip({ type, text }: TriggerChipProps) {
     )
   }
 
+  const mentionOnly = mentionType === "bot" && isMentionOnlyBot(text)
   return (
-    <span className={cn(chipBase, style)}>
+    <span
+      className={cn(chipBase, mentionOnly ? mentionOnlyStyle : style)}
+      title={mentionOnly ? mentionOnlyTitle : undefined}
+    >
       {prefix}
       {text}
     </span>
@@ -96,6 +110,7 @@ export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointe
   const getChannelUrlById = useChannelUrlById()
   const getMentionType = useMentionType()
   const onMentionClick = useMentionClick()
+  const isMentionOnlyBot = useIsMentionOnlyBot()
 
   if (pointer.kind === "channel") {
     const url = getChannelUrlById(pointer.id)
@@ -130,7 +145,17 @@ export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointe
     )
   }
 
-  return <span className={cn(chipBase, style)}>@{slug}</span>
+  // Pointer mentions carry the authoritative id (INV-64) — check by it, so a
+  // renamed slug can't dodge the signal.
+  const mentionOnly = pointer.mentionType === "bot" && isMentionOnlyBot(pointer.id)
+  return (
+    <span
+      className={cn(chipBase, mentionOnly ? mentionOnlyStyle : style)}
+      title={mentionOnly ? mentionOnlyTitle : undefined}
+    >
+      @{slug}
+    </span>
+  )
 }
 
 // `(?=\s|$)` keeps the command name a whole token, so a path segment like the

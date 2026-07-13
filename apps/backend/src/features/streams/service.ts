@@ -60,7 +60,7 @@ import { EnclaveRuntimesRepository, ENCLAVE_RUNTIME_STALENESS_MS } from "../encl
 // services, which risk a cycle back into streams. These repository modules are
 // leaves (db + types only). Same lesson as the BIK schema in lib/schemas.
 import { BotRuntimeInstanceRepository, BOT_RUNTIME_BIK_STALENESS_MS } from "../bot-runtimes/repository"
-import { BotRepository } from "../public-api/bot-repository"
+import { BotRepository, serializeBot } from "../public-api/bot-repository"
 import {
   streamTypeSchema,
   streamPurposeSchema,
@@ -1584,10 +1584,10 @@ export class StreamService {
     if (target.workspaceId !== workspaceId) {
       throw new HttpError("Stream does not belong to this workspace", { status: 403, code: "WRONG_WORKSPACE" })
     }
-    if (target.type === StreamTypes.DM) {
-      throw new HttpError("Cannot add bots to direct messages", { status: 400, code: "DM_MEMBERS_IMMUTABLE" })
-    }
-
+    // Unlike addMember, DMs are allowed: DM *contacts* are immutable
+    // (stream_members), but bot grants live in bot_channel_access and don't
+    // touch the peer pair — a bot must be addable so it can see and claim
+    // delegations created in the DM.
     const grantStream = await this.resolveBotGrantStream(client, target)
     const inserted = await BotChannelAccessRepository.grantAccess(client, {
       id: streamId(),
@@ -1607,12 +1607,18 @@ export class StreamService {
       actorType: "bot",
     })
 
+    // Personal bots are visibility-scoped, so other members of the stream may
+    // not hold this bot in their roster — the event carries its metadata so
+    // their clients can render the new participant without a re-bootstrap.
+    const bot = await BotRepository.findById(client, workspaceId, botId)
+
     await OutboxRepository.insert(client, "stream:member_added", {
       workspaceId: grantStream.workspaceId,
       streamId: grantStream.id,
       memberId: botId,
       stream: grantStream,
       event,
+      ...(bot ? { bot: serializeBot(bot) } : {}),
     })
   }
 

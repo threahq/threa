@@ -1,6 +1,10 @@
-import { BOT_TRAITS, BOT_TYPES, BotTypes, type BotTrait, type BotType } from "@threa/types"
+import { BOT_TRAITS, BOT_TYPES, BotTypes, type Bot as SerializedBot, type BotTrait, type BotType } from "@threa/types"
+import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
-import { sql } from "../../db"
+import { sql, composeSql } from "../../db"
+// Module cycle with streams/service (which deep-imports this file) is benign:
+// both sides only reference the other inside function bodies, never at init.
+import { streamAccessPredicateSql } from "../streams"
 
 interface BotRow {
   id: string
@@ -87,6 +91,48 @@ function mapRowToBot(row: BotRow): Bot {
   return { ...base, type: "shared", ownerUserId: null }
 }
 
+/** Wire shape (`@threa/types` Bot): ISO-string dates, no apiKeyId. */
+export function serializeBot(bot: Bot): SerializedBot {
+  const common = {
+    id: bot.id,
+    workspaceId: bot.workspaceId,
+    traits: bot.traits,
+    slug: bot.slug,
+    name: bot.name,
+    description: bot.description,
+    avatarEmoji: bot.avatarEmoji,
+    avatarUrl: bot.avatarUrl,
+    archivedAt: bot.archivedAt?.toISOString() ?? null,
+    createdAt: bot.createdAt.toISOString(),
+    updatedAt: bot.updatedAt.toISOString(),
+  }
+  if (bot.type === "personal") {
+    return { ...common, type: "personal", ownerUserId: bot.ownerUserId }
+  }
+  return { ...common, type: "shared", ownerUserId: null }
+}
+
+/**
+ * A bot is visible to a viewer when it is shared, owned by the viewer, or
+ * participating (via a `bot_channel_access` grant) in a stream the viewer can
+ * read — participation implies visibility, so the roster, mention dispatch,
+ * and actor rendering all resolve a bot that acts in a stream the viewer
+ * shares with it. Readability of the granted stream routes through the
+ * canonical INV-62 predicate.
+ */
+function visibleBotPredicateSql(workspaceId: string, userId: string): QueryConfig {
+  return composeSql`(
+    type = ${BotTypes.SHARED}
+    OR owner_user_id = ${userId}
+    OR EXISTS (
+      SELECT 1 FROM bot_channel_access bca
+      WHERE bca.workspace_id = ${workspaceId}
+        AND bca.bot_id = bots.id
+        AND ${streamAccessPredicateSql(workspaceId, userId, "bca.stream_id")}
+    )
+  )`
+}
+
 export const BotRepository = {
   async findByApiKeyId(db: Querier, workspaceId: string, apiKeyId: string): Promise<Bot | null> {
     const result = await db.query<BotRow>(sql`
@@ -132,16 +178,16 @@ export const BotRepository = {
   },
 
   /**
-   * Bots the given user can see in their bootstrap: all shared bots in the workspace
-   * plus the user's own personal bots. Personal bots owned by other users are excluded.
+   * Bots the given user can see in their bootstrap: all shared bots, the
+   * user's own personal bots, and personal bots granted to a stream the user
+   * can read (see {@link visibleBotPredicateSql}).
    */
   async listVisibleTo(db: Querier, workspaceId: string, userId: string): Promise<Bot[]> {
-    const result = await db.query<BotRow>(sql`
-      SELECT ${sql.raw(BOT_COLUMNS)}
-      FROM bots
+    const result = await db.query<BotRow>(composeSql`
+      ${sql`SELECT ${sql.raw(BOT_COLUMNS)} FROM bots`}
       WHERE workspace_id = ${workspaceId}
         AND archived_at IS NULL
-        AND (type = ${BotTypes.SHARED} OR (type = ${BotTypes.PERSONAL} AND owner_user_id = ${userId}))
+        AND ${visibleBotPredicateSql(workspaceId, userId)}
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRowToBot)
@@ -158,21 +204,15 @@ export const BotRepository = {
     return result.rows.map(mapRowToBot)
   },
 
-  async findVisibleBySlugs(db: Querier, workspaceId: string, userId: string, slugs: string[]): Promise<Bot[]> {
-    if (slugs.length === 0) return []
-
-    const result = await db.query<BotRow>(sql`
-      SELECT ${sql.raw(BOT_COLUMNS)}
-      FROM bots
-      WHERE workspace_id = ${workspaceId}
-        AND slug = ANY(${slugs})
-        AND archived_at IS NULL
-        AND (type = ${BotTypes.SHARED} OR (type = ${BotTypes.PERSONAL} AND owner_user_id = ${userId}))
-    `)
-    return result.rows.map(mapRowToBot)
-  },
-
-  async findVisibleByIds(db: Querier, workspaceId: string, userId: string, ids: string[]): Promise<Bot[]> {
+  /**
+   * The bots the given user may INVOKE, filtered from a candidate id set.
+   * Deliberately narrower than visibility: anyone who can read a stream sees
+   * and may mention a granted personal bot, but a personal bot executes on
+   * its owner's machine (often with elevated access), so only the owner's
+   * mentions dispatch a turn — a non-owner's mention renders and notifies but
+   * hard-stops here. Shared bots are invocable by everyone.
+   */
+  async findInvocableByIds(db: Querier, workspaceId: string, invokerUserId: string, ids: string[]): Promise<Bot[]> {
     if (ids.length === 0) return []
 
     const result = await db.query<BotRow>(sql`
@@ -181,7 +221,7 @@ export const BotRepository = {
       WHERE workspace_id = ${workspaceId}
         AND id = ANY(${ids})
         AND archived_at IS NULL
-        AND (type = ${BotTypes.SHARED} OR (type = ${BotTypes.PERSONAL} AND owner_user_id = ${userId}))
+        AND (type = ${BotTypes.SHARED} OR owner_user_id = ${invokerUserId})
     `)
     return result.rows.map(mapRowToBot)
   },
