@@ -13,6 +13,7 @@ import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepos
 import { EnclaveRuntimesRepository } from "../enclave-runtimes"
 import { BotRuntimeInstanceRepository } from "../bot-runtimes/repository"
 import { BotRepository } from "../public-api/bot-repository"
+import { BotChannelAccessRepository } from "../api-keys"
 import * as idModule from "../../lib/id"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -1735,5 +1736,72 @@ describe("StreamService.updateCompanionMode persona validation", () => {
     await service.updateCompanionMode("stream_1", "ws_1", "off", null)
     expect(mockPersonaFindById).not.toHaveBeenCalled()
     expect(mockUpdate).toHaveBeenCalled()
+  })
+})
+
+describe("StreamService.addBotToStream", () => {
+  const mockGrantAccess = spyOn(BotChannelAccessRepository, "grantAccess")
+  let service: StreamService
+
+  beforeEach(() => {
+    mockFindById.mockReset()
+    mockGrantAccess.mockReset().mockResolvedValue(true)
+    mockInsertEvent.mockReset().mockResolvedValue({
+      id: "evt_1",
+      streamId: "stream_dm",
+      sequence: 1n,
+      eventType: "member_added",
+      payload: {},
+      actorId: "bot_1",
+      actorType: "bot",
+      createdAt: new Date(),
+    } as never)
+    mockInsertOutbox.mockReset().mockResolvedValue({} as never)
+    service = new StreamService({} as never)
+  })
+
+  test("grants a bot access to a DM stream (contacts stay immutable, bot participants are addable)", async () => {
+    mockFindById.mockResolvedValue({ id: "stream_dm", workspaceId: "ws_1", type: "dm" } as never)
+
+    await service.addBotToStream("stream_dm", "bot_1", "ws_1", "usr_1")
+
+    expect(mockGrantAccess).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ workspaceId: "ws_1", botId: "bot_1", streamId: "stream_dm", grantedBy: "usr_1" })
+    )
+    expect(mockInsertEvent).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ streamId: "stream_dm", eventType: "member_added", actorId: "bot_1", actorType: "bot" })
+    )
+    expect(mockInsertOutbox).toHaveBeenCalledWith(
+      {},
+      "stream:member_added",
+      expect.objectContaining({ streamId: "stream_dm", memberId: "bot_1" })
+    )
+  })
+
+  test("redirects a thread grant to its root channel", async () => {
+    mockFindById
+      .mockResolvedValueOnce({
+        id: "stream_thread",
+        workspaceId: "ws_1",
+        type: "thread",
+        rootStreamId: "stream_root",
+      } as never)
+      .mockResolvedValueOnce({ id: "stream_root", workspaceId: "ws_1", type: "channel" } as never)
+
+    await service.addBotToStream("stream_thread", "bot_1", "ws_1", "usr_1")
+
+    expect(mockGrantAccess).toHaveBeenCalledWith({}, expect.objectContaining({ streamId: "stream_root" }))
+  })
+
+  test("does not emit events when the grant already exists", async () => {
+    mockFindById.mockResolvedValue({ id: "stream_dm", workspaceId: "ws_1", type: "dm" } as never)
+    mockGrantAccess.mockResolvedValue(false)
+
+    await service.addBotToStream("stream_dm", "bot_1", "ws_1", "usr_1")
+
+    expect(mockInsertEvent).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
 })

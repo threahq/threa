@@ -1584,10 +1584,10 @@ export class StreamService {
     if (target.workspaceId !== workspaceId) {
       throw new HttpError("Stream does not belong to this workspace", { status: 403, code: "WRONG_WORKSPACE" })
     }
-    if (target.type === StreamTypes.DM) {
-      throw new HttpError("Cannot add bots to direct messages", { status: 400, code: "DM_MEMBERS_IMMUTABLE" })
-    }
-
+    // Unlike addMember, DMs are allowed: DM *contacts* are immutable
+    // (stream_members), but bot grants live in bot_channel_access and don't
+    // touch the peer pair — a bot must be addable so it can see and claim
+    // delegations created in the DM.
     const grantStream = await this.resolveBotGrantStream(client, target)
     const inserted = await BotChannelAccessRepository.grantAccess(client, {
       id: streamId(),
