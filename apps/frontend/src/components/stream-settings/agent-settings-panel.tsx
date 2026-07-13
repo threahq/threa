@@ -84,7 +84,7 @@ export function AgentSettingsPanel({
         </div>
       </div>
 
-      {personaPicker && personaPicker.personas.length > 0 && (
+      {personaPicker && (
         <div className="space-y-2">
           <Label className="text-sm font-medium">Companion agent</Label>
           <CompanionAgentSelect

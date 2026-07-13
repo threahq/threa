@@ -83,7 +83,7 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
       companionBusy={companionBusy}
       externalAgent={externalAgent}
       personaPicker={
-        !e2e && personas.length > 0
+        !e2e
           ? {
               workspaceId,
               personas,

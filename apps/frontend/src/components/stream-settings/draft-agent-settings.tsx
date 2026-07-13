@@ -42,22 +42,18 @@ export function DraftAgentSettings({
     <AgentSettingsPanel
       companionMode={companionMode}
       onCompanionModeChange={(mode) => updateScratchpad(draftId, { companionMode: mode })}
-      personaPicker={
-        personas.length > 0
-          ? {
-              workspaceId,
-              personas,
-              selectedPersonaId: pickerValue,
-              onChange: (personaId) =>
-                updateScratchpad(draftId, {
-                  // Dexie removes a key set to undefined — inherit means no stored pointer.
-                  companionPersonaId: companionPointerFromPickerValue(personaId) ?? undefined,
-                }),
-              defaultOption: { label: companionDefaultOptionLabel(effectiveDefault) },
-              defaultBadges: { workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id },
-            }
-          : undefined
-      }
+      personaPicker={{
+        workspaceId,
+        personas,
+        selectedPersonaId: pickerValue,
+        onChange: (personaId) =>
+          updateScratchpad(draftId, {
+            // Dexie removes a key set to undefined — inherit means no stored pointer.
+            companionPersonaId: companionPointerFromPickerValue(personaId) ?? undefined,
+          }),
+        defaultOption: { label: companionDefaultOptionLabel(effectiveDefault) },
+        defaultBadges: { workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id },
+      }}
       toolPolicy={{
         value: allowedToolCategories,
         onChange: (next) => updateScratchpad(draftId, { allowedToolCategories: next }),

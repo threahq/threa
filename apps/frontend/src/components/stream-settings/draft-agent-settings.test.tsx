@@ -109,11 +109,16 @@ describe("DraftAgentSettings", () => {
     expect(updateScratchpad).toHaveBeenCalledWith("draft_1", { companionPersonaId: "persona_coach" })
   })
 
-  it("hides the picker while the store is still hydrating (empty roster)", () => {
+  it("keeps the picker mounted but disabled while the store is still hydrating (empty roster)", () => {
     vi.spyOn(rosterHooks, "useCompanionRoster").mockReturnValue([])
 
     renderSettings({})
 
-    expect(screen.queryByRole("combobox", { name: /companion agent/i })).not.toBeInTheDocument()
+    // The section must not pop in and shift the sheet once the roster resolves
+    // (INV-21) — the trigger renders at full size, disabled, with no premature
+    // "Default (Ariadne)" value.
+    const trigger = screen.getByRole("combobox", { name: /companion agent/i })
+    expect(trigger).toBeDisabled()
+    expect(trigger).toHaveTextContent("Loading agents…")
   })
 })

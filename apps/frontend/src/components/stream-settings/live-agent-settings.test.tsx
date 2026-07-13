@@ -187,4 +187,14 @@ describe("LiveAgentSettings", () => {
 
     expect(screen.queryByRole("combobox", { name: /companion agent/i })).not.toBeInTheDocument()
   })
+
+  it("keeps the picker mounted but disabled while the roster is still hydrating (empty store)", () => {
+    seedAndRender({})
+
+    // No pop-in shove once the roster resolves (INV-21): the section renders
+    // immediately with a full-size disabled trigger.
+    const trigger = screen.getByRole("combobox", { name: /companion agent/i })
+    expect(trigger).toBeDisabled()
+    expect(trigger).toHaveTextContent("Loading agents…")
+  })
 })
