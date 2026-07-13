@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { forwardRef, useImperativeHandle } from "react"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { toast } from "sonner"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { JSONContent, PersonaConfigResponse, PersonaResolvedConfig } from "@threa/types"
+import type { PersonaAttachmentItem, JSONContent, PersonaConfigResponse, PersonaResolvedConfig } from "@threa/types"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"
 import { spyOnExport } from "@/test/spy"
@@ -93,6 +94,26 @@ function config(overrides: Partial<PersonaConfigResponse> = {}): PersonaConfigRe
     availableModels: [{ id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" }],
     ...overrides,
   }
+}
+
+function attachment(overrides: Partial<PersonaAttachmentItem> = {}): PersonaAttachmentItem {
+  return {
+    id: "att_1",
+    filename: "handbook.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 12 * 1024,
+    processingStatus: "ready",
+    position: 0,
+    createdAt: "2026-07-12T00:00:00Z",
+    ...overrides,
+  }
+}
+
+/** The hidden knowledge file input, distinguished from the avatar input by its mime accept. */
+function attachmentInput(container: HTMLElement): HTMLInputElement {
+  const input = container.querySelector<HTMLInputElement>('input[type="file"][accept*="application/pdf"]')
+  if (!input) throw new Error("attachment file input not found")
+  return input
 }
 
 function renderEditor(cfg: PersonaConfigResponse = config()) {
@@ -219,5 +240,70 @@ describe("CustomPersonaEditor", () => {
 
     await waitFor(() => expect(archive).toHaveBeenCalledWith("ws_1", "persona_c1"))
     expect(await screen.findByText("Workspace home")).toBeInTheDocument()
+  })
+
+  describe("Knowledge attachments", () => {
+    it("renders a row per attachment with size and a processing badge (INV-46)", () => {
+      renderEditor(
+        config({
+          attachments: [
+            attachment({ id: "att_ready", filename: "handbook.pdf", sizeBytes: 12 * 1024, processingStatus: "ready" }),
+            attachment({ id: "att_proc", filename: "notes.txt", sizeBytes: 2 * 1024, processingStatus: "processing" }),
+          ],
+        })
+      )
+
+      expect(screen.getByText("handbook.pdf")).toBeInTheDocument()
+      expect(screen.getByText(/12\.0 KB/)).toBeInTheDocument()
+      expect(screen.getByText("notes.txt")).toBeInTheDocument()
+      expect(screen.getByText(/Processing/)).toBeInTheDocument()
+    })
+
+    it("uploads the picked file via the attachment mutation (no success toast, INV-63)", async () => {
+      const upload = vi
+        .spyOn(personasApi, "uploadAttachment")
+        .mockResolvedValue(attachment({ id: "att_new", filename: "notes.txt", processingStatus: "processing" }))
+      const successToast = vi.spyOn(toast, "success")
+      const { container } = renderEditor()
+
+      const file = new File(["hello"], "notes.txt", { type: "text/plain" })
+      fireEvent.change(attachmentInput(container), { target: { files: [file] } })
+
+      await waitFor(() => expect(upload).toHaveBeenCalledWith("ws_1", "persona_c1", file))
+      expect(successToast).not.toHaveBeenCalled()
+    })
+
+    it("removes an attachment via the delete mutation", async () => {
+      const del = vi.spyOn(personasApi, "deleteAttachment").mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      renderEditor(config({ attachments: [attachment({ id: "att_x", filename: "handbook.pdf" })] }))
+
+      await user.click(screen.getByRole("button", { name: "Remove handbook.pdf" }))
+
+      await waitFor(() => expect(del).toHaveBeenCalledWith("ws_1", "persona_c1", "att_x"))
+    })
+
+    it("disables Add at the count cap and shows the reserved 'N of N files' hint (INV-21)", () => {
+      const attachments = Array.from({ length: 5 }, (_, i) => attachment({ id: `att_${i}`, filename: `f${i}.pdf` }))
+      renderEditor(config({ attachments }))
+
+      expect(screen.getByRole("button", { name: /Add file/ })).toBeDisabled()
+      expect(screen.getByText("5 of 5 files")).toBeInTheDocument()
+    })
+
+    it("toasts the server's rejection message on upload failure and fires no success toast (INV-11/63)", async () => {
+      vi.spyOn(personasApi, "uploadAttachment").mockRejectedValue(
+        new ApiError(400, "PERSONA_ATTACHMENT_LIMIT", "You can attach at most 5 files.")
+      )
+      const errorToast = vi.spyOn(toast, "error")
+      const successToast = vi.spyOn(toast, "success")
+      const { container } = renderEditor()
+
+      const file = new File(["hello"], "notes.txt", { type: "text/plain" })
+      fireEvent.change(attachmentInput(container), { target: { files: [file] } })
+
+      await waitFor(() => expect(errorToast).toHaveBeenCalledWith("You can attach at most 5 files."))
+      expect(successToast).not.toHaveBeenCalled()
+    })
   })
 })

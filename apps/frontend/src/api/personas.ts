@@ -1,6 +1,7 @@
-import { api, postAvatarUpload } from "./client"
+import { api, postAvatarUpload, postMultipartFile } from "./client"
 import type {
   ForkPersonaInput,
+  PersonaAttachmentItem,
   PersonaConfigPatch,
   PersonaConfigResponse,
   PersonaConfigRevision,
@@ -113,6 +114,27 @@ export const personasApi = {
     return api.delete<{ persona: PersonaListItem; updatedAt: string }>(
       `/api/workspaces/${workspaceId}/personas/${personaId}/avatar`
     )
+  },
+
+  /**
+   * Add a context attachment to a custom/personal persona (multipart, `file`
+   * field). Returns the created {@link PersonaAttachmentItem} (`processingStatus`
+   * starts `processing` until extraction lands). A mime/size/cap rejection throws
+   * an `ApiError` whose message names the constraint (INV-11).
+   */
+  async uploadAttachment(workspaceId: string, personaId: string, file: File): Promise<PersonaAttachmentItem> {
+    const { attachment } = await postMultipartFile<{ attachment: PersonaAttachmentItem }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}/attachments`,
+      file,
+      "file",
+      { code: "PERSONA_ATTACHMENT_UPLOAD_ERROR", message: "Failed to add file" }
+    )
+    return attachment
+  },
+
+  /** Remove a persona context attachment (hard delete — the file is unbound to any message). */
+  deleteAttachment(workspaceId: string, personaId: string, attachmentId: string): Promise<void> {
+    return api.delete<void>(`/api/workspaces/${workspaceId}/personas/${personaId}/attachments/${attachmentId}`)
   },
 
   /**

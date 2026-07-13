@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Upload, X } from "lucide-react"
+import { FileText, Upload, X } from "lucide-react"
 import {
   getPersonaAvatarUrl,
+  PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES,
+  PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
+  PERSONA_ATTACHMENT_MAX_COUNT,
   PERSONA_DESCRIPTION_MAX_CHARS,
   PERSONA_NAME_MAX_CHARS,
   PERSONA_SLOT_MAX_CHARS,
@@ -38,11 +41,14 @@ import { PersonaAvatar } from "@/components/persona-avatar"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { cn } from "@/lib/utils"
+import { formatFileSize } from "@/lib/file-size"
 import {
   personaKeys,
   useArchivePersona,
+  useDeletePersonaAttachment,
   useRemovePersonaAvatar,
   useUpdatePersonaCustom,
+  useUploadPersonaAttachment,
   useUploadPersonaAvatar,
 } from "@/hooks/use-personas"
 import { buildModelOptions, toCustomConfig, CUSTOM_EDITABLE_FIELDS } from "./persona-form"
@@ -53,6 +59,12 @@ import { PersonaEditorFooter } from "./persona-editor-footer"
 import { ToolChecklist } from "./tool-checklist"
 
 const ESCALATION_NONE = "__none__"
+
+/** The file input's `accept` — the persona-attachment mime allowlist (INV-33 source). */
+const PERSONA_ATTACHMENT_ACCEPT = [
+  ...PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES.map((prefix) => `${prefix}*`),
+  ...PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
+].join(",")
 
 /**
  * Narrow the 409's opaque `details.current` to a custom conflict at runtime — a
@@ -135,8 +147,12 @@ export function CustomPersonaEditor({
   const update = useUpdatePersonaCustom(workspaceId, personaId)
   const uploadAvatar = useUploadPersonaAvatar(workspaceId, personaId)
   const removeAvatar = useRemovePersonaAvatar(workspaceId, personaId)
+  const uploadAttachment = useUploadPersonaAttachment(workspaceId, personaId)
+  const deleteAttachment = useDeletePersonaAttachment(workspaceId, personaId)
   const archive = useArchivePersona(workspaceId)
   const avatarInputRef = useRef<HTMLInputElement>(null)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const atAttachmentCap = config.attachments.length >= PERSONA_ATTACHMENT_MAX_COUNT
 
   const modelOptions = useMemo(
     () => buildModelOptions(config.availableModels, [values.model, resolved.model]),
@@ -226,6 +242,21 @@ export function CustomPersonaEditor({
     event.target.value = ""
   }
   const avatarImageUrl = getPersonaAvatarUrl(workspaceId, resolved.avatarUrl, 64)
+
+  const handleAttachmentFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      uploadAttachment.mutate(file, {
+        // Surface the server's mime/size/cap message verbatim (INV-11); no success
+        // toast — the row appearing is the signal (INV-63).
+        onError: (error) => toast.error(error instanceof Error ? error.message : "Failed to add file"),
+      })
+    }
+    event.target.value = ""
+  }
+  const handleRemoveAttachment = (attachmentId: string) => {
+    deleteAttachment.mutate(attachmentId, { onError: () => toast.error("Failed to remove file") })
+  }
 
   return (
     <div className="space-y-6">
@@ -373,6 +404,68 @@ export function CustomPersonaEditor({
         <p className="text-right text-[11px] text-muted-foreground">
           {values.brevityPrompt?.length ?? 0}/{PERSONA_SLOT_MAX_CHARS}
         </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Knowledge</Label>
+        <p className="text-xs text-muted-foreground">
+          Files the persona always carries in its context. Text, PDF, Word, Excel, or JSON.
+        </p>
+        {config.attachments.length > 0 && (
+          <ul className="space-y-1.5">
+            {config.attachments.map((attachment) => (
+              <li
+                key={attachment.id}
+                className="flex items-center gap-3 rounded-lg border border-input bg-card px-3 py-2"
+              >
+                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{attachment.filename}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatFileSize(attachment.sizeBytes)}
+                    {attachment.processingStatus === "processing" && " · Processing…"}
+                    {attachment.processingStatus === "failed" && (
+                      <span className="text-destructive"> · Couldn&apos;t read this file</span>
+                    )}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-muted-foreground"
+                  aria-label={`Remove ${attachment.filename}`}
+                  disabled={deleteAttachment.isPending}
+                  onClick={() => handleRemoveAttachment(attachment.id)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => attachmentInputRef.current?.click()}
+            disabled={atAttachmentCap || uploadAttachment.isPending}
+          >
+            <Upload className="mr-1 h-3.5 w-3.5" />
+            {uploadAttachment.isPending ? "Adding…" : "Add file"}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {config.attachments.length} of {PERSONA_ATTACHMENT_MAX_COUNT} files
+          </span>
+        </div>
+        <input
+          ref={attachmentInputRef}
+          type="file"
+          accept={PERSONA_ATTACHMENT_ACCEPT}
+          className="hidden"
+          onChange={handleAttachmentFile}
+        />
       </div>
 
       <div className="space-y-1.5">

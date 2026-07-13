@@ -141,6 +141,10 @@ export function usePersonaConfig(workspaceId: string, personaId: string, options
     queryFn: () => personasApi.getConfig(workspaceId, personaId),
     enabled: !!workspaceId && !!personaId && (options?.enabled ?? true),
     staleTime: 30_000,
+    // Poll ONLY while an attachment's extraction is in flight, so the processing
+    // badge flips to ready without a manual reload; idle otherwise (no unconditional polling).
+    refetchInterval: (query) =>
+      query.state.data?.attachments.some((a) => a.processingStatus === "processing") ? 3_000 : false,
   })
 }
 
@@ -386,5 +390,39 @@ export function useRemovePersonaAvatar(workspaceId: string, personaId: string) {
   return useMutation({
     mutationFn: () => personasApi.removeAvatar(workspaceId, personaId),
     onSuccess: ({ persona, updatedAt }) => applyCustomAvatar(queryClient, workspaceId, personaId, persona, updatedAt),
+  })
+}
+
+/**
+ * Add a context attachment to a custom/personal persona. The returned row is
+ * appended to the config cache so it renders immediately (INV-63 — the row
+ * appearing IS the signal, no toast); the config query is then invalidated so the
+ * server-authoritative position/ordering reconciles, and its gated refetchInterval
+ * takes over polling while extraction runs.
+ */
+export function useUploadPersonaAttachment(workspaceId: string, personaId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => personasApi.uploadAttachment(workspaceId, personaId, file),
+    onSuccess: (attachment) => {
+      queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
+        old ? { ...old, attachments: [...old.attachments, attachment] } : old
+      )
+      void queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, personaId) })
+    },
+  })
+}
+
+/** Remove a persona context attachment; the row drops from the config cache (the signal, INV-63). */
+export function useDeletePersonaAttachment(workspaceId: string, personaId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (attachmentId: string) => personasApi.deleteAttachment(workspaceId, personaId, attachmentId),
+    onSuccess: (_result, attachmentId) => {
+      queryClient.setQueryData<PersonaConfigResponse>(personaKeys.config(workspaceId, personaId), (old) =>
+        old ? { ...old, attachments: old.attachments.filter((a) => a.id !== attachmentId) } : old
+      )
+      void queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, personaId) })
+    },
   })
 }
