@@ -11,7 +11,7 @@ import { needsAutoNaming } from "./display-name"
 import { logger } from "../../lib/logger"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
 import { awaitAttachmentProcessing } from "../attachments"
-import { awaitLinkPreviewProcessing, enrichMessagesWithLinkPreviews } from "../link-previews"
+import { awaitLinkPreviewProcessing, enrichMessagesWithLinkPreviewMap } from "../link-previews"
 import { MAX_MESSAGES_FOR_NAMING, MAX_EXISTING_NAMES, buildNamingSystemPrompt } from "./naming-config"
 
 export interface GenerateNameResult {
@@ -150,7 +150,7 @@ export class StreamNamingService {
       )
     }
 
-    await linkPreviewProcessing
+    const linkPreviewResult = await linkPreviewProcessing
 
     // Uses pool directly per INV-30 (single-query path)
     const messageIds = messages.map((m) => m.id)
@@ -161,7 +161,7 @@ export class StreamNamingService {
       attachmentsByMessageId = new Map()
     }
 
-    const messagesWithLinkPreviews = await enrichMessagesWithLinkPreviews(this.pool, stream.workspaceId, messages)
+    const messagesWithLinkPreviews = enrichMessagesWithLinkPreviewMap(messages, linkPreviewResult.previewsByMessage)
     const conversationText = await this.messageFormatter.formatMessagesWithAttachments(
       this.pool,
       stream.workspaceId,

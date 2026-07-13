@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import type { JSONContent } from "@threa/types"
+import { LinkPreviewStatuses, type JSONContent } from "@threa/types"
 import type { Querier } from "../../db"
 import { logger } from "../../lib/logger"
 import { escapeXmlAttr } from "../../lib/xml"
@@ -20,6 +20,7 @@ export interface AwaitLinkPreviewProcessingResult {
   allCompleted: boolean
   completedUrls: string[]
   failedOrTimedOutUrls: string[]
+  previewsByMessage: Map<string, LinkPreview[]>
 }
 
 /**
@@ -42,25 +43,28 @@ export async function awaitLinkPreviewProcessing(
     )
     if (urls.length > 0) expected.set(message.id, new Set(urls.map(normalizeUrl)))
   }
-  if (expected.size === 0) return { allCompleted: true, completedUrls: [], failedOrTimedOutUrls: [] }
+  if (expected.size === 0) {
+    return { allCompleted: true, completedUrls: [], failedOrTimedOutUrls: [], previewsByMessage: new Map() }
+  }
 
   const startedAt = Date.now()
   const completedKeys = new Set<string>()
   const failedKeys = new Set<string>()
+  let previewsByMessage = new Map<string, LinkPreview[]>()
 
   while (Date.now() - startedAt < timeoutMs) {
-    const rowsByMessage = await LinkPreviewRepository.findByMessageIds(pool, workspaceId, [...expected.keys()])
+    previewsByMessage = await LinkPreviewRepository.findByMessageIds(pool, workspaceId, [...expected.keys()])
     let hasPending = false
 
     for (const [messageId, normalizedUrls] of expected) {
-      const rows = rowsByMessage.get(messageId) ?? []
+      const rows = previewsByMessage.get(messageId) ?? []
       for (const normalizedUrl of normalizedUrls) {
         const row = rows.find((candidate) => candidate.normalizedUrl === normalizedUrl)
         if (!row) {
           hasPending = true
-        } else if (row.status === "completed") {
+        } else if (row.status === LinkPreviewStatuses.COMPLETED) {
           completedKeys.add(`${messageId}:${normalizedUrl}`)
-        } else if (row.status === "failed") {
+        } else if (row.status === LinkPreviewStatuses.FAILED) {
           failedKeys.add(`${messageId}:${normalizedUrl}`)
         } else {
           hasPending = true
@@ -93,6 +97,7 @@ export async function awaitLinkPreviewProcessing(
     allCompleted: failedOrTimedOutUrls.length === 0,
     completedUrls,
     failedOrTimedOutUrls,
+    previewsByMessage,
   }
 }
 
@@ -109,9 +114,16 @@ export async function enrichMessagesWithLinkPreviews<T extends LinkPreviewContex
     messages.map((message) => message.id)
   )
 
+  return enrichMessagesWithLinkPreviewMap(messages, previewsByMessage)
+}
+
+export function enrichMessagesWithLinkPreviewMap<T extends LinkPreviewContextMessage>(
+  messages: T[],
+  previewsByMessage: Map<string, LinkPreview[]>
+): T[] {
   return messages.map((message) => {
     const rendered = renderLinkPreviewContext(
-      (previewsByMessage.get(message.id) ?? []).filter((preview) => preview.status === "completed")
+      (previewsByMessage.get(message.id) ?? []).filter((preview) => preview.status === LinkPreviewStatuses.COMPLETED)
     )
     return rendered ? { ...message, contentMarkdown: `${message.contentMarkdown}\n\n${rendered}` } : message
   })

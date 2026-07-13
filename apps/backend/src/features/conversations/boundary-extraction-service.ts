@@ -23,7 +23,7 @@ import { addStalenessFields } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
-import { AuthorTypes, ConversationStatuses, StreamTypes } from "@threa/types"
+import { AuthorTypes, ConversationStatuses, LinkPreviewStatuses, StreamTypes } from "@threa/types"
 import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5
@@ -303,7 +303,7 @@ export class BoundaryExtractionService {
       const linkPreviewsByMessageId = new Map(
         [...previewRowsByMessage].map(([targetMessageId, previews]) => [
           targetMessageId,
-          previews.filter((preview) => preview.status === "completed"),
+          previews.filter((preview) => preview.status === LinkPreviewStatuses.COMPLETED),
         ])
       )
 

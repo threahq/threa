@@ -1,5 +1,5 @@
 import type { Querier } from "../../../../db"
-import { ContextRefKinds, type AttachmentSummary, type ConversationContextRef } from "@threa/types"
+import { ContextRefKinds, LinkPreviewStatuses, type AttachmentSummary, type ConversationContextRef } from "@threa/types"
 import { HttpError } from "../../../../lib/errors"
 import { AttachmentRepository } from "../../../attachments"
 import { LinkPreviewRepository, renderLinkPreviewContext } from "../../../link-previews"
@@ -119,7 +119,9 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
                 sizeBytes: a.sizeBytes,
               }))
           : undefined
-      const linkPreviews = (linkPreviewsByMessage.get(m.id) ?? []).filter((preview) => preview.status === "completed")
+      const linkPreviews = (linkPreviewsByMessage.get(m.id) ?? []).filter(
+        (preview) => preview.status === LinkPreviewStatuses.COMPLETED
+      )
       return {
         messageId: m.id,
         authorId: m.authorId,

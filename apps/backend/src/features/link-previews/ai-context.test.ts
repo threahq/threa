@@ -85,6 +85,7 @@ describe("awaitLinkPreviewProcessing", () => {
       allCompleted: true,
       completedUrls: ["https://x.com/example/status/123"],
       failedOrTimedOutUrls: [],
+      previewsByMessage: new Map([["msg_1", [completed]]]),
     })
     expect(find).toHaveBeenCalledTimes(2)
     find.mockRestore()

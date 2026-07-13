@@ -18,6 +18,7 @@ export { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"
 export {
   awaitLinkPreviewProcessing,
   enrichMessagesWithLinkPreviews,
+  enrichMessagesWithLinkPreviewMap,
   renderLinkPreviewContext,
   DEFAULT_LINK_PREVIEW_PROCESSING_TIMEOUT_MS,
 } from "./ai-context"

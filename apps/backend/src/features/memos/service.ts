@@ -372,11 +372,18 @@ export class MemoService implements MemoServiceLike {
     // by classification, suggestions, and memorization. Memo accumulation is
     // delayed, so unlike send-time AI consumers it does not need to poll.
     const relativeTo = new Date()
+    const allMessageRows = [...fetchedData.conversationMessages.values()].flatMap((messages) =>
+      [...messages.values()].filter((message): message is Message => message !== null)
+    )
+    const enrichedMessages = await enrichMessagesWithLinkPreviews(this.pool, workspaceId, allMessageRows)
+    const enrichedById = new Map(enrichedMessages.map((message) => [message.id, message]))
+
     for (const [conversationId, messages] of fetchedData.conversationMessages) {
-      const messageRows = [...messages.values()].filter((message): message is Message => message !== null)
+      const messageRows = [...messages.values()]
+        .filter((message): message is Message => message !== null)
+        .map((message) => enrichedById.get(message.id) ?? message)
       if (messageRows.length === 0) continue
-      const enriched = await enrichMessagesWithLinkPreviews(this.pool, workspaceId, messageRows)
-      const formatted = await this.messageFormatter.formatMessages(this.pool, workspaceId, enriched, {
+      const formatted = await this.messageFormatter.formatMessages(this.pool, workspaceId, messageRows, {
         includeIds: true,
         relativeTo,
       })
