@@ -4,12 +4,12 @@ import type { JSONContent } from "@threa/types"
 
 describe("@threa/prosemirror markdown links", () => {
   it("parses links whose URLs contain nested balanced parentheses", () => {
-    const parsed = parseMarkdown("[Wikipedia](https://en.wikipedia.org/wiki/Foo_(bar_(baz)))")
+    const parsed = parseMarkdown("[Wikipedia](https://en.wikipedia.org/wiki/Foo_(bar_(baz_(qux))))")
 
     expect(parsed.content?.[0]?.content?.[0]).toEqual({
       type: "text",
       text: "Wikipedia",
-      marks: [{ type: "link", attrs: { href: "https://en.wikipedia.org/wiki/Foo_(bar_(baz))" } }],
+      marks: [{ type: "link", attrs: { href: "https://en.wikipedia.org/wiki/Foo_(bar_(baz_(qux)))" } }],
     })
   })
 })
