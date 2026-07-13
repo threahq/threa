@@ -120,6 +120,38 @@ describe("deriveStreamContext", () => {
     expect(bare?.badge).toBeNull()
   })
 
+  it("uses the canonical document URL when a stale rich preview has trailing punctuation", () => {
+    const canonicalUrl = "https://github.com/acme/repo/pull/42"
+    const events = [
+      messageEvent("2026-06-23T10:00:00.000Z", {
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: `${canonicalUrl}.` }] }],
+        },
+        linkPreviews: [
+          {
+            id: "lp_stale",
+            url: `${canonicalUrl}.`,
+            title: "Stale preview",
+            description: null,
+            imageUrl: null,
+            faviconUrl: "https://github.com/favicon.ico",
+            siteName: "GitHub",
+            contentType: "website",
+            previewType: "github_pr",
+            position: 0,
+          },
+        ],
+      }),
+    ]
+
+    const links = deriveStreamContext(events).items.filter((i): i is LinkContextItem => i.category === "link")
+    expect(links).toHaveLength(1)
+    expect(links[0].url).toBe(canonicalUrl)
+    expect(links[0].title).toBeNull()
+    expect(links[0].badge).toBeNull()
+  })
+
   it("reads links from contentJson, so a bold link keeps a clean URL (no trailing ** leak)", () => {
     const events = [
       messageEvent("2026-06-23T10:00:00.000Z", {
