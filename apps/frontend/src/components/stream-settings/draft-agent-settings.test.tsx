@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
 import * as draftHook from "@/hooks/use-draft-scratchpads"
-import * as personasHooks from "@/hooks/use-personas"
+import * as rosterHooks from "@/hooks/use-companion-roster"
 import * as defaultCompanionHooks from "@/hooks/use-default-companion-persona"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import { DraftAgentSettings } from "./draft-agent-settings"
@@ -45,9 +45,9 @@ beforeEach(() => {
     deleteScratchpad: vi.fn(),
     getScratchpad: vi.fn(),
   } as unknown as ReturnType<typeof draftHook.useDraftScratchpads>)
-  vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
-    data: ROSTER,
-  } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+  vi.spyOn(rosterHooks, "useCompanionRoster").mockReturnValue(
+    ROSTER as unknown as ReturnType<typeof rosterHooks.useCompanionRoster>
+  )
   vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
     effectiveDefault: ROSTER[0],
     workspaceDefault: ROSTER[0],
@@ -109,10 +109,8 @@ describe("DraftAgentSettings", () => {
     expect(updateScratchpad).toHaveBeenCalledWith("draft_1", { companionPersonaId: "persona_coach" })
   })
 
-  it("hides the picker while the roster is still loading", () => {
-    vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
-      data: undefined,
-    } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+  it("hides the picker while the store is still hydrating (empty roster)", () => {
+    vi.spyOn(rosterHooks, "useCompanionRoster").mockReturnValue([])
 
     renderSettings({})
 

@@ -10,6 +10,7 @@ function persona(overrides: Partial<PersonaListItem> & Pick<PersonaListItem, "id
     kind: "custom",
     avatarUrl: null,
     isCustomized: false,
+    status: "active",
     ...overrides,
   }
 }

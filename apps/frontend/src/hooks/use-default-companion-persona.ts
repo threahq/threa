@@ -1,15 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { ARIADNE_PERSONA_SLUG, type PersonaListItem, type WorkspaceBootstrap } from "@threa/types"
+import { ARIADNE_PERSONA_SLUG, type WorkspaceBootstrap } from "@threa/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { usePreferencesOptional } from "@/contexts"
-import { usePersonas } from "@/hooks/use-personas"
+import { useCompanionRoster } from "@/hooks/use-companion-roster"
+import type { CompanionPersona } from "@/components/stream-settings/companion-agent-select"
 
 export interface DefaultCompanionResolution {
   /** The default that applies to the viewer: user pref → workspace setting → Ariadne. */
-  effectiveDefault: PersonaListItem | undefined
+  effectiveDefault: CompanionPersona | undefined
   /** The workspace-tier default alone (workspace setting → Ariadne), for the
    *  user-settings picker's "what would I inherit" synthetic option. */
-  workspaceDefault: PersonaListItem | undefined
+  workspaceDefault: CompanionPersona | undefined
 }
 
 /**
@@ -19,21 +20,19 @@ export interface DefaultCompanionResolution {
  * personas, so an off-roster id is archived/inactive and falls through (the same
  * resolve-time tolerance the dispatch resolver applies, INV-11's one sanctioned
  * fallback). `workspaceDefault` is exposed separately so the user picker can name
- * the tier it would inherit independent of the viewer's own override.
+ * the tier it would inherit independent of the viewer's own override. Reads the
+ * bootstrap-backed store — no fetch.
  */
-export function useDefaultCompanionPersona(
-  workspaceId: string,
-  opts?: { enabled?: boolean }
-): DefaultCompanionResolution {
+export function useDefaultCompanionPersona(workspaceId: string): DefaultCompanionResolution {
   const userDefaultId = usePreferencesOptional()?.preferences?.defaultCompanionPersonaId ?? null
   const workspaceDefaultId = useWorkspaceDefaultCompanionPersonaId(workspaceId)
-  const { data: personas } = usePersonas(workspaceId, { enabled: opts?.enabled ?? true })
+  const personas = useCompanionRoster(workspaceId)
   return resolveDefaultCompanionPersona(personas, userDefaultId, workspaceDefaultId)
 }
 
 /** Pure precedence resolver (roster + stored ids → resolved rows). */
 export function resolveDefaultCompanionPersona(
-  personas: PersonaListItem[] | undefined,
+  personas: CompanionPersona[] | undefined,
   userDefaultId: string | null,
   workspaceDefaultId: string | null
 ): DefaultCompanionResolution {

@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { PersonaListItem, Stream } from "@threa/types"
 import * as streamsHooks from "@/hooks/use-streams"
-import * as personasHooks from "@/hooks/use-personas"
+import * as rosterHooks from "@/hooks/use-companion-roster"
 import * as defaultCompanionHooks from "@/hooks/use-default-companion-persona"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import * as botPresenceHooks from "@/hooks/use-active-bot-presence"
@@ -23,6 +23,7 @@ function persona(overrides: Partial<PersonaListItem> & Pick<PersonaListItem, "id
     kind: "custom",
     avatarUrl: null,
     isCustomized: false,
+    status: "active",
     ...overrides,
   }
 }
@@ -36,9 +37,7 @@ beforeEach(() => {
     mutateAsync: companionMutate,
     isPending: false,
   } as unknown as ReturnType<typeof streamsHooks.useUpdateCompanionMode>)
-  vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
-    data: [ARIADNE, COACH],
-  } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+  vi.spyOn(rosterHooks, "useCompanionRoster").mockReturnValue([ARIADNE, COACH])
   vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
     effectiveDefault: ARIADNE,
     workspaceDefault: ARIADNE,

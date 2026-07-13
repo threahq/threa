@@ -7,7 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
 import { streamKeys } from "@/hooks"
 import * as streamsHooks from "@/hooks/use-streams"
-import * as personasHooks from "@/hooks/use-personas"
+import * as rosterHooks from "@/hooks/use-companion-roster"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import * as workspacesHooks from "@/hooks/use-workspaces"
 import * as workspaceStore from "@/stores/workspace-store"
@@ -33,9 +33,7 @@ beforeEach(() => {
     id: "user_owner",
   } as unknown as ReturnType<typeof workspacesHooks.useCurrentWorkspaceUser>)
   vi.spyOn(workspaceStore, "useWorkspaceBots").mockReturnValue([])
-  vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
-    data: undefined,
-  } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+  vi.spyOn(rosterHooks, "useCompanionRoster").mockReturnValue([])
   vi.spyOn(emojiHooks, "useWorkspaceEmoji").mockReturnValue({
     toEmoji: (shortcode: string) => shortcode,
   } as unknown as ReturnType<typeof emojiHooks.useWorkspaceEmoji>)
@@ -81,9 +79,9 @@ function seedAndRender(opts: {
     vi.spyOn(workspaceStore, "useWorkspaceBots").mockReturnValue(opts.bots)
   }
   if (opts.personas) {
-    vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
-      data: opts.personas,
-    } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+    vi.spyOn(rosterHooks, "useCompanionRoster").mockReturnValue(
+      opts.personas as unknown as ReturnType<typeof rosterHooks.useCompanionRoster>
+    )
   }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_sp"), {

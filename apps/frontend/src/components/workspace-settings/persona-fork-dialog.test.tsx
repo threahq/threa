@@ -20,6 +20,7 @@ const sources: PersonaListItem[] = [
     kind: "builtin",
     avatarUrl: null,
     isCustomized: false,
+    status: "active",
   },
 ]
 

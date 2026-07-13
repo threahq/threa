@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event"
 import type { ReactNode } from "react"
 import type { PersonaListItem } from "@threa/types"
 import * as contextsModule from "@/contexts"
-import * as personasHooks from "@/hooks/use-personas"
+import * as rosterHooks from "@/hooks/use-companion-roster"
 import * as defaultCompanionHooks from "@/hooks/use-default-companion-persona"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import { PersonalDefaultCompanionSection } from "./ai-settings"
@@ -18,6 +18,7 @@ function persona(overrides: Partial<PersonaListItem> & Pick<PersonaListItem, "id
     kind: "custom",
     avatarUrl: null,
     isCustomized: false,
+    status: "active",
     ...overrides,
   }
 }
@@ -46,9 +47,7 @@ describe("PersonalDefaultCompanionSection", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     updatePreference.mockClear()
-    vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
-      data: [ARIADNE, COACH],
-    } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+    vi.spyOn(rosterHooks, "useCompanionRoster").mockReturnValue([ARIADNE, COACH])
     vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
       effectiveDefault: ARIADNE,
       workspaceDefault: ARIADNE,

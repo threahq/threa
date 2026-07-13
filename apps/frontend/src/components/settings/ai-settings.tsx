@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
 import { useInputMode } from "@/hooks/use-input-mode"
-import { usePersonas } from "@/hooks/use-personas"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
+import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import {
   CompanionAgentSelect,
   companionPickerValue,
@@ -27,7 +27,7 @@ const MODIFIER_LABEL =
  */
 export function PersonalDefaultCompanionSection({ workspaceId }: { workspaceId: string }) {
   const { preferences, updatePreference, isLoading } = usePreferences()
-  const { data: personas } = usePersonas(workspaceId)
+  const personas = useCompanionRoster(workspaceId)
   const { workspaceDefault } = useDefaultCompanionPersona(workspaceId)
 
   // An override that no longer resolves (archived persona) degrades to the
@@ -38,7 +38,7 @@ export function PersonalDefaultCompanionSection({ workspaceId }: { workspaceId: 
     void updatePreference("defaultCompanionPersonaId", companionPointerFromPickerValue(next))
   }
 
-  if (!personas || personas.length === 0) return null
+  if (personas.length === 0) return null
 
   return (
     <section className="space-y-3">

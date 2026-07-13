@@ -1,7 +1,7 @@
 import { type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
 import { useDraftScratchpads } from "@/hooks/use-draft-scratchpads"
-import { usePersonas } from "@/hooks/use-personas"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
+import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import { AgentSettingsPanel } from "./agent-settings-panel"
 import {
   companionDefaultOptionLabel,
@@ -33,7 +33,7 @@ export function DraftAgentSettings({
   configuredCategories,
 }: DraftAgentSettingsProps) {
   const { getScratchpad, updateScratchpad } = useDraftScratchpads(workspaceId)
-  const { data: personas } = usePersonas(workspaceId)
+  const personas = useCompanionRoster(workspaceId)
   const { effectiveDefault } = useDefaultCompanionPersona(workspaceId)
 
   const pickerValue = companionPickerValue(personas, getScratchpad(draftId)?.companionPersonaId)
@@ -43,7 +43,7 @@ export function DraftAgentSettings({
       companionMode={companionMode}
       onCompanionModeChange={(mode) => updateScratchpad(draftId, { companionMode: mode })}
       personaPicker={
-        personas
+        personas.length > 0
           ? {
               workspaceId,
               personas,

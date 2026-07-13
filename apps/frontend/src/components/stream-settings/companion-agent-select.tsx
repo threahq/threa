@@ -2,9 +2,16 @@ import { ARIADNE_PERSONA_SLUG, type PersonaListItem } from "@threa/types"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PersonaListAvatar } from "@/components/persona-avatar"
 
+/**
+ * The fields the companion pickers render/resolve. Both the API roster's
+ * `PersonaListItem` (settings surfaces) and the bootstrap-backed store rows
+ * (`useCompanionRoster`) satisfy it, so every surface shares one picker.
+ */
+export type CompanionPersona = Pick<PersonaListItem, "id" | "slug" | "name" | "avatarEmoji" | "avatarUrl">
+
 export interface CompanionSelection {
   selectedPersonaId: string | undefined
-  selectedPersona: PersonaListItem | undefined
+  selectedPersona: CompanionPersona | undefined
   /** Display name for copy ("… reads new messages and replies"). */
   companionName: string
 }
@@ -20,7 +27,7 @@ export const COMPANION_DEFAULT_OPTION_VALUE = "__workspace_default__"
  * default row. Inherit is legible and picking a concrete persona always pins.
  */
 export function companionPickerValue(
-  personas: PersonaListItem[] | undefined,
+  personas: CompanionPersona[] | undefined,
   companionPersonaId: string | null | undefined
 ): string {
   return companionPersonaId && personas?.some((p) => p.id === companionPersonaId)
@@ -30,7 +37,7 @@ export function companionPickerValue(
 
 /** Label for the stream pickers' synthetic inherit row, naming the persona the
  *  default currently resolves to. */
-export function companionDefaultOptionLabel(defaultPersona: PersonaListItem | undefined): string {
+export function companionDefaultOptionLabel(defaultPersona: CompanionPersona | undefined): string {
   return `Default (${defaultPersona?.name ?? "Ariadne"})`
 }
 
@@ -53,9 +60,9 @@ export function companionPointerFromPickerValue(value: string): string | null {
  * inside stays the final fallback so behavior is byte-identical to before.
  */
 export function resolveCompanionSelection(
-  personas: PersonaListItem[] | undefined,
+  personas: CompanionPersona[] | undefined,
   companionPersonaId: string | null | undefined,
-  defaultPersona?: PersonaListItem
+  defaultPersona?: CompanionPersona
 ): CompanionSelection {
   const fallback = defaultPersona ?? personas?.find((p) => p.slug === ARIADNE_PERSONA_SLUG)
   const pointed = companionPersonaId ? personas?.find((p) => p.id === companionPersonaId) : undefined
@@ -65,7 +72,7 @@ export function resolveCompanionSelection(
 
 interface CompanionAgentSelectProps {
   workspaceId: string
-  personas: PersonaListItem[]
+  personas: CompanionPersona[]
   value: string | undefined
   onChange: (personaId: string) => void
   disabled?: boolean

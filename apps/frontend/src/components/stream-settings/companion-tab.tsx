@@ -3,8 +3,8 @@ import { toast } from "sonner"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useUpdateCompanionMode } from "@/hooks/use-streams"
-import { usePersonas } from "@/hooks/use-personas"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
+import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import {
   CompanionModes,
@@ -51,20 +51,22 @@ export function CompanionTab({
   const isE2e = stream.e2eEnabled === true
   const disabled = isPending
 
-  // The picker (and its roster fetch) is plaintext-only — an encrypted
-  // scratchpad always runs the built-in Ariadne, so don't fire /personas there.
-  const { data: personas } = usePersonas(workspaceId, { enabled: !isE2e })
-  const { effectiveDefault } = useDefaultCompanionPersona(workspaceId, { enabled: !isE2e })
+  // Bootstrap-backed store read (no fetch) — instant on open, offline-capable.
+  // The picker itself stays hidden on encrypted scratchpads (enclave is
+  // Ariadne-only).
+  const personas = useCompanionRoster(workspaceId)
+  const { effectiveDefault } = useDefaultCompanionPersona(workspaceId)
 
   const { companionName: resolvedName } = resolveCompanionSelection(
     personas,
     stream.companionPersonaId,
     effectiveDefault
   )
-  // Until the roster resolves, the real default is unknown — say "your companion"
-  // rather than flash a name that may be wrong. E2E streams never load the roster
-  // and genuinely always run Ariadne, so the resolved name is correct there.
-  const rosterReady = isE2e || personas !== undefined
+  // Until the store hydrates ([] before the bootstrap/IDB seed lands), the real
+  // default is unknown — say "your companion" rather than flash a name that may
+  // be wrong. E2E scratchpads genuinely always run Ariadne, so the resolved name
+  // is correct there regardless.
+  const rosterReady = isE2e || personas.length > 0
   const companionName = rosterReady ? resolvedName : "your companion"
   const pickerValue = companionPickerValue(personas, stream.companionPersonaId)
 
@@ -134,7 +136,7 @@ export function CompanionTab({
 
       {/* Encrypted scratchpads always run the built-in Ariadne in the enclave
           regardless of the pointer, so the persona picker is plaintext-only. */}
-      {!isE2e && personas && personas.length > 0 && (
+      {!isE2e && personas.length > 0 && (
         <div className="space-y-2">
           <div className="space-y-1">
             <Label className="text-sm font-medium">Companion agent</Label>

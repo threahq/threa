@@ -7,7 +7,7 @@
 // `availableModels`; built-in defaults stay legal even if the registry lacks them.
 
 import { z } from "zod"
-import { AGENT_TOOL_NAMES, TONE_PRESETS, BREVITY_PRESETS } from "./constants"
+import { AGENT_TOOL_NAMES, TONE_PRESETS, BREVITY_PRESETS, type PersonaStatus } from "./constants"
 
 /**
  * One selectable chat model for the persona editor's model / escalation-model
@@ -206,6 +206,13 @@ export interface PersonaListItem {
    * always false there.
    */
   isCustomized: boolean
+  /**
+   * Lifecycle status. The visible list returns `active` rows only, but the
+   * `agent_config:updated` broadcast reuses this shape for archive/unarchive —
+   * the field lets store-backed consumers flip their cached row without a
+   * refetch.
+   */
+  status: PersonaStatus
 }
 
 /**

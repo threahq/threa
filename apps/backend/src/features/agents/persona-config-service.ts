@@ -154,6 +154,7 @@ function customRowToListItem(row: Persona): PersonaListItem {
     kind: "custom",
     avatarUrl: row.avatarUrl,
     isCustomized: false,
+    status: row.status,
   }
 }
 
@@ -187,6 +188,9 @@ function toPersonaListItem(config: PersonaResolvedConfig, isCustomized: boolean)
     kind: "builtin",
     avatarUrl: null,
     isCustomized,
+    // Only visible (non-hidden) built-ins reach list surfaces, and a built-in
+    // has no archived state — the broadcast consumer relies on this field.
+    status: "active",
   }
 }
 
