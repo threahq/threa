@@ -238,10 +238,11 @@ async function dropDatabase(dbName: string): Promise<void> {
     return
   }
   console.log(`Dropping database '${dbName}'...`)
-  await runPsqlOnDefault(
-    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${dbName}' AND pid <> pg_backend_pid()`
-  )
-  await runPsqlOnDefault(`DROP DATABASE "${dbName}"`)
+  // WITH (FORCE) terminates remaining sessions atomically with the drop. A
+  // separate pg_terminate_backend loses the race against the live PR backend's
+  // pools, whose reconnect loops re-attach in the gap and fail the DROP with
+  // "is being accessed by other users" (seen twice on #1318).
+  await runPsqlOnDefault(`DROP DATABASE "${dbName}" WITH (FORCE)`)
   console.log(`Dropped '${dbName}'`)
 }
 
