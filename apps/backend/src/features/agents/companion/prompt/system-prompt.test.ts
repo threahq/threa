@@ -341,6 +341,97 @@ describe("buildSystemPrompt", () => {
     expect(prompt.indexOf("## Stream Brief")).toBeLessThan(prompt.indexOf("## Context"))
   })
 
+  const knowledge = [
+    { attachmentId: "att_1", filename: "runbook.md", position: 0, fullText: "RUNBOOK CONTENT", summary: null },
+    { attachmentId: "att_2", filename: "faq.txt", position: 1, fullText: null, summary: "FAQ SUMMARY" },
+  ]
+
+  test("injects the persona ## Knowledge block after the persona prompt and before the stream context", () => {
+    const prompt = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      null,
+      null,
+      null,
+      undefined,
+      knowledge
+    )
+
+    expect(prompt).toContain("## Knowledge")
+    expect(prompt).toContain("### runbook.md\n\nRUNBOOK CONTENT")
+    expect(prompt).toContain("### faq.txt\n\nFAQ SUMMARY")
+    // Files render in position order.
+    expect(prompt.indexOf("### runbook.md")).toBeLessThan(prompt.indexOf("### faq.txt"))
+    // The block sits in the stable prefix: after the base persona prompt, before
+    // the stream context section.
+    expect(prompt.indexOf("Base system prompt")).toBeLessThan(prompt.indexOf("## Knowledge"))
+    expect(prompt.indexOf("## Knowledge")).toBeLessThan(prompt.indexOf("## Context"))
+  })
+
+  test("no persona attachments → byte-identical to the pre-feature prompt", () => {
+    const base = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [])
+    const withUndefined = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      null,
+      null,
+      null,
+      undefined,
+      undefined
+    )
+    const withEmpty = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      null,
+      null,
+      null,
+      undefined,
+      []
+    )
+    const withNull = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      null,
+      null,
+      null,
+      undefined,
+      null
+    )
+
+    expect(withUndefined).toBe(base)
+    expect(withEmpty).toBe(base)
+    expect(withNull).toBe(base)
+    expect(base).not.toContain("## Knowledge")
+  })
+
   test("omits the Stream Brief section when the stream has no brief (or a blank one)", () => {
     const absent = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [])
     const blank = buildSystemPrompt(

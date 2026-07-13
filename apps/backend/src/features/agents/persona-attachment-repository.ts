@@ -75,6 +75,42 @@ function mapListRow(row: PersonaAttachmentListRow): PersonaAttachmentListItem {
   }
 }
 
+interface PersonaAttachmentContentRow {
+  attachment_id: string
+  filename: string
+  position: number
+  full_text: string | null
+  summary: string | null
+}
+
+/**
+ * A bound attachment with its extraction CONTENT (full text + summary), for the
+ * dispatch-time `## Knowledge` prompt block. Distinct from
+ * {@link PersonaAttachmentListItem}, which the config payload uses and which
+ * carries only extraction PRESENCE — this shape drags the extracted text and so
+ * is read only on the prompt path, never over the wire (decision 6/7).
+ */
+export interface PersonaAttachmentContentItem {
+  attachmentId: string
+  filename: string
+  position: number
+  fullText: string | null
+  summary: string | null
+}
+
+function mapContentRow(row: PersonaAttachmentContentRow): PersonaAttachmentContentItem {
+  return {
+    attachmentId: row.attachment_id,
+    filename: row.filename,
+    position: row.position,
+    fullText: row.full_text,
+    // The extraction row stores '' for a not-yet-summarized file; normalize the
+    // empty string to null so the block's "has a summary" test is a plain
+    // null-check.
+    summary: row.summary && row.summary.length > 0 ? row.summary : null,
+  }
+}
+
 export const PersonaAttachmentRepository = {
   /**
    * Bind an attachment to a persona at the next position, but only while the
@@ -138,6 +174,35 @@ export const PersonaAttachmentRepository = {
       ORDER BY pa.position ASC
     `)
     return result.rows.map(mapListRow)
+  },
+
+  /**
+   * A persona's bound attachments in position order with their extraction
+   * content (full text + summary) for the dispatch-time `## Knowledge` block, in
+   * one joined query (INV-56). Same workspace + position scoping as
+   * {@link listForPersona}; the extra columns are the extracted text, so this is
+   * the prompt-path read only — the config payload uses the lean
+   * {@link listForPersona} so `full_text` never rides the wire (decision 6/7).
+   */
+  async listForPersonaWithContent(
+    db: Querier,
+    workspaceId: string,
+    personaId: string
+  ): Promise<PersonaAttachmentContentItem[]> {
+    const result = await db.query<PersonaAttachmentContentRow>(sql`
+      SELECT
+        pa.attachment_id,
+        a.filename,
+        pa.position,
+        e.full_text,
+        e.summary
+      FROM persona_attachments pa
+      JOIN attachments a ON a.id = pa.attachment_id AND a.workspace_id = pa.workspace_id
+      LEFT JOIN attachment_extractions e ON e.attachment_id = pa.attachment_id
+      WHERE pa.workspace_id = ${workspaceId} AND pa.persona_id = ${personaId}
+      ORDER BY pa.position ASC
+    `)
+    return result.rows.map(mapContentRow)
   },
 
   /**

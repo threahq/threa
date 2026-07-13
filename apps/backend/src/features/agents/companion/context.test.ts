@@ -3,6 +3,7 @@ import { StreamTypes } from "@threa/types"
 import { StreamBriefRepository, type StreamBrief } from "../../streams"
 import { buildAgentContext } from "./context"
 import type { Persona } from "../persona-repository"
+import { PersonaAttachmentRepository } from "../persona-attachment-repository"
 
 const persona: Persona = {
   id: "persona_1",
@@ -109,5 +110,65 @@ describe("buildAgentContext stream brief (roadmap 4.1)", () => {
     })
 
     expect(context.composeSystemPrompt([], { kind: "catch_up" })).not.toContain("## Stream Brief")
+  })
+})
+
+describe("buildAgentContext persona knowledge (context attachments, decision 7)", () => {
+  afterEach(() => mock.restore())
+
+  const scratchpad = {
+    id: "stream_pad",
+    workspaceId: "ws_1",
+    type: StreamTypes.SCRATCHPAD,
+    rootStreamId: null,
+    parentStreamId: null,
+    displayName: "Pad",
+    createdBy: "usr_1",
+  } as never
+
+  it("skips the attachment query entirely for a built-in persona (managed_by system → zero reads)", async () => {
+    const listWithContent = spyOn(PersonaAttachmentRepository, "listForPersonaWithContent")
+
+    const context = await buildAgentContext(deps, {
+      workspaceId: "ws_1",
+      streamId: "stream_pad",
+      stream: scratchpad,
+      messageId: "msg_1",
+      persona, // managedBy: "system"
+      purpose: { kind: "catch_up" },
+      policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
+    })
+
+    expect(listWithContent).not.toHaveBeenCalled()
+    expect(context.composeSystemPrompt([], { kind: "catch_up" })).not.toContain("## Knowledge")
+  })
+
+  it("injects the persona's attachments in position order, resolving them by the persona id", async () => {
+    const listWithContent = spyOn(PersonaAttachmentRepository, "listForPersonaWithContent").mockResolvedValue([
+      { attachmentId: "att_1", filename: "guide.md", position: 0, fullText: "GUIDE CONTENT", summary: null },
+      { attachmentId: "att_2", filename: "spec.txt", position: 1, fullText: null, summary: "SPEC SUMMARY" },
+    ])
+
+    const customPersona: Persona = { ...persona, id: "persona_custom", managedBy: "workspace", workspaceId: "ws_1" }
+
+    const context = await buildAgentContext(deps, {
+      workspaceId: "ws_1",
+      streamId: "stream_pad",
+      stream: scratchpad,
+      messageId: "msg_1",
+      persona: customPersona,
+      purpose: { kind: "catch_up" },
+      policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
+    })
+
+    // A draft-test turn shares the SAVED persona id, so loading by persona.id
+    // here resolves the saved attachments with no special-casing (decision 7).
+    expect(listWithContent.mock.calls.at(-1)?.slice(1)).toEqual(["ws_1", "persona_custom"])
+
+    const prompt = context.composeSystemPrompt([], { kind: "catch_up" })
+    expect(prompt).toContain("## Knowledge")
+    expect(prompt).toContain("### guide.md\n\nGUIDE CONTENT")
+    expect(prompt).toContain("### spec.txt\n\nSPEC SUMMARY")
+    expect(prompt.indexOf("### guide.md")).toBeLessThan(prompt.indexOf("### spec.txt"))
   })
 })
