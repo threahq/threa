@@ -129,6 +129,12 @@ function mountPanel(opts: {
 }
 
 beforeEach(() => {
+  // Default composer stub: the real form (desktop always-open since the
+  // thread-semantics ruling) pulls auth/mention providers this harness doesn't
+  // mount. Tests that inspect composer props install their own spy.
+  vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation(() => (
+    <button type="button">Write a reply…</button>
+  ))
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
@@ -175,10 +181,16 @@ describe("ConversationPanel", () => {
     expect(getBoardPost).not.toHaveBeenCalled()
   })
 
-  it("offers a scoped reply affordance", async () => {
+  it("offers a scoped reply affordance with thread-composer semantics (desktop always-open)", async () => {
+    let captured: boolean | undefined
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      captured = props.desktopAlwaysOpen
+      return <button type="button">Write a reply…</button>
+    })
     mountPanel({ cached: asCached(makePost()) })
     await screen.findByText("Opening message body.")
     expect(screen.getByRole("button", { name: "Write a reply…" })).toBeTruthy()
+    expect(captured).toBe(true)
   })
 
   it("bumps openReplySignal on the composer when opened via 'Reply in conversation' (queued request)", async () => {

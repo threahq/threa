@@ -80,6 +80,12 @@ interface InlineComposerFormProps {
    * the very draft the affordance showed. Consumed once, on mount.
    */
   restoreStashedIdOnMount?: string | null
+  /**
+   * Monotonic nonce: each increment focuses the editor. For always-mounted
+   * hosts (the desktop conversation panel), where "open the reply composer"
+   * requests can't be expressed as a mount.
+   */
+  focusSignal?: number
   /** Perform the send. Throws to keep the composer open and restore the draft. */
   onSubmit: (input: InlineComposerSubmit) => Promise<void>
   /** Collapse the composer (Escape / after-send / blur-when-empty). */
@@ -107,6 +113,7 @@ export function InlineComposerForm({
   rejectE2e,
   scheduleTarget,
   restoreStashedIdOnMount,
+  focusSignal,
   onSubmit,
   onClose,
 }: InlineComposerFormProps) {
@@ -138,6 +145,15 @@ export function InlineComposerForm({
     restoreOnMountRef.current = null
     void stash.handleRestoreStashed(id)
   }, [composer.isLoaded, stash])
+
+  // Focus-on-signal for always-mounted hosts (skip the mount value — focus on
+  // mount is `autoFocus`'s job).
+  const lastFocusSignalRef = useRef(focusSignal)
+  useEffect(() => {
+    if (focusSignal === undefined || focusSignal === lastFocusSignalRef.current) return
+    lastFocusSignalRef.current = focusSignal
+    composerControlRef.current?.focus()
+  }, [focusSignal])
 
   const composerControlRef = useRef<ComposerControlHandle | null>(null)
   const composerRef = useRef(composer)

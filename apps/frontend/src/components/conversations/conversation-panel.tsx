@@ -652,6 +652,9 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
             hostStreamType={hostStreamType}
             lastActiveStreamId={lastActiveStreamId}
             openReplySignal={openReplySignal}
+            // The panel is a dedicated conversation view — thread-composer
+            // semantics: always open on desktop, collapsed⇄focused on mobile.
+            desktopAlwaysOpen
           />
         </div>
       </QuoteReplyProvider>

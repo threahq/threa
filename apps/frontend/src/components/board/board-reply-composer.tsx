@@ -67,6 +67,15 @@ interface BoardReplyComposerProps {
    * form keeps its context by position.
    */
   contextChip?: string
+  /**
+   * Thread-composer semantics for a dedicated conversation view (the panel):
+   * on desktop the composer is permanently mounted — only the open state, like
+   * a thread's — while mobile keeps its collapsed⇄focused pair. Off (the
+   * default) for board cards, where composers aren't kept mounted per card,
+   * and for the inline sub-conversation affordances (Kris's composer ruling,
+   * 2026-07-13).
+   */
+  desktopAlwaysOpen?: boolean
 }
 
 /**
@@ -82,6 +91,8 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
   const [resting, setResting] = useState<RestingState>("idle")
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const isMobile = useIsMobile()
+  const alwaysOpen = (props.desktopAlwaysOpen ?? false) && !isMobile
 
   // The scope's unsent draft, advertised on the resting button and — when it
   // isn't checked out on this device (stashed / roamed) — checked out by the
@@ -129,6 +140,25 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     setOpen(false)
   }, [])
 
+  // Always-open: the form never collapses — after a send / Escape / blur the
+  // editor simply stays, like a thread composer. Open-requests become focus
+  // requests, and the drafts-explorer `?stash=` restore is consumed by the
+  // mounted form's own URL effect (no mount to hang it on).
+  const noopClose = useCallback(() => {}, [])
+  if (alwaysOpen) {
+    return (
+      <BoardReplyComposerForm
+        {...props}
+        onClose={noopClose}
+        pendingQuote={pendingQuote}
+        onQuoteConsumed={onQuoteConsumed}
+        restoreStashedId={null}
+        autoFocus={false}
+        focusSignal={openReplySignal}
+      />
+    )
+  }
+
   if (!open) {
     return (
       <button
@@ -173,11 +203,15 @@ function BoardReplyComposerForm({
   onQuoteConsumed,
   contextChip,
   restoreStashedId,
+  autoFocus,
+  focusSignal,
 }: BoardReplyComposerProps & {
   onClose: (opts?: { refocus?: boolean; hadContent?: boolean }) => void
   pendingQuote: QuoteReplyData | null
   onQuoteConsumed: () => void
   restoreStashedId: string | null
+  autoFocus?: boolean
+  focusSignal?: number
 }) {
   const reply = useReplyToBoardPost(workspaceId)
   const isMobile = useIsMobile()
@@ -212,6 +246,8 @@ function BoardReplyComposerForm({
       rejectE2e="Encrypted notes can't be replied to from the board yet — open the note to reply there."
       scheduleTarget={{ streamId, conversationId: post.conversation.id }}
       restoreStashedIdOnMount={restoreStashedId}
+      autoFocus={autoFocus}
+      focusSignal={focusSignal}
       onSubmit={onSubmit}
       onClose={onClose}
     />
