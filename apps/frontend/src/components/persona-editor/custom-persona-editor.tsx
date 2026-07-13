@@ -33,6 +33,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -464,9 +465,19 @@ export function CustomPersonaEditor({
                     {formatFileSize(attachment.sizeBytes)}
                     {attachment.processingStatus === "processing" && " · Processing…"}
                     {attachment.processingStatus === "ready" && attachment.contextMode && (
-                      <span title={CONTEXT_MODE_HINT[attachment.contextMode]}>
-                        {` · ${CONTEXT_MODE_LABEL[attachment.contextMode]}`}
-                      </span>
+                      <Tooltip>
+                        {/* A real focusable trigger: native `title` never fires on
+                            touch and a bare span can't take keyboard focus, which
+                            hid the budget explanation from two input modalities. */}
+                        <TooltipTrigger asChild>
+                          <button type="button" className="cursor-default">
+                            {` · ${CONTEXT_MODE_LABEL[attachment.contextMode]}`}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-64">
+                          {CONTEXT_MODE_HINT[attachment.contextMode]}
+                        </TooltipContent>
+                      </Tooltip>
                     )}
                     {attachment.processingStatus === "failed" && (
                       <span className="text-destructive">

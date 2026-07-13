@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   PERSONA_ATTACHMENT_MAX_COUNT,
   type PersonaAttachmentItem,
@@ -206,15 +207,17 @@ function renderEditor(cfg: PersonaConfigResponse = config()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const tree = (next: PersonaConfigResponse) => (
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/w/ws_1/settings/personas/persona_c1"]}>
-        <Routes>
-          <Route
-            path="/w/:workspaceId/settings/personas/:personaId"
-            element={<CustomPersonaEditor workspaceId="ws_1" personaId="persona_c1" config={next} />}
-          />
-          <Route path="/w/:workspaceId" element={<div>Workspace home</div>} />
-        </Routes>
-      </MemoryRouter>
+      <TooltipProvider>
+        <MemoryRouter initialEntries={["/w/ws_1/settings/personas/persona_c1"]}>
+          <Routes>
+            <Route
+              path="/w/:workspaceId/settings/personas/:personaId"
+              element={<CustomPersonaEditor workspaceId="ws_1" personaId="persona_c1" config={next} />}
+            />
+            <Route path="/w/:workspaceId" element={<div>Workspace home</div>} />
+          </Routes>
+        </MemoryRouter>
+      </TooltipProvider>
     </QueryClientProvider>
   )
   const result = render(tree(cfg))

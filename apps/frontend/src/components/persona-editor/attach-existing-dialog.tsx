@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { Search } from "lucide-react"
+import { Loader2, Search } from "lucide-react"
 import { toast } from "sonner"
 import {
   categoryFromMime,
@@ -103,7 +103,9 @@ export function AttachExistingDialog({ workspaceId, personaId, open, onOpenChang
   }
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+    // disableSnapPoints: this dialog opens with a focused text input, and the
+    // snap-point drawer slides its header off-screen when the keyboard opens.
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
       <ResponsiveDialogContent
         desktopClassName="overflow-hidden p-0 gap-0 shadow-lg sm:!fixed sm:!top-[12%] sm:!translate-y-0 sm:!flex sm:!flex-col sm:max-w-[560px] sm:rounded-2xl sm:!h-[70vh]"
         drawerClassName="overflow-hidden p-0 h-[85dvh]"
@@ -127,7 +129,18 @@ export function AttachExistingDialog({ workspaceId, personaId, open, onOpenChang
               aria-label="Search files"
             />
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="relative min-h-0 flex-1 overflow-y-auto">
+            {/* The pick is a server-side copy (S3 CopyObject + insert) — block
+                further picks and say so while it runs, without shifting layout. */}
+            {attach.isPending && (
+              <div
+                className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-background/60 text-sm text-muted-foreground"
+                data-testid="attach-existing-pending"
+              >
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Attaching…
+              </div>
+            )}
             {/* Own empty copy: the explorer's inherited strings ("No files yet…",
                 "widen the search") describe a surface this dialog is not — the
                 picker's scope (files posted in chats you can read, knowledge
