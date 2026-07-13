@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
 import { installBootResume } from "./boot"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
 import { die } from "./errors"
 import { findAgent, inventoryPath, readInventory, upsertAgent } from "./inventory"
 import { commandExists, commandPath, output } from "./shell"
-import { ClaudeRuntimeSpawner, PiRuntimeSpawner, readThreaChannelConfig } from "./spawners"
-import { latestAgents, parseScratchpadUrl } from "./resume"
+import {
+  ClaudeRuntimeSpawner,
+  PiRuntimeSpawner,
+  configuredThreaBaseUrl,
+  mcpConfigPath,
+  readThreaChannelConfig,
+} from "./spawners"
+import { latestAgents, parseScratchpadUrl, recordedNoYolo } from "./resume"
 import { agentWindowExists, attachedTmuxSession, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions } from "./types"
 
@@ -77,6 +81,7 @@ export async function bootResume(options: ResumeOptions): Promise<void> {
       await Bun.sleep(10_000)
     }
   }
+  console.error("harnessd: gave up resuming agents after 3 attempts; Threa API is still unavailable")
 }
 
 export function installBootResumeAgent(options: ResumeOptions): void {
@@ -125,7 +130,7 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       skip("missing worktree dir")
       continue
     }
-    const mcpConfig = join(homedir(), ".threa", "harnessd", "mcp", `${agent.name}.json`)
+    const mcpConfig = mcpConfigPath(agent.name)
     if (!existsSync(mcpConfig)) {
       skip("missing MCP config")
       continue
@@ -135,10 +140,7 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       skip("invalid scratchpad URL")
       continue
     }
-    const configuredBaseUrl = (process.env.THREA_BASE_URL || config.baseUrl || "https://app.threa.io").replace(
-      /\/$/,
-      ""
-    )
+    const configuredBaseUrl = configuredThreaBaseUrl(config)
     if (scratchpad.baseUrl !== configuredBaseUrl) {
       skip("scratchpad URL origin does not match configured Threa base URL")
       continue
@@ -183,7 +185,7 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
         updatedAt: now(),
         lastOutput: result.output.slice(-4000),
       })
-      const bypass = agent.command.includes("--no-yolo") ? "disabled" : "enabled"
+      const bypass = recordedNoYolo(agent) ? "disabled" : "enabled"
       console.log(`restored\t${agent.name}\tbypass ${bypass}`)
     } catch (error) {
       upsertAgent({ ...agent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })

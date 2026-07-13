@@ -1,6 +1,6 @@
 import { resolve } from "node:path"
 import { die } from "./errors"
-import type { RuntimeKind, SpawnOptions } from "./types"
+import type { ResumeOptions, RuntimeKind, SpawnOptions } from "./types"
 
 export function usage(): never {
   console.log(`threa-harnessd
@@ -88,7 +88,7 @@ export function inferBranch(name: string, text?: string): string {
   return `explore/${name.replace(/^explore-/, "")}`
 }
 
-export function parseResume(args: string[]): { tmux?: string; dryRun?: boolean; force?: boolean } {
+export function parseResume(args: string[]): ResumeOptions {
   const flags = parseFlags(args)
   return {
     tmux: stringFlag(flags, "tmux"),

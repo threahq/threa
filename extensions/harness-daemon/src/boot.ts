@@ -10,7 +10,9 @@ export function installBootResume(tmux: string): void {
       "install-boot-resume currently supports macOS LaunchAgents only; run boot-resume from your Linux startup service"
     )
   }
-  const entrypoint = resolve(process.argv[1] ?? "")
+  const entrypointArg = process.argv[1]
+  if (!entrypointArg) throw new Error("install-boot-resume: could not determine entrypoint path")
+  const entrypoint = resolve(entrypointArg)
   const bun = process.execPath
   const logDir = join(homedir(), ".threa", "harnessd", "log")
   const plist = join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`)

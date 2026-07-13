@@ -1,12 +1,21 @@
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
-import { basename, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { die } from "./errors"
 import { commandExists, commandPath, run, shellQuote } from "./shell"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
+import { recordedNoYolo } from "./resume"
 import { ensureWorktree } from "./worktree"
+
+export function mcpConfigPath(name: string): string {
+  return join(homedir(), ".threa", "harnessd", "mcp", `${name}.json`)
+}
+
+export function configuredThreaBaseUrl(config: ThreaChannelConfig): string {
+  return (process.env.THREA_BASE_URL || config.baseUrl || "https://app.threa.io").replace(/\/$/, "")
+}
 
 export function claudeLaunchArgs(params: {
   claudeBin: string
@@ -150,12 +159,12 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const claudeBin = process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")
     if (!claudeBin) die("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
 
-    const mcpConfig = join(homedir(), ".threa", "harnessd", "mcp", `${agent.name}.json`)
+    const mcpConfig = mcpConfigPath(agent.name)
     if (!existsSync(mcpConfig)) die(`MCP config missing: ${mcpConfig}`)
     const channel = mcpChannel(mcpConfig)
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "claude", name: agent.name })
     ensureTmuxSession(session, true)
-    const noYolo = agent.command.includes("--no-yolo")
+    const noYolo = recordedNoYolo(agent)
     const window = pickTmuxWindow(session, agent.name)
     const windowId = createWindow(
       session,
@@ -196,9 +205,8 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
    * and leaves global config untouched.
    */
   private writeMcpConfig(name: string, channel: string, channelEntry: string): string {
-    const dir = join(homedir(), ".threa", "harnessd", "mcp")
-    mkdirSync(dir, { recursive: true })
-    const path = join(dir, `${name}.json`)
+    const path = mcpConfigPath(name)
+    mkdirSync(dirname(path), { recursive: true })
     writeFileSync(
       path,
       JSON.stringify({ mcpServers: { [channel]: { type: "stdio", command: "bun", args: [channelEntry] } } }, null, 2)
@@ -230,7 +238,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
 
   private async prelinkScratchpad(worktree: string): Promise<string | undefined> {
     const config = readThreaChannelConfig()
-    const baseUrl = (process.env.THREA_BASE_URL || config.baseUrl || "https://app.threa.io").replace(/\/$/, "")
+    const baseUrl = configuredThreaBaseUrl(config)
     const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
     const apiKey = process.env.THREA_API_KEY || config.apiKey
     if (!workspaceId || !apiKey) {
