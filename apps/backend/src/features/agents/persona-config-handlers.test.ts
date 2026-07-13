@@ -479,4 +479,68 @@ describe("persona config avatar handlers", () => {
 
     expect(res.statusCode).toBe(404)
   })
+
+  it("POST attachment 400s when no file is uploaded", async () => {
+    const addAttachment = mock(async () => ({}) as never)
+    const handlers = makeHandlers({ addAttachment } as unknown as Partial<PersonaConfigService>)
+
+    await expect(
+      handlers.uploadAttachment(fakeReq({ params: { personaId: CUSTOM_ID } }), fakeRes())
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    expect(addAttachment).not.toHaveBeenCalled()
+  })
+
+  it("POST attachment passes the buffered file to the service and returns 201", async () => {
+    const item = {
+      id: "att_1",
+      filename: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+      processingStatus: "processing",
+      position: 0,
+      createdAt: "2026-07-13T00:00:00.000Z",
+    }
+    const addAttachment = mock(async () => item)
+    const handlers = makeHandlers({ addAttachment } as unknown as Partial<PersonaConfigService>)
+    const req = fakeReq({ params: { personaId: CUSTOM_ID } })
+    ;(req as unknown as { file: unknown }).file = {
+      buffer: Buffer.from("hello world!"),
+      originalname: "notes.txt",
+      mimetype: "text/plain",
+      size: 12,
+    }
+    const res = fakeRes()
+
+    await handlers.uploadAttachment(req, res)
+
+    expect(res.statusCode).toBe(201)
+    expect(res.body).toEqual({ attachment: item })
+    expect(addAttachment).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, CALLER, {
+      buffer: expect.any(Buffer),
+      filename: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+    })
+  })
+
+  it("DELETE attachment authorizes via the service and 204s", async () => {
+    const removeAttachment = mock(async () => undefined)
+    const handlers = makeHandlers({ removeAttachment } as unknown as Partial<PersonaConfigService>)
+    const res = fakeRes()
+
+    await handlers.deleteAttachment(fakeReq({ params: { personaId: CUSTOM_ID, attachmentId: "att_1" } }), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(removeAttachment).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, "att_1", CALLER)
+  })
+
+  it("DELETE attachment 400s an empty attachmentId param (INV-55)", async () => {
+    const removeAttachment = mock(async () => undefined)
+    const handlers = makeHandlers({ removeAttachment } as unknown as Partial<PersonaConfigService>)
+
+    await expect(
+      handlers.deleteAttachment(fakeReq({ params: { personaId: CUSTOM_ID, attachmentId: "" } }), fakeRes())
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    expect(removeAttachment).not.toHaveBeenCalled()
+  })
 })

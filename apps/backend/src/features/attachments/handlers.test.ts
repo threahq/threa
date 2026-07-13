@@ -421,6 +421,103 @@ describe("attachment handlers safety gating", () => {
     expect(attachmentService.getDownloadUrl).toHaveBeenCalled()
     expect(res.body).toEqual({ url: "https://download", expiresIn: 900 })
   })
+
+  // persona-context-attachments: a persona file keeps stream_id NULL forever, so
+  // the generic serving path must not hand it to anyone but its uploader — else
+  // any workspace member holding the id could read another user's private
+  // knowledge (or its extracted text). buildAttachment is uploadedBy usr_1.
+
+  it("getDownloadUrl 403s a non-uploader on an unbound (null-stream) attachment", async () => {
+    const attachmentService = {
+      getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+      getDownloadUrl: mock(() => Promise.resolve("https://download")),
+      getSharingBlockReason: mock(() => null),
+    } as any
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      streamService: {} as any,
+      storage: {} as any,
+      pool: {} as any,
+    })
+    const res = createResponse()
+
+    await handlers.getDownloadUrl(
+      { user: { id: "usr_2" }, workspaceId: "ws_1", params: { attachmentId: "attach_1" }, query: {} } as any,
+      res
+    )
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.body).toEqual({ error: "Access denied" })
+    expect(attachmentService.getDownloadUrl).not.toHaveBeenCalled()
+  })
+
+  it("getContent 403s a non-uploader on an unbound (null-stream) attachment before serving bytes", async () => {
+    const storage = { getObjectContent: mock(() => Promise.reject(new Error("should not be reached"))) } as any
+    const attachmentService = {
+      getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+      getSharingBlockReason: mock(() => null),
+    } as any
+    const handlers = createAttachmentHandlers({ attachmentService, streamService: {} as any, storage, pool: {} as any })
+    const res = createResponse()
+
+    await handlers.getContent(
+      {
+        user: { id: "usr_2" },
+        workspaceId: "ws_1",
+        params: { attachmentId: "attach_1" },
+        query: {},
+        headers: {},
+      } as any,
+      res
+    )
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(storage.getObjectContent).not.toHaveBeenCalled()
+  })
+
+  it("getExtraction 403s a non-uploader on an unbound (null-stream) attachment", async () => {
+    const attachmentService = {
+      getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+    } as any
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      streamService: {} as any,
+      storage: {} as any,
+      pool: {} as any,
+    })
+    const res = createResponse()
+
+    await handlers.getExtraction(
+      { user: { id: "usr_2" }, workspaceId: "ws_1", params: { attachmentId: "attach_1" }, query: {} } as any,
+      res
+    )
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.body).toEqual({ error: "Access denied" })
+  })
+
+  it("getDownloadUrl still serves the uploader their own unbound attachment (composer preview unaffected)", async () => {
+    const attachmentService = {
+      getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+      getDownloadUrl: mock(() => Promise.resolve("https://download")),
+      getSharingBlockReason: mock(() => null),
+    } as any
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      streamService: {} as any,
+      storage: {} as any,
+      pool: {} as any,
+    })
+    const res = createResponse()
+
+    await handlers.getDownloadUrl(
+      { user: { id: "usr_1" }, workspaceId: "ws_1", params: { attachmentId: "attach_1" }, query: {} } as any,
+      res
+    )
+
+    expect(attachmentService.getDownloadUrl).toHaveBeenCalled()
+    expect(res.body).toEqual({ url: "https://download", expiresIn: 900 })
+  })
 })
 
 function buildSearchRow(overrides: Partial<AttachmentSearchRow> = {}): AttachmentSearchRow {

@@ -34,6 +34,20 @@ interface Dependencies {
   pool: Pool
 }
 
+/**
+ * An attachment not yet bound to a message (null stream) has no stream ACL to
+ * gate the generic serving path on, so only its uploader may read it. This
+ * closes the persona-context-attachments leak: a persona file keeps `stream_id`
+ * NULL forever, so without this any workspace member holding the (ULID) id could
+ * fetch another user's private persona knowledge or its extracted text. Bound
+ * attachments (stream set) are gated by stream access upstream and never reach
+ * this check. Composer previews still work — the uploader reads their own
+ * pending upload.
+ */
+function unboundAttachmentBlockedForCaller(attachment: Attachment, userId: string): boolean {
+  return !attachment.streamId && !!attachment.uploadedBy && attachment.uploadedBy !== userId
+}
+
 const reserveAttachmentSchema = z.object({
   filename: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(255).default("application/octet-stream"),
@@ -246,6 +260,8 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
             return res.status(403).json({ error: "Access denied" })
           }
         }
+      } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
+        return res.status(403).json({ error: "Access denied" })
       }
 
       const parsed = z
@@ -309,6 +325,8 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
             return res.status(403).json({ error: "Access denied" })
           }
         }
+      } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
+        return res.status(403).json({ error: "Access denied" })
       }
 
       const parsed = z
@@ -414,6 +432,8 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
             return res.status(403).json({ error: "Access denied" })
           }
         }
+      } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
+        return res.status(403).json({ error: "Access denied" })
       }
 
       const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, attachmentId)

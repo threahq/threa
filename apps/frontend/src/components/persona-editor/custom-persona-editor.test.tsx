@@ -89,6 +89,7 @@ function config(overrides: Partial<PersonaConfigResponse> = {}): PersonaConfigRe
     overrideUpdatedAt: "2026-07-12T00:00:00Z",
     resolved: resolved(),
     draft: null,
+    attachments: [],
     availableModels: [{ id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" }],
     ...overrides,
   }

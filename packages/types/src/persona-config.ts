@@ -238,6 +238,69 @@ export interface PersonaDraftState {
   updatedAt: string
 }
 
+/**
+ * Persona context attachments (persona-context-attachments). Files a custom or
+ * personal persona always carries in its dispatch context — standing knowledge,
+ * not something it must fetch. Bounds live here (INV-33) because both the
+ * backend (multer filter, service cap, Zod) and the frontend editor (cap
+ * display, file-input `accept`) enforce/render them; a single source keeps them
+ * from drifting.
+ */
+export const PERSONA_ATTACHMENT_MAX_COUNT = 5
+
+/** Per-file upload cap. Text-bearing knowledge files are small; 20MB is generous. */
+export const PERSONA_ATTACHMENT_MAX_SIZE_BYTES = 20 * 1024 * 1024
+
+/**
+ * Exact mime types accepted beyond the `text/*` family: the text-bearing types
+ * the extraction pipeline handles (PDF, docx, xlsx, JSON). No image/video/audio
+ * in v1 (no vision injection). `text/csv`/`text/markdown`/`text/plain` are
+ * covered by the `text/` prefix in {@link PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES}.
+ */
+export const PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/json",
+] as const
+
+/** Mime prefixes accepted wholesale — every `text/*` subtype is a knowledge file. */
+export const PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES = ["text/"] as const
+
+/** Whether a mime type may be uploaded as persona context (prefix OR exact match). */
+export function isPersonaAttachmentMimeAllowed(mimeType: string): boolean {
+  const normalized = mimeType.split(";")[0]!.trim().toLowerCase()
+  return (
+    PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES.some((prefix) => normalized.startsWith(prefix)) ||
+    (PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES as readonly string[]).includes(normalized)
+  )
+}
+
+/**
+ * A persona context attachment's processing readiness, derived server-side from
+ * the extraction row (INV-46 — structured, the editor renders the word):
+ * `ready` once extraction produced content, `failed` when the pipeline gave up
+ * or the scan skipped it, `processing` while extraction is in flight.
+ */
+export const PERSONA_ATTACHMENT_PROCESSING_STATUSES = ["processing", "ready", "failed"] as const
+export type PersonaAttachmentProcessingStatus = (typeof PERSONA_ATTACHMENT_PROCESSING_STATUSES)[number]
+
+/**
+ * One persona context attachment as it rides the persona config response and the
+ * upload response. `id` is the underlying attachment id; `position` is the
+ * render/prompt order. No storage path or download URL — v1 never serves these
+ * to the client, only injects their extracted content into dispatch.
+ */
+export interface PersonaAttachmentItem {
+  id: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  processingStatus: PersonaAttachmentProcessingStatus
+  position: number
+  createdAt: string
+}
+
 /** Admin config response for a single persona. */
 export interface PersonaConfigResponse {
   /** Built-in vs custom — the editor renders a restricted or full form on this. */
@@ -263,6 +326,12 @@ export interface PersonaConfigResponse {
    * client-side even when it is not itself assignable (a built-in default).
    */
   availableModels: PersonaModelOption[]
+  /**
+   * Context attachments in prompt/render order (persona-context-attachments).
+   * Custom and personal personas only; a built-in has no owned row to bind to,
+   * so this is always empty for `kind: "builtin"`.
+   */
+  attachments: PersonaAttachmentItem[]
 }
 
 /** Who committed a persona config revision. The single home for this union — the

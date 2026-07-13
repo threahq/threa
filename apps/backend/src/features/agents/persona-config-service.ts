@@ -10,6 +10,13 @@ import {
   CompanionModes,
   MemoryModes,
   StreamPurposes,
+  ProcessingStatuses,
+  PERSONA_ATTACHMENT_MAX_COUNT,
+  PERSONA_ATTACHMENT_MAX_SIZE_BYTES,
+  PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
+  isPersonaAttachmentMimeAllowed,
+  type PersonaAttachmentItem,
+  type PersonaAttachmentProcessingStatus,
   type PersonaConfigPatch,
   type PersonaConfigResponse,
   type PersonaConfigRevision,
@@ -23,6 +30,10 @@ import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
+import { buildUploadParams, type AttachmentService } from "../attachments"
+import type { StorageProvider } from "../../lib/storage/s3-client"
+import { attachmentId as generateAttachmentId } from "../../lib/id"
+import { PersonaAttachmentRepository, type PersonaAttachmentListItem } from "./persona-attachment-repository"
 import type { StreamService } from "../streams"
 import { AgentConfigOverrideRepository, type AgentConfigOverrideDetail } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
@@ -41,6 +52,8 @@ interface Dependencies {
   pool: Pool
   streamService: StreamService
   modelRegistry: ModelRegistry
+  attachmentService: AttachmentService
+  storage: StorageProvider
 }
 
 /**
@@ -97,6 +110,38 @@ function customsOnly(): HttpError {
     status: 400,
     code: "PERSONA_NOT_CUSTOM",
   })
+}
+
+function personaAttachmentLimitReached(): HttpError {
+  return new HttpError(`A persona can have at most ${PERSONA_ATTACHMENT_MAX_COUNT} context attachments`, {
+    status: 400,
+    code: "PERSONA_ATTACHMENT_LIMIT",
+  })
+}
+
+function personaAttachmentNotFound(): HttpError {
+  return new HttpError("Persona attachment not found", { status: 404, code: "PERSONA_ATTACHMENT_NOT_FOUND" })
+}
+
+/** Derive the structured wire status (INV-46) from the extraction/pipeline state. */
+function personaAttachmentProcessingStatus(item: PersonaAttachmentListItem): PersonaAttachmentProcessingStatus {
+  if (item.hasExtraction) return "ready"
+  if (item.processingStatus === ProcessingStatuses.FAILED || item.processingStatus === ProcessingStatuses.SKIPPED) {
+    return "failed"
+  }
+  return "processing"
+}
+
+function toPersonaAttachmentItem(item: PersonaAttachmentListItem): PersonaAttachmentItem {
+  return {
+    id: item.attachmentId,
+    filename: item.filename,
+    mimeType: item.mimeType,
+    sizeBytes: item.sizeBytes,
+    processingStatus: personaAttachmentProcessingStatus(item),
+    position: item.position,
+    createdAt: item.createdAt.toISOString(),
+  }
 }
 
 /** Map a custom persona row to the resolved-config wire shape (the editor's populated form). */
@@ -244,6 +289,14 @@ export class PersonaConfigService {
 
   private get modelRegistry(): ModelRegistry {
     return this.deps.modelRegistry
+  }
+
+  private get attachmentService(): AttachmentService {
+    return this.deps.attachmentService
+  }
+
+  private get storage(): StorageProvider {
+    return this.deps.storage
   }
 
   /** Registry-derived chat models an admin may assign (INV-16), labelled by the registry name. */
@@ -438,6 +491,7 @@ export class PersonaConfigService {
       // personal row is `kind: 'personal'`, a workspace custom `kind: 'custom'`
       // (user-scoped-personas).
       const { row } = editable
+      const attachments = await this.listAttachments(workspaceId, personaId)
       return {
         kind: row.managedBy === "user" ? "personal" : "custom",
         defaults: null,
@@ -446,6 +500,7 @@ export class PersonaConfigService {
         resolved: customRowToResolvedConfig(row),
         draft,
         availableModels: this.listAvailableModels(),
+        attachments,
       }
     }
 
@@ -477,7 +532,16 @@ export class PersonaConfigService {
       resolved,
       draft,
       availableModels: this.listAvailableModels(),
+      // A built-in has no owned row to bind attachments to (persona-context-
+      // attachments); always empty.
+      attachments: [],
     }
+  }
+
+  /** A custom/personal persona's context attachments in position order, as wire items. */
+  private async listAttachments(workspaceId: string, personaId: string): Promise<PersonaAttachmentItem[]> {
+    const rows = await PersonaAttachmentRepository.listForPersona(this.pool, workspaceId, personaId)
+    return rows.map(toPersonaAttachmentItem)
   }
 
   /** The caller's own draft for a persona, with a stale/archived test-stream pointer collapsed to null. */
@@ -1024,5 +1088,142 @@ export class PersonaConfigService {
       return { persona: item, updatedAt: row.updatedAt.toISOString() }
     })
     return { persona, previousAvatarUrl, updatedAt }
+  }
+
+  /**
+   * Add a context attachment to a custom/personal persona (persona-context-
+   * attachments). Authorization is the persona edit gate exactly
+   * ({@link authorizeEditableOr404}): a workspace persona needs admin, a personal
+   * persona needs its owner (a non-owner — admin included — already 404'd); a
+   * built-in has no owned row → 400 `PERSONA_NOT_CUSTOM`.
+   *
+   * The caller (handler) buffers the file in memory and authorizes BEFORE any S3
+   * write, so a rejected upload never leaves an orphaned object. Here: validate
+   * mime/size, put the bytes to S3, run the reused sync creation
+   * ({@link AttachmentService.createForUpload} — malware scan + `attachment:uploaded`
+   * outbox event that drives extraction), then bind the row under the race-safe
+   * count cap. A cap loss (concurrent adds) hard-deletes the just-created
+   * attachment + S3 object so nothing orphans.
+   */
+  async addAttachment(
+    workspaceId: string,
+    personaId: string,
+    caller: PersonaCaller,
+    file: { buffer: Buffer; filename: string; mimeType: string; sizeBytes: number }
+  ): Promise<PersonaAttachmentItem> {
+    const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
+    if (editable.kind !== "custom") throw customsOnly()
+
+    if (!isPersonaAttachmentMimeAllowed(file.mimeType)) {
+      throw new HttpError(
+        `File type "${file.mimeType}" is not allowed. Allowed: text/*, ${PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES.join(", ")}`,
+        { status: 400, code: "PERSONA_ATTACHMENT_INVALID_TYPE" }
+      )
+    }
+    if (file.sizeBytes > PERSONA_ATTACHMENT_MAX_SIZE_BYTES) {
+      throw new HttpError(`File exceeds the ${PERSONA_ATTACHMENT_MAX_SIZE_BYTES}-byte limit`, {
+        status: 400,
+        code: "PERSONA_ATTACHMENT_TOO_LARGE",
+      })
+    }
+
+    // Fast pre-check to avoid an S3 write + scan when the persona is obviously
+    // already full. Not the enforced guard — the race-safe insert below is
+    // (INV-20) — so a concurrent add slipping past here is caught and cleaned up.
+    const existing = await PersonaAttachmentRepository.listForPersona(this.pool, workspaceId, personaId)
+    if (existing.length >= PERSONA_ATTACHMENT_MAX_COUNT) throw personaAttachmentLimitReached()
+
+    const attachmentId = generateAttachmentId()
+    const storagePath = `${workspaceId}/${attachmentId}/${file.filename}`
+    await this.storage.putObject(storagePath, file.buffer, file.mimeType)
+
+    let created
+    try {
+      // Persona uploads are plaintext-only, so the e2e flag is always false.
+      created = await this.attachmentService.createForUpload(
+        buildUploadParams(
+          {
+            id: attachmentId,
+            workspaceId,
+            uploadedBy: caller.userId,
+            filename: file.filename,
+            mimeType: file.mimeType,
+            sizeBytes: file.sizeBytes,
+            storagePath,
+          },
+          false
+        )
+      )
+    } catch (error) {
+      // createForUpload's create() may throw before it inserts the row (e.g. the
+      // scan errored); the object we just put would otherwise orphan.
+      await this.storage.delete(storagePath).catch((err) => {
+        logger.error({ err, storagePath }, "failed to clean up persona attachment object after create error")
+      })
+      throw error
+    }
+
+    if (created.status === "blocked") {
+      // createForUpload already hard-deleted the attachment row + S3 object.
+      throw new HttpError(created.reason, { status: 400, code: "PERSONA_ATTACHMENT_BLOCKED" })
+    }
+    if (created.status === "cleanup_failed") {
+      throw new HttpError("Attachment was blocked and cleanup failed", {
+        status: 500,
+        code: "PERSONA_ATTACHMENT_CLEANUP_FAILED",
+      })
+    }
+
+    const binding = await withTransaction(this.pool, async (client) =>
+      PersonaAttachmentRepository.insertBinding(client, {
+        attachmentId,
+        workspaceId,
+        personaId,
+        createdBy: caller.userId,
+        maxCount: PERSONA_ATTACHMENT_MAX_COUNT,
+      })
+    )
+    if (!binding) {
+      // Lost the cap race — undo the attachment we created (deletes row +
+      // extraction + S3 object) so nothing orphans, then fail loudly.
+      await this.attachmentService.delete(attachmentId).catch((err) => {
+        logger.error({ err, attachmentId }, "failed to clean up persona attachment after cap race")
+      })
+      throw personaAttachmentLimitReached()
+    }
+
+    return {
+      id: attachmentId,
+      filename: file.filename,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      // Extraction was just dispatched via the outbox event — not ready yet.
+      processingStatus: "processing",
+      position: binding.position,
+      createdAt: binding.createdAt.toISOString(),
+    }
+  }
+
+  /**
+   * Remove a persona context attachment: verify the binding under the persona
+   * edit gate, delete it, then hard-delete the attachment row + extraction + S3
+   * object ({@link AttachmentService.delete}). Persona files are never bound to a
+   * message, so a hard delete is safe. The binding delete runs first so a failure
+   * mid-way leaves at worst an unbound (invisible) attachment row, never a
+   * binding pointing at deleted bytes.
+   */
+  async removeAttachment(
+    workspaceId: string,
+    personaId: string,
+    attachmentId: string,
+    caller: PersonaCaller
+  ): Promise<void> {
+    const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
+    if (editable.kind !== "custom") throw customsOnly()
+
+    const deleted = await PersonaAttachmentRepository.deleteBinding(this.pool, workspaceId, personaId, attachmentId)
+    if (!deleted) throw personaAttachmentNotFound()
+
+    await this.attachmentService.delete(attachmentId)
   }
 }

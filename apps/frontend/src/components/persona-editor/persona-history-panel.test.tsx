@@ -110,6 +110,7 @@ function config(): PersonaConfigResponse {
     overrideUpdatedAt: "2026-07-11T02:00:00Z",
     resolved: { ...d, ...overridePatch },
     draft: null,
+    attachments: [],
     availableModels: [
       { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
       { id: "openrouter:anthropic/claude-opus-4.8", label: "Claude Opus 4.8" },

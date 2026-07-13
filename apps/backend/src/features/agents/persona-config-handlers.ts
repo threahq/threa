@@ -65,6 +65,10 @@ const putCustomSchema = z.object({
   expectedUpdatedAt: z.string().nullable(),
 })
 
+const attachmentParamsSchema = z.object({
+  attachmentId: z.string().min(1),
+})
+
 function personaNotFound(): HttpError {
   return new HttpError("Persona not found", { status: 404, code: "PERSONA_NOT_FOUND" })
 }
@@ -274,6 +278,41 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
         avatarService.deleteAvatarFiles(result.previousAvatarUrl)
       }
       res.json({ persona: result.persona, updatedAt: result.updatedAt })
+    },
+
+    /**
+     * POST /api/workspaces/:workspaceId/personas/:personaId/attachments
+     *
+     * Add a context attachment (persona-context-attachments). Custom/personal
+     * personas only (a built-in id 400s PERSONA_NOT_CUSTOM in the service). The
+     * persona-attachment multer instance buffered the file in memory; the service
+     * authorizes against the persona BEFORE writing to S3.
+     */
+    async uploadAttachment(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const personaId = req.params.personaId!
+
+      if (!req.file) {
+        throw new HttpError("No file uploaded", { status: 400, code: "VALIDATION_ERROR" })
+      }
+
+      const attachment = await personaConfigService.addAttachment(workspaceId, personaId, resolveCaller(req), {
+        buffer: req.file.buffer,
+        filename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        sizeBytes: req.file.size,
+      })
+      res.status(201).json({ attachment })
+    },
+
+    /** DELETE /api/workspaces/:workspaceId/personas/:personaId/attachments/:attachmentId */
+    async deleteAttachment(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const personaId = req.params.personaId!
+      const { attachmentId } = validateRequest(attachmentParamsSchema, req.params)
+
+      await personaConfigService.removeAttachment(workspaceId, personaId, attachmentId, resolveCaller(req))
+      res.status(204).end()
     },
 
     /** DELETE /api/workspaces/:workspaceId/personas/:personaId/avatar */

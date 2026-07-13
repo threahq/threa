@@ -3,7 +3,11 @@ import type { Express, RequestHandler } from "express"
 import type { Server } from "socket.io"
 import { createAuthMiddleware } from "@threa/backend-common"
 import { createWorkspaceUserMiddleware } from "./middleware/workspace"
-import { createUploadMiddleware, createAvatarUploadMiddleware } from "./middleware/upload"
+import {
+  createUploadMiddleware,
+  createAvatarUploadMiddleware,
+  createPersonaAttachmentUploadMiddleware,
+} from "./middleware/upload"
 import { createRateLimiters, type RateLimiterConfig } from "./middleware/rate-limit"
 import { createOpsAccessMiddleware } from "./middleware/ops-access"
 import { createRequireBotManagement } from "./middleware/bot-management"
@@ -256,6 +260,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   const authHandlers = createAuthHandlers()
   const avatarUpload = createAvatarUploadMiddleware()
+  const personaAttachmentUpload = createPersonaAttachmentUploadMiddleware()
   const commandAvailabilityService = new CommandAvailabilityService({ pool, commandRegistry })
   const boardViewService = new BoardViewService(pool)
   const workspace = createWorkspaceHandlers({
@@ -485,6 +490,21 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/personas/:personaId/avatar", ...authed, avatarUpload, persona.uploadAvatar)
   app.delete("/api/workspaces/:workspaceId/personas/:personaId/avatar", ...authed, persona.removeAvatar)
   app.get("/api/workspaces/:workspaceId/personas/:personaId/avatar/:file", persona.serveAvatarFile)
+  // Custom/personal persona context attachments (persona-context-attachments):
+  // the file is buffered in memory so the service authorizes against the persona
+  // before any S3 write. The list rides the config GET — no separate GET route.
+  app.post(
+    "/api/workspaces/:workspaceId/personas/:personaId/attachments",
+    ...authed,
+    rateLimits.upload,
+    personaAttachmentUpload,
+    persona.uploadAttachment
+  )
+  app.delete(
+    "/api/workspaces/:workspaceId/personas/:personaId/attachments/:attachmentId",
+    ...authed,
+    persona.deleteAttachment
+  )
 
   // Sidebar config (per-user, per-workspace layout)
   app.get("/api/workspaces/:workspaceId/sidebar-config", ...authed, sidebarConfig.get)

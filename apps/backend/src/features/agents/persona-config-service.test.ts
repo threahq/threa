@@ -7,6 +7,7 @@ import { AgentConfigOverrideRepository } from "./agent-config-override-repositor
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
 import { PersonaRepository, type Persona } from "./persona-repository"
+import { PersonaAttachmentRepository } from "./persona-attachment-repository"
 import { COMPANION_MODEL_ID, TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS } from "./companion/config"
 import { OutboxRepository } from "../../lib/outbox"
 import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID, getVisibleBuiltInAgentConfig } from "./built-in-agents"
@@ -63,8 +64,17 @@ function setupTransaction() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
 }
 
-function makeService(streamService: any = { getStreamById: mock(async (id: string) => ({ id, archivedAt: null })) }) {
-  return new PersonaConfigService({ pool: {} as any, streamService, modelRegistry: FAKE_MODEL_REGISTRY })
+function makeService(
+  streamService: any = { getStreamById: mock(async (id: string) => ({ id, archivedAt: null })) },
+  extra: { attachmentService?: any; storage?: any } = {}
+) {
+  return new PersonaConfigService({
+    pool: {} as any,
+    streamService,
+    modelRegistry: FAKE_MODEL_REGISTRY,
+    attachmentService: extra.attachmentService ?? ({} as any),
+    storage: extra.storage ?? ({} as any),
+  })
 }
 
 describe("PersonaConfigService.listVisible", () => {
@@ -386,6 +396,8 @@ describe("PersonaConfigService.setOverride", () => {
       pool: {} as any,
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
+      attachmentService: {} as any,
+      storage: {} as any,
     })
 
     const result = await service.setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { tonePreset: "direct" }, null, CALLER_ID)
@@ -768,6 +780,8 @@ describe("PersonaConfigService draft lifecycle", () => {
       pool: {} as any,
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
+      attachmentService: {} as any,
+      storage: {} as any,
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -786,6 +800,8 @@ describe("PersonaConfigService draft lifecycle", () => {
       pool: {} as any,
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
+      attachmentService: {} as any,
+      storage: {} as any,
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -806,6 +822,8 @@ describe("PersonaConfigService draft lifecycle", () => {
       pool: {} as any,
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
+      attachmentService: {} as any,
+      storage: {} as any,
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -826,6 +844,8 @@ describe("PersonaConfigService draft lifecycle", () => {
       pool: {} as any,
       streamService: { getStreamById, createScratchpad } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
+      attachmentService: {} as any,
+      storage: {} as any,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -846,6 +866,8 @@ describe("PersonaConfigService draft lifecycle", () => {
       pool: {} as any,
       streamService: { getStreamById: mock(async () => null), createScratchpad } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
+      attachmentService: {} as any,
+      storage: {} as any,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -887,6 +909,8 @@ describe("PersonaConfigService draft lifecycle", () => {
       pool: {} as any,
       streamService: { getStreamById: mock(async () => null), createScratchpad } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
+      attachmentService: {} as any,
+      storage: {} as any,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -1149,6 +1173,7 @@ describe("PersonaConfigService custom getConfig + status", () => {
   it("getConfig returns the custom shape (kind custom, defaults null, row as resolved, row updatedAt as token)", async () => {
     spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue([])
 
     const config = await makeService().getConfig(WORKSPACE_ID, "persona_custom_1", CALLER)
 
@@ -1158,6 +1183,7 @@ describe("PersonaConfigService custom getConfig + status", () => {
       overridePatch: null,
       overrideUpdatedAt: "2026-02-02T00:00:00.000Z",
       resolved: { id: "persona_custom_1", managedBy: "workspace", tonePreset: null },
+      attachments: [],
     })
   })
 
@@ -1497,6 +1523,7 @@ describe("PersonaConfigService lifecycle authorization (user-scoped-personas)", 
   it("getConfig for a personal persona returns kind:'personal' and managedBy:'user' for its owner", async () => {
     spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: personalPersona() })
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue([])
 
     const config = await makeService().getConfig(WORKSPACE_ID, "persona_personal_1", OWNER)
 
@@ -1557,5 +1584,364 @@ describe("PersonaConfigService.listArchived — caller-aware (user-scoped-person
     const personas = await makeService().listArchived(WORKSPACE_ID, MEMBER)
     expect(list.mock.calls[0]![2]).toEqual({ includeWorkspace: false, ownerUserId: MEMBER.userId })
     expect(personas[0]).toMatchObject({ kind: "personal", ownerUserId: MEMBER.userId })
+  })
+})
+
+// ── persona context attachments (persona-context-attachments) ─────────────────
+
+const ADMIN: PersonaCaller = { userId: "usr_admin", isAdmin: true }
+
+function textFile(overrides: Partial<{ filename: string; mimeType: string; sizeBytes: number }> = {}) {
+  return {
+    buffer: Buffer.from("standing knowledge"),
+    filename: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: 18,
+    ...overrides,
+  }
+}
+
+function makeAttachmentDeps(overrides: { createForUpload?: any; delete?: any; putObject?: any } = {}) {
+  const attachmentService = {
+    createForUpload:
+      overrides.createForUpload ?? mock(async () => ({ status: "created" as const, attachment: { id: "att_x" } })),
+    delete: overrides.delete ?? mock(async () => true),
+  }
+  const storage = { putObject: overrides.putObject ?? mock(async () => undefined), delete: mock(async () => undefined) }
+  return { attachmentService, storage }
+}
+
+describe("PersonaConfigService.addAttachment — authorization matrix", () => {
+  afterEach(() => mock.restore())
+
+  it("workspace persona: an admin may add", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue([])
+    spyOn(PersonaAttachmentRepository, "insertBinding").mockResolvedValue({
+      attachmentId: "att_x",
+      workspaceId: WORKSPACE_ID,
+      personaId: "persona_custom_1",
+      position: 0,
+      createdBy: ADMIN.userId,
+      createdAt: new Date("2026-07-13T00:00:00Z"),
+    })
+    const deps = makeAttachmentDeps()
+
+    const item = await makeService(undefined, deps).addAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, textFile())
+
+    expect(item).toMatchObject({ filename: "notes.txt", processingStatus: "processing", position: 0 })
+    expect(item.id).toMatch(/^attach_/)
+    expect(deps.storage.putObject).toHaveBeenCalledTimes(1)
+    expect(deps.attachmentService.createForUpload).toHaveBeenCalledTimes(1)
+    // The generated id is what binds and what createForUpload receives (not the mock's).
+    expect((deps.attachmentService.createForUpload as any).mock.calls[0][0].id).toBe(item.id)
+  })
+
+  it("workspace persona: a non-admin member is 403'd before any upload", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const deps = makeAttachmentDeps()
+
+    await expect(
+      makeService(undefined, deps).addAttachment(WORKSPACE_ID, "persona_custom_1", MEMBER, textFile())
+    ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" })
+    expect(deps.storage.putObject).not.toHaveBeenCalled()
+  })
+
+  it("personal persona: the owner may add", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: personalPersona() })
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue([])
+    spyOn(PersonaAttachmentRepository, "insertBinding").mockResolvedValue({
+      attachmentId: "att_x",
+      workspaceId: WORKSPACE_ID,
+      personaId: "persona_personal_1",
+      position: 0,
+      createdBy: OWNER.userId,
+      createdAt: new Date("2026-07-13T00:00:00Z"),
+    })
+    const deps = makeAttachmentDeps()
+
+    const item = await makeService(undefined, deps).addAttachment(WORKSPACE_ID, "persona_personal_1", OWNER, textFile())
+    expect(item.id).toMatch(/^attach_/)
+    expect(item.position).toBe(0)
+  })
+
+  it("personal persona: a non-owner member 404s (resolveEditable filters it — invisible)", async () => {
+    // resolveEditable returns null for a non-owner viewer (user-scoped-personas).
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue(null)
+    const deps = makeAttachmentDeps()
+
+    await expect(
+      makeService(undefined, deps).addAttachment(WORKSPACE_ID, "persona_personal_1", MEMBER, textFile())
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
+    expect(deps.storage.putObject).not.toHaveBeenCalled()
+  })
+
+  it("personal persona: a non-owner ADMIN also 404s (invisible means invisible)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue(null)
+    const deps = makeAttachmentDeps()
+
+    await expect(
+      makeService(undefined, deps).addAttachment(WORKSPACE_ID, "persona_personal_1", ADMIN, textFile())
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
+  })
+
+  it("a built-in persona 400s PERSONA_NOT_CUSTOM (no owned row to bind to)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "builtin",
+      base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
+    })
+    const deps = makeAttachmentDeps()
+
+    await expect(
+      makeService(undefined, deps).addAttachment(WORKSPACE_ID, ARIADNE_AGENT_ID, ADMIN, textFile())
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
+    expect(deps.storage.putObject).not.toHaveBeenCalled()
+  })
+})
+
+describe("PersonaConfigService.addAttachment — validation, cap, and cleanup", () => {
+  afterEach(() => mock.restore())
+
+  it("rejects a disallowed mime type with a structured 400 naming the allowed set", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const deps = makeAttachmentDeps()
+
+    await expect(
+      makeService(undefined, deps).addAttachment(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        textFile({ mimeType: "image/png", filename: "logo.png" })
+      )
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_INVALID_TYPE" })
+    expect(deps.storage.putObject).not.toHaveBeenCalled()
+  })
+
+  it("rejects an oversized file with a structured 400", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const deps = makeAttachmentDeps()
+
+    await expect(
+      makeService(undefined, deps).addAttachment(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        textFile({ sizeBytes: 21 * 1024 * 1024 })
+      )
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_TOO_LARGE" })
+    expect(deps.storage.putObject).not.toHaveBeenCalled()
+  })
+
+  it("fast-fails at the cap before writing to S3 when the persona already has 5", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue(
+      Array.from({ length: 5 }, (_, i) => ({
+        attachmentId: `att_${i}`,
+        filename: "f.txt",
+        mimeType: "text/plain",
+        sizeBytes: 1,
+        position: i,
+        createdAt: new Date(),
+        processingStatus: "completed" as const,
+        hasExtraction: true,
+        hasSummary: true,
+      }))
+    )
+    const deps = makeAttachmentDeps()
+
+    await expect(
+      makeService(undefined, deps).addAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, textFile())
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_LIMIT" })
+    expect(deps.storage.putObject).not.toHaveBeenCalled()
+  })
+
+  it("lost cap race (insertBinding null) hard-deletes the just-created attachment and 400s", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue([])
+    spyOn(PersonaAttachmentRepository, "insertBinding").mockResolvedValue(null)
+    const del = mock(async () => true)
+    const deps = makeAttachmentDeps({
+      createForUpload: mock(async () => ({ status: "created" as const, attachment: { id: "att_race" } })),
+      delete: del,
+    })
+
+    await expect(
+      makeService(undefined, deps).addAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, textFile())
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_LIMIT" })
+    // No orphaned attachment/S3 object — the created attachment is deleted.
+    expect(del).toHaveBeenCalledTimes(1)
+  })
+
+  it("surfaces a malware-blocked upload as 400 (createForUpload already cleaned it up)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue([])
+    const insert = spyOn(PersonaAttachmentRepository, "insertBinding")
+    const deps = makeAttachmentDeps({
+      createForUpload: mock(async () => ({ status: "blocked" as const, reason: "Blocked by malware scan" })),
+    })
+
+    await expect(
+      makeService(undefined, deps).addAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, textFile())
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_BLOCKED" })
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("cleans up the S3 object when createForUpload throws before inserting the row", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue([])
+    const storageDelete = mock(async () => undefined)
+    const deps = makeAttachmentDeps({
+      createForUpload: mock(async () => {
+        throw new Error("scan exploded")
+      }),
+    })
+    deps.storage.delete = storageDelete
+
+    await expect(
+      makeService(undefined, deps).addAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, textFile())
+    ).rejects.toThrow("scan exploded")
+    expect(storageDelete).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("PersonaConfigService.removeAttachment", () => {
+  afterEach(() => mock.restore())
+
+  it("deletes the binding then hard-deletes the attachment row + S3 object", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "deleteBinding").mockResolvedValue(true)
+    const del = mock(async () => true)
+    const deps = makeAttachmentDeps({ delete: del })
+
+    await makeService(undefined, deps).removeAttachment(WORKSPACE_ID, "persona_custom_1", "att_1", ADMIN)
+
+    expect(del).toHaveBeenCalledWith("att_1")
+  })
+
+  it("404s when the binding does not exist (and never touches the attachment)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "deleteBinding").mockResolvedValue(false)
+    const del = mock(async () => true)
+    const deps = makeAttachmentDeps({ delete: del })
+
+    await expect(
+      makeService(undefined, deps).removeAttachment(WORKSPACE_ID, "persona_custom_1", "missing", ADMIN)
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_ATTACHMENT_NOT_FOUND" })
+    expect(del).not.toHaveBeenCalled()
+  })
+
+  it("a non-owner ADMIN 404s on a personal persona's attachment (invisible)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue(null)
+    const deps = makeAttachmentDeps()
+
+    await expect(
+      makeService(undefined, deps).removeAttachment(WORKSPACE_ID, "persona_personal_1", "att_1", ADMIN)
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
+  })
+
+  it("400s PERSONA_NOT_CUSTOM for a built-in", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "builtin",
+      base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
+    })
+    const deps = makeAttachmentDeps()
+
+    await expect(
+      makeService(undefined, deps).removeAttachment(WORKSPACE_ID, ARIADNE_AGENT_ID, "att_1", ADMIN)
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
+  })
+})
+
+describe("PersonaConfigService.getConfig — attachments fold-in", () => {
+  afterEach(() => mock.restore())
+
+  it("maps extraction/pipeline state to structured processing status, in position order", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue([
+      {
+        attachmentId: "att_ready",
+        filename: "ready.txt",
+        mimeType: "text/plain",
+        sizeBytes: 10,
+        position: 0,
+        createdAt: new Date("2026-07-13T00:00:00Z"),
+        processingStatus: "completed",
+        hasExtraction: true,
+        hasSummary: true,
+      },
+      {
+        attachmentId: "att_processing",
+        filename: "wip.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 20,
+        position: 1,
+        createdAt: new Date("2026-07-13T00:01:00Z"),
+        processingStatus: "processing",
+        hasExtraction: false,
+        hasSummary: false,
+      },
+      {
+        attachmentId: "att_failed",
+        filename: "bad.csv",
+        mimeType: "text/csv",
+        sizeBytes: 30,
+        position: 2,
+        createdAt: new Date("2026-07-13T00:02:00Z"),
+        processingStatus: "failed",
+        hasExtraction: false,
+        hasSummary: false,
+      },
+    ])
+
+    const config = await makeService().getConfig(WORKSPACE_ID, "persona_custom_1", CALLER)
+
+    expect(config!.attachments).toEqual([
+      {
+        id: "att_ready",
+        filename: "ready.txt",
+        mimeType: "text/plain",
+        sizeBytes: 10,
+        processingStatus: "ready",
+        position: 0,
+        createdAt: "2026-07-13T00:00:00.000Z",
+      },
+      {
+        id: "att_processing",
+        filename: "wip.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 20,
+        processingStatus: "processing",
+        position: 1,
+        createdAt: "2026-07-13T00:01:00.000Z",
+      },
+      {
+        id: "att_failed",
+        filename: "bad.csv",
+        mimeType: "text/csv",
+        sizeBytes: 30,
+        processingStatus: "failed",
+        position: 2,
+        createdAt: "2026-07-13T00:02:00.000Z",
+      },
+    ])
+  })
+
+  it("a built-in config carries an empty attachments list without a repo read", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "builtin",
+      base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
+    })
+    spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
+    const list = spyOn(PersonaAttachmentRepository, "listForPersona")
+
+    const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
+
+    expect(config!.attachments).toEqual([])
+    expect(list).not.toHaveBeenCalled()
   })
 })
