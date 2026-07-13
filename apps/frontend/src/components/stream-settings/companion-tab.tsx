@@ -128,7 +128,7 @@ export function CompanionTab({
 
       {/* Encrypted scratchpads always run the built-in Ariadne in the enclave
           regardless of the pointer, so the persona picker is plaintext-only. */}
-      {!isE2e && personas.length > 0 && (
+      {!isE2e && (
         <div className="space-y-2">
           <div className="space-y-1">
             <Label className="text-sm font-medium">Companion agent</Label>

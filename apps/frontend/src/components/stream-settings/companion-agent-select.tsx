@@ -127,10 +127,17 @@ export function CompanionAgentSelect({
   defaultOption,
   defaultBadges,
 }: CompanionAgentSelectProps) {
+  // An empty roster means the store hasn't hydrated yet (built-ins guarantee a
+  // real roster is never empty), so keep the trigger mounted at full size and
+  // disable it instead of unmounting — a section that pops in after mount
+  // shifts everything below it (INV-21). The value is withheld too: a draft's
+  // synthetic default row would otherwise flash "Default (Ariadne)" before the
+  // configured default resolves.
+  const hydrating = personas.length === 0
   return (
-    <Select value={value} onValueChange={onChange} disabled={disabled}>
+    <Select value={hydrating ? undefined : value} onValueChange={onChange} disabled={disabled || hydrating}>
       <SelectTrigger className={triggerClassName} aria-label="Companion agent">
-        <SelectValue placeholder="Select an agent" />
+        <SelectValue placeholder={hydrating ? "Loading agents…" : "Select an agent"} />
       </SelectTrigger>
       <SelectContent>
         {defaultOption && (
