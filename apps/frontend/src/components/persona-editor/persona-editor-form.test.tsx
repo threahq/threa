@@ -44,6 +44,7 @@ function config(overrides: Partial<PersonaConfigResponse> = {}): PersonaConfigRe
     overrideUpdatedAt: null,
     resolved: d,
     draft: null,
+    attachments: [],
     availableModels: [
       { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
       { id: "openrouter:anthropic/claude-opus-4.8", label: "Claude Opus 4.8" },
@@ -186,13 +187,11 @@ describe("PersonaEditorForm (restricted built-in editor)", () => {
   })
 
   it("debounces edits into a draft write", async () => {
-    const putDraft = vi
-      .spyOn(personasApi, "putDraft")
-      .mockResolvedValue({
-        patch: { enabledTools: ["send_message"] },
-        testStreamId: null,
-        updatedAt: "2026-07-11T00:00:00Z",
-      })
+    const putDraft = vi.spyOn(personasApi, "putDraft").mockResolvedValue({
+      patch: { enabledTools: ["send_message"] },
+      testStreamId: null,
+      updatedAt: "2026-07-11T00:00:00Z",
+    })
     const user = userEvent.setup()
     renderForm()
 
@@ -205,13 +204,11 @@ describe("PersonaEditorForm (restricted built-in editor)", () => {
   })
 
   it("a pending debounce does not resurrect the draft after Save (ghost-draft regression)", async () => {
-    const putDraft = vi
-      .spyOn(personasApi, "putDraft")
-      .mockResolvedValue({
-        patch: { enabledTools: ["send_message"] },
-        testStreamId: null,
-        updatedAt: "2026-07-11T00:00:00Z",
-      })
+    const putDraft = vi.spyOn(personasApi, "putDraft").mockResolvedValue({
+      patch: { enabledTools: ["send_message"] },
+      testStreamId: null,
+      updatedAt: "2026-07-11T00:00:00Z",
+    })
     const putOverride = vi
       .spyOn(personasApi, "putOverride")
       .mockResolvedValue({ persona: { id: "persona_system_ariadne" }, updatedAt: "2026-07-11T00:00:01Z" } as never)

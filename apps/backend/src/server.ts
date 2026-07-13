@@ -519,7 +519,12 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
   const agentFollowUpService = new AgentFollowUpService({ pool, workspaceSettingsService })
-  const personaConfigService = new PersonaConfigService({ pool, streamService, modelRegistry })
+  const personaConfigService = new PersonaConfigService({
+    pool,
+    streamService,
+    modelRegistry,
+    attachmentService,
+  })
   const streamBriefService = new StreamBriefService({ pool })
   const delegationService = new DelegationService({ pool })
   const draftsService = new DraftsService({ pool })

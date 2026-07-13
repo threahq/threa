@@ -7,6 +7,7 @@ import type { UserPreferencesService } from "../../user-preferences"
 import { MessageRepository, SharedMessageRepository, collectSharedMessageIds, type Message } from "../../messaging"
 import { UserRepository, type User } from "../../workspaces"
 import type { Persona } from "../persona-repository"
+import { PersonaAttachmentRepository, type PersonaAttachmentContentItem } from "../persona-attachment-repository"
 import { resolveActorNames } from "../actor-names"
 import { AttachmentRepository } from "../../attachments"
 import {
@@ -223,6 +224,18 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // injected into every turn. Threads inherit the root stream's brief — the
   // brief keys on the effective root, same rule as access (INV-62).
   const streamBrief = await StreamBriefRepository.findByStreamId(db, workspaceId, resolveBriefStreamId(stream))
+
+  // Persona standing knowledge (context attachments): the persona's uploaded
+  // files, joined to their extraction content in one pooled read (INV-56, no
+  // client held across the AI work below — INV-41). Only custom/personal
+  // personas own attachment rows; a built-in (`managed_by: system`) has no owned
+  // row to bind to, so it skips the query entirely (zero attachment reads). A
+  // draft-test turn resolves the SAVED persona's `id` here (drafts share it), so
+  // the block reflects the saved attachments without any special-casing.
+  const personaKnowledge: PersonaAttachmentContentItem[] =
+    persona.managedBy === "system"
+      ? []
+      : await PersonaAttachmentRepository.listForPersonaWithContent(db, workspaceId, persona.id)
 
   // Best-effort "Current Topic" highlight (§2.8 Q8): the topic the segmenter has
   // placed this turn in, surfaced over the contiguous window. Reads current
@@ -441,7 +454,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       followUp,
       previousSessionsBlock,
       streamBrief?.content ?? null,
-      resolvePersonaStyleSlots(persona)
+      resolvePersonaStyleSlots(persona),
+      personaKnowledge
     )
     if (turnDigestBlock) {
       systemPrompt += `\n\n${turnDigestBlock}`

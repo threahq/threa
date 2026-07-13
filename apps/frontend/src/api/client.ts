@@ -47,23 +47,38 @@ export async function parseApiError(
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ""
 
 /**
- * Multipart avatar upload (bots and personas). The shared `apiFetch` forces a
- * JSON content-type, which would clobber the multipart boundary the browser must
- * set for a `FormData` body — so this posts the form directly and returns the
- * parsed JSON for the caller to project onto its own response shape.
+ * Multipart single-file upload. The shared `apiFetch` forces a JSON content-type,
+ * which would clobber the multipart boundary the browser must set for a
+ * `FormData` body — so this posts the form directly and returns the parsed JSON
+ * for the caller to project onto its own response shape. `fieldName` is the
+ * multer field the endpoint reads (`avatar` for avatars, `file` for persona
+ * knowledge attachments).
  */
-export async function postAvatarUpload<T>(path: string, file: File): Promise<T> {
+export async function postMultipartFile<T>(
+  path: string,
+  file: File,
+  fieldName: string,
+  fallback: { code?: string; message?: string } = {}
+): Promise<T> {
   const formData = new FormData()
-  formData.append("avatar", file)
+  formData.append(fieldName, file)
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     credentials: "include",
     body: formData,
   })
   if (!response.ok) {
-    throw await parseApiError(response, { code: "AVATAR_UPLOAD_ERROR", message: "Failed to upload avatar" })
+    throw await parseApiError(response, fallback)
   }
   return (await response.json()) as T
+}
+
+/** Multipart avatar upload (bots and personas) — the `avatar`-field specialization. */
+export function postAvatarUpload<T>(path: string, file: File): Promise<T> {
+  return postMultipartFile<T>(path, file, "avatar", {
+    code: "AVATAR_UPLOAD_ERROR",
+    message: "Failed to upload avatar",
+  })
 }
 
 // Bound every request so a flaky/slow network can't leave a fetch hanging

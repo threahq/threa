@@ -862,6 +862,16 @@ export {
   type UpdatePersonaOverrideInput,
   type ForkPersonaInput,
   type UpdatePersonaCustomInput,
+  PERSONA_ATTACHMENT_MAX_COUNT,
+  PERSONA_ATTACHMENT_MAX_SIZE_BYTES,
+  PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
+  PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES,
+  isPersonaAttachmentMimeAllowed,
+  PERSONA_ATTACHMENT_PROCESSING_STATUSES,
+  type PersonaAttachmentProcessingStatus,
+  PERSONA_ATTACHMENT_CONTEXT_MODES,
+  type PersonaAttachmentContextMode,
+  type PersonaAttachmentItem,
 } from "./persona-config"
 
 // Feature flags (per-user rollout switches, managed from the backoffice)

@@ -485,6 +485,17 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/personas/:personaId/avatar", ...authed, avatarUpload, persona.uploadAvatar)
   app.delete("/api/workspaces/:workspaceId/personas/:personaId/avatar", ...authed, persona.removeAvatar)
   app.get("/api/workspaces/:workspaceId/personas/:personaId/avatar/:file", persona.serveAvatarFile)
+  // Custom/personal persona context attachments (persona-context-attachments):
+  // the bytes reach S3 through the shared composer upload transport (reserve →
+  // content); this JSON POST binds an already-uploaded attachment to the persona,
+  // so there is one frontend upload path (INV-35/37). The list rides the config
+  // GET — no separate GET route.
+  app.post("/api/workspaces/:workspaceId/personas/:personaId/attachments", ...authed, persona.bindAttachment)
+  app.delete(
+    "/api/workspaces/:workspaceId/personas/:personaId/attachments/:attachmentId",
+    ...authed,
+    persona.deleteAttachment
+  )
 
   // Sidebar config (per-user, per-workspace layout)
   app.get("/api/workspaces/:workspaceId/sidebar-config", ...authed, sidebarConfig.get)

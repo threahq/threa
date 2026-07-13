@@ -2,15 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Upload, X } from "lucide-react"
+import { FileText, Upload, X } from "lucide-react"
 import {
   getPersonaAvatarUrl,
+  isPersonaAttachmentMimeAllowed,
+  PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES,
+  PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
+  PERSONA_ATTACHMENT_MAX_COUNT,
+  PERSONA_ATTACHMENT_MAX_SIZE_BYTES,
   PERSONA_DESCRIPTION_MAX_CHARS,
   PERSONA_NAME_MAX_CHARS,
   PERSONA_SLOT_MAX_CHARS,
   PERSONA_SYSTEM_PROMPT_MAX_CHARS,
   type AgentToolName,
   type JSONContent,
+  type PersonaAttachmentContextMode,
   type PersonaConfigResponse,
 } from "@threa/types"
 import { ApiError } from "@/api/client"
@@ -38,9 +44,11 @@ import { PersonaAvatar } from "@/components/persona-avatar"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { cn } from "@/lib/utils"
+import { formatFileSize } from "@/lib/file-size"
 import {
   personaKeys,
   useArchivePersona,
+  useDeletePersonaAttachment,
   useRemovePersonaAvatar,
   useUpdatePersonaCustom,
   useUploadPersonaAvatar,
@@ -48,11 +56,25 @@ import {
 import { buildModelOptions, toCustomConfig, CUSTOM_EDITABLE_FIELDS } from "./persona-form"
 import type { SyncState } from "./persona-form"
 import { usePersonaDraftEditor } from "./use-persona-draft-editor"
+import { usePersonaKnowledgeUploads } from "./use-persona-knowledge-uploads"
 import { PersonaConflictBanner } from "./persona-conflict-banner"
 import { PersonaEditorFooter } from "./persona-editor-footer"
 import { ToolChecklist } from "./tool-checklist"
 
 const ESCALATION_NONE = "__none__"
+
+/** How a ready attachment's context mode reads in the row (INV-46 — words from the structured value). */
+const CONTEXT_MODE_LABEL: Record<PersonaAttachmentContextMode, string> = {
+  full: "In full",
+  summary: "Summary only",
+  name_only: "Name only",
+}
+
+/** The file input's `accept` — the persona-attachment mime allowlist (INV-33 source). */
+const PERSONA_ATTACHMENT_ACCEPT = [
+  ...PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES.map((prefix) => `${prefix}*`),
+  ...PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
+].join(",")
 
 /**
  * Narrow the 409's opaque `details.current` to a custom conflict at runtime — a
@@ -135,8 +157,16 @@ export function CustomPersonaEditor({
   const update = useUpdatePersonaCustom(workspaceId, personaId)
   const uploadAvatar = useUploadPersonaAvatar(workspaceId, personaId)
   const removeAvatar = useRemovePersonaAvatar(workspaceId, personaId)
+  const knowledge = usePersonaKnowledgeUploads(workspaceId, personaId)
+  const deleteAttachment = useDeletePersonaAttachment(workspaceId, personaId)
   const archive = useArchivePersona(workspaceId)
   const avatarInputRef = useRef<HTMLInputElement>(null)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
+  // The cap counts committed rows AND in-flight uploads, so rapid picks can't
+  // overrun it while binds are still landing.
+  const attachmentCount = config.attachments.length + knowledge.rows.length
+  const remainingSlots = PERSONA_ATTACHMENT_MAX_COUNT - attachmentCount
+  const atAttachmentCap = remainingSlots <= 0
 
   const modelOptions = useMemo(
     () => buildModelOptions(config.availableModels, [values.model, resolved.model]),
@@ -226,6 +256,33 @@ export function CustomPersonaEditor({
     event.target.value = ""
   }
   const avatarImageUrl = getPersonaAvatarUrl(workspaceId, resolved.avatarUrl, 64)
+
+  const handleAttachmentFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(event.target.files ?? [])
+    event.target.value = ""
+    if (picked.length === 0) return
+
+    // Pre-check against the same mime/size rules the server enforces so a doomed
+    // upload never starts (INV-11 — loud, no silent drops).
+    const valid: File[] = []
+    const rejected: string[] = []
+    for (const file of picked) {
+      if (!isPersonaAttachmentMimeAllowed(file.type)) rejected.push(`${file.name} (unsupported type)`)
+      else if (file.size > PERSONA_ATTACHMENT_MAX_SIZE_BYTES) rejected.push(`${file.name} (over 20MB)`)
+      else valid.push(file)
+    }
+    if (rejected.length > 0) toast.error(`Can't add ${rejected.join(", ")}`)
+
+    // Never overrun the cap: take the first N that fit and say what was dropped.
+    const accepted = valid.slice(0, Math.max(remainingSlots, 0))
+    if (accepted.length < valid.length) {
+      toast.error(`Only ${remainingSlots} more file${remainingSlots === 1 ? "" : "s"} can be added`)
+    }
+    knowledge.addFiles(accepted)
+  }
+  const handleRemoveAttachment = (attachmentId: string) => {
+    deleteAttachment.mutate(attachmentId, { onError: () => toast.error("Failed to remove file") })
+  }
 
   return (
     <div className="space-y-6">
@@ -373,6 +430,108 @@ export function CustomPersonaEditor({
         <p className="text-right text-[11px] text-muted-foreground">
           {values.brevityPrompt?.length ?? 0}/{PERSONA_SLOT_MAX_CHARS}
         </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Knowledge</Label>
+        <p className="text-xs text-muted-foreground">
+          Files the persona always carries in its context. Text, PDF, Word, Excel, or JSON.
+        </p>
+        {(config.attachments.length > 0 || knowledge.rows.length > 0) && (
+          <ul className="space-y-1.5">
+            {config.attachments.map((attachment) => (
+              <li
+                key={attachment.id}
+                className="flex items-center gap-3 rounded-lg border border-input bg-card px-3 py-2"
+              >
+                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{attachment.filename}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatFileSize(attachment.sizeBytes)}
+                    {attachment.processingStatus === "processing" && " · Processing…"}
+                    {attachment.processingStatus === "ready" &&
+                      attachment.contextMode &&
+                      ` · ${CONTEXT_MODE_LABEL[attachment.contextMode]}`}
+                    {attachment.processingStatus === "failed" && (
+                      <span className="text-destructive"> · Couldn&apos;t read this file</span>
+                    )}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-muted-foreground"
+                  aria-label={`Remove ${attachment.filename}`}
+                  disabled={deleteAttachment.isPending}
+                  onClick={() => handleRemoveAttachment(attachment.id)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </li>
+            ))}
+            {knowledge.rows.map((row) => (
+              <li key={row.jobId} className="flex items-center gap-3 rounded-lg border border-input bg-card px-3 py-2">
+                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{row.filename}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatFileSize(row.sizeBytes)}
+                    {row.status === "uploading" && ` · Uploading… ${Math.round(row.progress * 100)}%`}
+                    {row.status === "error" && (
+                      <span className="text-destructive"> · {row.error ?? "Upload failed"}</span>
+                    )}
+                  </p>
+                </div>
+                {row.status === "error" && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 shrink-0"
+                    onClick={() => knowledge.retry(row.jobId)}
+                  >
+                    Retry
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-muted-foreground"
+                  aria-label={`Cancel ${row.filename}`}
+                  onClick={() => knowledge.cancel(row.jobId)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => attachmentInputRef.current?.click()}
+            disabled={atAttachmentCap}
+          >
+            <Upload className="mr-1 h-3.5 w-3.5" />
+            Add file
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {attachmentCount} of {PERSONA_ATTACHMENT_MAX_COUNT} files
+          </span>
+        </div>
+        <input
+          ref={attachmentInputRef}
+          type="file"
+          multiple
+          accept={PERSONA_ATTACHMENT_ACCEPT}
+          className="hidden"
+          onChange={handleAttachmentFile}
+        />
       </div>
 
       <div className="space-y-1.5">

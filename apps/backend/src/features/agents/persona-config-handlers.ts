@@ -65,6 +65,14 @@ const putCustomSchema = z.object({
   expectedUpdatedAt: z.string().nullable(),
 })
 
+const attachmentParamsSchema = z.object({
+  attachmentId: z.string().min(1),
+})
+
+const bindAttachmentSchema = z.object({
+  attachmentId: z.string().min(1),
+})
+
 function personaNotFound(): HttpError {
   return new HttpError("Persona not found", { status: 404, code: "PERSONA_NOT_FOUND" })
 }
@@ -274,6 +282,40 @@ export function createPersonaConfigHandlers({ personaConfigService, avatarServic
         avatarService.deleteAvatarFiles(result.previousAvatarUrl)
       }
       res.json({ persona: result.persona, updatedAt: result.updatedAt })
+    },
+
+    /**
+     * POST /api/workspaces/:workspaceId/personas/:personaId/attachments
+     *
+     * Bind an already-uploaded workspace attachment as persona context knowledge
+     * (persona-context-attachments). JSON `{ attachmentId }` — the bytes reached S3
+     * through the shared composer upload transport (reserve → content), so this is
+     * the persona-ness step only, one upload path (INV-35/37). Custom/personal
+     * personas only (a built-in id 400s PERSONA_NOT_CUSTOM in the service).
+     */
+    async bindAttachment(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const personaId = req.params.personaId!
+
+      const { attachmentId } = validateRequest(bindAttachmentSchema, req.body)
+
+      const attachment = await personaConfigService.bindAttachment(
+        workspaceId,
+        personaId,
+        resolveCaller(req),
+        attachmentId
+      )
+      res.status(201).json({ attachment })
+    },
+
+    /** DELETE /api/workspaces/:workspaceId/personas/:personaId/attachments/:attachmentId */
+    async deleteAttachment(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const personaId = req.params.personaId!
+      const { attachmentId } = validateRequest(attachmentParamsSchema, req.params)
+
+      await personaConfigService.removeAttachment(workspaceId, personaId, attachmentId, resolveCaller(req))
+      res.status(204).end()
     },
 
     /** DELETE /api/workspaces/:workspaceId/personas/:personaId/avatar */

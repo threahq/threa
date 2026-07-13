@@ -479,4 +479,58 @@ describe("persona config avatar handlers", () => {
 
     expect(res.statusCode).toBe(404)
   })
+
+  it("POST attachment 400s when the body has no attachmentId (INV-55)", async () => {
+    const bindAttachment = mock(async () => ({}) as never)
+    const handlers = makeHandlers({ bindAttachment } as unknown as Partial<PersonaConfigService>)
+
+    await expect(
+      handlers.bindAttachment(fakeReq({ params: { personaId: CUSTOM_ID }, body: {} }), fakeRes())
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    expect(bindAttachment).not.toHaveBeenCalled()
+  })
+
+  it("POST attachment binds the attachment id and returns 201", async () => {
+    const item = {
+      id: "attach_1",
+      filename: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+      processingStatus: "processing",
+      contextMode: null,
+      position: 0,
+      createdAt: "2026-07-13T00:00:00.000Z",
+    }
+    const bindAttachment = mock(async () => item)
+    const handlers = makeHandlers({ bindAttachment } as unknown as Partial<PersonaConfigService>)
+    const req = fakeReq({ params: { personaId: CUSTOM_ID }, body: { attachmentId: "attach_1" } })
+    const res = fakeRes()
+
+    await handlers.bindAttachment(req, res)
+
+    expect(res.statusCode).toBe(201)
+    expect(res.body).toEqual({ attachment: item })
+    expect(bindAttachment).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, CALLER, "attach_1")
+  })
+
+  it("DELETE attachment authorizes via the service and 204s", async () => {
+    const removeAttachment = mock(async () => undefined)
+    const handlers = makeHandlers({ removeAttachment } as unknown as Partial<PersonaConfigService>)
+    const res = fakeRes()
+
+    await handlers.deleteAttachment(fakeReq({ params: { personaId: CUSTOM_ID, attachmentId: "att_1" } }), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(removeAttachment).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, "att_1", CALLER)
+  })
+
+  it("DELETE attachment 400s an empty attachmentId param (INV-55)", async () => {
+    const removeAttachment = mock(async () => undefined)
+    const handlers = makeHandlers({ removeAttachment } as unknown as Partial<PersonaConfigService>)
+
+    await expect(
+      handlers.deleteAttachment(fakeReq({ params: { personaId: CUSTOM_ID, attachmentId: "" } }), fakeRes())
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    expect(removeAttachment).not.toHaveBeenCalled()
+  })
 })

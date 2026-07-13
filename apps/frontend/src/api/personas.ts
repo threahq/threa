@@ -1,6 +1,7 @@
 import { api, postAvatarUpload } from "./client"
 import type {
   ForkPersonaInput,
+  PersonaAttachmentItem,
   PersonaConfigPatch,
   PersonaConfigResponse,
   PersonaConfigRevision,
@@ -113,6 +114,28 @@ export const personasApi = {
     return api.delete<{ persona: PersonaListItem; updatedAt: string }>(
       `/api/workspaces/${workspaceId}/personas/${personaId}/avatar`
     )
+  },
+
+  /**
+   * Bind an already-uploaded workspace attachment to a custom/personal persona as
+   * context knowledge (persona-context-attachments). The bytes reach S3 through the
+   * shared composer upload transport (reserve → content); this is the persona-ness
+   * step only, so there is ONE frontend upload path (INV-35/37). Returns the created
+   * {@link PersonaAttachmentItem} (`processingStatus` starts `processing` until
+   * extraction lands). A mime/size/cap/settle rejection throws an `ApiError` whose
+   * message names the constraint (INV-11).
+   */
+  async bindAttachment(workspaceId: string, personaId: string, attachmentId: string): Promise<PersonaAttachmentItem> {
+    const { attachment } = await api.post<{ attachment: PersonaAttachmentItem }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}/attachments`,
+      { attachmentId }
+    )
+    return attachment
+  },
+
+  /** Remove a persona context attachment (hard delete — the file is unbound to any message). */
+  deleteAttachment(workspaceId: string, personaId: string, attachmentId: string): Promise<void> {
+    return api.delete<void>(`/api/workspaces/${workspaceId}/personas/${personaId}/attachments/${attachmentId}`)
   },
 
   /**

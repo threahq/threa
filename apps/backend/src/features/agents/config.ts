@@ -34,6 +34,25 @@ export { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "@threa/types"
 export const MAX_FOLLOW_UP_HORIZON_DAYS = 30
 
 /**
+ * Prompt budgets for the persona `## Knowledge` block (persona context
+ * attachments, decision 6). SERVER-ONLY — these bound how much extracted text a
+ * persona's standing files inject into the system prompt and never cross the
+ * wire, so they live in the agents feature config next to the prompt code
+ * (INV-33/44), not in `@threa/types`.
+ *
+ * `PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS`: a single file's full extracted
+ * text is inlined verbatim only up to this length; a larger file degrades to its
+ * (short) extraction summary so one big upload can't dominate the prompt.
+ *
+ * `PERSONA_ATTACHMENT_BLOCK_MAX_CHARS`: the whole block's budget across all
+ * files. The file that crosses it is truncated with an explicit `…[truncated]`
+ * marker and later files degrade to summary-only — a file is never silently
+ * dropped (the persona should know what it can't fully see).
+ */
+export const PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS = 8_000
+export const PERSONA_ATTACHMENT_BLOCK_MAX_CHARS = 24_000
+
+/**
  * Tools stripped from a `draft_test` turn (persona editor test-drive, roadmap
  * 7.1). A test chat runs the candidate persona verbatim so the admin judges its
  * real behavior — but its scratchpad is ephemeral (archived on discard, memory
