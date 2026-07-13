@@ -55,7 +55,14 @@ export { useDraftMessage, getDraftMessageKey } from "./use-draft-message"
 
 export { useStashedDrafts, type UseStashedDraftsResult, type CachedDraft } from "./use-stashed-drafts"
 
-export { useStashComposer, type UseStashComposerResult } from "./use-stash-composer"
+export { useStashComposer, useStashParamDraftRow, type UseStashComposerResult } from "./use-stash-composer"
+
+export {
+  useScopeDraftPreview,
+  useBoardSubtopicDraftIndex,
+  type ScopeDraftPreview,
+  type SubtopicDraftEntry,
+} from "./use-scope-draft-preview"
 
 export {
   useDecryptedDraftPreviews,

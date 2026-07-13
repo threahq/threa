@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { Paperclip, Pencil } from "lucide-react"
 import { useQuoteReply, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
 import { useReplyToBoardPost } from "@/hooks/use-conversations"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useScopeDraftPreview, type ScopeDraftPreview } from "@/hooks"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
+import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import type { BoardPost } from "@threa/types"
 
 // Resting-affordance state. `draft` signals a persisted-but-collapsed reply, so
@@ -14,6 +17,29 @@ type RestingState = "idle" | "draft"
 const RESTING_LABEL: Record<RestingState, string> = {
   idle: "Write a reply…",
   draft: "Continue reply…",
+}
+
+/**
+ * The resting affordance's content when the scope holds an unsent draft: the
+ * draft's own first line, mirroring the mobile composer's collapsed preview
+ * bar — the draft is visible in place instead of hiding behind a generic
+ * label (discoverability ruling, Kris 2026-07-13). Shared by the bottom-reply
+ * button here and the branch-tail affordance.
+ */
+export function DraftRestingPreview({ draft }: { draft: ScopeDraftPreview }) {
+  return (
+    <span className="flex w-full min-w-0 items-center gap-2">
+      <Pencil aria-label="Unsent draft" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      {draft.preview ? (
+        <span className="min-w-0 flex-1 truncate text-foreground">{draft.preview}</span>
+      ) : (
+        <span className="flex min-w-0 flex-1 items-center gap-1 truncate text-muted-foreground">
+          <Paperclip className="h-3.5 w-3.5 shrink-0" />
+          {draft.attachmentCount} attachment{draft.attachmentCount === 1 ? "" : "s"}
+        </span>
+      )}
+    </span>
+  )
 }
 
 interface BoardReplyComposerProps {
@@ -41,6 +67,15 @@ interface BoardReplyComposerProps {
    * form keeps its context by position.
    */
   contextChip?: string
+  /**
+   * Thread-composer semantics for a dedicated conversation view (the panel):
+   * on desktop the composer is permanently mounted — only the open state, like
+   * a thread's — while mobile keeps its collapsed⇄focused pair. Off (the
+   * default) for board cards, where composers aren't kept mounted per card,
+   * and for the inline sub-conversation affordances (Kris's composer ruling,
+   * 2026-07-13).
+   */
+  desktopAlwaysOpen?: boolean
 }
 
 /**
@@ -56,6 +91,14 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
   const [resting, setResting] = useState<RestingState>("idle")
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const isMobile = useIsMobile()
+  const alwaysOpen = (props.desktopAlwaysOpen ?? false) && !isMobile
+
+  // The scope's unsent draft, advertised on the resting button and — when it
+  // isn't checked out on this device (stashed / roamed) — checked out by the
+  // opening form so the click surfaces exactly what the button showed.
+  const scopeDraft = useScopeDraftPreview(props.workspaceId, boardReplyDraftKey(props.post.conversation.id))
+  const restoreStashedId = scopeDraft && !scopeDraft.isCheckedOut ? scopeDraft.draftId : null
 
   const { openReplySignal } = props
   useEffect(() => {
@@ -97,6 +140,25 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     setOpen(false)
   }, [])
 
+  // Always-open: the form never collapses — after a send / Escape / blur the
+  // editor simply stays, like a thread composer. Open-requests become focus
+  // requests, and the drafts-explorer `?stash=` restore is consumed by the
+  // mounted form's own URL effect (no mount to hang it on).
+  const noopClose = useCallback(() => {}, [])
+  if (alwaysOpen) {
+    return (
+      <BoardReplyComposerForm
+        {...props}
+        onClose={noopClose}
+        pendingQuote={pendingQuote}
+        onQuoteConsumed={onQuoteConsumed}
+        restoreStashedId={null}
+        autoFocus={false}
+        focusSignal={openReplySignal}
+      />
+    )
+  }
+
   if (!open) {
     return (
       <button
@@ -108,16 +170,26 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
         }}
         className="mt-3 flex w-full min-w-0 items-center rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        {/* No leading icon: it would misalign the resting text against the open
-            composer's placeholder, and a state-dependent icon would shift the
-            label (INV-21). */}
-        <span className="truncate">{RESTING_LABEL[resting]}</span>
+        {/* With a draft: the draft's own first line (mobile collapsed-composer
+            presentation). Without: the plain invitation — no leading icon, so
+            the resting text aligns with the open composer's placeholder. */}
+        {scopeDraft ? (
+          <DraftRestingPreview draft={scopeDraft} />
+        ) : (
+          <span className="truncate">{RESTING_LABEL[resting]}</span>
+        )}
       </button>
     )
   }
 
   return (
-    <BoardReplyComposerForm {...props} onClose={close} pendingQuote={pendingQuote} onQuoteConsumed={onQuoteConsumed} />
+    <BoardReplyComposerForm
+      {...props}
+      onClose={close}
+      pendingQuote={pendingQuote}
+      onQuoteConsumed={onQuoteConsumed}
+      restoreStashedId={restoreStashedId}
+    />
   )
 }
 
@@ -130,10 +202,16 @@ function BoardReplyComposerForm({
   pendingQuote,
   onQuoteConsumed,
   contextChip,
+  restoreStashedId,
+  autoFocus,
+  focusSignal,
 }: BoardReplyComposerProps & {
   onClose: (opts?: { refocus?: boolean; hadContent?: boolean }) => void
   pendingQuote: QuoteReplyData | null
   onQuoteConsumed: () => void
+  restoreStashedId: string | null
+  autoFocus?: boolean
+  focusSignal?: number
 }) {
   const reply = useReplyToBoardPost(workspaceId)
   const isMobile = useIsMobile()
@@ -160,12 +238,16 @@ function BoardReplyComposerForm({
       workspaceId={workspaceId}
       streamId={streamId}
       memoAnchorStreamId={streamId}
-      draftKey={`board:reply:${post.conversation.id}`}
+      draftKey={boardReplyDraftKey(post.conversation.id)}
       placeholder="Write a reply…"
       contextChip={isMobile && contextChip ? `Replying in ${contextChip}` : undefined}
       pendingQuote={pendingQuote}
       onQuoteConsumed={onQuoteConsumed}
       rejectE2e="Encrypted notes can't be replied to from the board yet — open the note to reply there."
+      scheduleTarget={{ streamId, conversationId: post.conversation.id }}
+      restoreStashedIdOnMount={restoreStashedId}
+      autoFocus={autoFocus}
+      focusSignal={focusSignal}
       onSubmit={onSubmit}
       onClose={onClose}
     />

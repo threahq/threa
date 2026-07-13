@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
+import { useLiveQuery } from "dexie-react-hooks"
+import { db } from "@/db"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { restoreStashedDraftToComposer, stashLoadedDraft } from "./use-draft-message"
 import { useStashedDrafts, type CachedDraft } from "./use-stashed-drafts"
@@ -31,6 +33,22 @@ export interface UseStashComposerResult {
  * plaintext ever leaving memory (E2EE-4) — so the pile works the same for
  * plaintext and E2E streams with no special-casing here.
  */
+/**
+ * The draft row named by the URL's `?stash=` param, for surfaces that must
+ * decide whether a deep-linked restore is theirs to host (e.g. a board card /
+ * conversation panel auto-opening a branch-tail composer). A Dexie point query
+ * on the one id — it re-fires only when that row changes, so it's cheap enough
+ * to mount per board card. Returns null when there is no param, the row hasn't
+ * synced yet, or it belongs to another workspace.
+ */
+export function useStashParamDraftRow(workspaceId: string): { draftId: string; scope: string } | null {
+  const [searchParams] = useSearchParams()
+  const draftId = searchParams.get("stash")
+  const row = useLiveQuery(() => (draftId ? db.drafts.get(draftId) : undefined), [draftId])
+  if (!draftId || !row || row.workspaceId !== workspaceId) return null
+  return { draftId, scope: row.scope }
+}
+
 export function useStashComposer(
   composer: DraftComposerState,
   workspaceId: string,
@@ -96,6 +114,12 @@ export function useStashComposer(
   useEffect(() => {
     const stashId = searchParams.get("stash")
     if (!stashId || !scope || !composer.isLoaded) return
+    // Only the host whose scope owns the row consumes the param. Several hosts
+    // can mount this hook at once (stream composer + thread panel + inline
+    // reply forms); restoring a foreign id would point THIS scope's loaded
+    // draft at another scope's row, splitting one draft across two composers.
+    // Skipping (without stripping) leaves the param for the owning host.
+    if (!stashedDrafts.drafts.some((draft) => draft.id === stashId)) return
     if (pendingStashRestoreRef.current === stashId) return
 
     pendingStashRestoreRef.current = stashId
@@ -112,7 +136,7 @@ export function useStashComposer(
         console.error("Failed to auto-restore stashed draft from URL", err)
       }
     )
-  }, [searchParams, setSearchParams, scope, composer.isLoaded, handleRestoreStashed])
+  }, [searchParams, setSearchParams, scope, composer.isLoaded, stashedDrafts.drafts, handleRestoreStashed])
 
   return {
     drafts: stashedDrafts.drafts,
