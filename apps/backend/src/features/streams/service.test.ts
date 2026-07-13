@@ -1741,10 +1741,27 @@ describe("StreamService.updateCompanionMode persona validation", () => {
 
 describe("StreamService.addBotToStream", () => {
   const mockGrantAccess = spyOn(BotChannelAccessRepository, "grantAccess")
+  const mockFindBotById = spyOn(BotRepository, "findById")
   let service: StreamService
 
   beforeEach(() => {
     mockFindById.mockReset()
+    mockFindBotById.mockReset().mockResolvedValue({
+      id: "bot_1",
+      workspaceId: "ws_1",
+      apiKeyId: null,
+      type: "personal",
+      ownerUserId: "usr_1",
+      traits: [],
+      slug: "kris-bot",
+      name: "Kris's Bot",
+      description: null,
+      avatarEmoji: null,
+      avatarUrl: null,
+      archivedAt: null,
+      createdAt: new Date("2026-07-13T00:00:00Z"),
+      updatedAt: new Date("2026-07-13T00:00:00Z"),
+    } as never)
     mockGrantAccess.mockReset().mockResolvedValue(true)
     mockInsertEvent.mockReset().mockResolvedValue({
       id: "evt_1",
@@ -1776,7 +1793,19 @@ describe("StreamService.addBotToStream", () => {
     expect(mockInsertOutbox).toHaveBeenCalledWith(
       {},
       "stream:member_added",
-      expect.objectContaining({ streamId: "stream_dm", memberId: "bot_1" })
+      expect.objectContaining({
+        streamId: "stream_dm",
+        memberId: "bot_1",
+        // Serialized bot metadata rides the event so members whose roster
+        // doesn't hold this personal bot can render the new participant.
+        bot: expect.objectContaining({
+          id: "bot_1",
+          type: "personal",
+          ownerUserId: "usr_1",
+          name: "Kris's Bot",
+          createdAt: "2026-07-13T00:00:00.000Z",
+        }),
+      })
     )
   })
 

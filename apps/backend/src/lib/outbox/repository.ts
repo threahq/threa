@@ -286,6 +286,12 @@ export interface StreamMemberAddedOutboxPayload extends StreamScopedPayload {
   memberId: string
   stream: Stream
   event: StreamEvent
+  /**
+   * Present when the added member is a bot: the receiving client may not have
+   * the bot in its roster (personal bots are visibility-scoped), so the event
+   * carries the metadata needed to render it.
+   */
+  bot?: WireBot
 }
 
 export interface StreamMemberRemovedOutboxPayload extends StreamScopedPayload {

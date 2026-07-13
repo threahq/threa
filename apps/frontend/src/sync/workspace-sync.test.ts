@@ -1449,6 +1449,71 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("upserts carried bot metadata when a bot joins a stream (personal bots are outside other members' rosters)", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ users: [makeWorkspaceUser()], streams: [], streamMemberships: [], bots: [] })
+    )
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+
+    const bot = {
+      id: "bot_friend",
+      workspaceId: "ws_1",
+      type: "personal",
+      ownerUserId: "member_2",
+      traits: [],
+      slug: "kris-bot",
+      name: "Kris's Bot",
+      description: null,
+      avatarEmoji: null,
+      avatarUrl: null,
+      archivedAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    emit("stream:member_added", {
+      workspaceId: "ws_1",
+      streamId: "stream_dm_bot",
+      memberId: "bot_friend",
+      stream: {
+        id: "stream_dm_bot",
+        workspaceId: "ws_1",
+        type: "dm",
+        displayName: null,
+        slug: null,
+        description: null,
+        visibility: "private",
+        parentStreamId: null,
+        parentMessageId: null,
+        rootStreamId: null,
+        companionMode: "off",
+        companionPersonaId: null,
+        createdBy: "member_2",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        archivedAt: null,
+      },
+      event: { id: "evt_bot", streamId: "stream_dm_bot", eventType: "member_added", actorType: "bot" },
+      bot,
+    })
+
+    await Promise.resolve()
+
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached?.bots).toContainEqual(expect.objectContaining({ id: "bot_friend", name: "Kris's Bot" }))
+    expect(await db.bots.get("bot_friend")).toMatchObject({ id: "bot_friend", name: "Kris's Bot" })
+
+    cleanup()
+  })
+
   it("subscribes the current user when they are added to a stream at runtime", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(
