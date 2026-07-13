@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react"
+import { useCallback, useLayoutEffect, useRef, useState } from "react"
 import { persistComposerHeight } from "@/lib/composer-height-storage"
 
 interface UseComposerHeightPublishOptions {
@@ -27,8 +27,10 @@ interface UseComposerHeightPublishOptions {
 }
 
 /**
- * Measures the element referenced by `ref` and publishes its height (in px) as
- * `--composer-height` on the nearest `[data-editor-zone]` ancestor. Scrollable
+ * Returns a callback ref that measures its element and publishes the height (in
+ * px) as `--composer-height` on the nearest `[data-editor-zone]` ancestor. A
+ * callback ref is required because React can replace the composer DOM node while
+ * preserving its parent component and hooks. Scrollable
  * siblings inside the same editor zone can consume the variable (e.g.
  * plain-scroll `padding-bottom`) to reserve space for the floating composer
  * pill.
@@ -46,17 +48,19 @@ interface UseComposerHeightPublishOptions {
  * fallback grew the timeline's footer spacer mid-paint and caused Virtuoso
  * to shift content up on every reload.
  */
-export function useComposerHeightPublish(
-  ref: React.RefObject<HTMLElement | null>,
-  { active = true, onHeightChange }: UseComposerHeightPublishOptions = {}
-): void {
+export function useComposerHeightPublish({
+  active = true,
+  onHeightChange,
+}: UseComposerHeightPublishOptions = {}): React.RefCallback<HTMLElement> {
+  const [el, setEl] = useState<HTMLElement | null>(null)
+  const ref = useCallback((node: HTMLElement | null) => setEl(node), [])
+
   // Held in a ref so a new callback identity each render doesn't tear down and
   // re-create the ResizeObserver (which would re-fire the initial measure).
   const onHeightChangeRef = useRef(onHeightChange)
   onHeightChangeRef.current = onHeightChange
 
   useLayoutEffect(() => {
-    const el = ref.current
     if (!el || !active) return
 
     const zone = el.closest<HTMLElement>("[data-editor-zone]")
@@ -119,5 +123,7 @@ export function useComposerHeightPublish(
       // Intentionally leave --composer-height set so stream navigation
       // starts with a reasonable approximation instead of falling back to 0px.
     }
-  }, [ref, active])
+  }, [el, active])
+
+  return ref
 }

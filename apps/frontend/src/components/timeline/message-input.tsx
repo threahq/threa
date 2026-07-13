@@ -515,7 +515,10 @@ function MessageInputComponent({
   const connectionState = useConnectionState()
   const isOffline = connectionState === "offline"
 
-  const selfRef = useRef<HTMLDivElement>(null)
+  const composerHeightRef = useComposerHeightPublish({
+    active: !expanded,
+    onHeightChange: onComposerHeightChange,
+  })
 
   // Reset local state on stream change (e.g., draft promotion) without remounting
   useEffect(() => {
@@ -531,12 +534,6 @@ function MessageInputComponent({
 
   const handleExpandClick = useCallback(() => setExpanded(true), [])
   const handleCollapse = useCallback(() => setExpanded(false), [])
-
-  // Publish the floating composer's measured height so the scroll area can dock
-  // above it. Disabled while the overlay is open — the inline composer is hidden
-  // then, so it has no height to publish. `onHeightChange` re-anchors the timeline
-  // to the bottom when the composer settles to a new height.
-  useComposerHeightPublish(selfRef, { active: !expanded, onHeightChange: onComposerHeightChange })
 
   // Stream label for the fullscreen overlay header (the post's destination).
   const overlayStreamName = useStreamName(workspaceId, streamId)
@@ -740,11 +737,11 @@ function MessageInputComponent({
 
   if (disabled && disabledReason) {
     // Use the same floating shell as the live composer so the banner anchors to
-    // the bottom and publishes its height to `--composer-height` (via selfRef).
+    // the bottom and publishes its height to `--composer-height`.
     // A plain in-flow div lands at the top of the absolutely-positioned stream
     // area and overlaps the first messages instead.
     return (
-      <FloatingComposerShell ref={selfRef} data-message-composer-root>
+      <FloatingComposerShell ref={composerHeightRef} data-message-composer-root>
         <div className="flex items-center justify-center py-3 px-4 rounded-md bg-muted/50">
           <p className="text-sm text-muted-foreground text-center">{disabledReason}</p>
         </div>
@@ -903,7 +900,7 @@ function MessageInputComponent({
 
       {/* Inline composer — hidden while expanded. Mobile inline editing hides the
           composer via the body-level inline-edit presence attribute. */}
-      <FloatingComposerShell ref={selfRef} hidden={expanded} data-message-composer-root>
+      <FloatingComposerShell ref={composerHeightRef} hidden={expanded} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {!expanded && conversationReplyStrip}
         {!expanded && <MessageComposer {...composerProps} autoFocus={autoFocus} onExpandClick={handleExpandClick} />}
