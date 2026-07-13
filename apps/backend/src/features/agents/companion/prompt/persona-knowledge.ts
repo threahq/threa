@@ -1,24 +1,10 @@
 import type { PersonaAttachmentContentItem } from "../../persona-attachment-repository"
-import { PERSONA_ATTACHMENT_BLOCK_MAX_CHARS, PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS } from "../../config"
-
-const TRUNCATION_MARKER = "…[truncated]"
-const PROCESSING_NOTE = "(processing — content not yet available)"
-
-/**
- * Pick the body text for one file before the block budget is spent (decision 6):
- * the full extracted text when it exists and fits the per-file inline cap, else
- * the (short) extraction summary, else a note that the extraction hasn't landed
- * yet.
- */
-function selectBody(item: PersonaAttachmentContentItem): string {
-  if (item.fullText && item.fullText.length <= PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS) {
-    return item.fullText
-  }
-  if (item.summary) {
-    return item.summary
-  }
-  return PROCESSING_NOTE
-}
+import {
+  planPersonaKnowledge,
+  PERSONA_KNOWLEDGE_PROCESSING_NOTE,
+  PERSONA_KNOWLEDGE_TRUNCATION_MARKER,
+  type PersonaKnowledgePlan,
+} from "./persona-knowledge-plan"
 
 /**
  * Cut `body` to at most `remaining` chars and mark the cut explicitly. When the
@@ -26,8 +12,29 @@ function selectBody(item: PersonaAttachmentContentItem): string {
  * file's heading still appears — never a silently dropped file.
  */
 function truncateWithMarker(body: string, remaining: number): string {
-  if (remaining <= 0) return TRUNCATION_MARKER
-  return `${body.slice(0, remaining).trimEnd()} ${TRUNCATION_MARKER}`
+  if (remaining <= 0) return PERSONA_KNOWLEDGE_TRUNCATION_MARKER
+  return `${body.slice(0, remaining).trimEnd()} ${PERSONA_KNOWLEDGE_TRUNCATION_MARKER}`
+}
+
+/**
+ * Render one file's body per its plan, slicing the ACTUAL content the planner
+ * budgeted by length. The planner already picked the source and the cut point, so
+ * this only materializes it — the two stay in lockstep because the plan was
+ * computed from these same lengths.
+ */
+function renderBody(item: PersonaAttachmentContentItem, plan: PersonaKnowledgePlan): string {
+  switch (plan.source) {
+    case "fullText":
+      return plan.truncateAt == null ? item.fullText! : truncateWithMarker(item.fullText!, plan.truncateAt)
+    case "summary":
+      return plan.truncateAt == null ? item.summary! : truncateWithMarker(item.summary!, plan.truncateAt)
+    case "processingNote":
+      return plan.truncateAt == null
+        ? PERSONA_KNOWLEDGE_PROCESSING_NOTE
+        : truncateWithMarker(PERSONA_KNOWLEDGE_PROCESSING_NOTE, plan.truncateAt)
+    case "marker":
+      return PERSONA_KNOWLEDGE_TRUNCATION_MARKER
+  }
 }
 
 /**
@@ -36,38 +43,22 @@ function truncateWithMarker(body: string, remaining: number): string {
  * `""` for a persona with no attachments so the composed prompt is byte-identical
  * to before the feature — the caller appends the result unconditionally.
  *
- * Budget behavior ({@link PERSONA_ATTACHMENT_BLOCK_MAX_CHARS}): files inline
- * their full text (up to the per-file cap) until one crosses the block budget;
- * that file is truncated with an explicit `…[truncated]` marker, and every file
- * after it degrades to its short summary (or the marker when it has none). A
- * large early upload therefore can't starve the rest, and no file vanishes
- * without a trace — the persona always sees at least each filename plus a gist.
+ * The per-file body selection and the cumulative block budget live entirely in
+ * {@link planPersonaKnowledge}; this function only materializes the plan against
+ * the actual content, so the config payload's `contextMode` (planned from the
+ * same lengths) can never disagree with what the prompt actually carries.
  */
 export function buildPersonaKnowledgeSection(items: PersonaAttachmentContentItem[]): string {
   if (items.length === 0) return ""
 
-  const sections: string[] = []
-  let usedChars = 0
-  let budgetCrossed = false
+  const plans = planPersonaKnowledge(
+    items.map((item) => ({
+      fullTextChars: item.fullText?.length ?? null,
+      summaryChars: item.summary?.length ?? null,
+    }))
+  )
 
-  for (const item of items) {
-    let body: string
-    if (budgetCrossed) {
-      // Budget already spent by an earlier file: degrade to the short summary so
-      // this file's gist still lands; the marker stands in when it has none.
-      body = item.summary ?? TRUNCATION_MARKER
-    } else {
-      body = selectBody(item)
-      const remaining = PERSONA_ATTACHMENT_BLOCK_MAX_CHARS - usedChars
-      if (body.length > remaining) {
-        body = truncateWithMarker(body, remaining)
-        budgetCrossed = true
-      } else {
-        usedChars += body.length
-      }
-    }
-    sections.push(`### ${item.filename}\n\n${body}`)
-  }
+  const sections = items.map((item, index) => `### ${item.filename}\n\n${renderBody(item, plans[index]!)}`)
 
   return `
 

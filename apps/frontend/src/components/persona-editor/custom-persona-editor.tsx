@@ -14,6 +14,7 @@ import {
   PERSONA_SYSTEM_PROMPT_MAX_CHARS,
   type AgentToolName,
   type JSONContent,
+  type PersonaAttachmentContextMode,
   type PersonaConfigResponse,
 } from "@threa/types"
 import { ApiError } from "@/api/client"
@@ -59,6 +60,13 @@ import { PersonaEditorFooter } from "./persona-editor-footer"
 import { ToolChecklist } from "./tool-checklist"
 
 const ESCALATION_NONE = "__none__"
+
+/** How a ready attachment's context mode reads in the row (INV-46 — words from the structured value). */
+const CONTEXT_MODE_LABEL: Record<PersonaAttachmentContextMode, string> = {
+  full: "In full",
+  summary: "Summary only",
+  name_only: "Name only",
+}
 
 /** The file input's `accept` — the persona-attachment mime allowlist (INV-33 source). */
 const PERSONA_ATTACHMENT_ACCEPT = [
@@ -424,6 +432,9 @@ export function CustomPersonaEditor({
                   <p className="text-xs text-muted-foreground">
                     {formatFileSize(attachment.sizeBytes)}
                     {attachment.processingStatus === "processing" && " · Processing…"}
+                    {attachment.processingStatus === "ready" &&
+                      attachment.contextMode &&
+                      ` · ${CONTEXT_MODE_LABEL[attachment.contextMode]}`}
                     {attachment.processingStatus === "failed" && (
                       <span className="text-destructive"> · Couldn&apos;t read this file</span>
                     )}

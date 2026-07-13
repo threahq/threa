@@ -869,6 +869,8 @@ export {
   isPersonaAttachmentMimeAllowed,
   PERSONA_ATTACHMENT_PROCESSING_STATUSES,
   type PersonaAttachmentProcessingStatus,
+  PERSONA_ATTACHMENT_CONTEXT_MODES,
+  type PersonaAttachmentContextMode,
   type PersonaAttachmentItem,
 } from "./persona-config"
 

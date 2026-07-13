@@ -34,6 +34,7 @@ import { buildUploadParams, type AttachmentService } from "../attachments"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { attachmentId as generateAttachmentId } from "../../lib/id"
 import { PersonaAttachmentRepository, type PersonaAttachmentListItem } from "./persona-attachment-repository"
+import { planPersonaKnowledge, type PersonaKnowledgePlan } from "./companion/prompt/persona-knowledge-plan"
 import type { StreamService } from "../streams"
 import { AgentConfigOverrideRepository, type AgentConfigOverrideDetail } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
@@ -132,13 +133,18 @@ function personaAttachmentProcessingStatus(item: PersonaAttachmentListItem): Per
   return "processing"
 }
 
-function toPersonaAttachmentItem(item: PersonaAttachmentListItem): PersonaAttachmentItem {
+function toPersonaAttachmentItem(item: PersonaAttachmentListItem, plan: PersonaKnowledgePlan): PersonaAttachmentItem {
+  const processingStatus = personaAttachmentProcessingStatus(item)
   return {
     id: item.attachmentId,
     filename: item.filename,
     mimeType: item.mimeType,
     sizeBytes: item.sizeBytes,
-    processingStatus: personaAttachmentProcessingStatus(item),
+    processingStatus,
+    // How this file is referenced in the persona's context (INV-46). Meaningless
+    // until extraction lands — there is no content to plan a mode from — so it is
+    // null for any non-ready row.
+    contextMode: processingStatus === "ready" ? plan.mode : null,
     position: item.position,
     createdAt: item.createdAt.toISOString(),
   }
@@ -541,7 +547,13 @@ export class PersonaConfigService {
   /** A custom/personal persona's context attachments in position order, as wire items. */
   private async listAttachments(workspaceId: string, personaId: string): Promise<PersonaAttachmentItem[]> {
     const rows = await PersonaAttachmentRepository.listForPersona(this.pool, workspaceId, personaId)
-    return rows.map(toPersonaAttachmentItem)
+    // Derive each row's context mode from the SAME budget planner the dispatch
+    // prompt uses, fed the extraction lengths in position order (INV-29/43) — the
+    // label the editor shows can't drift from what the prompt actually carries.
+    const plans = planPersonaKnowledge(
+      rows.map((row) => ({ fullTextChars: row.fullTextChars, summaryChars: row.summaryChars }))
+    )
+    return rows.map((row, index) => toPersonaAttachmentItem(row, plans[index]!))
   }
 
   /** The caller's own draft for a persona, with a stale/archived test-stream pointer collapsed to null. */
@@ -1197,8 +1209,10 @@ export class PersonaConfigService {
       filename: file.filename,
       mimeType: file.mimeType,
       sizeBytes: file.sizeBytes,
-      // Extraction was just dispatched via the outbox event — not ready yet.
+      // Extraction was just dispatched via the outbox event — not ready yet, so
+      // no content mode can be planned.
       processingStatus: "processing",
+      contextMode: null,
       position: binding.position,
       createdAt: binding.createdAt.toISOString(),
     }

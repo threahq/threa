@@ -39,15 +39,19 @@ interface PersonaAttachmentListRow {
   created_at: Date
   processing_status: string
   has_extraction: boolean
-  has_summary: boolean
+  full_text_chars: number | null
+  summary_chars: number | null
 }
 
 /**
  * One bound attachment joined to its file metadata and extraction readiness, in
  * a single round trip (INV-56). `processingStatus` is the underlying
- * attachment's own pipeline state; `hasExtraction`/`hasSummary` report whether
- * the extraction row has landed (and carries a non-empty summary) so the service
- * can derive the structured wire status without a second query.
+ * attachment's own pipeline state; `hasExtraction` reports whether the extraction
+ * row has landed (so the service can derive the structured `ready`/`processing`/
+ * `failed` wire status). `fullTextChars`/`summaryChars` are the extracted content
+ * LENGTHS only (never the text — that must not ride the config wire): the config
+ * fold feeds them to the same budget planner the prompt uses so each row's
+ * `contextMode` is derived by identical logic (INV-29/43).
  */
 export interface PersonaAttachmentListItem {
   attachmentId: string
@@ -58,7 +62,8 @@ export interface PersonaAttachmentListItem {
   createdAt: Date
   processingStatus: ProcessingStatus
   hasExtraction: boolean
-  hasSummary: boolean
+  fullTextChars: number | null
+  summaryChars: number | null
 }
 
 function mapListRow(row: PersonaAttachmentListRow): PersonaAttachmentListItem {
@@ -71,7 +76,8 @@ function mapListRow(row: PersonaAttachmentListRow): PersonaAttachmentListItem {
     createdAt: row.created_at,
     processingStatus: row.processing_status as ProcessingStatus,
     hasExtraction: row.has_extraction,
-    hasSummary: row.has_summary,
+    fullTextChars: row.full_text_chars,
+    summaryChars: row.summary_chars,
   }
 }
 
@@ -166,7 +172,8 @@ export const PersonaAttachmentRepository = {
         pa.created_at,
         a.processing_status,
         (e.attachment_id IS NOT NULL) AS has_extraction,
-        (e.summary IS NOT NULL AND e.summary <> '') AS has_summary
+        LENGTH(e.full_text) AS full_text_chars,
+        LENGTH(e.summary) AS summary_chars
       FROM persona_attachments pa
       JOIN attachments a ON a.id = pa.attachment_id AND a.workspace_id = pa.workspace_id
       LEFT JOIN attachment_extractions e ON e.attachment_id = pa.attachment_id

@@ -497,6 +497,7 @@ describe("persona config avatar handlers", () => {
       mimeType: "text/plain",
       sizeBytes: 12,
       processingStatus: "processing",
+      contextMode: null,
       position: 0,
       createdAt: "2026-07-13T00:00:00.000Z",
     }

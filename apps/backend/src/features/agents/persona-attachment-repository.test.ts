@@ -87,7 +87,8 @@ describe("PersonaAttachmentRepository.listForPersona", () => {
           created_at: new Date("2026-07-13T00:00:00Z"),
           processing_status: "completed",
           has_extraction: true,
-          has_summary: true,
+          full_text_chars: 1200,
+          summary_chars: 80,
         },
       ],
     ])
@@ -100,6 +101,9 @@ describe("PersonaAttachmentRepository.listForPersona", () => {
     expect(text).toContain("LEFT JOIN attachment_extractions e")
     expect(text).toContain("ORDER BY pa.position ASC")
     expect(text).toContain("pa.workspace_id =")
+    // Content LENGTHS only — the text itself must not ride the config wire (decision 6/7).
+    expect(text).toContain("LENGTH(e.full_text)")
+    expect(text).toContain("LENGTH(e.summary)")
     // One round trip (INV-56).
     expect(db.queries).toHaveLength(1)
     expect(items[0]).toEqual({
@@ -111,7 +115,8 @@ describe("PersonaAttachmentRepository.listForPersona", () => {
       createdAt: new Date("2026-07-13T00:00:00Z"),
       processingStatus: "completed",
       hasExtraction: true,
-      hasSummary: true,
+      fullTextChars: 1200,
+      summaryChars: 80,
     })
   })
 })

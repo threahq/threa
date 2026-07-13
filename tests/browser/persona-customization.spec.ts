@@ -477,9 +477,9 @@ test.describe("Persona roster + editors", () => {
    * Knowledge section (persona context attachments, step 4). A forked custom
    * persona's editor uploads a small text file through the Knowledge section's
    * hidden file input, the row appears with its filename and the cap hint moves
-   * to "1 of 5 files", the processing badge clears once the (stub-free, local)
+   * to "1 of 50 files", the processing badge clears once the (stub-free, local)
    * text extraction lands, then a remove deletes the row and the cap hint returns
-   * to "0 of 5 files".
+   * to "0 of 50 files".
    *
    * The persona is a custom (workspace) fork rather than a personal one only to
    * keep this single-context and fast — the Knowledge surface is byte-identical
@@ -505,11 +505,11 @@ test.describe("Persona roster + editors", () => {
     await page.goto(`/w/${workspaceId}/settings/personas/${personaId}`)
     await expect(page.getByRole("heading", { name: `Edit ${agentName}` })).toBeVisible({ timeout: 10000 })
 
-    // ──── The Knowledge section starts empty at "0 of 5 files" ────
+    // ──── The Knowledge section starts empty at "0 of 50 files" ────
 
     const knowledge = page.getByText("Knowledge", { exact: true })
     await expect(knowledge).toBeVisible()
-    await expect(page.getByText("0 of 5 files")).toBeVisible()
+    await expect(page.getByText("0 of 50 files")).toBeVisible()
 
     // ──── Upload a small markdown file through the hidden attachment input ────
 
@@ -524,9 +524,9 @@ test.describe("Persona roster + editors", () => {
       buffer: Buffer.from(`# Deploy runbook ${testId}\n\nStep 1: rotate the key.\nStep 2: redeploy.\n`),
     })
 
-    // The row appears with its filename, and the cap hint moves to "1 of 5 files".
+    // The row appears with its filename, and the cap hint moves to "1 of 50 files".
     await expect(page.getByText(fileName)).toBeVisible({ timeout: 15000 })
-    await expect(page.getByText("1 of 5 files")).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText("1 of 50 files")).toBeVisible({ timeout: 10000 })
 
     // ──── The processing badge clears once extraction lands (config-refetch poll) ────
 
@@ -541,7 +541,7 @@ test.describe("Persona roster + editors", () => {
 
     await page.getByRole("button", { name: `Remove ${fileName}` }).click()
     await expect(page.getByText(fileName)).toHaveCount(0, { timeout: 10000 })
-    await expect(page.getByText("0 of 5 files")).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText("0 of 50 files")).toBeVisible({ timeout: 10000 })
   })
 })
 

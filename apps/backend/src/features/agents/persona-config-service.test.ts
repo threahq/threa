@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
 import type { ModelCapabilities, ModelRegistry } from "@threa/agent-runtime"
-import { AgentToolNames, CompanionModes, MemoryModes, StreamPurposes, type PersonaConfigPatch } from "@threa/types"
+import {
+  AgentToolNames,
+  CompanionModes,
+  MemoryModes,
+  PERSONA_ATTACHMENT_MAX_COUNT,
+  StreamPurposes,
+  type PersonaConfigPatch,
+} from "@threa/types"
 import { PersonaConfigService, type PersonaCaller } from "./persona-config-service"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
 import { PersonaRepository, type Persona } from "./persona-repository"
 import { PersonaAttachmentRepository } from "./persona-attachment-repository"
+import { PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS } from "./config"
 import { COMPANION_MODEL_ID, TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS } from "./companion/config"
 import { OutboxRepository } from "../../lib/outbox"
 import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID, getVisibleBuiltInAgentConfig } from "./built-in-agents"
@@ -1734,10 +1742,10 @@ describe("PersonaConfigService.addAttachment — validation, cap, and cleanup", 
     expect(deps.storage.putObject).not.toHaveBeenCalled()
   })
 
-  it("fast-fails at the cap before writing to S3 when the persona already has 5", async () => {
+  it("fast-fails at the cap before writing to S3 when the persona is already full", async () => {
     spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
     spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue(
-      Array.from({ length: 5 }, (_, i) => ({
+      Array.from({ length: PERSONA_ATTACHMENT_MAX_COUNT }, (_, i) => ({
         attachmentId: `att_${i}`,
         filename: "f.txt",
         mimeType: "text/plain",
@@ -1746,7 +1754,8 @@ describe("PersonaConfigService.addAttachment — validation, cap, and cleanup", 
         createdAt: new Date(),
         processingStatus: "completed" as const,
         hasExtraction: true,
-        hasSummary: true,
+        fullTextChars: 10,
+        summaryChars: 5,
       }))
     )
     const deps = makeAttachmentDeps()
@@ -1858,12 +1867,13 @@ describe("PersonaConfigService.removeAttachment", () => {
 describe("PersonaConfigService.getConfig — attachments fold-in", () => {
   afterEach(() => mock.restore())
 
-  it("maps extraction/pipeline state to structured processing status, in position order", async () => {
+  it("maps extraction/pipeline state to structured processing status + context mode, in position order", async () => {
     spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
     spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
     spyOn(PersonaAttachmentRepository, "listForPersona").mockResolvedValue([
       {
-        attachmentId: "att_ready",
+        // Ready, short full text within the inline cap → referenced in full.
+        attachmentId: "att_full",
         filename: "ready.txt",
         mimeType: "text/plain",
         sizeBytes: 10,
@@ -1871,29 +1881,59 @@ describe("PersonaConfigService.getConfig — attachments fold-in", () => {
         createdAt: new Date("2026-07-13T00:00:00Z"),
         processingStatus: "completed",
         hasExtraction: true,
-        hasSummary: true,
+        fullTextChars: 1200,
+        summaryChars: 80,
       },
       {
+        // Ready, full text over the inline cap but a summary present → summary only.
+        attachmentId: "att_summary",
+        filename: "huge.txt",
+        mimeType: "text/plain",
+        sizeBytes: 999999,
+        position: 1,
+        createdAt: new Date("2026-07-13T00:00:30Z"),
+        processingStatus: "completed",
+        hasExtraction: true,
+        fullTextChars: PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS + 1,
+        summaryChars: 120,
+      },
+      {
+        // Ready but the extraction produced neither text nor summary → name only.
+        attachmentId: "att_name",
+        filename: "empty.txt",
+        mimeType: "text/plain",
+        sizeBytes: 0,
+        position: 2,
+        createdAt: new Date("2026-07-13T00:00:45Z"),
+        processingStatus: "completed",
+        hasExtraction: true,
+        fullTextChars: 0,
+        summaryChars: null,
+      },
+      {
+        // Extraction still in flight → status processing, mode null (no content yet).
         attachmentId: "att_processing",
         filename: "wip.pdf",
         mimeType: "application/pdf",
         sizeBytes: 20,
-        position: 1,
+        position: 3,
         createdAt: new Date("2026-07-13T00:01:00Z"),
         processingStatus: "processing",
         hasExtraction: false,
-        hasSummary: false,
+        fullTextChars: null,
+        summaryChars: null,
       },
       {
         attachmentId: "att_failed",
         filename: "bad.csv",
         mimeType: "text/csv",
         sizeBytes: 30,
-        position: 2,
+        position: 4,
         createdAt: new Date("2026-07-13T00:02:00Z"),
         processingStatus: "failed",
         hasExtraction: false,
-        hasSummary: false,
+        fullTextChars: null,
+        summaryChars: null,
       },
     ])
 
@@ -1901,13 +1941,34 @@ describe("PersonaConfigService.getConfig — attachments fold-in", () => {
 
     expect(config!.attachments).toEqual([
       {
-        id: "att_ready",
+        id: "att_full",
         filename: "ready.txt",
         mimeType: "text/plain",
         sizeBytes: 10,
         processingStatus: "ready",
+        contextMode: "full",
         position: 0,
         createdAt: "2026-07-13T00:00:00.000Z",
+      },
+      {
+        id: "att_summary",
+        filename: "huge.txt",
+        mimeType: "text/plain",
+        sizeBytes: 999999,
+        processingStatus: "ready",
+        contextMode: "summary",
+        position: 1,
+        createdAt: "2026-07-13T00:00:30.000Z",
+      },
+      {
+        id: "att_name",
+        filename: "empty.txt",
+        mimeType: "text/plain",
+        sizeBytes: 0,
+        processingStatus: "ready",
+        contextMode: "name_only",
+        position: 2,
+        createdAt: "2026-07-13T00:00:45.000Z",
       },
       {
         id: "att_processing",
@@ -1915,7 +1976,8 @@ describe("PersonaConfigService.getConfig — attachments fold-in", () => {
         mimeType: "application/pdf",
         sizeBytes: 20,
         processingStatus: "processing",
-        position: 1,
+        contextMode: null,
+        position: 3,
         createdAt: "2026-07-13T00:01:00.000Z",
       },
       {
@@ -1924,7 +1986,8 @@ describe("PersonaConfigService.getConfig — attachments fold-in", () => {
         mimeType: "text/csv",
         sizeBytes: 30,
         processingStatus: "failed",
-        position: 2,
+        contextMode: null,
+        position: 4,
         createdAt: "2026-07-13T00:02:00.000Z",
       },
     ])

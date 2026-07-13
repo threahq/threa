@@ -5,7 +5,13 @@ import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { PersonaAttachmentItem, JSONContent, PersonaConfigResponse, PersonaResolvedConfig } from "@threa/types"
+import {
+  PERSONA_ATTACHMENT_MAX_COUNT,
+  type PersonaAttachmentItem,
+  type JSONContent,
+  type PersonaConfigResponse,
+  type PersonaResolvedConfig,
+} from "@threa/types"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"
 import { spyOnExport } from "@/test/spy"
@@ -103,6 +109,7 @@ function attachment(overrides: Partial<PersonaAttachmentItem> = {}): PersonaAtta
     mimeType: "application/pdf",
     sizeBytes: 12 * 1024,
     processingStatus: "ready",
+    contextMode: "full",
     position: 0,
     createdAt: "2026-07-12T00:00:00Z",
     ...overrides,
@@ -283,12 +290,32 @@ describe("CustomPersonaEditor", () => {
       await waitFor(() => expect(del).toHaveBeenCalledWith("ws_1", "persona_c1", "att_x"))
     })
 
+    it("shows the context mode for each ready attachment (INV-46)", () => {
+      renderEditor(
+        config({
+          attachments: [
+            attachment({ id: "att_full", filename: "full.txt", processingStatus: "ready", contextMode: "full" }),
+            attachment({ id: "att_sum", filename: "sum.txt", processingStatus: "ready", contextMode: "summary" }),
+            attachment({ id: "att_name", filename: "name.txt", processingStatus: "ready", contextMode: "name_only" }),
+          ],
+        })
+      )
+
+      expect(screen.getByText(/In full/)).toBeInTheDocument()
+      expect(screen.getByText(/Summary only/)).toBeInTheDocument()
+      expect(screen.getByText(/Name only/)).toBeInTheDocument()
+    })
+
     it("disables Add at the count cap and shows the reserved 'N of N files' hint (INV-21)", () => {
-      const attachments = Array.from({ length: 5 }, (_, i) => attachment({ id: `att_${i}`, filename: `f${i}.pdf` }))
+      const attachments = Array.from({ length: PERSONA_ATTACHMENT_MAX_COUNT }, (_, i) =>
+        attachment({ id: `att_${i}`, filename: `f${i}.pdf` })
+      )
       renderEditor(config({ attachments }))
 
       expect(screen.getByRole("button", { name: /Add file/ })).toBeDisabled()
-      expect(screen.getByText("5 of 5 files")).toBeInTheDocument()
+      expect(
+        screen.getByText(`${PERSONA_ATTACHMENT_MAX_COUNT} of ${PERSONA_ATTACHMENT_MAX_COUNT} files`)
+      ).toBeInTheDocument()
     })
 
     it("toasts the server's rejection message on upload failure and fires no success toast (INV-11/63)", async () => {

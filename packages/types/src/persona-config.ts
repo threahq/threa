@@ -245,8 +245,15 @@ export interface PersonaDraftState {
  * backend (multer filter, service cap, Zod) and the frontend editor (cap
  * display, file-input `accept`) enforce/render them; a single source keeps them
  * from drifting.
+ *
+ * The real constraint is the prompt budget (`PERSONA_ATTACHMENT_BLOCK_MAX_CHARS`
+ * in the agents feature config), not a file count — a large file degrades to its
+ * summary and later files to their names, so many small files stay legible. This
+ * count is only an anti-abuse ceiling on how many rows one persona can accrue;
+ * the `contextMode` on each attachment tells the user how much of a given file
+ * actually reaches the model.
  */
-export const PERSONA_ATTACHMENT_MAX_COUNT = 5
+export const PERSONA_ATTACHMENT_MAX_COUNT = 50
 
 /** Per-file upload cap. Text-bearing knowledge files are small; 20MB is generous. */
 export const PERSONA_ATTACHMENT_MAX_SIZE_BYTES = 20 * 1024 * 1024
@@ -286,6 +293,19 @@ export const PERSONA_ATTACHMENT_PROCESSING_STATUSES = ["processing", "ready", "f
 export type PersonaAttachmentProcessingStatus = (typeof PERSONA_ATTACHMENT_PROCESSING_STATUSES)[number]
 
 /**
+ * How much of a ready attachment actually reaches the persona's dispatch prompt,
+ * derived server-side by the SAME budget planner that renders the `## Knowledge`
+ * block (INV-46 — structured, the editor renders the word):
+ * `full` = its whole extracted text is inlined; `summary` = only its short
+ * extraction summary (the full text was too long or the block budget was already
+ * spent); `name_only` = just its filename (no content fit). The editor shows this
+ * so a persona owner is never surprised that a file they attached contributes
+ * less than they expect once the prompt budget degrades.
+ */
+export const PERSONA_ATTACHMENT_CONTEXT_MODES = ["full", "summary", "name_only"] as const
+export type PersonaAttachmentContextMode = (typeof PERSONA_ATTACHMENT_CONTEXT_MODES)[number]
+
+/**
  * One persona context attachment as it rides the persona config response and the
  * upload response. `id` is the underlying attachment id; `position` is the
  * render/prompt order. No storage path or download URL — v1 never serves these
@@ -297,6 +317,12 @@ export interface PersonaAttachmentItem {
   mimeType: string
   sizeBytes: number
   processingStatus: PersonaAttachmentProcessingStatus
+  /**
+   * How the file is referenced in the persona's context (see
+   * {@link PERSONA_ATTACHMENT_CONTEXT_MODES}). `null` until `processingStatus`
+   * is `ready`: before extraction lands there is no content to plan a mode from.
+   */
+  contextMode: PersonaAttachmentContextMode | null
   position: number
   createdAt: string
 }
