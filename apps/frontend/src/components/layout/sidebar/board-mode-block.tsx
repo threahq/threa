@@ -1,14 +1,42 @@
-import { useMemo } from "react"
-import { Link, useLocation } from "react-router-dom"
-import { ArrowLeft, Bookmark, Pin } from "lucide-react"
-import { BOARD_LENSES, type BoardLens } from "@threa/types"
-import { useSidebar } from "@/contexts"
+import { useMemo, useState } from "react"
+import { Link, useLocation, useSearchParams } from "react-router-dom"
+import { Archive, ArrowLeft, Bookmark, Check, CircleDot, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react"
+import { BOARD_LENSES, DEFAULT_BOARD_LENS, type BoardLens, type BoardScopeStreamType } from "@threa/types"
+import { useSidebar, usePreferencesOptional } from "@/contexts"
 import { cn } from "@/lib/utils"
-import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
+import { useBoardHome, useBoardViews, useDeleteBoardView, useUpdateBoardView } from "@/hooks/use-board-views"
 import { useBoardSelection } from "@/hooks/use-board-selection"
-import { isViewActive, lensHref, savedViewHref } from "@/components/board/board-saved-views"
+import { useMuteStream, useUnmuteStream } from "@/hooks/use-conversations"
+import {
+  useWorkspaceDmPeers,
+  useWorkspaceLabels,
+  useWorkspaceStreams,
+  useWorkspaceUsers,
+} from "@/stores/workspace-store"
+import { useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
+import { resolveStreamName } from "@/lib/streams"
+import { isViewActive, lensHref, savedViewHref, SaveViewDialog } from "@/components/board/board-saved-views"
+import {
+  BoardScopePicker,
+  BoardTypePicker,
+  BoardLabelPicker,
+  type FilterIcon,
+} from "@/components/board/board-filter-pickers"
+import {
+  BOARD_ARCHIVED_ON,
+  BOARD_ARCHIVED_PARAM,
+  BOARD_EXCLUDE_LABEL_PARAM,
+  BOARD_EXCLUDE_SCOPE_PARAM,
+  BOARD_EXCLUDE_TYPE_PARAM,
+  BOARD_LABEL_PARAM,
+  BOARD_SCOPE_PARAM,
+  BOARD_TYPE_PARAM,
+  BOARD_UNREAD_ON,
+  BOARD_UNREAD_PARAM,
+} from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import { getLastLocation } from "@/lib/last-location"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { BoardFilterChips } from "./board-filter-chips"
 
 interface BoardModeBlockProps {
@@ -27,21 +55,28 @@ const SECTION_LABEL_CLASS =
 /**
  * The board block replaces the quick-links block in the sidebar while on
  * `/board` (board-centered-sidebar-exploration.md § V2 top blocks). Top-to-
- * bottom: a "← Chats" back link to the last visited stream, the viewer's saved
- * Views, and the board Lenses. Every entry is a `<Link>` — the board's whole
- * state is URL (INV-40/INV-59) — and the URLs are built with the same helpers
- * the filter bar uses (`lensHref`, `savedViewHref`) so the two surfaces can't
- * drift (INV-35). The filter axes ride along a lens switch, so scoping survives.
+ * bottom: a "← Chats" back link, the Filters group (the stream/type/label
+ * pickers + the unread/archived toggles the deleted filter header used to host),
+ * the active-filter chips, the viewer's saved Views, and the board Lenses. Every
+ * navigational entry is a `<Link>` — the board's whole state is URL
+ * (INV-40/INV-59) — built with the same helpers the pickers use
+ * (`lensHref`, `savedViewHref`) so the surfaces can't drift (INV-35).
  */
 export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlockProps) {
   const { collapseOnMobile } = useSidebar()
   const location = useLocation()
+  const prefs = usePreferencesOptional()
 
-  // One shared URL derivation (INV-35) — the chips block reads the same hook.
+  // One shared URL derivation (INV-35) — the chips block and filters read it too.
   const { currentLens, selection } = useBoardSelection()
 
   const { data: views } = useBoardViews(workspaceId)
   const { view: homeView } = useBoardHome(workspaceId)
+  const update = useUpdateBoardView(workspaceId)
+  const remove = useDeleteBoardView(workspaceId)
+
+  // `null` closed; `{ id, name }` = renaming that view.
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
 
   // A saved view IS the selection when the live lens + every axis match it, so it
   // — not its base lens — reads as active; a lens is active only when no view is.
@@ -60,6 +95,10 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
     selection.excludeStreamTypes.length > 0 ||
     selection.excludeLabelIds.length > 0
 
+  // No lens reads as home while a saved-view home resolves (the view's pin is home).
+  const homeLens = prefs?.preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
+  const homeViewActive = homeView != null
+
   return (
     <div className="mb-2 space-y-1">
       <Link
@@ -70,6 +109,8 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
         <ArrowLeft className="h-4 w-4" />
         Chats
       </Link>
+
+      <BoardModeFilters workspaceId={workspaceId} />
 
       {hasActiveFilters && <BoardFilterChips workspaceId={workspaceId} />}
 
@@ -83,20 +124,61 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
             const active = view.id === activeViewId
             const isHome = view.id === homeView?.id
             return (
-              <Link
+              <div
                 key={view.id}
-                to={savedViewHref(workspaceId, view)}
-                onClick={collapseOnMobile}
-                aria-current={active ? "true" : undefined}
-                className={cn(ROW_CLASS, active ? "bg-primary/10" : "hover:bg-muted/50 text-muted-foreground")}
-              >
-                {isHome ? (
-                  <Pin className="h-4 w-4 shrink-0 fill-current" aria-label="Board home" />
-                ) : (
-                  <Bookmark className="h-4 w-4 shrink-0" />
+                className={cn(
+                  "group flex items-center rounded-lg pr-2 transition-colors",
+                  active ? "bg-primary/10" : "hover:bg-muted/50"
                 )}
-                <span className="min-w-0 flex-1 truncate">{view.name}</span>
-              </Link>
+              >
+                <Link
+                  to={savedViewHref(workspaceId, view)}
+                  onClick={collapseOnMobile}
+                  aria-current={active ? "true" : undefined}
+                  className={cn(
+                    "flex min-w-0 flex-1 items-center gap-2.5 py-2 pl-4 text-sm font-medium",
+                    !active && "text-muted-foreground"
+                  )}
+                >
+                  {isHome ? (
+                    <Pin className="h-4 w-4 shrink-0 fill-current" aria-label="Board home" />
+                  ) : (
+                    <Bookmark className="h-4 w-4 shrink-0" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{view.name}</span>
+                </Link>
+                {/* Fixed-footprint trigger — always laid out, transparent until
+                    hover/focus/open — so revealing the actions never shifts the
+                    row (INV-21). Management verbs are actions, not navigation. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={`Actions for ${view.name}`}
+                      className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => void prefs?.updatePreferences({ boardDefaultViewId: view.id })}>
+                      <Pin className={cn("mr-2 h-4 w-4", isHome && "fill-current")} />
+                      {isHome ? "Board home" : "Set as board home"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setRenaming({ id: view.id, name: view.name })}>
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => remove.mutate(view.id)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             )
           })}
         </div>
@@ -109,25 +191,200 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
           const Icon = def.icon
           const active = value === currentLens && activeViewId === null
           const count = lensTotals?.[value] ?? null
+          const isHome = !homeViewActive && value === homeLens
           return (
-            <Link
+            <div
               key={value}
-              to={lensHref(workspaceId, value, location.search)}
-              onClick={collapseOnMobile}
-              aria-current={active ? "true" : undefined}
-              className={cn(ROW_CLASS, active ? "bg-primary/10" : "hover:bg-muted/50 text-muted-foreground")}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">{def.label}</span>
-              {count !== null && (
-                <span aria-hidden className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {count}
-                </span>
+              className={cn(
+                "group flex items-center rounded-lg pr-2 transition-colors",
+                active ? "bg-primary/10" : "hover:bg-muted/50"
               )}
-            </Link>
+            >
+              <Link
+                to={lensHref(workspaceId, value, location.search)}
+                onClick={collapseOnMobile}
+                aria-current={active ? "true" : undefined}
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-2.5 py-2 pl-4 text-sm font-medium",
+                  !active && "text-muted-foreground"
+                )}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{def.label}</span>
+                {count !== null && (
+                  <span aria-hidden className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {count}
+                  </span>
+                )}
+              </Link>
+              {/* Always laid out, faint until home — pinning a lens as the board
+                  home mirrors the appearance-settings radio; silent per INV-63
+                  (the fill is the signal), fixed footprint per INV-21. */}
+              <button
+                type="button"
+                onClick={() => void prefs?.updatePreferences({ boardDefaultLens: value, boardDefaultViewId: null })}
+                aria-pressed={isHome}
+                aria-label={isHome ? `${def.label} is your board home` : `Set ${def.label} as board home`}
+                className={cn(
+                  "ml-1 shrink-0 rounded p-1 transition-colors",
+                  isHome ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground"
+                )}
+              >
+                <Pin className={cn("h-3.5 w-3.5", isHome && "fill-current")} />
+              </button>
+            </div>
           )
         })}
       </div>
+
+      <SaveViewDialog
+        open={renaming !== null}
+        initialName={renaming?.name ?? ""}
+        isRename
+        onOpenChange={(open) => !open && setRenaming(null)}
+        onSubmit={(name) => {
+          if (renaming) update.mutate({ id: renaming.id, input: { name } })
+          setRenaming(null)
+        }}
+      />
     </div>
+  )
+}
+
+/**
+ * The board-mode "Filters" group: the stream/type/label pickers (the same
+ * components the deleted filter header hosted, popover on desktop / drawer on
+ * touch via `FilterMenuShell`) plus the unread-only and archived toggles. Every
+ * control rewrites the board's URL params (INV-59) — the sidebar holds no filter
+ * state, it just navigates. Filter rewrites `replace`, so toggling doesn't spam
+ * history. Shares the URL vocabulary SSOT (`board-filter-params`) with the page.
+ */
+function BoardModeFilters({ workspaceId }: { workspaceId: string }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { selection } = useBoardSelection()
+
+  const streams = useWorkspaceStreams(workspaceId)
+  const users = useWorkspaceUsers(workspaceId)
+  const dmPeers = useWorkspaceDmPeers(workspaceId)
+  const allLabels = useWorkspaceLabels(workspaceId)
+  const myLabels = useMemo(
+    () => allLabels.filter((l) => !l.archivedAt).sort((a, b) => a.name.localeCompare(b.name)),
+    [allLabels]
+  )
+
+  const muted = useBoardMutedStreamIds(workspaceId)
+  const muteStream = useMuteStream(workspaceId)
+  const unmuteStream = useUnmuteStream(workspaceId)
+
+  const showArchived = searchParams.get(BOARD_ARCHIVED_PARAM) === BOARD_ARCHIVED_ON
+  const unreadOnly = searchParams.get(BOARD_UNREAD_PARAM) === BOARD_UNREAD_ON
+
+  const labelFor = (streamId: string) =>
+    resolveStreamName(streamId, { streams, users, dmPeers }, "generic") ?? "Unknown stream"
+
+  // The Labels picker only renders when there's something to pick (or a stale URL
+  // names labels the viewer no longer has — keep it so they can clear it).
+  const showLabelsPicker =
+    myLabels.length > 0 || selection.scopeLabelIds.length > 0 || selection.excludeLabelIds.length > 0
+
+  // One URL write per toggle: a dimension's include/exclude params rewrite
+  // together so moving an id between the two sides is a single history entry.
+  const setParamLists = (entries: Array<[param: string, values: string[]]>) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const [param, values] of entries) {
+          if (values.length > 0) next.set(param, values.join(","))
+          else next.delete(param)
+        }
+        return next
+      },
+      { replace: true }
+    )
+  }
+  const setStreamFilter = (include: string[], exclude: string[]) =>
+    setParamLists([
+      [BOARD_SCOPE_PARAM, include],
+      [BOARD_EXCLUDE_SCOPE_PARAM, exclude],
+    ])
+  const setTypeFilter = (include: BoardScopeStreamType[], exclude: BoardScopeStreamType[]) =>
+    setParamLists([
+      [BOARD_TYPE_PARAM, include],
+      [BOARD_EXCLUDE_TYPE_PARAM, exclude],
+    ])
+  const setLabelFilter = (include: string[], exclude: string[]) =>
+    setParamLists([
+      [BOARD_LABEL_PARAM, include],
+      [BOARD_EXCLUDE_LABEL_PARAM, exclude],
+    ])
+
+  return (
+    <div className="pt-1">
+      <h3 className={SECTION_LABEL_CLASS}>Filters</h3>
+      <div className="flex flex-wrap items-center gap-1.5 px-4 py-1">
+        <BoardScopePicker
+          workspaceId={workspaceId}
+          scopeStreamIds={selection.scopeStreamIds}
+          excludeStreamIds={selection.excludeStreamIds}
+          onStreamFilterChange={setStreamFilter}
+          labelFor={labelFor}
+          mutedStreamIds={muted}
+          onToggleMute={(streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId))}
+        />
+        <BoardTypePicker
+          scopeStreamTypes={selection.scopeStreamTypes}
+          excludeStreamTypes={selection.excludeStreamTypes}
+          onTypeFilterChange={setTypeFilter}
+        />
+        {showLabelsPicker && (
+          <BoardLabelPicker
+            myLabels={myLabels}
+            scopeLabelIds={selection.scopeLabelIds}
+            excludeLabelIds={selection.excludeLabelIds}
+            onLabelFilterChange={setLabelFilter}
+          />
+        )}
+      </div>
+      <FilterToggleRow
+        icon={CircleDot}
+        label="Unread only"
+        active={unreadOnly}
+        onToggle={() => setParamLists([[BOARD_UNREAD_PARAM, unreadOnly ? [] : [BOARD_UNREAD_ON]]])}
+      />
+      <FilterToggleRow
+        icon={Archive}
+        label="Archived"
+        active={showArchived}
+        onToggle={() => setParamLists([[BOARD_ARCHIVED_PARAM, showArchived ? [] : [BOARD_ARCHIVED_ON]]])}
+      />
+    </div>
+  )
+}
+
+/** A full-width on/off filter toggle styled like the board-mode nav rows. The
+ *  URL param it reflects is the source of truth (INV-59); it's an action, not a
+ *  navigation, so a button (INV-40). */
+function FilterToggleRow({
+  icon: Icon,
+  label,
+  active,
+  onToggle,
+}: {
+  icon: FilterIcon
+  label: string
+  active: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={active}
+      className={cn(ROW_CLASS, "w-full", active ? "bg-primary/10" : "text-muted-foreground hover:bg-muted/50")}
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+      {active && <Check className="h-4 w-4 shrink-0" />}
+    </button>
   )
 }

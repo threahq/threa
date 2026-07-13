@@ -21,12 +21,7 @@ import {
 import { useStableBoardView, type BoardViewFilter, type BoardViewPost } from "@/hooks/use-stable-board-view"
 import { selectLabeledStreamIds } from "@/hooks/use-labels"
 import { useBoardStreamSubscriptions } from "@/hooks/use-board-stream-subscriptions"
-import {
-  useWorkspaceConversations,
-  useBoardExclusions,
-  useMuteStream,
-  useUnmuteStream,
-} from "@/hooks/use-conversations"
+import { useWorkspaceConversations, useBoardExclusions } from "@/hooks/use-conversations"
 import { useBoardHiddenConversations, useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
 import { useBoardRailsReady } from "@/hooks/use-board-card-messages"
 import { useBoardRevealLatch } from "@/hooks/use-board-reveal-latch"
@@ -44,7 +39,6 @@ import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
 import { setBoardFlash } from "@/stores/board-flash-store"
-import { BoardFilterBar } from "@/components/board/board-filter-bar"
 import { boardHomeHref } from "@/components/board/board-saved-views"
 import { useBoardViews } from "@/hooks/use-board-views"
 import { isBoardFiltered } from "@/lib/board/filter-state"
@@ -71,7 +65,6 @@ import {
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
   type BoardLens,
-  type BoardScopeStreamType,
   type ConversationWithStaleness,
 } from "@threa/types"
 
@@ -211,7 +204,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // Id lists are deduped and capped at the shared server limits so a hand-built
   // URL can't produce a request the backend rejects; type tokens outside the
   // root grains are dropped rather than 400ing the fetch.
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const scopeParam = searchParams.get(BOARD_SCOPE_PARAM) ?? ""
   const scopeStreamIds = useMemo(() => parseIdListParam(scopeParam).slice(0, MAX_BOARD_SCOPE_STREAMS), [scopeParam])
   const excludeScopeParam = searchParams.get(BOARD_EXCLUDE_SCOPE_PARAM) ?? ""
@@ -306,38 +299,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       showArchived,
     ]
   )
-  // One URL write per toggle: a dimension's include/exclude params are rewritten
-  // together so moving an id between the two sides is a single history entry.
-  const setParamLists = (entries: Array<[param: string, values: string[]]>) => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        for (const [param, values] of entries) {
-          if (values.length > 0) next.set(param, values.join(","))
-          else next.delete(param)
-        }
-        return next
-      },
-      { replace: true }
-    )
-  }
-  const setStreamFilter = (include: string[], exclude: string[]) =>
-    setParamLists([
-      [BOARD_SCOPE_PARAM, include],
-      [BOARD_EXCLUDE_SCOPE_PARAM, exclude],
-    ])
-  const setTypeFilter = (include: BoardScopeStreamType[], exclude: BoardScopeStreamType[]) =>
-    setParamLists([
-      [BOARD_TYPE_PARAM, include],
-      [BOARD_EXCLUDE_TYPE_PARAM, exclude],
-    ])
-  const setLabelFilter = (include: string[], exclude: string[]) =>
-    setParamLists([
-      [BOARD_LABEL_PARAM, include],
-      [BOARD_EXCLUDE_LABEL_PARAM, exclude],
-    ])
-  const setShowArchived = (next: boolean) => setParamLists([[BOARD_ARCHIVED_PARAM, next ? [BOARD_ARCHIVED_ON] : []]])
-  const setUnreadOnly = (next: boolean) => setParamLists([[BOARD_UNREAD_PARAM, next ? [BOARD_UNREAD_ON] : []]])
   const {
     containerRef,
     panelWidth,
@@ -376,8 +337,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   useBoardExclusions(workspaceId)
   const hidden = useBoardHiddenConversations(workspaceId)
   const muted = useBoardMutedStreamIds(workspaceId)
-  const muteStream = useMuteStream(workspaceId)
-  const unmuteStream = useUnmuteStream(workspaceId)
   const exclusions = useMemo(
     () => ({ hidden, muted, muteActive: scopeStreamIds.length === 0 }),
     [hidden, muted, scopeStreamIds.length]
@@ -768,25 +727,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         <LayoutGrid className="h-5 w-5 shrink-0 text-muted-foreground" />
         <h1 className="truncate font-semibold">Board</h1>
       </header>
-      <BoardFilterBar
-        workspaceId={workspaceId}
-        lens={lens}
-        scopeStreamIds={scopeStreamIds}
-        excludeStreamIds={excludeStreamIds}
-        onStreamFilterChange={setStreamFilter}
-        scopeStreamTypes={scopeStreamTypes}
-        excludeStreamTypes={excludeStreamTypes}
-        onTypeFilterChange={setTypeFilter}
-        scopeLabelIds={scopeLabelIds}
-        excludeLabelIds={excludeLabelIds}
-        onLabelFilterChange={setLabelFilter}
-        mutedStreamIds={muted}
-        onToggleMute={(streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId))}
-        showArchived={showArchived}
-        onToggleArchived={setShowArchived}
-        unreadOnly={unreadOnly}
-        onToggleUnreadOnly={setUnreadOnly}
-      />
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}
       </span>
