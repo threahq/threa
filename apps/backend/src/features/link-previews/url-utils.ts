@@ -10,6 +10,7 @@ export type InAppLinkRef =
   | { kind: "stream"; workspaceId: string; streamId: string }
   | { kind: "memo"; workspaceId: string; memoId: string }
   | { kind: "conversation"; workspaceId: string; conversationId: string }
+  | { kind: "delegation"; workspaceId: string; delegationId: string }
 
 /** Panel-id prefix a conversation deep-link carries in `?panel=` (mirrors the frontend `CONVERSATION_PANEL_PREFIX`). */
 const CONVERSATION_PANEL_PREFIX = "conv:"
@@ -79,6 +80,7 @@ export type GitHubUrlMatch =
  * - `{origin}/w/{workspaceId}/s/{streamId}` → stream
  * - `{origin}/w/{workspaceId}/memos/{memoId}` → memo
  * - `{origin}/w/{workspaceId}/board?panel=conv:{conversationId}` → conversation
+ * - `{origin}/w/{workspaceId}/delegations/{delegationId}` → delegation
  * Returns null if the origin isn't recognized or no shape matches.
  */
 export function parseInAppLink(url: string, appOrigins: string[]): InAppLinkRef | null {
@@ -99,6 +101,12 @@ export function parseInAppLink(url: string, appOrigins: string[]): InAppLinkRef 
     if (memoMatch) {
       const [, workspaceId, memoId] = memoMatch
       return { kind: "memo", workspaceId, memoId }
+    }
+
+    const delegationMatch = parsed.pathname.match(/^\/w\/([^/]+)\/delegations\/([^/]+)$/)
+    if (delegationMatch) {
+      const [, workspaceId, delegationId] = delegationMatch
+      return { kind: "delegation", workspaceId, delegationId }
     }
 
     // A conversation has no `/s/:id` permalink — it spans a root stream + threads

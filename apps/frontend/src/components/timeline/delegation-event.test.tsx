@@ -133,6 +133,19 @@ describe("DelegationEvent", () => {
     expect(success).not.toHaveBeenCalled()
   })
 
+  it("copies a shareable delegation link and confirms in place with a checkmark (INV-63/21: no toast)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } })
+    const success = vi.spyOn(toast, "success")
+
+    renderCard()
+    await userEvent.click(screen.getByRole("button", { name: /Copy link/ }))
+
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/ws_1/delegations/dlg_1`)
+    await screen.findByRole("button", { name: "Link copied" })
+    expect(success).not.toHaveBeenCalled()
+  })
+
   it("marks the delegation done for paste-path work and relabels in place", async () => {
     const markDone = vi.spyOn(delegationsApi, "markDone").mockResolvedValue({ completed: true })
 

@@ -35,6 +35,7 @@ export interface LinkPreview {
   targetMessageId: string | null
   targetMemoId: string | null
   targetConversationId: string | null
+  targetDelegationId: string | null
   fetchedAt: Date | null
   expiresAt: Date | null
   createdAt: Date
@@ -51,6 +52,7 @@ export interface InsertLinkPreviewParams {
   targetMessageId?: string
   targetMemoId?: string
   targetConversationId?: string
+  targetDelegationId?: string
 }
 
 export interface UpdateLinkPreviewParams {
@@ -92,6 +94,7 @@ function mapRow(row: Record<string, unknown>): LinkPreview {
     targetMessageId: (row.target_message_id as string | null) ?? null,
     targetMemoId: (row.target_memo_id as string | null) ?? null,
     targetConversationId: (row.target_conversation_id as string | null) ?? null,
+    targetDelegationId: (row.target_delegation_id as string | null) ?? null,
     fetchedAt: row.fetched_at ? new Date(row.fetched_at as string) : null,
     expiresAt: row.expires_at ? new Date(row.expires_at as string) : null,
     createdAt: new Date(row.created_at as string),
@@ -105,8 +108,9 @@ export const LinkPreviewRepository = {
     const status = isInAppLinkContentType(params.contentType) ? "completed" : "pending"
     const result = await querier.query(
       sql`INSERT INTO link_previews (id, workspace_id, url, normalized_url, content_type, status,
-              target_workspace_id, target_stream_id, target_message_id, target_memo_id, target_conversation_id)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+              target_workspace_id, target_stream_id, target_message_id, target_memo_id, target_conversation_id,
+              target_delegation_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           ON CONFLICT (workspace_id, normalized_url) DO UPDATE SET
               content_type = EXCLUDED.content_type,
               status = EXCLUDED.status,
@@ -114,7 +118,8 @@ export const LinkPreviewRepository = {
               target_stream_id = EXCLUDED.target_stream_id,
               target_message_id = EXCLUDED.target_message_id,
               target_memo_id = EXCLUDED.target_memo_id,
-              target_conversation_id = EXCLUDED.target_conversation_id
+              target_conversation_id = EXCLUDED.target_conversation_id,
+              target_delegation_id = EXCLUDED.target_delegation_id
           WHERE link_previews.content_type != EXCLUDED.content_type
           RETURNING *`,
       [
@@ -129,6 +134,7 @@ export const LinkPreviewRepository = {
         params.targetMessageId ?? null,
         params.targetMemoId ?? null,
         params.targetConversationId ?? null,
+        params.targetDelegationId ?? null,
       ]
     )
     if (result.rows.length > 0) {

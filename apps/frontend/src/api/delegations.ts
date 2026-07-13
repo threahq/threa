@@ -1,4 +1,4 @@
-import type { ListDelegationsResponse } from "@threa/types"
+import type { DelegationSummary, ListDelegationsResponse } from "@threa/types"
 import { api } from "./client"
 
 /**
@@ -17,6 +17,15 @@ export const delegationsApi = {
   async list(workspaceId: string, streamId: string): Promise<ListDelegationsResponse> {
     const params = new URLSearchParams({ streamId })
     return api.get<ListDelegationsResponse>(`/api/workspaces/${workspaceId}/delegations?${params.toString()}`)
+  },
+
+  /**
+   * Read one delegation by id — the `/delegations/:id` link's redirect resolver.
+   * Access-checked and 404-hiding server-side (a delegation the viewer can't
+   * reach 404s exactly like a missing one).
+   */
+  async get(workspaceId: string, id: string): Promise<DelegationSummary> {
+    return api.get<DelegationSummary>(`/api/workspaces/${workspaceId}/delegations/${id}`)
   },
 
   /**

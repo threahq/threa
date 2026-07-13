@@ -347,6 +347,29 @@ describe("DelegatedTaskRepository.listByStream", () => {
   })
 })
 
+describe("DelegatedTaskRepository.findByIdWithEvent", () => {
+  afterEach(() => mock.restore())
+
+  it("scopes to id + workspace and joins the created event id", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [{ ...makeRow({ id: "dlg_1" }), created_event_id: "event_1" }])
+
+    const row = await DelegatedTaskRepository.findByIdWithEvent(db, "ws_1", "dlg_1")
+
+    expect(captured.text).toContain("dt.id = $1")
+    expect(captured.text).toContain("dt.workspace_id = $2")
+    expect(captured.text).toContain("ce.event_type = 'delegation:created'")
+    expect(captured.text).toContain("ce.payload->>'delegationId' = dt.id")
+    expect(captured.values).toEqual(["dlg_1", "ws_1"])
+    expect(row).toMatchObject({ id: "dlg_1", createdEventId: "event_1" })
+  })
+
+  it("returns null when no row matches", async () => {
+    const db = createQuerier({ text: null, values: null }, [])
+    expect(await DelegatedTaskRepository.findByIdWithEvent(db, "ws_1", "dlg_missing")).toBeNull()
+  })
+})
+
 describe("DelegatedTaskRepository.expireLapsedClaims", () => {
   afterEach(() => mock.restore())
 

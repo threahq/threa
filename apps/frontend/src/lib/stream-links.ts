@@ -12,6 +12,16 @@ export function buildStreamLink(workspaceId: string, streamId: string): string {
 }
 
 /**
+ * Absolute, shareable URL for a delegation. Points at the first-class
+ * `/delegations/:id` route (a redirect page that resolves the delegation and
+ * bounces to its card row), so a pasted link renders as a titled chip + card
+ * (mirrors {@link buildConversationLink}). Copy surfaces write this string.
+ */
+export function buildDelegationLink(workspaceId: string, delegationId: string): string {
+  return `${window.location.origin}/w/${workspaceId}/delegations/${delegationId}`
+}
+
+/**
  * Absolute, shareable URL that reopens a conversation in the side panel
  * (Mechanism B). A conversation is not a stream — it spans its root + threads —
  * so its link can't be a stream permalink: it opens the board (the panel host

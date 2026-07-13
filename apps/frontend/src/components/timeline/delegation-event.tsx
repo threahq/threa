@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
-import { Check, ChevronDown, ChevronRight, Copy, Loader2, TerminalSquare } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Copy, Link2, Loader2, TerminalSquare } from "lucide-react"
 import {
   DelegationStatuses,
   type DelegationCreatedEventPayload,
@@ -12,6 +12,7 @@ import {
 import { delegationsApi } from "@/api"
 import { useActors } from "@/hooks"
 import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL } from "@/lib/delegation-display"
+import { buildDelegationLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 
 interface DelegationEventProps {
@@ -93,8 +94,10 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
   const [cancelling, setCancelling] = useState(false)
   const [markingDone, setMarkingDone] = useState(false)
   const [copyDone, setCopyDone] = useState(false)
+  const [copyLinkDone, setCopyLinkDone] = useState(false)
   const [briefOpen, setBriefOpen] = useState(false)
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const copyLinkResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   if (!payload) return null
 
@@ -124,6 +127,19 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
     setCopyDone(true)
     if (copyResetRef.current) clearTimeout(copyResetRef.current)
     copyResetRef.current = setTimeout(() => setCopyDone(false), 1200)
+  }
+
+  async function handleCopyLink() {
+    if (!payload) return
+    try {
+      await navigator.clipboard.writeText(buildDelegationLink(workspaceId, payload.delegationId))
+    } catch {
+      toast.error("Couldn't copy the link")
+      return
+    }
+    setCopyLinkDone(true)
+    if (copyLinkResetRef.current) clearTimeout(copyLinkResetRef.current)
+    copyLinkResetRef.current = setTimeout(() => setCopyLinkDone(false), 1200)
   }
 
   async function handleMarkDone() {
@@ -237,6 +253,21 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
                 <Copy className="h-3 w-3" aria-hidden="true" />
               )}
               Copy prompt
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              aria-label={copyLinkDone ? "Link copied" : "Copy link"}
+              aria-live="polite"
+              title="Copy a shareable link to this delegation"
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {copyLinkDone ? (
+                <Check className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <Link2 className="h-3 w-3" aria-hidden="true" />
+              )}
+              Copy link
             </button>
             {showDoneSlot && (
               <button

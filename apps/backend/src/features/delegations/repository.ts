@@ -135,6 +135,25 @@ export const DelegatedTaskRepository = {
   },
 
   /**
+   * Read a single delegation plus its `delegation:created` event id,
+   * workspace-scoped (INV-8) — the first-party by-id GET and the link-preview
+   * resolver, both of which deep-link the card. Mirrors `listByStream`'s join.
+   */
+  async findByIdWithEvent(db: Querier, workspaceId: string, id: string): Promise<DelegatedTaskWithEvent | null> {
+    const result = await db.query<DelegatedTaskRow & { created_event_id: string | null }>(sql`
+      SELECT ${sql.raw(QUALIFIED_COLUMNS)}, ce.id AS created_event_id
+      FROM delegated_tasks dt
+      LEFT JOIN stream_events ce
+        ON ce.stream_id = dt.stream_id
+        AND ce.event_type = 'delegation:created'
+        AND ce.payload->>'delegationId' = dt.id
+      WHERE dt.id = ${id} AND dt.workspace_id = ${workspaceId}
+    `)
+    const row = result.rows[0]
+    return row ? { ...mapRow(row), createdEventId: row.created_event_id } : null
+  },
+
+  /**
    * A workspace's open (claimable) delegations, oldest first — the 5.3 list
    * surface. `since` narrows to rows created after the instant, so a polling
    * runner that remembers its last sweep doesn't re-download the whole queue.
