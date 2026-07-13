@@ -288,7 +288,6 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
 
   // Measured height of the draft composer pill; consumed by the scroll area
   // below it (padding-bottom) so messages sit offset above the floating pill.
-  const draftComposerRef = useRef<HTMLDivElement>(null)
   const draftScrollRef = useRef<HTMLDivElement | null>(null)
   const handleDraftComposerHeightChange = useCallback((_px: number, opts: { initial: boolean }) => {
     const scroller = draftScrollRef.current
@@ -306,7 +305,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
       requestAnimationFrame(rePin)
     }
   }, [])
-  useComposerHeightPublish(draftComposerRef, {
+  const draftComposerRef = useComposerHeightPublish({
     active: !draftExpanded,
     onHeightChange: handleDraftComposerHeightChange,
   })

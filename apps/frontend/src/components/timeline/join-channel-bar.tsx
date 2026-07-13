@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { Hash } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { streamsApi } from "@/api"
@@ -21,8 +21,7 @@ export function JoinChannelBar({ workspaceId, streamId, channelName, onJoined, o
   // that variable, and the composer that would otherwise set it is not rendered
   // for non-members. Without this the scroller keeps the stale height a prior
   // composer left behind and the bar can float over messages.
-  const selfRef = useRef<HTMLDivElement | null>(null)
-  useComposerHeightPublish(selfRef, { onHeightChange })
+  const composerHeightRef = useComposerHeightPublish({ onHeightChange })
 
   const handleJoin = async () => {
     setIsJoining(true)
@@ -38,7 +37,7 @@ export function JoinChannelBar({ workspaceId, streamId, channelName, onJoined, o
   }
 
   return (
-    <div ref={selfRef} className="flex flex-col items-center gap-3 border-t bg-background px-4 py-6">
+    <div ref={composerHeightRef} className="flex flex-col items-center gap-3 border-t bg-background px-4 py-6">
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <span>You're viewing</span>
         <span className="inline-flex items-center gap-0.5 font-medium text-foreground">

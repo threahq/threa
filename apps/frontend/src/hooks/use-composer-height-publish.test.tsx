@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { useRef, type CSSProperties } from "react"
+import { type CSSProperties } from "react"
 import { render } from "@testing-library/react"
 import { useComposerHeightPublish } from "./use-composer-height-publish"
 
@@ -7,15 +7,19 @@ type ResizeCallback = (entries: ResizeObserverEntry[], observer: ResizeObserver)
 
 function installManualResizeObserver(): {
   fire: (blockSize: number) => void
+  observed: Element[]
   restore: () => void
 } {
   let lastCallback: ResizeCallback | null = null
+  const observed: Element[] = []
   const original = global.ResizeObserver
   class ManualResizeObserver {
     constructor(cb: ResizeCallback) {
       lastCallback = cb
     }
-    observe() {}
+    observe(target: Element) {
+      observed.push(target)
+    }
     unobserve() {}
     disconnect() {}
   }
@@ -26,6 +30,7 @@ function installManualResizeObserver(): {
         [{ borderBoxSize: [{ blockSize, inlineSize: 0 }] }] as unknown as ResizeObserverEntry[],
         {} as ResizeObserver
       ),
+    observed,
     restore: () => {
       global.ResizeObserver = original
     },
@@ -48,20 +53,22 @@ function Harness({
   onHeightChange,
   active = true,
   zoneHeight,
+  replaceNode = false,
 }: {
   onHeightChange: (px: number) => void
   active?: boolean
   /** Pre-existing `--composer-height` on the zone, simulating the first-paint value. */
   zoneHeight?: string
+  replaceNode?: boolean
 }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useComposerHeightPublish(ref, { active, onHeightChange })
+  const ref = useComposerHeightPublish({ active, onHeightChange })
+  const composer = <div ref={ref}>composer</div>
   return (
     <div
       data-editor-zone="main"
       style={zoneHeight ? ({ "--composer-height": zoneHeight } as CSSProperties) : undefined}
     >
-      <div ref={ref}>composer</div>
+      {replaceNode ? <section>{composer}</section> : composer}
     </div>
   )
 }
@@ -155,6 +162,24 @@ describe("useComposerHeightPublish", () => {
       expect(onHeightChange).toHaveBeenCalledWith(96, { initial: true })
     } finally {
       raf.mockRestore()
+      ro.restore()
+    }
+  })
+
+  it("moves observation when React replaces the ref element without remounting the hook", () => {
+    const ro = installManualResizeObserver()
+    try {
+      const onHeightChange = vi.fn()
+      const { container, rerender } = render(<Harness onHeightChange={onHeightChange} />)
+      const firstComposer = container.querySelector<HTMLElement>("[data-editor-zone] > div")!
+      expect(ro.observed).toEqual([firstComposer])
+
+      rerender(<Harness onHeightChange={onHeightChange} replaceNode />)
+      const replacementComposer = container.querySelector<HTMLElement>("[data-editor-zone] section > div")!
+
+      expect(replacementComposer).not.toBe(firstComposer)
+      expect(ro.observed).toEqual([firstComposer, replacementComposer])
+    } finally {
       ro.restore()
     }
   })
