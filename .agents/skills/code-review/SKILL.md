@@ -6,7 +6,7 @@ allowed-tools: Bash(gh api:*), Bash(gh issue view:*), Bash(gh issue list:*), Bas
 
 # Multi-Perspective Code Review
 
-Up to 4 parallel Luna reviewers — **Agent 1: Spec & Design**, **Agent 2: Correctness & Data Flow**, **Agent 3: UX**, **Agent 4: Mobile** — with inline self-scoring (threshold ≥80/100) → filtered report. The fan-out scales to the diff (Step 3): UX + Mobile only spawn on frontend changes, and trivial diffs collapse to a single combined agent, so a backend-only PR runs 2 agents and a small one runs 1. The report is ALWAYS printed to chat; when reviewing a GitHub PR it is also posted as a PR comment.
+Up to 4 parallel Sonnet reviewers — **Agent 1: Spec & Design**, **Agent 2: Correctness & Data Flow**, **Agent 3: UX**, **Agent 4: Mobile** — with inline self-scoring (threshold ≥80/100) → filtered report. The fan-out scales to the diff (Step 3): UX + Mobile only spawn on frontend changes, and trivial diffs collapse to a single combined agent, so a backend-only PR runs 2 agents and a small one runs 1. The report is ALWAYS printed to chat; when reviewing a GitHub PR it is also posted as a PR comment.
 
 > **Remote / web sessions:** `gh` is not installed and the GitHub MCP server cannot reliably update existing issue comments (the supersede step in Step 6 silently no-ops). If `gh` fails with "command not found", use the **`github-api-web` skill** for every GitHub interaction in this skill — list/read/post/**PATCH** comments via `curl $GH_TOKEN`. Do NOT fall back to `mcp__github__*` for the supersede flow; it cannot edit prior comment bodies.
 
@@ -107,12 +107,12 @@ printf 'changed_lines=%s substantive_files=%s frontend_files=%s\n' "$changed_lin
 
 Pick the tier from those numbers:
 
-- **Trivial** — `changed_lines` ≤ 50 AND `sub_count` ≤ 2: spawn **one** combined Luna agent that runs every relevant lens (drop UX/Mobile if `fe_count` = 0) in a single prompt. No fan-out.
+- **Trivial** — `changed_lines` ≤ 50 AND `sub_count` ≤ 2: spawn **one** combined Sonnet agent that runs every relevant lens (drop UX/Mobile if `fe_count` = 0) in a single prompt. No fan-out.
 - **Standard** — anything larger: always spawn **Agent 1 (Spec & Design)** and **Agent 2 (Correctness & Data Flow)**. Spawn **Agent 3 (UX)** and **Agent 4 (Mobile)** ONLY when `fe_count` ≥ 1. A backend-only diff therefore runs 2 agents, not 4 — UX and Mobile findings cannot exist without frontend changes, so paying for those agents on backend diffs is pure waste.
 
 Record which agents you spawned and why (e.g. "backend-only: skipped UX + Mobile") — Step 6 attribution must reflect the actual set.
 
-Agents run `run_in_background: true`, `subagent_type: "general-purpose"`, `model: "openai-codex/gpt-5.6-luna"`. Each gets: the plan / distilled chat intent, the diff path (`/tmp/code-review.diff`), and (PR mode) the PR number.
+Agents run `run_in_background: true`, `subagent_type: "general-purpose"`, `model: "sonnet"`. Each gets: the plan / distilled chat intent, the diff path (`/tmp/code-review.diff`), and (PR mode) the PR number.
 
 **CLAUDE.md handling (quota):** Do NOT paste full CLAUDE.md into every agent — it is ~5.5k tokens and duplicating it across agents is the largest avoidable cost. Only **Agent 1** receives the full root CLAUDE.md text (plus any touched-directory CLAUDE.md) because it owns the invariant audit. Every other agent gets only the "Quick Invariant Lookup" digest from CLAUDE.md and the instruction: *"Read root CLAUDE.md ONLY to confirm a specific invariant before flagging it."*
 
@@ -184,7 +184,7 @@ Re-run Step 1 to ensure the PR hasn't been closed/drafted during review.
 
 **PR mode also posts a comment.** Use `gh pr comment N --body-file …`. Link format: `https://github.com/OWNER/REPO/blob/FULL_SHA/path/file.ts#L10-L15` (full SHA, 1-2 lines context). In local mode, use the same link format only if a remote/SHA is known; otherwise cite `path/file.ts:10-15`.
 
-**Attribution:** Disclose models AND the actual lens set that ran (it varies by tier/surface). Include `**Review models:** Orchestrator: <runtime model> | Reviewers: openai-codex/gpt-5.6-luna x<N> (<lenses actually spawned>)` — e.g. `openai-codex/gpt-5.6-luna x2 (spec+design, correctness+data-flow)` for a backend diff, `openai-codex/gpt-5.6-luna x4 (spec+design, correctness+data-flow, UX, mobile)` for a frontend one, or `openai-codex/gpt-5.6-luna x1 (combined)` for a trivial diff.
+**Attribution:** Disclose models AND the actual lens set that ran (it varies by tier/surface). Include `**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x<N> (<lenses actually spawned>)` — e.g. `sonnet x2 (spec+design, correctness+data-flow)` for a backend diff, `sonnet x4 (spec+design, correctness+data-flow, UX, mobile)` for a frontend one, or `sonnet x1 (combined)` for a trivial diff.
 
 Report body (identical for the chat printout and the PR comment; the PR comment also carries the `<!-- unified-review -->` marker as its first line):
 
@@ -192,7 +192,7 @@ Report body (identical for the chat printout and the PR comment; the PR comment 
 <!-- unified-review -->
 ### Code review
 **Confidence: X/7** — [Label]
-**Review models:** Orchestrator: <runtime model> | Reviewers: openai-codex/gpt-5.6-luna x<N> (<lenses that ran>)
+**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x<N> (<lenses that ran>)
 
 Found N issues:
 
@@ -219,7 +219,7 @@ Found N issues:
 <!-- unified-review -->
 ### Code review
 **Confidence: 7/7** — Excellent
-**Review models:** Orchestrator: <runtime model> | Reviewers: openai-codex/gpt-5.6-luna x<N> (<lenses that ran>)
+**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x<N> (<lenses that ran>)
 
 No issues found. Checked for <the lenses that actually ran — e.g. bugs, data-flow lifecycle, CLAUDE.md compliance, plan adherence, design quality, and security on a backend diff; add UX and mobile when those agents ran>.
 
@@ -238,7 +238,7 @@ Use `gh api -X PATCH repos/OWNER/REPO/issues/comments/ID -f body=...` locally, o
 ```
 Code review complete — <PR #N: URL | local branch <name> vs <base_ref>>
 Confidence: X/7
-Models: Orchestrator=<runtime model>, Reviewers=openai-codex/gpt-5.6-luna x<N> (<lenses that ran>)
+Models: Orchestrator=<runtime model>, Reviewers=sonnet x<N> (<lenses that ran>)
 Summary:
 - 📐 Plan: <status>
 - 🔍 Bugs: <status>
