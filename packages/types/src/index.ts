@@ -914,6 +914,7 @@ export {
   SIDEBAR_QUICK_LINKS_WITH_ACTIVE_STATE,
   type SidebarActiveQuickLinkKey,
   quickLinkHasActiveState,
+  isKnownQuickLinkKey,
   SIDEBAR_QUICK_LINK_VISIBILITIES,
   type SidebarQuickLinkVisibility,
   type SidebarQuickLink,

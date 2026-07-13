@@ -152,6 +152,20 @@ describe("updateSidebarConfigSchema", () => {
     ])
   })
 
+  it("tolerates a retired quick-link key instead of 400ing the PATCH", () => {
+    // A stale client still sends the removed "board" link; the schema accepts it
+    // (normalizeSidebarConfig drops unknown keys on write) rather than rejecting.
+    const result = updateSidebarConfigSchema.safeParse({
+      basePreset: "smart",
+      sections: [{ id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } }],
+      quickLinks: [
+        { key: "board", visibility: "show" },
+        { key: "drafts", visibility: "show" },
+      ],
+    })
+    expect(result.success).toBe(true)
+  })
+
   it("accepts the quicklinks section spec", () => {
     const parsed = updateSidebarConfigSchema.parse({
       basePreset: "smart",

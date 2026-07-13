@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test"
 import {
   normalizeSidebarConfig,
   SIDEBAR_CONFIG_VERSION,
+  SIDEBAR_QUICK_LINKS,
   QUICK_LINKS_SECTION_ID,
   MAX_CUSTOM_SECTION_STREAM_IDS,
   type RawSidebarConfig,
@@ -162,5 +163,29 @@ describe("normalizeSidebarConfig section sanitization", () => {
     const spec = result.sections[0].spec
     if (spec.kind !== "custom") throw new Error("expected a custom section")
     expect(spec.streamIds).toHaveLength(MAX_CUSTOM_SECTION_STREAM_IDS)
+  })
+})
+
+describe("normalizeSidebarConfig quick-link sanitization", () => {
+  test("drops a retired quick-link key (board) while keeping the rest and appending missing keys", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [],
+      // A stale client persisted the removed "board" link ahead of the others.
+      quickLinks: [
+        { key: "board", visibility: "show" },
+        { key: "drafts", visibility: "hidden" },
+      ],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+    const keys = result.quickLinks.map((l) => l.key)
+
+    expect(keys).not.toContain("board")
+    // The known key it carried keeps its stored visibility and leading position;
+    // every other current key is appended (shown) in canonical order.
+    expect(keys).toEqual(["drafts", ...SIDEBAR_QUICK_LINKS.filter((k) => k !== "drafts")])
+    expect(result.quickLinks.find((l) => l.key === "drafts")?.visibility).toBe("hidden")
   })
 })

@@ -80,17 +80,13 @@ export type SidebarBasePreset = (typeof SIDEBAR_BASE_PRESETS)[number]
  * reorder them and set each one's visibility; the set itself is fixed (these are
  * the workspace's standing views).
  */
-export const SIDEBAR_QUICK_LINKS = [
-  "board",
-  "drafts",
-  "saved",
-  "files",
-  "scheduled",
-  "memory",
-  "labels",
-  "activity",
-] as const
+export const SIDEBAR_QUICK_LINKS = ["drafts", "saved", "files", "scheduled", "memory", "labels", "activity"] as const
 export type SidebarQuickLinkKey = (typeof SIDEBAR_QUICK_LINKS)[number]
+
+/** Whether a stored/wire key is one of the current quick links. */
+export function isKnownQuickLinkKey(key: string): key is SidebarQuickLinkKey {
+  return (SIDEBAR_QUICK_LINKS as readonly string[]).includes(key)
+}
 
 /** Stable section id for the Quick Links block — doubles as its collapse-state key. */
 export const QUICK_LINKS_SECTION_ID = "quick-links"
@@ -147,9 +143,14 @@ export interface SidebarConfig {
   quickLinks: SidebarQuickLink[]
 }
 
-/** The legacy ({ enabled }) and current ({ visibility }) shapes a stored link can take. */
+/**
+ * The legacy ({ enabled }) and current ({ visibility }) shapes a stored link can
+ * take. `key` is a raw string, not {@link SidebarQuickLinkKey}: a persisted row or
+ * a stale client can carry a retired key (e.g. the removed "board" link), which
+ * {@link normalizeSidebarConfig} drops on read.
+ */
 export type StoredQuickLink = {
-  key: SidebarQuickLinkKey
+  key: string
   visibility?: SidebarQuickLinkVisibility
   /** Pre-v2 boolean flag, migrated to {@link SidebarQuickLink.visibility}. */
   enabled?: boolean
@@ -229,11 +230,11 @@ function sanitizeCustomStreamIds(streamIds: unknown, claimed: Set<string>): stri
 }
 
 /** Resolve a stored link's visibility, migrating the pre-v2 boolean and coercing invalid `active`. */
-function normalizeQuickLinkVisibility(link: StoredQuickLink): SidebarQuickLinkVisibility {
+function normalizeQuickLinkVisibility(link: StoredQuickLink, key: SidebarQuickLinkKey): SidebarQuickLinkVisibility {
   const stored = link.visibility
   if (stored === "show" || stored === "active" || stored === "hidden") {
     // "active" only makes sense for links with a live signal.
-    return stored === "active" && !quickLinkHasActiveState(link.key) ? "show" : stored
+    return stored === "active" && !quickLinkHasActiveState(key) ? "show" : stored
   }
   // Pre-v2 documents carried a boolean `enabled` instead of a visibility.
   if (typeof link.enabled === "boolean") return link.enabled ? "show" : "hidden"
@@ -259,9 +260,10 @@ export function normalizeSidebarConfig(config: RawSidebarConfig): SidebarConfig 
   const seen = new Set<SidebarQuickLinkKey>()
   const quickLinks: SidebarQuickLink[] = []
   for (const link of storedLinks) {
-    if (SIDEBAR_QUICK_LINKS.includes(link.key) && !seen.has(link.key)) {
-      seen.add(link.key)
-      quickLinks.push({ key: link.key, visibility: normalizeQuickLinkVisibility(link) })
+    const key = link.key
+    if (isKnownQuickLinkKey(key) && !seen.has(key)) {
+      seen.add(key)
+      quickLinks.push({ key, visibility: normalizeQuickLinkVisibility(link, key) })
     }
   }
   for (const key of SIDEBAR_QUICK_LINKS) {

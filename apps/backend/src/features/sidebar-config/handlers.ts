@@ -6,7 +6,6 @@ import {
   SIDEBAR_SECTION_KEYS,
   SIDEBAR_TYPE_SECTIONS,
   SIDEBAR_BASE_PRESETS,
-  SIDEBAR_QUICK_LINKS,
   SIDEBAR_QUICK_LINK_VISIBILITIES,
   MAX_CUSTOM_SECTION_NAME_LENGTH,
   MAX_CUSTOM_SECTION_STREAM_IDS,
@@ -39,8 +38,13 @@ const sidebarSectionSchema = z.object({
 // `visibility` is the current tri-state; `enabled` is the pre-v2 boolean an
 // older client may still send. Both are optional so either shape validates; the
 // service's normalizeSidebarConfig collapses them to a canonical visibility.
+//
+// `key` is a bounded raw string, not an enum of the current keys: a stale client
+// may still send a retired key (e.g. the removed "board" link), and rejecting the
+// whole PATCH would strand its layout. normalizeSidebarConfig drops unknown keys
+// on write, so the retired link disappears without a 400.
 const sidebarQuickLinkSchema = z.object({
-  key: z.enum(SIDEBAR_QUICK_LINKS),
+  key: z.string().min(1).max(64),
   visibility: z.enum(SIDEBAR_QUICK_LINK_VISIBILITIES).optional(),
   enabled: z.boolean().optional(),
 })
@@ -53,7 +57,9 @@ const updateSidebarConfigSchema = z.object({
   version: z.number().int().optional(),
   basePreset: z.enum(SIDEBAR_BASE_PRESETS),
   sections: z.array(sidebarSectionSchema).max(50),
-  quickLinks: z.array(sidebarQuickLinkSchema).max(SIDEBAR_QUICK_LINKS.length).optional().default([]),
+  // Cap only guards payload size; the array may carry a few retired keys from a
+  // stale client that normalizeSidebarConfig then drops.
+  quickLinks: z.array(sidebarQuickLinkSchema).max(32).optional().default([]),
 })
 
 export { updateSidebarConfigSchema }

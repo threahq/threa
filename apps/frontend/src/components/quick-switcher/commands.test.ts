@@ -106,7 +106,6 @@ describe("commands", () => {
 
     /** The palette destination each sidebar quick link must be reachable through. */
     const reachability: Record<SidebarQuickLinkKey, (ctx: ReturnType<typeof makeContext>) => void> = {
-      board: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/board`),
       drafts: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/drafts`),
       saved: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/saved`),
       files: ({ openExplorer }) => expect(openExplorer).toHaveBeenCalled(),

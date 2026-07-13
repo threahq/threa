@@ -1,14 +1,4 @@
-import {
-  Bell,
-  Bookmark,
-  Brain,
-  CalendarClock,
-  FileEdit,
-  LayoutGrid,
-  Paperclip,
-  Tag,
-  type LucideIcon,
-} from "lucide-react"
+import { Bell, Bookmark, Brain, CalendarClock, FileEdit, Paperclip, Tag, type LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarQuickLink, SidebarQuickLinkKey } from "@threa/types"
@@ -24,7 +14,6 @@ import { MoreDivider, SectionHeader } from "./sections"
  * show-hide), so the two never drift.
  */
 export const QUICK_LINK_META: Record<SidebarQuickLinkKey, { label: string; icon: LucideIcon }> = {
-  board: { label: "Board", icon: LayoutGrid },
   drafts: { label: "Drafts", icon: FileEdit },
   saved: { label: "Saved", icon: Bookmark },
   files: { label: "Files", icon: Paperclip },
@@ -45,7 +34,6 @@ interface SidebarQuickLinksProps {
   isScheduledPage: boolean
   scheduledCount: number
   isActivityPage: boolean
-  isBoardPage: boolean
   isMemoryPage: boolean
   isFilesPage: boolean
   isLabelsPage: boolean
@@ -84,7 +72,6 @@ export function SidebarQuickLinks({
   isScheduledPage,
   scheduledCount,
   isActivityPage,
-  isBoardPage,
   isMemoryPage,
   isFilesPage,
   isLabelsPage,
@@ -97,7 +84,6 @@ export function SidebarQuickLinks({
   // The route/count signal data per key; presentation (label/icon) comes from
   // QUICK_LINK_META so the editor and the list stay in sync.
   const itemByKey: Record<SidebarQuickLinkKey, QuickLinkItem> = {
-    board: { to: `/w/${workspaceId}/board`, isActive: isBoardPage, unreadCount: 0, signalSlot: null },
     drafts: {
       to: `/w/${workspaceId}/drafts`,
       isActive: isDraftsPage,
