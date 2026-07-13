@@ -30,7 +30,13 @@ import {
 import { useBoardHiddenConversations, useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
 import { useBoardRailsReady } from "@/hooks/use-board-card-messages"
 import { useBoardRevealLatch } from "@/hooks/use-board-reveal-latch"
-import { useConversationGraphReady } from "@/hooks/use-conversation-graph"
+import {
+  useConversationGraph,
+  useConversationGraphReady,
+  useStreamStructuralIndex,
+  collectBranchThreadStreamIds,
+} from "@/hooks/use-conversation-graph"
+import { useBoardDraftsReady } from "@/hooks/use-scope-draft-preview"
 import { SKELETON_DELAY_MS } from "@/contexts/coordinated-loading-context"
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
 import { BoardCard } from "@/components/board/board-card"
@@ -482,19 +488,39 @@ function BoardPageInner({
   // content actually changed — Kris's refresh ruling, 2026-07-05). Warm-device
   // holds are one IDB round-trip; the skeleton appears only past the same delay
   // the timeline uses, so the common path is blank-for-a-beat → complete board.
+  const conversationGraph = useConversationGraph(workspaceId)
+  const structuralIndex = useStreamStructuralIndex(workspaceId)
   const prewarmStreamIds = useMemo(() => {
     const set = new Set<string>()
     for (const post of posts.slice(0, REVEAL_PREWARM_CARDS)) {
       set.add(post.conversation.streamId)
       for (const id of post.streamIds ?? []) set.add(id)
+      // The nested branches the card will render, from the graph itself — the
+      // same walk the card does. `post.streamIds` carries a branch's thread
+      // stream only when the branch conversation sits in the same filtered feed
+      // page (the suppression fold); a branch outside the feed window still
+      // renders nested, and without its rail warmed here the branch paints
+      // collapsed ("N more replies") and expands a frame later.
+      for (const id of collectBranchThreadStreamIds({
+        conversationId: post.conversation.id,
+        memberMessageIds: post.conversation.messageIds,
+        index: structuralIndex,
+        graph: conversationGraph,
+      })) {
+        set.add(id)
+      }
     }
     return [...set].sort()
-  }, [posts])
+  }, [posts, structuralIndex, conversationGraph])
   const railsReady = useBoardRailsReady(prewarmStreamIds)
   const graphReady = useConversationGraphReady(workspaceId)
+  // Draft pills (card reply button, branch tails, sub-topic indicators) read the
+  // shared board-drafts snapshot; hold the reveal until its first read lands so
+  // a pill is in the card's first frame, never a later one.
+  const draftsReady = useBoardDraftsReady(workspaceId)
   // Latch the reveal so a newly added conversation's cold rail can't un-paint the
   // whole feed (see `useBoardRevealLatch`); the gate only holds the first paint.
-  const revealReady = useBoardRevealLatch(railsReady && graphReady, workspaceId)
+  const revealReady = useBoardRevealLatch(railsReady && graphReady && draftsReady, workspaceId)
   const holding = posts.length > 0 && !revealReady
   const loading = isLoading || viewLoading || seedPending || holding
   const [skeletonVisible, setSkeletonVisible] = useState(false)

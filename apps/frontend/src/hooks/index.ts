@@ -60,6 +60,7 @@ export { useStashComposer, useStashParamDraftRow, type UseStashComposerResult } 
 export {
   useScopeDraftPreview,
   useBoardSubtopicDraftIndex,
+  useBoardDraftsReady,
   type ScopeDraftPreview,
   type SubtopicDraftEntry,
 } from "./use-scope-draft-preview"

@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import type { JSONContent } from "@threa/types"
 import { db } from "@/db"
-import { useScopeDraftPreview, useBoardSubtopicDraftIndex } from "./use-scope-draft-preview"
+import {
+  useScopeDraftPreview,
+  useBoardSubtopicDraftIndex,
+  useBoardDraftsReady,
+  __clearBoardDraftsRegistry,
+} from "./use-scope-draft-preview"
 
 const workspaceId = "ws_1"
 const scope = "board:reply:conv_1"
@@ -17,6 +22,7 @@ async function seed(id: string, draftScope: string, text: string, clientUpdatedA
 }
 
 beforeEach(async () => {
+  __clearBoardDraftsRegistry()
   await db.drafts.clear()
   await db.composerLoaded.clear()
 })
@@ -48,6 +54,24 @@ describe("useScopeDraftPreview", () => {
     await waitFor(() =>
       expect(result.current).toMatchObject({ draftId: "draft_new", preview: "newest roamed body", isCheckedOut: false })
     )
+  })
+
+  it("throws on a non-board scope — the shared snapshot only covers board:* rows", () => {
+    expect(() => renderHook(() => useScopeDraftPreview(workspaceId, "stream:stream_1"))).toThrow(/board draft scopes/)
+  })
+})
+
+describe("useBoardDraftsReady", () => {
+  it("is false until the shared snapshot's first read lands, then true — and the settled snapshot serves scope reads synchronously", async () => {
+    await seed("draft_1", scope, "body", 1000)
+    const ready = renderHook(() => useBoardDraftsReady(workspaceId))
+    expect(ready.result.current).toBe(false)
+    await waitFor(() => expect(ready.result.current).toBe(true))
+
+    // A hook mounting AFTER the snapshot resolved (a card painting post-reveal)
+    // reads its preview in its very first render — no post-mount pop-in.
+    const preview = renderHook(() => useScopeDraftPreview(workspaceId, scope))
+    expect(preview.result.current).toMatchObject({ draftId: "draft_1", preview: "body" })
   })
 })
 
