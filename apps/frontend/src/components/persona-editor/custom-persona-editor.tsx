@@ -71,6 +71,15 @@ const CONTEXT_MODE_LABEL: Record<PersonaAttachmentContextMode, string> = {
   name_only: "Name only",
 }
 
+/** Hover explanation for each context label: the budget is invisible otherwise,
+ *  and "Summary only" reads as a silent downgrade without the why. */
+const CONTEXT_MODE_HINT: Record<PersonaAttachmentContextMode, string> = {
+  full: "The file's full text is in the persona's context.",
+  summary:
+    "Too large to include in full, so the persona gets a short summary. Smaller or fewer files are included in full.",
+  name_only: "The persona's knowledge budget is used up, so only the filename is included.",
+}
+
 /** The file input's `accept` — the persona-attachment mime allowlist (INV-33 source). */
 const PERSONA_ATTACHMENT_ACCEPT = [
   ...PERSONA_ATTACHMENT_ALLOWED_MIME_PREFIXES.map((prefix) => `${prefix}*`),
@@ -438,7 +447,8 @@ export function CustomPersonaEditor({
       <div className="space-y-2">
         <Label>Knowledge</Label>
         <p className="text-xs text-muted-foreground">
-          Files the persona always carries in its context. Text, PDF, Word, Excel, or JSON.
+          Files the persona always carries in its context. Text, PDF, Word, Excel, or JSON. Large files are carried as
+          short summaries so everything fits the persona&apos;s knowledge budget.
         </p>
         {(config.attachments.length > 0 || knowledge.rows.length > 0) && (
           <ul className="space-y-1.5">
@@ -453,11 +463,16 @@ export function CustomPersonaEditor({
                   <p className="text-xs text-muted-foreground">
                     {formatFileSize(attachment.sizeBytes)}
                     {attachment.processingStatus === "processing" && " · Processing…"}
-                    {attachment.processingStatus === "ready" &&
-                      attachment.contextMode &&
-                      ` · ${CONTEXT_MODE_LABEL[attachment.contextMode]}`}
+                    {attachment.processingStatus === "ready" && attachment.contextMode && (
+                      <span title={CONTEXT_MODE_HINT[attachment.contextMode]}>
+                        {` · ${CONTEXT_MODE_LABEL[attachment.contextMode]}`}
+                      </span>
+                    )}
                     {attachment.processingStatus === "failed" && (
-                      <span className="text-destructive"> · Couldn&apos;t read this file</span>
+                      <span className="text-destructive">
+                        {" "}
+                        · Couldn&apos;t read this file. Remove it and try a different format.
+                      </span>
                     )}
                   </p>
                 </div>
