@@ -53,6 +53,7 @@ Two rules for using it:
 | share-target                                                                   | OS-level share into a workspace (PWA), destination picker                                                                                       | `pages/share-target.tsx`                                                     |
 | offline                                                                        | Composing offline, queued operations, connection status                                                                                         | `sw.ts`, `sync/operation-queue.ts`                                           |
 | [ai-companions](public/ai-companions.md) ✅                                    | Personas, companion mode, mentions, in-timeline activity card, agent traces                                                                     | `features/agents`, `docs/core-concepts.md`                                   |
+| [custom-personas](public/custom-personas.md) ✅                                | Fork/edit personas (workspace + personal scopes, visibility rules), the editor, test-drive, revisions, attached knowledge files                 | `features/agents`, `components/persona-editor/`                              |
 
 ## Concepts
 
