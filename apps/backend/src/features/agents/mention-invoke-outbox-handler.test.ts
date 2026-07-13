@@ -19,11 +19,18 @@ function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
 }
 
 function createHandler() {
-  ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(makeFakeCursorLock())
+  // `handle()` is fire-and-forget through the debouncer, so tests await `ran`
+  // — resolved when the (mocked) cursor lock finishes one processing pass —
+  // instead of sleeping past the debounce window (deterministic on slow CI).
+  let resolveRan!: () => void
+  const ran = new Promise<void>((resolve) => {
+    resolveRan = resolve
+  })
+  ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(makeFakeCursorLock(() => resolveRan()))
   const send = mock(async () => {})
   const jobQueue = { send } as unknown as QueueManager
   const handler = new MentionInvokeHandler({} as any, jobQueue)
-  return { handler, send }
+  return { handler, send, ran }
 }
 
 // Mirrors what the composer/API path emits AFTER ingestion resolution (INV-64):
@@ -91,9 +98,9 @@ describe("MentionInvokeHandler", () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     expect(findByIds).toHaveBeenCalledWith(expect.anything(), ["persona_ariadne"], "ws_test")
     expect(send).toHaveBeenCalledTimes(1)
@@ -118,9 +125,9 @@ describe("MentionInvokeHandler", () => {
       { ...ACTIVE_PERSONA, id: "persona_lena", slug: "лена" },
     ] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     expect(findByIds).toHaveBeenCalledWith(expect.anything(), ["persona_lena"], "ws_test")
     expect(send).toHaveBeenCalledTimes(1)
@@ -148,9 +155,9 @@ describe("MentionInvokeHandler", () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     expect(findByIds).toHaveBeenCalledWith(expect.anything(), ["persona_ariadne"], "ws_test")
     expect(send).toHaveBeenCalledTimes(1)
@@ -165,9 +172,9 @@ describe("MentionInvokeHandler", () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     expect(findByIds).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
@@ -179,9 +186,9 @@ describe("MentionInvokeHandler", () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([{ ...ACTIVE_PERSONA, status: "archived" }] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     expect(send).not.toHaveBeenCalled()
   })
@@ -195,9 +202,9 @@ describe("MentionInvokeHandler", () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     expect(findByIds).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
@@ -215,9 +222,9 @@ describe("MentionInvokeHandler", () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     expect(send).not.toHaveBeenCalled()
   })
@@ -233,9 +240,9 @@ describe("MentionInvokeHandler", () => {
       { id: "persona_mine", slug: "mine", status: "active", managedBy: "user", ownerUserId: "usr_author" },
     ] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     expect(send).toHaveBeenCalledTimes(1)
     expect(send).toHaveBeenCalledWith(JobQueues.PERSONA_AGENT, expect.objectContaining({ personaId: "persona_mine" }))
@@ -252,9 +259,9 @@ describe("MentionInvokeHandler", () => {
       { ...ACTIVE_PERSONA },
     ] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     // The other user's personal persona is skipped; the workspace built-in still runs.
     expect(send).toHaveBeenCalledTimes(1)
@@ -270,9 +277,9 @@ describe("MentionInvokeHandler", () => {
     const e2eSpy = spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
-    const { handler, send } = createHandler()
+    const { handler, send, ran } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await ran
 
     expect(send).not.toHaveBeenCalled()
     expect(e2eSpy).toHaveBeenCalled()

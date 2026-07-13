@@ -350,12 +350,20 @@ test.describe("Persona roster + editors", () => {
       await memberPage.getByRole("textbox", { name: "Description" }).fill(personaDescription)
       const save = memberPage.getByRole("button", { name: "Save" })
       await expect(save).toBeEnabled()
+      // Save disables the moment the mutation STARTS, so wait for the config
+      // PUT to succeed before navigating away — otherwise a failed save would
+      // slip past (the later name assertions hold from the fork seed alone).
+      const saved = memberPage.waitForResponse(
+        (r) => r.url().includes(`/personas/${personaId}`) && r.request().method() === "PUT" && r.ok()
+      )
       await save.click()
-      await expect(save).toBeDisabled({ timeout: 10000 })
+      await saved
 
-      // ──── Back on My personas the saved row is listed ────
+      // ──── Back on My personas the saved row shows the EDITED description ────
       await memberPage.goto(`/w/${workspaceId}?settings=ai`)
-      await expect(memberPage.getByText(personaName)).toBeVisible({ timeout: 10000 })
+      await expect(
+        memberPage.getByRole("listitem").filter({ hasText: personaName }).getByText(personaDescription)
+      ).toBeVisible({ timeout: 10000 })
 
       // ════════════ OWNER: pick it as a scratchpad companion (with "Personal" tag) ════════════
 

@@ -328,21 +328,32 @@ export function useArchivePersona(workspaceId: string) {
     onSuccess: (persona) => {
       removeFromList(queryClient, personaKeys.list(workspaceId), persona.id)
       upsertIntoList(queryClient, personaKeys.archived(workspaceId), persona)
+      // Flip the owner's store row now — pickers and "My personas" read the
+      // store, and must not keep offering an archived personal persona while
+      // the owner-room broadcast (the durable reconcile) is in flight.
+      if (persona.kind === "personal") {
+        upsertWorkspacePersonaCache(workspaceId, cachedPersonaFromListItem(persona, workspaceId))
+      }
     },
   })
 }
 
 /** Restore an archived persona to active. A workspace custom re-joins the roster
  *  list cache; a personal persona is NOT written there (`GET /personas` is
- *  workspace-only — it would pollute the admin roster), its store row flips back
- *  to active via the owner-room broadcast that "My personas" reads. */
+ *  workspace-only — it would pollute the admin roster) — its store row flips
+ *  back to active from the mutation result, with the owner-room broadcast as
+ *  the durable reconcile. */
 export function useUnarchivePersona(workspaceId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (personaId: string) => personasApi.unarchive(workspaceId, personaId),
     onSuccess: (persona) => {
       removeFromList(queryClient, personaKeys.archived(workspaceId), persona.id)
-      if (persona.kind !== "personal") upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)
+      if (persona.kind === "personal") {
+        upsertWorkspacePersonaCache(workspaceId, cachedPersonaFromListItem(persona, workspaceId))
+        return
+      }
+      upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)
     },
   })
 }

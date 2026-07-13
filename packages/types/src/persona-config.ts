@@ -7,7 +7,7 @@
 // `availableModels`; built-in defaults stay legal even if the registry lacks them.
 
 import { z } from "zod"
-import { AGENT_TOOL_NAMES, TONE_PRESETS, BREVITY_PRESETS, type PersonaStatus } from "./constants"
+import { AGENT_TOOL_NAMES, TONE_PRESETS, BREVITY_PRESETS, PERSONA_MANAGED_BY, type PersonaStatus } from "./constants"
 
 /**
  * One selectable chat model for the persona editor's model / escalation-model
@@ -176,7 +176,7 @@ export const personaResolvedConfigSchema = z.object({
   brevityPrompt: z.string().max(PERSONA_SLOT_MAX_CHARS).nullable(),
   // `user` is a personal persona (user-scoped-personas), resolved only for its
   // owner; a built-in is `system`, a workspace custom is `workspace`.
-  managedBy: z.enum(["system", "workspace", "user"]),
+  managedBy: z.enum(PERSONA_MANAGED_BY),
   status: personaConfigStatusSchema,
   visibility: personaConfigVisibilitySchema,
   e2eCapable: z.boolean(),

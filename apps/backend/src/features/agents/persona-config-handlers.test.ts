@@ -13,7 +13,7 @@ const notFound = () => new HttpError("Persona not found", { status: 404, code: "
 // the service (user-scoped-personas).
 const CALLER = { userId: "usr_1", isAdmin: true }
 
-function fakeReq(overrides: Partial<{ params: object; body: object }> = {}): Request {
+function fakeReq(overrides: Partial<{ params: object; body: object; user: object }> = {}): Request {
   return {
     user: { id: "usr_1", role: "admin" },
     workspaceId: "workspace_1",
@@ -270,6 +270,24 @@ describe("persona config handlers", () => {
 
     expect(res.body).toEqual({ persona })
     expect(setCustomStatus).toHaveBeenCalledWith("workspace_1", "persona_x", "archived", CALLER)
+  })
+
+  it("resolves a non-admin member as isAdmin: false at the handler boundary", async () => {
+    // A regression resolving every member as admin would bypass the service's
+    // workspace-persona authorization without failing any admin-role test.
+    const persona = { id: "persona_x", slug: "helper", name: "Helper", kind: "personal" }
+    const setCustomStatus = mock(async () => persona)
+    const res = fakeRes()
+
+    await makeHandlers({ setCustomStatus } as unknown as Partial<PersonaConfigService>).archive(
+      fakeReq({ params: { personaId: "persona_x" }, user: { id: "usr_1", role: "member" } }),
+      res
+    )
+
+    expect(setCustomStatus).toHaveBeenCalledWith("workspace_1", "persona_x", "archived", {
+      userId: "usr_1",
+      isAdmin: false,
+    })
   })
 
   it("PUT draft returns the saved draft state", async () => {
