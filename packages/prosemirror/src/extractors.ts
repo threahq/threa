@@ -191,14 +191,16 @@ export function collectQuoteReplyMessageIds(content: JSONContent): string[] {
 const BARE_URL_IN_TEXT = /https?:\/\/[^\s<>"[\]]+/g
 
 function trimPlaintextUrl(url: string): string {
-  let trimmed = url.replace(/[.,;:!?]+$/, "")
-  while (trimmed.endsWith(")")) {
-    const opens = (trimmed.match(/\(/g) ?? []).length
-    const closes = (trimmed.match(/\)/g) ?? []).length
-    if (closes <= opens) break
-    trimmed = trimmed.slice(0, -1)
+  let trimmed = url
+  while (true) {
+    const withoutPunctuation = trimmed.replace(/[.,;:!?]+$/, "")
+    const opens = (withoutPunctuation.match(/\(/g) ?? []).length
+    const closes = (withoutPunctuation.match(/\)/g) ?? []).length
+    const next =
+      closes > opens && withoutPunctuation.endsWith(")") ? withoutPunctuation.slice(0, -1) : withoutPunctuation
+    if (next === trimmed) return trimmed
+    trimmed = next
   }
-  return trimmed
 }
 
 /**

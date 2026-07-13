@@ -3,13 +3,13 @@ import { normalizeMarkdownTables, parseMarkdown, serializeToMarkdown } from "./m
 import type { JSONContent } from "@threa/types"
 
 describe("@threa/prosemirror markdown links", () => {
-  it("parses a link whose URL contains balanced parentheses", () => {
-    const parsed = parseMarkdown("[Wikipedia](https://en.wikipedia.org/wiki/Foo_(bar))")
+  it("parses links whose URLs contain nested balanced parentheses", () => {
+    const parsed = parseMarkdown("[Wikipedia](https://en.wikipedia.org/wiki/Foo_(bar_(baz)))")
 
     expect(parsed.content?.[0]?.content?.[0]).toEqual({
       type: "text",
       text: "Wikipedia",
-      marks: [{ type: "link", attrs: { href: "https://en.wikipedia.org/wiki/Foo_(bar)" } }],
+      marks: [{ type: "link", attrs: { href: "https://en.wikipedia.org/wiki/Foo_(bar_(baz))" } }],
     })
   })
 })
