@@ -53,8 +53,8 @@ const SECTION_LABEL_CLASS =
   "m-0 px-4 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
 
 /**
- * The board block replaces the quick-links block in the sidebar while on
- * `/board` (board-centered-sidebar-exploration.md § V2 top blocks). Top-to-
+ * The board block sits below the quick links in the sidebar while on `/board`
+ * (board-centered-sidebar-exploration.md § V2 top blocks). Top-to-
  * bottom: a "← Chats" back link, the Filters group (the stream/type/label
  * pickers + the unread/archived toggles the deleted filter header used to host),
  * the active-filter chips, the viewer's saved Views, and the board Lenses. Every
