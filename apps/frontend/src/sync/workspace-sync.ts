@@ -1434,8 +1434,10 @@ export function registerWorkspaceSocketHandlers(
   const handleAgentConfigUpdated = (payload: { workspaceId: string; agentId: string; persona: PersonaListItem }) => {
     if (payload.workspaceId !== workspaceId) return
 
-    const { id, slug, name, description, avatarEmoji, avatarUrl, model, kind } = payload.persona
-    const patch = { slug, name, description, avatarEmoji, avatarUrl, model }
+    const { id, slug, name, description, avatarEmoji, avatarUrl, model, kind, status } = payload.persona
+    // status rides along so an archive/unarchive flips the cached row — the
+    // store-backed companion roster filters on it without a refetch.
+    const patch = { slug, name, description, avatarEmoji, avatarUrl, model, status }
     // A fork broadcasts a NEW custom that no existing row covers — upsert it so the
     // roster and actor rendering reflect it live (the list payload lacks the full
     // row, so synthesize the non-display fields; a bootstrap resync fills them in).
@@ -1454,7 +1456,7 @@ export function registerWorkspaceSocketHandlers(
       maxTokens: null,
       enabledTools: null,
       managedBy: kind === "custom" ? "workspace" : "system",
-      status: "active",
+      status,
       createdAt: nowIso,
       updatedAt: nowIso,
     }

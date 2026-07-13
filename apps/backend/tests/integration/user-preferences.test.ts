@@ -4,6 +4,7 @@ import { UserPreferencesService, UserPreferencesRepository } from "../../src/fea
 import { workspaceId, userId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
 import { DEFAULT_USER_PREFERENCES } from "@threa/types"
+import { ARIADNE_AGENT_ID } from "../../src/features/agents"
 
 describe("User Preferences - Sparse Override Pattern", () => {
   let pool: Pool
@@ -158,6 +159,40 @@ describe("User Preferences - Sparse Override Pattern", () => {
       const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
 
       expect(overrides).toEqual([{ key: "scratchpadCustomPrompt", value: "Be terse in scratchpads." }])
+    })
+
+    test("should store a non-null default companion persona override (active persona passes validation)", async () => {
+      // Ariadne (a built-in) is always an active persona in every workspace, so it
+      // passes write-time validation; the stored id differs from the null default.
+      await service.updatePreferences(testWorkspaceId, testUserId, {
+        defaultCompanionPersonaId: ARIADNE_AGENT_ID,
+      })
+
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      expect(overrides).toEqual([{ key: "defaultCompanionPersonaId", value: ARIADNE_AGENT_ID }])
+    })
+
+    test("should delete the default companion persona override when reverted to null", async () => {
+      await service.updatePreferences(testWorkspaceId, testUserId, {
+        defaultCompanionPersonaId: ARIADNE_AGENT_ID,
+      })
+      expect(await UserPreferencesRepository.findOverrides(pool, testUserId)).toHaveLength(1)
+
+      await service.updatePreferences(testWorkspaceId, testUserId, {
+        defaultCompanionPersonaId: null,
+      })
+      expect(await UserPreferencesRepository.findOverrides(pool, testUserId)).toHaveLength(0)
+    })
+
+    test("should reject a default companion persona id that is not an active workspace persona", async () => {
+      await expect(
+        service.updatePreferences(testWorkspaceId, testUserId, {
+          defaultCompanionPersonaId: "persona_does_not_exist",
+        })
+      ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_AVAILABLE" })
+
+      // Nothing was stored on the rejected write.
+      expect(await UserPreferencesRepository.findOverrides(pool, testUserId)).toHaveLength(0)
     })
   })
 

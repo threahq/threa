@@ -3,7 +3,8 @@ import { toast } from "sonner"
 import type { CompanionMode, StreamBootstrap, ToolPrivacyPolicy } from "@threa/types"
 import { streamKeys } from "@/hooks"
 import { useUpdateCompanionMode, useUpdateToolPolicy } from "@/hooks/use-streams"
-import { usePersonas } from "@/hooks/use-personas"
+import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
+import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { AgentSettingsPanel } from "./agent-settings-panel"
@@ -29,9 +30,10 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
   const { mutateAsync: updateToolPolicy, isPending: toolBusy } = useUpdateToolPolicy(workspaceId, streamId)
   const currentUser = useCurrentWorkspaceUser(workspaceId)
   const externalAgent = useActiveBotPresence(workspaceId, streamId)
-  // Encrypted scratchpads always run the enclave's built-in Ariadne, so the
-  // picker (and its roster fetch) is plaintext-only.
-  const { data: personas } = usePersonas(workspaceId, { enabled: !e2e })
+  // Bootstrap-backed store read (no fetch); the picker stays hidden on
+  // encrypted scratchpads (enclave always runs the built-in Ariadne).
+  const personas = useCompanionRoster(workspaceId)
+  const { workspaceDefault, personalDefault } = useDefaultCompanionPersona(workspaceId)
 
   // Cache-only observer: re-renders when a mutation patches the bootstrap.
   const { data: bootstrap } = useQuery({
@@ -52,6 +54,9 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
     }
   }
 
+  // A created scratchpad is pinned to one persona; a legacy NULL pointer
+  // displays (and dispatches as) the built-in default. No inherit row here —
+  // only an explicit pick changes the agent.
   const { selectedPersonaId } = resolveCompanionSelection(personas, bootstrap?.stream?.companionPersonaId)
 
   const handlePersona = async (personaId: string) => {
@@ -78,8 +83,15 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
       companionBusy={companionBusy}
       externalAgent={externalAgent}
       personaPicker={
-        !e2e && personas
-          ? { workspaceId, personas, selectedPersonaId, onChange: handlePersona, busy: companionBusy }
+        !e2e && personas.length > 0
+          ? {
+              workspaceId,
+              personas,
+              selectedPersonaId,
+              onChange: handlePersona,
+              defaultBadges: { workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id },
+              busy: companionBusy,
+            }
           : undefined
       }
       toolPolicy={

@@ -2,6 +2,7 @@ import { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { WorkspaceSettingsRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
+import { assertAssignablePersona } from "../agents"
 import { type WorkspaceSettings, type UpdateWorkspaceSettingsInput, DEFAULT_WORKSPACE_SETTINGS } from "@threa/types"
 
 /** Merge sparse overrides onto code defaults to produce full settings. */
@@ -34,6 +35,7 @@ function flattenUpdates(updates: UpdateWorkspaceSettingsInput): Array<{ key: str
     "memoLanguage",
     "voiceSteeringWords",
     "maxPendingFollowUps",
+    "defaultCompanionPersonaId",
   ] as const
   for (const key of simpleKeys) {
     if (updates[key] !== undefined) {
@@ -58,6 +60,7 @@ export class WorkspaceSettingsService {
    * setting a value back to the default clears the override.
    */
   async updateSettings(workspaceId: string, updates: UpdateWorkspaceSettingsInput): Promise<WorkspaceSettings> {
+    await assertAssignablePersona(this.pool, updates.defaultCompanionPersonaId, workspaceId)
     return withTransaction(this.pool, async (client) => {
       for (const { key, value } of flattenUpdates(updates)) {
         if (matchesDefault(key, value)) {

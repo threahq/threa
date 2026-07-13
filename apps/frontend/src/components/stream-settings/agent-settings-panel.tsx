@@ -1,18 +1,12 @@
 import type { ComponentType } from "react"
 import { Moon, Sparkles } from "lucide-react"
-import {
-  CompanionModes,
-  type CompanionMode,
-  type PersonaListItem,
-  type ToolPrivacyCategory,
-  type ToolPrivacyPolicy,
-} from "@threa/types"
+import { CompanionModes, type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
 import type { ActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { ToolPolicyControl } from "./tool-policy-picker"
 import { ExternalAgentIndicator } from "./external-agent-indicator"
-import { CompanionAgentSelect } from "./companion-agent-select"
+import { CompanionAgentSelect, type CompanionDefaultBadges, type CompanionPersona } from "./companion-agent-select"
 
 export interface AgentToolPolicyBinding {
   value: ToolPrivacyPolicy
@@ -26,9 +20,16 @@ export interface AgentToolPolicyBinding {
 export interface AgentPersonaBinding {
   workspaceId: string
   /** Roster to offer (built-ins + active customs). */
-  personas: PersonaListItem[]
+  personas: CompanionPersona[]
+  /** Select value: an explicit persona id, or the inherit sentinel (see
+   *  `companionPickerValue`). */
   selectedPersonaId: string | undefined
   onChange: (personaId: string) => void
+  /** The synthetic leading "Default (X)" row (creation-time surfaces only);
+   *  the caller maps its sentinel value back to unset. */
+  defaultOption?: { label: string }
+  /** Row indicators marking the workspace/personal default personas. */
+  defaultBadges?: CompanionDefaultBadges
   busy?: boolean
 }
 
@@ -91,6 +92,8 @@ export function AgentSettingsPanel({
             personas={personaPicker.personas}
             value={personaPicker.selectedPersonaId}
             onChange={personaPicker.onChange}
+            defaultOption={personaPicker.defaultOption}
+            defaultBadges={personaPicker.defaultBadges}
             disabled={personaPicker.busy}
             triggerClassName="w-full"
           />

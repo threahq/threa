@@ -23,6 +23,9 @@ const updateWorkspaceSettingsSchema = z.object({
     .optional(),
   // Per-stream pending follow-up cap the assistant self-regulates against (roadmap 1.4).
   maxPendingFollowUps: z.number().int().min(MAX_PENDING_FOLLOW_UPS_MIN).max(MAX_PENDING_FOLLOW_UPS_MAX).optional(),
+  // Workspace default companion persona id; null clears back to built-in Ariadne.
+  // Semantic validation (active persona in this workspace) runs in the service.
+  defaultCompanionPersonaId: z.string().min(1).max(64).nullable().optional(),
 })
 
 export { updateWorkspaceSettingsSchema }

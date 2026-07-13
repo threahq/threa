@@ -31,7 +31,7 @@ test.describe("Persona roster + editors", () => {
 
     await page.goto(`/w/${workspaceId}?ws-settings=ai-agents`)
     const dialog = page.getByRole("dialog")
-    await expect(dialog.getByText("Ariadne", { exact: true })).toBeVisible({ timeout: 10000 })
+    await expect(dialog.getByRole("listitem").filter({ hasText: "Ariadne" })).toBeVisible({ timeout: 10000 })
     // Fresh workspace — Ariadne has no override yet.
     await expect(dialog.getByText("Customized")).toHaveCount(0)
 
@@ -89,7 +89,7 @@ test.describe("Persona roster + editors", () => {
 
     await page.goto(`/w/${workspaceId}?ws-settings=ai-agents`)
     const settingsDialog = page.getByRole("dialog")
-    await expect(settingsDialog.getByText("Ariadne", { exact: true })).toBeVisible({ timeout: 10000 })
+    await expect(settingsDialog.getByRole("listitem").filter({ hasText: "Ariadne" })).toBeVisible({ timeout: 10000 })
 
     await settingsDialog.getByRole("button", { name: "New agent" }).click()
     const forkDialog = page.getByRole("dialog").filter({ hasText: "Fork an existing agent" })
@@ -168,7 +168,7 @@ test.describe("Persona roster + editors", () => {
     // Lands back on the AI Agents tab; the agent left the active roster.
     await expect(page).toHaveURL(/ws-settings=ai-agents/)
     const dialog = page.getByRole("dialog")
-    await expect(dialog.getByText("Ariadne", { exact: true })).toBeVisible({ timeout: 10000 })
+    await expect(dialog.getByRole("listitem").filter({ hasText: "Ariadne" })).toBeVisible({ timeout: 10000 })
 
     // ──── It sits behind the Archived disclosure; unarchive returns it ────
 
@@ -182,5 +182,89 @@ test.describe("Persona roster + editors", () => {
     await expect(
       dialog.getByRole("listitem").filter({ hasText: agentName }).getByRole("link", { name: "Edit" })
     ).toBeVisible({ timeout: 10000 })
+  })
+
+  test("defaults pin at create: a later default change never switches an existing scratchpad's agent", async ({
+    page,
+  }) => {
+    test.setTimeout(60000)
+
+    const { testId } = await loginAndCreateWorkspace(page, "persona-default")
+    const workspaceId = page.url().match(/\/w\/(ws_[^/]+)/)![1]
+    const wsAgentName = `Workspace pick ${testId}`
+    const userAgentName = `Personal pick ${testId}`
+
+    // Two custom personas (forked via API for speed) give the workspace tier and
+    // the personal tier distinct, assertable names.
+    for (const name of [wsAgentName, userAgentName]) {
+      const forkRes = await page.request.post(`/api/workspaces/${workspaceId}/personas`, {
+        data: { sourcePersonaId: "persona_system_ariadne", name },
+      })
+      await expectApiOk(forkRes, `Persona fork (${name})`)
+    }
+
+    // ──── Admin sets the workspace default via the Personas tab combobox ────
+
+    await page.goto(`/w/${workspaceId}?ws-settings=ai-agents`)
+    const settingsDialog = page.getByRole("dialog")
+    const wsDefaultPicker = settingsDialog.getByRole("combobox", { name: "Companion agent" })
+    await expect(wsDefaultPicker).toBeEnabled({ timeout: 10000 })
+    const wsSettingsSaved = page.waitForResponse(
+      (r) => r.url().includes("/workspace-settings") && r.request().method() === "PATCH" && r.ok()
+    )
+    await wsDefaultPicker.click()
+    await page.getByRole("option", { name: wsAgentName }).click()
+    await expect(wsDefaultPicker).toContainText(wsAgentName)
+    await wsSettingsSaved
+
+    // ──── A scratchpad created with NO explicit pick PINS the workspace default ────
+
+    const createRes = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+      data: { type: "scratchpad", displayName: `pad-${testId}` },
+    })
+    await expectApiOk(createRes, "Scratchpad creation")
+    const streamId = ((await createRes.json()) as { stream: { id: string } }).stream.id
+    const created = ((await createRes.json()) as { stream: { companionPersonaId: string | null } }).stream
+    // The default resolves at create and the concrete id is written — never a
+    // null pointer to be re-resolved later.
+    expect(created.companionPersonaId).not.toBeNull()
+
+    const companionUrl = `/w/${workspaceId}/s/${streamId}?stream-settings=companion&sid=${streamId}`
+    await page.goto(companionUrl)
+    const streamPicker = page.getByRole("combobox", { name: "Companion agent" })
+    await expect(streamPicker).toContainText(wsAgentName, { timeout: 10000 })
+
+    // ──── Changing defaults later must NOT touch the existing scratchpad ────
+
+    await page.goto(`/w/${workspaceId}?settings=ai`)
+    const userDefaultPicker = page.getByRole("combobox", { name: "Companion agent" })
+    // The synthetic leading option names the tier it would inherit (the workspace pick).
+    await expect(userDefaultPicker).toContainText(wsAgentName, { timeout: 10000 })
+    const preferenceSaved = page.waitForResponse(
+      (r) => r.url().includes("/preferences") && r.request().method() === "PATCH" && r.ok()
+    )
+    await userDefaultPicker.click()
+    await page.getByRole("option", { name: userAgentName }).click()
+    await expect(userDefaultPicker).toContainText(userAgentName)
+    await preferenceSaved
+
+    // The existing scratchpad stays on the persona it was created with — a
+    // default change never switches an agent mid-scratchpad.
+    await page.goto(companionUrl)
+    await expect(page.getByRole("combobox", { name: "Companion agent" })).toContainText(wsAgentName, {
+      timeout: 10000,
+    })
+
+    // ──── A NEW scratchpad pins the current default (the personal pick) ────
+
+    const createRes2 = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+      data: { type: "scratchpad", displayName: `pad2-${testId}` },
+    })
+    await expectApiOk(createRes2, "Second scratchpad creation")
+    const streamId2 = ((await createRes2.json()) as { stream: { id: string } }).stream.id
+    await page.goto(`/w/${workspaceId}/s/${streamId2}?stream-settings=companion&sid=${streamId2}`)
+    await expect(page.getByRole("combobox", { name: "Companion agent" })).toContainText(userAgentName, {
+      timeout: 10000,
+    })
   })
 })

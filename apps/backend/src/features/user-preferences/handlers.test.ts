@@ -87,6 +87,30 @@ describe("updatePreferencesSchema boardDefaultViewId", () => {
   })
 })
 
+describe("updatePreferencesSchema defaultCompanionPersonaId", () => {
+  it("accepts a persona id", () => {
+    expect(updatePreferencesSchema.parse({ defaultCompanionPersonaId: "persona_1" }).defaultCompanionPersonaId).toBe(
+      "persona_1"
+    )
+  })
+
+  it("accepts null to inherit the workspace default", () => {
+    expect(updatePreferencesSchema.parse({ defaultCompanionPersonaId: null }).defaultCompanionPersonaId).toBeNull()
+  })
+
+  it("rejects an empty id", () => {
+    expect(updatePreferencesSchema.safeParse({ defaultCompanionPersonaId: "" }).success).toBe(false)
+  })
+
+  it("rejects an over-long id", () => {
+    expect(updatePreferencesSchema.safeParse({ defaultCompanionPersonaId: "x".repeat(65) }).success).toBe(false)
+  })
+
+  it("treats the field as optional", () => {
+    expect(updatePreferencesSchema.parse({}).defaultCompanionPersonaId).toBeUndefined()
+  })
+})
+
 describe("updatePreferencesSchema board card collapse settings", () => {
   it("accepts valid board card collapse settings", () => {
     const parsed = updatePreferencesSchema.parse({

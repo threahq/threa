@@ -262,6 +262,111 @@ describe("CompanionHandler", () => {
     )
   })
 
+  it("falls back to the built-in default (never the user/workspace default) for a legacy NULL pointer", async () => {
+    mockUserMessageEvent("stream_unpinned")
+
+    const scratchpad = makeStream({
+      id: "stream_unpinned",
+      type: StreamTypes.SCRATCHPAD,
+      companionMode: CompanionModes.ON,
+      companionPersonaId: null,
+      createdBy: "usr_creator",
+    })
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad)
+    const findById = spyOn(PersonaRepository, "findById")
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+    const systemDefault = spyOn(PersonaRepository, "getSystemDefault").mockResolvedValue({
+      id: "persona_system_ariadne",
+      status: "active",
+    } as any)
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    // Defaults resolve at CREATE and pin; dispatch never re-resolves them —
+    // a legacy NULL pointer degrades to the built-in only.
+    expect(findById).not.toHaveBeenCalled()
+    expect(systemDefault).toHaveBeenCalledWith({}, "ws_1")
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.agent",
+      expect.objectContaining({
+        streamId: "stream_unpinned",
+        personaId: "persona_system_ariadne",
+      })
+    )
+  })
+
+  it("falls back to the built-in default for an unpinned nested thread via its root scratchpad", async () => {
+    mockUserMessageEvent("stream_thread_unpinned")
+
+    const thread = makeStream({
+      id: "stream_thread_unpinned",
+      type: StreamTypes.THREAD,
+      parentStreamId: "stream_root_unpinned",
+      parentMessageId: "msg_parent",
+      rootStreamId: "stream_root_unpinned",
+      companionMode: CompanionModes.OFF,
+      companionPersonaId: null,
+      createdBy: "usr_thread_author",
+    })
+    const rootScratchpad = makeStream({
+      id: "stream_root_unpinned",
+      type: StreamTypes.SCRATCHPAD,
+      companionMode: CompanionModes.ON,
+      companionPersonaId: null,
+      createdBy: "usr_root_owner",
+    })
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+      if (id === "stream_thread_unpinned") return thread
+      if (id === "stream_root_unpinned") return rootScratchpad
+      return null
+    })
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+    const systemDefault = spyOn(PersonaRepository, "getSystemDefault").mockResolvedValue({
+      id: "persona_system_ariadne",
+      status: "active",
+    } as any)
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(systemDefault).toHaveBeenCalledWith({}, "ws_1")
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.agent",
+      expect.objectContaining({
+        streamId: "stream_thread_unpinned",
+        personaId: "persona_system_ariadne",
+      })
+    )
+  })
+
+  it("uses the pinned persona directly when the scratchpad has an active explicit pick", async () => {
+    mockUserMessageEvent("stream_pinned")
+
+    const scratchpad = makeStream({
+      id: "stream_pinned",
+      type: StreamTypes.SCRATCHPAD,
+      companionMode: CompanionModes.ON,
+      companionPersonaId: "persona_pinned",
+    })
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad)
+    spyOn(PersonaRepository, "findById").mockResolvedValue({ id: "persona_pinned", status: "active" } as any)
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+    const systemDefault = spyOn(PersonaRepository, "getSystemDefault")
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(systemDefault).not.toHaveBeenCalled()
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.agent",
+      expect.objectContaining({ streamId: "stream_pinned", personaId: "persona_pinned" })
+    )
+  })
+
   it("does not dispatch for threads under a scratchpad whose companion mode is off", async () => {
     mockUserMessageEvent("stream_thread_off")
 

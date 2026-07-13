@@ -1,8 +1,13 @@
 import { type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
 import { useDraftScratchpads } from "@/hooks/use-draft-scratchpads"
-import { usePersonas } from "@/hooks/use-personas"
+import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
+import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import { AgentSettingsPanel } from "./agent-settings-panel"
-import { resolveCompanionSelection } from "./companion-agent-select"
+import {
+  companionDefaultOptionLabel,
+  companionPickerValue,
+  companionPointerFromPickerValue,
+} from "./companion-agent-select"
 
 interface DraftAgentSettingsProps {
   workspaceId: string
@@ -28,21 +33,28 @@ export function DraftAgentSettings({
   configuredCategories,
 }: DraftAgentSettingsProps) {
   const { getScratchpad, updateScratchpad } = useDraftScratchpads(workspaceId)
-  const { data: personas } = usePersonas(workspaceId)
+  const personas = useCompanionRoster(workspaceId)
+  const { effectiveDefault, workspaceDefault, personalDefault } = useDefaultCompanionPersona(workspaceId)
 
-  const { selectedPersonaId } = resolveCompanionSelection(personas, getScratchpad(draftId)?.companionPersonaId)
+  const pickerValue = companionPickerValue(personas, getScratchpad(draftId)?.companionPersonaId)
 
   return (
     <AgentSettingsPanel
       companionMode={companionMode}
       onCompanionModeChange={(mode) => updateScratchpad(draftId, { companionMode: mode })}
       personaPicker={
-        personas
+        personas.length > 0
           ? {
               workspaceId,
               personas,
-              selectedPersonaId,
-              onChange: (personaId) => updateScratchpad(draftId, { companionPersonaId: personaId }),
+              selectedPersonaId: pickerValue,
+              onChange: (personaId) =>
+                updateScratchpad(draftId, {
+                  // Dexie removes a key set to undefined — inherit means no stored pointer.
+                  companionPersonaId: companionPointerFromPickerValue(personaId) ?? undefined,
+                }),
+              defaultOption: { label: companionDefaultOptionLabel(effectiveDefault) },
+              defaultBadges: { workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id },
             }
           : undefined
       }

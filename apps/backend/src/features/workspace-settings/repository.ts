@@ -21,6 +21,22 @@ export const WorkspaceSettingsRepository = {
   },
 
   /**
+   * Read a single setting override by key, or null when unset (i.e. the code
+   * default applies). Cheaper than merging the whole settings object when a
+   * caller needs one key (INV-27).
+   */
+  async findOverride(db: Querier, workspaceId: string, key: string): Promise<WorkspaceSettingOverrideRecord | null> {
+    const result = await db.query<WorkspaceSettingOverrideRow>(sql`
+      SELECT key, value
+      FROM workspace_setting_overrides
+      WHERE workspace_id = ${workspaceId}
+        AND key = ${key}
+    `)
+    const row = result.rows[0]
+    return row ? { key: row.key, value: row.value } : null
+  },
+
+  /**
    * Upsert a single setting override. Race-safe via ON CONFLICT so concurrent
    * admins don't clobber with a check-then-act (INV-20).
    */

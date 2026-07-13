@@ -3,7 +3,8 @@ import { toast } from "sonner"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useUpdateCompanionMode } from "@/hooks/use-streams"
-import { usePersonas } from "@/hooks/use-personas"
+import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
+import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import {
   CompanionModes,
@@ -44,11 +45,25 @@ export function CompanionTab({
   const isE2e = stream.e2eEnabled === true
   const disabled = isPending
 
-  // The picker (and its roster fetch) is plaintext-only — an encrypted
-  // scratchpad always runs the built-in Ariadne, so don't fire /personas there.
-  const { data: personas } = usePersonas(workspaceId, { enabled: !isE2e })
+  // Bootstrap-backed store read (no fetch) — instant on open, offline-capable.
+  // The picker itself stays hidden on encrypted scratchpads (enclave is
+  // Ariadne-only).
+  const personas = useCompanionRoster(workspaceId)
+  const { workspaceDefault, personalDefault } = useDefaultCompanionPersona(workspaceId)
 
-  const { selectedPersonaId, companionName } = resolveCompanionSelection(personas, stream.companionPersonaId)
+  // A created scratchpad is pinned to one persona; a legacy NULL pointer
+  // displays (and dispatches as) the built-in default. Only an explicit pick
+  // changes the agent — defaults apply at create, never retroactively.
+  const { selectedPersonaId, companionName: resolvedName } = resolveCompanionSelection(
+    personas,
+    stream.companionPersonaId
+  )
+  // Until the store hydrates ([] before the bootstrap/IDB seed lands), the real
+  // default is unknown — say "your companion" rather than flash a name that may
+  // be wrong. E2E scratchpads genuinely always run Ariadne, so the resolved name
+  // is correct there regardless.
+  const rosterReady = isE2e || personas.length > 0
+  const companionName = rosterReady ? resolvedName : "your companion"
 
   const handleChange = async (next: CompanionMode) => {
     if (next === stream.companionMode) return
@@ -93,7 +108,11 @@ export function CompanionTab({
             onSelect={() => handleChange(CompanionModes.ON)}
             icon={Sparkles}
             label="Companion"
-            hint={`${companionName} reads new messages and replies in the thread`}
+            hint={
+              rosterReady
+                ? `${companionName} reads new messages and replies in the thread`
+                : "Your companion reads new messages and replies in the thread"
+            }
             disabled={disabled}
           />
           <CompanionOption
@@ -109,7 +128,7 @@ export function CompanionTab({
 
       {/* Encrypted scratchpads always run the built-in Ariadne in the enclave
           regardless of the pointer, so the persona picker is plaintext-only. */}
-      {!isE2e && personas && personas.length > 0 && (
+      {!isE2e && personas.length > 0 && (
         <div className="space-y-2">
           <div className="space-y-1">
             <Label className="text-sm font-medium">Companion agent</Label>
@@ -123,6 +142,7 @@ export function CompanionTab({
             personas={personas}
             value={selectedPersonaId}
             onChange={handlePersonaChange}
+            defaultBadges={{ workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id }}
             disabled={disabled}
             triggerClassName="w-full sm:w-72"
           />

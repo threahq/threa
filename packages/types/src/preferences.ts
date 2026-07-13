@@ -347,6 +347,16 @@ export interface UserPreferences {
    */
   workSchedule: WorkSchedule | null
   /**
+   * The user's personal default companion persona for scratchpads with no
+   * explicit persona pick. `null` means "inherit the workspace default" — only a
+   * user who deliberately diverges from the workspace stores an override. Resolve
+   * the effective default with
+   * user.defaultCompanionPersonaId ?? workspaceSettings.defaultCompanionPersonaId
+   * ?? built-in Ariadne; each tier degrades to the next when its id is missing,
+   * archived, or not active in the workspace.
+   */
+  defaultCompanionPersonaId: string | null
+  /**
    * The user's personal status presets, additive to the workspace/system
    * defaults shown in the status picker. Empty by default.
    */
@@ -397,6 +407,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   keyboardShortcuts: {},
   accessibility: DEFAULT_ACCESSIBILITY,
   workSchedule: null,
+  defaultCompanionPersonaId: null,
   statusPresets: [],
   gettingStartedDismissed: false,
 }
@@ -436,6 +447,7 @@ export interface UpdateUserPreferencesInput {
   keyboardShortcuts?: KeyboardShortcuts
   accessibility?: Partial<AccessibilityPreferences>
   workSchedule?: WorkSchedule | null
+  defaultCompanionPersonaId?: string | null
   statusPresets?: StatusPreset[]
   gettingStartedDismissed?: boolean
 }

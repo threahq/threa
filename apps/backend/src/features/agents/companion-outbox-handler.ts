@@ -101,6 +101,10 @@ export class CompanionHandler extends DebouncedOutboxHandler {
       : null
 
     if (!persona || persona.status !== "active") {
+      // Legacy NULL pointers (pre-pin-at-create rows) and archived picks fall
+      // back to the built-in default. Deliberately NOT the user/workspace
+      // default resolver — that runs at CREATE time only; re-resolving here
+      // would switch a scratchpad's agent mid-run when a default changes.
       persona = await PersonaRepository.getSystemDefault(this.db, companionSource.workspaceId)
     }
 

@@ -120,6 +120,9 @@ const updatePreferencesSchema = z.object({
     .optional(),
   // null clears the personal override (revert to the workspace default).
   workSchedule: workScheduleSchema.nullable().optional(),
+  // Personal default companion persona id; null clears back to the workspace
+  // default. Semantic validation (active persona in this workspace) runs in the service.
+  defaultCompanionPersonaId: z.string().min(1).max(64).nullable().optional(),
   // Per-user custom status presets, additive to the workspace/system defaults.
   statusPresets: statusPresetsSchema.optional(),
   gettingStartedDismissed: z.boolean().optional(),

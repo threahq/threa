@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { useParams } from "react-router-dom"
 import { serializeToMarkdown, parsePromptMarkdown } from "@/components/editor/editor-markdown"
 import { EditorActionBar, RichEditor, type RichEditorHandle } from "@/components/editor"
 import { EncryptedScratchpadsSection } from "@/components/encryption"
@@ -6,13 +7,64 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
+import { useCompanionRoster } from "@/hooks/use-companion-roster"
+import {
+  CompanionAgentSelect,
+  companionPickerValue,
+  companionPointerFromPickerValue,
+} from "@/components/stream-settings/companion-agent-select"
 import { type JSONContent } from "@threa/types"
 
 const MODIFIER_LABEL =
   typeof navigator !== "undefined" && navigator.platform?.toLowerCase().includes("mac") ? "Cmd" : "Ctrl"
 
+/**
+ * The viewer's personal default companion for scratchpads with no explicit pick.
+ * A leading "Workspace default (<name>)" option round-trips as null (inherit the
+ * workspace tier); any persona pick stores that concrete id, which wins over the
+ * workspace default. Mirrors `BoardHomeSection`'s sentinel-value technique.
+ */
+export function PersonalDefaultCompanionSection({ workspaceId }: { workspaceId: string }) {
+  const { preferences, updatePreference, isLoading } = usePreferences()
+  const personas = useCompanionRoster(workspaceId)
+  const { workspaceDefault } = useDefaultCompanionPersona(workspaceId)
+
+  // An override that no longer resolves (archived persona) degrades to the
+  // synthetic "workspace default" rather than showing an empty trigger.
+  const value = companionPickerValue(personas, preferences?.defaultCompanionPersonaId)
+
+  const onChange = (next: string) => {
+    void updatePreference("defaultCompanionPersonaId", companionPointerFromPickerValue(next))
+  }
+
+  if (personas.length === 0) return null
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-medium">Default companion</h3>
+        <p className="text-sm text-muted-foreground">
+          The agent that answers in your scratchpads unless a scratchpad has its own pick. Choose Workspace default to
+          follow whatever your workspace sets.
+        </p>
+      </div>
+      <CompanionAgentSelect
+        workspaceId={workspaceId}
+        personas={personas}
+        value={value}
+        onChange={onChange}
+        defaultOption={{ label: `Workspace default (${workspaceDefault?.name ?? "Ariadne"})` }}
+        disabled={isLoading}
+        triggerClassName="w-full sm:w-72"
+      />
+    </section>
+  )
+}
+
 export function AISettings() {
   const { preferences, updatePreference, isLoading } = usePreferences()
+  const { workspaceId } = useParams<{ workspaceId: string }>()
   // Selection toolbar is a hover/mouse affordance — suppress it only when a
   // finger is the active input, so a mouse on a touchscreen laptop keeps it.
   const disableSelectionToolbar = useInputMode() === "touch"
@@ -116,6 +168,13 @@ export function AISettings() {
           <span>{MODIFIER_LABEL}+Enter to save</span>
         </div>
       </section>
+
+      {workspaceId && (
+        <>
+          <Separator />
+          <PersonalDefaultCompanionSection workspaceId={workspaceId} />
+        </>
+      )}
 
       <Separator />
 

@@ -343,6 +343,7 @@ describe("PersonaConfigService.setOverride", () => {
         kind: "builtin",
         avatarUrl: null,
         isCustomized: true,
+        status: "active",
       },
     })
     // Draft dropped on the same client the override wrote through (the txn).

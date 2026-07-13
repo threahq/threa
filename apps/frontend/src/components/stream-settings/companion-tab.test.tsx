@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { PersonaListItem, Stream } from "@threa/types"
 import * as streamsHooks from "@/hooks/use-streams"
-import * as personasHooks from "@/hooks/use-personas"
+import * as rosterHooks from "@/hooks/use-companion-roster"
+import * as defaultCompanionHooks from "@/hooks/use-default-companion-persona"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import * as botPresenceHooks from "@/hooks/use-active-bot-presence"
 import * as briefHooks from "@/hooks/use-stream-brief"
@@ -22,6 +23,7 @@ function persona(overrides: Partial<PersonaListItem> & Pick<PersonaListItem, "id
     kind: "custom",
     avatarUrl: null,
     isCustomized: false,
+    status: "active",
     ...overrides,
   }
 }
@@ -35,9 +37,12 @@ beforeEach(() => {
     mutateAsync: companionMutate,
     isPending: false,
   } as unknown as ReturnType<typeof streamsHooks.useUpdateCompanionMode>)
-  vi.spyOn(personasHooks, "usePersonas").mockReturnValue({
-    data: [ARIADNE, COACH],
-  } as unknown as ReturnType<typeof personasHooks.usePersonas>)
+  vi.spyOn(rosterHooks, "useCompanionRoster").mockReturnValue([ARIADNE, COACH])
+  vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
+    effectiveDefault: ARIADNE,
+    workspaceDefault: ARIADNE,
+    personalDefault: undefined,
+  } as unknown as ReturnType<typeof defaultCompanionHooks.useDefaultCompanionPersona>)
   vi.spyOn(emojiHooks, "useWorkspaceEmoji").mockReturnValue({
     toEmoji: (shortcode: string) => shortcode,
   } as unknown as ReturnType<typeof emojiHooks.useWorkspaceEmoji>)
@@ -87,7 +92,9 @@ describe("CompanionTab persona picker", () => {
     expect(screen.getByText(/Ariadne reads new messages and replies in the thread/i)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
-    expect(await screen.findByRole("option", { name: /Ariadne/i })).toBeInTheDocument()
+    // No inherit row on a created stream — it's pinned; rows carry default badges.
+    expect(screen.queryByRole("option", { name: /Default \(/i })).not.toBeInTheDocument()
+    expect(await screen.findByRole("option", { name: /Ariadne.*Workspace default/i })).toBeInTheDocument()
     expect(screen.getByRole("option", { name: /Coach/i })).toBeInTheDocument()
   })
 
@@ -104,6 +111,19 @@ describe("CompanionTab persona picker", () => {
     renderTab({ companionPersonaId: "persona_coach" })
 
     expect(screen.getByText(/Coach reads new messages and replies in the thread/i)).toBeInTheDocument()
+  })
+
+  it("does NOT retroactively apply a changed default to a stream with a null pointer", () => {
+    vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
+      effectiveDefault: COACH,
+      workspaceDefault: COACH,
+      personalDefault: undefined,
+    })
+    renderTab({ companionPersonaId: null })
+
+    // Defaults pin at CREATE; a legacy null pointer displays (and dispatches
+    // as) the built-in default, never the currently-configured one.
+    expect(screen.getByText(/Ariadne reads new messages and replies in the thread/i)).toBeInTheDocument()
   })
 
   it("hides the persona picker on encrypted streams (enclave is Ariadne-only)", () => {
