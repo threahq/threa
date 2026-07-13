@@ -8,7 +8,7 @@ public_site: true
 summary: >
   A per-stream on/off setting; when it's on, Ariadne reads each new message and
   replies in the thread. An activity card and a step-by-step trace show what it did.
-related: [architecture/agent-runtime.md]
+related: [architecture/agent-runtime.md, public/persona-knowledge.md]
 ---
 
 ## What it does
