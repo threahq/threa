@@ -184,7 +184,7 @@ test.describe("Persona roster + editors", () => {
     ).toBeVisible({ timeout: 10000 })
   })
 
-  test("default companion resolves through workspace setting then a personal override, with no explicit stream pick", async ({
+  test("defaults pin at create: a later default change never switches an existing scratchpad's agent", async ({
     page,
   }) => {
     test.setTimeout(60000)
@@ -217,22 +217,24 @@ test.describe("Persona roster + editors", () => {
     await expect(wsDefaultPicker).toContainText(wsAgentName)
     await wsSettingsSaved
 
-    // ──── A fresh scratchpad with NO explicit pick shows the workspace default ────
+    // ──── A scratchpad created with NO explicit pick PINS the workspace default ────
 
     const createRes = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
       data: { type: "scratchpad", displayName: `pad-${testId}` },
     })
     await expectApiOk(createRes, "Scratchpad creation")
     const streamId = ((await createRes.json()) as { stream: { id: string } }).stream.id
+    const created = ((await createRes.json()) as { stream: { companionPersonaId: string | null } }).stream
+    // The default resolves at create and the concrete id is written — never a
+    // null pointer to be re-resolved later.
+    expect(created.companionPersonaId).not.toBeNull()
 
     const companionUrl = `/w/${workspaceId}/s/${streamId}?stream-settings=companion&sid=${streamId}`
     await page.goto(companionUrl)
     const streamPicker = page.getByRole("combobox", { name: "Companion agent" })
-    // The stream keeps a null pointer (resolution is at dispatch); the picker
-    // displays the resolved workspace default with no manual selection.
     await expect(streamPicker).toContainText(wsAgentName, { timeout: 10000 })
 
-    // ──── A personal default overrides the workspace tier for this viewer ────
+    // ──── Changing defaults later must NOT touch the existing scratchpad ────
 
     await page.goto(`/w/${workspaceId}?settings=ai`)
     const userDefaultPicker = page.getByRole("combobox", { name: "Companion agent" })
@@ -246,8 +248,21 @@ test.describe("Persona roster + editors", () => {
     await expect(userDefaultPicker).toContainText(userAgentName)
     await preferenceSaved
 
-    // Same scratchpad, still no explicit pick — the personal override now wins.
+    // The existing scratchpad stays on the persona it was created with — a
+    // default change never switches an agent mid-scratchpad.
     await page.goto(companionUrl)
+    await expect(page.getByRole("combobox", { name: "Companion agent" })).toContainText(wsAgentName, {
+      timeout: 10000,
+    })
+
+    // ──── A NEW scratchpad pins the current default (the personal pick) ────
+
+    const createRes2 = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+      data: { type: "scratchpad", displayName: `pad2-${testId}` },
+    })
+    await expectApiOk(createRes2, "Second scratchpad creation")
+    const streamId2 = ((await createRes2.json()) as { stream: { id: string } }).stream.id
+    await page.goto(`/w/${workspaceId}/s/${streamId2}?stream-settings=companion&sid=${streamId2}`)
     await expect(page.getByRole("combobox", { name: "Companion agent" })).toContainText(userAgentName, {
       timeout: 10000,
     })

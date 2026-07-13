@@ -34,7 +34,7 @@ export function DraftAgentSettings({
 }: DraftAgentSettingsProps) {
   const { getScratchpad, updateScratchpad } = useDraftScratchpads(workspaceId)
   const personas = useCompanionRoster(workspaceId)
-  const { effectiveDefault } = useDefaultCompanionPersona(workspaceId)
+  const { effectiveDefault, workspaceDefault, personalDefault } = useDefaultCompanionPersona(workspaceId)
 
   const pickerValue = companionPickerValue(personas, getScratchpad(draftId)?.companionPersonaId)
 
@@ -54,6 +54,7 @@ export function DraftAgentSettings({
                   companionPersonaId: companionPointerFromPickerValue(personaId) ?? undefined,
                 }),
               defaultOption: { label: companionDefaultOptionLabel(effectiveDefault) },
+              defaultBadges: { workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id },
             }
           : undefined
       }

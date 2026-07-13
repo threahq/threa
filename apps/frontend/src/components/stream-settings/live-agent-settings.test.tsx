@@ -162,33 +162,24 @@ describe("LiveAgentSettings", () => {
     expect(companionMutate).toHaveBeenCalledWith({ companionMode: "on", companionPersonaId: "persona_coach" })
   })
 
-  it("treats re-picking the inherit row on an unpinned stream as a no-op", async () => {
-    seedAndRender({ personas: ROSTER, companionPersonaId: null })
-
-    await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
-    await userEvent.click(screen.getByRole("option", { name: /Default \(/i }))
-
-    expect(companionMutate).not.toHaveBeenCalled()
-  })
-
-  it("pins the stream when the resolved default is picked explicitly", async () => {
-    seedAndRender({ personas: ROSTER, companionPersonaId: null })
-
-    await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
-    await userEvent.click(
-      screen.getByRole("option", { name: (name) => name.includes("Ariadne") && !name.includes("Default") })
-    )
-
-    expect(companionMutate).toHaveBeenCalledWith({ companionMode: "on", companionPersonaId: "persona_ariadne" })
-  })
-
-  it("clears the pin back to inherit via the synthetic default row", async () => {
+  it("offers no inherit row — a created stream is pinned; rows carry default badges", async () => {
     seedAndRender({ personas: ROSTER, companionPersonaId: "persona_coach" })
 
     await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
-    await userEvent.click(screen.getByRole("option", { name: /Default \(/i }))
 
-    expect(companionMutate).toHaveBeenCalledWith({ companionMode: "on", companionPersonaId: null })
+    expect(screen.queryByRole("option", { name: /Default \(/i })).not.toBeInTheDocument()
+    // No workspace/personal default configured → the built-in tier (Ariadne) is
+    // the workspace default and gets the badge.
+    expect(screen.getByRole("option", { name: /Ariadne.*Workspace default/i })).toBeInTheDocument()
+  })
+
+  it("treats re-picking the pinned persona as a no-op", async () => {
+    seedAndRender({ personas: ROSTER, companionPersonaId: "persona_coach" })
+
+    await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
+    await userEvent.click(screen.getByRole("option", { name: /coach/i }))
+
+    expect(companionMutate).not.toHaveBeenCalled()
   })
 
   it("hides the picker on encrypted scratchpads (enclave runs the built-in Ariadne)", () => {

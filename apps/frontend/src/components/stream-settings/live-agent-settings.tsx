@@ -8,11 +8,7 @@ import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { AgentSettingsPanel } from "./agent-settings-panel"
-import {
-  companionDefaultOptionLabel,
-  companionPickerValue,
-  companionPointerFromPickerValue,
-} from "./companion-agent-select"
+import { resolveCompanionSelection } from "./companion-agent-select"
 
 interface LiveAgentSettingsProps {
   workspaceId: string
@@ -37,7 +33,7 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
   // Bootstrap-backed store read (no fetch); the picker stays hidden on
   // encrypted scratchpads (enclave always runs the built-in Ariadne).
   const personas = useCompanionRoster(workspaceId)
-  const { effectiveDefault } = useDefaultCompanionPersona(workspaceId)
+  const { workspaceDefault, personalDefault } = useDefaultCompanionPersona(workspaceId)
 
   // Cache-only observer: re-renders when a mutation patches the bootstrap.
   const { data: bootstrap } = useQuery({
@@ -58,15 +54,15 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
     }
   }
 
-  const pickerValue = companionPickerValue(personas, bootstrap?.stream?.companionPersonaId)
+  // A created scratchpad is pinned to one persona; a legacy NULL pointer
+  // displays (and dispatches as) the built-in default. No inherit row here —
+  // only an explicit pick changes the agent.
+  const { selectedPersonaId } = resolveCompanionSelection(personas, bootstrap?.stream?.companionPersonaId)
 
   const handlePersona = async (personaId: string) => {
-    if (personaId === pickerValue) return
+    if (personaId === selectedPersonaId) return
     try {
-      await updateCompanionMode({
-        companionMode,
-        companionPersonaId: companionPointerFromPickerValue(personaId),
-      })
+      await updateCompanionMode({ companionMode, companionPersonaId: personaId })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update companion agent")
     }
@@ -91,9 +87,9 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
           ? {
               workspaceId,
               personas,
-              selectedPersonaId: pickerValue,
+              selectedPersonaId,
               onChange: handlePersona,
-              defaultOption: { label: companionDefaultOptionLabel(effectiveDefault) },
+              defaultBadges: { workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id },
               busy: companionBusy,
             }
           : undefined

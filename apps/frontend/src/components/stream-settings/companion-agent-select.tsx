@@ -70,6 +70,21 @@ export function resolveCompanionSelection(
   return { selectedPersonaId: selectedPersona?.id, selectedPersona, companionName: selectedPersona?.name ?? "Ariadne" }
 }
 
+/** Which persona rows get a default indicator: the workspace tier's resolution
+ *  and the viewer's explicit personal default (when set). */
+export interface CompanionDefaultBadges {
+  workspaceDefaultId?: string
+  personalDefaultId?: string
+}
+
+function defaultBadgeLabel(personaId: string, badges: CompanionDefaultBadges | undefined): string | null {
+  if (!badges) return null
+  // "Your default" is the more specific tier — it wins when both land on one row.
+  if (badges.personalDefaultId === personaId) return "Your default"
+  if (badges.workspaceDefaultId === personaId) return "Workspace default"
+  return null
+}
+
 interface CompanionAgentSelectProps {
   workspaceId: string
   personas: CompanionPersona[]
@@ -77,10 +92,13 @@ interface CompanionAgentSelectProps {
   onChange: (personaId: string) => void
   disabled?: boolean
   triggerClassName?: string
-  /** A leading synthetic option (e.g. "Workspace default (Ariadne)") rendered
-   *  before the persona rows; it carries {@link COMPANION_DEFAULT_OPTION_VALUE},
-   *  which the caller maps back to null. */
+  /** A leading synthetic option (e.g. "Default (Ariadne)") rendered before the
+   *  persona rows; it carries {@link COMPANION_DEFAULT_OPTION_VALUE}, which the
+   *  caller maps back to null/unset. Creation-time surfaces only — a created
+   *  scratchpad is pinned to one persona and offers no inherit row. */
   defaultOption?: { label: string }
+  /** Row indicators marking the workspace/personal default personas. */
+  defaultBadges?: CompanionDefaultBadges
 }
 
 /** The companion-agent dropdown (avatar + name rows) shared by every surface
@@ -93,6 +111,7 @@ export function CompanionAgentSelect({
   disabled,
   triggerClassName,
   defaultOption,
+  defaultBadges,
 }: CompanionAgentSelectProps) {
   return (
     <Select value={value} onValueChange={onChange} disabled={disabled}>
@@ -105,14 +124,18 @@ export function CompanionAgentSelect({
             <span className="truncate">{defaultOption.label}</span>
           </SelectItem>
         )}
-        {personas.map((persona) => (
-          <SelectItem key={persona.id} value={persona.id}>
-            <span className="flex items-center gap-2">
-              <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="xs" />
-              <span className="truncate">{persona.name}</span>
-            </span>
-          </SelectItem>
-        ))}
+        {personas.map((persona) => {
+          const badge = defaultBadgeLabel(persona.id, defaultBadges)
+          return (
+            <SelectItem key={persona.id} value={persona.id}>
+              <span className="flex items-center gap-2">
+                <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="xs" />
+                <span className="truncate">{persona.name}</span>
+                {badge && <span className="shrink-0 text-[10px] text-muted-foreground">{badge}</span>}
+              </span>
+            </SelectItem>
+          )
+        })}
       </SelectContent>
     </Select>
   )

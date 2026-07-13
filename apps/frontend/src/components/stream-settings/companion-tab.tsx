@@ -13,13 +13,7 @@ import {
   type ToolPrivacyCategory,
   type ToolPrivacyPolicy,
 } from "@threa/types"
-import {
-  CompanionAgentSelect,
-  companionDefaultOptionLabel,
-  companionPickerValue,
-  companionPointerFromPickerValue,
-  resolveCompanionSelection,
-} from "./companion-agent-select"
+import { CompanionAgentSelect, resolveCompanionSelection } from "./companion-agent-select"
 import { ToolPolicyPicker } from "./tool-policy-picker"
 import { ExternalAgentIndicator } from "./external-agent-indicator"
 import { BriefSection } from "./brief-section"
@@ -55,12 +49,14 @@ export function CompanionTab({
   // The picker itself stays hidden on encrypted scratchpads (enclave is
   // Ariadne-only).
   const personas = useCompanionRoster(workspaceId)
-  const { effectiveDefault } = useDefaultCompanionPersona(workspaceId)
+  const { workspaceDefault, personalDefault } = useDefaultCompanionPersona(workspaceId)
 
-  const { companionName: resolvedName } = resolveCompanionSelection(
+  // A created scratchpad is pinned to one persona; a legacy NULL pointer
+  // displays (and dispatches as) the built-in default. Only an explicit pick
+  // changes the agent — defaults apply at create, never retroactively.
+  const { selectedPersonaId, companionName: resolvedName } = resolveCompanionSelection(
     personas,
-    stream.companionPersonaId,
-    effectiveDefault
+    stream.companionPersonaId
   )
   // Until the store hydrates ([] before the bootstrap/IDB seed lands), the real
   // default is unknown — say "your companion" rather than flash a name that may
@@ -68,7 +64,6 @@ export function CompanionTab({
   // is correct there regardless.
   const rosterReady = isE2e || personas.length > 0
   const companionName = rosterReady ? resolvedName : "your companion"
-  const pickerValue = companionPickerValue(personas, stream.companionPersonaId)
 
   const handleChange = async (next: CompanionMode) => {
     if (next === stream.companionMode) return
@@ -81,12 +76,9 @@ export function CompanionTab({
   }
 
   const handlePersonaChange = async (personaId: string) => {
-    if (personaId === pickerValue) return
+    if (personaId === selectedPersonaId) return
     try {
-      await updateCompanionMode({
-        companionMode: stream.companionMode,
-        companionPersonaId: companionPointerFromPickerValue(personaId),
-      })
+      await updateCompanionMode({ companionMode: stream.companionMode, companionPersonaId: personaId })
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update companion agent"
       toast.error(message)
@@ -148,9 +140,9 @@ export function CompanionTab({
           <CompanionAgentSelect
             workspaceId={workspaceId}
             personas={personas}
-            value={pickerValue}
+            value={selectedPersonaId}
             onChange={handlePersonaChange}
-            defaultOption={{ label: companionDefaultOptionLabel(effectiveDefault) }}
+            defaultBadges={{ workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id }}
             disabled={disabled}
             triggerClassName="w-full sm:w-72"
           />

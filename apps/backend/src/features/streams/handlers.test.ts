@@ -1,9 +1,10 @@
-import { describe, expect, it, mock } from "bun:test"
+import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { LinkPreviewSummary } from "@threa/types"
 import type { Request, Response } from "express"
 import type { StreamEvent } from "./event-repository"
 import { applyLinkPreviewStateToEvents, createStreamHandlers } from "./handlers"
 import type { StreamService } from "./service"
+import * as agentsBarrel from "../agents"
 
 function createMessageEvent(messageId: string): StreamEvent {
   return {
@@ -275,12 +276,22 @@ describe("createStreamHandlers.create — allowedToolCategories", () => {
   }
 
   function makeHandlers(streamService: Partial<StreamService>) {
-    return createStreamHandlers({ streamService } as unknown as Parameters<typeof createStreamHandlers>[0])
+    return createStreamHandlers({ streamService, pool: {} } as unknown as Parameters<typeof createStreamHandlers>[0])
   }
 
   function makeCreateReq(body: unknown): Request {
     return { user: { id: "user_owner" }, workspaceId: "ws_1", params: {}, body } as unknown as Request
   }
+
+  let resolveSpy: ReturnType<typeof spyOn<typeof agentsBarrel, "resolveDefaultPersona">>
+
+  beforeEach(() => {
+    // A persona-less scratchpad create resolves the default and pins it. The
+    // spy is shared across tests (bun returns the same instance) — clear it.
+    resolveSpy = spyOn(agentsBarrel, "resolveDefaultPersona")
+    resolveSpy.mockClear()
+    resolveSpy.mockResolvedValue({ id: "persona_system_ariadne", status: "active" } as never)
+  })
 
   it("threads allowedToolCategories to the service when creating a scratchpad", async () => {
     const create = mock(async (_params: { allowedToolCategories?: unknown }) => ({ id: "stream_sp" }))
@@ -303,5 +314,41 @@ describe("createStreamHandlers.create — allowedToolCategories", () => {
       handlers.create(makeCreateReq({ type: "channel", slug: "general", allowedToolCategories: ["web"] }), res)
     ).rejects.toMatchObject({ status: 400 })
     expect(create).not.toHaveBeenCalled()
+  })
+
+  it("pins the resolved default persona when a scratchpad is created with no explicit pick", async () => {
+    const create = mock(async (_params: { companionPersonaId?: string }) => ({ id: "stream_sp" }))
+    resolveSpy.mockResolvedValue({ id: "persona_pinned_default", status: "active" } as never)
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res } = makeRes()
+
+    await handlers.create(makeCreateReq({ type: "scratchpad" }), res)
+
+    // The default is resolved ONCE at create (creator's pref → workspace → Ariadne)
+    // and the concrete id is pinned — later default changes never touch this stream.
+    expect(resolveSpy).toHaveBeenCalledWith({}, "ws_1", "user_owner")
+    expect(create.mock.calls[0]![0].companionPersonaId).toBe("persona_pinned_default")
+  })
+
+  it("keeps an explicit pick verbatim (no default resolution)", async () => {
+    const create = mock(async (_params: { companionPersonaId?: string }) => ({ id: "stream_sp" }))
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res } = makeRes()
+
+    await handlers.create(makeCreateReq({ type: "scratchpad", companionPersonaId: "persona_explicit" }), res)
+
+    expect(resolveSpy).not.toHaveBeenCalled()
+    expect(create.mock.calls[0]![0].companionPersonaId).toBe("persona_explicit")
+  })
+
+  it("does not resolve a default for non-scratchpad creates", async () => {
+    const create = mock(async (_params: { companionPersonaId?: string }) => ({ id: "stream_ch" }))
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res } = makeRes()
+
+    await handlers.create(makeCreateReq({ type: "channel", slug: "general" }), res)
+
+    expect(resolveSpy).not.toHaveBeenCalled()
+    expect(create.mock.calls[0]![0].companionPersonaId).toBeUndefined()
   })
 })

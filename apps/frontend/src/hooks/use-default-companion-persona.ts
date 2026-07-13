@@ -11,10 +11,14 @@ export interface DefaultCompanionResolution {
   /** The workspace-tier default alone (workspace setting → Ariadne), for the
    *  user-settings picker's "what would I inherit" synthetic option. */
   workspaceDefault: CompanionPersona | undefined
+  /** The viewer's explicit personal default, or undefined when inheriting the
+   *  workspace tier — drives the "Your default" row indicator in the pickers. */
+  personalDefault: CompanionPersona | undefined
 }
 
 /**
- * Resolve the companion default a null stream pointer displays as. Precedence is
+ * Resolve the companion default a new scratchpad is pinned to at create (and
+ * the pickers' "Default (X)" sentinel/indicators display). Precedence is
  * user preference → workspace setting → built-in Ariadne, degrading a tier when
  * its stored id is absent from the roster — the roster carries only active
  * personas, so an off-roster id is archived/inactive and falls through (the same
@@ -41,7 +45,7 @@ export function resolveDefaultCompanionPersona(
   const workspaceDefault = workspacePersona ?? ariadne
   const userPersona = userDefaultId ? personas?.find((p) => p.id === userDefaultId) : undefined
   const effectiveDefault = userPersona ?? workspaceDefault
-  return { effectiveDefault, workspaceDefault }
+  return { effectiveDefault, workspaceDefault, personalDefault: userPersona }
 }
 
 /**

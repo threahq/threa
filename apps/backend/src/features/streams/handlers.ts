@@ -30,7 +30,7 @@ import {
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threa/types"
 import type { Pool } from "pg"
-import { PersonaRepository, assertRefAccess, fetchStreamBag, contextBagSchema } from "../agents"
+import { PersonaRepository, assertRefAccess, fetchStreamBag, contextBagSchema, resolveDefaultPersona } from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
@@ -606,6 +606,15 @@ export function createStreamHandlers({
         }
         resolvedCompanionMode = CompanionModes.ON
         resolvedPersonaId = ariadne.id
+      }
+      if (type === StreamTypes.SCRATCHPAD && !e2eEnabled && !resolvedPersonaId) {
+        // No explicit pick: resolve the creator's default (user pref → workspace
+        // setting → Ariadne) NOW and pin the concrete id. Scratchpads are locked
+        // to the persona they were created with — a later default change must
+        // never switch an existing scratchpad's agent mid-run; dispatch reads
+        // the pointer and never re-resolves.
+        const defaultPersona = await resolveDefaultPersona(pool, workspaceId, userId)
+        resolvedPersonaId = defaultPersona?.id
       }
 
       const stream = await streamService.create({

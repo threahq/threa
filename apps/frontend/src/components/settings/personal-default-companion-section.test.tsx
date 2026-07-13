@@ -51,6 +51,7 @@ describe("PersonalDefaultCompanionSection", () => {
     vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
       effectiveDefault: ARIADNE,
       workspaceDefault: ARIADNE,
+      personalDefault: undefined,
     })
     vi.spyOn(emojiHooks, "useWorkspaceEmoji").mockReturnValue({
       toEmoji: (shortcode: string) => shortcode,

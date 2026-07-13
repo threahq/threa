@@ -7,7 +7,6 @@ import { StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { CompanionHandler } from "./companion-outbox-handler"
 import { PersonaRepository } from "./persona-repository"
-import * as resolveDefaultPersonaModule from "./resolve-default-persona"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository } from "./session-repository"
 
@@ -263,7 +262,7 @@ describe("CompanionHandler", () => {
     )
   })
 
-  it("resolves the default persona at dispatch when the scratchpad has no explicit pick", async () => {
+  it("falls back to the built-in default (never the user/workspace default) for a legacy NULL pointer", async () => {
     mockUserMessageEvent("stream_unpinned")
 
     const scratchpad = makeStream({
@@ -276,8 +275,8 @@ describe("CompanionHandler", () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad)
     const findById = spyOn(PersonaRepository, "findById")
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
-    const resolveSpy = spyOn(resolveDefaultPersonaModule, "resolveDefaultPersona").mockResolvedValue({
-      id: "persona_resolved_default",
+    const systemDefault = spyOn(PersonaRepository, "getSystemDefault").mockResolvedValue({
+      id: "persona_system_ariadne",
       status: "active",
     } as any)
 
@@ -285,19 +284,20 @@ describe("CompanionHandler", () => {
     handler.handle()
     await waitForDebounce()
 
-    // Null pointer never hits findById; the resolver runs with the creator's id.
+    // Defaults resolve at CREATE and pin; dispatch never re-resolves them —
+    // a legacy NULL pointer degrades to the built-in only.
     expect(findById).not.toHaveBeenCalled()
-    expect(resolveSpy).toHaveBeenCalledWith({}, "ws_1", "usr_creator")
+    expect(systemDefault).toHaveBeenCalledWith({}, "ws_1")
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
       expect.objectContaining({
         streamId: "stream_unpinned",
-        personaId: "persona_resolved_default",
+        personaId: "persona_system_ariadne",
       })
     )
   })
 
-  it("resolves the default with the ROOT scratchpad's creator for an unpinned nested thread", async () => {
+  it("falls back to the built-in default for an unpinned nested thread via its root scratchpad", async () => {
     mockUserMessageEvent("stream_thread_unpinned")
 
     const thread = makeStream({
@@ -323,8 +323,8 @@ describe("CompanionHandler", () => {
       return null
     })
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
-    const resolveSpy = spyOn(resolveDefaultPersonaModule, "resolveDefaultPersona").mockResolvedValue({
-      id: "persona_resolved_default",
+    const systemDefault = spyOn(PersonaRepository, "getSystemDefault").mockResolvedValue({
+      id: "persona_system_ariadne",
       status: "active",
     } as any)
 
@@ -332,17 +332,17 @@ describe("CompanionHandler", () => {
     handler.handle()
     await waitForDebounce()
 
-    expect(resolveSpy).toHaveBeenCalledWith({}, "ws_1", "usr_root_owner")
+    expect(systemDefault).toHaveBeenCalledWith({}, "ws_1")
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
       expect.objectContaining({
         streamId: "stream_thread_unpinned",
-        personaId: "persona_resolved_default",
+        personaId: "persona_system_ariadne",
       })
     )
   })
 
-  it("bypasses the default resolver when the scratchpad has an active explicit pick", async () => {
+  it("uses the pinned persona directly when the scratchpad has an active explicit pick", async () => {
     mockUserMessageEvent("stream_pinned")
 
     const scratchpad = makeStream({
@@ -354,13 +354,13 @@ describe("CompanionHandler", () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad)
     spyOn(PersonaRepository, "findById").mockResolvedValue({ id: "persona_pinned", status: "active" } as any)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
-    const resolveSpy = spyOn(resolveDefaultPersonaModule, "resolveDefaultPersona")
+    const systemDefault = spyOn(PersonaRepository, "getSystemDefault")
 
     const { handler, jobQueue } = createHandler()
     handler.handle()
     await waitForDebounce()
 
-    expect(resolveSpy).not.toHaveBeenCalled()
+    expect(systemDefault).not.toHaveBeenCalled()
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
       expect.objectContaining({ streamId: "stream_pinned", personaId: "persona_pinned" })

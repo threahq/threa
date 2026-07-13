@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label"
 import type { ActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { ToolPolicyControl } from "./tool-policy-picker"
 import { ExternalAgentIndicator } from "./external-agent-indicator"
-import { CompanionAgentSelect, type CompanionPersona } from "./companion-agent-select"
+import { CompanionAgentSelect, type CompanionDefaultBadges, type CompanionPersona } from "./companion-agent-select"
 
 export interface AgentToolPolicyBinding {
   value: ToolPrivacyPolicy
@@ -25,9 +25,11 @@ export interface AgentPersonaBinding {
    *  `companionPickerValue`). */
   selectedPersonaId: string | undefined
   onChange: (personaId: string) => void
-  /** The synthetic leading "Default (X)" row; the caller maps its sentinel
-   *  value back to null (inherit). */
+  /** The synthetic leading "Default (X)" row (creation-time surfaces only);
+   *  the caller maps its sentinel value back to unset. */
   defaultOption?: { label: string }
+  /** Row indicators marking the workspace/personal default personas. */
+  defaultBadges?: CompanionDefaultBadges
   busy?: boolean
 }
 
@@ -91,6 +93,7 @@ export function AgentSettingsPanel({
             value={personaPicker.selectedPersonaId}
             onChange={personaPicker.onChange}
             defaultOption={personaPicker.defaultOption}
+            defaultBadges={personaPicker.defaultBadges}
             disabled={personaPicker.busy}
             triggerClassName="w-full"
           />

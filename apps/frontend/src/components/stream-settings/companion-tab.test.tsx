@@ -41,6 +41,7 @@ beforeEach(() => {
   vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
     effectiveDefault: ARIADNE,
     workspaceDefault: ARIADNE,
+    personalDefault: undefined,
   } as unknown as ReturnType<typeof defaultCompanionHooks.useDefaultCompanionPersona>)
   vi.spyOn(emojiHooks, "useWorkspaceEmoji").mockReturnValue({
     toEmoji: (shortcode: string) => shortcode,
@@ -91,11 +92,9 @@ describe("CompanionTab persona picker", () => {
     expect(screen.getByText(/Ariadne reads new messages and replies in the thread/i)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
-    // Leading synthetic inherit row, then the roster.
-    expect(await screen.findByRole("option", { name: /Default \(Ariadne\)/i })).toBeInTheDocument()
-    expect(
-      screen.getByRole("option", { name: (name) => name.includes("Ariadne") && !name.includes("Default") })
-    ).toBeInTheDocument()
+    // No inherit row on a created stream — it's pinned; rows carry default badges.
+    expect(screen.queryByRole("option", { name: /Default \(/i })).not.toBeInTheDocument()
+    expect(await screen.findByRole("option", { name: /Ariadne.*Workspace default/i })).toBeInTheDocument()
     expect(screen.getByRole("option", { name: /Coach/i })).toBeInTheDocument()
   })
 
@@ -114,15 +113,17 @@ describe("CompanionTab persona picker", () => {
     expect(screen.getByText(/Coach reads new messages and replies in the thread/i)).toBeInTheDocument()
   })
 
-  it("shows the configured workspace default on an unpinned stream", () => {
+  it("does NOT retroactively apply a changed default to a stream with a null pointer", () => {
     vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
       effectiveDefault: COACH,
       workspaceDefault: COACH,
+      personalDefault: undefined,
     })
     renderTab({ companionPersonaId: null })
 
-    // A null pointer now resolves to the configured default, not the hardcoded Ariadne.
-    expect(screen.getByText(/Coach reads new messages and replies in the thread/i)).toBeInTheDocument()
+    // Defaults pin at CREATE; a legacy null pointer displays (and dispatches
+    // as) the built-in default, never the currently-configured one.
+    expect(screen.getByText(/Ariadne reads new messages and replies in the thread/i)).toBeInTheDocument()
   })
 
   it("hides the persona picker on encrypted streams (enclave is Ariadne-only)", () => {
