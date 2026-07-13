@@ -8,6 +8,13 @@ export interface Mentionable {
   avatarEmoji?: string
   avatarUrl?: string
   isCurrentUser?: boolean
+  /**
+   * A personal (owner-scoped) persona. Only the owner ever receives these rows,
+   * but the owner can hold a personal and a workspace persona on the same slug
+   * (per-owner slug namespace), so the suggestion list tags personal rows to
+   * disambiguate two identically-labelled `@slug` entries (user-scoped-personas).
+   */
+  isPersonal?: boolean
 }
 
 export interface ChannelItem {

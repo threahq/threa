@@ -1330,6 +1330,66 @@ describe("PersonaConfigService.forkPersona — scope (user-scoped-personas)", ()
 
     expect(insert).toHaveBeenCalledTimes(1)
   })
+
+  // Per-owner slug namespace (user-scoped-personas AMENDED). The retry loop is
+  // unchanged — both partial unique indexes surface 23505 — but a personal fork's
+  // base slug is available in each owner's own namespace, so two members forking
+  // the same name both land the clean slug without a cross-user suffix. The DB
+  // migration test proves the index; these prove the service's slug plumbing.
+  it("personal fork of 'Coach' lands the clean slug 'coach' for each owner independently", async () => {
+    for (const member of [MEMBER, OWNER]) {
+      mock.restore()
+      setupTransaction()
+      spyOn(PersonaRepository, "findById").mockResolvedValue(null)
+      const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(
+        personalPersona({ id: "persona_personal_coach", slug: "coach", ownerUserId: member.userId })
+      )
+      spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+      spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+      await makeService().forkPersona(WORKSPACE_ID, null, "Coach", "personal", member)
+
+      expect(insert).toHaveBeenCalledTimes(1)
+      expect((insert.mock.calls[0]![1] as { slug: string; ownerUserId?: string }).slug).toBe("coach")
+      expect((insert.mock.calls[0]![1] as { ownerUserId?: string }).ownerUserId).toBe(member.userId)
+    }
+  })
+
+  it("workspace fork of 'Coach' lands the clean shared slug 'coach' (shared namespace unaffected by personal rows)", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "findById").mockResolvedValue(null)
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(
+      customPersona({ id: "persona_ws_coach", slug: "coach" })
+    )
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await makeService().forkPersona(WORKSPACE_ID, null, "Coach", "workspace", CALLER)
+
+    expect(insert).toHaveBeenCalledTimes(1)
+    expect((insert.mock.calls[0]![1] as { slug: string; ownerUserId?: string }).slug).toBe("coach")
+    expect((insert.mock.calls[0]![1] as { ownerUserId?: string }).ownerUserId).toBeUndefined()
+  })
+
+  it("same owner forking 'Coach' twice suffixes to 'coach-2' on the 23505 (own-namespace collision)", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "findById").mockResolvedValue(null)
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona")
+      .mockImplementationOnce(async () => {
+        throw Object.assign(new Error("duplicate key"), { code: "23505" })
+      })
+      .mockImplementationOnce(async () =>
+        personalPersona({ id: "persona_personal_coach2", slug: "coach-2", ownerUserId: OWNER.userId })
+      )
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const persona = await makeService().forkPersona(WORKSPACE_ID, null, "Coach", "personal", OWNER)
+
+    expect(persona.slug).toBe("coach-2")
+    expect((insert.mock.calls[0]![1] as { slug: string }).slug).toBe("coach")
+    expect((insert.mock.calls[1]![1] as { slug: string }).slug).toBe("coach-2")
+  })
 })
 
 describe("PersonaConfigService lifecycle authorization (user-scoped-personas)", () => {

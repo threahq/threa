@@ -42,4 +42,20 @@ describe("MentionList persona rows", () => {
     expect(getByText("🧵")).toBeInTheDocument()
     expect(container.querySelector("img")).not.toBeInTheDocument()
   })
+
+  it("tags a personal persona row with 'Personal' and leaves shared rows untagged (user-scoped-personas)", () => {
+    const items: Mentionable[] = [
+      { id: "persona_personal", slug: "coach", name: "My Coach", type: "persona", avatarEmoji: "🧠", isPersonal: true },
+      { id: "persona_shared", slug: "coach", name: "Team Coach", type: "persona", avatarEmoji: "📣" },
+    ]
+
+    const { getByText, queryAllByText } = render(
+      <MentionList items={items} clientRect={() => new DOMRect()} command={() => {}} />
+    )
+
+    // Both @coach rows render; only the owner's personal one carries the tag.
+    expect(getByText("My Coach")).toBeInTheDocument()
+    expect(getByText("Team Coach")).toBeInTheDocument()
+    expect(queryAllByText("Personal")).toHaveLength(1)
+  })
 })

@@ -782,9 +782,11 @@ export class PersonaConfigService {
    * text; a custom's free text copies through) — the new custom carries free text
    * only. The avatar image is NOT copied (it's a per-persona upload). Writes the
    * row + a v1 full-config revision + the `agent_config:updated` broadcast in one
-   * transaction (INV-7). The slug is workspace-scoped and race-safe: on the
-   * `(workspace_id, slug)` unique constraint it retries with a `-2`/`-3` suffix
-   * (INV-20). Returns the new light persona.
+   * transaction (INV-7). The slug is scoped per fork target — workspace forks
+   * collide workspace-wide (`personas_shared_slug_key`), personal forks only
+   * within the owner's own namespace (`personas_personal_slug_key`) — and
+   * race-safe either way: a 23505 from whichever partial unique index the scope
+   * hits retries with a `-2`/`-3` suffix (INV-20). Returns the new light persona.
    */
   async forkPersona(
     workspaceId: string,

@@ -436,6 +436,50 @@ describe("PersonaRepository personal-persona visibility (user-scoped-personas)",
     expect(persona).toMatchObject({ managedBy: "user", ownerUserId: "user_owner" })
   })
 
+  const coachWorkspaceRow = {
+    ...workspacePersonaRow,
+    id: "persona_ws_coach",
+    slug: "coach",
+    name: "Coach",
+    managed_by: "workspace",
+    owner_user_id: null,
+  }
+  const coachPersonalRow = {
+    ...personalPersonaRow,
+    id: "persona_personal_coach",
+    slug: "coach",
+    name: "My Coach",
+    managed_by: "user",
+    owner_user_id: "user_owner",
+  }
+
+  test("findBySlugs: the owner's own personal row shadows a same-slug workspace custom (order-independent)", async () => {
+    // Both rows come back from the one personas query; JS precedence, not SQL
+    // order, decides the winner, so it must hold whichever order the DB returns.
+    const wsFirst = createDb([[], [coachWorkspaceRow, coachPersonalRow]])
+    const a = await PersonaRepository.findBySlugs(wsFirst, ["coach"], "workspace_1", "user_owner")
+    expect(a.map((p) => p.id)).toEqual(["persona_personal_coach"])
+
+    const personalFirst = createDb([[], [coachPersonalRow, coachWorkspaceRow]])
+    const b = await PersonaRepository.findBySlugs(personalFirst, ["coach"], "workspace_1", "user_owner")
+    expect(b.map((p) => p.id)).toEqual(["persona_personal_coach"])
+  })
+
+  test("findBySlugs matches slugs case-insensitively (batch path), personal shadow preserved", async () => {
+    const db = createDb([[], [coachWorkspaceRow, coachPersonalRow]])
+    const personas = await PersonaRepository.findBySlugs(db, ["Coach"], "workspace_1", "user_owner")
+    expect(personas.map((p) => p.id)).toEqual(["persona_personal_coach"])
+    const q = db.queries[1] as { values: unknown[] }
+    expect(q.values).toContainEqual(["coach"])
+  })
+
+  test("findBySlug: the owner's own personal row is ordered first for a same-slug collision (deterministic LIMIT 1)", async () => {
+    const db = createDb([[coachPersonalRow]])
+    await PersonaRepository.findBySlug(db, "coach", "workspace_1", "user_owner")
+    const q = db.queries[0] as { text: string }
+    expect(q.text).toContain("ORDER BY (managed_by = 'user') DESC")
+  })
+
   test("findWorkspacePersona with a viewer resolves the caller's own personal row", async () => {
     const db = createDb([[personalPersonaRow]])
     const row = await PersonaRepository.findWorkspacePersona(db, "workspace_1", "persona_personal_helper", {

@@ -129,6 +129,19 @@ export const BUILT_IN_AGENT_CONFIG_TIMESTAMP = new Date("2026-04-25T00:00:00.000
 // optional workspace filter in each query (INV-8: scoped reads see only the caller
 // workspace or global system rows).
 
+/**
+ * Slug-resolution precedence for a DB row (lower = stronger): the viewer's OWN
+ * personal row (-1) beats a workspace custom (0) on the same slug (per-owner
+ * slug namespace, user-scoped-personas); built-ins rank 1 and system rows 2 in
+ * the caller's merge. Only the viewer's own personal rows reach the query that
+ * feeds this — others are filtered server-side.
+ */
+function slugPrecedence(row: PersonaRow): number {
+  if (row.workspace_id === null) return 2
+  if (row.managed_by === "user") return -1
+  return 0
+}
+
 function mapBuiltInToPersona(agent: BuiltInAgentConfig): Persona {
   return {
     id: agent.id,
@@ -321,7 +334,10 @@ export const PersonaRepository = {
 
     // Look for workspace-specific first, fall back to system. A personal
     // (`managed_by = 'user'`) row resolves only for its owner (user-scoped-
-    // personas); absent a viewer, personal rows never match.
+    // personas); absent a viewer, personal rows never match. When the owner has
+    // a personal row AND a workspace custom on the same slug (per-owner slug
+    // namespace), the personal row shadows — order it first so this LIMIT 1 is
+    // deterministic rather than picking whichever the planner returned.
     const workspaceResult = await db.query<PersonaRow>(
       viewerUserId
         ? sql`
@@ -330,6 +346,7 @@ export const PersonaRepository = {
             WHERE slug = ${slug} AND workspace_id = ${workspaceId}
               AND status = 'active'
               AND (managed_by <> 'user' OR owner_user_id = ${viewerUserId})
+            ORDER BY (managed_by = 'user') DESC
             LIMIT 1
           `
         : sql`
@@ -434,8 +451,7 @@ export const PersonaRepository = {
           `
     )
     for (const row of result.rows) {
-      // Workspace-specific rows beat built-in/system; system rows are the fallback.
-      consider(mapRowToPersona(row), row.workspace_id === null ? 2 : 0)
+      consider(mapRowToPersona(row), slugPrecedence(row))
     }
     return [...bySlug.values()]
   },
