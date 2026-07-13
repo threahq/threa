@@ -95,6 +95,9 @@ describe("AttachmentService", () => {
     spyOn(AttachmentUploadRepository, "deleteByAttachmentId").mockImplementation(async () => {
       steps.push("upload:delete")
     })
+    spyOn(AttachmentRepository, "deletePersonaBindings").mockImplementation(async () => {
+      steps.push("persona:unbind")
+    })
     spyOn(AttachmentRepository, "delete").mockImplementation(async () => {
       steps.push("attachment:delete")
       return true
@@ -113,10 +116,67 @@ describe("AttachmentService", () => {
       "attachment:lock",
       "extraction:delete",
       "upload:delete",
+      "persona:unbind",
       "attachment:delete",
       "transaction:end",
       "storage:delete",
     ])
+  })
+
+  it("cascades a delete to the file's persona context-attachment binding (INV-1, no FKs)", async () => {
+    spyOn(db, "withTransaction").mockImplementation((async (_db: unknown, callback: (client: any) => Promise<any>) =>
+      callback({})) as any)
+    spyOn(AttachmentRepository, "findByIdForUpdate").mockResolvedValue(
+      makeAttachment({ streamId: null, messageId: null })
+    )
+    spyOn(AttachmentExtractionRepository, "deleteByAttachmentId").mockResolvedValue(true)
+    spyOn(AttachmentUploadRepository, "deleteByAttachmentId").mockResolvedValue(undefined as never)
+    const unbind = spyOn(AttachmentRepository, "deletePersonaBindings").mockResolvedValue(undefined as never)
+    spyOn(AttachmentRepository, "delete").mockResolvedValue(true)
+
+    const { service } = createService()
+    const deleted = await service.delete("attach_1")
+
+    expect(deleted).toBe(true)
+    expect(unbind).toHaveBeenCalledWith(expect.anything(), "attach_1")
+  })
+
+  describe("deleteIfUnbound", () => {
+    it("deletes the file (and its extraction/upload/persona rows + S3 object) when still unbound", async () => {
+      spyOn(db, "withTransaction").mockImplementation((async (_db: unknown, callback: (client: any) => Promise<any>) =>
+        callback({})) as any)
+      const conditionalDelete = spyOn(AttachmentRepository, "deleteIfUnbound").mockResolvedValue("ws_1/attach_1/f")
+      const extraction = spyOn(AttachmentExtractionRepository, "deleteByAttachmentId").mockResolvedValue(true)
+      const upload = spyOn(AttachmentUploadRepository, "deleteByAttachmentId").mockResolvedValue(undefined as never)
+      const unbind = spyOn(AttachmentRepository, "deletePersonaBindings").mockResolvedValue(undefined as never)
+
+      const { service, storage } = createService()
+      const result = await service.deleteIfUnbound("attach_1")
+
+      expect(result).toEqual({ deleted: true })
+      expect(conditionalDelete).toHaveBeenCalledWith(expect.anything(), "attach_1")
+      expect(extraction).toHaveBeenCalled()
+      expect(upload).toHaveBeenCalled()
+      expect(unbind).toHaveBeenCalled()
+      expect(storage.delete).toHaveBeenCalledWith("ws_1/attach_1/f")
+    })
+
+    it("leaves the bytes and rows intact when a message claimed the file (conditional delete no-ops)", async () => {
+      spyOn(db, "withTransaction").mockImplementation((async (_db: unknown, callback: (client: any) => Promise<any>) =>
+        callback({})) as any)
+      // The race-safe DELETE matched no row: message_id/stream_id got set first.
+      spyOn(AttachmentRepository, "deleteIfUnbound").mockResolvedValue(null)
+      const extraction = spyOn(AttachmentExtractionRepository, "deleteByAttachmentId").mockResolvedValue(true)
+      const unbind = spyOn(AttachmentRepository, "deletePersonaBindings").mockResolvedValue(undefined as never)
+
+      const { service, storage } = createService()
+      const result = await service.deleteIfUnbound("attach_1")
+
+      expect(result).toEqual({ deleted: false })
+      expect(extraction).not.toHaveBeenCalled()
+      expect(unbind).not.toHaveBeenCalled()
+      expect(storage.delete).not.toHaveBeenCalled()
+    })
   })
 
   it("returns false when attachment does not exist", async () => {

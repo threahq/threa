@@ -1612,16 +1612,18 @@ function settledAttachment(overrides: Partial<Record<string, unknown>> = {}) {
 /**
  * Attachment-service seam for the bind path: `getById` returns the row to bind,
  * `getSharingBlockReason` is the settled-and-safe predicate (null = safe), and
- * `delete` is the cap-race cleanup. No S3 / createForUpload — the bytes already
- * landed through the shared upload transport (INV-35/37).
+ * `deleteIfUnbound` is the race-safe cap-race / remove cleanup (`{ deleted }`;
+ * `false` = a message claimed the file, so its bytes were left intact — INV-20).
+ * No S3 / createForUpload — the bytes already landed through the shared upload
+ * transport (INV-35/37).
  */
-function makeBindDeps(overrides: { getById?: any; getSharingBlockReason?: any; delete?: any } = {}): {
+function makeBindDeps(overrides: { getById?: any; getSharingBlockReason?: any; deleteIfUnbound?: any } = {}): {
   attachmentService: any
 } {
   const attachmentService = {
     getById: overrides.getById ?? mock(async () => settledAttachment()),
     getSharingBlockReason: overrides.getSharingBlockReason ?? mock(() => null),
-    delete: overrides.delete ?? mock(async () => true),
+    deleteIfUnbound: overrides.deleteIfUnbound ?? mock(async () => ({ deleted: true })),
   }
   return { attachmentService }
 }
@@ -1820,8 +1822,8 @@ describe("PersonaConfigService.bindAttachment — cap and conflicts", () => {
     setupTransaction()
     spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
     spyOn(PersonaAttachmentRepository, "insertBinding").mockRejectedValue({ code: "23505" })
-    const del = mock(async () => true)
-    const deps = makeBindDeps({ delete: del })
+    const del = mock(async () => ({ deleted: true }))
+    const deps = makeBindDeps({ deleteIfUnbound: del })
 
     await expect(
       makeService(undefined, deps).bindAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, ATTACHMENT_ID)
@@ -1834,14 +1836,28 @@ describe("PersonaConfigService.bindAttachment — cap and conflicts", () => {
     setupTransaction()
     spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
     spyOn(PersonaAttachmentRepository, "insertBinding").mockResolvedValue(null)
-    const del = mock(async () => true)
-    const deps = makeBindDeps({ delete: del })
+    const del = mock(async () => ({ deleted: true }))
+    const deps = makeBindDeps({ deleteIfUnbound: del })
 
     await expect(
       makeService(undefined, deps).bindAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, ATTACHMENT_ID)
     ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_LIMIT" })
     // The sweep never reaps a settled-but-unbound attachment (its tracking row is
-    // gone), so bind must delete it to avoid a permanent orphan.
+    // gone), so bind must delete it to avoid a permanent orphan — race-safely, so
+    // a file a message claimed in the meantime keeps its bytes (INV-20).
+    expect(del).toHaveBeenCalledWith(ATTACHMENT_ID)
+  })
+
+  it("lost cap race where a message claimed the file: cleanup no-ops but still 400s", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "insertBinding").mockResolvedValue(null)
+    const del = mock(async () => ({ deleted: false }))
+    const deps = makeBindDeps({ deleteIfUnbound: del })
+
+    await expect(
+      makeService(undefined, deps).bindAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, ATTACHMENT_ID)
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_LIMIT" })
     expect(del).toHaveBeenCalledWith(ATTACHMENT_ID)
   })
 })
@@ -1849,22 +1865,36 @@ describe("PersonaConfigService.bindAttachment — cap and conflicts", () => {
 describe("PersonaConfigService.removeAttachment", () => {
   afterEach(() => mock.restore())
 
-  it("deletes the binding then hard-deletes the attachment row + S3 object", async () => {
+  it("deletes the binding then hard-deletes the attachment row + S3 object (only while unbound)", async () => {
     spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
     spyOn(PersonaAttachmentRepository, "deleteBinding").mockResolvedValue(true)
-    const del = mock(async () => true)
-    const deps = makeBindDeps({ delete: del })
+    const del = mock(async () => ({ deleted: true }))
+    const deps = makeBindDeps({ deleteIfUnbound: del })
 
     await makeService(undefined, deps).removeAttachment(WORKSPACE_ID, "persona_custom_1", "att_1", ADMIN)
 
     expect(del).toHaveBeenCalledWith("att_1")
   })
 
+  it("still succeeds when a message claimed the file first (binding gone, bytes left intact)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const unbind = spyOn(PersonaAttachmentRepository, "deleteBinding").mockResolvedValue(true)
+    const del = mock(async () => ({ deleted: false }))
+    const deps = makeBindDeps({ deleteIfUnbound: del })
+
+    // No throw: the user-visible action (unbind) happened; the file's bytes are a
+    // message's now and were intentionally not destroyed.
+    await makeService(undefined, deps).removeAttachment(WORKSPACE_ID, "persona_custom_1", "att_1", ADMIN)
+
+    expect(unbind).toHaveBeenCalled()
+    expect(del).toHaveBeenCalledWith("att_1")
+  })
+
   it("404s when the binding does not exist (and never touches the attachment)", async () => {
     spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
     spyOn(PersonaAttachmentRepository, "deleteBinding").mockResolvedValue(false)
-    const del = mock(async () => true)
-    const deps = makeBindDeps({ delete: del })
+    const del = mock(async () => ({ deleted: true }))
+    const deps = makeBindDeps({ deleteIfUnbound: del })
 
     await expect(
       makeService(undefined, deps).removeAttachment(WORKSPACE_ID, "persona_custom_1", "missing", ADMIN)

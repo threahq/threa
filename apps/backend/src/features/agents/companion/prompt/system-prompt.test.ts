@@ -342,8 +342,24 @@ describe("buildSystemPrompt", () => {
   })
 
   const knowledge = [
-    { attachmentId: "att_1", filename: "runbook.md", position: 0, fullText: "RUNBOOK CONTENT", summary: null },
-    { attachmentId: "att_2", filename: "faq.txt", position: 1, fullText: null, summary: "FAQ SUMMARY" },
+    {
+      attachmentId: "att_1",
+      filename: "runbook.md",
+      position: 0,
+      fullText: "RUNBOOK CONTENT",
+      summary: null,
+      processingStatus: "completed" as const,
+      hasExtraction: true,
+    },
+    {
+      attachmentId: "att_2",
+      filename: "faq.txt",
+      position: 1,
+      fullText: null,
+      summary: "FAQ SUMMARY",
+      processingStatus: "completed" as const,
+      hasExtraction: true,
+    },
   ]
 
   test("injects the persona ## Knowledge block after the persona prompt and before the stream context", () => {

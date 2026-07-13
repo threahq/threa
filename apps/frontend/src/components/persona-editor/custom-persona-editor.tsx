@@ -268,7 +268,8 @@ export function CustomPersonaEditor({
     const rejected: string[] = []
     for (const file of picked) {
       if (!isPersonaAttachmentMimeAllowed(file.type)) rejected.push(`${file.name} (unsupported type)`)
-      else if (file.size > PERSONA_ATTACHMENT_MAX_SIZE_BYTES) rejected.push(`${file.name} (over 20MB)`)
+      else if (file.size > PERSONA_ATTACHMENT_MAX_SIZE_BYTES)
+        rejected.push(`${file.name} (over ${formatFileSize(PERSONA_ATTACHMENT_MAX_SIZE_BYTES)})`)
       else valid.push(file)
     }
     if (rejected.length > 0) toast.error(`Can't add ${rejected.join(", ")}`)

@@ -10,6 +10,8 @@ function item(overrides: Partial<PersonaAttachmentContentItem>): PersonaAttachme
     position: 0,
     fullText: null,
     summary: null,
+    processingStatus: "processing",
+    hasExtraction: false,
     ...overrides,
   }
 }
@@ -63,13 +65,13 @@ describe("buildPersonaKnowledgeSection", () => {
     expect(block).not.toContain(summary)
   })
 
-  test("files after the budget-crossing file degrade to summary-only (full text dropped)", () => {
-    // The first file's summary alone overruns the block budget, so it is the
-    // one that gets truncated; the second file then degrades to summary-only.
-    const crossingSummary = "C".repeat(PERSONA_ATTACHMENT_BLOCK_MAX_CHARS + 100)
-    const laterFullText = "LATER_FULL_TEXT_SHOULD_NOT_APPEAR"
+  test("budget-aware degradation: a file whose full text won't fit shows its whole summary instead", () => {
+    // The first file's whole summary fits but leaves only a small remainder; the
+    // second file's full text overruns it, so it degrades to its whole summary.
+    const firstSummary = "C".repeat(PERSONA_ATTACHMENT_BLOCK_MAX_CHARS - 100)
+    const laterFullText = "LATER_FULL_TEXT_SHOULD_NOT_APPEAR_".repeat(20)
     const block = buildPersonaKnowledgeSection([
-      item({ attachmentId: "att_1", filename: "first.txt", fullText: null, summary: crossingSummary }),
+      item({ attachmentId: "att_1", filename: "first.txt", fullText: null, summary: firstSummary }),
       item({
         attachmentId: "att_2",
         filename: "second.txt",
@@ -78,11 +80,36 @@ describe("buildPersonaKnowledgeSection", () => {
       }),
     ])
 
-    // Second file is still present (never silently dropped) but shows its short
-    // summary, not its full text.
+    // First file renders whole (untruncated); the second shows its short summary,
+    // not its full text — never silently dropped.
+    expect(block).not.toContain("…[truncated]")
     expect(block).toContain("### second.txt")
     expect(block).toContain("SECOND SUMMARY GIST")
     expect(block).not.toContain(laterFullText)
+  })
+
+  test("processing vs failed extractions render distinct notes (T3)", () => {
+    const block = buildPersonaKnowledgeSection([
+      item({
+        attachmentId: "att_1",
+        filename: "pending.pdf",
+        fullText: null,
+        summary: null,
+        processingStatus: "processing",
+        hasExtraction: false,
+      }),
+      item({
+        attachmentId: "att_2",
+        filename: "broken.pdf",
+        fullText: null,
+        summary: null,
+        processingStatus: "failed",
+        hasExtraction: false,
+      }),
+    ])
+
+    expect(block).toContain("### pending.pdf\n\n(processing — content not yet available)")
+    expect(block).toContain("### broken.pdf\n\n(extraction failed — content unavailable)")
   })
 
   test("a post-budget file with no summary renders the marker so it is never silently dropped", () => {
