@@ -761,6 +761,26 @@ describe("SyncEngine reconnect catch-up cursor (INV-53 gap safety)", () => {
       expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
     })
   })
+
+  it("catches up a newly visible thread panel even when its bootstrap query is cached", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    deps.streamService.bootstrap.mockClear()
+    deps.queryClient.setQueryData(["streams", "bootstrap", "ws_1", "thread_1"], makeStreamBootstrap("thread_1", "1"))
+    await seedEvent("thread_1", 1)
+
+    engine.setVisibleStreamIds(["thread_1"])
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_1", { after: "1" })
+    })
+    await vi.waitFor(async () => {
+      expect(await db.events.get("evt_2")).toMatchObject({ streamId: "thread_1", sequence: "2" })
+    })
+  })
 })
 
 describe("SyncEngine HTTP-first warm fetch", () => {

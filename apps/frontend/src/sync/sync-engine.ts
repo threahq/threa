@@ -182,9 +182,10 @@ export class SyncEngine {
 
   // Ref-like state updated by the React layer
   private currentStreamId: string | undefined = undefined
+  /** URL-visible stream surfaces: the route stream plus bare-stream panels. */
   private visibleStreamIds: string[] = []
   /** Streams whose board cards are on screen — declared by the board page, kept
-   *  separate from `visibleStreamIds` (the sidebar's, replaced wholesale). Their
+   *  separate from `visibleStreamIds` (which is replaced wholesale). Their
    *  bodies ride `db.events`, so the board joins + catches them up like any opened
    *  stream and re-asserts them across reconnects (see setBoardStreamIds). */
   private boardStreamIds = new Set<string>()
@@ -219,8 +220,20 @@ export class SyncEngine {
     }
   }
 
+  /**
+   * Refresh newly visible route/panel streams. A cached bootstrap has infinite
+   * stale time, so the query observer alone will not close events missed while
+   * a panel was hidden; the engine-owned delta does (INV-53).
+   */
   setVisibleStreamIds(ids: string[]): void {
+    const previous = new Set(this.visibleStreamIds)
     this.visibleStreamIds = ids
+
+    for (const streamId of ids) {
+      if (previous.has(streamId)) continue
+      if (streamId.startsWith("draft_") || streamId.startsWith("draft:") || streamId.startsWith("conv:")) continue
+      void this.refreshStreamAfterNavigation(streamId)
+    }
   }
 
   /**
@@ -232,8 +245,8 @@ export class SyncEngine {
    * joined (member streams are already subscribed at bootstrap).
    *
    * It is additive and must NEVER route through setVisibleStreamIds — that set is
-   * the sidebar's and is replaced wholesale (clobbering it would drop the
-   * sidebar's reconnect catch-up). Newly-declared streams are caught up +
+   * URL-derived and replaced wholesale (clobbering it would drop the open
+   * route/panel reconnect catch-up). Newly-declared streams are caught up +
    * bootstrapped here unless their history is already local (syncBoardStreams'
    * persisted-window skip), concurrency-capped so opening the board doesn't fire
    * a fetch burst across dozens of unsynced streams. Board streams join the
