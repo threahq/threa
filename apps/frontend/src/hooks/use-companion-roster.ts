@@ -1,5 +1,6 @@
 import { useMemo } from "react"
 import type { CompanionPersona } from "@/components/stream-settings/companion-agent-select"
+import { personaKindFromManagedBy } from "@/lib/personas"
 import { useWorkspacePersonas } from "@/stores/workspace-store"
 
 /**
@@ -19,7 +20,15 @@ export function useCompanionRoster(workspaceId: string | undefined): CompanionPe
         .sort((a, b) => {
           if (a.managedBy !== b.managedBy) return a.managedBy === "system" ? -1 : 1
           return a.name.localeCompare(b.name)
-        }),
+        })
+        .map((p) => ({
+          id: p.id,
+          slug: p.slug,
+          name: p.name,
+          avatarEmoji: p.avatarEmoji,
+          avatarUrl: p.avatarUrl,
+          kind: personaKindFromManagedBy(p.managedBy),
+        })),
     [personas]
   )
 }

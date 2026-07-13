@@ -25,13 +25,16 @@ const sources: PersonaListItem[] = [
   },
 ]
 
-function renderDialog() {
+function renderDialog(scope?: "workspace" | "personal") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/w/ws_1"]}>
         <Routes>
-          <Route path="/w/:workspaceId" element={<PersonaForkDialog workspaceId="ws_1" sources={sources} />} />
+          <Route
+            path="/w/:workspaceId"
+            element={<PersonaForkDialog workspaceId="ws_1" sources={sources} scope={scope} />}
+          />
           <Route path="/w/:workspaceId/settings/personas/:personaId" element={<div>Editor for new agent</div>} />
         </Routes>
       </MemoryRouter>
@@ -52,7 +55,11 @@ describe("PersonaForkDialog", () => {
     await user.click(screen.getByRole("button", { name: "Create" }))
 
     await waitFor(() =>
-      expect(fork).toHaveBeenCalledWith("ws_1", { sourcePersonaId: "persona_system_ariadne", name: "Research bot" })
+      expect(fork).toHaveBeenCalledWith("ws_1", {
+        sourcePersonaId: "persona_system_ariadne",
+        name: "Research bot",
+        scope: "workspace",
+      })
     )
     expect(await screen.findByText("Editor for new agent")).toBeInTheDocument()
   })
@@ -70,7 +77,9 @@ describe("PersonaForkDialog", () => {
     await user.type(await screen.findByLabelText("Name"), "Scribe")
     await user.click(screen.getByRole("button", { name: "Create" }))
 
-    await waitFor(() => expect(fork).toHaveBeenCalledWith("ws_1", { sourcePersonaId: null, name: "Scribe" }))
+    await waitFor(() =>
+      expect(fork).toHaveBeenCalledWith("ws_1", { sourcePersonaId: null, name: "Scribe", scope: "workspace" })
+    )
   })
 
   it("disables Create until a name is entered", async () => {
@@ -79,5 +88,36 @@ describe("PersonaForkDialog", () => {
 
     await user.click(screen.getByRole("button", { name: /New agent/ }))
     expect(screen.getByRole("button", { name: "Create" })).toBeDisabled()
+  })
+
+  it("forks with personal scope and personal-noun copy when scope is personal", async () => {
+    const fork = vi.spyOn(personasApi, "fork").mockResolvedValue({
+      id: "persona_personal_new",
+      slug: "my-helper",
+      name: "My helper",
+      description: null,
+      avatarEmoji: null,
+      model: "openrouter:anthropic/claude-sonnet-4.6",
+      kind: "personal",
+      ownerUserId: "usr_me",
+      avatarUrl: null,
+      isCustomized: false,
+      status: "active",
+    })
+    const user = userEvent.setup()
+    renderDialog("personal")
+
+    await user.click(screen.getByRole("button", { name: /New persona/ }))
+    await user.type(await screen.findByLabelText("Name"), "My helper")
+    await user.click(screen.getByRole("button", { name: "Create" }))
+
+    await waitFor(() =>
+      expect(fork).toHaveBeenCalledWith("ws_1", {
+        sourcePersonaId: "persona_system_ariadne",
+        name: "My helper",
+        scope: "personal",
+      })
+    )
+    expect(await screen.findByText("Editor for new agent")).toBeInTheDocument()
   })
 })

@@ -7,7 +7,7 @@ import { PersonaListAvatar } from "@/components/persona-avatar"
  * `PersonaListItem` (settings surfaces) and the bootstrap-backed store rows
  * (`useCompanionRoster`) satisfy it, so every surface shares one picker.
  */
-export type CompanionPersona = Pick<PersonaListItem, "id" | "slug" | "name" | "avatarEmoji" | "avatarUrl">
+export type CompanionPersona = Pick<PersonaListItem, "id" | "slug" | "name" | "avatarEmoji" | "avatarUrl" | "kind">
 
 export interface CompanionSelection {
   selectedPersonaId: string | undefined
@@ -85,6 +85,20 @@ function defaultBadgeLabel(personaId: string, badges: CompanionDefaultBadges | u
   return null
 }
 
+/**
+ * The muted suffixes a persona row carries: the default-tier indicator (if any)
+ * and a "Personal" tag for a user-owned (kind `personal`) persona. Both are small
+ * shrink-0 tags, so a personal persona that is also the viewer's default reads
+ * "Your default · Personal" without wrapping (INV-21). Pure so the composition is
+ * unit-testable independent of the Radix Select DOM.
+ */
+export function companionRowBadges(
+  persona: Pick<CompanionPersona, "id" | "kind">,
+  badges: CompanionDefaultBadges | undefined
+): { defaultBadge: string | null; isPersonal: boolean } {
+  return { defaultBadge: defaultBadgeLabel(persona.id, badges), isPersonal: persona.kind === "personal" }
+}
+
 interface CompanionAgentSelectProps {
   workspaceId: string
   personas: CompanionPersona[]
@@ -125,13 +139,14 @@ export function CompanionAgentSelect({
           </SelectItem>
         )}
         {personas.map((persona) => {
-          const badge = defaultBadgeLabel(persona.id, defaultBadges)
+          const { defaultBadge, isPersonal } = companionRowBadges(persona, defaultBadges)
           return (
             <SelectItem key={persona.id} value={persona.id}>
               <span className="flex items-center gap-2">
                 <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="xs" />
                 <span className="truncate">{persona.name}</span>
-                {badge && <span className="shrink-0 text-[10px] text-muted-foreground">{badge}</span>}
+                {defaultBadge && <span className="shrink-0 text-[10px] text-muted-foreground">{defaultBadge}</span>}
+                {isPersonal && <span className="shrink-0 text-[10px] text-muted-foreground">Personal</span>}
               </span>
             </SelectItem>
           )

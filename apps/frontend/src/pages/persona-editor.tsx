@@ -7,6 +7,7 @@ import { SidebarToggle } from "@/components/layout"
 import { ThreadPanelSlot } from "@/components/layout/thread-panel-slot"
 import { hasPermission } from "@/lib/permissions"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useWorkspacePersonas } from "@/stores/workspace-store"
 import { usePersonaConfig } from "@/hooks/use-personas"
 import { usePanelLayout, useIsSplitCapable } from "@/hooks"
 import { PersonaEditorForm } from "@/components/persona-editor/persona-editor-form"
@@ -16,25 +17,37 @@ import type { SyncState } from "@/components/persona-editor/persona-form"
 import { ApiError } from "@/api/client"
 
 /**
- * Full-page persona (built-in agent) editor (roadmap 7.1/7.2), reached from the
- * workspace-settings Personas tab. Admin-gated (INV-59 — persona id in the URL).
- * Desktop: editor form left, draft test chat in a resizable right pane. Mobile:
- * editor only, with a "Test draft" action that opens the test scratchpad as a
- * normal stream.
+ * Full-page persona editor (roadmap 7.1/7.2, user-scoped-personas). Reached from
+ * the workspace-settings Personas tab (built-ins + workspace customs, admin) or
+ * the personal-settings "My personas" section (a member's own personal personas).
+ * Access is admin OR persona owner. Desktop: editor form left, draft test chat in
+ * a resizable right pane. Mobile: editor only, with a "Test draft" action that
+ * opens the test scratchpad as a normal stream.
  */
 export function PersonaEditorPage() {
   const { workspaceId, personaId } = useParams<{ workspaceId: string; personaId: string }>()
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
   const isAdmin = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+  // A personal persona's store row reaches only its owner (server-scoped), so its
+  // presence with `managedBy === "user"` proves ownership. A just-forked personal
+  // persona is seeded into the store by the fork mutation, so this is already true
+  // on the first render after navigating from "New persona".
+  const personas = useWorkspacePersonas(workspaceId)
+  const ownsPersonal = !!personaId && personas.some((p) => p.id === personaId && p.managedBy === "user")
+  const allowed = isAdmin || ownsPersonal
 
   const {
     data: config,
     isLoading,
     error,
     refetch,
-  } = usePersonaConfig(workspaceId ?? "", personaId ?? "", { enabled: isAdmin })
+  } = usePersonaConfig(workspaceId ?? "", personaId ?? "", { enabled: allowed })
 
   const notFound = ApiError.isApiError(error) && error.code === "PERSONA_NOT_FOUND"
+  // A personal persona returns to the owner's personal AI settings (openable by a
+  // non-admin); a built-in/workspace persona returns to the admin roster.
+  const isPersonalPersona = config?.kind === "personal" || ownsPersonal
+  const backTo = isPersonalPersona ? `/w/${workspaceId}?settings=ai` : `/w/${workspaceId}?ws-settings=ai-agents`
   // The split needs ~MIN_MAIN_WIDTH + MIN_PANEL_WIDTH + sidebar of room; below
   // SPLIT_VIEW_BREAKPOINT (phone landscape, small tablets, narrow windows) the
   // drawer layout is strictly better than two crushed panes.
@@ -59,9 +72,9 @@ export function PersonaEditorPage() {
   } = usePanelLayout(showTestPane)
 
   if (!workspaceId || !personaId) return null
-  // Wait for the bootstrap to resolve before deciding; a confirmed non-admin is
-  // bounced (the config routes are admin-only server-side too).
-  if (bootstrap && !isAdmin) return <Navigate to={`/w/${workspaceId}`} replace />
+  // Wait for the bootstrap to resolve before deciding; a viewer who is neither an
+  // admin nor the persona's owner is bounced (the config routes reject them too).
+  if (bootstrap && !allowed) return <Navigate to={`/w/${workspaceId}`} replace />
 
   let body: ReactNode
   if (notFound) {
@@ -78,13 +91,14 @@ export function PersonaEditorPage() {
     )
   } else if (isLoading || !config) {
     body = <p className="text-sm text-muted-foreground">Loading persona…</p>
-  } else if (config.kind === "custom") {
+  } else if (config.kind === "custom" || config.kind === "personal") {
     body = (
       <CustomPersonaEditor
         workspaceId={workspaceId}
         personaId={personaId}
         config={config}
         onSyncStateChange={setSyncState}
+        returnTo={backTo}
       />
     )
   } else {
@@ -103,7 +117,7 @@ export function PersonaEditorPage() {
       <header className="flex h-12 items-center gap-2 border-b px-4">
         <SidebarToggle location="page" />
         <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-          <Link to={`/w/${workspaceId}?ws-settings=ai-agents`} aria-label="Back to AI Agents">
+          <Link to={backTo} aria-label={isPersonalPersona ? "Back to AI settings" : "Back to AI Agents"}>
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>

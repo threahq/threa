@@ -314,6 +314,12 @@ export interface ForkPersonaInput {
    */
   sourcePersonaId: string | null
   name: string
+  /**
+   * Fork target scope: `workspace` (admin-only, a shared custom) or `personal`
+   * (any member, private to the caller — user-scoped-personas). Omitted defaults
+   * to `workspace` server-side, so existing callers are unchanged.
+   */
+  scope?: "workspace" | "personal"
 }
 
 /** Request body for PUT update-a-custom-persona (full-field write + optimistic concurrency). */

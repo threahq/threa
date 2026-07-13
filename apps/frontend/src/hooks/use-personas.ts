@@ -7,6 +7,8 @@ import type {
   PersonaListItem,
 } from "@threa/types"
 import { personasApi } from "@/api"
+import { cachedPersonaFromListItem } from "@/lib/personas"
+import { upsertWorkspacePersonaCache } from "@/stores/workspace-store"
 
 export const personaKeys = {
   all: ["personas"] as const,
@@ -271,15 +273,27 @@ export function useDiscardPersonaDraft(workspaceId: string, personaId: string) {
 }
 
 /**
- * Fork a source persona into a new workspace custom. On success the new custom
- * lands in the active roster cache immediately (so the roster reflects it before
- * the broadcast-driven refetch); the caller navigates to its editor.
+ * Fork a source persona into a new custom. A `workspace` fork (admin) lands in the
+ * active roster cache so the roster reflects it before the broadcast-driven
+ * refetch. A `personal` fork (any member) is NOT written to the workspace roster
+ * cache — `GET /personas` is workspace-only, so a personal row would pollute the
+ * admin roster tab; instead it is seeded into the bootstrap-backed store so the
+ * editor's ownership gate already sees it on the navigate that follows (the
+ * owner-room `agent_config:updated` broadcast then reconciles it durably, and the
+ * "My personas" section reads the same store). This mutation-level `onSuccess`
+ * runs before the caller's `mutate(...)` navigate, so the seed is in place first.
+ * `scope` defaults to `workspace` so existing callers are unchanged.
  */
 export function useForkPersona(workspaceId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: { sourcePersonaId: string | null; name: string }) => personasApi.fork(workspaceId, input),
-    onSuccess: (persona) => {
+    mutationFn: (input: { sourcePersonaId: string | null; name: string; scope?: "workspace" | "personal" }) =>
+      personasApi.fork(workspaceId, input),
+    onSuccess: (persona, input) => {
+      if (input.scope === "personal") {
+        upsertWorkspacePersonaCache(workspaceId, cachedPersonaFromListItem(persona, workspaceId))
+        return
+      }
       upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)
     },
   })
@@ -318,14 +332,17 @@ export function useArchivePersona(workspaceId: string) {
   })
 }
 
-/** Restore an archived custom persona to the active roster. */
+/** Restore an archived persona to active. A workspace custom re-joins the roster
+ *  list cache; a personal persona is NOT written there (`GET /personas` is
+ *  workspace-only — it would pollute the admin roster), its store row flips back
+ *  to active via the owner-room broadcast that "My personas" reads. */
 export function useUnarchivePersona(workspaceId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (personaId: string) => personasApi.unarchive(workspaceId, personaId),
     onSuccess: (persona) => {
       removeFromList(queryClient, personaKeys.archived(workspaceId), persona.id)
-      upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)
+      if (persona.kind !== "personal") upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)
     },
   })
 }

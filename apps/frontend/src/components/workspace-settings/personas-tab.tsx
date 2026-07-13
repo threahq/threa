@@ -26,9 +26,15 @@ interface PersonasTabProps {
  */
 export function PersonasTab({ workspaceId }: PersonasTabProps) {
   const { data: personas, isLoading, isError, refetch } = usePersonas(workspaceId)
-  const { data: archived } = useArchivedPersonas(workspaceId)
+  const { data: archivedAll } = useArchivedPersonas(workspaceId)
   const unarchive = useUnarchivePersona(workspaceId)
   const [archivedOpen, setArchivedOpen] = useState(false)
+
+  // `GET /personas/archived` returns an admin's OWN personal archived personas
+  // alongside the workspace customs; the workspace roster only manages shared
+  // agents, so a personal persona never belongs here (it lives in personal
+  // Settings → AI → My personas).
+  const archived = archivedAll?.filter((persona) => persona.kind !== "personal")
 
   let personaList: ReactNode
   if (isLoading) {
