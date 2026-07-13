@@ -30,7 +30,7 @@ export class LinkPreviewOutboxHandler extends DebouncedOutboxHandler {
 
     const isEdit = event.eventType === "message:edited"
     const { workspaceId, streamId, event: messageEvent } = payload
-    const { messageId, contentMarkdown } = messageEvent.payload
+    const { messageId, contentJson, contentMarkdown } = messageEvent.payload
 
     // E2E streams: contentMarkdown is ciphertext, so the URL scanner
     // would find nothing useful. Skip without inspecting the message.
@@ -49,6 +49,7 @@ export class LinkPreviewOutboxHandler extends DebouncedOutboxHandler {
       streamId,
       messageId,
       contentMarkdown,
+      contentJson,
       isEdit,
     })
 

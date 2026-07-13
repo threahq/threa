@@ -2,6 +2,18 @@ import { describe, expect, it } from "bun:test"
 import { normalizeMarkdownTables, parseMarkdown, serializeToMarkdown } from "./markdown"
 import type { JSONContent } from "@threa/types"
 
+describe("@threa/prosemirror markdown links", () => {
+  it("parses a link whose URL contains balanced parentheses", () => {
+    const parsed = parseMarkdown("[Wikipedia](https://en.wikipedia.org/wiki/Foo_(bar))")
+
+    expect(parsed.content?.[0]?.content?.[0]).toEqual({
+      type: "text",
+      text: "Wikipedia",
+      marks: [{ type: "link", attrs: { href: "https://en.wikipedia.org/wiki/Foo_(bar)" } }],
+    })
+  })
+})
+
 describe("@threa/prosemirror markdown attachment metadata", () => {
   it("serializes attachment metadata into the markdown link title", () => {
     const doc: JSONContent = {

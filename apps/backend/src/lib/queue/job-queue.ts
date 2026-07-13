@@ -1,4 +1,4 @@
-import { AgentTriggers, type AgentSessionRerunContext } from "@threa/types"
+import { AgentTriggers, type AgentSessionRerunContext, type JSONContent } from "@threa/types"
 
 export interface Job<T = unknown> {
   id: string
@@ -251,6 +251,8 @@ export interface LinkPreviewExtractJobData {
   streamId: string
   messageId: string
   contentMarkdown: string
+  /** Optional for compatibility with jobs queued before document-based extraction. */
+  contentJson?: JSONContent | null
   /** When true, clears existing previews before re-extracting (message edit flow) */
   isEdit?: boolean
 }

@@ -552,14 +552,14 @@ function hoursFromNow(hours: number): Date {
  */
 export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPreviewExtractJobData> {
   return async (job: Job<LinkPreviewExtractJobData>) => {
-    const { workspaceId, messageId, streamId, contentMarkdown, isEdit } = job.data
+    const { workspaceId, messageId, streamId, contentMarkdown, contentJson, isEdit } = job.data
 
     log.info({ messageId, workspaceId, isEdit }, "Processing link previews for message")
 
     // For edits, clear old junction rows first so stale previews are removed.
     const pendingPreviews = isEdit
-      ? await deps.linkPreviewService.replacePreviewsForMessage(workspaceId, messageId, contentMarkdown)
-      : await deps.linkPreviewService.extractAndCreatePending(workspaceId, messageId, contentMarkdown)
+      ? await deps.linkPreviewService.replacePreviewsForMessage(workspaceId, messageId, contentMarkdown, contentJson)
+      : await deps.linkPreviewService.extractAndCreatePending(workspaceId, messageId, contentMarkdown, contentJson)
 
     if (pendingPreviews.length === 0) {
       // For edits with no URLs, publish empty set so frontend clears stale previews

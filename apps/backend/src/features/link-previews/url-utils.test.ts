@@ -94,6 +94,42 @@ describe("extractUrls", () => {
     expect(extractUrls(md)).toEqual(["https://google.com", "https://github.com"])
   })
 
+  test("uses authoritative document links and plaintext URL extraction when contentJson is available", () => {
+    const contentJson = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: "F2 — https://github.com/threahq/threa/pull/1316.",
+              marks: [{ type: "bold" }],
+            },
+            { type: "text", text: " Reference " },
+            {
+              type: "text",
+              text: "the channel",
+              marks: [
+                {
+                  type: "link",
+                  attrs: {
+                    href: "https://app.threa.io/w/ws_1/s/stream_1?m=msg_1",
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(extractUrls("ignored serialized markdown", ["https://app.threa.io"], contentJson)).toEqual([
+      "https://github.com/threahq/threa/pull/1316",
+      "https://app.threa.io/w/ws_1/s/stream_1?m=msg_1",
+    ])
+  })
+
   test("extracts markdown links with parentheses in URL", () => {
     const md = "[Wikipedia](https://en.wikipedia.org/wiki/Foo_(bar))"
     expect(extractUrls(md)).toEqual(["https://en.wikipedia.org/wiki/Foo_(bar)"])
