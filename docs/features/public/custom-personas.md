@@ -68,10 +68,16 @@ and Brevity choices; the prompt is read-only and the identity is fixed.
 A persona can carry attached knowledge: files whose extracted content rides as
 standing context in every reply the persona gives (companion turns, mentions, and
 test drives alike). The persona does not have to be asked to fetch anything; the
-content is simply present. Today knowledge is attached by uploading files, through
-the same upload machinery as sending a file in chat (per-file progress, retry,
-several files at once) and the same extraction pipeline (PDF, Word, Excel, CSV,
-JSON, Markdown, plain text).
+content is simply present. Knowledge is attached two ways. You can upload files,
+through the same upload machinery as sending a file in chat (per-file progress,
+retry, several files at once) and the same extraction pipeline (PDF, Word, Excel,
+CSV, JSON, Markdown, plain text). Or you can attach an existing file: "Attach
+existing" opens a search over the files already posted in streams you can read,
+and picking one gives the persona its own independent copy. The picker only offers
+message-bound files that finished scanning clean, of the same text-bearing types
+uploads accept; it never lists a file you cannot already open. The copy is
+independent from the moment it is made: deleting the original message or file never
+affects the persona, and the persona's copy is never shared back to the source.
 
 Because context is bounded, each file lands in one of three forms, decided by a
 single budget walk over the list in order, and each row in the editor shows which
@@ -100,9 +106,11 @@ persona's knowledge follows the same permissions as editing it.
   and prompt.
 - There is no promotion path from a personal persona to a workspace one, and no
   sharing of one persona (or its files) between members or workspaces.
-- Knowledge is attach-by-upload only today; referencing an existing workspace
-  file by link is not built. There is also no on-demand deep read: a file larger
-  than the inline cap is represented by its summary.
+- Knowledge is attached by upload or by attaching an existing workspace file;
+  either way the persona holds an independent copy (attaching an existing file
+  copies it rather than linking, since deleting the source must never change what
+  the persona carries). There is no on-demand deep read: a file larger than the
+  inline cap is represented by its summary.
 - When a member leaves, their personal personas simply stop being visible or
   dispatchable; nothing cleans them up.
 - If a scratchpad pinned to someone's personal persona is later shared, other
