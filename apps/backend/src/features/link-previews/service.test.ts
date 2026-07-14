@@ -9,6 +9,7 @@ import { SearchRepository } from "../search"
 import type { StreamService } from "../streams"
 import { StreamMemberRepository } from "../streams"
 import type { MemoExplorerService } from "../memos"
+import type { DelegationService } from "../delegations"
 
 /** The exact shape `tryAccess` resolves to, so a drift in the contract breaks here. */
 type AccessibleStream = NonNullable<Awaited<ReturnType<StreamService["tryAccess"]>>>
@@ -36,6 +37,7 @@ function makePreview(overrides: Partial<LinkPreview>): LinkPreview {
     targetMessageId: null,
     targetMemoId: null,
     targetConversationId: null,
+    targetDelegationId: null,
     fetchedAt: null,
     expiresAt: null,
     createdAt: new Date(),
@@ -86,11 +88,16 @@ function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
   }
 }
 
-function makeService(streamService: Partial<StreamService>, memoExplorerService: Partial<MemoExplorerService>) {
+function makeService(
+  streamService: Partial<StreamService>,
+  memoExplorerService: Partial<MemoExplorerService>,
+  delegationService: Partial<DelegationService> = {}
+) {
   return new LinkPreviewService({
     pool: {} as Pool,
     streamService: streamService as StreamService,
     memoExplorerService: memoExplorerService as MemoExplorerService,
+    delegationService: delegationService as DelegationService,
   })
 }
 
@@ -635,5 +642,116 @@ describe("LinkPreviewService.resolveInAppLinkByUrl", () => {
     expect(await service.resolveInAppLinkByUrl(WORKSPACE_ID, VIEWER_ID, "https://example.com/blog")).toBeNull()
     // A valid app origin but an unrecognized path is also null.
     expect(await service.resolveInAppLinkByUrl(WORKSPACE_ID, VIEWER_ID, "https://app.threa.io/settings")).toBeNull()
+  })
+})
+
+describe("LinkPreviewService — delegation link resolution", () => {
+  const previousOrigins = process.env.CORS_ALLOWED_ORIGINS
+  beforeAll(() => {
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.threa.io"
+  })
+  afterAll(() => {
+    if (previousOrigins === undefined) delete process.env.CORS_ALLOWED_ORIGINS
+    else process.env.CORS_ALLOWED_ORIGINS = previousOrigins
+  })
+
+  const SELF_URL = "https://app.threa.io/w/ws_self/delegations/dlg_1"
+  const OTHER_URL = "https://app.threa.io/w/ws_other/delegations/dlg_1"
+
+  function makeDelegationWithEvent(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "dlg_1",
+      streamId: "stream_1",
+      title: "Add rate limiting",
+      status: "claimed",
+      claimedByLabel: "Kris's MacBook / Claude Code",
+      createdEventId: "event_1",
+      ...overrides,
+    } as never
+  }
+
+  test("returns cross_workspace for a delegation URL in another workspace without inspecting it", async () => {
+    const getByIdWithEvent = spyOn({ getByIdWithEvent: async () => makeDelegationWithEvent() }, "getByIdWithEvent")
+    const tryAccess = spyOn({ tryAccess: async () => null }, "tryAccess")
+    const service = makeService({ tryAccess: tryAccess as never }, {}, { getByIdWithEvent: getByIdWithEvent as never })
+
+    const result = await service.resolveInAppLinkByUrl(WORKSPACE_ID, VIEWER_ID, OTHER_URL)
+
+    expect(result).toEqual({ kind: "delegation", accessTier: "cross_workspace" })
+    expect(getByIdWithEvent).not.toHaveBeenCalled()
+    expect(tryAccess).not.toHaveBeenCalled()
+  })
+
+  test("returns private when the delegation is missing", async () => {
+    const service = makeService({ tryAccess: async () => makeStream() }, {}, { getByIdWithEvent: async () => null })
+
+    expect(await service.resolveInAppLinkByUrl(WORKSPACE_ID, VIEWER_ID, SELF_URL)).toEqual({
+      kind: "delegation",
+      accessTier: "private",
+    })
+  })
+
+  test("returns private when the viewer cannot access the delegation's stream", async () => {
+    const service = makeService(
+      { tryAccess: async () => null },
+      {},
+      { getByIdWithEvent: async () => makeDelegationWithEvent() }
+    )
+
+    expect(await service.resolveInAppLinkByUrl(WORKSPACE_ID, VIEWER_ID, SELF_URL)).toEqual({
+      kind: "delegation",
+      accessTier: "private",
+    })
+  })
+
+  test("returns full delegation metadata when the viewer has access", async () => {
+    const service = makeService(
+      { tryAccess: async () => makeStream({ id: "stream_1", slug: "eng" }) },
+      {},
+      { getByIdWithEvent: async () => makeDelegationWithEvent({ status: "running" }) }
+    )
+
+    const result = await service.resolveInAppLinkByUrl(WORKSPACE_ID, VIEWER_ID, SELF_URL)
+
+    expect(result).toEqual({
+      kind: "delegation",
+      accessTier: "full",
+      delegationId: "dlg_1",
+      title: "Add rate limiting",
+      status: "running",
+      claimedByLabel: "Kris's MacBook / Claude Code",
+      streamId: "stream_1",
+      streamType: "channel",
+      createdEventId: "event_1",
+    })
+  })
+
+  test("resolves full delegation metadata from a persisted preview row by id (bake/by-id path)", async () => {
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({
+        contentType: "delegation_link",
+        targetStreamId: null,
+        targetDelegationId: "dlg_1",
+      })
+    )
+    const service = makeService(
+      { tryAccess: async () => makeStream({ id: "stream_1", slug: "eng" }) },
+      {},
+      { getByIdWithEvent: async () => makeDelegationWithEvent({ status: "running" }) }
+    )
+
+    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
+
+    expect(result).toEqual({
+      kind: "delegation",
+      accessTier: "full",
+      delegationId: "dlg_1",
+      title: "Add rate limiting",
+      status: "running",
+      claimedByLabel: "Kris's MacBook / Claude Code",
+      streamId: "stream_1",
+      streamType: "channel",
+      createdEventId: "event_1",
+    })
   })
 })

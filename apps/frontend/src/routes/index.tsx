@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react"
-import { createBrowserRouter, Navigate, useLocation, useParams } from "react-router-dom"
+import { createBrowserRouter, Navigate, useLocation, useNavigate, useParams } from "react-router-dom"
+import { toast } from "sonner"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { FallbackLoader } from "@/components/fallback-loader"
 import { attachOverlayHistoryRouter, OverlayHistoryLayout } from "@/components/ui/history-back-close"
+import { ApiError, delegationsApi } from "@/api"
 import { useSidebar } from "@/contexts"
 import { useLastLocation } from "@/hooks"
 import { getLastWorkspaceId } from "@/lib/last-workspace"
@@ -131,6 +133,10 @@ export const router = createBrowserRouter([
             element: <LegacyMemoRedirect />,
           },
           {
+            path: "delegations/:delegationId",
+            element: <DelegationRedirect />,
+          },
+          {
             path: "s/:streamId",
             HydrateFallback: FallbackLoader,
             lazy: async () => ({ Component: (await import("@/pages/stream")).StreamPage }),
@@ -210,6 +216,48 @@ export function WorkspaceHome() {
       <p>Select a stream from the sidebar</p>
     </div>
   )
+}
+
+/**
+ * `/w/:ws/delegations/:id` has no page of its own — a delegation lives as a card
+ * row in its source stream. Resolve the delegation by id, then replace-navigate
+ * to that stream's timeline deep-linked to the card (`?m=createdEventId`), so a
+ * pasted delegation link opens the card in context. A 404 (missing or no access,
+ * collapsed server-side) sends the viewer home with an error toast (INV-63).
+ */
+export function DelegationRedirect() {
+  const { workspaceId, delegationId } = useParams<{ workspaceId: string; delegationId: string }>()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!workspaceId || !delegationId) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const delegation = await delegationsApi.get(workspaceId, delegationId)
+        if (cancelled) return
+        const base = `/w/${workspaceId}/s/${delegation.streamId}`
+        navigate(delegation.createdEventId ? `${base}?m=${delegation.createdEventId}` : base, { replace: true })
+      } catch (error) {
+        if (cancelled) return
+        toast.error(
+          ApiError.isApiError(error) && error.status === 404
+            ? "Delegation not found or not accessible"
+            : "Couldn't open the delegation"
+        )
+        navigate(`/w/${workspaceId}`, { replace: true })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, delegationId, navigate])
+
+  if (!workspaceId || !delegationId) {
+    return <Navigate to="/workspaces" replace />
+  }
+
+  return <FallbackLoader />
 }
 
 export function LegacyMemoRedirect() {

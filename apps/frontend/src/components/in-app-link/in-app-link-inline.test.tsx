@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { linkPreviewsApi } from "@/api"
 import * as workspaceStore from "@/stores/workspace-store"
 import * as currentUserModule from "@/hooks/use-current-workspace-user-id"
-import { InAppLinkInline, ConversationLinkInline } from "./in-app-link-inline"
+import { InAppLinkInline, ConversationLinkInline, DelegationLinkInline } from "./in-app-link-inline"
 
 const origin = window.location.origin
 
@@ -18,6 +18,21 @@ function renderConversationLink() {
       <QueryClientProvider client={client}>
         <MemoryRouter>
           <ConversationLinkInline href={href} workspaceId="ws_1" />
+        </MemoryRouter>
+      </QueryClientProvider>
+    ),
+  }
+}
+
+function renderDelegationLink() {
+  const href = `${origin}/w/ws_1/delegations/dlg_1`
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return {
+    href,
+    ...render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <DelegationLinkInline href={href} workspaceId="ws_1" />
         </MemoryRouter>
       </QueryClientProvider>
     ),
@@ -145,6 +160,50 @@ describe("ConversationLinkInline (conversation chip)", () => {
     })
 
     renderConversationLink()
+
+    await waitFor(() => expect(screen.getByText("Another workspace")).toBeInTheDocument())
+    expect(screen.queryByRole("link")).not.toBeInTheDocument()
+  })
+})
+
+describe("DelegationLinkInline (delegation chip)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("renders the delegation title as a navigable chip", async () => {
+    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
+      kind: "delegation",
+      accessTier: "full",
+      title: "Add rate limiting to the webhook",
+      status: "open",
+    })
+
+    const { href } = renderDelegationLink()
+
+    const chip = await screen.findByText("Add rate limiting to the webhook")
+    expect(chip.closest("a")).toHaveAttribute("href", href)
+  })
+
+  it("shows a non-navigable placeholder for an inaccessible (private) delegation", async () => {
+    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
+      kind: "delegation",
+      accessTier: "private",
+    })
+
+    renderDelegationLink()
+
+    await waitFor(() => expect(screen.getByText("Private delegation")).toBeInTheDocument())
+    expect(screen.queryByRole("link")).not.toBeInTheDocument()
+  })
+
+  it("shows a cross-workspace placeholder without leaking the title", async () => {
+    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
+      kind: "delegation",
+      accessTier: "cross_workspace",
+    })
+
+    renderDelegationLink()
 
     await waitFor(() => expect(screen.getByText("Another workspace")).toBeInTheDocument())
     expect(screen.queryByRole("link")).not.toBeInTheDocument()

@@ -11,6 +11,7 @@ import {
   NotebookPen,
   ArrowUpRight,
   CheckCircle2,
+  TerminalSquare,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -20,6 +21,7 @@ import { actorTypeFromId } from "@/hooks/use-actors"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { classifyDraftLink } from "@/lib/in-app-links"
 import { useStreamName } from "@/hooks/use-stream-name"
+import { DELEGATION_STATUS_LABEL, delegationStatusPillClass } from "@/lib/delegation-display"
 import { AccentGlow } from "./link-preview-primitives"
 import { linkPreviewsApi } from "@/api"
 import type {
@@ -29,6 +31,7 @@ import type {
   StreamLinkPreviewData,
   MemoLinkPreviewData,
   ConversationLinkPreviewData,
+  DelegationLinkPreviewData,
   ConversationStatus,
   StreamType,
 } from "@threa/types"
@@ -104,6 +107,7 @@ export function InAppLinkPreviewCard({ preview, workspaceId, onDismiss, hydrate 
 function skeletonVariant(contentType: LinkPreviewSummary["contentType"]): CardVariant {
   if (contentType === "memo_link") return "memo"
   if (contentType === "conversation_link") return "conversation"
+  if (contentType === "delegation_link") return "delegation"
   return "message"
 }
 
@@ -118,12 +122,14 @@ const CARD_HEADER_H = "min-h-[2.0625rem]" // text/icon line + py-1.5 + border, f
 const CARD_BODY_MESSAGE = "min-h-[5.5rem]" // avatar + author line + 2-line clamp
 const CARD_BODY_MEMO = "min-h-[7rem]" // tile + title + 2-line clamp + source line
 const CARD_BODY_CONVERSATION = "min-h-[8.5rem]" // tile + title + 2-line clamp + participants/count line + source stream line
+const CARD_BODY_DELEGATION = "min-h-[6.25rem]" // tile + title/status line + claimed-by line + source stream line
 
-type CardVariant = "message" | "memo" | "conversation"
+type CardVariant = "message" | "memo" | "conversation" | "delegation"
 
 function cardBodyHeight(variant: CardVariant): string {
   if (variant === "memo") return CARD_BODY_MEMO
   if (variant === "conversation") return CARD_BODY_CONVERSATION
+  if (variant === "delegation") return CARD_BODY_DELEGATION
   return CARD_BODY_MESSAGE
 }
 
@@ -159,6 +165,10 @@ function ResolvedInAppLink({
   if (data.kind === "conversation")
     return (
       <ConversationLinkCard data={data} url={url} workspaceId={workspaceId} reserve={reserve} onDismiss={onDismiss} />
+    )
+  if (data.kind === "delegation")
+    return (
+      <DelegationLinkCard data={data} url={url} workspaceId={workspaceId} reserve={reserve} onDismiss={onDismiss} />
     )
   return <MessageLinkCard data={data} url={url} workspaceId={workspaceId} reserve={reserve} onDismiss={onDismiss} />
 }
@@ -530,6 +540,100 @@ function ConversationLinkCard({
 
   return (
     <CardShell header={<CardHeader label="Conversation" onDismiss={onDismiss} />}>
+      <InternalLink path={internalPath}>{body}</InternalLink>
+    </CardShell>
+  )
+}
+
+function DelegationLinkCard({
+  data,
+  url,
+  workspaceId,
+  reserve,
+  onDismiss,
+}: {
+  data: DelegationLinkPreviewData
+  url: string
+  workspaceId: string
+  reserve: boolean
+  onDismiss?: () => void
+}) {
+  // The source-stream name is per-viewer and absent from the resolve, so resolve
+  // it locally (same source the composer chip uses).
+  const localStreamName = useStreamName(workspaceId, data.streamId ?? "")
+
+  if (data.accessTier === "cross_workspace") {
+    return (
+      <MinimalCard
+        kindIcon={<TerminalSquare />}
+        kindLabel="Delegation"
+        label="In another workspace"
+        variant="delegation"
+        reserve={reserve}
+        onDismiss={onDismiss}
+      />
+    )
+  }
+
+  if (data.accessTier === "private") {
+    return (
+      <MinimalCard
+        kindIcon={<TerminalSquare />}
+        kindLabel="Delegation"
+        bodyIcon={<Lock />}
+        label="Private delegation"
+        variant="delegation"
+        reserve={reserve}
+        onDismiss={onDismiss}
+      />
+    )
+  }
+
+  // Link straight to the delegation card's timeline row rather than through the
+  // `/delegations/:id` redirect — the redirect resolves to the same deep-link, so
+  // skipping it saves a fetch + navigation hop.
+  let internalPath = getInternalPath(url)
+  if (data.streamId) {
+    const base = `/w/${workspaceId}/s/${data.streamId}`
+    internalPath = data.createdEventId ? `${base}?m=${data.createdEventId}` : base
+  }
+
+  const body = (
+    <CardBody className={reserve ? CARD_BODY_DELEGATION : undefined}>
+      <div className="flex items-start gap-3">
+        <IconTile>
+          <TerminalSquare />
+        </IconTile>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <h4 className="truncate text-sm font-semibold leading-snug text-foreground">
+              {data.title ?? "Delegation"}
+            </h4>
+            {data.status && (
+              <span
+                className={cn(
+                  "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                  delegationStatusPillClass(data.status)
+                )}
+              >
+                {DELEGATION_STATUS_LABEL[data.status]}
+              </span>
+            )}
+          </div>
+          {data.claimedByLabel && <p className="mt-1 truncate text-xs text-muted-foreground">{data.claimedByLabel}</p>}
+          {localStreamName && (
+            <span className="mt-1.5 inline-flex max-w-full items-center gap-1 text-[11px] text-muted-foreground [&>svg]:h-3 [&>svg]:w-3 [&>svg]:shrink-0">
+              {streamKindIcon(data.streamType)}
+              <span className="truncate">{localStreamName}</span>
+            </span>
+          )}
+        </div>
+      </div>
+    </CardBody>
+  )
+
+  return (
+    <CardShell header={<CardHeader label="Delegation" onDismiss={onDismiss} />}>
       <InternalLink path={internalPath}>{body}</InternalLink>
     </CardShell>
   )

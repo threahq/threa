@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
-import { LegacyMemoRedirect, RootRedirect, WorkspaceHome } from "./index"
+import { toast } from "sonner"
+import type { DelegationSummary } from "@threa/types"
+import { DelegationRedirect, LegacyMemoRedirect, RootRedirect, WorkspaceHome } from "./index"
+import { ApiError, delegationsApi } from "@/api"
 import * as useLastLocationModule from "@/hooks/use-last-location"
 import * as sidebarContextModule from "@/contexts/sidebar-context"
 import { clearLastWorkspaceId, setLastWorkspaceId } from "@/lib/last-workspace"
@@ -17,6 +20,27 @@ function SearchEcho() {
 function PathEcho() {
   const location = useLocation()
   return <div data-testid="path">{location.pathname}</div>
+}
+
+function PathAndSearchEcho() {
+  const location = useLocation()
+  return <div data-testid="path">{`${location.pathname}${location.search}`}</div>
+}
+
+function makeDelegationSummary(overrides: Partial<DelegationSummary> = {}): DelegationSummary {
+  return {
+    id: "deleg_1",
+    streamId: "stream_1",
+    title: "Ship the thing",
+    status: "open",
+    claimedByLabel: null,
+    resultMessageId: null,
+    statusNote: null,
+    createdEventId: "event_1",
+    createdAt: "2026-07-14T00:00:00.000Z",
+    statusChangedAt: "2026-07-14T00:00:00.000Z",
+    ...overrides,
+  }
 }
 
 describe("RootRedirect", () => {
@@ -114,5 +138,63 @@ describe("WorkspaceHome", () => {
     )
 
     expect(await screen.findByTestId("search")).toHaveTextContent("?q=launch&memo=memo_456")
+  })
+})
+
+describe("DelegationRedirect", () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  function renderRedirect() {
+    return render(
+      <MemoryRouter initialEntries={["/w/ws_123/delegations/deleg_1"]}>
+        <Routes>
+          <Route path="/w/:workspaceId/delegations/:delegationId" element={<DelegationRedirect />} />
+          <Route path="/w/:workspaceId/s/:streamId" element={<PathAndSearchEcho />} />
+          <Route path="/w/:workspaceId" element={<PathAndSearchEcho />} />
+        </Routes>
+      </MemoryRouter>
+    )
+  }
+
+  it("deep-links to the card event when the delegation has a created event", async () => {
+    vi.spyOn(delegationsApi, "get").mockResolvedValue(
+      makeDelegationSummary({ streamId: "stream_9", createdEventId: "event_42" })
+    )
+
+    renderRedirect()
+
+    expect(await screen.findByTestId("path")).toHaveTextContent("/w/ws_123/s/stream_9?m=event_42")
+  })
+
+  it("navigates to the bare stream when there is no created event id", async () => {
+    vi.spyOn(delegationsApi, "get").mockResolvedValue(
+      makeDelegationSummary({ streamId: "stream_9", createdEventId: null })
+    )
+
+    renderRedirect()
+
+    const path = await screen.findByTestId("path")
+    expect(path).toHaveTextContent("/w/ws_123/s/stream_9")
+    expect(path.textContent).not.toContain("?m=")
+  })
+
+  it("sends the viewer home with a not-found toast on a 404", async () => {
+    const errorSpy = vi.spyOn(toast, "error").mockImplementation(() => "")
+    vi.spyOn(delegationsApi, "get").mockRejectedValue(new ApiError(404, "NOT_FOUND", "nope"))
+
+    renderRedirect()
+
+    expect(await screen.findByTestId("path")).toHaveTextContent("/w/ws_123")
+    expect(errorSpy).toHaveBeenCalledWith("Delegation not found or not accessible")
+  })
+
+  it("sends the viewer home with a generic toast on a non-404 error", async () => {
+    const errorSpy = vi.spyOn(toast, "error").mockImplementation(() => "")
+    vi.spyOn(delegationsApi, "get").mockRejectedValue(new ApiError(500, "SERVER_ERROR", "boom"))
+
+    renderRedirect()
+
+    expect(await screen.findByTestId("path")).toHaveTextContent("/w/ws_123")
+    expect(errorSpy).toHaveBeenCalledWith("Couldn't open the delegation")
   })
 })

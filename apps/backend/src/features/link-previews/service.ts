@@ -5,6 +5,7 @@ import { withTransaction } from "../../db"
 import { linkPreviewId } from "../../lib/id"
 import type {
   ConversationLinkPreviewData,
+  DelegationLinkPreviewData,
   InAppLinkPreviewData,
   LinkPreviewContentType,
   LinkPreviewSummary,
@@ -18,6 +19,7 @@ import { UserRepository } from "../workspaces"
 import type { StreamService } from "../streams"
 import { StreamMemberRepository } from "../streams"
 import { ConversationRepository } from "../conversations"
+import type { DelegationService } from "../delegations"
 import type { MemoExplorerService } from "../memos"
 import { resolveUserAccessibleStreamIds } from "../search"
 import { OutboxRepository } from "../../lib/outbox"
@@ -44,6 +46,7 @@ export interface LinkPreviewServiceDeps {
   pool: Pool
   streamService: StreamService
   memoExplorerService: MemoExplorerService
+  delegationService: DelegationService
 }
 
 /**
@@ -57,6 +60,7 @@ interface InAppLinkTarget {
   targetMessageId?: string | null
   targetMemoId?: string | null
   targetConversationId?: string | null
+  targetDelegationId?: string | null
 }
 
 /**
@@ -73,6 +77,7 @@ function inAppLinkInsertFields(
   targetMessageId?: string
   targetMemoId?: string
   targetConversationId?: string
+  targetDelegationId?: string
 } {
   if (!ref) return { contentType: detectContentType(url) }
   switch (ref.kind) {
@@ -100,6 +105,12 @@ function inAppLinkInsertFields(
         contentType: "conversation_link",
         targetWorkspaceId: ref.workspaceId,
         targetConversationId: ref.conversationId,
+      }
+    case "delegation":
+      return {
+        contentType: "delegation_link",
+        targetWorkspaceId: ref.workspaceId,
+        targetDelegationId: ref.delegationId,
       }
   }
 }
@@ -363,7 +374,7 @@ export class LinkPreviewService {
   }
 
   /**
-   * Resolve an in-app link preview (message, stream, memo, or conversation) for a specific viewer.
+   * Resolve an in-app link preview (message, stream, memo, conversation, or delegation) for a specific viewer.
    * Returns access-tiered data: full content for accessible targets, limited info
    * for private targets, and a minimal card for cross-workspace links. A
    * cross-workspace target is never inspected — same-workspace check happens first
@@ -409,6 +420,8 @@ export class LinkPreviewService {
         return this.resolveMemoTarget(workspaceId, userId, target, opts?.accessibleStreamIds)
       case "conversation_link":
         return this.resolveConversationTarget(workspaceId, userId, target)
+      case "delegation_link":
+        return this.resolveDelegationTarget(workspaceId, userId, target)
       default:
         return Promise.resolve(null)
     }
@@ -592,6 +605,46 @@ export class LinkPreviewService {
       participantIds: conversation.participantIds,
       streamName: stream.displayName ?? stream.slug ?? undefined,
       streamType: stream.type,
+    }
+  }
+
+  private async resolveDelegationTarget(
+    workspaceId: string,
+    userId: string,
+    target: InAppLinkTarget
+  ): Promise<DelegationLinkPreviewData | null> {
+    const { targetWorkspaceId, targetDelegationId } = target
+    if (!targetWorkspaceId || !targetDelegationId) return null
+
+    if (targetWorkspaceId !== workspaceId) {
+      return { kind: "delegation", accessTier: "cross_workspace" }
+    }
+
+    // Collapse "not found" and "no access to the delegation's stream" into the
+    // private tier so a delegation link never leaks whether it exists (matches
+    // the message/stream/memo/conversation resolvers).
+    const delegation = await this.deps.delegationService.getByIdWithEvent({ workspaceId, id: targetDelegationId })
+    if (!delegation) {
+      return { kind: "delegation", accessTier: "private" }
+    }
+
+    // A delegation inherits access from its stream (INV-62 resolves a thread
+    // anchor through its root inside tryAccess).
+    const stream = await this.deps.streamService.tryAccess(delegation.streamId, workspaceId, userId)
+    if (!stream) {
+      return { kind: "delegation", accessTier: "private" }
+    }
+
+    return {
+      kind: "delegation",
+      accessTier: "full",
+      delegationId: delegation.id,
+      title: delegation.title,
+      status: delegation.status,
+      claimedByLabel: delegation.claimedByLabel,
+      streamId: delegation.streamId,
+      streamType: stream.type,
+      createdEventId: delegation.createdEventId,
     }
   }
 

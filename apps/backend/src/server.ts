@@ -642,7 +642,7 @@ export async function startServer(): Promise<ServerInstance> {
     github: config.github,
     linear: config.linear,
   })
-  const linkPreviewService = new LinkPreviewService({ pool, streamService, memoExplorerService })
+  const linkPreviewService = new LinkPreviewService({ pool, streamService, memoExplorerService, delegationService })
   const giphyService = new GiphyService({ config: config.giphy })
 
   const isProduction = process.env.NODE_ENV === "production"

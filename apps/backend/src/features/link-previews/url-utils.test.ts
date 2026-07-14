@@ -358,6 +358,30 @@ describe("parseInAppLink", () => {
     })
   })
 
+  test("parses a delegation link", () => {
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/delegations/dlg_1", origins)).toEqual({
+      kind: "delegation",
+      workspaceId: "ws_123",
+      delegationId: "dlg_1",
+    })
+  })
+
+  test("parses a delegation link ignoring a query string", () => {
+    expect(parseInAppLink("http://localhost:5173/w/ws_abc/delegations/dlg_9?from=card", origins)).toEqual({
+      kind: "delegation",
+      workspaceId: "ws_abc",
+      delegationId: "dlg_9",
+    })
+  })
+
+  test("returns null for a delegation path with a trailing segment", () => {
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/delegations/dlg_1/extra", origins)).toBeNull()
+  })
+
+  test("returns null for a bare delegations path with no id", () => {
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/delegations", origins)).toBeNull()
+  })
+
   test("returns null for a board URL with a non-conversation panel", () => {
     expect(parseInAppLink("https://app.threa.io/w/ws_123/board?panel=stream:stream_1", origins)).toBeNull()
     expect(parseInAppLink("https://app.threa.io/w/ws_123/board", origins)).toBeNull()

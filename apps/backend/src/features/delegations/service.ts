@@ -109,6 +109,14 @@ export class DelegationService {
     return DelegatedTaskRepository.findById(this.pool, params.workspaceId, params.id)
   }
 
+  /**
+   * Read a delegation plus its `delegation:created` event id — the first-party
+   * by-id GET and the link-preview resolver, both of which deep-link the card.
+   */
+  async getByIdWithEvent(params: { workspaceId: string; id: string }): Promise<DelegatedTaskWithEvent | null> {
+    return DelegatedTaskRepository.findByIdWithEvent(this.pool, params.workspaceId, params.id)
+  }
+
   /** A workspace's claimable delegations, oldest first (the 5.3 list surface). */
   async listOpen(params: { workspaceId: string; since?: Date }): Promise<DelegatedTask[]> {
     return DelegatedTaskRepository.listOpen(this.pool, params.workspaceId, { since: params.since })

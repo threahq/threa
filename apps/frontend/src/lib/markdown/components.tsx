@@ -11,7 +11,11 @@ import {
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { classifyDraftLink } from "@/lib/in-app-links"
-import { InAppLinkInline, ConversationLinkInline } from "@/components/in-app-link/in-app-link-inline"
+import {
+  InAppLinkInline,
+  ConversationLinkInline,
+  DelegationLinkInline,
+} from "@/components/in-app-link/in-app-link-inline"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
@@ -255,6 +259,9 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
   }
   if (inAppRef && inAppRef.kind === "conversation" && workspaceId) {
     return <ConversationLinkInline href={inAppRef.url} workspaceId={workspaceId} />
+  }
+  if (inAppRef && inAppRef.kind === "delegation" && workspaceId) {
+    return <DelegationLinkInline href={inAppRef.url} workspaceId={workspaceId} />
   }
 
   if (internalPath) {

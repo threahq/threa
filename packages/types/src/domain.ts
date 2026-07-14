@@ -31,6 +31,7 @@ import type {
   AttachmentSafetyStatus,
   AttachmentUploadStatus,
   ConversationStatus,
+  DelegationStatus,
   BoardScopeStreamType,
   BoardLens,
   MemoType,
@@ -1623,6 +1624,31 @@ export interface ConversationLinkPreviewData {
 }
 
 /**
+ * Resolved in-app delegation link data. A delegation carries its own title and
+ * lifecycle status, so the card renders from that metadata; `createdEventId`
+ * lets the whole card deep-link to the delegation card row in its stream.
+ * Content fields are only populated for the "full" access tier.
+ */
+export interface DelegationLinkPreviewData {
+  kind: "delegation"
+  accessTier: InAppLinkAccessTier
+  /** The delegation id, so the card can build the canonical link (full tier only). */
+  delegationId?: string
+  /** Delegation title (full tier only) */
+  title?: string
+  /** open / claimed / running / completed / failed / cancelled / expired (full tier only) */
+  status?: DelegationStatus
+  /** Human-readable label of the claiming local agent, when claimed (full tier only) */
+  claimedByLabel?: string | null
+  /** Source stream the delegation lives in, for the "in #stream" line (full tier only) */
+  streamId?: string
+  /** Source stream's type, so the card picks the right glyph (full tier only) */
+  streamType?: StreamType
+  /** The `delegation:created` timeline event id, for deep-linking the card (full tier only) */
+  createdEventId?: string | null
+}
+
+/**
  * Discriminated union returned by the permission-checked in-app link resolve
  * endpoint. The `kind` mirrors the link preview's in-app content type.
  */
@@ -1631,3 +1657,4 @@ export type InAppLinkPreviewData =
   | StreamLinkPreviewData
   | MemoLinkPreviewData
   | ConversationLinkPreviewData
+  | DelegationLinkPreviewData
