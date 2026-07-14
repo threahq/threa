@@ -7,10 +7,15 @@ import { setNotificationIntent } from "./lib/notification-intent"
 import { hydrateCollapseCache } from "./lib/markdown/collapse-cache"
 import { applyPersistedComposerHeight } from "./lib/composer-height-storage"
 import { installCrashRecovery } from "./lib/crash-recovery"
+import { currentAppInstalledAt } from "./lib/app-build"
 // Side-effect import: attaches the live pointer listener and sets <html data-input>
 // before first paint so the CSS reveal model (.reveal-*) is correct from the start.
 import "./hooks/use-input-mode"
 import "./index.css"
+
+// Record at bundle startup rather than when App status opens, so this is the
+// first time the installed build actually ran on the device.
+currentAppInstalledAt()
 
 // Catch uncaught errors that wedge the app after the PWA returns from the
 // background (e.g. resuming after "Open in Firefox") and reload instead of

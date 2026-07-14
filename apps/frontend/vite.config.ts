@@ -19,11 +19,12 @@ const isE2ETest = !!process.env.VITE_BACKEND_PORT
 
 // Build version from git short hash — used for auto-update detection.
 // Falls back to a build timestamp so auto-update still works in gitless CI environments.
+const buildTimestamp = new Date().toISOString()
 let buildVersion: string
 try {
   buildVersion = execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim()
 } catch {
-  buildVersion = `build-${Date.now()}`
+  buildVersion = `build-${Date.parse(buildTimestamp)}`
 }
 
 function versionJsonPlugin(): Plugin {
@@ -34,7 +35,7 @@ function versionJsonPlugin(): Plugin {
       this.emitFile({
         type: "asset",
         fileName: "version.json",
-        source: JSON.stringify({ version: buildVersion }),
+        source: JSON.stringify({ version: buildVersion, builtAt: buildTimestamp }),
       })
     },
   }
@@ -125,6 +126,7 @@ export default defineConfig({
   // Same value as the emitted version.json, so a post-reload mismatch is decisive.
   define: {
     __APP_VERSION__: JSON.stringify(buildVersion),
+    __APP_BUILT_AT__: JSON.stringify(buildTimestamp),
     // True only in the Playwright E2E build (VITE_BACKEND_PORT is set). Lets the
     // app suppress the persistent "new version available" update toast, which
     // otherwise parks over the composer in the aria-live region and intercepts

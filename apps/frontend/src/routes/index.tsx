@@ -152,6 +152,11 @@ export const router = createBrowserRouter([
             lazy: async () => ({ Component: (await import("@/pages/ai-usage-admin")).AIUsageAdminPage }),
           },
           {
+            path: "app-status",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/app-status")).AppStatusPage }),
+          },
+          {
             path: "settings/personas/:personaId",
             HydrateFallback: FallbackLoader,
             lazy: async () => ({ Component: (await import("@/pages/persona-editor")).PersonaEditorPage }),

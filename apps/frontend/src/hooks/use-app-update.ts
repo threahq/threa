@@ -1,22 +1,20 @@
-import { useEffect, useCallback, useRef } from "react"
+import { useEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import { usePageActivity } from "./use-page-activity"
 import { useSocketReconnectCount } from "@/contexts"
 import * as swRecovery from "@/lib/sw-recovery"
 import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
+import { currentAppVersion } from "@/lib/app-build"
 
-const POLL_INTERVAL = 300_000 // 5 minutes
+export { currentAppBuiltAt, currentAppInstalledAt, currentAppVersion } from "@/lib/app-build"
+
+export const APP_UPDATE_POLL_INTERVAL_MS = 300_000
 const TOAST_ID = "app-update"
 const IS_DEV = import.meta.env.DEV
 
 export const WAITING_WORKER_TIMEOUT_MS = 1500
 export const RELOAD_FALLBACK_TIMEOUT_MS = 3000
 export const CLICK_UPDATE_TIMEOUT_MS = 5000
-
-// The build version baked into this bundle at build time (vite `define`). The
-// running app otherwise has no idea which build it is, so it can't tell whether a
-// reload actually swapped in new code — see reconcilePostReload.
-declare const __APP_VERSION__: string
 
 // True only in the Playwright E2E build (vite `define`, gated on VITE_BACKEND_PORT).
 // The update toast uses `duration: Infinity` and renders in the aria-live
@@ -103,21 +101,43 @@ function waitForInstallingWorker(
   })
 }
 
+function settleWithin<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), timeoutMs)
+    void promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(fallback)
+      }
+    )
+  })
+}
+
+function requestRegistrationUpdate(registration: ServiceWorkerRegistration): Promise<boolean> {
+  try {
+    return settleWithin(
+      registration.update().then(() => true),
+      CLICK_UPDATE_TIMEOUT_MS,
+      false
+    )
+  } catch {
+    return Promise.resolve(false)
+  }
+}
+
 async function findWaitingWorker(registration: ServiceWorkerRegistration): Promise<ServiceWorker | null> {
   if (registration.waiting) return registration.waiting
 
   const alreadyInstalling = await waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS)
   if (registration.waiting || alreadyInstalling) return registration.waiting ?? alreadyInstalling
 
-  try {
-    // update() has no timeout of its own; on a stalled mobile network the
-    // awaited click would look dead for as long as the browser waits. Bound it
-    // and fall through — a plain reload is offline-safe, and reconcilePostReload
-    // catches a reload that landed stale.
-    await Promise.race([registration.update(), new Promise((resolve) => setTimeout(resolve, CLICK_UPDATE_TIMEOUT_MS))])
-  } catch {
-    return null
-  }
+  // update() has no timeout of its own; bound user-triggered checks so a stalled
+  // mobile network cannot leave the action looking dead indefinitely.
+  await requestRegistrationUpdate(registration)
   if (registration.waiting) return registration.waiting
   return waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS)
 }
@@ -296,17 +316,23 @@ async function announceIfPageStale(registration: ServiceWorkerRegistration): Pro
   showUpdateToast()
 }
 
-/** This bundle's build version, or null if the `define` wasn't applied (e.g. some test envs). */
-export function currentAppVersion(): string | null {
-  return typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : null
+export function useIsServiceWorkerControlled(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const serviceWorker = navigator.serviceWorker
+      if (!serviceWorker) return () => {}
+      serviceWorker.addEventListener("controllerchange", notify)
+      return () => serviceWorker.removeEventListener("controllerchange", notify)
+    },
+    () => Boolean(navigator.serviceWorker?.controller),
+    () => false
+  )
 }
 
 /**
  * The latest deployed build version from the server, or null if it can't be read.
  * `no-store` bypasses the HTTP cache; `/version.json` is excluded from the SW's
  * navigation handler and matches no other SW route, so this reaches the network.
- * A null return means "couldn't verify" (offline, server hiccup, or a poisoned
- * non-JSON response) — never treated as a mismatch.
  */
 export async function fetchLatestVersion(): Promise<string | null> {
   try {
@@ -366,6 +392,134 @@ export async function reconcilePostReload(): Promise<boolean> {
   const latest = await fetchLatestVersion()
   if (!shouldRecoverForVersion(current, latest)) return false
   return swRecovery.runSwRecovery({ force: true })
+}
+
+export type ManualUpdateCheckResult =
+  | { status: "current"; latestVersion: string }
+  | { status: "ready" | "available"; latestVersion: string | null }
+  | { status: "offline"; latestVersion: null }
+  | { status: "unavailable"; latestVersion: null }
+
+/** Run the same service-worker update probe as the background checker and report its result. */
+export async function checkForAppUpdate(): Promise<ManualUpdateCheckResult> {
+  let registration: ServiceWorkerRegistration | undefined
+  try {
+    registration = await navigator.serviceWorker?.getRegistration()
+  } catch {
+    registration = undefined
+  }
+  if (!registration) {
+    return navigator.onLine
+      ? { status: "unavailable", latestVersion: null }
+      : { status: "offline", latestVersion: null }
+  }
+
+  const latestPromise = fetchLatestVersion()
+  await requestRegistrationUpdate(registration)
+
+  if (!registration.waiting) {
+    await waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS)
+  }
+  const latest = await settleWithin(latestPromise, CLICK_UPDATE_TIMEOUT_MS, null)
+  if (registration.waiting) return { status: "ready", latestVersion: latest }
+  if (shouldRecoverForVersion(currentAppVersion(), latest)) {
+    return { status: "available", latestVersion: latest }
+  }
+  if (latest && latest === currentAppVersion()) {
+    return { status: "current", latestVersion: latest }
+  }
+  if (!navigator.onLine) return { status: "offline", latestVersion: null }
+  return { status: "unavailable", latestVersion: null }
+}
+
+export type ManualUpdateState = "idle" | "checking" | ManualUpdateCheckResult["status"]
+
+export function useManualAppUpdate(): {
+  state: ManualUpdateState
+  latestVersion: string | null
+  lastCheckedAt: Date | null
+  check: () => Promise<void>
+  reload: () => Promise<void>
+} {
+  const [state, setState] = useState<ManualUpdateState>("idle")
+  const [latestVersion, setLatestVersion] = useState<string | null>(null)
+  const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null)
+  const readyRef = useRef(false)
+
+  useEffect(() => {
+    const serviceWorker = navigator.serviceWorker
+    if (!serviceWorker) return
+
+    let disposed = false
+    let registration: ServiceWorkerRegistration | null = null
+    const workerCleanups: Array<() => void> = []
+
+    const adoptWaitingWorker = () => {
+      if (disposed || !registration?.waiting) return
+      readyRef.current = true
+      setLatestVersion(null)
+      setState("ready")
+    }
+    const trackInstalling = (worker: ServiceWorker | null) => {
+      if (!worker) return
+      if (worker.state === "installed" || worker.state === "activated" || worker.state === "redundant") {
+        adoptWaitingWorker()
+        return
+      }
+      const onStateChange = () => {
+        adoptWaitingWorker()
+        if (worker.state === "installed" || worker.state === "redundant") {
+          worker.removeEventListener("statechange", onStateChange)
+        }
+      }
+      worker.addEventListener("statechange", onStateChange)
+      workerCleanups.push(() => worker.removeEventListener("statechange", onStateChange))
+    }
+    const onUpdateFound = () => {
+      adoptWaitingWorker()
+      trackInstalling(registration?.installing ?? null)
+    }
+
+    void serviceWorker.getRegistration().then((found) => {
+      if (!found || disposed) return
+      registration = found
+      adoptWaitingWorker()
+      trackInstalling(found.installing)
+      found.addEventListener("updatefound", onUpdateFound)
+    })
+
+    return () => {
+      disposed = true
+      registration?.removeEventListener("updatefound", onUpdateFound)
+      for (const cleanup of workerCleanups) cleanup()
+    }
+  }, [])
+
+  const check = useCallback(async () => {
+    setState("checking")
+    try {
+      const result = await checkForAppUpdate()
+      if (readyRef.current && result.status !== "ready") return
+      if (result.status === "ready") readyRef.current = true
+      setLatestVersion(result.latestVersion)
+      setState(result.status)
+    } catch {
+      if (!readyRef.current) {
+        setLatestVersion(null)
+        setState(navigator.onLine ? "unavailable" : "offline")
+      }
+    } finally {
+      setLastCheckedAt(new Date())
+    }
+  }, [])
+
+  return {
+    state,
+    latestVersion,
+    lastCheckedAt,
+    check,
+    reload: reloadForUpdate,
+  }
 }
 
 export function useAppUpdate(): void {
@@ -472,7 +626,7 @@ export function useAppUpdate(): void {
 
   useEffect(() => {
     if (IS_DEV) return
-    const id = setInterval(checkForUpdate, POLL_INTERVAL)
+    const id = setInterval(checkForUpdate, APP_UPDATE_POLL_INTERVAL_MS)
     return () => clearInterval(id)
   }, [checkForUpdate])
 
