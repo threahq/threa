@@ -88,14 +88,30 @@ interface UseConversationAutoReadOptions {
  *   state: derivation flaps (the `unreadCounts === 0` short-circuit falling
  *   back to a stale frontier when a count leaves zero, a stale `lastReadAt`
  *   time fallback after compaction) would read as mass regressions and
- *   false-pin — and a pinned card on a static board never releases, wedging
- *   auto-read (first dogfood's board failure). Suppression covers all
- *   eligible rows, not just the currently-visible set: visibility is
- *   unknowable across observer teardowns (attention loss, id-set changes),
- *   and under-suppressing would let a still-on-screen row dwell and
- *   cutoff-mark right back over the explicit unread. Each row's suppression
- *   releases when the observer reports it off-screen — immediately for rows
- *   that weren't visible, on leave for the ones that were.
+ *   false-pin. Suppression covers all eligible rows, not just the
+ *   currently-visible set: visibility is unknowable across observer teardowns
+ *   (attention loss, id-set changes), and under-suppressing would let a
+ *   still-on-screen row dwell and cutoff-mark right back over the explicit
+ *   unread.
+ * - Pin release — the mark sticks while the viewer keeps looking (that IS the
+ *   pin's purpose) and lifts only at the next genuine RE-ATTENTION boundary,
+ *   never on a timer. Two boundaries release it:
+ *   (a) Per-row viewport exit — a row's observer reporting it off-screen
+ *       releases that row's suppression (immediately for rows that were never
+ *       visible after a rebuild, on leave for the ones that were). A static
+ *       board never fires this, which is why (b) exists.
+ *   (b) Attention cycle — a blur→refocus (or hide→show on a phone-like device,
+ *       per `useAutoReadAttention`) lifts the whole pin, but only once the
+ *       viewer has ATTENDED to it: a pin engaged while attentive that then
+ *       loses and regains attention has crossed the boundary; a pin engaged
+ *       while attention is off (a background cross-device regression) treats
+ *       the coming refocus as the viewer's first look, not a boundary, and
+ *       waits for the cycle AFTER that. This is the board wedge fix — a static,
+ *       continuously-focused card that earlier never released now releases the
+ *       moment the viewer tabs away and back.
+ *   Unmounting the surface (panel close, card scrolled off the board window)
+ *   discards the pin with the hook's refs; a remount re-reads from a clean
+ *   slate, so navigate-away-and-back is a third, implicit release.
  * - A pending debounce fires on unmount, and without re-checking attention:
  *   the dwell already happened while the viewer was attending, so the read is
  *   real — only the batching timer is late.
@@ -112,6 +128,8 @@ export function useConversationAutoRead({
   getReadTruth,
 }: UseConversationAutoReadOptions): void {
   const canAutoRead = useAutoReadAttention()
+  const canAutoReadRef = useRef(canAutoRead)
+  canAutoReadRef.current = canAutoRead
 
   const eligible = messages.filter((m) => !m.id.startsWith("temp_"))
   const eligibleIdsKey = eligible.map((m) => m.id).join(",")
@@ -129,6 +147,12 @@ export function useConversationAutoRead({
   const dwellTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastMarkedRef = useRef<string | null>(null)
+  // The attention-cycle release state (see the pin doc): whether the viewer has
+  // attended to the page since the pin engaged, and whether attention has since
+  // dropped. A pin engaged while attentive that then loses and regains attention
+  // has crossed a full re-attention boundary and releases.
+  const pinAttendedRef = useRef(false)
+  const pinBlurredAfterAttendedRef = useRef(false)
 
   const stateOf = useCallback(
     (m: RenderableMessage): RowReadState =>
@@ -198,7 +222,26 @@ export function useConversationAutoRead({
     }
     lastMarkedRef.current = null
     for (const m of eligibleRef.current) suppressedRef.current.add(m.id)
+    // Baseline the attention-cycle release: a pin engaged while the viewer is
+    // attending starts "attended", so the next blur→refocus releases it. A pin
+    // engaged while attention is off (a cross-device regression that lands in
+    // the background) is NOT attended yet — the coming refocus is the viewer's
+    // FIRST look at it, not a re-attention boundary, so it must not release.
+    pinAttendedRef.current = canAutoReadRef.current
+    pinBlurredAfterAttendedRef.current = false
   }, [])
+
+  /** Lift the whole pin (all suppressions) — the attention-cycle release. */
+  const releasePin = useCallback(() => {
+    suppressedRef.current.clear()
+    pinAttendedRef.current = false
+    pinBlurredAfterAttendedRef.current = false
+    // Rows that became `seen` mid-pin (a reply streaming in dwells into seenRef
+    // while evaluate is blocked) re-fire as already-seen after release and never
+    // re-schedule — evaluate once now so they mark immediately instead of
+    // waiting for an unrelated future dwell.
+    scheduleEvaluate()
+  }, [scheduleEvaluate])
 
   // The controller invokes this synchronously at the top of the menu "Mark as
   // unread", before the request departs — closing the window where a pending
@@ -207,6 +250,29 @@ export function useConversationAutoRead({
     registerExplicitUnread(pin)
     return () => registerExplicitUnread(null)
   }, [registerExplicitUnread, pin])
+
+  // The attention-cycle arm of the pin release: a blur→refocus (or, on a
+  // phone-like device, a hide→show) after the viewer has attended to the pin is
+  // a genuine re-attention boundary — the pin has served its "don't re-read what
+  // I just marked" purpose and lifts. Runs before the observer effect so the
+  // rebuilt observer re-arms against cleared suppressions.
+  useEffect(() => {
+    if (suppressedRef.current.size === 0) {
+      pinAttendedRef.current = false
+      pinBlurredAfterAttendedRef.current = false
+      return
+    }
+    if (canAutoRead) {
+      if (pinBlurredAfterAttendedRef.current) {
+        autoReadDebug("pin: released on re-attention")
+        releasePin()
+      } else {
+        pinAttendedRef.current = true
+      }
+    } else if (pinAttendedRef.current) {
+      pinBlurredAfterAttendedRef.current = true
+    }
+  }, [canAutoRead, releasePin])
 
   const cancelDwell = (id: string) => {
     const timer = dwellTimersRef.current.get(id)
