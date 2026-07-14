@@ -1785,6 +1785,33 @@ export interface AIUsageByUser {
   recordCount: number
 }
 
+export const AI_USAGE_CATEGORIES = ["memory", "conversation", "agents", "attachments", "other"] as const
+
+export type AIUsageCategory = (typeof AI_USAGE_CATEGORIES)[number]
+
+export interface AIUsageByFunction {
+  functionId: string
+  category: AIUsageCategory
+  totalCostUsd: number
+  totalTokens: number
+  recordCount: number
+}
+
+export interface AIUsageByModel {
+  model: string
+  totalCostUsd: number
+  totalTokens: number
+  recordCount: number
+}
+
+export interface AIUsageByDay {
+  date: string
+  category: AIUsageCategory
+  totalCostUsd: number
+  totalTokens: number
+  recordCount: number
+}
+
 export interface AIUsageRecord {
   id: string
   functionId: string
@@ -1807,6 +1834,9 @@ export interface AIUsageResponse {
   total: AIUsageSummary
   byOrigin: AIUsageByOrigin[]
   byUser: AIUsageByUser[]
+  byFunction: AIUsageByFunction[]
+  byModel: AIUsageByModel[]
+  byDay: AIUsageByDay[]
 }
 
 export interface AIRecentUsageResponse {

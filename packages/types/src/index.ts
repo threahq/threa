@@ -626,6 +626,10 @@ export type {
   AIUsageOrigin,
   AIUsageByOrigin,
   AIUsageByUser,
+  AIUsageCategory,
+  AIUsageByFunction,
+  AIUsageByModel,
+  AIUsageByDay,
   AIUsageRecord,
   AIUsageResponse,
   AIRecentUsageResponse,
@@ -635,7 +639,7 @@ export type {
 } from "./api"
 
 // Push Notifications
-export { DEVICE_KEY_LENGTH } from "./api"
+export { DEVICE_KEY_LENGTH, AI_USAGE_CATEGORIES } from "./api"
 
 // Command kind constants
 export { CommandKinds, CommandScopes } from "./api"

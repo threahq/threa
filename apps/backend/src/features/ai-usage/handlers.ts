@@ -4,6 +4,7 @@ import type { Pool } from "pg"
 import { withClient } from "../../db"
 import { AIUsageRepository } from "./usage-repository"
 import { AIBudgetRepository } from "./budget-repository"
+import { categorizeFunction, aggregateUsageByDay } from "./categories"
 import { aiBudgetId } from "../../lib/id"
 import { validateRequest } from "../../lib/validation"
 
@@ -41,13 +42,19 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
 
       const { start, end } = getCurrentMonthRange()
 
-      const [total, byOrigin, byUser] = await withClient(pool, async (client) =>
+      const [total, byOrigin, byUser, byFunctionRows, byModel, byDayRows] = await withClient(pool, async (client) =>
         Promise.all([
           AIUsageRepository.getWorkspaceUsage(client, workspaceId, start, end),
           AIUsageRepository.getUsageByOrigin(client, workspaceId, start, end),
           AIUsageRepository.getUsageByUser(client, workspaceId, start, end),
+          AIUsageRepository.getUsageByFunction(client, workspaceId, start, end),
+          AIUsageRepository.getUsageByModel(client, workspaceId, start, end),
+          AIUsageRepository.getUsageByDay(client, workspaceId, start, end),
         ])
       )
+
+      const byFunction = byFunctionRows.map((row) => ({ ...row, category: categorizeFunction(row.functionId) }))
+      const byDay = aggregateUsageByDay(byDayRows)
 
       res.json({
         period: {
@@ -57,6 +64,9 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         total,
         byOrigin,
         byUser,
+        byFunction,
+        byModel,
+        byDay,
       })
     },
 
