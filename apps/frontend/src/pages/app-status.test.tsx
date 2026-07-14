@@ -171,6 +171,8 @@ describe("AppStatusPage", () => {
     act(() => serviceWorker.parkUpdate({ postMessage: vi.fn() } as unknown as ServiceWorker))
 
     expect(screen.getByRole("button", { name: "Reload and update" })).toBeInTheDocument()
+    expect(screen.getByText("A new build is downloaded and ready.")).toBeInTheDocument()
+    expect(screen.queryByText("def5678")).not.toBeInTheDocument()
   })
 
   it("finishes a manual check when registration.update stalls", async () => {

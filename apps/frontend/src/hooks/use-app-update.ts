@@ -444,6 +444,7 @@ export function useManualAppUpdate(): {
   const [state, setState] = useState<ManualUpdateState>("idle")
   const [latestVersion, setLatestVersion] = useState<string | null>(null)
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null)
+  const readyRef = useRef(false)
 
   useEffect(() => {
     const serviceWorker = navigator.serviceWorker
@@ -454,7 +455,10 @@ export function useManualAppUpdate(): {
     const workerCleanups: Array<() => void> = []
 
     const adoptWaitingWorker = () => {
-      if (!disposed && registration?.waiting) setState("ready")
+      if (disposed || !registration?.waiting) return
+      readyRef.current = true
+      setLatestVersion(null)
+      setState("ready")
     }
     const trackInstalling = (worker: ServiceWorker | null) => {
       if (!worker) return
@@ -495,11 +499,15 @@ export function useManualAppUpdate(): {
     setState("checking")
     try {
       const result = await checkForAppUpdate()
+      if (readyRef.current && result.status !== "ready") return
+      if (result.status === "ready") readyRef.current = true
       setLatestVersion(result.latestVersion)
       setState(result.status)
     } catch {
-      setLatestVersion(null)
-      setState(navigator.onLine ? "unavailable" : "offline")
+      if (!readyRef.current) {
+        setLatestVersion(null)
+        setState(navigator.onLine ? "unavailable" : "offline")
+      }
     } finally {
       setLastCheckedAt(new Date())
     }
