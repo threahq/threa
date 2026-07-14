@@ -28,7 +28,7 @@ import { ComposerLinkPreviews } from "./composer-link-previews"
 import { ContextRefStrip } from "./context-ref-strip"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
-import { COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
+import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
 import type { MessageSendMode, JSONContent } from "@threa/types"
@@ -1129,7 +1129,7 @@ export function MessageComposer({
             }}
           >
             {isMobile && !mobileChromeOpen && (
-              <div className="flex items-center gap-2 min-h-[30px] text-sm select-none pointer-events-none">
+              <div className={cn(COLLAPSED_COMPOSER_ROW, "text-sm select-none pointer-events-none")}>
                 <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
                 <div className="pointer-events-auto">{sendButton}</div>
               </div>

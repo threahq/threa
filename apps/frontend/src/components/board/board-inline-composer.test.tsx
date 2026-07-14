@@ -168,7 +168,7 @@ describe("InlineComposerForm floating anchor (mobile)", () => {
     render(<Anchored>{form({ onClose })}</Anchored>)
 
     await userEvent.click(await screen.findByRole("button", { name: "Close composer" }))
-    expect(onClose).toHaveBeenCalledWith({ hadContent: false })
+    expect(onClose).toHaveBeenCalled()
     expect(flushDraft).toHaveBeenCalled()
   })
 
@@ -186,7 +186,7 @@ describe("InlineComposerForm floating anchor (mobile)", () => {
         {form({ onClose: closeSecond, placeholder: "Second" })}
       </Anchored>
     )
-    await waitFor(() => expect(closeFirst).toHaveBeenCalledWith({ hadContent: false }))
+    await waitFor(() => expect(closeFirst).toHaveBeenCalled())
     expect(closeSecond).not.toHaveBeenCalled()
     await screen.findByText("Second")
 

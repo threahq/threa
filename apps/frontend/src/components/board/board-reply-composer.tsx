@@ -120,7 +120,7 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     }
   }, [open])
 
-  const close = useCallback((opts?: { refocus?: boolean; hadContent?: boolean }) => {
+  const close = useCallback((opts?: { refocus?: boolean }) => {
     refocusOnCollapseRef.current = opts?.refocus ?? false
     setOpen(false)
   }, [])
@@ -185,7 +185,7 @@ function BoardReplyComposerForm({
   docked,
   armedReply,
 }: BoardReplyComposerProps & {
-  onClose: (opts?: { refocus?: boolean; hadContent?: boolean }) => void
+  onClose: (opts?: { refocus?: boolean }) => void
   pendingQuote: QuoteReplyData | null
   onQuoteConsumed: () => void
   restoreStashedId: string | null

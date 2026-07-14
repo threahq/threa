@@ -16,7 +16,11 @@ const CARD_CLASS = cn(
   COLLAPSED_COMPOSER_SHADOW
 )
 
-const ROW_CLASS = "flex w-full items-center gap-2 min-h-[30px]"
+/** Collapsed-row metrics shared with `MessageComposer`'s own collapsed bar so
+ *  the two cannot drift (they must read as the same object). */
+export const COLLAPSED_COMPOSER_ROW = "flex items-center gap-2 min-h-[30px]"
+
+const ROW_CLASS = cn(COLLAPSED_COMPOSER_ROW, "w-full")
 
 /**
  * The one collapsed reply affordance shared by every board surface (board-card

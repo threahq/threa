@@ -113,7 +113,7 @@ interface InlineComposerFormProps {
   /** Perform the send. Throws to keep the composer open and restore the draft. */
   onSubmit: (input: InlineComposerSubmit) => Promise<void>
   /** Collapse the composer (Escape / after-send / blur-when-empty). */
-  onClose: (opts?: { refocus?: boolean; hadContent?: boolean }) => void
+  onClose: (opts?: { refocus?: boolean }) => void
 }
 
 /**
@@ -276,7 +276,7 @@ export function InlineComposerForm({
     }
     if (!wasClaimantRef.current) return
     void composerRef.current.flushDraft()
-    onCloseRef.current({ hadContent: !isEmptyRef.current })
+    onCloseRef.current()
   }, [floating, claimantId, formId])
 
   // Publish the shell's height so the anchor's scrollable content can reserve
@@ -334,7 +334,7 @@ export function InlineComposerForm({
     void composerRef.current.flushDraft()
     // No refocus: returning focus to the resting button after a touch dismissal
     // would draw a focus ring the user never keyboard-navigated to.
-    onCloseRef.current({ hadContent: !isEmptyRef.current })
+    onCloseRef.current()
   }, [])
 
   const handleBlur = useCallback(() => {
@@ -529,9 +529,8 @@ export function InlineComposerForm({
       // device) keep it.
       onExpandClick={floating ? undefined : () => setExpanded(true)}
       onEscapeBlur={() => {
-        const hadContent = !isEmptyRef.current
         void composer.flushDraft()
-        onClose({ refocus: true, hadContent })
+        onClose({ refocus: true })
       }}
     />
   )
