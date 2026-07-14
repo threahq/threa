@@ -1,13 +1,9 @@
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react"
-import { Link, useLocation } from "react-router-dom"
-import { Archive, Ban, Bell, BellOff, Check, ChevronDown, CircleDot, Hash, Layers, Pin, Tag, X } from "lucide-react"
+import { Ban, Bell, BellOff, ChevronDown, Hash, Layers, Tag, X } from "lucide-react"
 import {
-  BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
-  DEFAULT_BOARD_LENS,
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
-  type BoardLens,
   type BoardScopeStreamType,
 } from "@threa/types"
 import { Badge } from "@/components/ui/badge"
@@ -17,20 +13,10 @@ import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useInputMode } from "@/hooks/use-input-mode"
-import {
-  useWorkspaceDmPeers,
-  useWorkspaceLabels,
-  useWorkspaceStreams,
-  useWorkspaceUsers,
-} from "@/stores/workspace-store"
+import { useWorkspaceStreams } from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks/use-labels"
-import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
-import { BoardSavedViews, isViewActive, lensHref, type BoardViewSelection } from "@/components/board/board-saved-views"
-import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
-import { clearFiltersSearch, toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
-import { isBoardFiltered } from "@/lib/board/filter-state"
-import { usePreferences } from "@/contexts"
-import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
+import { STREAM_ICONS } from "@/lib/streams"
+import { toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
 import { BOARD_STREAM_TYPE_LABELS as TYPE_LABELS } from "@/lib/board/stream-type-labels"
 import { cn } from "@/lib/utils"
 
@@ -39,297 +25,15 @@ import { cn } from "@/lib/utils"
 const SCOPE_STREAM_TYPES = new Set<string>(BOARD_SCOPE_STREAM_TYPES)
 
 /** A dimension's include/exclude rewrite: both lists in one URL write. */
-type FilterChange<T> = (include: T[], exclude: T[]) => void
+export type FilterChange<T> = (include: T[], exclude: T[]) => void
 
 /** Chip/row glyph: lucide icons and the `STREAM_ICONS` components both fit. */
-type FilterIcon = ComponentType<{ className?: string }>
-
-interface BoardFilterBarProps {
-  workspaceId: string
-  lens: BoardLens
-  /** Included scope stream ids (root streams), in URL order. */
-  scopeStreamIds: string[]
-  /** Excluded stream ids (anchor-or-root veto), in URL order. */
-  excludeStreamIds: string[]
-  /** Rewrites the stream filter; the page owns the URL write. */
-  onStreamFilterChange: FilterChange<string>
-  /** Included root-stream types, in URL order. */
-  scopeStreamTypes: BoardScopeStreamType[]
-  /** Excluded root-stream types, in URL order. */
-  excludeStreamTypes: BoardScopeStreamType[]
-  /** Rewrites the type filter; the page owns the URL write. */
-  onTypeFilterChange: FilterChange<BoardScopeStreamType>
-  /** Included label ids (the viewer's own labels), in URL order. */
-  scopeLabelIds: string[]
-  /** Excluded label ids, in URL order. */
-  excludeLabelIds: string[]
-  /** Rewrites the label filter; the page owns the URL write. */
-  onLabelFilterChange: FilterChange<string>
-  /** Root streams the viewer muted from the board (board-view-design.md § "Hide & mute"). */
-  mutedStreamIds?: ReadonlySet<string>
-  /** Toggle a stream's board mute; the page owns the write. */
-  onToggleMute?: (streamId: string, mute: boolean) => void
-  /** Whether archived cards are currently included (`?archived=true`). */
-  showArchived: boolean
-  /** Toggle the archived opt-in; the page owns the URL write. */
-  onToggleArchived: (next: boolean) => void
-  /** Whether the board is narrowed to unread conversations (`?unread=true`). */
-  unreadOnly: boolean
-  /** Toggle the unread-only opt-in; the page owns the URL write. */
-  onToggleUnreadOnly: (next: boolean) => void
-}
+export type FilterIcon = ComponentType<{ className?: string }>
 
 /**
- * The board's filter row: a lens picker and stream/type/label pickers, all
- * optional narrowings over the always-available All home. Deliberately a
- * filter control — not a tab strip — so the lenses read as suggestions you can
- * reach for (like the search page's stream-type filter), not as the prescribed
- * ways to use the board. Every filter lives in the URL as query params — the
- * lens included (`?lens=`) — so refresh/back/share reproduce the view (INV-59).
- *
- * Each picker row is tri-state: the row toggles INCLUDE (checkbox), the ban
- * button on its right toggles EXCLUDE — include narrows, exclude vetoes, and
- * the two are mutually exclusive per row. Excluded selections render as "Not:"
- * chips so a veto never reads as a scope.
- *
- * One horizontally-scrollable row on every breakpoint: controls first, then a
- * chip per selection, then a clear-all link once anything narrows. Pickers
- * open as popovers for mouse input and bottom drawers for touch (the
- * `SearchFilterMenu` split).
- */
-export function BoardFilterBar({
-  workspaceId,
-  lens,
-  scopeStreamIds,
-  excludeStreamIds,
-  onStreamFilterChange,
-  scopeStreamTypes,
-  excludeStreamTypes,
-  onTypeFilterChange,
-  scopeLabelIds,
-  excludeLabelIds,
-  onLabelFilterChange,
-  mutedStreamIds,
-  onToggleMute,
-  showArchived,
-  onToggleArchived,
-  unreadOnly,
-  onToggleUnreadOnly,
-}: BoardFilterBarProps) {
-  const location = useLocation()
-  const streams = useWorkspaceStreams(workspaceId)
-  const users = useWorkspaceUsers(workspaceId)
-  const dmPeers = useWorkspaceDmPeers(workspaceId)
-  const allLabels = useWorkspaceLabels(workspaceId)
-  const myLabels = useMemo(
-    () => allLabels.filter((l) => !l.archivedAt).sort((a, b) => a.name.localeCompare(b.name)),
-    [allLabels]
-  )
-  const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
-  const labelById = useMemo(() => new Map(myLabels.map((l) => [l.id, l])), [myLabels])
-
-  // The baseline is absolute — the unfiltered All lens — so any narrowing offers
-  // "Clear filters", including the viewer's own saved-view or non-All home (its
-  // filters must be clearable too; the home-relative baseline made them not be).
-  // `unreadOnly` narrows the feed like every other axis (unlike `showArchived`,
-  // which broadens it), so it counts toward "filtered"; `BoardViewSelection`
-  // itself stays unread-unaware (matching `showArchived`'s precedent): unread
-  // state churns on every read receipt, so it isn't meaningful in a saved view.
-  const isFiltered =
-    isBoardFiltered({
-      lens,
-      scopeStreamIds,
-      scopeStreamTypes,
-      scopeLabelIds,
-      excludeStreamIds,
-      excludeStreamTypes,
-      excludeLabelIds,
-    }) || unreadOnly
-  // "Clear filters" shows everything: explicit `?lens=all` with no filter axes —
-  // never the bare `/board` entry alias, which would bounce to the viewer's home.
-  // The surviving non-filter query — an open `?panel=` — rides along, per the
-  // `clearFiltersSearch` contract, so clearing filters never drops the open thread.
-  const clearFiltersTo = useMemo(
-    () => `/w/${workspaceId}/board${clearFiltersSearch(location.search)}`,
-    [workspaceId, location.search]
-  )
-
-  const labelFor = (streamId: string) =>
-    resolveStreamName(streamId, { streams, users, dmPeers }, "generic") ?? "Unknown stream"
-  const labelNameFor = (labelId: string) => labelById.get(labelId)?.name ?? "Unknown label"
-
-  // The Labels picker only renders when there's something to pick (or a stale
-  // URL names labels the viewer no longer has — keep it so they can clear it).
-  const showLabelsPicker = myLabels.length > 0 || scopeLabelIds.length > 0 || excludeLabelIds.length > 0
-
-  const streamIconFor = (id: string): FilterIcon => {
-    const type = streamById.get(id)?.type
-    return (type && STREAM_ICONS[type]) || Hash
-  }
-
-  return (
-    <div className="flex min-h-9 items-center gap-1.5 overflow-x-auto border-b px-3 py-1.5 scrollbar-none sm:px-4">
-      <BoardLensMenu
-        workspaceId={workspaceId}
-        lens={lens}
-        scopeStreamIds={scopeStreamIds}
-        excludeStreamIds={excludeStreamIds}
-        scopeStreamTypes={scopeStreamTypes}
-        excludeStreamTypes={excludeStreamTypes}
-        scopeLabelIds={scopeLabelIds}
-        excludeLabelIds={excludeLabelIds}
-      />
-      <BoardScopePicker
-        workspaceId={workspaceId}
-        scopeStreamIds={scopeStreamIds}
-        excludeStreamIds={excludeStreamIds}
-        onStreamFilterChange={onStreamFilterChange}
-        labelFor={labelFor}
-        mutedStreamIds={mutedStreamIds}
-        onToggleMute={onToggleMute}
-      />
-      <BoardTypePicker
-        scopeStreamTypes={scopeStreamTypes}
-        excludeStreamTypes={excludeStreamTypes}
-        onTypeFilterChange={onTypeFilterChange}
-      />
-      {showLabelsPicker && (
-        <BoardLabelPicker
-          myLabels={myLabels}
-          scopeLabelIds={scopeLabelIds}
-          excludeLabelIds={excludeLabelIds}
-          onLabelFilterChange={onLabelFilterChange}
-        />
-      )}
-      <Button
-        type="button"
-        variant={unreadOnly ? "secondary" : "outline"}
-        size="sm"
-        onClick={() => onToggleUnreadOnly(!unreadOnly)}
-        aria-pressed={unreadOnly}
-        className="h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs font-normal"
-        aria-label={unreadOnly ? "Show every conversation" : "Show only unread conversations"}
-      >
-        <CircleDot className="h-3.5 w-3.5" />
-        Unread
-      </Button>
-      <Button
-        type="button"
-        variant={showArchived ? "secondary" : "outline"}
-        size="sm"
-        onClick={() => onToggleArchived(!showArchived)}
-        aria-pressed={showArchived}
-        className="h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs font-normal"
-        aria-label={showArchived ? "Hide archived conversations" : "Show archived conversations"}
-      >
-        <Archive className="h-3.5 w-3.5" />
-        Archived
-      </Button>
-      {scopeStreamTypes.map((type) => (
-        <FilterChip
-          key={`is-${type}`}
-          icon={STREAM_ICONS[type] || Layers}
-          label={TYPE_LABELS[type]}
-          onRemove={() =>
-            onTypeFilterChange(
-              scopeStreamTypes.filter((t) => t !== type),
-              excludeStreamTypes
-            )
-          }
-          removeLabel={`Remove ${TYPE_LABELS[type]} from the board scope`}
-        />
-      ))}
-      {excludeStreamTypes.map((type) => (
-        <FilterChip
-          key={`not-is-${type}`}
-          icon={STREAM_ICONS[type] || Layers}
-          label={TYPE_LABELS[type]}
-          excluded
-          onRemove={() =>
-            onTypeFilterChange(
-              scopeStreamTypes,
-              excludeStreamTypes.filter((t) => t !== type)
-            )
-          }
-          removeLabel={`Stop excluding ${TYPE_LABELS[type]} from the board`}
-        />
-      ))}
-      {scopeStreamIds.map((id) => (
-        <FilterChip
-          key={`in-${id}`}
-          icon={streamIconFor(id)}
-          label={labelFor(id)}
-          onRemove={() =>
-            onStreamFilterChange(
-              scopeStreamIds.filter((s) => s !== id),
-              excludeStreamIds
-            )
-          }
-          removeLabel={`Remove ${labelFor(id)} from the board scope`}
-        />
-      ))}
-      {excludeStreamIds.map((id) => (
-        <FilterChip
-          key={`not-in-${id}`}
-          icon={streamIconFor(id)}
-          label={labelFor(id)}
-          excluded
-          onRemove={() =>
-            onStreamFilterChange(
-              scopeStreamIds,
-              excludeStreamIds.filter((s) => s !== id)
-            )
-          }
-          removeLabel={`Stop excluding ${labelFor(id)} from the board`}
-        />
-      ))}
-      {scopeLabelIds.map((id) => (
-        <FilterChip
-          key={`label-${id}`}
-          icon={Tag}
-          label={labelNameFor(id)}
-          swatch={labelById.get(id)?.color}
-          onRemove={() =>
-            onLabelFilterChange(
-              scopeLabelIds.filter((l) => l !== id),
-              excludeLabelIds
-            )
-          }
-          removeLabel={`Remove the ${labelNameFor(id)} label from the board scope`}
-        />
-      ))}
-      {excludeLabelIds.map((id) => (
-        <FilterChip
-          key={`not-label-${id}`}
-          icon={Tag}
-          label={labelNameFor(id)}
-          swatch={labelById.get(id)?.color}
-          excluded
-          onRemove={() =>
-            onLabelFilterChange(
-              scopeLabelIds,
-              excludeLabelIds.filter((l) => l !== id)
-            )
-          }
-          removeLabel={`Stop excluding the ${labelNameFor(id)} label from the board`}
-        />
-      ))}
-      {isFiltered && (
-        <Link
-          to={clearFiltersTo}
-          className="shrink-0 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-        >
-          Clear filters
-        </Link>
-      )}
-    </div>
-  )
-}
-
-/**
- * One filter selection in the bar. An `excluded` chip reads as a veto: "Not:"
- * prefix + destructive tint, so a narrowed board and a vetoed stream can't be
- * confused at a glance.
+ * One filter selection rendered as a removable chip. An `excluded` chip reads as
+ * a veto: "Not:" prefix + destructive tint, so a narrowed board and a vetoed
+ * stream can't be confused at a glance.
  */
 export function FilterChip({
   icon: Icon,
@@ -372,11 +76,11 @@ export function FilterChip({
 }
 
 /**
- * Shared container for the bar's pickers: popover for mouse input, bottom
- * drawer when a finger is active (the `SearchFilterMenu` split). One shell so
- * the pickers can't drift as sizing/a11y evolves.
+ * Shared container for the board's filter pickers: popover for mouse input,
+ * bottom drawer when a finger is active (the `SearchFilterMenu` split). One shell
+ * so the pickers can't drift as sizing/a11y evolves.
  */
-function FilterMenuShell({
+export function FilterMenuShell({
   title,
   open,
   onOpenChange,
@@ -437,149 +141,13 @@ function ExcludeToggle({ excluded, onToggle, subject }: { excluded: boolean; onT
 }
 
 /**
- * Lens picker. Each option is a link (lens changes are navigation, INV-40) with
- * a one-line description, so the menu doubles as the explanation of what each
- * lens means. The trigger reflects the active lens and fills in once a
- * non-default lens narrows the board.
- */
-function BoardLensMenu({
-  workspaceId,
-  lens,
-  scopeStreamIds,
-  excludeStreamIds,
-  scopeStreamTypes,
-  excludeStreamTypes,
-  scopeLabelIds,
-  excludeLabelIds,
-}: {
-  workspaceId: string
-  lens: BoardLens
-  scopeStreamIds: string[]
-  excludeStreamIds: string[]
-  scopeStreamTypes: BoardScopeStreamType[]
-  excludeStreamTypes: BoardScopeStreamType[]
-  scopeLabelIds: string[]
-  excludeLabelIds: string[]
-}) {
-  const [open, setOpen] = useState(false)
-  const { search } = useLocation()
-  const { updatePreferences } = usePreferences()
-  const current = BOARD_LENS_DEFS[lens]
-  const CurrentIcon = current.icon
-
-  // A saved view IS the selection when the live lens + every filter axis match
-  // it, so it — not its base lens — is what reads as active. Resolved once here
-  // so the lens list and the saved-view list can't both mark a row.
-  const { data: views } = useBoardViews(workspaceId)
-  const selection: BoardViewSelection = {
-    lens,
-    scopeStreamIds,
-    scopeStreamTypes,
-    scopeLabelIds,
-    excludeStreamIds,
-    excludeStreamTypes,
-    excludeLabelIds,
-  }
-  const activeViewId = views?.find((view) => isViewActive(view, selection))?.id ?? null
-
-  // The pin fill: the home lens preference marks a lens row, but no lens reads
-  // as home while a saved-view home resolves (the view's pin is the home then).
-  const homeLens = usePreferences().preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
-  const { view: homeMenuView } = useBoardHome(workspaceId)
-  const homeViewActive = homeMenuView != null
-
-  const content = (
-    <>
-      <nav aria-label="Board lens" className="py-1">
-        {BOARD_LENSES.map((value) => {
-          const def = BOARD_LENS_DEFS[value]
-          const Icon = def.icon
-          const selected = value === lens && activeViewId === null
-          const isHome = !homeViewActive && value === homeLens
-          return (
-            <div
-              key={value}
-              className={cn(
-                "mx-1 flex items-center rounded-item transition-colors hover:bg-muted",
-                selected && "bg-muted/60"
-              )}
-            >
-              <Link
-                to={lensHref(workspaceId, value, search)}
-                onClick={() => setOpen(false)}
-                aria-current={selected ? "true" : undefined}
-                className="flex min-w-0 flex-1 items-start gap-2.5 rounded-item px-2.5 py-2"
-              >
-                <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium">{def.label}</span>
-                  <span className="block text-xs text-muted-foreground">{def.description}</span>
-                </span>
-                {selected && <Check className="mt-1 h-4 w-4 shrink-0" />}
-              </Link>
-              {/* Pin this lens as the board home (bare `/board`) — mirrors the
-                  appearance-settings radio, placed where lenses are picked. Also
-                  clears any saved-view home so the landing actually lands here.
-                  Filled when current home; silent per INV-63 (the fill is the signal). */}
-              <button
-                type="button"
-                onClick={() => void updatePreferences({ boardDefaultLens: value, boardDefaultViewId: null })}
-                aria-pressed={isHome}
-                aria-label={isHome ? `${def.label} is your board home` : `Set ${def.label} as board home`}
-                className={cn(
-                  "mr-1 shrink-0 rounded p-1.5 transition-colors",
-                  isHome ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground"
-                )}
-              >
-                <Pin className={cn("h-3.5 w-3.5", isHome && "fill-current")} />
-              </button>
-            </div>
-          )
-        })}
-      </nav>
-      <BoardSavedViews
-        workspaceId={workspaceId}
-        lens={lens}
-        activeViewId={activeViewId}
-        scopeStreamIds={scopeStreamIds}
-        excludeStreamIds={excludeStreamIds}
-        scopeStreamTypes={scopeStreamTypes}
-        excludeStreamTypes={excludeStreamTypes}
-        scopeLabelIds={scopeLabelIds}
-        excludeLabelIds={excludeLabelIds}
-        onNavigate={() => setOpen(false)}
-      />
-    </>
-  )
-
-  const trigger = (
-    <Button
-      variant={lens === DEFAULT_BOARD_LENS ? "outline" : "secondary"}
-      size="sm"
-      className="h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs font-normal"
-      aria-label={`Board lens: ${current.label}`}
-    >
-      <CurrentIcon className="h-3.5 w-3.5" />
-      {current.label}
-      <ChevronDown className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
-    </Button>
-  )
-
-  return (
-    <FilterMenuShell title="Board lens" open={open} onOpenChange={setOpen} trigger={trigger}>
-      {content}
-    </FilterMenuShell>
-  )
-}
-
-/**
  * Stream picker: a searchable tri-state multi-select over the workspace's root
  * streams (channels, DMs, scratchpads, system). The row toggles include
- * (`?in=`), the ban toggle vetoes (`?not-in=`); both rewrite through the page.
+ * (`?in=`), the ban toggle vetoes (`?not-in=`); both rewrite through the caller.
  * Each list is capped at the shared server limit so the picker can't build a
  * URL the backend rejects.
  */
-function BoardScopePicker({
+export function BoardScopePicker({
   workspaceId,
   scopeStreamIds,
   excludeStreamIds,
@@ -732,7 +300,7 @@ function BoardScopePicker({
  * grains. Matches by the conversation's effective root — a thread under a
  * channel counts as Channels — mirroring the stream picker's root rule.
  */
-function BoardTypePicker({
+export function BoardTypePicker({
   scopeStreamTypes,
   excludeStreamTypes,
   onTypeFilterChange,
@@ -812,7 +380,7 @@ function BoardTypePicker({
  * matches a conversation by its anchor or effective root stream, the same rule
  * as the stream picker.
  */
-function BoardLabelPicker({
+export function BoardLabelPicker({
   myLabels,
   scopeLabelIds,
   excludeLabelIds,

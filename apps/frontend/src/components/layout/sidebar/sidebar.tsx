@@ -366,30 +366,44 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // removing the section from the editor takes it out of both the normal list
   // (resolved as a positioned section) and the empty-streams state.
   const hasQuickLinksSection = sidebarConfig.sections.some((s) => s.spec.kind === "quicklinks")
-  // On `/board` the board block replaces the quick-links block in place; every
-  // other surface keeps the unchanged quick links.
+  const quickLinks = hasQuickLinksSection ? (
+    <SidebarQuickLinks
+      workspaceId={workspaceId}
+      quickLinks={sidebarConfig.quickLinks}
+      isDraftsPage={isDraftsPage}
+      draftCount={draftCount}
+      isSavedPage={isSavedPage}
+      savedCount={savedCount}
+      isScheduledPage={isScheduledPage}
+      scheduledCount={scheduledCount}
+      isActivityPage={isActivityPage}
+      isMemoryPage={isMemoryPage}
+      isFilesPage={isFilesPage}
+      isLabelsPage={isLabelsPage}
+      unreadActivityCount={unreadActivityCount}
+    />
+  ) : null
+  // Board mode keeps the board block (its filters/views/lenses) available even
+  // when the user drops the quick-links section, so the quick links sit above it
+  // only when present. Chats mode pairs the `Board` entry row with the quick
+  // links and stays hidden without the section, as it always has.
   let quickLinksSlot: ReactNode
-  if (hasQuickLinksSection) {
-    quickLinksSlot = isBoardPage ? (
-      <BoardModeBlock workspaceId={workspaceId} userId={user?.id ?? null} lensTotals={boardMode?.lensTotals ?? null} />
-    ) : (
+  if (isBoardPage) {
+    quickLinksSlot = (
+      <>
+        {quickLinks}
+        <BoardModeBlock
+          workspaceId={workspaceId}
+          userId={user?.id ?? null}
+          lensTotals={boardMode?.lensTotals ?? null}
+        />
+      </>
+    )
+  } else if (hasQuickLinksSection) {
+    quickLinksSlot = (
       <>
         <BoardLinkRow workspaceId={workspaceId} userId={user?.id ?? null} />
-        <SidebarQuickLinks
-          workspaceId={workspaceId}
-          quickLinks={sidebarConfig.quickLinks}
-          isDraftsPage={isDraftsPage}
-          draftCount={draftCount}
-          isSavedPage={isSavedPage}
-          savedCount={savedCount}
-          isScheduledPage={isScheduledPage}
-          scheduledCount={scheduledCount}
-          isActivityPage={isActivityPage}
-          isMemoryPage={isMemoryPage}
-          isFilesPage={isFilesPage}
-          isLabelsPage={isLabelsPage}
-          unreadActivityCount={unreadActivityCount}
-        />
+        {quickLinks}
       </>
     )
   }

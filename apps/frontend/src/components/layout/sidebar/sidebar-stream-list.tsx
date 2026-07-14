@@ -232,6 +232,14 @@ export function SidebarStreamList({
         onDragEnd={handleDragEnd}
         onDragCancel={() => setDraggingStreamId(null)}
       >
+        {/* A provided slot renders at its section's position below; when the user's
+            layout has NO quicklinks section it renders first instead of vanishing.
+            Chats mode never hits this (its slot is built only when the section
+            exists) — it exists for board mode, whose slot carries the board's
+            filters/views/lenses and must survive the section's removal. */}
+        {quickLinksSlot && !resolvedSections.some(({ section }) => section.spec.kind === "quicklinks")
+          ? quickLinksSlot
+          : null}
         {resolvedSections.map(({ section, items }) => {
           // The Quick Links block renders its own link list at this position. The
           // slot owns its spacing (and may render null when every link is hidden),

@@ -8,7 +8,7 @@ import {
   useWorkspaceUsers,
 } from "@/stores/workspace-store"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
-import { FilterChip } from "@/components/board/board-filter-bar"
+import { FilterChip } from "@/components/board/board-filter-pickers"
 import { SaveCurrentViewDialog } from "@/components/board/board-saved-views"
 import { useBoardSelection } from "@/hooks/use-board-selection"
 import { BOARD_STREAM_TYPE_LABELS } from "@/lib/board/stream-type-labels"

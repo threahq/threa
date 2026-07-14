@@ -283,29 +283,6 @@ describe("BoardPage", () => {
     expect(cta.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/board?lens=all`)
   })
 
-  it("clears everything — including the saved-view home's own scope — keeping an open panel", async () => {
-    // "Clear filters" means everything (?lens=all), not "back to the home": the
-    // home's own filters must clear too, and the target is never the bare entry
-    // alias (which would bounce straight back). The open `?panel=` rides along.
-    vi.mocked(contextsModule.usePreferences).mockReturnValue({
-      preferences: { timezone: "UTC", locale: "en-US", boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
-    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
-      preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-    mountBoard([], {
-      boardViews: [makeBoardView()],
-      entry: `/w/${WORKSPACE_ID}/board?lens=active&is=channel&in=stream_x&panel=conv%3Aabc`,
-    })
-    const clear = await screen.findByRole("link", { name: "Clear filters" })
-    const url = new URL(clear.getAttribute("href") ?? "", "http://x")
-    expect(url.pathname).toBe(`/w/${WORKSPACE_ID}/board`)
-    expect(url.searchParams.get("lens")).toBe("all") // explicit — never the bare alias
-    expect(url.searchParams.get("panel")).toBe("conv:abc") // the open thread survives
-    expect(url.searchParams.get("is")).toBeNull() // the home view's own scope clears
-    expect(url.searchParams.get("in")).toBeNull() // the extra narrowing clears
-  })
-
   it("stays put when a saved view is pinned as home while on an explicit board URL", async () => {
     // Pinning a view as home is a preference change, not a navigation. Rendered
     // board URLs always carry `?lens=`, so the entry-alias redirect (which only
@@ -328,25 +305,6 @@ describe("BoardPage", () => {
 
     expect(screen.getByTestId("location").textContent).toBe(`/w/${WORKSPACE_ID}/board?lens=all`)
     expect(screen.getByText("Board still here.")).toBeTruthy()
-  })
-
-  it("shows no 'Clear filters' on the unfiltered All lens (the absolute baseline)", async () => {
-    const post = makePost({ id: "conv_x" }, { contentMarkdown: "A topic." })
-    mountBoard([post], { entry: `/w/${WORKSPACE_ID}/board?lens=all` })
-    await screen.findByText("A topic.")
-    expect(screen.queryByText("Clear filters")).toBeNull()
-  })
-
-  it("shows 'Clear filters' on a non-All lens — even the viewer's own home lens", async () => {
-    // A Mine home landing is still a narrowing of everything; its lens must be
-    // clearable (the home-relative baseline hid the affordance here).
-    vi.mocked(contextsModule.usePreferencesOptional).mockReturnValue({
-      preferences: { boardDefaultLens: "mine" },
-    } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-    const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
-    mountBoard([mine], { entry: `/w/${WORKSPACE_ID}/board?lens=mine` })
-    await screen.findByText("My own topic.")
-    expect(screen.getByText("Clear filters")).toBeTruthy()
   })
 
   it("shows the empty state without a 'Show everything' CTA on the unfiltered All lens", async () => {

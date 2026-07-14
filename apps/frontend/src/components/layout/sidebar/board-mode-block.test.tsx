@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { MemoryRouter } from "react-router-dom"
-import { render, screen } from "@/test"
+import { MemoryRouter, useLocation } from "react-router-dom"
+import { render, screen, userEvent } from "@/test"
 import type { BoardView } from "@threa/types"
 import * as Contexts from "@/contexts"
 import * as BoardViewsHooks from "@/hooks/use-board-views"
+import * as ConversationsHooks from "@/hooks/use-conversations"
+import * as WorkspaceStore from "@/stores/workspace-store"
+import * as BoardExclusions from "@/stores/board-exclusions-store"
+import * as InputMode from "@/hooks/use-input-mode"
 import { setLastLocation } from "@/lib/last-location"
 import { BoardModeBlock } from "./board-mode-block"
 
@@ -26,22 +30,33 @@ function view(over: Partial<BoardView> = {}): BoardView {
   }
 }
 
+interface Mocks {
+  updatePreferences: ReturnType<typeof vi.fn>
+  update: { mutate: ReturnType<typeof vi.fn> }
+  remove: { mutate: ReturnType<typeof vi.fn> }
+}
+
 /** Stub the ambient hooks the block reads: sidebar (collapseOnMobile), the
- *  board-views query, the board home, and the preferences (home lens). */
+ *  board-views query, the board home, the preferences (home lens + writer), the
+ *  view mutations, and the filter-group's workspace stores + mute mutations. */
 function stub(
   opts: {
     views?: BoardView[]
     homeView?: BoardView | null
     boardDefaultLens?: string | null
   } = {}
-) {
+): Mocks {
+  const updatePreferences = vi.fn()
+  const update = { mutate: vi.fn() }
+  const remove = { mutate: vi.fn() }
+
   vi.spyOn(Contexts, "useSidebar").mockReturnValue({
     collapseOnMobile: vi.fn(),
   } as unknown as ReturnType<typeof Contexts.useSidebar>)
   vi.spyOn(Contexts, "usePreferencesOptional").mockReturnValue(
     opts.boardDefaultLens === undefined
       ? null
-      : ({ preferences: { boardDefaultLens: opts.boardDefaultLens } } as unknown as ReturnType<
+      : ({ preferences: { boardDefaultLens: opts.boardDefaultLens }, updatePreferences } as unknown as ReturnType<
           typeof Contexts.usePreferencesOptional
         >)
   )
@@ -51,11 +66,38 @@ function stub(
   vi.spyOn(BoardViewsHooks, "useBoardHome").mockReturnValue({
     view: opts.homeView ?? null,
   })
+  vi.spyOn(BoardViewsHooks, "useUpdateBoardView").mockReturnValue(
+    update as unknown as ReturnType<typeof BoardViewsHooks.useUpdateBoardView>
+  )
+  vi.spyOn(BoardViewsHooks, "useDeleteBoardView").mockReturnValue(
+    remove as unknown as ReturnType<typeof BoardViewsHooks.useDeleteBoardView>
+  )
+
+  vi.spyOn(InputMode, "useInputMode").mockReturnValue("mouse")
+  vi.spyOn(ConversationsHooks, "useMuteStream").mockReturnValue({ mutate: vi.fn() } as never)
+  vi.spyOn(ConversationsHooks, "useUnmuteStream").mockReturnValue({ mutate: vi.fn() } as never)
+  vi.spyOn(WorkspaceStore, "useWorkspaceStreams").mockReturnValue([] as never)
+  vi.spyOn(WorkspaceStore, "useWorkspaceUsers").mockReturnValue([] as never)
+  vi.spyOn(WorkspaceStore, "useWorkspaceDmPeers").mockReturnValue([] as never)
+  vi.spyOn(WorkspaceStore, "useWorkspaceLabels").mockReturnValue([] as never)
+  vi.spyOn(BoardExclusions, "useBoardMutedStreamIds").mockReturnValue(new Set())
+
+  return { updatePreferences, update, remove }
+}
+
+function LocationProbe() {
+  const loc = useLocation()
+  return <div data-testid="loc">{`${loc.pathname}${loc.search}`}</div>
+}
+
+function currentLoc(): string {
+  return screen.getByTestId("loc").textContent ?? ""
 }
 
 function mountAt(path: string, props: Partial<Parameters<typeof BoardModeBlock>[0]> = {}) {
   return render(
     <MemoryRouter initialEntries={[path]}>
+      <LocationProbe />
       <BoardModeBlock workspaceId={WS} userId={USER} {...props} />
     </MemoryRouter>
   )
@@ -67,6 +109,11 @@ function hrefOf(name: RegExp | string): string {
 
 beforeEach(() => {
   localStorage.clear()
+  // Radix menus/popovers need these in jsdom (they aren't implemented there).
+  Element.prototype.scrollIntoView ??= () => {}
+  Element.prototype.hasPointerCapture ??= () => false
+  Element.prototype.setPointerCapture ??= () => {}
+  Element.prototype.releasePointerCapture ??= () => {}
 })
 afterEach(() => vi.restoreAllMocks())
 
@@ -186,5 +233,89 @@ describe("BoardModeBlock", () => {
     mountAt(`/w/${WS}/board`, { lensTotals: null })
 
     expect(screen.getByRole("link", { name: "Active" })).toHaveTextContent(/^Active$/)
+  })
+
+  it("renders the Filters group with the stream and type pickers", () => {
+    stub()
+    mountAt(`/w/${WS}/board?lens=all`)
+
+    expect(screen.getByText("Filters")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Filter the board by streams" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Filter the board by stream types" })).toBeInTheDocument()
+  })
+
+  it("opens the streams picker on click", async () => {
+    const user = userEvent.setup()
+    stub()
+    mountAt(`/w/${WS}/board?lens=all`)
+
+    await user.click(screen.getByRole("button", { name: "Filter the board by streams" }))
+    expect(await screen.findByPlaceholderText("Find a stream")).toBeInTheDocument()
+  })
+
+  it("the Unread only toggle flips ?unread=true and back", async () => {
+    const user = userEvent.setup()
+    stub()
+    mountAt(`/w/${WS}/board?lens=all`)
+
+    await user.click(screen.getByRole("button", { name: "Unread only" }))
+    expect(new URL(currentLoc(), "http://x").searchParams.get("unread")).toBe("true")
+
+    await user.click(screen.getByRole("button", { name: "Unread only" }))
+    expect(new URL(currentLoc(), "http://x").searchParams.get("unread")).toBeNull()
+  })
+
+  it("the Archived toggle flips ?archived=true", async () => {
+    const user = userEvent.setup()
+    stub()
+    mountAt(`/w/${WS}/board?lens=all`)
+
+    await user.click(screen.getByRole("button", { name: "Archived" }))
+    expect(new URL(currentLoc(), "http://x").searchParams.get("archived")).toBe("true")
+  })
+
+  it("pinning a lens writes the home-lens preference and clears any view home", async () => {
+    const user = userEvent.setup()
+    const { updatePreferences } = stub({ boardDefaultLens: "all" })
+    mountAt(`/w/${WS}/board?lens=all`)
+
+    await user.click(screen.getByRole("button", { name: "Set Active as board home" }))
+    expect(updatePreferences).toHaveBeenCalledWith({ boardDefaultLens: "active", boardDefaultViewId: null })
+  })
+
+  it("pinning a saved view writes the home-view preference", async () => {
+    const user = userEvent.setup()
+    const { updatePreferences } = stub({ views: [view()], boardDefaultLens: "all" })
+    mountAt(`/w/${WS}/board`)
+
+    await user.click(screen.getByRole("button", { name: "Actions for Design work" }))
+    await user.click(await screen.findByRole("menuitem", { name: /Set as board home/ }))
+    expect(updatePreferences).toHaveBeenCalledWith({ boardDefaultViewId: "boardview_1" })
+  })
+
+  it("renaming a saved view fires the update mutation with the new name", async () => {
+    const user = userEvent.setup()
+    const { update } = stub({ views: [view()], boardDefaultLens: "all" })
+    mountAt(`/w/${WS}/board`)
+
+    await user.click(screen.getByRole("button", { name: "Actions for Design work" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Rename" }))
+    const input = await screen.findByPlaceholderText("View name")
+    await user.clear(input)
+    await user.type(input, "Renamed")
+    await user.click(screen.getByRole("button", { name: "Rename" }))
+
+    expect(update.mutate).toHaveBeenCalledWith({ id: "boardview_1", input: { name: "Renamed" } })
+  })
+
+  it("deleting a saved view fires the delete mutation", async () => {
+    const user = userEvent.setup()
+    const { remove } = stub({ views: [view()], boardDefaultLens: "all" })
+    mountAt(`/w/${WS}/board`)
+
+    await user.click(screen.getByRole("button", { name: "Actions for Design work" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }))
+
+    expect(remove.mutate).toHaveBeenCalledWith("boardview_1")
   })
 })
