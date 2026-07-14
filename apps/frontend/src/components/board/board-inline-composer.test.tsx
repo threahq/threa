@@ -272,6 +272,11 @@ describe("InlineComposerForm armed reply-target strip", () => {
       "board:reply:conv_root",
       expect.anything()
     )
+    // Flush must precede the relocate: it clears the armed typing debounce
+    // (bound to the branch scope) that would otherwise fire after the move and
+    // mint a fresh draft under the vacated scope.
+    expect(flushDraft).toHaveBeenCalled()
+    expect(flushDraft.mock.invocationCallOrder[0]).toBeLessThan(relocateSpy.mock.invocationCallOrder[0])
     await waitFor(() => expect(onCancel).toHaveBeenCalled())
   })
 })

@@ -461,6 +461,13 @@ export function InlineComposerForm({
   // the draft key.
   const handleCancelReplyTarget = useCallback(async () => {
     if (!replyTarget) return
+    // Flush FIRST: `saveDraft` clears the armed typing debounce, whose closure
+    // is bound to the branch scope — the composer never unmounts on cancel
+    // (only its draftKey flips), so an unfired timer would otherwise outlive
+    // the relocate and mint a fresh draft under the vacated scope. In-flight
+    // saves past the timer are dropped by the resolve-seq bump inside
+    // `relocateLoadedDraft`.
+    await composerRef.current.flushDraft()
     await relocateLoadedDraft(workspaceId, draftKey, replyTarget.moveDraftToKey, composer.content)
     syncEngine?.kickOperationQueue()
     replyTarget.onCancel()

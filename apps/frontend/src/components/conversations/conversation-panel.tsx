@@ -397,7 +397,12 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
         restoreStashedId: armed.restoreStashedId,
         restoreSignal: armed.seq,
         onSubmit: (input) => queueExistingBranchReply(armed.target.conversationId, armed.target.threadStreamId, input),
-        onCancel: () => setArmed(null),
+        onCancel: () => {
+          setArmed(null)
+          // The × unmounts with the strip — refocus the composer so "back to the
+          // standard composer" means the user just keeps typing (arm/cancel symmetry).
+          setFocusSeq((n) => n + 1)
+        },
       }
     : undefined
 

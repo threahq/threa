@@ -468,6 +468,13 @@ export async function relocateLoadedDraft(
   toScope: string,
   liveContent?: JSONContent
 ): Promise<void> {
+  // Bump the source scope's resolve sequence BEFORE the teardown (mirroring
+  // `resolveLoadedDraft`): a debounced typing save already in flight captured
+  // the pre-bump sequence, so `isStaleObservedResolve` drops its create instead
+  // of letting it resurrect the scope we're vacating. The caller must separately
+  // clear any ARMED-but-unfired debounce (its save would capture the post-bump
+  // sequence) — flushing the composer before calling this does that.
+  recordScopeResolved(fromScope)
   const loadedId = (await db.composerLoaded.get(fromScope))?.draftId ?? null
   const row = loadedId ? await db.drafts.get(loadedId) : null
   const contentJson = liveContent && !isEmptyContent(liveContent) ? liveContent : (row?.contentJson ?? EMPTY_DOC)
