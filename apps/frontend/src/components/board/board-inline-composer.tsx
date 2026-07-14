@@ -330,8 +330,11 @@ export function InlineComposerForm({
     }
   }, [holdsFloatingSlot, anchorEl])
 
-  const handleFloatingClose = useCallback(() => {
-    void composerRef.current.flushDraft()
+  const handleFloatingClose = useCallback(async () => {
+    // Await the flush: the resting bar's draft preview reads the persisted row
+    // (Dexie liveQuery), so closing before the write commits would flash the
+    // bare placeholder over content typed within the last debounce window.
+    await composerRef.current.flushDraft()
     // No refocus: returning focus to the resting button after a touch dismissal
     // would draw a focus ring the user never keyboard-navigated to.
     onCloseRef.current()
@@ -528,8 +531,11 @@ export function InlineComposerForm({
       // expand. In-place forms (desktop, and the docked panel footer on every
       // device) keep it.
       onExpandClick={floating ? undefined : () => setExpanded(true)}
-      onEscapeBlur={() => {
-        void composer.flushDraft()
+      onEscapeBlur={async () => {
+        // Awaited for the same reason as handleFloatingClose: a fast
+        // type-then-Escape must not flash the bare placeholder while the
+        // just-typed draft's row is still being written.
+        await composer.flushDraft()
         onClose({ refocus: true })
       }}
     />
