@@ -104,6 +104,43 @@ describe("AppStatusPage", () => {
     expect(screen.getByText("def5678")).toBeInTheDocument()
   })
 
+  it("downloads again instead of reloading before an update is parked", async () => {
+    installServiceWorker({
+      waiting: null,
+      installing: null,
+      update: vi.fn().mockResolvedValue(undefined),
+    })
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: "def5678" }),
+    } as Response)
+
+    renderPage()
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
+
+    expect(await screen.findByText("Update available")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Download update" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Reload and update" })).not.toBeInTheDocument()
+  })
+
+  it("does not call a first service-worker activation an app update", async () => {
+    installServiceWorker({
+      waiting: null,
+      installing: { state: "activated" } as ServiceWorker,
+      update: vi.fn().mockResolvedValue(undefined),
+    })
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: "abc1234" }),
+    } as Response)
+
+    renderPage()
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
+
+    expect(await screen.findByText("Up to date")).toBeInTheDocument()
+    expect(screen.queryByText("Update ready")).not.toBeInTheDocument()
+  })
+
   it("finishes a manual check when registration.update stalls", async () => {
     vi.useFakeTimers()
     installServiceWorker({

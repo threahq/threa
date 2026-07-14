@@ -417,9 +417,11 @@ export async function checkForAppUpdate(): Promise<ManualUpdateCheckResult> {
   const latestPromise = fetchLatestVersion()
   await requestRegistrationUpdate(registration)
 
-  const waiting = registration.waiting ?? (await waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS))
+  if (!registration.waiting) {
+    await waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS)
+  }
   const latest = await settleWithin(latestPromise, CLICK_UPDATE_TIMEOUT_MS, null)
-  if (waiting) return { status: "ready", latestVersion: latest }
+  if (registration.waiting) return { status: "ready", latestVersion: latest }
   if (shouldRecoverForVersion(currentAppVersion(), latest)) {
     return { status: "available", latestVersion: latest }
   }

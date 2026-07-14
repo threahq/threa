@@ -76,10 +76,10 @@ function statusCopy(state: ManualUpdateState, latestVersion: string | null): Sta
       title: "Update available",
       description: latestVersion ? (
         <>
-          Version <span className="font-mono text-foreground">{latestVersion}</span> is available.
+          Version <span className="font-mono text-foreground">{latestVersion}</span> is available to download.
         </>
       ) : (
-        "A newer build is available."
+        "A newer build is available to download."
       ),
       icon: Download,
       iconClassName: "text-primary",
@@ -186,7 +186,7 @@ export function AppStatusPage() {
                     </p>
                   )}
                 </div>
-                {update.state === "ready" || update.state === "available" ? (
+                {update.state === "ready" ? (
                   <Button onClick={() => void update.reload()}>
                     <RefreshCw />
                     Reload and update
@@ -194,7 +194,7 @@ export function AppStatusPage() {
                 ) : (
                   <Button variant="outline" disabled={update.state === "checking"} onClick={() => void update.check()}>
                     {update.state === "checking" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                    Check for updates
+                    {update.state === "available" ? "Download update" : "Check for updates"}
                   </Button>
                 )}
               </div>
