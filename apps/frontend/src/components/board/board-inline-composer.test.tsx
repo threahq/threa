@@ -6,12 +6,13 @@ import { InlineComposerForm } from "./board-inline-composer"
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
 import { spyOnExport } from "@/test"
 import * as composerModule from "@/components/composer"
-import * as useMobileModule from "@/hooks/use-mobile"
+import * as usePointerModule from "@/hooks/use-pointer"
 import * as hooksModule from "@/hooks"
 import * as contextsModule from "@/contexts"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamStoreModule from "@/stores/stream-store"
+import * as draftMessageModule from "@/hooks/use-draft-message"
 import type { MessageComposerProps } from "@/components/composer"
 import type { JSONContent } from "@threa/types"
 
@@ -93,6 +94,10 @@ beforeEach(() => {
   spyOnExport(hooksModule, "useScheduleMessage").mockReturnValue((() => ({
     mutateAsync: scheduleMutateAsync,
   })) as never)
+  // Default to desktop/fine so `floating` is off; tests that exercise the mobile
+  // portal opt in per-test. The gate reads the shared `useIsMobileOrCoarse`
+  // predicate (the panel full-screen breadth), so drive that boundary directly.
+  vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({ preferences: undefined } as never)
   vi.spyOn(mentionablesModule, "useMentionStreamContext").mockReturnValue(undefined as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
@@ -131,7 +136,7 @@ function form(overrides: Partial<Parameters<typeof InlineComposerForm>[0]> = {})
 
 describe("InlineComposerForm floating anchor (mobile)", () => {
   it("renders in place on desktop even when an anchor exists", () => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
     render(<Anchored>{form()}</Anchored>)
 
     const anchor = screen.getByTestId("anchor")
@@ -142,7 +147,7 @@ describe("InlineComposerForm floating anchor (mobile)", () => {
   })
 
   it("portals into the anchor's floating shell on mobile and publishes its height", async () => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
     const { unmount } = render(<Anchored>{form({ contextChip: "Replying in GPU budget" })}</Anchored>)
 
     const anchor = screen.getByTestId("anchor")
@@ -158,7 +163,7 @@ describe("InlineComposerForm floating anchor (mobile)", () => {
   })
 
   it("dismisses via the close button, flushing the draft", async () => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
     const onClose = vi.fn()
     render(<Anchored>{form({ onClose })}</Anchored>)
 
@@ -168,7 +173,7 @@ describe("InlineComposerForm floating anchor (mobile)", () => {
   })
 
   it("collapses the previous composer when a second one claims the slot", async () => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
     const closeFirst = vi.fn()
     const closeSecond = vi.fn()
     const { rerender } = render(<Anchored>{form({ onClose: closeFirst, placeholder: "First" })}</Anchored>)
@@ -196,9 +201,84 @@ describe("InlineComposerForm floating anchor (mobile)", () => {
   })
 })
 
+describe("InlineComposerForm mobile-breadth + docked gate", () => {
+  it("a coarse-pointer device ≥640px floats into the anchor — no mid-flow editor", async () => {
+    // The mid-screen bug: the panel full-screens on the `useIsMobileOrCoarse`
+    // breadth (coarse pointer OR narrow viewport), but the form used to float on
+    // bare `useIsMobile`, so a coarse tablet rendered the editor mid-flow. The
+    // gate now shares the panel's predicate; `use-pointer.test` guards that a
+    // wide coarse device makes that predicate true.
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
+    render(<Anchored>{form()}</Anchored>)
+
+    const anchor = screen.getByTestId("anchor")
+    await waitFor(() => expect(anchor.contains(screen.getByTestId("editor-stub"))).toBe(true))
+    expect(screen.getByTestId("in-place").querySelector("[data-floating-composer-marker]")).not.toBeNull()
+  })
+
+  it("docked: renders in place on every device — never floats, even on a coarse phone", () => {
+    // The panel footer IS the dock; suppressing the floating path keeps the
+    // composer bar there instead of portaling it to a separate pill.
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
+    render(<Anchored>{form({ docked: true })}</Anchored>)
+
+    const anchor = screen.getByTestId("anchor")
+    const editor = screen.getByTestId("editor-stub")
+    expect(anchor.contains(editor)).toBe(false)
+    expect(screen.getByTestId("in-place").contains(editor)).toBe(true)
+    expect(screen.queryByRole("button", { name: "Close composer" })).toBeNull()
+  })
+})
+
+describe("InlineComposerForm armed reply-target strip", () => {
+  beforeEach(() => {
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
+  })
+
+  it("shows the dismissible 'Replying in <title>' strip when armed", () => {
+    render(
+      <Anchored>
+        {form({
+          docked: true,
+          replyTarget: { title: "GPU budget", moveDraftToKey: "board:reply:c", onCancel: vi.fn() },
+        })}
+      </Anchored>
+    )
+    const strip = screen.getByTestId("conversation-reply-strip")
+    expect(strip.textContent).toContain("Replying in")
+    expect(strip.textContent).toContain("GPU budget")
+    expect(screen.getByRole("button", { name: "Cancel reply in conversation" })).toBeTruthy()
+  })
+
+  it("× relocates the draft (live content included) to the root scope, then disarms", async () => {
+    const relocateSpy = vi.fn().mockResolvedValue(undefined)
+    spyOnExport(draftMessageModule, "relocateLoadedDraft").mockReturnValue(relocateSpy as never)
+    const onCancel = vi.fn()
+    render(
+      <Anchored>
+        {form({
+          docked: true,
+          draftKey: "board:branch-reply:conv_b",
+          replyTarget: { title: "Sub-topic", moveDraftToKey: "board:reply:conv_root", onCancel },
+        })}
+      </Anchored>
+    )
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel reply in conversation" }))
+
+    expect(relocateSpy).toHaveBeenCalledWith(
+      "ws_1",
+      "board:branch-reply:conv_b",
+      "board:reply:conv_root",
+      expect.anything()
+    )
+    await waitFor(() => expect(onCancel).toHaveBeenCalled())
+  })
+})
+
 describe("InlineComposerForm fullscreen expand", () => {
   it("desktop: an expand button opens the same draft in the fullscreen editor", async () => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
     render(<Anchored>{form()}</Anchored>)
 
     expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-expanded", "false")
@@ -213,7 +293,7 @@ describe("InlineComposerForm fullscreen expand", () => {
   })
 
   it("mobile: no expand affordance — the floating pill has its own height-publish lifecycle", () => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
     render(<Anchored>{form()}</Anchored>)
     expect(screen.queryByRole("button", { name: "Expand" })).toBeNull()
   })
@@ -221,7 +301,7 @@ describe("InlineComposerForm fullscreen expand", () => {
 
 describe("InlineComposerForm restore-on-mount", () => {
   beforeEach(() => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
   })
 
   it("checks out the advertised stash row once the composer loads", async () => {
@@ -239,7 +319,7 @@ describe("InlineComposerForm restore-on-mount", () => {
 
 describe("InlineComposerForm stash + schedule", () => {
   beforeEach(() => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
   })
 
   /** The MessageComposer props the form last rendered with. */

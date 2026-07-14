@@ -116,6 +116,13 @@ function SubtopicDraftIndicator({
  * branch's thread; a new sub-topic queues `streamCreation` + `{ intent:
  * "newSubtopic" }`. Nothing is created until the user sends.
  */
+/** A materialized sub-conversation a docked composer can be armed to reply into. */
+export interface ArmBranchTarget {
+  conversationId: string
+  threadStreamId: string
+  title: string
+}
+
 export function useInlineBranchComposer(params: {
   workspaceId: string
   conversationId: string
@@ -123,12 +130,26 @@ export function useInlineBranchComposer(params: {
   memberMessageIds: string[]
   index: StreamStructuralIndex
   graph: ConversationGraph
+  /**
+   * Panel arming: when set, a non-pending branch's Reply arms the surface's
+   * docked footer composer at that target instead of mounting a mid-flow inline
+   * form (Kris's composer ruling — the panel is a dedicated conversation view,
+   * so replies dock at the bottom). Board cards omit it and keep the inline
+   * model. Pending branches always stay inline (no real conversation id to arm).
+   */
+  onArmBranchReply?: (target: ArmBranchTarget, restoreStashedId: string | null) => void
 }): {
   branchStreamIds: string[]
   extraDraftPanelIds: string[]
   openComposer: OpenInlineComposer | null
   openNewSubtopic: (streamId: string, messageId: string) => void
   openBranchReply: (branch: BranchConversationView) => void
+  /** Send a reply into an already-materialized branch (the armed docked path). */
+  queueExistingBranchReply: (
+    conversationId: string,
+    threadStreamId: string,
+    input: InlineComposerSubmit
+  ) => Promise<void>
   renderAfterMessage: (messageId: string) => ReactNode
   renderBranchTail: (branch: BranchConversationView) => ReactNode
   /** Synthetic branch groups for in-flight sub-topic sends, resolved against the
@@ -136,7 +157,7 @@ export function useInlineBranchComposer(params: {
    *  before the `conversation:created` echo hands rendering to the graph. */
   derivePendingBranches: (messagesById: Map<string, RenderableMessage>) => BranchConversationView[]
 } {
-  const { workspaceId, conversationId, memberMessageIds, index, graph } = params
+  const { workspaceId, conversationId, memberMessageIds, index, graph, onArmBranchReply } = params
   const { queueDraftMessage } = useQueueDraftMessage(workspaceId)
   const [openComposer, setOpenComposer] = useState<OpenInlineComposer | null>(null)
   // Draft panels of "new sub-topic" sends still in flight — kept subscribed until
@@ -208,16 +229,30 @@ export function useInlineBranchComposer(params: {
     const parsed = parseBoardDraftKey(stashTarget.scope)
     if (!parsed || parsed.kind === "reply") return
     if (parsed.kind === "branch-reply") {
-      const threadStreamId = graph.conversationById.get(parsed.conversationId)?.conversation.streamId
+      const branchPost = graph.conversationById.get(parsed.conversationId)
+      const threadStreamId = branchPost?.conversation.streamId
       if (!threadStreamId || !branchStreamIds.includes(threadStreamId)) return
       consumedStashRef.current = stashTarget.draftId
+      // Panel: arm the docked footer at the branch (with restore); board card
+      // opens the inline branch composer.
+      if (onArmBranchReply) {
+        onArmBranchReply(
+          {
+            conversationId: parsed.conversationId,
+            threadStreamId,
+            title: branchPost?.conversation.topicSummary ?? "sub-topic",
+          },
+          stashTarget.draftId
+        )
+        return
+      }
       setOpenComposer({ kind: "branch-reply", conversationId: parsed.conversationId, threadStreamId })
       return
     }
     if (graph.conversationIdByMemberMessageId.get(parsed.messageId) !== conversationId) return
     consumedStashRef.current = stashTarget.draftId
     setOpenComposer({ kind: "new-subtopic", streamId: parsed.streamId, messageId: parsed.messageId })
-  }, [stashTarget, graph, branchStreamIds, conversationId])
+  }, [stashTarget, graph, branchStreamIds, conversationId, onArmBranchReply])
 
   // A pending sub-topic is handed to the graph path only once BOTH its thread
   // stream exists (promotion) AND the child conversation is cached — dropping it
@@ -313,6 +348,17 @@ export function useInlineBranchComposer(params: {
     [pendingSubtopics]
   )
 
+  const queueExistingBranchReply = useCallback(
+    async (branchConversationId: string, threadStreamId: string, input: InlineComposerSubmit) => {
+      await queueDraftMessage(input, {
+        workspaceId,
+        streamId: threadStreamId,
+        conversation: { intent: "existing", conversationId: branchConversationId },
+      })
+    },
+    [queueDraftMessage, workspaceId]
+  )
+
   const submitBranchReply = useCallback(
     async (branch: BranchConversationView, input: InlineComposerSubmit) => {
       // A pending branch's child conversation id isn't known yet (its echo
@@ -324,13 +370,9 @@ export function useInlineBranchComposer(params: {
         await queueSubtopicSend(pendingEntry.streamId, pendingEntry.messageId, input)
         return
       }
-      await queueDraftMessage(input, {
-        workspaceId,
-        streamId: branch.threadStreamId,
-        conversation: { intent: "existing", conversationId: branch.conversationId },
-      })
+      await queueExistingBranchReply(branch.conversationId, branch.threadStreamId, input)
     },
-    [queueDraftMessage, workspaceId, pendingEntryFor, queueSubtopicSend]
+    [queueExistingBranchReply, pendingEntryFor, queueSubtopicSend]
   )
 
   const renderAfterMessage = useCallback(
@@ -410,15 +452,25 @@ export function useInlineBranchComposer(params: {
           />
         )
       }
+      // Panel: a materialized branch arms the docked footer composer; the board
+      // card (no `onArmBranchReply`) and any pending branch open inline.
+      const canArm = onArmBranchReply && !branch.pending
       return (
         <BranchTailAffordance
           workspaceId={workspaceId}
           scope={tailDraftKey}
-          onOpen={(restoreStashedId) => openBranchReply(branch, restoreStashedId)}
+          onOpen={(restoreStashedId) =>
+            canArm
+              ? onArmBranchReply(
+                  { conversationId: branch.conversationId, threadStreamId: branch.threadStreamId, title: branch.title },
+                  restoreStashedId
+                )
+              : openBranchReply(branch, restoreStashedId)
+          }
         />
       )
     },
-    [openComposer, workspaceId, submitBranchReply, closeComposer, openBranchReply, pendingEntryFor]
+    [openComposer, workspaceId, submitBranchReply, closeComposer, openBranchReply, pendingEntryFor, onArmBranchReply]
   )
 
   return {
@@ -427,6 +479,7 @@ export function useInlineBranchComposer(params: {
     openComposer,
     openNewSubtopic,
     openBranchReply,
+    queueExistingBranchReply,
     renderAfterMessage,
     renderBranchTail,
     derivePendingBranches,

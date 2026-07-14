@@ -147,3 +147,59 @@ describe("useInlineBranchComposer ?stash= deep-link consumer", () => {
     expect(result.current.openComposer).toBeNull()
   })
 })
+
+describe("useInlineBranchComposer panel arming (onArmBranchReply)", () => {
+  let queueDraftMessage: ReturnType<typeof vi.fn>
+  let onArmBranchReply: ReturnType<typeof vi.fn>
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    await purgeScopeDrafts(workspaceId, "board:branch-reply:conv_branch")
+    queueDraftMessage = vi.fn().mockResolvedValue(undefined)
+    onArmBranchReply = vi.fn()
+    vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({
+      queueDraftMessage,
+      currentUserId: "usr_me",
+    } as unknown as ReturnType<typeof queueDraftModule.useQueueDraftMessage>)
+  })
+
+  function mountArmed(stashId: string) {
+    return renderHook(
+      () =>
+        useInlineBranchComposer({
+          workspaceId,
+          conversationId: PARENT_ID,
+          memberMessageIds: ["msg_fork", "msg_fork_b"],
+          index,
+          graph: makeGraph(),
+          onArmBranchReply: onArmBranchReply as never,
+        }),
+      { wrapper: wrapperWithStash(stashId) }
+    )
+  }
+
+  it("arms the footer for a branch-reply stash instead of mounting the inline composer", async () => {
+    const draftId = await seedDraft("board:branch-reply:conv_branch")
+    const { result } = mountArmed(draftId)
+    await waitFor(() =>
+      expect(onArmBranchReply).toHaveBeenCalledWith(
+        { conversationId: "conv_branch", threadStreamId: "stream_thread_1", title: expect.any(String) },
+        draftId
+      )
+    )
+    // Armed, not opened inline — the docked footer owns the editor.
+    expect(result.current.openComposer).toBeNull()
+  })
+
+  it("queueExistingBranchReply routes an existing-conversation directive into the branch thread", async () => {
+    const { result } = mountArmed("draft_none")
+    const input = { contentJson: { type: "doc", content: [] } }
+    await result.current.queueExistingBranchReply("conv_branch", "stream_thread_1", input)
+    expect(queueDraftMessage).toHaveBeenCalledWith(input, {
+      workspaceId,
+      streamId: "stream_thread_1",
+      conversation: { intent: "existing", conversationId: "conv_branch" },
+    })
+  })
+})

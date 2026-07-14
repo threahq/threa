@@ -68,14 +68,38 @@ interface BoardReplyComposerProps {
    */
   contextChip?: string
   /**
-   * Thread-composer semantics for a dedicated conversation view (the panel):
-   * on desktop the composer is permanently mounted — only the open state, like
-   * a thread's — while mobile keeps its collapsed⇄focused pair. Off (the
-   * default) for board cards, where composers aren't kept mounted per card,
-   * and for the inline sub-conversation affordances (Kris's composer ruling,
-   * 2026-07-13).
+   * Docked-composer semantics for a dedicated conversation view (the panel):
+   * the composer is permanently mounted on BOTH platforms — desktop stays
+   * expanded, mobile shows `MessageComposer`'s own collapsed⇄focused bar
+   * (timeline parity). No resting "Write a reply…" button, no draft-pill
+   * button (Kris's composer ruling, 2026-07-13). Off (the default) for board
+   * cards, which keep the resting-button model, and the inline
+   * sub-conversation affordances.
    */
-  desktopAlwaysOpen?: boolean
+  alwaysDocked?: boolean
+  /**
+   * Arms the docked composer to a sub-conversation (branch) instead of the
+   * conversation root: its draft scope, host stream, schedule target, and send
+   * routing switch to the branch, and a dismissible "Replying in <title>"
+   * strip shows. Panel only; the × moves the draft back to the root scope and
+   * disarms. Ignored unless `alwaysDocked`.
+   */
+  armedReply?: ArmedReply
+}
+
+/** A sub-conversation the docked panel composer is armed to reply into. */
+export interface ArmedReply {
+  /** The branch's draft persistence scope (per-target). */
+  draftKey: string
+  /** Names the branch in the dismissible strip ("Replying in <title>"). */
+  title: string
+  /** The branch thread stream (mention context, E2E gate) + conversation id. */
+  scheduleTarget: { streamId: string; conversationId: string }
+  /** Roamed draft to check out on arm, and a nonce that fires the check-out. */
+  restoreStashedId: string | null
+  restoreSignal: number
+  onSubmit: (input: InlineComposerSubmit) => Promise<void>
+  onCancel: () => void
 }
 
 /**
@@ -91,8 +115,7 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
   const [resting, setResting] = useState<RestingState>("idle")
   const buttonRef = useRef<HTMLButtonElement>(null)
-  const isMobile = useIsMobile()
-  const alwaysOpen = (props.desktopAlwaysOpen ?? false) && !isMobile
+  const alwaysDocked = props.alwaysDocked ?? false
 
   // The scope's unsent draft, advertised on the resting button and — when it
   // isn't checked out on this device (stashed / roamed) — checked out by the
@@ -140,15 +163,18 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     setOpen(false)
   }, [])
 
-  // Always-open: the form never collapses — after a send / Escape / blur the
-  // editor simply stays, like a thread composer. Open-requests become focus
-  // requests, and the drafts-explorer `?stash=` restore is consumed by the
-  // mounted form's own URL effect (no mount to hang it on).
+  // Always-docked (the conversation panel): the form never collapses to a
+  // button — after a send / Escape / blur the editor simply stays, docked at
+  // the footer, on both platforms (mobile shows MessageComposer's own collapsed
+  // bar). Open-requests become focus requests, and the drafts-explorer `?stash=`
+  // restore is consumed by the mounted form's own URL effect (no mount to hang
+  // it on).
   const noopClose = useCallback(() => {}, [])
-  if (alwaysOpen) {
+  if (alwaysDocked) {
     return (
       <BoardReplyComposerForm
         {...props}
+        docked
         onClose={noopClose}
         pendingQuote={pendingQuote}
         onQuoteConsumed={onQuoteConsumed}
@@ -205,6 +231,8 @@ function BoardReplyComposerForm({
   restoreStashedId,
   autoFocus,
   focusSignal,
+  docked,
+  armedReply,
 }: BoardReplyComposerProps & {
   onClose: (opts?: { refocus?: boolean; hadContent?: boolean }) => void
   pendingQuote: QuoteReplyData | null
@@ -212,12 +240,14 @@ function BoardReplyComposerForm({
   restoreStashedId: string | null
   autoFocus?: boolean
   focusSignal?: number
+  docked?: boolean
 }) {
   const reply = useReplyToBoardPost(workspaceId)
   const isMobile = useIsMobile()
-  const streamId = post.conversation.streamId
+  const rootStreamId = post.conversation.streamId
+  const rootReplyKey = boardReplyDraftKey(post.conversation.id)
 
-  const onSubmit = useCallback(
+  const onRootSubmit = useCallback(
     async ({ contentJson, attachmentIds, attachments }: InlineComposerSubmit) => {
       await reply.mutateAsync({
         conversation: post.conversation,
@@ -233,22 +263,39 @@ function BoardReplyComposerForm({
     [reply, post.conversation, post.openingMessage, hostStreamType, lastActiveStreamId]
   )
 
+  // When armed the composer targets the branch: its own draft scope + host
+  // stream + schedule target + send routing, plus the dismissible strip whose
+  // × moves the draft back to the root reply scope. Unarmed it is the root
+  // conversation composer.
+  const streamId = armedReply ? armedReply.scheduleTarget.streamId : rootStreamId
+
   return (
     <InlineComposerForm
       workspaceId={workspaceId}
       streamId={streamId}
       memoAnchorStreamId={streamId}
-      draftKey={boardReplyDraftKey(post.conversation.id)}
+      draftKey={armedReply ? armedReply.draftKey : rootReplyKey}
       placeholder="Write a reply…"
       contextChip={isMobile && contextChip ? `Replying in ${contextChip}` : undefined}
+      docked={docked}
+      replyTarget={
+        armedReply
+          ? { title: armedReply.title, moveDraftToKey: rootReplyKey, onCancel: armedReply.onCancel }
+          : undefined
+      }
+      restoreOnSignal={
+        armedReply ? { stashId: armedReply.restoreStashedId, signal: armedReply.restoreSignal } : undefined
+      }
       pendingQuote={pendingQuote}
       onQuoteConsumed={onQuoteConsumed}
       rejectE2e="Encrypted notes can't be replied to from the board yet — open the note to reply there."
-      scheduleTarget={{ streamId, conversationId: post.conversation.id }}
+      scheduleTarget={
+        armedReply ? armedReply.scheduleTarget : { streamId: rootStreamId, conversationId: post.conversation.id }
+      }
       restoreStashedIdOnMount={restoreStashedId}
       autoFocus={autoFocus}
       focusSignal={focusSignal}
-      onSubmit={onSubmit}
+      onSubmit={armedReply ? armedReply.onSubmit : onRootSubmit}
       onClose={onClose}
     />
   )

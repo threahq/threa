@@ -347,10 +347,26 @@ function opWriteLineage(op: PendingOperation): string[] {
  * updates in place — without this, a committed-but-unacked push followed by
  * more typing splits the draft on a single device.
  */
-export async function enqueueDraftUpsert(workspaceId: string, draftId: string): Promise<void> {
+export async function enqueueDraftUpsert(
+  workspaceId: string,
+  draftId: string,
+  options?: {
+    /**
+     * Always supersede queued dupes with a fresh op (lineage carried), even ones
+     * that report "never attempted". A row mutation that must reach the server —
+     * a scope move — cannot trust `startedAt === undefined`: the queue worker
+     * claims an op and snapshots the row in a separate transaction, so the claim
+     * may not be visible yet while a pre-mutation push is already in flight.
+     * Coalescing onto that doomed op loses the mutation forever (its completion
+     * deletes the only pending marker). The lineage makes the extra push
+     * idempotent server-side, so forcing is safe when the dupe truly never ran.
+     */
+    forceNewOp?: boolean
+  }
+): Promise<void> {
   await db.transaction("rw", db.pendingOperations, async () => {
     const dupes = await pendingDraftOps("upsert_draft", draftId)
-    if (dupes.length > 0 && dupes.every((op) => op.startedAt === undefined)) {
+    if (!options?.forceNewOp && dupes.length > 0 && dupes.every((op) => op.startedAt === undefined)) {
       // Never attempted — the op will read the latest content at drain, and its
       // writeId must stay stable. Nothing to do.
       return

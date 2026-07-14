@@ -181,15 +181,15 @@ describe("ConversationPanel", () => {
     expect(getBoardPost).not.toHaveBeenCalled()
   })
 
-  it("offers a scoped reply affordance with thread-composer semantics (desktop always-open)", async () => {
+  it("docks the scoped reply composer (alwaysDocked — no resting button)", async () => {
     let captured: boolean | undefined
     vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
-      captured = props.desktopAlwaysOpen
-      return <button type="button">Write a reply…</button>
+      captured = props.alwaysDocked
+      return <div data-testid="docked-composer" />
     })
     mountPanel({ cached: asCached(makePost()) })
     await screen.findByText("Opening message body.")
-    expect(screen.getByRole("button", { name: "Write a reply…" })).toBeTruthy()
+    expect(screen.getByTestId("docked-composer")).toBeTruthy()
     expect(captured).toBe(true)
   })
 

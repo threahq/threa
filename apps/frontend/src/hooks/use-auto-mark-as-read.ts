@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react"
 import { useUnreadCounts } from "./use-unread-counts"
 import { useActivityCounts } from "./use-activity-counts"
 import { usePageActivity } from "./use-page-activity"
-import { useIsMobile, useIsCoarsePointer } from "./use-mobile"
+import { useIsMobile } from "./use-mobile"
+import { useCoarsePointer } from "./use-pointer"
 
 interface UseAutoMarkAsReadOptions {
   enabled?: boolean
@@ -35,7 +36,7 @@ interface UseAutoMarkAsReadOptions {
 export function useAutoReadAttention(): boolean {
   const { isVisible, isFocused } = usePageActivity()
   const isMobile = useIsMobile()
-  const isCoarsePointer = useIsCoarsePointer()
+  const isCoarsePointer = useCoarsePointer()
   return isVisible && (isFocused || (isMobile && isCoarsePointer))
 }
 

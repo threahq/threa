@@ -11,7 +11,7 @@ import {
   useDraftsFromStore,
 } from "@/stores/draft-store"
 import { enqueueDraftUpsert, migrateLocalDraftScope, syncDraftRemoval, syncDraftResolution } from "@/sync/draft-sync"
-import { clearStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
+import { clearStagedDraft, readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 import { getScopeResolveSeq, markDraftResolved, recordScopeResolved } from "@/sync/draft-resolution-guard"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { type JSONContent, draftStreamScope, draftThreadScope } from "@threa/types"
@@ -428,9 +428,56 @@ export async function rescopeScopeDrafts(workspaceId: string, fromScope: string,
       const live = await db.drafts.get(row.id)
       if (!live || live.scope !== fromScope) return
       await migrateLocalDraftScope(workspaceId, fromScope, { ...live, scope: toScope })
-      await enqueueDraftUpsert(workspaceId, live.id)
+      // forceNewOp: a push snapshotted before this move may be in flight with its
+      // claim not yet visible — coalescing onto it would lose the scope move when
+      // it completes (live repro: cancel-armed-reply left the server row branch-
+      // scoped forever). The fresh op re-reads the moved row at drain.
+      await enqueueDraftUpsert(workspaceId, live.id, { forceNewOp: true })
     })
   }
+  // The crash-safe staging buffer (localStorage) must follow the move: a staged
+  // entry left under the old scope no longer matches any IDB row there, so the
+  // startup reconcile would "recover" it — resurrecting the draft under the
+  // scope the user just moved it out of.
+  const staged = readStagedDraft(workspaceId, fromScope)
+  if (staged) {
+    stageDraftContent(workspaceId, toScope, staged.contentJson)
+    clearStagedDraft(workspaceId, fromScope)
+  }
+}
+
+/**
+ * Move the loaded draft's content out of `fromScope` into a FRESH loaded draft
+ * under `toScope`, deleting the source draft. The race-proof alternative to
+ * `rescopeScopeDrafts` for a scope a LIVE editor is leaving: an in-flight push
+ * snapshotted before a row-move can land after it and reinstate the old scope
+ * server-side (last write wins) — no enqueue-layer ordering can prevent that.
+ * Deleting the source instead rides the delete machinery's tombstone
+ * (`supersededWriteIds`), which is designed to suppress exactly those late
+ * pushes; the target row is brand-new, so it has no version history to fight.
+ *
+ * `liveContent` is the editor's current document (keystrokes may not have
+ * flushed); it wins over the persisted body. An existing loaded draft under
+ * `toScope` is stashed first, never clobbered (cardinal no-loss rule). Stash
+ * siblings under `fromScope` stay put — they were deliberately stashed against
+ * that target. No-op (source still cleared) when there is nothing to move.
+ */
+export async function relocateLoadedDraft(
+  workspaceId: string,
+  fromScope: string,
+  toScope: string,
+  liveContent?: JSONContent
+): Promise<void> {
+  const loadedId = (await db.composerLoaded.get(fromScope))?.draftId ?? null
+  const row = loadedId ? await db.drafts.get(loadedId) : null
+  const contentJson = liveContent && !isEmptyContent(liveContent) ? liveContent : (row?.contentJson ?? EMPTY_DOC)
+  const attachments = row?.attachments ?? []
+
+  if (!isEmptyContent(contentJson) || attachments.length > 0) {
+    await stashLoadedDraft(workspaceId, toScope)
+    await upsertLoadedDraft(workspaceId, toScope, { contentJson, attachments })
+  }
+  await clearLoadedDraft(workspaceId, fromScope)
 }
 
 /**

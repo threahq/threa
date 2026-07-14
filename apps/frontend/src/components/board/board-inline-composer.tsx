@@ -6,15 +6,18 @@ import {
   MessageComposer,
   FloatingComposerShell,
   OverlayComposerShell,
+  ConversationReplyStrip,
   ScheduledMessagesPicker,
   StashedDraftsPicker,
   useFloatingComposerAnchor,
   FLOATING_COMPOSER_HEIGHT_VAR,
   type ComposerControlHandle,
 } from "@/components/composer"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
 import { useDraftComposer, useScheduleMessage, useStashComposer } from "@/hooks"
+import { relocateLoadedDraft } from "@/hooks/use-draft-message"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { usePreferences } from "@/contexts"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -54,6 +57,27 @@ interface InlineComposerFormProps {
    *  budget") — the inline forms all look alike, so the target must be legible
    *  at the composer itself, not inferred from indentation. */
   contextChip?: string
+  /**
+   * Docked host (the conversation panel footer): the form is permanently
+   * mounted and never portals to the mobile floating pill — the footer IS the
+   * dock. On mobile the collapsed presentation is `MessageComposer`'s own
+   * collapsed bar (timeline parity), so it starts unfocused rather than open.
+   */
+  docked?: boolean
+  /**
+   * Dismissible reply-target strip (timeline `conversationReplyStrip` parity):
+   * arms this composer to a sub-conversation. The × flushes the live buffer,
+   * moves the draft rows from this scope to `moveDraftToKey` (the root reply
+   * scope), then calls `onCancel` to disarm — so the typed content survives
+   * visibly under the root composer. Takes the place of `contextChip`.
+   */
+  replyTarget?: { title: string; moveDraftToKey: string; onCancel: () => void }
+  /**
+   * Restore a roamed/stashed draft when `signal` increments — arming a docked
+   * composer to a branch whose advertised draft isn't checked out here has no
+   * remount to hang `restoreStashedIdOnMount` on, so the restore is a nonce.
+   */
+  restoreOnSignal?: { stashId: string | null; signal: number }
   autoFocus?: boolean
   pendingQuote?: QuoteReplyData | null
   onQuoteConsumed?: () => void
@@ -107,6 +131,9 @@ export function InlineComposerForm({
   draftKey,
   placeholder,
   contextChip,
+  docked,
+  replyTarget,
+  restoreOnSignal,
   autoFocus = true,
   pendingQuote,
   onQuoteConsumed,
@@ -130,6 +157,7 @@ export function InlineComposerForm({
   const hostIsE2e = hostStream?.e2eEnabled === true || idbHostStream?.e2eEnabled === true
 
   const composer = useDraftComposer({ workspaceId, draftKey, scopeId: draftKey })
+  const syncEngine = useOptionalSyncEngine()
   // "Save for later" pile scoped to this reply target — the same pointer-move
   // stash the timeline composer has, so a half-written inline reply survives
   // switching cards without hijacking the ambient draft slot.
@@ -154,6 +182,23 @@ export function InlineComposerForm({
     lastFocusSignalRef.current = focusSignal
     composerControlRef.current?.focus()
   }, [focusSignal])
+
+  // Restore-on-signal: an always-mounted host arming to a new target whose
+  // advertised draft is roamed (not checked out here). No remount fires
+  // `restoreStashedIdOnMount`, so the check-out rides a nonce instead. The ref
+  // advances only once the restore actually fires (a signal that lands before
+  // the composer loads is retried on the next render, not swallowed).
+  const lastRestoreSignalRef = useRef(restoreOnSignal?.signal)
+  useEffect(() => {
+    if (!restoreOnSignal || restoreOnSignal.signal === lastRestoreSignalRef.current) return
+    if (!restoreOnSignal.stashId) {
+      lastRestoreSignalRef.current = restoreOnSignal.signal
+      return
+    }
+    if (!composer.isLoaded) return
+    lastRestoreSignalRef.current = restoreOnSignal.signal
+    void stash.handleRestoreStashed(restoreOnSignal.stashId)
+  }, [restoreOnSignal, composer.isLoaded, stash])
 
   const composerControlRef = useRef<ComposerControlHandle | null>(null)
   const composerRef = useRef(composer)
@@ -187,10 +232,16 @@ export function InlineComposerForm({
   // Mobile: portal the open form into the surface's floating-composer anchor as
   // the stream's floating pill (shared FloatingComposerShell), pinned to the
   // visible bottom above the keyboard, instead of expanding in place mid-scroll.
-  // Desktop (or a surface without an anchor) keeps the in-place form.
-  const isMobile = useIsMobile()
+  // Desktop (or a surface without an anchor) keeps the in-place form. "Mobile"
+  // here matches the panel/page full-screen breadth (`useSidebar().isMobile`,
+  // the same `useIsMobileOrCoarse` predicate — viewport OR coarse pointer), not
+  // bare viewport width: a coarse-pointer tablet ≥640px full-screens the panel,
+  // so its inline form must float too rather than render mid-flow under the
+  // message. A docked host never floats: the footer is the dock, so it keeps the
+  // in-place form on every device.
+  const isMobileOrCoarse = useIsMobileOrCoarse()
   const anchor = useFloatingComposerAnchor()
-  const floating = isMobile && anchor !== null
+  const floating = isMobileOrCoarse && anchor !== null && !docked
   const formId = useId()
   const anchorEl = anchor?.el
   const claim = anchor?.claim
@@ -401,6 +452,27 @@ export function InlineComposerForm({
     </div>
   ) : null
 
+  // Cancel the armed sub-conversation target: relocate the draft (live editor
+  // content wins) into the root reply scope, then disarm. `relocateLoadedDraft`
+  // deletes the source rather than re-scoping the row — an in-flight push
+  // snapshotted under the branch scope would otherwise land last and reinstate
+  // it server-side; the delete's tombstone suppresses exactly that. The content
+  // re-reads under root via the scope-change rehydrate once `onCancel` flips
+  // the draft key.
+  const handleCancelReplyTarget = useCallback(async () => {
+    if (!replyTarget) return
+    await relocateLoadedDraft(workspaceId, draftKey, replyTarget.moveDraftToKey, composer.content)
+    syncEngine?.kickOperationQueue()
+    replyTarget.onCancel()
+  }, [replyTarget, workspaceId, draftKey, syncEngine, composer.content])
+
+  // Armed reply-target strip — the send's only signal that it files into a
+  // sub-conversation, matching the timeline's dismissible strip. Replaces the
+  // context chip when present (the panel arms; board cards use the chip).
+  const replyTargetNode = replyTarget ? (
+    <ConversationReplyStrip title={replyTarget.title} onCancel={() => void handleCancelReplyTarget()} />
+  ) : null
+
   // Shared by the inline editor and the fullscreen one below — same draft,
   // same send path, same everything except layout.
   const sharedComposerProps = {
@@ -438,16 +510,17 @@ export function InlineComposerForm({
       {...sharedComposerProps}
       composerRef={composerControlRef}
       autoFocus={autoFocus}
-      initialMobileChromeOpen
-      // Desktop only — gated on `isMobile`, not `floating` (mobile without a
-      // floating anchor is still mobile: `floating` is `isMobile && anchor !==
-      // null`, so it's false there and would wrongly leave expand enabled). The
-      // floating form's height-publish effect keys off its own mount lifecycle
-      // (`holdsFloatingSlot`), which an `expanded` escape hatch here would
-      // sidestep, leaving a stale reserved-space CSS var behind. Mobile already
-      // gets a roomy floating pill, so the expand affordance isn't worth that
-      // edge case there.
-      onExpandClick={isMobile ? undefined : () => setExpanded(true)}
+      // Docked hosts start collapsed on mobile (MessageComposer's own
+      // collapsed⇄focused bar — timeline parity); the mount-and-focus floating
+      // pill starts open.
+      initialMobileChromeOpen={!docked}
+      // Gated on `floating`, not bare `isMobile`: the floating form's
+      // height-publish effect keys off its mount lifecycle (`holdsFloatingSlot`),
+      // which an `expanded` escape hatch would sidestep, leaving a stale
+      // reserved-space CSS var behind — so only the floating pill suppresses
+      // expand. In-place forms (desktop, and the docked panel footer on every
+      // device) keep it.
+      onExpandClick={floating ? undefined : () => setExpanded(true)}
       onEscapeBlur={() => {
         const hadContent = !isEmptyRef.current
         void composer.flushDraft()
@@ -515,8 +588,8 @@ export function InlineComposerForm({
   }
 
   return (
-    <div ref={containerRef} className="mt-3" onBlur={handleBlur}>
-      {contextChipNode && <div className="mb-1">{contextChipNode}</div>}
+    <div ref={containerRef} className={docked ? undefined : "mt-3"} onBlur={handleBlur}>
+      {replyTargetNode ?? (contextChipNode && <div className="mb-1">{contextChipNode}</div>)}
       {fullscreenEditor}
       {!expanded && editor}
     </div>

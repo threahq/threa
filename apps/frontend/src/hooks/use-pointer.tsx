@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react"
+import { useIsMobile } from "./use-mobile"
 
 // Whether the PRIMARY pointer is coarse — i.e. this is a touch-primary device
 // (phone / tablet / convertible in tablet mode), NOT a mouse-primary one.
@@ -29,4 +30,16 @@ function getServerSnapshot() {
 
 export function useCoarsePointer() {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+}
+
+// The overlay-sidebar / mobile-full-screen breadth: a phone-width viewport OR a
+// touch-primary device (a tablet in landscape is wide but finger-driven, so it
+// keeps the swipeable overlay sidebar and full-screen panel). The single source
+// for this formula so `useSidebar().isMobile` and the board float gate can't
+// drift apart — the disagreement between them is what produced the mid-flow
+// editor bug.
+export function useIsMobileOrCoarse() {
+  const isNarrowViewport = useIsMobile()
+  const isTouchPrimary = useCoarsePointer()
+  return isNarrowViewport || isTouchPrimary
 }
