@@ -6,6 +6,8 @@ import { useAIBudget, useAIUsage, useUpdateAIBudget } from "@/hooks"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { BudgetControlsPanel } from "@/components/ai-usage/budget-controls-panel"
 import { BudgetHealthHero } from "@/components/ai-usage/budget-health-hero"
+import { CapabilityBreakdown } from "@/components/ai-usage/capability-breakdown"
+import { DailySpendChart } from "@/components/ai-usage/daily-spend-chart"
 import { computeMetrics, type BudgetMetrics } from "@/components/ai-usage/metrics"
 import { TopSpendersCard, UsageSplitCard } from "@/components/ai-usage/usage-breakdown"
 import { SidebarToggle } from "@/components/layout"
@@ -144,6 +146,18 @@ export function AIUsageAdminPage() {
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="space-y-6">
+              <DailySpendChart
+                byDay={usage?.byDay ?? []}
+                periodStart={usage?.period.start ?? new Date().toISOString()}
+                periodEnd={usage?.period.end ?? new Date().toISOString()}
+                isLoading={usageLoading}
+              />
+              <CapabilityBreakdown
+                byFunction={usage?.byFunction ?? []}
+                byModel={usage?.byModel ?? []}
+                totalCost={usage?.total.totalCostUsd ?? 0}
+                isLoading={usageLoading}
+              />
               <UsageSplitCard
                 systemCost={systemCost}
                 assistantCost={assistantCost}
