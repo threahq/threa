@@ -224,19 +224,32 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  * soft threads", mechanism A) — no dependence on the conversation overlay being
  * painted.
  *
- * Deliberately simple (Kris's call, superseding an earlier server-timestamped
- * design): the chip fires on every *block start* — the previous conversation-
- * bearing row differs from this one's conversation — full stop, regardless of
- * whether this conversation has appeared anywhere in the loaded timeline
- * before. With replies routinely arriving out of order via the board (reply to
- * any conversation, from anywhere), a flat timeline that only flagged genuine
- * "dormant revivals" would still read as a non-sequitur on an ordinary topic
- * jump the local render just hasn't seen yet — so don't try to distinguish
- * "revival" from "first mention I haven't rendered": both need the same
- * grounding. `previousActivityAt` is filled in when it happens to be locally
- * known (a genuine revival within the loaded window) and left `undefined`
- * otherwise — the chip renders the topic without a time tail rather than
- * guessing.
+ * Two different trigger rules for two different mechanisms (Kris's call,
+ * superseding an earlier server-timestamped design):
+ *
+ * - **Declared** (Mechanism C — a board/panel reply that names its conversation
+ *   at send time): chips on every *block start* — the previous conversation-
+ *   bearing row differs from this one — full stop, regardless of whether this
+ *   conversation has appeared anywhere in the loaded timeline before. This is
+ *   the reported case: a reply routed via the board into a long-dormant
+ *   conversation, with nothing else of it loaded, must still ground the
+ *   reader. No history requirement.
+ * - **Async-classified** (Mechanism A — the boundary extractor's `membership`
+ *   map, ordinary ambient chat with no declaration): still requires the
+ *   conversation to have been genuinely seen earlier IN THIS RENDER (`seen`).
+ *   Unconditional block-start chipping here would spam a chip under nearly
+ *   every message in a bursty channel — the extractor freely mints many
+ *   small, unrelated one- or two-message conversations for ordinary rapid
+ *   chat, and each one is a "block start" relative to the last (caught live:
+ *   an E2E fixture posting 20 sequential filler messages chipped literally
+ *   all of them, one colliding on text with its own chip). Kris's stated
+ *   motivation was board-driven conversation jumps, not ambient chat, so the
+ *   noisier rule is confined to the mechanism it was asked for.
+ *
+ * `previousActivityAt` is filled in when it happens to be locally known (the
+ * conversation's earlier member is loaded into this render) and left
+ * `undefined` otherwise — a declared revival with nothing else loaded renders
+ * the topic without a time tail rather than guessing.
  *
  * `membership` is the always-on `messageId → conversationId` map
  * (`buildMessageConversationMap`), including cross-stream secondary members. A
@@ -254,6 +267,7 @@ export function annotateConversationRevivals(
   membership: ReadonlyMap<string, string>,
   conversationsById: ReadonlyMap<string, ConversationWithStaleness>
 ): TimelineItem[] {
+  const seen = new Set<string>()
   const lastActivityByConversation = new Map<string, string>()
   let previousConversationId: string | null = null
   return items.map((item) => {
@@ -282,17 +296,22 @@ export function annotateConversationRevivals(
     const declared = payload.declaredConversationId
     const declaredRow = declared != null ? conversationsById.get(declared) : undefined
     const declaredRetired = declaredRow?.status === ConversationStatuses.RESOLVED && declaredRow.messageIds.length === 0
+    const isDeclared = !declaredRetired && declared != null
     const conversationId = (declaredRetired ? undefined : declared) ?? membership.get(messageId) ?? null
     let revival: ConversationRevival | undefined
     if (conversationId != null) {
       const blockStart = conversationId !== previousConversationId
-      if (blockStart) {
+      // Declared: no history required (see doc comment). Async-classified:
+      // still needs to have been genuinely seen before, to avoid chipping
+      // nearly every message in ordinary bursty chat.
+      if (blockStart && (isDeclared || seen.has(conversationId))) {
         revival = {
           conversationId,
           topicSummary: conversationsById.get(conversationId)?.topicSummary ?? null,
           previousActivityAt: lastActivityByConversation.get(conversationId),
         }
       }
+      seen.add(conversationId)
       lastActivityByConversation.set(conversationId, item.event.createdAt)
       // Only a real conversation breaks the run. An unassigned message
       // (extraction pending, or a genuinely unclustered aside) must NOT reset

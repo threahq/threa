@@ -536,6 +536,31 @@ describe("annotateConversationRevivals", () => {
       previousActivityAt: undefined,
     })
   })
+
+  // Regression caught live by an E2E fixture: a burst of ordinary chat with no
+  // declaration (the boundary extractor freely mints many small, unrelated
+  // one-message conversations) must NOT chip every message — only a declared
+  // (board/panel) reply gets the no-history-required treatment.
+  it("does not chip a burst of async-classified messages each in their own distinct conversation", () => {
+    const items = Array.from({ length: 5 }, (_, i) =>
+      messageItem(`evt_f${i}`, `msg_f${i}`, `2026-02-19T00:0${i}:00.000Z`)
+    )
+    const membership = new Map(items.map((_, i) => [`msg_f${i}`, `conv_f${i}`]))
+
+    const annotated = annotateConversationRevivals(items, membership, new Map())
+
+    expect(annotated.every((item) => revivalOf(item) === undefined)).toBe(true)
+  })
+
+  it("the same burst DOES chip when each message is declared instead (board-driven, no history needed)", () => {
+    const items = Array.from({ length: 5 }, (_, i) =>
+      messageItem(`evt_f${i}`, `msg_f${i}`, `2026-02-19T00:0${i}:00.000Z`, `conv_f${i}`)
+    )
+
+    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+
+    expect(annotated.every((item) => revivalOf(item) !== undefined)).toBe(true)
+  })
 })
 
 describe("findMessageItemIndex", () => {
