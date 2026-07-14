@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { CornerDownRight, Reply } from "lucide-react"
+import { CornerDownRight } from "lucide-react"
 import { StreamTypes } from "@threa/types"
 import { useQueueDraftMessage } from "@/hooks/use-queue-draft-message"
 import { useBoardSubtopicDraftIndex, useScopeDraftPreview, useStashParamDraftRow } from "@/hooks"
 import type { SubtopicDraftEntry } from "@/hooks"
 import { rescopeScopeDrafts } from "@/hooks/use-draft-message"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
-import { DraftRestingPreview } from "@/components/board/board-reply-composer"
+import { CollapsedComposerBar } from "@/components/composer/collapsed-composer-bar"
 import { createDraftPanelId } from "@/contexts"
 import { collectBranchThreadStreamIds } from "@/hooks/use-conversation-graph"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
@@ -26,11 +26,12 @@ const E2E_REPLY_MESSAGE = "Encrypted notes can't be replied to from the board ye
 const E2E_SUBTOPIC_MESSAGE = "Can't start a sub-topic in an encrypted note here."
 
 /**
- * The collapsed branch-tail affordance. With an unsent draft for the tail's
- * scope it renders the draft's own first line as a composer-styled pill (the
- * mobile collapsed presentation — the draft is visible in place); without one
- * it stays the quiet "Reply" link. `onOpen` receives the stash row to check
- * out when the advertised draft isn't loaded on this device.
+ * The collapsed branch-tail affordance: the shared collapsed-composer bar
+ * (timeline parity), preceded by the `CornerDownRight` sub-conversation arrow
+ * kept OUTSIDE the bar so the affordance still reads as a reply INTO the branch
+ * (round-4 discoverability). With an unsent draft it shows the draft's first
+ * line; otherwise the "Reply…" placeholder. `onOpen` receives the stash row to
+ * check out when the advertised draft isn't loaded on this device.
  */
 function BranchTailAffordance({
   workspaceId,
@@ -42,37 +43,28 @@ function BranchTailAffordance({
   onOpen: (restoreStashedId: string | null) => void
 }) {
   const draft = useScopeDraftPreview(workspaceId, scope)
-  if (!draft) {
-    return (
-      <button
-        type="button"
-        onClick={() => onOpen(null)}
-        className="mt-3 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <Reply className="h-3.5 w-3.5 shrink-0" />
-        Reply
-      </button>
-    )
-  }
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(draft.isCheckedOut ? null : draft.draftId)}
-      className="mt-3 flex w-full min-w-0 items-center rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
-    >
-      <DraftRestingPreview draft={draft} />
-    </button>
+    <div className="mt-3 flex items-center gap-2">
+      <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <CollapsedComposerBar
+        className="flex-1"
+        draft={draft}
+        placeholder="Reply…"
+        onClick={() => onOpen(draft && !draft.isCheckedOut ? draft.draftId : null)}
+      />
+    </div>
   )
 }
 
 /**
- * Marks a message row whose "new sub-topic" gesture holds an unsent draft
- * while that composer is unmounted: the branch arrow + the same draft pill the
- * branch tail uses (one presentation for a sub-conversation draft whether or
- * not the branch has materialized — Kris 2026-07-13), clickable to reopen the
- * gesture with the draft in it. Rendered only while NO branch exists under the
- * message; once one materializes, the draft is rescoped onto its tail (see the
- * migration effect in the hook) so this and the branch never show together.
+ * Marks a message row whose "new sub-topic" gesture holds an unsent draft while
+ * that composer is unmounted: the `CornerDownRight` branch arrow + the same
+ * collapsed-composer bar the branch tail uses (one presentation for a
+ * sub-conversation draft whether or not the branch has materialized — Kris
+ * 2026-07-13), clickable to reopen the gesture with the draft in it. Rendered
+ * only while NO branch exists under the message; once one materializes, the
+ * draft is rescoped onto its tail (see the migration effect in the hook) so this
+ * and the branch never show together.
  */
 function SubtopicDraftIndicator({
   entry,
@@ -82,16 +74,15 @@ function SubtopicDraftIndicator({
   onOpen: (restoreStashedId: string | null) => void
 }) {
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(entry.isCheckedOut ? null : entry.draftId)}
-      className="mt-2 flex w-full min-w-0 items-center gap-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
-    >
-      <CornerDownRight className="h-3.5 w-3.5 shrink-0" />
-      <span className="flex min-w-0 flex-1 items-center rounded-[16px] border border-input bg-card p-3">
-        <DraftRestingPreview draft={entry} />
-      </span>
-    </button>
+    <div className="mt-2 flex items-center gap-2">
+      <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <CollapsedComposerBar
+        className="flex-1"
+        draft={entry}
+        placeholder="Reply…"
+        onClick={() => onOpen(entry.isCheckedOut ? null : entry.draftId)}
+      />
+    </div>
   )
 }
 

@@ -1,46 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Paperclip, Pencil } from "lucide-react"
 import { useQuoteReply, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
 import { useReplyToBoardPost } from "@/hooks/use-conversations"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useScopeDraftPreview, type ScopeDraftPreview } from "@/hooks"
+import { useScopeDraftPreview } from "@/hooks"
+import { CollapsedComposerBar } from "@/components/composer/collapsed-composer-bar"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import type { BoardPost } from "@threa/types"
-
-// Resting-affordance state. `draft` signals a persisted-but-collapsed reply, so
-// the user knows reopening restores it. Every reply — including a lone post's
-// convert-to-thread — joins the same conversation and renders in place on the
-// card (board-view-design.md "Convert-to-thread, corrected"), so a successful
-// send just returns the affordance to its invitation.
-type RestingState = "idle" | "draft"
-const RESTING_LABEL: Record<RestingState, string> = {
-  idle: "Write a reply…",
-  draft: "Continue reply…",
-}
-
-/**
- * The resting affordance's content when the scope holds an unsent draft: the
- * draft's own first line, mirroring the mobile composer's collapsed preview
- * bar — the draft is visible in place instead of hiding behind a generic
- * label (discoverability ruling, Kris 2026-07-13). Shared by the bottom-reply
- * button here and the branch-tail affordance.
- */
-export function DraftRestingPreview({ draft }: { draft: ScopeDraftPreview }) {
-  return (
-    <span className="flex w-full min-w-0 items-center gap-2">
-      <Pencil aria-label="Unsent draft" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      {draft.preview ? (
-        <span className="min-w-0 flex-1 truncate text-foreground">{draft.preview}</span>
-      ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-1 truncate text-muted-foreground">
-          <Paperclip className="h-3.5 w-3.5 shrink-0" />
-          {draft.attachmentCount} attachment{draft.attachmentCount === 1 ? "" : "s"}
-        </span>
-      )}
-    </span>
-  )
-}
 
 interface BoardReplyComposerProps {
   workspaceId: string
@@ -113,7 +79,6 @@ export interface ArmedReply {
  */
 export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
-  const [resting, setResting] = useState<RestingState>("idle")
   const buttonRef = useRef<HTMLButtonElement>(null)
   const alwaysDocked = props.alwaysDocked ?? false
 
@@ -126,7 +91,6 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const { openReplySignal } = props
   useEffect(() => {
     if (!openReplySignal) return
-    setResting("idle")
     setOpen(true)
   }, [openReplySignal])
 
@@ -141,7 +105,6 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     if (!quoteReplyCtx) return
     return quoteReplyCtx.registerHandler((data) => {
       setPendingQuote(data)
-      setResting("idle")
       setOpen(true)
     })
   }, [quoteReplyCtx])
@@ -159,7 +122,6 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
 
   const close = useCallback((opts?: { refocus?: boolean; hadContent?: boolean }) => {
     refocusOnCollapseRef.current = opts?.refocus ?? false
-    setResting(opts?.hadContent ? "draft" : "idle")
     setOpen(false)
   }, [])
 
@@ -187,24 +149,13 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
 
   if (!open) {
     return (
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => {
-          setResting("idle")
-          setOpen(true)
-        }}
-        className="mt-3 flex w-full min-w-0 items-center rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
-      >
-        {/* With a draft: the draft's own first line (mobile collapsed-composer
-            presentation). Without: the plain invitation — no leading icon, so
-            the resting text aligns with the open composer's placeholder. */}
-        {scopeDraft ? (
-          <DraftRestingPreview draft={scopeDraft} />
-        ) : (
-          <span className="truncate">{RESTING_LABEL[resting]}</span>
-        )}
-      </button>
+      <CollapsedComposerBar
+        buttonRef={buttonRef}
+        className="mt-3"
+        draft={scopeDraft}
+        placeholder="Write a reply…"
+        onClick={() => setOpen(true)}
+      />
     )
   }
 

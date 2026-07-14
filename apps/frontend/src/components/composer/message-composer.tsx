@@ -28,6 +28,7 @@ import { ComposerLinkPreviews } from "./composer-link-previews"
 import { ContextRefStrip } from "./context-ref-strip"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
+import { COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
 import type { MessageSendMode, JSONContent } from "@threa/types"
@@ -1102,8 +1103,7 @@ export function MessageComposer({
               "rounded-[16px] border border-input flex flex-col flex-1 min-h-0",
               // Floating-composer shadow on the inline (non-expanded) card; the
               // expanded fullscreen sheet stays flat.
-              !mobileExpanded &&
-                "shadow-[inset_0_1px_0_hsl(33_28%_97%),0_8px_24px_-14px_hsl(28_30%_22%/0.18),0_2px_6px_-2px_hsl(28_30%_22%/0.06)] dark:shadow-[0_8px_24px_-14px_rgb(0_0_0/0.35),0_2px_6px_-2px_rgb(0_0_0/0.12)]",
+              !mobileExpanded && COLLAPSED_COMPOSER_SHADOW,
               // Glass (translucent + backdrop-blur) lets the timeline show through
               // the floating composer, but backdrop-filter re-rasterizes the blurred
               // backdrop on every repaint — cheap on desktop, a frame-killer on
