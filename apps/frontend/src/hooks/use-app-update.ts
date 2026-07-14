@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef, useState } from "react"
+import { useEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import { usePageActivity } from "./use-page-activity"
 import { useSocketReconnectCount } from "@/contexts"
@@ -104,21 +104,43 @@ function waitForInstallingWorker(
   })
 }
 
+function settleWithin<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), timeoutMs)
+    void promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(fallback)
+      }
+    )
+  })
+}
+
+function requestRegistrationUpdate(registration: ServiceWorkerRegistration): Promise<boolean> {
+  try {
+    return settleWithin(
+      registration.update().then(() => true),
+      CLICK_UPDATE_TIMEOUT_MS,
+      false
+    )
+  } catch {
+    return Promise.resolve(false)
+  }
+}
+
 async function findWaitingWorker(registration: ServiceWorkerRegistration): Promise<ServiceWorker | null> {
   if (registration.waiting) return registration.waiting
 
   const alreadyInstalling = await waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS)
   if (registration.waiting || alreadyInstalling) return registration.waiting ?? alreadyInstalling
 
-  try {
-    // update() has no timeout of its own; on a stalled mobile network the
-    // awaited click would look dead for as long as the browser waits. Bound it
-    // and fall through — a plain reload is offline-safe, and reconcilePostReload
-    // catches a reload that landed stale.
-    await Promise.race([registration.update(), new Promise((resolve) => setTimeout(resolve, CLICK_UPDATE_TIMEOUT_MS))])
-  } catch {
-    return null
-  }
+  // update() has no timeout of its own; bound user-triggered checks so a stalled
+  // mobile network cannot leave the action looking dead indefinitely.
+  await requestRegistrationUpdate(registration)
   if (registration.waiting) return registration.waiting
   return waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS)
 }
@@ -307,6 +329,37 @@ export function currentAppBuiltAt(): string | null {
   return typeof __APP_BUILT_AT__ === "string" ? __APP_BUILT_AT__ : null
 }
 
+export function currentAppInstalledAt(now: Date = new Date()): Date | null {
+  const version = currentAppVersion()
+  if (!version) return null
+
+  try {
+    const key = `app-version-installed-at:${version}`
+    const stored = localStorage.getItem(key)
+    if (stored) {
+      const parsed = new Date(stored)
+      if (!Number.isNaN(parsed.getTime())) return parsed
+    }
+    localStorage.setItem(key, now.toISOString())
+    return now
+  } catch {
+    return null
+  }
+}
+
+export function useIsServiceWorkerControlled(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const serviceWorker = navigator.serviceWorker
+      if (!serviceWorker) return () => {}
+      serviceWorker.addEventListener("controllerchange", notify)
+      return () => serviceWorker.removeEventListener("controllerchange", notify)
+    },
+    () => Boolean(navigator.serviceWorker?.controller),
+    () => false
+  )
+}
+
 /**
  * The latest deployed build version from the server, or null if it can't be read.
  * `no-store` bypasses the HTTP cache; `/version.json` is excluded from the SW's
@@ -392,14 +445,11 @@ export async function checkForAppUpdate(): Promise<ManualUpdateCheckResult> {
       : { status: "offline", latestVersion: null }
   }
 
-  try {
-    await registration.update()
-  } catch {
-    // The version probe below distinguishes offline from an otherwise failed check.
-  }
+  const latestPromise = fetchLatestVersion()
+  await requestRegistrationUpdate(registration)
 
   const waiting = registration.waiting ?? (await waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS))
-  const latest = await fetchLatestVersion()
+  const latest = await settleWithin(latestPromise, CLICK_UPDATE_TIMEOUT_MS, null)
   if (waiting) return { status: "ready", latestVersion: latest }
   if (shouldRecoverForVersion(currentAppVersion(), latest)) {
     return { status: "available", latestVersion: latest }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import { render, screen, userEvent } from "@/test"
+import { act, render, screen, userEvent } from "@/test"
 import * as contextsModule from "@/contexts"
 import { AppStatusPage } from "./app-status"
 
@@ -16,6 +16,32 @@ function renderPage() {
   )
 }
 
+interface FakeRegistration {
+  waiting: ServiceWorker | null
+  installing: ServiceWorker | null
+  update: () => Promise<unknown>
+}
+
+function installServiceWorker(registration: FakeRegistration, controlled = true) {
+  const listeners = new Set<() => void>()
+  const serviceWorker = {
+    controller: controlled ? {} : null,
+    getRegistration: vi.fn().mockResolvedValue(registration),
+    addEventListener: vi.fn((type: string, listener: () => void) => {
+      if (type === "controllerchange") listeners.add(listener)
+    }),
+    removeEventListener: vi.fn((type: string, listener: () => void) => {
+      if (type === "controllerchange") listeners.delete(listener)
+    }),
+    takeControl() {
+      serviceWorker.controller = {}
+      for (const listener of listeners) listener()
+    },
+  }
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: serviceWorker })
+  return serviceWorker
+}
+
 describe("AppStatusPage", () => {
   beforeEach(() => {
     vi.stubGlobal("__APP_VERSION__", "abc1234")
@@ -28,6 +54,7 @@ describe("AppStatusPage", () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     if (serviceWorkerDescriptor) {
@@ -39,13 +66,7 @@ describe("AppStatusPage", () => {
 
   it("shows build details and confirms a manual update check", async () => {
     const update = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, "serviceWorker", {
-      configurable: true,
-      value: {
-        controller: {},
-        getRegistration: vi.fn().mockResolvedValue({ waiting: null, installing: null, update }),
-      },
-    })
+    installServiceWorker({ waiting: null, installing: null, update })
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: async () => ({ version: "abc1234", builtAt: "2026-07-14T12:30:00.000Z" }),
@@ -54,7 +75,8 @@ describe("AppStatusPage", () => {
     renderPage()
 
     expect(screen.getByText("abc1234")).toBeInTheDocument()
-    expect(screen.getByText("Last updated")).toBeInTheDocument()
+    expect(screen.getByText("Updated on this device")).toBeInTheDocument()
+    expect(screen.getByText("Build created")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
 
@@ -64,16 +86,10 @@ describe("AppStatusPage", () => {
   })
 
   it("offers to reload once a new worker is ready", async () => {
-    Object.defineProperty(navigator, "serviceWorker", {
-      configurable: true,
-      value: {
-        controller: {},
-        getRegistration: vi.fn().mockResolvedValue({
-          waiting: { postMessage: vi.fn() },
-          installing: null,
-          update: vi.fn().mockResolvedValue(undefined),
-        }),
-      },
+    installServiceWorker({
+      waiting: { postMessage: vi.fn() } as unknown as ServiceWorker,
+      installing: null,
+      update: vi.fn().mockResolvedValue(undefined),
     })
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
@@ -86,5 +102,39 @@ describe("AppStatusPage", () => {
     expect(await screen.findByText("Update ready")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Reload and update" })).toBeInTheDocument()
     expect(screen.getByText("def5678")).toBeInTheDocument()
+  })
+
+  it("finishes a manual check when registration.update stalls", async () => {
+    vi.useFakeTimers()
+    installServiceWorker({
+      waiting: null,
+      installing: null,
+      update: vi.fn(() => new Promise(() => {})),
+    })
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: "abc1234" }),
+    } as Response)
+
+    renderPage()
+    act(() => screen.getByRole("button", { name: "Check for updates" }).click())
+    await act(async () => vi.advanceTimersByTimeAsync(5_000))
+
+    expect(screen.getByText("Up to date")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled()
+  })
+
+  it("updates offline readiness when the service worker takes control", () => {
+    const serviceWorker = installServiceWorker(
+      { waiting: null, installing: null, update: vi.fn().mockResolvedValue(undefined) },
+      false
+    )
+
+    renderPage()
+    expect(screen.getByText("Starting")).toBeInTheDocument()
+
+    act(() => serviceWorker.takeControl())
+
+    expect(screen.getByText("Ready")).toBeInTheDocument()
   })
 })

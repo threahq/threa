@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
 import {
   AlertTriangle,
@@ -24,7 +24,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import {
   APP_UPDATE_POLL_INTERVAL_MS,
   currentAppBuiltAt,
+  currentAppInstalledAt,
   currentAppVersion,
+  useIsServiceWorkerControlled,
   useManualAppUpdate,
   type ManualUpdateState,
 } from "@/hooks/use-app-update"
@@ -128,15 +130,17 @@ function isStandaloneApp(): boolean {
   )
 }
 
-function offlineSupportLabel(): string {
+function offlineSupportLabel(isControlled: boolean): string {
   if (!("serviceWorker" in navigator)) return "Not supported"
-  return navigator.serviceWorker.controller ? "Ready" : "Starting"
+  return isControlled ? "Ready" : "Starting"
 }
 
 export function AppStatusPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const isOnline = useIsOnline()
+  const isServiceWorkerControlled = useIsServiceWorkerControlled()
   const update = useManualAppUpdate()
+  const [installedAt] = useState(() => currentAppInstalledAt())
   const copy = statusCopy(update.state, update.latestVersion)
   const StatusIcon = copy.icon
   const version = currentAppVersion() ?? "Development"
@@ -207,7 +211,14 @@ export function AppStatusPage() {
                 <DetailRow icon={HardDrive} label="Current version">
                   <span className="font-mono tabular-nums">{version}</span>
                 </DetailRow>
-                <DetailRow icon={CloudDownload} label="Last updated">
+                <DetailRow icon={RefreshCw} label="Updated on this device">
+                  {installedAt ? (
+                    <time dateTime={installedAt.toISOString()}>{formatFullDateTime(installedAt)}</time>
+                  ) : (
+                    "Not available"
+                  )}
+                </DetailRow>
+                <DetailRow icon={CloudDownload} label="Build created">
                   {hasValidBuildDate && builtAt ? (
                     <time dateTime={builtAt.toISOString()}>{formatFullDateTime(builtAt)}</time>
                   ) : (
@@ -230,7 +241,7 @@ export function AppStatusPage() {
                   <span className={cn(!isOnline && "text-muted-foreground")}>{isOnline ? "Online" : "Offline"}</span>
                 </DetailRow>
                 <DetailRow icon={CloudDownload} label="Offline support">
-                  {offlineSupportLabel()}
+                  {offlineSupportLabel(isServiceWorkerControlled)}
                 </DetailRow>
                 <DetailRow icon={MonitorSmartphone} label="Running as">
                   {isStandaloneApp() ? "Installed app" : "Web browser"}
