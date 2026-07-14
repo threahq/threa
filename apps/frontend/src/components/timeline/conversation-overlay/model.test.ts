@@ -243,6 +243,9 @@ describe("annotateConversationRevivals", () => {
     ]
     const membership = { a1: "conv_a", b1: "conv_b", a2: "conv_a" }
 
+    // Async-classified (no declaredConversationId): still requires `seen`, so
+    // a1/b1's first local appearance stays chip-less — only a2's genuine
+    // revival (conv_a seen before, at a1) chips.
     expect(revivals(items, membership)).toEqual([
       null,
       null,
@@ -294,5 +297,21 @@ describe("annotateConversationRevivals", () => {
       topicSummary: "Pizza",
       previousActivityAt: "2026-06-01T00:00:00.000Z",
     })
+  })
+
+  // Regression (caught live by an E2E fixture posting 20 sequential filler
+  // messages): the boundary extractor freely mints many small, unrelated
+  // one-message conversations for ordinary bursty chat — every one of them is
+  // a "block start" relative to the last. Chipping every single one is noise
+  // (and collided with a Playwright locator whose text matched a chip's
+  // topic label). Async-classified messages must stay gated on `seen`.
+  it("does not chip a burst of ambient messages each assigned to their own distinct conversation", () => {
+    const items = Array.from({ length: 20 }, (_, i) =>
+      msg(`f${i}`, `2026-06-01T00:${String(i).padStart(2, "0")}:00.000Z`)
+    )
+    const membership = Object.fromEntries(items.map((_, i) => [`f${i}`, `conv_f${i}`]))
+
+    const result = revivals(items, membership)
+    expect(result.every((r) => r === null)).toBe(true)
   })
 })

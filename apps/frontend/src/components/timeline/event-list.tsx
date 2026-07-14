@@ -222,17 +222,37 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
 }
 
 /**
- * Stamp message rows that revive a scattered conversation with a
- * {@link ConversationRevival} for the always-on provenance chip (board-view-
- * design.md §"Conversations as soft threads", mechanism A) — no dependence on
- * the conversation overlay being painted.
+ * Stamp message rows that switch conversation with a {@link ConversationRevival}
+ * for the always-on provenance chip (board-view-design.md §"Conversations as
+ * soft threads", mechanism A) — no dependence on the conversation overlay being
+ * painted.
  *
- * A revival is a *block start* (the conversation differs from the previous
- * message row) whose conversation has already appeared earlier in the timeline.
- * Because a block start means the previous row is a different conversation, an
- * earlier member is necessarily separated from this one — that separation is
- * exactly the non-sequitur the chip explains. A conversation's first appearance
- * is a fresh topic, not a revival, so it carries no chip.
+ * Two different trigger rules for two different mechanisms (Kris's call,
+ * superseding an earlier server-timestamped design):
+ *
+ * - **Declared** (Mechanism C — a board/panel reply that names its conversation
+ *   at send time): chips on every *block start* — the previous conversation-
+ *   bearing row differs from this one — full stop, regardless of whether this
+ *   conversation has appeared anywhere in the loaded timeline before. This is
+ *   the reported case: a reply routed via the board into a long-dormant
+ *   conversation, with nothing else of it loaded, must still ground the
+ *   reader. No history requirement.
+ * - **Async-classified** (Mechanism A — the boundary extractor's `membership`
+ *   map, ordinary ambient chat with no declaration): still requires the
+ *   conversation to have been genuinely seen earlier IN THIS RENDER (`seen`).
+ *   Unconditional block-start chipping here would spam a chip under nearly
+ *   every message in a bursty channel — the extractor freely mints many
+ *   small, unrelated one- or two-message conversations for ordinary rapid
+ *   chat, and each one is a "block start" relative to the last (caught live:
+ *   an E2E fixture posting 20 sequential filler messages chipped literally
+ *   all of them, one colliding on text with its own chip). Kris's stated
+ *   motivation was board-driven conversation jumps, not ambient chat, so the
+ *   noisier rule is confined to the mechanism it was asked for.
+ *
+ * `previousActivityAt` is filled in when it happens to be locally known (the
+ * conversation's earlier member is loaded into this render) and left
+ * `undefined` otherwise — a declared revival with nothing else loaded renders
+ * the topic without a time tail rather than guessing.
  *
  * `membership` is the always-on `messageId → conversationId` map
  * (`buildMessageConversationMap`), including cross-stream secondary members. A
@@ -242,8 +262,8 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  * break a run — only a different real conversation does. This diverges from
  * `annotateConversationRows` (which resets its run on an unassigned row for
  * coloring): a lone unclustered aside between two members of the same topic is
- * not a topic switch, so it must not manufacture a revival. Pure and
- * export-only for isolated coverage.
+ * not a topic switch, so it must not manufacture a chip. Pure and export-only
+ * for isolated coverage.
  */
 export function annotateConversationRevivals(
   items: TimelineItem[],
@@ -279,16 +299,19 @@ export function annotateConversationRevivals(
     const declared = payload.declaredConversationId
     const declaredRow = declared != null ? conversationsById.get(declared) : undefined
     const declaredRetired = declaredRow?.status === ConversationStatuses.RESOLVED && declaredRow.messageIds.length === 0
+    const isDeclared = !declaredRetired && declared != null
     const conversationId = (declaredRetired ? undefined : declared) ?? membership.get(messageId) ?? null
     let revival: ConversationRevival | undefined
     if (conversationId != null) {
       const blockStart = conversationId !== previousConversationId
-      const previousActivityAt = lastActivityByConversation.get(conversationId)
-      if (blockStart && seen.has(conversationId) && previousActivityAt) {
+      // Declared: no history required (see doc comment). Async-classified:
+      // still needs to have been genuinely seen before, to avoid chipping
+      // nearly every message in ordinary bursty chat.
+      if (blockStart && (isDeclared || seen.has(conversationId))) {
         revival = {
           conversationId,
           topicSummary: conversationsById.get(conversationId)?.topicSummary ?? null,
-          previousActivityAt,
+          previousActivityAt: lastActivityByConversation.get(conversationId),
         }
       }
       seen.add(conversationId)
@@ -296,8 +319,8 @@ export function annotateConversationRevivals(
       // Only a real conversation breaks the run. An unassigned message
       // (extraction pending, or a genuinely unclustered aside) must NOT reset
       // this — otherwise the next same-conversation message reads as a block
-      // start and gets a false revival chip even though no *other* topic
-      // intervened, just one stray message. A revival requires a different
+      // start and gets a false chip even though no *other* topic intervened,
+      // just one stray message. A topic switch requires a different
       // conversation between the prior member and now, not merely a gap.
       previousConversationId = conversationId
     }

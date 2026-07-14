@@ -384,8 +384,10 @@ describe("annotateConversationRevivals", () => {
 
   const revivalOf = (item: TimelineItem) => (item.type === "event" ? item.revival : undefined)
 
-  // A → conv_x, B → conv_y, C → conv_x: the intervening conv_y makes C revive a
-  // scattered conv_x, so C carries the chip anchored on A's activity.
+  // A → conv_x, B → conv_y, C → conv_x: every block start chips (the
+  // simplified rule, Kris's call) — A and B each open, chip-less on time
+  // (first local appearance of their conversation); C's block start finds
+  // conv_x locally seen at A, so it carries a real time anchor.
   const scattered = (declared: boolean): TimelineItem[] => [
     messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", declared ? "conv_x" : undefined),
     messageItem("evt_b", "msg_b", "2026-02-19T01:00:00.000Z", declared ? "conv_y" : undefined),
@@ -400,8 +402,10 @@ describe("annotateConversationRevivals", () => {
       topicSummary: null,
       previousActivityAt: "2026-02-19T00:00:00.000Z",
     })
-    expect(revivalOf(items[0])).toBeUndefined()
-    expect(revivalOf(items[1])).toBeUndefined()
+    // Every block start chips now — A and B each open their conversation for
+    // the first time locally, so both chip too, just with no time to show.
+    expect(revivalOf(items[0])).toEqual({ conversationId: "conv_x", topicSummary: null, previousActivityAt: undefined })
+    expect(revivalOf(items[1])).toEqual({ conversationId: "conv_y", topicSummary: null, previousActivityAt: undefined })
   })
 
   it("resolves the topic label from the conversation list when it has loaded", () => {
@@ -477,6 +481,86 @@ describe("annotateConversationRevivals", () => {
     const items = annotateConversationRevivals(scattered(true), membership, conversationsById)
 
     expect(revivalOf(items[2])?.conversationId).toBe("conv_x")
+  })
+
+  // Kris's report: a long-dormant conversation revived from the board, with
+  // NOTHING else of it loaded into `items` at all — no scattered earlier
+  // member anywhere in the window. The chip must still fire (simplified
+  // design supersedes the earlier server-timestamp approach): a block start
+  // is a block start, whether or not this conversation has been rendered
+  // before. There's simply no time to show for it.
+  it("chips a conversation's first LOADED appearance too, with no time tail — the exact reported bug", () => {
+    const items = [
+      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_other"),
+      messageItem("evt_b", "msg_b", "2026-02-19T05:00:00.000Z", "conv_x"),
+    ]
+
+    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+
+    expect(revivalOf(annotated[1])).toEqual({
+      conversationId: "conv_x",
+      topicSummary: null,
+      previousActivityAt: undefined,
+    })
+  })
+
+  it("fills previousActivityAt when the earlier member IS locally loaded (genuine revival, real time tail)", () => {
+    const annotated = annotateConversationRevivals(scattered(true), new Map(), new Map())
+
+    expect(revivalOf(annotated[2])).toEqual({
+      conversationId: "conv_x",
+      topicSummary: null,
+      previousActivityAt: "2026-02-19T00:00:00.000Z",
+    })
+  })
+
+  it("still requires a block start — a locally-adjacent continuation doesn't chip every row", () => {
+    const items = [
+      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_x"),
+      messageItem("evt_b", "msg_b", "2026-02-19T00:05:00.000Z", "conv_x"),
+    ]
+
+    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+
+    expect(revivalOf(annotated[0])).toBeDefined()
+    expect(revivalOf(annotated[1])).toBeUndefined()
+  })
+
+  it("chips even a lone message with nothing before it at all (matches annotateConversationRows' block-start convention)", () => {
+    const items = [messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_x")]
+
+    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+
+    expect(revivalOf(annotated[0])).toEqual({
+      conversationId: "conv_x",
+      topicSummary: null,
+      previousActivityAt: undefined,
+    })
+  })
+
+  // Regression caught live by an E2E fixture: a burst of ordinary chat with no
+  // declaration (the boundary extractor freely mints many small, unrelated
+  // one-message conversations) must NOT chip every message — only a declared
+  // (board/panel) reply gets the no-history-required treatment.
+  it("does not chip a burst of async-classified messages each in their own distinct conversation", () => {
+    const items = Array.from({ length: 5 }, (_, i) =>
+      messageItem(`evt_f${i}`, `msg_f${i}`, `2026-02-19T00:0${i}:00.000Z`)
+    )
+    const membership = new Map(items.map((_, i) => [`msg_f${i}`, `conv_f${i}`]))
+
+    const annotated = annotateConversationRevivals(items, membership, new Map())
+
+    expect(annotated.every((item) => revivalOf(item) === undefined)).toBe(true)
+  })
+
+  it("the same burst DOES chip when each message is declared instead (board-driven, no history needed)", () => {
+    const items = Array.from({ length: 5 }, (_, i) =>
+      messageItem(`evt_f${i}`, `msg_f${i}`, `2026-02-19T00:0${i}:00.000Z`, `conv_f${i}`)
+    )
+
+    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+
+    expect(annotated.every((item) => revivalOf(item) !== undefined)).toBe(true)
   })
 })
 
