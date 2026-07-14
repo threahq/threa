@@ -390,7 +390,7 @@ no separate "see all" route.
 
 - `sidebar-header.tsx` — workspace switcher, search affordance.
 - `sidebar-actions.tsx` — per-row contextual action menu/drawer.
-- `sidebar-footer.tsx` — settings, account, etc.
+- `sidebar-footer.tsx` — settings, AI usage, app status, admin portal, and account actions.
 - `quick-links.tsx` — top-level nav (Drafts, Saved, Scheduled, Threads, Activity, Memory, Files).
 - `scratchpad-item.tsx` — scratchpad-specific row variant.
 - `use-urgency-tracking.ts` — drives `urgencyBlocks` exposed by `useSidebar()`.
@@ -427,6 +427,7 @@ Workspace-scoped (`/w/:workspaceId`):
 - `/memos/:memoId` — `LegacyMemoRedirect` → `/memory?memo=…`.
 - `/share` — `SharePickerPage` (in-app share picker).
 - `/admin/ai-usage` — `AIUsageAdminPage`.
+- `/app-status` — `AppStatusPage` (build metadata, device readiness, and manual PWA update checks).
 
 ---
 

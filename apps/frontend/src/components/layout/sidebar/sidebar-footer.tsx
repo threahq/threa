@@ -7,6 +7,7 @@ import {
   DollarSign,
   FileText,
   Hash,
+  Info,
   ListChecks,
   LogOut,
   Moon,
@@ -424,6 +425,13 @@ export function SidebarFooter({
             } satisfies SidebarActionItem,
           ]
         : []),
+      {
+        id: "app-status",
+        label: "App status",
+        icon: Info,
+        href: `/w/${workspaceId}/app-status`,
+        onSelect: collapseOnMobile,
+      },
       {
         id: "switch-account",
         label: "Switch account",

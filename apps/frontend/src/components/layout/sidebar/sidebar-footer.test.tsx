@@ -131,6 +131,7 @@ describe("SidebarFooter", () => {
     // status set in this fixture, so it invites the user to set one).
     expect(screen.getByRole("button", { name: "Set a status" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "AI Usage" })).toHaveAttribute("href", "/w/workspace_1/admin/ai-usage")
+    expect(screen.getByRole("link", { name: "App status" })).toHaveAttribute("href", "/w/workspace_1/app-status")
 
     // A single Settings entry — Profile is the dialog's default tab, not a
     // second menu row into the same dialog.

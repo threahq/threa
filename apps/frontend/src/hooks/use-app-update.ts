@@ -1,11 +1,11 @@
-import { useEffect, useCallback, useRef } from "react"
+import { useEffect, useCallback, useRef, useState } from "react"
 import { toast } from "sonner"
 import { usePageActivity } from "./use-page-activity"
 import { useSocketReconnectCount } from "@/contexts"
 import * as swRecovery from "@/lib/sw-recovery"
 import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
 
-const POLL_INTERVAL = 300_000 // 5 minutes
+export const APP_UPDATE_POLL_INTERVAL_MS = 300_000
 const TOAST_ID = "app-update"
 const IS_DEV = import.meta.env.DEV
 
@@ -17,6 +17,7 @@ export const CLICK_UPDATE_TIMEOUT_MS = 5000
 // running app otherwise has no idea which build it is, so it can't tell whether a
 // reload actually swapped in new code — see reconcilePostReload.
 declare const __APP_VERSION__: string
+declare const __APP_BUILT_AT__: string
 
 // True only in the Playwright E2E build (vite `define`, gated on VITE_BACKEND_PORT).
 // The update toast uses `duration: Infinity` and renders in the aria-live
@@ -301,12 +302,15 @@ export function currentAppVersion(): string | null {
   return typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : null
 }
 
+/** UTC timestamp for when this bundle was built. */
+export function currentAppBuiltAt(): string | null {
+  return typeof __APP_BUILT_AT__ === "string" ? __APP_BUILT_AT__ : null
+}
+
 /**
  * The latest deployed build version from the server, or null if it can't be read.
  * `no-store` bypasses the HTTP cache; `/version.json` is excluded from the SW's
  * navigation handler and matches no other SW route, so this reaches the network.
- * A null return means "couldn't verify" (offline, server hiccup, or a poisoned
- * non-JSON response) — never treated as a mismatch.
  */
 export async function fetchLatestVersion(): Promise<string | null> {
   try {
@@ -366,6 +370,81 @@ export async function reconcilePostReload(): Promise<boolean> {
   const latest = await fetchLatestVersion()
   if (!shouldRecoverForVersion(current, latest)) return false
   return swRecovery.runSwRecovery({ force: true })
+}
+
+export type ManualUpdateCheckResult =
+  | { status: "current"; latestVersion: string }
+  | { status: "ready" | "available"; latestVersion: string | null }
+  | { status: "offline"; latestVersion: null }
+  | { status: "unavailable"; latestVersion: null }
+
+/** Run the same service-worker update probe as the background checker and report its result. */
+export async function checkForAppUpdate(): Promise<ManualUpdateCheckResult> {
+  let registration: ServiceWorkerRegistration | undefined
+  try {
+    registration = await navigator.serviceWorker?.getRegistration()
+  } catch {
+    registration = undefined
+  }
+  if (!registration) {
+    return navigator.onLine
+      ? { status: "unavailable", latestVersion: null }
+      : { status: "offline", latestVersion: null }
+  }
+
+  try {
+    await registration.update()
+  } catch {
+    // The version probe below distinguishes offline from an otherwise failed check.
+  }
+
+  const waiting = registration.waiting ?? (await waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS))
+  const latest = await fetchLatestVersion()
+  if (waiting) return { status: "ready", latestVersion: latest }
+  if (shouldRecoverForVersion(currentAppVersion(), latest)) {
+    return { status: "available", latestVersion: latest }
+  }
+  if (latest && latest === currentAppVersion()) {
+    return { status: "current", latestVersion: latest }
+  }
+  if (!navigator.onLine) return { status: "offline", latestVersion: null }
+  return { status: "unavailable", latestVersion: null }
+}
+
+export type ManualUpdateState = "idle" | "checking" | ManualUpdateCheckResult["status"]
+
+export function useManualAppUpdate(): {
+  state: ManualUpdateState
+  latestVersion: string | null
+  lastCheckedAt: Date | null
+  check: () => Promise<void>
+  reload: () => Promise<void>
+} {
+  const [state, setState] = useState<ManualUpdateState>("idle")
+  const [latestVersion, setLatestVersion] = useState<string | null>(null)
+  const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null)
+
+  const check = useCallback(async () => {
+    setState("checking")
+    try {
+      const result = await checkForAppUpdate()
+      setLatestVersion(result.latestVersion)
+      setState(result.status)
+    } catch {
+      setLatestVersion(null)
+      setState(navigator.onLine ? "unavailable" : "offline")
+    } finally {
+      setLastCheckedAt(new Date())
+    }
+  }, [])
+
+  return {
+    state,
+    latestVersion,
+    lastCheckedAt,
+    check,
+    reload: reloadForUpdate,
+  }
 }
 
 export function useAppUpdate(): void {
@@ -472,7 +551,7 @@ export function useAppUpdate(): void {
 
   useEffect(() => {
     if (IS_DEV) return
-    const id = setInterval(checkForUpdate, POLL_INTERVAL)
+    const id = setInterval(checkForUpdate, APP_UPDATE_POLL_INTERVAL_MS)
     return () => clearInterval(id)
   }, [checkForUpdate])
 

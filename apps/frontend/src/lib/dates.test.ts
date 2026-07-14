@@ -200,54 +200,57 @@ describe("dates", () => {
   })
 
   describe("formatFutureTime", () => {
-    const NOW = new Date("2026-04-16T12:00:00.000Z")
+    // Local constructors keep the no-timezone cases tied to device-local time
+    // (INV-42), regardless of the test runner's TZ.
+    const NOW = new Date(2026, 3, 16, 12, 0, 0)
+    const UTC_NOW = new Date("2026-04-16T12:00:00.000Z")
 
     it("shows minutes for times within the next hour", () => {
-      expect(formatFutureTime(new Date("2026-04-16T12:05:00.000Z"), NOW, { timeFormat: "24h" })).toBe("5m")
-      expect(formatFutureTime(new Date("2026-04-16T12:47:00.000Z"), NOW, { timeFormat: "24h" })).toBe("47m")
+      expect(formatFutureTime(new Date(2026, 3, 16, 12, 5), NOW, { timeFormat: "24h" })).toBe("5m")
+      expect(formatFutureTime(new Date(2026, 3, 16, 12, 47), NOW, { timeFormat: "24h" })).toBe("47m")
     })
 
     it("clamps past dates to 0m (UI clamping per spec)", () => {
-      expect(formatFutureTime(new Date("2026-04-16T11:45:00.000Z"), NOW, { timeFormat: "24h" })).toBe("0m")
+      expect(formatFutureTime(new Date(2026, 3, 16, 11, 45), NOW, { timeFormat: "24h" })).toBe("0m")
     })
 
     it("shows absolute time for later today", () => {
-      expect(formatFutureTime(new Date("2026-04-16T18:30:00.000Z"), NOW, { timeFormat: "24h" })).toBe("18:30")
+      expect(formatFutureTime(new Date(2026, 3, 16, 18, 30), NOW, { timeFormat: "24h" })).toBe("18:30")
     })
 
     it("prefixes 'tomorrow' for next-day times", () => {
-      expect(formatFutureTime(new Date("2026-04-17T09:00:00.000Z"), NOW, { timeFormat: "24h" })).toBe("tomorrow 09:00")
+      expect(formatFutureTime(new Date(2026, 3, 17, 9), NOW, { timeFormat: "24h" })).toBe("tomorrow 09:00")
     })
 
     it("shows weekday for dates 2-6 days out", () => {
-      const label = formatFutureTime(new Date("2026-04-20T14:00:00.000Z"), NOW, { timeFormat: "24h" })
+      const label = formatFutureTime(new Date(2026, 3, 20, 14), NOW, { timeFormat: "24h" })
       expect(label).toMatch(/^Mon 14:00$/)
     })
 
     it("shows month+day beyond 6 days same year", () => {
-      const label = formatFutureTime(new Date("2026-05-15T09:00:00.000Z"), NOW, { timeFormat: "24h" })
+      const label = formatFutureTime(new Date(2026, 4, 15, 9), NOW, { timeFormat: "24h" })
       expect(label).toMatch(/^May 15 09:00$/)
     })
 
     it("adds year suffix for different years", () => {
-      const label = formatFutureTime(new Date("2099-01-01T00:00:00.000Z"), NOW, { timeFormat: "24h" })
+      const label = formatFutureTime(new Date(2099, 0, 1), NOW, { timeFormat: "24h" })
       expect(label).toMatch(/99/)
     })
 
     it("respects 12h time preference", () => {
-      expect(formatFutureTime(new Date("2026-04-16T18:30:00.000Z"), NOW, { timeFormat: "12h" })).toMatch(/PM|pm/i)
+      expect(formatFutureTime(new Date(2026, 3, 16, 18, 30), NOW, { timeFormat: "12h" })).toMatch(/PM|pm/i)
     })
 
     it("resolves 'today/tomorrow' boundaries in the user's timezone (INV-42)", () => {
       // 2026-04-17T02:00Z is still *April 16th* in Los Angeles (UTC-7), so in
       // an LA-timezoned user it's "today" not "tomorrow".
-      const la = formatFutureTime(new Date("2026-04-17T02:00:00.000Z"), NOW, {
+      const la = formatFutureTime(new Date("2026-04-17T02:00:00.000Z"), UTC_NOW, {
         timeFormat: "24h",
         timezone: "America/Los_Angeles",
       })
       expect(la).not.toMatch(/tomorrow/)
       // Same instant in Tokyo (UTC+9) is well into the next day.
-      const tokyo = formatFutureTime(new Date("2026-04-17T02:00:00.000Z"), NOW, {
+      const tokyo = formatFutureTime(new Date("2026-04-17T02:00:00.000Z"), UTC_NOW, {
         timeFormat: "24h",
         timezone: "Asia/Tokyo",
       })
@@ -256,7 +259,7 @@ describe("dates", () => {
 
     it("formats same-day absolute time in the user's timezone", () => {
       // 18:30 UTC is 11:30 in LA (UTC-7).
-      const label = formatFutureTime(new Date("2026-04-16T18:30:00.000Z"), NOW, {
+      const label = formatFutureTime(new Date("2026-04-16T18:30:00.000Z"), UTC_NOW, {
         timeFormat: "24h",
         timezone: "America/Los_Angeles",
       })
