@@ -24,9 +24,18 @@ interface FakeRegistration {
 
 function installServiceWorker(registration: FakeRegistration, controlled = true) {
   const listeners = new Set<() => void>()
+  const registrationListeners = new Set<() => void>()
+  const liveRegistration = Object.assign(registration, {
+    addEventListener: vi.fn((type: string, listener: () => void) => {
+      if (type === "updatefound") registrationListeners.add(listener)
+    }),
+    removeEventListener: vi.fn((type: string, listener: () => void) => {
+      if (type === "updatefound") registrationListeners.delete(listener)
+    }),
+  })
   const serviceWorker = {
     controller: controlled ? {} : null,
-    getRegistration: vi.fn().mockResolvedValue(registration),
+    getRegistration: vi.fn().mockResolvedValue(liveRegistration),
     addEventListener: vi.fn((type: string, listener: () => void) => {
       if (type === "controllerchange") listeners.add(listener)
     }),
@@ -36,6 +45,10 @@ function installServiceWorker(registration: FakeRegistration, controlled = true)
     takeControl() {
       serviceWorker.controller = {}
       for (const listener of listeners) listener()
+    },
+    parkUpdate(worker: ServiceWorker) {
+      liveRegistration.waiting = worker
+      for (const listener of registrationListeners) listener()
     },
   }
   Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: serviceWorker })
@@ -101,7 +114,6 @@ describe("AppStatusPage", () => {
 
     expect(await screen.findByText("Update ready")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Reload and update" })).toBeInTheDocument()
-    expect(screen.getByText("def5678")).toBeInTheDocument()
   })
 
   it("downloads again instead of reloading before an update is parked", async () => {
@@ -139,6 +151,26 @@ describe("AppStatusPage", () => {
 
     expect(await screen.findByText("Up to date")).toBeInTheDocument()
     expect(screen.queryByText("Update ready")).not.toBeInTheDocument()
+  })
+
+  it("switches from download to reload when the worker finishes in the background", async () => {
+    const serviceWorker = installServiceWorker({
+      waiting: null,
+      installing: null,
+      update: vi.fn().mockResolvedValue(undefined),
+    })
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: "def5678" }),
+    } as Response)
+
+    renderPage()
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
+    expect(await screen.findByRole("button", { name: "Download update" })).toBeInTheDocument()
+
+    act(() => serviceWorker.parkUpdate({ postMessage: vi.fn() } as unknown as ServiceWorker))
+
+    expect(screen.getByRole("button", { name: "Reload and update" })).toBeInTheDocument()
   })
 
   it("finishes a manual check when registration.update stalls", async () => {

@@ -445,6 +445,52 @@ export function useManualAppUpdate(): {
   const [latestVersion, setLatestVersion] = useState<string | null>(null)
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null)
 
+  useEffect(() => {
+    const serviceWorker = navigator.serviceWorker
+    if (!serviceWorker) return
+
+    let disposed = false
+    let registration: ServiceWorkerRegistration | null = null
+    const workerCleanups: Array<() => void> = []
+
+    const adoptWaitingWorker = () => {
+      if (!disposed && registration?.waiting) setState("ready")
+    }
+    const trackInstalling = (worker: ServiceWorker | null) => {
+      if (!worker) return
+      if (worker.state === "installed" || worker.state === "activated" || worker.state === "redundant") {
+        adoptWaitingWorker()
+        return
+      }
+      const onStateChange = () => {
+        adoptWaitingWorker()
+        if (worker.state === "installed" || worker.state === "redundant") {
+          worker.removeEventListener("statechange", onStateChange)
+        }
+      }
+      worker.addEventListener("statechange", onStateChange)
+      workerCleanups.push(() => worker.removeEventListener("statechange", onStateChange))
+    }
+    const onUpdateFound = () => {
+      adoptWaitingWorker()
+      trackInstalling(registration?.installing ?? null)
+    }
+
+    void serviceWorker.getRegistration().then((found) => {
+      if (!found || disposed) return
+      registration = found
+      adoptWaitingWorker()
+      trackInstalling(found.installing)
+      found.addEventListener("updatefound", onUpdateFound)
+    })
+
+    return () => {
+      disposed = true
+      registration?.removeEventListener("updatefound", onUpdateFound)
+      for (const cleanup of workerCleanups) cleanup()
+    }
+  }, [])
+
   const check = useCallback(async () => {
     setState("checking")
     try {
