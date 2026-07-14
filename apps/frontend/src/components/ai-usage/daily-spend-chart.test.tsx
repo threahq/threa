@@ -23,6 +23,13 @@ describe("buildDailySpendData", () => {
     expect(busy.agents).toBe(0.1)
     expect(busy.conversation).toBe(0)
   })
+
+  it("excludes the day starting exactly at the exclusive period end", () => {
+    const data = buildDailySpendData([], "2026-07-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z")
+    expect(data[0]!.date).toBe("2026-07-01")
+    expect(data[data.length - 1]!.date).toBe("2026-07-31")
+    expect(data).toHaveLength(31)
+  })
 })
 
 describe("DailySpendChart", () => {

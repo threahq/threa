@@ -18,9 +18,10 @@ function utcMidnight(iso: string) {
 
 export function buildDailySpendData(byDay: AIUsageByDay[], periodStart: string, periodEnd: string): DailyDatum[] {
   const start = utcMidnight(periodStart)
-  const end = utcMidnight(periodEnd)
+  // periodEnd is exclusive; include a final partial day but not a day starting exactly at the boundary.
+  const end = Date.parse(periodEnd)
   const rows = new Map<string, DailyDatum>()
-  for (let ms = start; ms <= end; ms += MS_PER_DAY) {
+  for (let ms = start; ms < end; ms += MS_PER_DAY) {
     const date = new Date(ms).toISOString().slice(0, 10)
     const datum: DailyDatum = { date }
     for (const category of AI_USAGE_CATEGORIES) datum[category] = 0
