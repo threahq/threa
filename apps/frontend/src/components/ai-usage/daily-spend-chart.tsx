@@ -11,18 +11,31 @@ import { SectionLabel } from "./primitives"
 
 type DailyDatum = { date: string } & Record<string, string | number>
 
-function utcMidnight(iso: string) {
-  const d = new Date(iso)
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+function dateKeyInZone(instantMs: number, timeZone: string): string {
+  // en-CA renders as YYYY-MM-DD
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(
+    new Date(instantMs)
+  )
 }
 
-export function buildDailySpendData(byDay: AIUsageByDay[], periodStart: string, periodEnd: string): DailyDatum[] {
-  const start = utcMidnight(periodStart)
-  // periodEnd is exclusive; include a final partial day but not a day starting exactly at the boundary.
-  const end = Date.parse(periodEnd)
+export function buildDailySpendData(
+  byDay: AIUsageByDay[],
+  periodStart: string,
+  periodEnd: string,
+  timeZone: string
+): DailyDatum[] {
+  // The backend labels buckets with days local to `timeZone`, so the fill
+  // walks calendar dates, not instants: resolve the period edges to local
+  // date strings (end is exclusive → step back 1ms), then iterate Y-M-D
+  // arithmetically, which is immune to DST-length days.
+  const first = dateKeyInZone(Date.parse(periodStart), timeZone)
+  const last = dateKeyInZone(Date.parse(periodEnd) - 1, timeZone)
+  const [y, m, d] = first.split("-").map(Number)
+
   const rows = new Map<string, DailyDatum>()
-  for (let ms = start; ms < end; ms += MS_PER_DAY) {
+  for (let ms = Date.UTC(y!, m! - 1, d!); ; ms += MS_PER_DAY) {
     const date = new Date(ms).toISOString().slice(0, 10)
+    if (date > last) break
     const datum: DailyDatum = { date }
     for (const category of AI_USAGE_CATEGORIES) datum[category] = 0
     rows.set(date, datum)
@@ -45,7 +58,12 @@ export function DailySpendChart({
   periodEnd: string
   isLoading: boolean
 }) {
-  const data = useMemo(() => buildDailySpendData(byDay, periodStart, periodEnd), [byDay, periodStart, periodEnd])
+  // Same device timezone the API layer sent as ?tz=, so buckets and fill agree.
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const data = useMemo(
+    () => buildDailySpendData(byDay, periodStart, periodEnd, timeZone),
+    [byDay, periodStart, periodEnd, timeZone]
+  )
 
   const config = useMemo<ChartConfig>(() => {
     const c: ChartConfig = {}

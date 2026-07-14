@@ -127,6 +127,61 @@ export function getDateKey(date: Date, timezone: string): string {
   return formatDate(date, timezone, "YYYY-MM-DD")
 }
 
+function wallClockParts(
+  date: Date,
+  timezone: string
+): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date)
+  const get = (type: string) => parseInt(parts.find((p) => p.type === type)?.value ?? "0", 10)
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    // Intl may render midnight as "24" with hour12: false
+    hour: get("hour") % 24,
+    minute: get("minute"),
+    second: get("second"),
+  }
+}
+
+/**
+ * The UTC instant of midnight on the 1st of the given month in `timezone`.
+ * `monthIndex` is 0-based and may overflow past 11 (Date.UTC semantics).
+ * Two-pass offset correction handles DST; if midnight doesn't exist in the
+ * zone that day, this resolves to the same shifted instant Postgres would.
+ */
+function zonedMonthStartUtc(year: number, monthIndex: number, timezone: string): Date {
+  const target = Date.UTC(year, monthIndex, 1)
+  let guess = target
+  for (let i = 0; i < 2; i++) {
+    const wall = wallClockParts(new Date(guess), timezone)
+    const wallAsUtc = Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute, wall.second)
+    guess += target - wallAsUtc
+  }
+  return new Date(guess)
+}
+
+/**
+ * The current calendar month's [start, end) window in `timezone`, as UTC
+ * instants. `end` is midnight on the 1st of the next month (exclusive).
+ */
+export function monthRangeInTimezone(timezone: string, now: Date = new Date()): { start: Date; end: Date } {
+  const wall = wallClockParts(now, timezone)
+  return {
+    start: zonedMonthStartUtc(wall.year, wall.month - 1, timezone),
+    end: zonedMonthStartUtc(wall.year, wall.month, timezone),
+  }
+}
+
 export function formatCurrentTime(
   date: Date,
   timezone: string,

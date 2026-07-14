@@ -7,6 +7,7 @@ import {
   formatTime,
   formatDate,
   getDateKey,
+  monthRangeInTimezone,
   formatCurrentTime,
   buildTemporalPromptSection,
   type TemporalContext,
@@ -14,6 +15,52 @@ import {
 } from "./temporal"
 
 describe("temporal utilities", () => {
+  describe("monthRangeInTimezone", () => {
+    const NOW = new Date("2026-07-14T12:00:00.000Z")
+
+    it("computes the [start, end) month window as UTC instants of local midnights", () => {
+      expect(monthRangeInTimezone("UTC", NOW)).toEqual({
+        start: new Date("2026-07-01T00:00:00.000Z"),
+        end: new Date("2026-08-01T00:00:00.000Z"),
+      })
+      // CEST is UTC+2 in July: local July starts at June 30 22:00 UTC
+      expect(monthRangeInTimezone("Europe/Stockholm", NOW)).toEqual({
+        start: new Date("2026-06-30T22:00:00.000Z"),
+        end: new Date("2026-07-31T22:00:00.000Z"),
+      })
+      // JST is UTC+9 year-round
+      expect(monthRangeInTimezone("Asia/Tokyo", NOW)).toEqual({
+        start: new Date("2026-06-30T15:00:00.000Z"),
+        end: new Date("2026-07-31T15:00:00.000Z"),
+      })
+      // PDT is UTC-7 in July
+      expect(monthRangeInTimezone("America/Los_Angeles", NOW)).toEqual({
+        start: new Date("2026-07-01T07:00:00.000Z"),
+        end: new Date("2026-08-01T07:00:00.000Z"),
+      })
+    })
+
+    it("crosses a year boundary and a DST change inside the month", () => {
+      // Dec 14 in Stockholm (CET, UTC+1); local instant near UTC midnight
+      // still resolves to the local month
+      expect(monthRangeInTimezone("Europe/Stockholm", new Date("2026-12-14T12:00:00.000Z"))).toEqual({
+        start: new Date("2026-11-30T23:00:00.000Z"),
+        end: new Date("2026-12-31T23:00:00.000Z"),
+      })
+      // October 2026 in Stockholm spans the CEST→CET fallback: start is +2, end is +1
+      expect(monthRangeInTimezone("Europe/Stockholm", new Date("2026-10-10T12:00:00.000Z"))).toEqual({
+        start: new Date("2026-09-30T22:00:00.000Z"),
+        end: new Date("2026-10-31T23:00:00.000Z"),
+      })
+    })
+
+    it("resolves 'today' by the zone's wall clock, not UTC", () => {
+      // 2026-07-31T23:30Z is already August 1 in Tokyo
+      const { start } = monthRangeInTimezone("Asia/Tokyo", new Date("2026-07-31T23:30:00.000Z"))
+      expect(start).toEqual(new Date("2026-07-31T15:00:00.000Z"))
+    })
+  })
+
   describe("isValidIanaTimezone", () => {
     it("accepts real IANA identifiers", () => {
       expect(isValidIanaTimezone("Europe/Stockholm")).toBe(true)

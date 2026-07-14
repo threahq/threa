@@ -9,8 +9,8 @@ const byDay: AIUsageByDay[] = [
 ]
 
 describe("buildDailySpendData", () => {
-  it("zero-fills every UTC day of the period from the date string", () => {
-    const data = buildDailySpendData(byDay, "2026-07-01T00:00:00.000Z", "2026-07-05T12:00:00.000Z")
+  it("zero-fills every day of the period from the date string", () => {
+    const data = buildDailySpendData(byDay, "2026-07-01T00:00:00.000Z", "2026-07-05T12:00:00.000Z", "UTC")
 
     expect(data.map((d) => d.date)).toEqual(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05"])
 
@@ -33,10 +33,27 @@ describe("buildDailySpendData", () => {
   })
 
   it("excludes the day starting exactly at the exclusive period end", () => {
-    const data = buildDailySpendData([], "2026-07-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z")
+    const data = buildDailySpendData([], "2026-07-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z", "UTC")
     expect(data[0]!.date).toBe("2026-07-01")
     expect(data[data.length - 1]!.date).toBe("2026-07-31")
     expect(data).toHaveLength(31)
+  })
+
+  it("walks days local to the timezone the period was drawn in", () => {
+    // July in Tokyo: the backend window is Jun 30 15:00Z → Jul 31 15:00Z and
+    // bucket labels are JST dates
+    const data = buildDailySpendData(byDay, "2026-06-30T15:00:00.000Z", "2026-07-31T15:00:00.000Z", "Asia/Tokyo")
+    expect(data[0]!.date).toBe("2026-07-01")
+    expect(data[data.length - 1]!.date).toBe("2026-07-31")
+    expect(data).toHaveLength(31)
+    expect(data.find((d) => d.date === "2026-07-03")).toEqual({
+      date: "2026-07-03",
+      memory: 0.2,
+      conversation: 0,
+      agents: 0.1,
+      attachments: 0,
+      other: 0,
+    })
   })
 })
 

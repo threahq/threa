@@ -295,7 +295,8 @@ export const AIUsageRepository = {
     db: Querier,
     workspaceId: string,
     periodStart: Date,
-    periodEnd: Date
+    periodEnd: Date,
+    timezone: string
   ): Promise<DayFunctionBreakdown[]> {
     const result = await db.query<{
       date: string
@@ -305,7 +306,7 @@ export const AIUsageRepository = {
       record_count: string
     }>(sql`
       SELECT
-        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as date,
+        to_char(created_at AT TIME ZONE ${timezone}, 'YYYY-MM-DD') as date,
         function_id,
         SUM(cost_usd) as total_cost_usd,
         SUM(total_tokens) as total_tokens,
