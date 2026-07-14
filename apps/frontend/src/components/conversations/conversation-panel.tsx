@@ -36,7 +36,7 @@ import {
   collectBranchThreadStreamIds,
   deriveBranchProvenance,
 } from "@/hooks/use-conversation-graph"
-import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
+import { useInlineBranchComposer, type ArmBranchTarget } from "@/components/board/use-inline-branch-composer"
 import { useMoveToSubtopic } from "@/components/board/use-move-to-subtopic"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
 import { useBoardHiddenConversations } from "@/stores/board-exclusions-store"
@@ -45,7 +45,7 @@ import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { RelativeTime } from "@/components/relative-time"
-import { BoardReplyComposer } from "@/components/board/board-reply-composer"
+import { BoardReplyComposer, type ArmedReply } from "@/components/board/board-reply-composer"
 import {
   FloatingComposerAnchorProvider,
   useFloatingComposerAnchor,
@@ -56,7 +56,7 @@ import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { SidebarToggle } from "@/components/layout"
 import { useActors, useVisibleStreams } from "@/hooks"
 import { useStashedDrafts } from "@/hooks/use-stashed-drafts"
-import { boardReplyDraftKey } from "@/lib/board/draft-keys"
+import { boardReplyDraftKey, boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useConversationService, usePanel, parseConversationPanel, useSidebar } from "@/contexts"
@@ -114,12 +114,12 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
     return subscribeConversationReplyOpen(conversationId, bump)
   }, [conversationId])
 
-  // A drafts-explorer deep link (`?panel=conv:<id>&stash=<draftId>`) lands here
-  // with the reply form collapsed — no composer is mounted, so nothing would
-  // consume the restore. When the stash id belongs to THIS panel's reply scope,
-  // open the composer; the mounted form's own `useStashComposer` then restores
-  // the row and strips the param. Ownership-checked so a foreign scope's param
-  // (e.g. a thread draft on the same route) is left for its own host.
+  // A drafts-explorer deep link (`?panel=conv:<id>&stash=<draftId>`): the docked
+  // footer composer is always mounted, and its own `useStashComposer` URL effect
+  // consumes the restore and strips the param — this bump only FOCUSES the
+  // footer so the restored draft is where the user is looking. Ownership-checked
+  // so a foreign scope's param (e.g. a thread draft on the same route) is left
+  // for its own host.
   const [searchParams] = useSearchParams()
   const stashParam = searchParams.get("stash")
   const replyScope = conversationId ? boardReplyDraftKey(conversationId) : undefined
@@ -352,6 +352,28 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   const [searchParams] = useSearchParams()
   const highlightMessageId = searchParams.get("m")
 
+  // The docked footer composer arms to a sub-conversation instead of mounting a
+  // mid-flow editor: replying in the panel always happens at the bottom dock
+  // (Kris's composer ruling). `armBranch` sets the target; the footer switches
+  // scope/routing and shows the dismissible strip. `focusSeq` re-focuses the
+  // footer on arm and on a "Reply in conversation" open (`openReplySignal`).
+  const [armed, setArmed] = useState<{ target: ArmBranchTarget; restoreStashedId: string | null; seq: number } | null>(
+    null
+  )
+  const armSeqRef = useRef(0)
+  const [focusSeq, setFocusSeq] = useState(0)
+  const armBranch = useCallback((target: ArmBranchTarget, restoreStashedId: string | null) => {
+    armSeqRef.current += 1
+    setArmed({ target, restoreStashedId, seq: armSeqRef.current })
+    setFocusSeq((n) => n + 1)
+  }, [])
+  const prevOpenReplyRef = useRef(openReplySignal)
+  useEffect(() => {
+    if (openReplySignal === prevOpenReplyRef.current) return
+    prevOpenReplyRef.current = openReplySignal
+    setFocusSeq((n) => n + 1)
+  }, [openReplySignal])
+
   // Shared graph + structural index, needed before the rail hook: the inline
   // branch composer derives the branch thread streams (and pending sub-topic
   // draft rails) the panel subscribes to as extra rails.
@@ -363,8 +385,26 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     memberMessageIds: conversation.messageIds,
     index: structuralIndex,
     graph: conversationGraph,
+    onArmBranchReply: armBranch,
   })
-  const { derivePendingBranches } = inlineComposer
+  const { derivePendingBranches, queueExistingBranchReply } = inlineComposer
+
+  const armedReply: ArmedReply | undefined = armed
+    ? {
+        draftKey: boardBranchReplyDraftKey(armed.target.conversationId),
+        title: armed.target.title,
+        scheduleTarget: { streamId: armed.target.threadStreamId, conversationId: armed.target.conversationId },
+        restoreStashedId: armed.restoreStashedId,
+        restoreSignal: armed.seq,
+        onSubmit: (input) => queueExistingBranchReply(armed.target.conversationId, armed.target.threadStreamId, input),
+        onCancel: () => {
+          setArmed(null)
+          // The × unmounts with the strip — refocus the composer so "back to the
+          // standard composer" means the user just keeps typing (arm/cancel symmetry).
+          setFocusSeq((n) => n + 1)
+        },
+      }
+    : undefined
 
   const {
     openingMessage,
@@ -651,10 +691,13 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
             post={post}
             hostStreamType={hostStreamType}
             lastActiveStreamId={lastActiveStreamId}
-            openReplySignal={openReplySignal}
-            // The panel is a dedicated conversation view — thread-composer
-            // semantics: always open on desktop, collapsed⇄focused on mobile.
-            desktopAlwaysOpen
+            openReplySignal={focusSeq}
+            // The panel is a dedicated conversation view — the composer is docked
+            // at the footer on both platforms (mobile shows MessageComposer's own
+            // collapsed bar), never a resting button. `armedReply` retargets it to
+            // a sub-conversation when a branch reply is armed.
+            alwaysDocked
+            armedReply={armedReply}
           />
         </div>
       </QuoteReplyProvider>

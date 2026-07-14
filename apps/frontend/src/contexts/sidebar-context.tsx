@@ -1,6 +1,5 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode } from "react"
-import { useIsMobile } from "@/hooks/use-mobile"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useAccountScopeOptional } from "@/auth/account-scope"
 
 /**
@@ -210,13 +209,10 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
 
   // Runtime state (preview is transient, not persisted).
   // Overlay sidebar treatment applies to narrow viewports AND touch-PRIMARY
-  // devices (coarse primary pointer), so a tablet in landscape (wide but
-  // finger-driven) keeps the swipeable overlay sidebar. A touch-CAPABLE laptop
-  // is mouse-primary (its trackpad reports a fine pointer) and stays on the
-  // pinned desktop layout — hence useCoarsePointer, not useTouchCapable.
-  const isNarrowViewport = useIsMobile()
-  const isTouchPrimary = useCoarsePointer()
-  const isMobile = isNarrowViewport || isTouchPrimary
+  // devices — a touch-CAPABLE laptop is mouse-primary and stays pinned, which
+  // is why the breadth is coarse-PRIMARY, not touch-capable. The board float
+  // gate shares this exact predicate so the two can't drift.
+  const isMobile = useIsMobileOrCoarse()
   const [state, setState] = useState<SidebarState>(() =>
     isMobile || persistedState.openState === "collapsed" ? "collapsed" : "pinned"
   )

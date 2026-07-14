@@ -14,6 +14,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { usePreferences } from "@/contexts"
 import { useConnectionState } from "@/components/layout/connection-status"
 import {
+  ConversationReplyStrip,
   FloatingComposerShell,
   MessageComposer,
   OverlayComposerShell,
@@ -33,7 +34,6 @@ import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quot
 import { useConversationReply, type ConversationReplyData } from "./conversation-reply-context"
 import { useConversationBoardPost, boardPostLastActiveStreamId } from "@/hooks/use-conversations"
 import { usePanel, createConversationPanelId } from "@/contexts"
-import { Layers, X } from "lucide-react"
 import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
@@ -854,23 +854,10 @@ function MessageInputComponent({
   // file into a conversation, so it renders wherever the composer does (inline
   // and expanded). Dismissible: X disarms without touching the typed content.
   const conversationReplyStrip = conversationReply ? (
-    <div
-      data-testid="conversation-reply-strip"
-      className="mb-1.5 flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/50 px-2 py-1 text-xs text-muted-foreground"
-    >
-      <Layers className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">
-        Replying in <span className="font-medium">{conversationReplyTopic ?? "conversation"}</span>
-      </span>
-      <button
-        type="button"
-        aria-label="Cancel reply in conversation"
-        onClick={() => setConversationReply(null)}
-        className="ml-auto shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground"
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
-    </div>
+    <ConversationReplyStrip
+      title={conversationReplyTopic ?? "conversation"}
+      onCancel={() => setConversationReply(null)}
+    />
   ) : null
 
   const StreamGlyph = stream ? STREAM_ICONS[stream.type] : null

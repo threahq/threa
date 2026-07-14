@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { clearLoadedDraft, purgeScopeDrafts, rescopeScopeDrafts, upsertLoadedDraft } from "./use-draft-message"
+import {
+  clearLoadedDraft,
+  purgeScopeDrafts,
+  relocateLoadedDraft,
+  rescopeScopeDrafts,
+  upsertLoadedDraft,
+} from "./use-draft-message"
+import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
+import { getScopeResolveSeq } from "@/sync/draft-resolution-guard"
 import { hasPendingDraftUpsert } from "@/sync/draft-sync"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
@@ -125,5 +133,92 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     // Each draft is queued for a push so the server row follows.
     expect(await pendingUpserts(loadedRow.id)).toBe(1)
     expect(await pendingUpserts("draft_stash")).toBe(1)
+  })
+
+  it("rescopeScopeDrafts moves the crash-safe staging buffer with the scope", async () => {
+    // A staged keystroke left under the old scope no longer matches any IDB row
+    // there after the move, so the startup reconcile would "recover" it —
+    // resurrecting the draft under the scope the user just moved it out of
+    // (live repro: cancel-armed-branch-reply left a duplicate branch draft).
+    const fromScope = "board:branch-reply:conv_a"
+    const toScope = "board:reply:conv_root"
+    await upsertLoadedDraft(workspaceId, fromScope, { contentJson: makeDoc("moving"), attachments: [] })
+    stageDraftContent(workspaceId, fromScope, makeDoc("moving"))
+
+    await rescopeScopeDrafts(workspaceId, fromScope, toScope)
+
+    expect(readStagedDraft(workspaceId, fromScope)).toBeNull()
+    expect(readStagedDraft(workspaceId, toScope)?.contentJson).toEqual(makeDoc("moving"))
+  })
+
+  it("relocateLoadedDraft mints a fresh target draft, tombstones the source, and stashes an existing target draft", async () => {
+    const fromScope = "board:branch-reply:conv_move"
+    const toScope = "board:reply:conv_move_root"
+    const sourceRow = await upsertLoadedDraft(workspaceId, fromScope, {
+      contentJson: makeDoc("stale persisted"),
+      attachments: [],
+    })
+    const existingTarget = await upsertLoadedDraft(workspaceId, toScope, {
+      contentJson: makeDoc("root already had this"),
+      attachments: [],
+    })
+
+    await relocateLoadedDraft(workspaceId, fromScope, toScope, makeDoc("live keystrokes"))
+
+    // Source: row deleted, pointer gone, delete queued (tombstone suppresses in-flight pushes).
+    expect(await db.drafts.get(sourceRow.id)).toBeUndefined()
+    expect((await db.composerLoaded.get(fromScope))?.draftId).toBeUndefined()
+    expect(await pendingDeletes(sourceRow.id)).toBe(1)
+    // Target: a FRESH loaded draft carrying the live editor content, not the stale body.
+    const targetLoadedId = (await db.composerLoaded.get(toScope))?.draftId
+    expect(targetLoadedId).toBeDefined()
+    expect(targetLoadedId).not.toBe(sourceRow.id)
+    expect((await db.drafts.get(targetLoadedId!))?.contentJson).toEqual(makeDoc("live keystrokes"))
+    // The target's previous loaded draft survives as a stash sibling (no-loss).
+    expect((await db.drafts.get(existingTarget.id))?.scope).toBe(toScope)
+    expect((await db.drafts.get(existingTarget.id))?.contentJson).toEqual(makeDoc("root already had this"))
+  })
+
+  it("relocateLoadedDraft drops an in-flight debounced save for the vacated scope (resolve-seq bump)", async () => {
+    // A debounced typing save that began BEFORE the relocate captured the
+    // pre-bump resolve sequence; letting its create land would resurrect the
+    // scope the user just moved out of (the review's phantom-draft finding).
+    const fromScope = "board:branch-reply:conv_seq"
+    const toScope = "board:reply:conv_seq_root"
+    await upsertLoadedDraft(workspaceId, fromScope, { contentJson: makeDoc("typed"), attachments: [] })
+    const observedResolveSeq = getScopeResolveSeq(fromScope)
+
+    await relocateLoadedDraft(workspaceId, fromScope, toScope, makeDoc("typed"))
+
+    // Simulates the stale save's create firing after the relocate.
+    await upsertLoadedDraft(workspaceId, fromScope, { contentJson: makeDoc("typed"), attachments: [] }, undefined, {
+      observedResolveSeq,
+    })
+
+    const fromRows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, fromScope]).toArray()
+    expect(fromRows).toHaveLength(0)
+    expect((await db.composerLoaded.get(fromScope))?.draftId).toBeUndefined()
+  })
+
+  it("rescopeScopeDrafts supersedes a queued push with a fresh op carrying its writeId lineage", async () => {
+    // The queue worker claims an op and snapshots the row in separate
+    // transactions, so a pre-move push can be in flight while its claim is not
+    // yet visible. Coalescing onto that op loses the scope move when it
+    // completes; the rescope must always mint a fresh op whose priorWriteIds
+    // carry the old lineage so the extra push stays idempotent.
+    const fromScope = "board:branch-reply:conv_b"
+    const toScope = "board:reply:conv_root2"
+    const row = await upsertLoadedDraft(workspaceId, fromScope, { contentJson: makeDoc("racing"), attachments: [] })
+    const before = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    const priorOp = before.find((o) => o.payload.draftId === row.id)
+    expect(priorOp).toBeDefined()
+
+    await rescopeScopeDrafts(workspaceId, fromScope, toScope)
+
+    const after = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    const ops = after.filter((o) => o.payload.draftId === row.id)
+    expect(ops).toHaveLength(1)
+    expect(ops[0].id).not.toBe(priorOp?.id)
+    expect(ops[0].payload.priorWriteIds).toContain(priorOp?.payload.writeId)
   })
 })

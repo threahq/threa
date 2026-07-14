@@ -283,10 +283,9 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
     mount(parent)
     await screen.findByText("Child branch message.")
 
-    await user.click(screen.getByRole("button", { name: "Reply" }))
-    expect(await screen.findByText("Reply…")).toBeTruthy()
+    await user.click(screen.getByRole("button", { name: "Reply…" }))
     // The chip names the reply target — the inline forms all look alike.
-    expect(screen.getByText("Replying in GPU budget")).toBeTruthy()
+    expect(await screen.findByText("Replying in GPU budget")).toBeTruthy()
 
     await user.click(screen.getByRole("button", { name: "Send inline" }))
     expect(queueDraftMessage).toHaveBeenCalledWith(
@@ -324,7 +323,7 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
     await db.events.put(messageEvent("pend_1", createDraftPanelId("stream_1", "m_open"), 30, "Pending sub-topic body."))
     await screen.findByText("Pending sub-topic body.")
 
-    await user.click(await screen.findByRole("button", { name: "Reply" }))
+    await user.click(await screen.findByRole("button", { name: "Reply…" }))
     // The pending branch has no extracted topic yet, so the chip names the target
     // generically rather than echoing the "New sub-topic" placeholder back.
     expect(await screen.findByText("Replying in this sub-topic")).toBeTruthy()
@@ -375,8 +374,9 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
     await screen.findByText("Child branch message.")
 
     // Open the branch-tail reply…
-    await user.click(screen.getByRole("button", { name: "Reply" }))
-    expect(await screen.findByText("Reply…")).toBeTruthy()
+    await user.click(screen.getByRole("button", { name: "Reply…" }))
+    // The composer stub renders the reply chip once it's mounted in the tail.
+    expect(await screen.findByText("Replying in GPU budget")).toBeTruthy()
 
     // …then open New sub-topic under the branch's message row: the reply
     // composer closes (one inline composer per card).
@@ -384,6 +384,6 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
     await user.click(menus[menus.length - 1])
     await user.click(screen.getByText("New sub-topic"))
     expect(await screen.findByText("Start a sub-topic…")).toBeTruthy()
-    expect(screen.queryByText("Reply…")).toBeNull()
+    expect(screen.queryByText("Replying in GPU budget")).toBeNull()
   })
 })

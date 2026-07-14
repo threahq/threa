@@ -240,7 +240,7 @@ describe("BoardCard branches", () => {
     expect(await screen.findByText("Child branch second message.")).toBeTruthy()
     expect(nested.closest(".border-l-2")).not.toBeNull()
     // The branch tail offers the inline Reply affordance (no navigation).
-    expect(screen.getByRole("button", { name: "Reply" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Reply…" })).toBeTruthy()
   })
 
   it("shows a 'branched from' provenance row on the child card", async () => {

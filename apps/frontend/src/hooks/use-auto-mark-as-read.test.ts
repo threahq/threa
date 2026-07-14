@@ -4,6 +4,7 @@ import { useAutoMarkAsRead } from "./use-auto-mark-as-read"
 import * as useUnreadCountsModule from "./use-unread-counts"
 import * as useActivityCountsModule from "./use-activity-counts"
 import * as useMobileModule from "./use-mobile"
+import * as usePointerModule from "./use-pointer"
 
 const mockMarkAsRead = vi.fn()
 const mockGetUnreadCount = vi.fn()
@@ -47,7 +48,7 @@ describe("useAutoMarkAsRead", () => {
     mockGetActivityCount.mockImplementation(() => activityCount)
 
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileViewport)
-    vi.spyOn(useMobileModule, "useIsCoarsePointer").mockImplementation(() => isCoarsePointer)
+    vi.spyOn(usePointerModule, "useCoarsePointer").mockImplementation(() => isCoarsePointer)
 
     vi.spyOn(useUnreadCountsModule, "useUnreadCounts").mockReturnValue({
       markAsRead: mockMarkAsRead,
