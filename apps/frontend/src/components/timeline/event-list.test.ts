@@ -362,7 +362,8 @@ describe("annotateConversationRevivals", () => {
     id: string,
     messageId: string,
     createdAt: string,
-    declaredConversationId?: string
+    declaredConversationId?: string,
+    declaredConversationPreviousActivityAt?: string
   ): TimelineItem {
     return {
       type: "event",
@@ -371,7 +372,11 @@ describe("annotateConversationRevivals", () => {
           id,
           sequence: id,
           eventType: "message_created",
-          payload: { messageId, ...(declaredConversationId ? { declaredConversationId } : {}) },
+          payload: {
+            messageId,
+            ...(declaredConversationId ? { declaredConversationId } : {}),
+            ...(declaredConversationPreviousActivityAt ? { declaredConversationPreviousActivityAt } : {}),
+          },
         }),
         createdAt,
       },
@@ -476,6 +481,76 @@ describe("annotateConversationRevivals", () => {
     const items = annotateConversationRevivals(scattered(true), membership, conversationsById)
 
     expect(revivalOf(items[2])?.conversationId).toBe("conv_x")
+  })
+
+  // A dormant conversation revived from the board/panel: nothing else of it is
+  // loaded into `items` at all (no scattered earlier member anywhere in the
+  // window) — the local `seen` tracking alone can never detect this. The
+  // server-stamped `declaredConversationPreviousActivityAt` is what makes the
+  // chip render anyway.
+  it("revives from the server-stamped anchor when nothing else of the conversation is loaded", () => {
+    const items = [
+      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_other"),
+      messageItem("evt_b", "msg_b", "2026-02-19T05:00:00.000Z", "conv_x", "2026-02-15T00:00:00.000Z"),
+    ]
+
+    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+
+    expect(revivalOf(annotated[1])).toEqual({
+      conversationId: "conv_x",
+      topicSummary: null,
+      previousActivityAt: "2026-02-15T00:00:00.000Z",
+    })
+  })
+
+  it("does NOT revive a first-time-loaded conversation lacking the server anchor", () => {
+    // Same shape as above, but no `declaredConversationPreviousActivityAt` (an
+    // async-classified message, or an older client) — must not fabricate a
+    // revival with no evidence of real prior activity.
+    const items = [
+      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_other"),
+      messageItem("evt_b", "msg_b", "2026-02-19T05:00:00.000Z", "conv_x"),
+    ]
+
+    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+
+    expect(revivalOf(annotated[1])).toBeUndefined()
+  })
+
+  it("still requires a block start — an anchor on a locally-adjacent continuation doesn't chip every row", () => {
+    const items = [
+      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_x", "2026-02-15T00:00:00.000Z"),
+      messageItem("evt_b", "msg_b", "2026-02-19T00:05:00.000Z", "conv_x", "2026-02-15T00:00:00.000Z"),
+    ]
+
+    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+
+    expect(revivalOf(annotated[0])).toBeDefined()
+    expect(revivalOf(annotated[1])).toBeUndefined()
+  })
+
+  it("ignores the server anchor when the declared conversation was retired — it was read for the dead shell, not the successor", () => {
+    const conversationsById = new Map<string, ConversationWithStaleness>([
+      ["conv_x", { status: "resolved", messageIds: [] as string[], topicSummary: null } as ConversationWithStaleness],
+      [
+        "conv_successor",
+        { status: "active", messageIds: ["msg_a", "msg_c"], topicSummary: "Pizza" } as ConversationWithStaleness,
+      ],
+    ])
+    const membership = new Map([
+      ["msg_a", "conv_successor"],
+      ["msg_c", "conv_successor"],
+    ])
+    const items = [
+      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_other"),
+      messageItem("evt_c", "msg_c", "2026-02-19T05:00:00.000Z", "conv_x", "2026-02-15T00:00:00.000Z"),
+    ]
+
+    const annotated = annotateConversationRevivals(items, membership, conversationsById)
+
+    // Routed to the successor; no revival — the successor has no earlier member
+    // loaded in this window, and the stale anchor belongs to conv_x, not it.
+    expect(revivalOf(annotated[1])).toBeUndefined()
   })
 })
 

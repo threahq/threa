@@ -94,6 +94,19 @@ export interface MessageCreatedPayload {
    */
   declaredConversationId?: string
   /**
+   * The declared conversation's `lastActivityAt` immediately before this
+   * message's attach (a plain pre-read via `ConversationAssigner.
+   * peekDeclaredConversationActivity`, not the assigner's own row-locked
+   * read) — the flat-timeline revival chip's "· 3h ago" anchor. Present
+   * whenever `declaredConversationId` is, so the chip is correct even when
+   * the conversation's earlier messages aren't currently loaded in the
+   * viewer's timeline (a truly dormant conversation revived from the board,
+   * with nothing else of it in view) — the client's purely local
+   * "have I rendered this conversation before" tracking can't detect that
+   * case on its own.
+   */
+  declaredConversationPreviousActivityAt?: string
+  /**
    * Populated at bootstrap enrichment time when this message has at least one
    * non-deleted reply. Not present on initial `message_created` emission (the
    * outbox path carries no replies yet).
@@ -392,6 +405,19 @@ export interface ConversationAssigner {
     client: PoolClient,
     params: { workspaceId: string; message: Message; directive: ConversationDirective }
   ): Promise<string>
+  /**
+   * For an `existing`-intent declaration: the target conversation's current
+   * `lastActivityAt`, read before this message's attach bumps it. Called ahead
+   * of `assignInTransaction` (see the call site) purely to stamp the flat-
+   * timeline revival chip's anchor onto the event payload — never mutates,
+   * never locks. Returns `undefined` when the id doesn't resolve (the send
+   * will fail validation in `assignInTransaction` moments later regardless).
+   * Optional: an assigner that doesn't implement it just yields no chip.
+   */
+  peekDeclaredConversationActivity?(
+    client: PoolClient,
+    params: { workspaceId: string; conversationId: string }
+  ): Promise<string | undefined>
 }
 
 export class EventService {
@@ -673,6 +699,25 @@ export class EventService {
     const declaredConversationId =
       params.conversation?.intent === ConversationIntents.EXISTING ? params.conversation.conversationId : undefined
 
+    // The conversation's prior activity, read BEFORE the assigner's later bump —
+    // the "· 3h ago" anchor the revival chip needs. Must be captured here, ahead
+    // of the event/outbox inserts below: the outbox row snapshots this payload
+    // for real-time broadcast, and the assigner (which does the authoritative
+    // attach + bump) only runs after those inserts, so anything read from it
+    // would land too late to reach either broadcast or catch-up. A plain,
+    // non-locking peek — the real attach's own row-lock is what's authoritative,
+    // so a concurrent bump landing in the gap can only make this display value
+    // slightly stale, never incorrect. Optional on the assigner (test doubles
+    // and any future assigner without conversation history need not implement
+    // it) — its absence just means no chip, not a broken send.
+    const declaredConversationPreviousActivityAt =
+      declaredConversationId && this.conversationAssigner?.peekDeclaredConversationActivity
+        ? await this.conversationAssigner.peekDeclaredConversationActivity(client, {
+            workspaceId: params.workspaceId,
+            conversationId: declaredConversationId,
+          })
+        : undefined
+
     const event = await StreamEventRepository.insert(client, {
       id: evtId,
       streamId: params.streamId,
@@ -687,6 +732,7 @@ export class EventService {
         ...(params.clientMessageId && { clientMessageId: params.clientMessageId }),
         ...(params.sentVia && { sentVia: params.sentVia }),
         ...(declaredConversationId && { declaredConversationId }),
+        ...(declaredConversationPreviousActivityAt && { declaredConversationPreviousActivityAt }),
         ...(metadata && { metadata }),
         ...(params.ciphertext && { ciphertext: params.ciphertext.toString("base64") }),
         ...(params.envelope !== undefined && { envelope: params.envelope }),

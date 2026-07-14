@@ -37,6 +37,15 @@ import { HttpError } from "../../lib/errors"
  *    parentMessageId ∈ the parent conversation), so no parent id is written.
  */
 export const conversationAssigner: ConversationAssigner = {
+  async peekDeclaredConversationActivity(client, { workspaceId, conversationId: targetId }) {
+    // Plain, workspace-scoped (INV-8), non-locking read — the authoritative
+    // attach + bump still happens in `assignInTransaction` a moment later, in
+    // the same transaction. Batch method reused as a single-id lookup so this
+    // stays consistent with the rest of the repository's workspace-scoping.
+    const [row] = await ConversationRepository.findByIds(client, workspaceId, [targetId])
+    return row?.lastActivityAt.toISOString()
+  },
+
   async assignInTransaction(client, { workspaceId, message, directive }) {
     if (directive.intent === ConversationIntents.THREAD_FROM_MESSAGE) {
       const sourceId = await attachThreadReplyToSource(client, workspaceId, message, directive.sourceConversationId)

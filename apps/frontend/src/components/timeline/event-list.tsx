@@ -241,6 +241,15 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  * coloring): a lone unclustered aside between two members of the same topic is
  * not a topic switch, so it must not manufacture a revival. Pure and
  * export-only for isolated coverage.
+ *
+ * "Has already appeared earlier" is checked two ways, not one: a local `seen`
+ * Set built purely from `items` (works only when the conversation's earlier
+ * member is loaded into the CURRENT render), and the server-stamped
+ * `declaredConversationPreviousActivityAt` on a declared `existing`-intent send
+ * (works even when nothing else of the conversation is loaded — a long-dormant
+ * conversation revived from the board/panel, with no other member anywhere in
+ * the viewer's currently-rendered window). Relying on `seen` alone would miss
+ * exactly that case, since it has no memory beyond what's actually rendered.
  */
 export function annotateConversationRevivals(
   items: TimelineItem[],
@@ -252,7 +261,11 @@ export function annotateConversationRevivals(
   let previousConversationId: string | null = null
   return items.map((item) => {
     if (item.type !== "event" || !isGroupableMessage(item.event)) return item
-    const payload = item.event.payload as { messageId?: string; declaredConversationId?: string }
+    const payload = item.event.payload as {
+      messageId?: string
+      declaredConversationId?: string
+      declaredConversationPreviousActivityAt?: string
+    }
     const messageId = payload?.messageId
     if (!messageId) return item
     // A message that DECLARED its conversation at send time carries the id on its
@@ -277,11 +290,24 @@ export function annotateConversationRevivals(
     const declaredRow = declared != null ? conversationsById.get(declared) : undefined
     const declaredRetired = declaredRow?.status === ConversationStatuses.RESOLVED && declaredRow.messageIds.length === 0
     const conversationId = (declaredRetired ? undefined : declared) ?? membership.get(messageId) ?? null
+    // The server-stamped anchor (Mechanism C, `declaredConversationPreviousActivityAt`
+    // — set only on an `existing`-intent send that attaches to an
+    // ALREADY-non-empty conversation). Its mere presence already confirms
+    // genuine prior activity, independent of whether that prior activity is
+    // currently loaded into `items` — unlike the purely local `seen` tracking
+    // below, which can't detect a revival when nothing else of the conversation
+    // is rendered (a long-dormant conversation revived from the board/panel with
+    // no other member message anywhere in the loaded window). Gated on
+    // `declared` (not the post-fallback `conversationId`) so a retired/merged
+    // id — which no longer matches what this timestamp was read for — can't
+    // borrow it.
+    const declaredPreviousActivityAt =
+      !declaredRetired && conversationId === declared ? payload.declaredConversationPreviousActivityAt : undefined
     let revival: ConversationRevival | undefined
     if (conversationId != null) {
       const blockStart = conversationId !== previousConversationId
-      const previousActivityAt = lastActivityByConversation.get(conversationId)
-      if (blockStart && seen.has(conversationId) && previousActivityAt) {
+      const previousActivityAt = declaredPreviousActivityAt ?? lastActivityByConversation.get(conversationId)
+      if (blockStart && (declaredPreviousActivityAt != null || seen.has(conversationId)) && previousActivityAt) {
         revival = {
           conversationId,
           topicSummary: conversationsById.get(conversationId)?.topicSummary ?? null,
