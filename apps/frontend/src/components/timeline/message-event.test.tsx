@@ -221,6 +221,25 @@ describe("MessageEvent", () => {
 
       expect(screen.getByRole("link", { name: /continues pizza/i })).toHaveAttribute("href", "/panel/conv:conv_a")
     })
+
+    it("renders the chip without a time tail when previousActivityAt is unknown (block start, nothing locally loaded)", () => {
+      const event = createMessageEvent("msg_123", "Pizza")
+
+      render(
+        <MessageEvent
+          event={event}
+          workspaceId={workspaceId}
+          streamId={streamId}
+          revival={{ conversationId: "conv_a", topicSummary: "Pizza", previousActivityAt: undefined }}
+        />,
+        { wrapper: Wrapper }
+      )
+
+      const chip = screen.getByRole("link", { name: /continues pizza/i })
+      expect(chip).toHaveAttribute("href", "/panel/conv:conv_a")
+      // No dangling "·" separator when there's no time to pair it with.
+      expect(chip).not.toHaveTextContent("·")
+    })
   })
 
   describe("content rendering", () => {

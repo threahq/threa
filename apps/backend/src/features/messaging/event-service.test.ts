@@ -1104,55 +1104,6 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
     const undeclared = await service.createMessageReturningConversation({ ...baseParams })
     expect(undeclared.conversationId).toBeUndefined()
   })
-
-  it("stamps declaredConversationPreviousActivityAt from the assigner's peek, read before the event insert", async () => {
-    const peekDeclaredConversationActivity = mock(async () => "2026-02-15T00:00:00.000Z")
-    const service = new EventService({} as any, { assignInTransaction, peekDeclaredConversationActivity })
-
-    await service.createMessage({
-      ...baseParams,
-      conversation: { intent: ConversationIntents.EXISTING, conversationId: "conv_abc" },
-    })
-
-    expect(peekDeclaredConversationActivity).toHaveBeenCalledWith(expect.anything(), {
-      workspaceId: "ws_1",
-      conversationId: "conv_abc",
-    })
-    expect(StreamEventRepository.insert).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        payload: expect.objectContaining({ declaredConversationPreviousActivityAt: "2026-02-15T00:00:00.000Z" }),
-      })
-    )
-    // Called before the event insert (the outbox row snapshots this payload for
-    // real-time broadcast, so the stamp must exist by then, not after).
-    const peekOrder = peekDeclaredConversationActivity.mock.invocationCallOrder[0]
-    const insertOrder = (StreamEventRepository.insert as any).mock.invocationCallOrder[0]
-    expect(peekOrder).toBeLessThan(insertOrder)
-  })
-
-  it("omits declaredConversationPreviousActivityAt when the assigner doesn't implement the peek", async () => {
-    // The plain `{ assignInTransaction }` double — an assigner without history
-    // support degrades to no chip, not a broken send (optional capability).
-    const service = new EventService({} as any, conversationAssigner)
-
-    await service.createMessage({
-      ...baseParams,
-      conversation: { intent: ConversationIntents.EXISTING, conversationId: "conv_abc" },
-    })
-
-    const eventPayload = (StreamEventRepository.insert as any).mock.calls[0][1].payload
-    expect(eventPayload).not.toHaveProperty("declaredConversationPreviousActivityAt")
-  })
-
-  it("never calls the peek for a new/thread/subtopic directive — only `existing` reopens something", async () => {
-    const peekDeclaredConversationActivity = mock(async () => "2026-02-15T00:00:00.000Z")
-    const service = new EventService({} as any, { assignInTransaction, peekDeclaredConversationActivity })
-
-    await service.createMessage({ ...baseParams, conversation: { intent: ConversationIntents.NEW } })
-
-    expect(peekDeclaredConversationActivity).not.toHaveBeenCalled()
-  })
 })
 
 describe("EventService INV-E1 sink guard", () => {

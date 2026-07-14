@@ -319,10 +319,18 @@ function ConversationProvenanceChip({ revival }: { revival: ConversationRevival 
       <span className="min-w-0 truncate">
         continues <span className="font-medium text-foreground/80 group-hover/prov:underline">{topic}</span>
       </span>
-      <span aria-hidden className="text-muted-foreground/40">
-        ·
-      </span>
-      <RelativeTime date={revival.previousActivityAt} terse className="shrink-0 text-muted-foreground/70" />
+      {/* Omitted, not "just now": absent means this conversation's earlier
+          member isn't loaded into the current render, not that it's recent —
+          the chip still fires (a topic switch needs the same grounding either
+          way), it just can't claim a time it doesn't know. */}
+      {revival.previousActivityAt && (
+        <>
+          <span aria-hidden className="text-muted-foreground/40">
+            ·
+          </span>
+          <RelativeTime date={revival.previousActivityAt} terse className="shrink-0 text-muted-foreground/70" />
+        </>
+      )}
     </Link>
   )
 }

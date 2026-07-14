@@ -362,8 +362,7 @@ describe("annotateConversationRevivals", () => {
     id: string,
     messageId: string,
     createdAt: string,
-    declaredConversationId?: string,
-    declaredConversationPreviousActivityAt?: string
+    declaredConversationId?: string
   ): TimelineItem {
     return {
       type: "event",
@@ -372,11 +371,7 @@ describe("annotateConversationRevivals", () => {
           id,
           sequence: id,
           eventType: "message_created",
-          payload: {
-            messageId,
-            ...(declaredConversationId ? { declaredConversationId } : {}),
-            ...(declaredConversationPreviousActivityAt ? { declaredConversationPreviousActivityAt } : {}),
-          },
+          payload: { messageId, ...(declaredConversationId ? { declaredConversationId } : {}) },
         }),
         createdAt,
       },
@@ -388,8 +383,10 @@ describe("annotateConversationRevivals", () => {
 
   const revivalOf = (item: TimelineItem) => (item.type === "event" ? item.revival : undefined)
 
-  // A → conv_x, B → conv_y, C → conv_x: the intervening conv_y makes C revive a
-  // scattered conv_x, so C carries the chip anchored on A's activity.
+  // A → conv_x, B → conv_y, C → conv_x: every block start chips (the
+  // simplified rule, Kris's call) — A and B each open, chip-less on time
+  // (first local appearance of their conversation); C's block start finds
+  // conv_x locally seen at A, so it carries a real time anchor.
   const scattered = (declared: boolean): TimelineItem[] => [
     messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", declared ? "conv_x" : undefined),
     messageItem("evt_b", "msg_b", "2026-02-19T01:00:00.000Z", declared ? "conv_y" : undefined),
@@ -404,8 +401,10 @@ describe("annotateConversationRevivals", () => {
       topicSummary: null,
       previousActivityAt: "2026-02-19T00:00:00.000Z",
     })
-    expect(revivalOf(items[0])).toBeUndefined()
-    expect(revivalOf(items[1])).toBeUndefined()
+    // Every block start chips now — A and B each open their conversation for
+    // the first time locally, so both chip too, just with no time to show.
+    expect(revivalOf(items[0])).toEqual({ conversationId: "conv_x", topicSummary: null, previousActivityAt: undefined })
+    expect(revivalOf(items[1])).toEqual({ conversationId: "conv_y", topicSummary: null, previousActivityAt: undefined })
   })
 
   it("resolves the topic label from the conversation list when it has loaded", () => {
@@ -483,30 +482,13 @@ describe("annotateConversationRevivals", () => {
     expect(revivalOf(items[2])?.conversationId).toBe("conv_x")
   })
 
-  // A dormant conversation revived from the board/panel: nothing else of it is
-  // loaded into `items` at all (no scattered earlier member anywhere in the
-  // window) — the local `seen` tracking alone can never detect this. The
-  // server-stamped `declaredConversationPreviousActivityAt` is what makes the
-  // chip render anyway.
-  it("revives from the server-stamped anchor when nothing else of the conversation is loaded", () => {
-    const items = [
-      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_other"),
-      messageItem("evt_b", "msg_b", "2026-02-19T05:00:00.000Z", "conv_x", "2026-02-15T00:00:00.000Z"),
-    ]
-
-    const annotated = annotateConversationRevivals(items, new Map(), new Map())
-
-    expect(revivalOf(annotated[1])).toEqual({
-      conversationId: "conv_x",
-      topicSummary: null,
-      previousActivityAt: "2026-02-15T00:00:00.000Z",
-    })
-  })
-
-  it("does NOT revive a first-time-loaded conversation lacking the server anchor", () => {
-    // Same shape as above, but no `declaredConversationPreviousActivityAt` (an
-    // async-classified message, or an older client) — must not fabricate a
-    // revival with no evidence of real prior activity.
+  // Kris's report: a long-dormant conversation revived from the board, with
+  // NOTHING else of it loaded into `items` at all — no scattered earlier
+  // member anywhere in the window. The chip must still fire (simplified
+  // design supersedes the earlier server-timestamp approach): a block start
+  // is a block start, whether or not this conversation has been rendered
+  // before. There's simply no time to show for it.
+  it("chips a conversation's first LOADED appearance too, with no time tail — the exact reported bug", () => {
     const items = [
       messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_other"),
       messageItem("evt_b", "msg_b", "2026-02-19T05:00:00.000Z", "conv_x"),
@@ -514,13 +496,27 @@ describe("annotateConversationRevivals", () => {
 
     const annotated = annotateConversationRevivals(items, new Map(), new Map())
 
-    expect(revivalOf(annotated[1])).toBeUndefined()
+    expect(revivalOf(annotated[1])).toEqual({
+      conversationId: "conv_x",
+      topicSummary: null,
+      previousActivityAt: undefined,
+    })
   })
 
-  it("still requires a block start — an anchor on a locally-adjacent continuation doesn't chip every row", () => {
+  it("fills previousActivityAt when the earlier member IS locally loaded (genuine revival, real time tail)", () => {
+    const annotated = annotateConversationRevivals(scattered(true), new Map(), new Map())
+
+    expect(revivalOf(annotated[2])).toEqual({
+      conversationId: "conv_x",
+      topicSummary: null,
+      previousActivityAt: "2026-02-19T00:00:00.000Z",
+    })
+  })
+
+  it("still requires a block start — a locally-adjacent continuation doesn't chip every row", () => {
     const items = [
-      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_x", "2026-02-15T00:00:00.000Z"),
-      messageItem("evt_b", "msg_b", "2026-02-19T00:05:00.000Z", "conv_x", "2026-02-15T00:00:00.000Z"),
+      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_x"),
+      messageItem("evt_b", "msg_b", "2026-02-19T00:05:00.000Z", "conv_x"),
     ]
 
     const annotated = annotateConversationRevivals(items, new Map(), new Map())
@@ -529,28 +525,16 @@ describe("annotateConversationRevivals", () => {
     expect(revivalOf(annotated[1])).toBeUndefined()
   })
 
-  it("ignores the server anchor when the declared conversation was retired — it was read for the dead shell, not the successor", () => {
-    const conversationsById = new Map<string, ConversationWithStaleness>([
-      ["conv_x", { status: "resolved", messageIds: [] as string[], topicSummary: null } as ConversationWithStaleness],
-      [
-        "conv_successor",
-        { status: "active", messageIds: ["msg_a", "msg_c"], topicSummary: "Pizza" } as ConversationWithStaleness,
-      ],
-    ])
-    const membership = new Map([
-      ["msg_a", "conv_successor"],
-      ["msg_c", "conv_successor"],
-    ])
-    const items = [
-      messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_other"),
-      messageItem("evt_c", "msg_c", "2026-02-19T05:00:00.000Z", "conv_x", "2026-02-15T00:00:00.000Z"),
-    ]
+  it("chips even a lone message with nothing before it at all (matches annotateConversationRows' block-start convention)", () => {
+    const items = [messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_x")]
 
-    const annotated = annotateConversationRevivals(items, membership, conversationsById)
+    const annotated = annotateConversationRevivals(items, new Map(), new Map())
 
-    // Routed to the successor; no revival — the successor has no earlier member
-    // loaded in this window, and the stale anchor belongs to conv_x, not it.
-    expect(revivalOf(annotated[1])).toBeUndefined()
+    expect(revivalOf(annotated[0])).toEqual({
+      conversationId: "conv_x",
+      topicSummary: null,
+      previousActivityAt: undefined,
+    })
   })
 })
 

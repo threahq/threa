@@ -219,17 +219,24 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
 }
 
 /**
- * Stamp message rows that revive a scattered conversation with a
- * {@link ConversationRevival} for the always-on provenance chip (board-view-
- * design.md §"Conversations as soft threads", mechanism A) — no dependence on
- * the conversation overlay being painted.
+ * Stamp message rows that switch conversation with a {@link ConversationRevival}
+ * for the always-on provenance chip (board-view-design.md §"Conversations as
+ * soft threads", mechanism A) — no dependence on the conversation overlay being
+ * painted.
  *
- * A revival is a *block start* (the conversation differs from the previous
- * message row) whose conversation has already appeared earlier in the timeline.
- * Because a block start means the previous row is a different conversation, an
- * earlier member is necessarily separated from this one — that separation is
- * exactly the non-sequitur the chip explains. A conversation's first appearance
- * is a fresh topic, not a revival, so it carries no chip.
+ * Deliberately simple (Kris's call, superseding an earlier server-timestamped
+ * design): the chip fires on every *block start* — the previous conversation-
+ * bearing row differs from this one's conversation — full stop, regardless of
+ * whether this conversation has appeared anywhere in the loaded timeline
+ * before. With replies routinely arriving out of order via the board (reply to
+ * any conversation, from anywhere), a flat timeline that only flagged genuine
+ * "dormant revivals" would still read as a non-sequitur on an ordinary topic
+ * jump the local render just hasn't seen yet — so don't try to distinguish
+ * "revival" from "first mention I haven't rendered": both need the same
+ * grounding. `previousActivityAt` is filled in when it happens to be locally
+ * known (a genuine revival within the loaded window) and left `undefined`
+ * otherwise — the chip renders the topic without a time tail rather than
+ * guessing.
  *
  * `membership` is the always-on `messageId → conversationId` map
  * (`buildMessageConversationMap`), including cross-stream secondary members. A
@@ -239,33 +246,19 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  * break a run — only a different real conversation does. This diverges from
  * `annotateConversationRows` (which resets its run on an unassigned row for
  * coloring): a lone unclustered aside between two members of the same topic is
- * not a topic switch, so it must not manufacture a revival. Pure and
- * export-only for isolated coverage.
- *
- * "Has already appeared earlier" is checked two ways, not one: a local `seen`
- * Set built purely from `items` (works only when the conversation's earlier
- * member is loaded into the CURRENT render), and the server-stamped
- * `declaredConversationPreviousActivityAt` on a declared `existing`-intent send
- * (works even when nothing else of the conversation is loaded — a long-dormant
- * conversation revived from the board/panel, with no other member anywhere in
- * the viewer's currently-rendered window). Relying on `seen` alone would miss
- * exactly that case, since it has no memory beyond what's actually rendered.
+ * not a topic switch, so it must not manufacture a chip. Pure and export-only
+ * for isolated coverage.
  */
 export function annotateConversationRevivals(
   items: TimelineItem[],
   membership: ReadonlyMap<string, string>,
   conversationsById: ReadonlyMap<string, ConversationWithStaleness>
 ): TimelineItem[] {
-  const seen = new Set<string>()
   const lastActivityByConversation = new Map<string, string>()
   let previousConversationId: string | null = null
   return items.map((item) => {
     if (item.type !== "event" || !isGroupableMessage(item.event)) return item
-    const payload = item.event.payload as {
-      messageId?: string
-      declaredConversationId?: string
-      declaredConversationPreviousActivityAt?: string
-    }
+    const payload = item.event.payload as { messageId?: string; declaredConversationId?: string }
     const messageId = payload?.messageId
     if (!messageId) return item
     // A message that DECLARED its conversation at send time carries the id on its
@@ -290,37 +283,22 @@ export function annotateConversationRevivals(
     const declaredRow = declared != null ? conversationsById.get(declared) : undefined
     const declaredRetired = declaredRow?.status === ConversationStatuses.RESOLVED && declaredRow.messageIds.length === 0
     const conversationId = (declaredRetired ? undefined : declared) ?? membership.get(messageId) ?? null
-    // The server-stamped anchor (Mechanism C, `declaredConversationPreviousActivityAt`
-    // — set only on an `existing`-intent send that attaches to an
-    // ALREADY-non-empty conversation). Its mere presence already confirms
-    // genuine prior activity, independent of whether that prior activity is
-    // currently loaded into `items` — unlike the purely local `seen` tracking
-    // below, which can't detect a revival when nothing else of the conversation
-    // is rendered (a long-dormant conversation revived from the board/panel with
-    // no other member message anywhere in the loaded window). Gated on
-    // `declared` (not the post-fallback `conversationId`) so a retired/merged
-    // id — which no longer matches what this timestamp was read for — can't
-    // borrow it.
-    const declaredPreviousActivityAt =
-      !declaredRetired && conversationId === declared ? payload.declaredConversationPreviousActivityAt : undefined
     let revival: ConversationRevival | undefined
     if (conversationId != null) {
       const blockStart = conversationId !== previousConversationId
-      const previousActivityAt = declaredPreviousActivityAt ?? lastActivityByConversation.get(conversationId)
-      if (blockStart && (declaredPreviousActivityAt != null || seen.has(conversationId)) && previousActivityAt) {
+      if (blockStart) {
         revival = {
           conversationId,
           topicSummary: conversationsById.get(conversationId)?.topicSummary ?? null,
-          previousActivityAt,
+          previousActivityAt: lastActivityByConversation.get(conversationId),
         }
       }
-      seen.add(conversationId)
       lastActivityByConversation.set(conversationId, item.event.createdAt)
       // Only a real conversation breaks the run. An unassigned message
       // (extraction pending, or a genuinely unclustered aside) must NOT reset
       // this — otherwise the next same-conversation message reads as a block
-      // start and gets a false revival chip even though no *other* topic
-      // intervened, just one stray message. A revival requires a different
+      // start and gets a false chip even though no *other* topic intervened,
+      // just one stray message. A topic switch requires a different
       // conversation between the prior member and now, not merely a gap.
       previousConversationId = conversationId
     }

@@ -96,8 +96,12 @@ export interface ConversationRevival {
   /**
    * `createdAt` of the conversation's previous member row — the "· 3h ago"
    * anchor. The prior activity of this topic, not this reviving message.
+   * `undefined` when that member isn't locally loaded (a block start whose
+   * conversation we simply haven't rendered before in this window — the chip
+   * still fires, per the "context, not just dormant-revival" call below; it
+   * just omits the time it can't know) — the chip renders without the tail.
    */
-  previousActivityAt: string
+  previousActivityAt?: string
 }
 
 /**

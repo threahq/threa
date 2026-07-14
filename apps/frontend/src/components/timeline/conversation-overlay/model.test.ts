@@ -243,14 +243,17 @@ describe("annotateConversationRevivals", () => {
     ]
     const membership = { a1: "conv_a", b1: "conv_b", a2: "conv_a" }
 
+    // Every block start chips (simplified rule): a1 and b1 each open their
+    // conversation for the first time locally (no time to show yet); a2's
+    // block start finds conv_a already seen at a1, so it gets a real anchor.
     expect(revivals(items, membership)).toEqual([
-      null,
-      null,
+      { conversationId: "conv_a", topicSummary: "Pizza", previousActivityAt: undefined },
+      { conversationId: "conv_b", topicSummary: "Bug", previousActivityAt: undefined },
       { conversationId: "conv_a", topicSummary: "Pizza", previousActivityAt: "2026-06-01T00:00:00.000Z" },
     ])
   })
 
-  it("does not mark a contiguous run or a conversation's first appearance", () => {
+  it("does not chip a contiguous run — only a real block start does", () => {
     const items = [
       msg("a1", "2026-06-01T00:00:00.000Z"),
       msg("a2", "2026-06-01T00:01:00.000Z"),
@@ -258,10 +261,14 @@ describe("annotateConversationRevivals", () => {
     ]
     const membership = { a1: "conv_a", a2: "conv_a", b1: "conv_b" }
 
-    expect(revivals(items, membership)).toEqual([null, null, null])
+    expect(revivals(items, membership)).toEqual([
+      { conversationId: "conv_a", topicSummary: "Pizza", previousActivityAt: undefined },
+      null,
+      { conversationId: "conv_b", topicSummary: "Bug", previousActivityAt: undefined },
+    ])
   })
 
-  it("does not manufacture a revival when only an unassigned aside separates two members", () => {
+  it("does not manufacture a chip on a2 when only an unassigned aside separates two members of the same conversation", () => {
     // a1 → x1(unassigned) → a2, all with no *other* conversation between. A lone
     // unclustered message is not a topic switch, so a2 must not get a chip.
     const items = [
@@ -271,7 +278,11 @@ describe("annotateConversationRevivals", () => {
     ]
     const membership = { a1: "conv_a", a2: "conv_a" }
 
-    expect(revivals(items, membership)).toEqual([null, null, null])
+    expect(revivals(items, membership)).toEqual([
+      { conversationId: "conv_a", topicSummary: "Pizza", previousActivityAt: undefined },
+      null,
+      null,
+    ])
   })
 
   it("ignores unassigned rows and does not break the run across non-message items", () => {

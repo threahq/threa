@@ -568,7 +568,21 @@ stops being load-bearing for the surfaces people actually drive.
 ### Open decisions — all resolved (2026-07-03)
 
 1. **Indicator trigger** — loud `↪ continues X` only on revivals. **Shipped that
-   way (#1140).**
+   way (#1140); reversed (2026-07-14, PR #1345).** The "revival-only" gate
+   required proof the conversation had appeared before — either locally
+   rendered earlier in the same load, or (a since-reverted attempt) a
+   server-stamped prior-activity timestamp. Both failed the same way: a
+   long-dormant conversation revived from the board, with nothing else of it
+   loaded in the viewer's timeline, showed no chip at all — the report that
+   started this ("nothing else of that Convo was visible"). Kris's call:
+   don't try to distinguish "genuine dormant revival" from "topic switch I
+   haven't rendered yet" — with replies routinely landing via the board out of
+   sequence, both need the same grounding. The chip now fires on every block
+   start (the previous conversation-bearing row differs from this one),
+   matching `annotateConversationRows`' existing block-start convention
+   exactly. `previousActivityAt` is filled in when locally known (a real
+   revival within the loaded window) and omitted otherwise — the chip still
+   renders, just without a time it can't honestly claim.
 2. **Attached context: content node vs. envelope field.** **Resolved the
    _opposite_ of the earlier lean (#1146): a hidden field, not a
    `conversationReference` content node.** The counter-argument won — a

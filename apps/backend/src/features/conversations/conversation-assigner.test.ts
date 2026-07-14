@@ -270,41 +270,6 @@ describe("conversationAssigner — existing (same-root guard)", () => {
   })
 })
 
-describe("conversationAssigner — peekDeclaredConversationActivity", () => {
-  let findByIds: ReturnType<typeof spyOn>
-
-  beforeEach(() => {
-    findByIds = spyOn(ConversationRepository, "findByIds")
-  })
-
-  afterEach(() => {
-    mock.restore()
-  })
-
-  test("returns the target conversation's current lastActivityAt, workspace-scoped", async () => {
-    findByIds.mockResolvedValue([makeSource({ id: "conv_src", lastActivityAt: new Date("2026-02-15T00:00:00.000Z") })])
-
-    const result = await conversationAssigner.peekDeclaredConversationActivity!(CLIENT, {
-      workspaceId: WORKSPACE_ID,
-      conversationId: "conv_src",
-    })
-
-    expect(result).toBe("2026-02-15T00:00:00.000Z")
-    expect(findByIds).toHaveBeenCalledWith(CLIENT, WORKSPACE_ID, ["conv_src"])
-  })
-
-  test("returns undefined for a missing/foreign id — never throws (the send's own validation catches it moments later)", async () => {
-    findByIds.mockResolvedValue([])
-
-    const result = await conversationAssigner.peekDeclaredConversationActivity!(CLIENT, {
-      workspaceId: WORKSPACE_ID,
-      conversationId: "conv_gone",
-    })
-
-    expect(result).toBeUndefined()
-  })
-})
-
 describe("conversationAssigner — new (client-minted id)", () => {
   let insert: ReturnType<typeof spyOn>
   let addPrimaryMessage: ReturnType<typeof spyOn>
