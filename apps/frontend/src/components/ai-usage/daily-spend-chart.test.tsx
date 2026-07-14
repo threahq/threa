@@ -14,14 +14,22 @@ describe("buildDailySpendData", () => {
 
     expect(data.map((d) => d.date)).toEqual(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05"])
 
-    const empty = data.find((d) => d.date === "2026-07-01")!
-    expect(empty.memory).toBe(0)
-    expect(empty.agents).toBe(0)
-
-    const busy = data.find((d) => d.date === "2026-07-03")!
-    expect(busy.memory).toBe(0.2)
-    expect(busy.agents).toBe(0.1)
-    expect(busy.conversation).toBe(0)
+    expect(data.find((d) => d.date === "2026-07-01")).toEqual({
+      date: "2026-07-01",
+      memory: 0,
+      conversation: 0,
+      agents: 0,
+      attachments: 0,
+      other: 0,
+    })
+    expect(data.find((d) => d.date === "2026-07-03")).toEqual({
+      date: "2026-07-03",
+      memory: 0.2,
+      conversation: 0,
+      agents: 0.1,
+      attachments: 0,
+      other: 0,
+    })
   })
 
   it("excludes the day starting exactly at the exclusive period end", () => {

@@ -1,4 +1,5 @@
 import type { AIUsageByDay, AIUsageCategory } from "@threa/types"
+import type { DayFunctionBreakdown } from "./usage-repository"
 
 export const FUNCTION_CATEGORY_MAP: Record<string, AIUsageCategory> = {
   "memorize-conversation": "memory",
@@ -47,15 +48,7 @@ export function categorizeFunction(functionId: string): AIUsageCategory {
   return FUNCTION_CATEGORY_MAP[functionId] ?? "other"
 }
 
-export interface UsageByDayFunctionRow {
-  date: string
-  functionId: string
-  totalCostUsd: number
-  totalTokens: number
-  recordCount: number
-}
-
-export function aggregateUsageByDay(rows: UsageByDayFunctionRow[]): AIUsageByDay[] {
+export function aggregateUsageByDay(rows: DayFunctionBreakdown[]): AIUsageByDay[] {
   const buckets = new Map<string, AIUsageByDay>()
   for (const row of rows) {
     const category = categorizeFunction(row.functionId)
