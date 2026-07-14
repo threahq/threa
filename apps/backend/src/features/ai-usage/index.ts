@@ -14,9 +14,12 @@ export type {
   UsageSummary,
   ModelBreakdown,
   FunctionBreakdown,
+  DayFunctionBreakdown,
   UserBreakdown,
   OriginBreakdown,
 } from "./usage-repository"
+
+export { FUNCTION_CATEGORY_MAP, categorizeFunction, aggregateUsageByDay } from "./categories"
 
 export { AIBudgetRepository } from "./budget-repository"
 export type {

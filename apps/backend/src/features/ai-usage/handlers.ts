@@ -4,8 +4,10 @@ import type { Pool } from "pg"
 import { withClient } from "../../db"
 import { AIUsageRepository } from "./usage-repository"
 import { AIBudgetRepository } from "./budget-repository"
+import { categorizeFunction, aggregateUsageByDay } from "./categories"
 import { aiBudgetId } from "../../lib/id"
 import { validateRequest } from "../../lib/validation"
+import { isValidIanaTimezone, monthRangeInTimezone } from "../../lib/temporal"
 
 const updateBudgetSchema = z.object({
   monthlyBudgetUsd: z.number().min(0).optional(),
@@ -21,33 +23,38 @@ interface Dependencies {
   pool: Pool
 }
 
-function getCurrentMonthRange(): { start: Date; end: Date } {
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0)
-  return { start, end }
-}
-
-/** First of next month. */
-function getNextResetDate(): Date {
-  const now = new Date()
-  return new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0)
-}
+// The dashboard's day buckets and month window follow the viewer's timezone
+// (Stripe's model: money is stored as timestamps, day/month lines are drawn at
+// presentation). Budget *enforcement* in budget-service keeps its own window.
+const timezoneQuerySchema = z.object({
+  tz: z
+    .string()
+    .refine(isValidIanaTimezone, { message: "must be a valid IANA timezone identifier" })
+    .optional()
+    .default("UTC"),
+})
 
 export function createAIUsageHandlers({ pool }: Dependencies) {
   return {
     async getUsage(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const { start, end } = getCurrentMonthRange()
+      const { tz } = validateRequest(timezoneQuerySchema, req.query)
+      const { start, end } = monthRangeInTimezone(tz)
 
-      const [total, byOrigin, byUser] = await withClient(pool, async (client) =>
+      const [total, byOrigin, byUser, byFunctionRows, byModel, byDayRows] = await withClient(pool, async (client) =>
         Promise.all([
           AIUsageRepository.getWorkspaceUsage(client, workspaceId, start, end),
           AIUsageRepository.getUsageByOrigin(client, workspaceId, start, end),
           AIUsageRepository.getUsageByUser(client, workspaceId, start, end),
+          AIUsageRepository.getUsageByFunction(client, workspaceId, start, end),
+          AIUsageRepository.getUsageByModel(client, workspaceId, start, end),
+          AIUsageRepository.getUsageByDay(client, workspaceId, start, end, tz),
         ])
       )
+
+      const byFunction = byFunctionRows.map((row) => ({ ...row, category: categorizeFunction(row.functionId) }))
+      const byDay = aggregateUsageByDay(byDayRows)
 
       res.json({
         period: {
@@ -57,6 +64,9 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         total,
         byOrigin,
         byUser,
+        byFunction,
+        byModel,
+        byDay,
       })
     },
 
@@ -86,7 +96,8 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
     async getBudget(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const { start, end } = getCurrentMonthRange()
+      const { tz } = validateRequest(timezoneQuerySchema, req.query)
+      const { start, end } = monthRangeInTimezone(tz)
 
       const [budget, usage] = await withClient(pool, async (client) =>
         Promise.all([
@@ -100,7 +111,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
           budget: null,
           currentUsage: usage,
           percentUsed: 0,
-          nextReset: getNextResetDate().toISOString(),
+          nextReset: end.toISOString(),
         })
       }
 
@@ -118,7 +129,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         },
         currentUsage: usage,
         percentUsed: Math.round(percentUsed * 100) / 100,
-        nextReset: getNextResetDate().toISOString(),
+        nextReset: end.toISOString(),
       })
     },
 
@@ -126,7 +137,8 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
       const workspaceId = req.workspaceId!
 
       const updates = validateRequest(updateBudgetSchema, req.body)
-      const { start, end } = getCurrentMonthRange()
+      const { tz } = validateRequest(timezoneQuerySchema, req.query)
+      const { start, end } = monthRangeInTimezone(tz)
 
       const [budget, usage] = await withClient(pool, async (client) => {
         // Creates with defaults if absent; otherwise updates only provided fields.
@@ -158,7 +170,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         },
         currentUsage: usage,
         percentUsed: Math.round(percentUsed * 100) / 100,
-        nextReset: getNextResetDate().toISOString(),
+        nextReset: end.toISOString(),
       })
     },
   }

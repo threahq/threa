@@ -74,6 +74,14 @@ export interface FunctionBreakdown {
   recordCount: number
 }
 
+export interface DayFunctionBreakdown {
+  date: string
+  functionId: string
+  totalCostUsd: number
+  totalTokens: number
+  recordCount: number
+}
+
 export interface UserBreakdown {
   userId: string | null
   totalCostUsd: number
@@ -276,6 +284,43 @@ export const AIUsageRepository = {
     `)
 
     return result.rows.map((row) => ({
+      functionId: row.function_id,
+      totalCostUsd: parseFloat(row.total_cost_usd),
+      totalTokens: parseInt(row.total_tokens, 10),
+      recordCount: parseInt(row.record_count, 10),
+    }))
+  },
+
+  async getUsageByDay(
+    db: Querier,
+    workspaceId: string,
+    periodStart: Date,
+    periodEnd: Date,
+    timezone: string
+  ): Promise<DayFunctionBreakdown[]> {
+    const result = await db.query<{
+      date: string
+      function_id: string
+      total_cost_usd: string
+      total_tokens: string
+      record_count: string
+    }>(sql`
+      SELECT
+        to_char(created_at AT TIME ZONE ${timezone}, 'YYYY-MM-DD') as date,
+        function_id,
+        SUM(cost_usd) as total_cost_usd,
+        SUM(total_tokens) as total_tokens,
+        COUNT(*) as record_count
+      FROM ai_usage_records
+      WHERE workspace_id = ${workspaceId}
+        AND created_at >= ${periodStart}
+        AND created_at < ${periodEnd}
+      GROUP BY date, function_id
+      ORDER BY date ASC
+    `)
+
+    return result.rows.map((row) => ({
+      date: row.date,
       functionId: row.function_id,
       totalCostUsd: parseFloat(row.total_cost_usd),
       totalTokens: parseInt(row.total_tokens, 10),
