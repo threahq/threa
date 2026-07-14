@@ -21,12 +21,14 @@ import type { BotChannelService } from "../api-keys"
 import { hashCallbackToken } from "../agents"
 import { BotRepository } from "./bot-repository"
 import type { DelegatedTask, DelegationService } from "../delegations"
+import type { BotAccessRequestService } from "../bot-access-requests"
 import {
   claimDelegationSchema,
   completeDelegationSchema,
   failDelegationSchema,
   listDelegationsQuerySchema,
   reportDelegationStatusSchema,
+  requestDelegationAccessSchema,
 } from "./schemas"
 
 interface DelegationPublicApiDeps {
@@ -35,6 +37,7 @@ interface DelegationPublicApiDeps {
   eventService: EventService
   streamService: StreamService
   botChannelService: BotChannelService
+  botAccessRequestService: BotAccessRequestService
 }
 
 /** Wire shape for a delegation on the public API. Claim-related secrets never appear here. */
@@ -80,6 +83,7 @@ export function createDelegationPublicApiHandlers({
   eventService,
   streamService,
   botChannelService,
+  botAccessRequestService,
 }: DelegationPublicApiDeps) {
   type KeyIdentity =
     | { kind: "user"; userId: string; userName: string; apiKeyId: string }
@@ -374,6 +378,60 @@ export function createDelegationPublicApiHandlers({
         throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
       }
       res.json({ data: serializeDelegation(failed) })
+    },
+
+    /**
+     * File an access request for a delegation the bot runtime learned of via the
+     * workspace-wide `delegation:available` nudge but cannot claim (no stream
+     * grant). Bot keys only — a user key's access follows its user, so it is
+     * pointed at joining the stream instead (400). Unlike the lifecycle ops,
+     * this deliberately does NOT gate on current access: it must find the
+     * delegation even when the bot LACKS access (the whole point). An unknown id
+     * still 404s — the existence-hiding carve-out is scoped to ids the workspace
+     * bot plane already saw broadcast on the nudge. When the bot already has
+     * access, short-circuit with `already_granted` and file no card; otherwise
+     * the request is idempotent per (bot, stream) — a re-request returns the same
+     * open row without spawning a duplicate card.
+     */
+    async requestDelegationAccess(req: Request, res: Response) {
+      const identity = resolveKeyIdentity(req)
+      if (identity.kind === "user") {
+        throw new HttpError("A user key's access follows the user; ask the user to join the stream", {
+          status: 400,
+          code: "USER_KEY_CANNOT_REQUEST_ACCESS",
+        })
+      }
+      const workspaceId = req.workspaceId!
+      const id = req.params.delegationId!
+      const { requestedByLabel } = validateRequest(requestDelegationAccessSchema, req.body)
+
+      const delegation = await delegationService.getById({ workspaceId, id })
+      if (!delegation) {
+        throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
+      }
+      if (await botChannelService.isStreamAccessibleForBot(workspaceId, identity.botId, delegation.streamId)) {
+        res.json({ data: { status: "already_granted" } })
+        return
+      }
+
+      // Snapshot the bot name from the roster: the card is roster-independent
+      // (non-members cannot resolve an ungranted personal bot), so the name must
+      // ride the request row and event payload.
+      const bot = await BotRepository.findById(pool, workspaceId, identity.botId)
+      if (!bot || bot.archivedAt) {
+        throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+      }
+
+      const { request } = await botAccessRequestService.request({
+        workspaceId,
+        streamId: delegation.streamId,
+        botId: identity.botId,
+        botName: bot.name,
+        delegationId: delegation.id,
+        delegationTitle: delegation.title,
+        requestedByLabel,
+      })
+      res.json({ data: { requestId: request.id, status: request.status } })
     },
   }
 }

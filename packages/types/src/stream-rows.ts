@@ -221,6 +221,13 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   },
   // A patch that advances the matching delegation card's status — not its own row.
   "delegation:status_changed": PATCH,
+
+  // A bot access request (F3): a broadcast row in the timeline, never a
+  // board/topic row — the request is stream chrome (a bot asking to join), not
+  // anchored to a conversation.
+  "bot_access:requested": CHROME_BROADCAST,
+  // A patch that advances the matching request card to approved/denied — not its own row.
+  "bot_access:status_changed": PATCH,
 }
 
 /**

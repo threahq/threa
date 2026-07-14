@@ -13,6 +13,7 @@ import {
   sealStep,
   type AttachmentRef,
   type BotRuntimeHello,
+  type DelegationAvailableNudge,
   type SealedReplyBody,
   type StepFrame,
 } from "@threa/bot-runtime-client"
@@ -292,10 +293,12 @@ export interface RemoteSessionOptions {
   transport?: BotRuntimeTransport
   /**
    * Tap for the workspace-wide `delegation:available` socket nudge (roadmap
-   * 5.4) — wire it to a `DelegationRunner.notifyAvailable()`. Only fires on
-   * the SDK-constructed transport; an injected transport owns its callbacks.
+   * 5.4) — wire it to a `DelegationRunner.notifyAvailable()`. The nudge payload
+   * carries the delegation id so a runner lacking the stream grant can claim it
+   * by id (and, on 404, request access, F3). Only fires on the SDK-constructed
+   * transport; an injected transport owns its callbacks.
    */
-  onDelegationAvailable?: () => void
+  onDelegationAvailable?: (payload?: DelegationAvailableNudge) => void
   log?: (message: string) => void
   /** Override the archive→restore grace window (tests). */
   archiveGraceMs?: number
@@ -370,7 +373,9 @@ export class RemoteSession {
         hello: this.hello,
         callbacks: {
           onInvocationAvailable: () => void this.claimDrain(),
-          ...(options.onDelegationAvailable ? { onDelegationAvailable: options.onDelegationAvailable } : {}),
+          ...(options.onDelegationAvailable
+            ? { onDelegationAvailable: (payload: DelegationAvailableNudge) => options.onDelegationAvailable?.(payload) }
+            : {}),
           onBootstrap: (bootstrap) => {
             if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) void this.claimDrain()
           },

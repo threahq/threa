@@ -64,6 +64,7 @@ import {
   reportDelegationStatusSchema,
   completeDelegationSchema,
   failDelegationSchema,
+  requestDelegationAccessSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -515,6 +516,13 @@ const delegationHeartbeatSchema = z.object({ claimExpiresAt: z.string().datetime
 
 const completedDelegationSchema = delegationSchema.extend({ resultMessageId: z.string().optional() })
 
+const delegationAccessRequestSchema = z.object({
+  /** Absent when the bot already had access (`already_granted`); otherwise the open request's id. */
+  requestId: z.string().optional(),
+  /** `already_granted` (no card filed) or `open` (a request card exists in the stream). */
+  status: z.string(),
+})
+
 const invocationStatusSchema = z.object({ invocationId: z.string(), status: z.string() })
 const invocationStepSchema = z.object({ invocationId: z.string(), sessionId: z.string(), stepId: z.string() })
 const renewedInvocationSchema = invocationStatusSchema.extend({ claimExpiresAt: z.string().datetime().nullable() })
@@ -649,6 +657,7 @@ export type OperationId =
   | "reportDelegationStatus"
   | "completeDelegation"
   | "failDelegation"
+  | "requestDelegationAccess"
   | "listStreams"
   | "getStream"
   | "updateStream"
@@ -1108,6 +1117,21 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: failDelegationSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(delegationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/request-access",
+    operationId: "requestDelegationAccess",
+    summary: "Request access to a delegation's stream",
+    description:
+      "For a workspace (bot) key that received the delegation:available nudge but cannot claim it (no channel grant): file an access request that renders as a card in the delegation's stream for a member to approve or deny. Returns already_granted (no card) when the bot already has access; otherwise the request is idempotent per (bot, stream). 404 for an unknown delegation id — the existence-hiding carve-out is scoped to ids the workspace bot plane already saw on the nudge. A user-scoped key gets 400 (USER_KEY_CANNOT_REQUEST_ACCESS): a user key's access follows its user, who should join the stream directly.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam],
+    requestSchema: requestDelegationAccessSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(delegationAccessRequestSchema),
     canReturn404: true,
   },
 

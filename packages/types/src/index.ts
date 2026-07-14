@@ -148,6 +148,10 @@ export {
   type DelegationStatus,
   DelegationStatuses,
   DELEGATION_TERMINAL_STATUSES,
+  // Bot access-request lifecycle (F3)
+  BOT_ACCESS_REQUEST_STATUSES,
+  type BotAccessRequestStatus,
+  BotAccessRequestStatuses,
   // Agent session events
   AGENT_SESSION_EVENT_TYPES,
   type AgentSessionEventType,
@@ -530,6 +534,8 @@ export type {
   AgentFollowUpCancelledEventPayload,
   DelegationCreatedEventPayload,
   DelegationStatusChangedEventPayload,
+  BotAccessRequestedEventPayload,
+  BotAccessStatusChangedEventPayload,
   DelegationSummary,
   ListDelegationsResponse,
   DescriptionSetEventPayload,

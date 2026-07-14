@@ -55,6 +55,7 @@ import {
   type StreamBootstrap,
   type ConversationWithStaleness,
   type DelegationStatusChangedEventPayload,
+  type BotAccessStatusChangedEventPayload,
   type UnreadOpenPosition,
 } from "@threa/types"
 import {
@@ -70,6 +71,7 @@ import {
   findFirstMessageId,
   collectCancelledFollowUpIds,
   collectDelegationStatusPatches,
+  collectBotAccessStatusPatches,
   findMessageItemIndex,
   findEventItemIndex,
   findTimelineTargetIndex,
@@ -1270,6 +1272,10 @@ export function StreamContent({
   // filtered out of `visibleItems`): the card must see claim/progress/terminal
   // patches to render the authoritative live status on the virtualized path.
   const delegationStatusPatches = useMemo(() => collectDelegationStatusPatches(timelineItems), [timelineItems])
+  // Same full-window read for bot-access request status patches (zero-height,
+  // filtered out of `visibleItems`): the card must see the approve/deny
+  // resolution to render the authoritative terminal state on the virtualized path.
+  const botAccessStatusPatches = useMemo(() => collectBotAccessStatusPatches(timelineItems), [timelineItems])
 
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
   // its closure is created once per scroll but runs for up to ~1.2s, during
@@ -2303,6 +2309,7 @@ export function StreamContent({
                             isLoading={false}
                             workspaceId={workspaceId}
                             streamId={streamId}
+                            viewerIsMember={isMember}
                             batch={batchState}
                           />
                         ) : (
@@ -2324,6 +2331,8 @@ export function StreamContent({
                           visibleItems={visibleItems}
                           cancelledFollowUpIds={cancelledFollowUpIds}
                           delegationStatusPatches={delegationStatusPatches}
+                          botAccessStatusPatches={botAccessStatusPatches}
+                          viewerIsMember={isMember}
                           isLoading={isLoading}
                           holdForDeepLink={holdForDeepLink}
                           isConfirmedEmpty={isConfirmedEmpty}
@@ -2426,6 +2435,7 @@ export function StreamContent({
                             agentActivity={agentActivity}
                             hideSessionCards={isChannel}
                             newMessageIds={newMessageIds}
+                            viewerIsMember={isMember}
                             batch={batchState}
                             conversationOverlay={activeConversationOverlay}
                           />
@@ -2587,6 +2597,8 @@ function TimelineMessageList({
   visibleItems,
   cancelledFollowUpIds,
   delegationStatusPatches,
+  botAccessStatusPatches,
+  viewerIsMember,
   isLoading,
   holdForDeepLink,
   isConfirmedEmpty,
@@ -2624,6 +2636,9 @@ function TimelineMessageList({
   visibleItems: TimelineItem[]
   cancelledFollowUpIds: Set<string>
   delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
+  botAccessStatusPatches: Map<string, BotAccessStatusChangedEventPayload>
+  /** True when the viewer is a member — gates the bot-access card's Approve/Deny. */
+  viewerIsMember?: boolean
   isLoading: boolean
   /** Hold the skeleton until a deep-link (?m=) target is in the loaded window
    *  so the keyed list mounts already anchored on it. */
@@ -2742,6 +2757,8 @@ function TimelineMessageList({
       onStopSession: handleStopSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
+      botAccessStatusPatches,
+      viewerIsMember,
       batch,
       conversationOverlay,
     }),
@@ -2760,6 +2777,8 @@ function TimelineMessageList({
       handleStopSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
+      botAccessStatusPatches,
+      viewerIsMember,
       batch,
       conversationOverlay,
     ]

@@ -68,6 +68,16 @@ export class DelegationRunner {
   /** The in-flight drain, when one is running — the single-flight latch. */
   private current: Promise<void> | undefined
   private pollTimer: ReturnType<typeof setInterval> | undefined
+  /**
+   * Delegation ids carried by `delegation:available` nudges. A bot without a
+   * stream grant never sees these in `listOpen`, so the drain claims them
+   * directly by id; on a 404 (no grant) it files an access request. Cleared
+   * once the id is claimed, taken by another runner (409), or its request is
+   * filed.
+   */
+  private readonly pendingNudged = new Set<string>()
+  /** Delegation ids we have already filed an access request for — file once per lifetime. */
+  private readonly accessRequested = new Set<string>()
 
   constructor(opts: DelegationRunnerOptions) {
     this.client = opts.client
@@ -97,8 +107,14 @@ export class DelegationRunner {
     return this.current ?? Promise.resolve()
   }
 
-  /** Wire this to the `delegation:available` socket nudge for instant pickup. */
-  notifyAvailable(): void {
+  /**
+   * Wire this to the `delegation:available` socket nudge for instant pickup. A
+   * nudge carries the delegation id; a bot lacking the stream grant never sees
+   * that id in `listOpen`, so it is tracked for a direct claim-by-id (which, on
+   * a 404, files an access request).
+   */
+  notifyAvailable(nudge?: { delegationId?: string }): void {
+    if (nudge?.delegationId) this.pendingNudged.add(nudge.delegationId)
     this.drain()
   }
 
@@ -120,6 +136,9 @@ export class DelegationRunner {
       while (executed && !this.stopped) {
         executed = false
         const open = await this.client.listOpen()
+        // A listable id is one the bot can already access — the list path owns
+        // it, so drop it from the nudge-tracked set (no access request needed).
+        for (const summary of open) this.pendingNudged.delete(summary.id)
         for (const summary of open) {
           if (this.stopped) return
           const claimed = await this.tryClaim(summary)
@@ -127,6 +146,17 @@ export class DelegationRunner {
           await this.execute(claimed)
           // One at a time: after finishing, re-list rather than working a
           // possibly-stale snapshot of the queue.
+          executed = true
+          break
+        }
+        if (executed) continue
+        // Nudge-carried ids the bot cannot see in the list (no stream grant):
+        // claim directly; a 404 files an access request once per id.
+        for (const id of [...this.pendingNudged]) {
+          if (this.stopped) return
+          const claimed = await this.tryClaimNudged(id)
+          if (!claimed) continue
+          await this.execute(claimed)
           executed = true
           break
         }
@@ -146,6 +176,54 @@ export class DelegationRunner {
       // access. Both mean "not ours" — move on quietly.
       if (error instanceof ThreaApiError && (error.status === 409 || error.status === 404)) return null
       throw error
+    }
+  }
+
+  /**
+   * Claim a nudge-carried id directly. Unlike {@link tryClaim}, a 404 here means
+   * "no stream grant" (the bot never saw this id in the list), so it files an
+   * access request instead of silently moving on. Any terminal outcome —
+   * claimed, taken by another runner (409), or request filed (404) — clears the
+   * id from the nudge-tracked set.
+   */
+  private async tryClaimNudged(id: string): Promise<ClaimedDelegation | null> {
+    const idempotencyKey = crypto.randomUUID()
+    await this.persistIdempotencyKey?.(id, idempotencyKey)
+    try {
+      const claimed = await this.client.claim(id, { claimedByLabel: this.claimedByLabel, idempotencyKey })
+      this.pendingNudged.delete(id)
+      return claimed
+    } catch (error) {
+      if (error instanceof ThreaApiError && error.status === 409) {
+        this.pendingNudged.delete(id)
+        return null
+      }
+      if (error instanceof ThreaApiError && error.status === 404) {
+        await this.requestAccessOnce(id)
+        this.pendingNudged.delete(id)
+        return null
+      }
+      throw error
+    }
+  }
+
+  /**
+   * File an access request for a delegation the bot cannot claim, at most once
+   * per id per runner lifetime. Best-effort: a failed request is logged and
+   * swallowed — the runner must never crash on it (a re-nudge retries the claim
+   * and, since the id is already marked, files nothing further).
+   */
+  private async requestAccessOnce(id: string): Promise<void> {
+    if (this.accessRequested.has(id)) return
+    try {
+      await this.client.requestAccess(id, { requestedByLabel: this.claimedByLabel })
+      // Mark AFTER success: a transient failure must stay retryable on the next
+      // nudge or the card is silently never filed — the failure F3 exists to
+      // fix. The server insert is idempotent, so a duplicate attempt is safe.
+      this.accessRequested.add(id)
+      this.log(`delegation ${id} not claimable (no access) — filed an access request`)
+    } catch (error) {
+      this.log(`delegation ${id} access request failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
