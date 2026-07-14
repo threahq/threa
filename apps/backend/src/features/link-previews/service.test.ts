@@ -721,6 +721,7 @@ describe("LinkPreviewService — delegation link resolution", () => {
       status: "running",
       claimedByLabel: "Kris's MacBook / Claude Code",
       streamId: "stream_1",
+      streamType: "channel",
       createdEventId: "event_1",
     })
   })
@@ -749,6 +750,7 @@ describe("LinkPreviewService — delegation link resolution", () => {
       status: "running",
       claimedByLabel: "Kris's MacBook / Claude Code",
       streamId: "stream_1",
+      streamType: "channel",
       createdEventId: "event_1",
     })
   })
