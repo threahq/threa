@@ -192,6 +192,7 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
       },
       putObject: async () => {},
       delete: async () => {},
+      copyObject: async () => {},
     }
     const attachmentService = new AttachmentService(
       ctx.pool,

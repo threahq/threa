@@ -133,6 +133,29 @@ export const personasApi = {
     return attachment
   },
 
+  /**
+   * Attach an EXISTING workspace file to a custom/personal persona by COPYING it
+   * (knowledge-by-reference). The caller picks a file they can already read; the
+   * server copies its bytes + extraction into a fresh persona-owned row and binds
+   * it (copy-on-attach). Returns the created {@link PersonaAttachmentItem} —
+   * `processingStatus` is `ready` immediately when the source's extraction was
+   * copied, else `processing` until the pipeline runs on the copy. An
+   * unreadable/missing source is a 404; an ineligible source (not clean / e2e /
+   * mime / size) or a full cap throws an `ApiError` whose message names the
+   * constraint (INV-11).
+   */
+  async attachFromExisting(
+    workspaceId: string,
+    personaId: string,
+    sourceAttachmentId: string
+  ): Promise<PersonaAttachmentItem> {
+    const { attachment } = await api.post<{ attachment: PersonaAttachmentItem }>(
+      `/api/workspaces/${workspaceId}/personas/${personaId}/attachments/from-existing`,
+      { sourceAttachmentId }
+    )
+    return attachment
+  },
+
   /** Remove a persona context attachment (hard delete — the file is unbound to any message). */
   deleteAttachment(workspaceId: string, personaId: string, attachmentId: string): Promise<void> {
     return api.delete<void>(`/api/workspaces/${workspaceId}/personas/${personaId}/attachments/${attachmentId}`)

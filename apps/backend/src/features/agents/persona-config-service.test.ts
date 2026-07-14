@@ -19,6 +19,8 @@ import { PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS } from "./config"
 import { COMPANION_MODEL_ID, TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS } from "./companion/config"
 import { OutboxRepository } from "../../lib/outbox"
 import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID, getVisibleBuiltInAgentConfig } from "./built-in-agents"
+import { AttachmentReferenceRepository } from "../attachments"
+import { SharedMessageRepository } from "../messaging"
 import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "workspace_1"
@@ -1859,6 +1861,378 @@ describe("PersonaConfigService.bindAttachment — cap and conflicts", () => {
       makeService(undefined, deps).bindAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, ATTACHMENT_ID)
     ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_LIMIT" })
     expect(del).toHaveBeenCalledWith(ATTACHMENT_ID)
+  })
+})
+
+// A CLEAN, message-bound source the caller can read — the normal copy-on-attach case.
+function sourceAttachment(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "attach_source_1",
+    workspaceId: WORKSPACE_ID,
+    uploadedBy: ADMIN.userId,
+    streamId: "stream_src",
+    messageId: "msg_src",
+    filename: "runbook.md",
+    mimeType: "text/markdown",
+    sizeBytes: 512,
+    storagePath: `${WORKSPACE_ID}/attach_source_1/runbook.md`,
+    processingStatus: "completed",
+    safetyStatus: "clean",
+    e2eOnly: false,
+    thumbnailStoragePath: null,
+    width: null,
+    height: null,
+    ...overrides,
+  }
+}
+
+/** A persona knowledge list row for the post-bind re-read (contextMode derivation). */
+function personaListRow(attachmentId: string, opts: { hasExtraction: boolean; processingStatus?: string }) {
+  return {
+    attachmentId,
+    filename: "runbook.md",
+    mimeType: "text/markdown",
+    sizeBytes: 512,
+    position: 0,
+    createdAt: new Date("2026-07-13T00:00:00Z"),
+    processingStatus: (opts.processingStatus ?? "completed") as any,
+    hasExtraction: opts.hasExtraction,
+    fullTextChars: opts.hasExtraction ? 40 : null,
+    summaryChars: opts.hasExtraction ? 20 : null,
+  }
+}
+
+/**
+ * Attachment-service seam for the copy-on-attach path: `getById` returns the
+ * SOURCE, `copyForPersona` records the generated new id and returns the copy row,
+ * `deleteIfUnbound` is the cap-loss / error cleanup. A `streamService` with
+ * `tryAccess` grants source readability for the bound-source cases.
+ */
+function makeAttachDeps(
+  overrides: {
+    getById?: any
+    copyForPersona?: any
+    deleteIfUnbound?: any
+  } = {}
+): { attachmentService: any; capturedNewId: () => string } {
+  let captured = ""
+  const copyForPersona =
+    overrides.copyForPersona ??
+    mock(async (p: any) => {
+      captured = p.newId
+      return { ...sourceAttachment(), id: p.newId }
+    })
+  const attachmentService = {
+    getById: overrides.getById ?? mock(async () => sourceAttachment()),
+    copyForPersona,
+    deleteIfUnbound: overrides.deleteIfUnbound ?? mock(async () => ({ deleted: true })),
+  }
+  return { attachmentService, capturedNewId: () => captured }
+}
+
+function grantingStreamService() {
+  return { tryAccess: mock(async () => ({ id: "stream_src", archivedAt: null })) }
+}
+
+describe("PersonaConfigService.attachFromExisting — authorization matrix", () => {
+  afterEach(() => mock.restore())
+
+  it("workspace persona: an admin may copy a readable source; returns a ready item with a real contextMode", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "insertBinding").mockResolvedValue(binding())
+    const { attachmentService, capturedNewId } = makeAttachDeps()
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockImplementation(async () => [
+      personaListRow(capturedNewId(), { hasExtraction: true }),
+    ])
+
+    const item = await makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+      WORKSPACE_ID,
+      "persona_custom_1",
+      ADMIN,
+      "attach_source_1"
+    )
+
+    expect(item).toMatchObject({
+      filename: "runbook.md",
+      mimeType: "text/markdown",
+      processingStatus: "ready",
+      contextMode: "full",
+    })
+    expect(attachmentService.copyForPersona).toHaveBeenCalledTimes(1)
+    expect(attachmentService.copyForPersona.mock.calls[0]![0]).toMatchObject({ uploadedBy: ADMIN.userId })
+  })
+
+  it("workspace persona: a non-admin member is 403'd and no copy is performed", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const { attachmentService } = makeAttachDeps()
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        MEMBER,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" })
+    expect(attachmentService.copyForPersona).not.toHaveBeenCalled()
+    expect(attachmentService.getById).not.toHaveBeenCalled()
+  })
+
+  it("personal persona: the owner may copy", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: personalPersona() })
+    spyOn(PersonaAttachmentRepository, "insertBinding").mockResolvedValue(
+      binding({ personaId: "persona_personal_1", createdBy: OWNER.userId })
+    )
+    const { attachmentService, capturedNewId } = makeAttachDeps({
+      getById: mock(async () => sourceAttachment({ uploadedBy: OWNER.userId, streamId: null, messageId: null })),
+    })
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockImplementation(async () => [
+      personaListRow(capturedNewId(), { hasExtraction: true }),
+    ])
+
+    const item = await makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+      WORKSPACE_ID,
+      "persona_personal_1",
+      OWNER,
+      "attach_source_1"
+    )
+    expect(item.processingStatus).toBe("ready")
+  })
+
+  it("personal persona: a non-owner (admin included) 404s (invisible means invisible)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue(null)
+    const { attachmentService } = makeAttachDeps()
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_personal_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_NOT_FOUND" })
+    expect(attachmentService.copyForPersona).not.toHaveBeenCalled()
+  })
+
+  it("a built-in persona 400s PERSONA_NOT_CUSTOM", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "builtin",
+      base: getVisibleBuiltInAgentConfig(ARIADNE_AGENT_ID)!,
+    })
+    const { attachmentService } = makeAttachDeps()
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        ARIADNE_AGENT_ID,
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_CUSTOM" })
+    expect(attachmentService.copyForPersona).not.toHaveBeenCalled()
+  })
+})
+
+describe("PersonaConfigService.attachFromExisting — source gates", () => {
+  afterEach(() => mock.restore())
+
+  it("404s a missing source and never copies", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const { attachmentService } = makeAttachDeps({ getById: mock(async () => null) })
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_ATTACHMENT_SOURCE_NOT_FOUND" })
+    expect(attachmentService.copyForPersona).not.toHaveBeenCalled()
+  })
+
+  it("404s a cross-workspace source", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const { attachmentService } = makeAttachDeps({
+      getById: mock(async () => sourceAttachment({ workspaceId: "workspace_other" })),
+    })
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_ATTACHMENT_SOURCE_NOT_FOUND" })
+  })
+
+  it("404s when the caller cannot read the source stream and performs NO copy", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    // Bound source, but tryAccess denies and the share/reference fallback also denies.
+    spyOn(SharedMessageRepository, "listSourcesGrantedToViewer").mockResolvedValue(new Set())
+    spyOn(AttachmentReferenceRepository, "hasViewerAccessByReference").mockResolvedValue(false)
+    const streamService = { tryAccess: mock(async () => null) }
+    const { attachmentService } = makeAttachDeps()
+
+    await expect(
+      makeService(streamService, { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_ATTACHMENT_SOURCE_NOT_FOUND" })
+    expect(attachmentService.copyForPersona).not.toHaveBeenCalled()
+  })
+
+  it("404s an UNBOUND source uploaded by someone else (uploader-only), no copy", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const { attachmentService } = makeAttachDeps({
+      getById: mock(async () => sourceAttachment({ streamId: null, messageId: null, uploadedBy: "usr_someone_else" })),
+    })
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 404, code: "PERSONA_ATTACHMENT_SOURCE_NOT_FOUND" })
+    expect(attachmentService.copyForPersona).not.toHaveBeenCalled()
+  })
+
+  it("400s a non-CLEAN source (e2e_unscanned / pending scan / quarantined)", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const { attachmentService } = makeAttachDeps({
+      getById: mock(async () => sourceAttachment({ safetyStatus: "e2e_unscanned" })),
+    })
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_SOURCE_NOT_CLEAN" })
+    expect(attachmentService.copyForPersona).not.toHaveBeenCalled()
+  })
+
+  it("400s an e2e_only source even if flagged clean", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const { attachmentService } = makeAttachDeps({
+      getById: mock(async () => sourceAttachment({ e2eOnly: true })),
+    })
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_SOURCE_NOT_CLEAN" })
+  })
+
+  it("400s a disallowed mime type", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const { attachmentService } = makeAttachDeps({
+      getById: mock(async () => sourceAttachment({ mimeType: "image/png", filename: "logo.png" })),
+    })
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_INVALID_TYPE" })
+    expect(attachmentService.copyForPersona).not.toHaveBeenCalled()
+  })
+
+  it("400s an oversized source", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const { attachmentService } = makeAttachDeps({
+      getById: mock(async () => sourceAttachment({ sizeBytes: 21 * 1024 * 1024 })),
+    })
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_TOO_LARGE" })
+  })
+})
+
+describe("PersonaConfigService.attachFromExisting — copy, cap, and cleanup", () => {
+  afterEach(() => mock.restore())
+
+  it("a copy that kicked the pipeline (no extraction) is `processing` with a null contextMode", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "insertBinding").mockResolvedValue(binding())
+    const { attachmentService, capturedNewId } = makeAttachDeps()
+    spyOn(PersonaAttachmentRepository, "listForPersona").mockImplementation(async () => [
+      personaListRow(capturedNewId(), { hasExtraction: false, processingStatus: "pending" }),
+    ])
+
+    const item = await makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+      WORKSPACE_ID,
+      "persona_custom_1",
+      ADMIN,
+      "attach_source_1"
+    )
+    expect(item.processingStatus).toBe("processing")
+    expect(item.contextMode).toBeNull()
+  })
+
+  it("lost cap race (insertBinding null) hard-deletes the just-created copy and 400s", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaAttachmentRepository, "insertBinding").mockResolvedValue(null)
+    const del = mock(async () => ({ deleted: true }))
+    const { attachmentService, capturedNewId } = makeAttachDeps({ deleteIfUnbound: del })
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_LIMIT" })
+    // The copy is the freshly-generated id, not the source — cleanup targets it.
+    expect(del).toHaveBeenCalledWith(capturedNewId())
+    expect(capturedNewId()).not.toBe("attach_source_1")
+  })
+
+  it("propagates a copy failure without binding (the copy's own S3 cleanup runs in the attachment layer)", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const insert = spyOn(PersonaAttachmentRepository, "insertBinding")
+    const { attachmentService } = makeAttachDeps({
+      copyForPersona: mock(async () => {
+        throw new Error("s3 copy boom")
+      }),
+    })
+
+    await expect(
+      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        ADMIN,
+        "attach_source_1"
+      )
+    ).rejects.toThrow("s3 copy boom")
+    expect(insert).not.toHaveBeenCalled()
   })
 })
 

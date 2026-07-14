@@ -5,6 +5,7 @@ import {
   DeleteObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
+  CopyObjectCommand,
 } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import type { S3Config } from "../env"
@@ -38,6 +39,14 @@ export interface StorageProvider {
   /** Stream an object with the metadata needed to proxy it over HTTP (optionally a Range slice). */
   getObjectContent(key: string, options?: { range?: string }): Promise<ObjectContent>
   putObject(key: string, body: Buffer, contentType: string): Promise<void>
+  /**
+   * Server-side copy of an existing object to a new key (no bytes transit the
+   * app). Used by persona knowledge-by-reference: attaching an existing file to
+   * a persona copies its bytes to a fresh key so the persona owns an independent
+   * copy (copy-on-attach). `srcKey` is URL-encoded into `CopySource` so keys with
+   * spaces/unicode filenames round-trip.
+   */
+  copyObject(srcKey: string, destKey: string): Promise<void>
   delete(key: string): Promise<void>
 }
 
@@ -181,6 +190,16 @@ export function createS3Storage(config: S3Config): StorageProvider {
           Key: key,
           Body: body,
           ContentType: contentType,
+        })
+      )
+    },
+
+    async copyObject(srcKey: string, destKey: string): Promise<void> {
+      await client.send(
+        new CopyObjectCommand({
+          Bucket: config.bucket,
+          Key: destKey,
+          CopySource: `${config.bucket}/${encodeURIComponent(srcKey)}`,
         })
       )
     },

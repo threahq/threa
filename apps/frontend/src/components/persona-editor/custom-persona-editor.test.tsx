@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   PERSONA_ATTACHMENT_MAX_COUNT,
   type PersonaAttachmentItem,
@@ -14,6 +15,7 @@ import {
 } from "@threa/types"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"
+import * as attachmentsApiModule from "@/api/attachments"
 import { spyOnExport } from "@/test/spy"
 import * as editorModule from "@/components/editor"
 import * as uploadManager from "@/lib/uploads/upload-manager"
@@ -205,15 +207,17 @@ function renderEditor(cfg: PersonaConfigResponse = config()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const tree = (next: PersonaConfigResponse) => (
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/w/ws_1/settings/personas/persona_c1"]}>
-        <Routes>
-          <Route
-            path="/w/:workspaceId/settings/personas/:personaId"
-            element={<CustomPersonaEditor workspaceId="ws_1" personaId="persona_c1" config={next} />}
-          />
-          <Route path="/w/:workspaceId" element={<div>Workspace home</div>} />
-        </Routes>
-      </MemoryRouter>
+      <TooltipProvider>
+        <MemoryRouter initialEntries={["/w/ws_1/settings/personas/persona_c1"]}>
+          <Routes>
+            <Route
+              path="/w/:workspaceId/settings/personas/:personaId"
+              element={<CustomPersonaEditor workspaceId="ws_1" personaId="persona_c1" config={next} />}
+            />
+            <Route path="/w/:workspaceId" element={<div>Workspace home</div>} />
+          </Routes>
+        </MemoryRouter>
+      </TooltipProvider>
     </QueryClientProvider>
   )
   const result = render(tree(cfg))
@@ -475,9 +479,21 @@ describe("CustomPersonaEditor", () => {
       renderEditor(config({ attachments }))
 
       expect(screen.getByRole("button", { name: /Add file/ })).toBeDisabled()
+      expect(screen.getByRole("button", { name: "Attach existing" })).toBeDisabled()
       expect(
         screen.getByText(`${PERSONA_ATTACHMENT_MAX_COUNT} of ${PERSONA_ATTACHMENT_MAX_COUNT} files`)
       ).toBeInTheDocument()
+    })
+
+    it("opens the Attach existing picker from the Knowledge section", async () => {
+      vi.spyOn(attachmentsApiModule.attachmentsApi, "search").mockResolvedValue({ items: [], nextCursor: null })
+      const user = userEvent.setup()
+      renderEditor()
+
+      expect(screen.queryByText("Attach existing file")).not.toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "Attach existing" }))
+
+      expect(await screen.findByText("Attach existing file")).toBeInTheDocument()
     })
   })
 })

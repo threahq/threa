@@ -2,6 +2,7 @@ import type { Pool } from "pg"
 import { generateSlug } from "@threa/backend-common"
 import type { ModelRegistry } from "@threa/agent-runtime"
 import {
+  AttachmentSafetyStatuses,
   personaConfigPatchSchema,
   personaCustomConfigSchema,
   SYSTEM_PERSONA_EDITABLE_FIELDS,
@@ -29,7 +30,13 @@ import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
-import type { AttachmentService } from "../attachments"
+import { attachmentId as generateAttachmentId } from "../../lib/id"
+import {
+  isAttachmentReadableViaShareOrReference,
+  unboundAttachmentBlockedForCaller,
+  type Attachment,
+  type AttachmentService,
+} from "../attachments"
 import {
   personaAttachmentExtractionFailed,
   PersonaAttachmentRepository,
@@ -122,6 +129,18 @@ function personaAttachmentLimitReached(): HttpError {
 
 function personaAttachmentNotFound(): HttpError {
   return new HttpError("Persona attachment not found", { status: 404, code: "PERSONA_ATTACHMENT_NOT_FOUND" })
+}
+
+/**
+ * The copy-on-attach source is missing, cross-workspace, or one the caller may
+ * not read. A single 404 for all three so a private file's existence never leaks
+ * (matching the download gate's non-leak posture) — the copy is never performed.
+ */
+function personaAttachmentSourceNotFound(): HttpError {
+  return new HttpError("Source attachment not found", {
+    status: 404,
+    code: "PERSONA_ATTACHMENT_SOURCE_NOT_FOUND",
+  })
 }
 
 /** Derive the structured wire status (INV-46) from the extraction/pipeline state. */
@@ -1151,18 +1170,7 @@ export class PersonaConfigService {
     }
     // The generic reserve path allows 100MB / any mime; the persona rules apply
     // here at bind, against the stored row's real metadata (INV-11 — loud).
-    if (!isPersonaAttachmentMimeAllowed(attachment.mimeType)) {
-      throw new HttpError(
-        `File type "${attachment.mimeType}" is not allowed. Allowed: text/*, ${PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES.join(", ")}`,
-        { status: 400, code: "PERSONA_ATTACHMENT_INVALID_TYPE" }
-      )
-    }
-    if (attachment.sizeBytes > PERSONA_ATTACHMENT_MAX_SIZE_BYTES) {
-      throw new HttpError(`File exceeds the ${PERSONA_ATTACHMENT_MAX_SIZE_BYTES}-byte limit`, {
-        status: 400,
-        code: "PERSONA_ATTACHMENT_TOO_LARGE",
-      })
-    }
+    this.assertPersonaMimeAndSizeEligible(attachment)
 
     let binding
     try {
@@ -1213,6 +1221,143 @@ export class PersonaConfigService {
       sizeBytes: attachment.sizeBytes,
       // Extraction runs off the upload's settle event; it may still be in flight,
       // so no content mode can be planned yet. The config refetch reconciles.
+      processingStatus: "processing",
+      contextMode: null,
+      position: binding.position,
+      createdAt: binding.createdAt.toISOString(),
+    }
+  }
+
+  /** The persona mime allowlist + per-file size cap, applied against a stored row (INV-11 — loud). */
+  private assertPersonaMimeAndSizeEligible(attachment: Pick<Attachment, "mimeType" | "sizeBytes">): void {
+    if (!isPersonaAttachmentMimeAllowed(attachment.mimeType)) {
+      throw new HttpError(
+        `File type "${attachment.mimeType}" is not allowed. Allowed: text/*, ${PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES.join(", ")}`,
+        { status: 400, code: "PERSONA_ATTACHMENT_INVALID_TYPE" }
+      )
+    }
+    if (attachment.sizeBytes > PERSONA_ATTACHMENT_MAX_SIZE_BYTES) {
+      throw new HttpError(`File exceeds the ${PERSONA_ATTACHMENT_MAX_SIZE_BYTES}-byte limit`, {
+        status: 400,
+        code: "PERSONA_ATTACHMENT_TOO_LARGE",
+      })
+    }
+  }
+
+  /**
+   * The exact readability chain the download/content handlers use (INV-35), not a
+   * reimplementation: a bound source resolves through direct stream access with
+   * the share-grant / inline-reference fallback; an unbound source (someone's
+   * pending upload) is private to its uploader. Throws a non-leaking 404 when the
+   * caller may not read it — so the copy is never performed for a file the caller
+   * can't already see.
+   */
+  private async assertCallerCanReadSource(source: Attachment, workspaceId: string, userId: string): Promise<void> {
+    if (source.streamId) {
+      const accessible = await this.streamService.tryAccess(source.streamId, workspaceId, userId)
+      if (accessible) return
+      const granted = await isAttachmentReadableViaShareOrReference(this.pool, source, workspaceId, userId)
+      if (granted) return
+      throw personaAttachmentSourceNotFound()
+    }
+    if (unboundAttachmentBlockedForCaller(source, userId)) throw personaAttachmentSourceNotFound()
+  }
+
+  /**
+   * Attach an EXISTING workspace file to a custom/personal persona as context
+   * knowledge by COPYING it (knowledge-by-reference). Attachments are immutable,
+   * so an independent copy IS reference semantics from the user's view and keeps
+   * every ownership rule intact: the persona owns its copy outright (message/
+   * stream NULL forever, uploader-only, hard-delete safe, cap-guarded), and the
+   * source message's file can never be mutated or deleted out from under the
+   * persona. `attachment_references` (row-sharing) is deliberately NOT used.
+   *
+   * Flow: the persona edit gate (as bind); load the source workspace-scoped
+   * (404 if missing/cross-workspace); the caller must be able to READ the source
+   * ({@link assertCallerCanReadSource} — the download handlers' exact chain);
+   * eligibility (CLEAN only, not e2e, persona mime + size against the SOURCE);
+   * server-side copy + extraction copy / pipeline kick
+   * ({@link AttachmentService.copyForPersona}); then the existing cap-guarded
+   * {@link PersonaAttachmentRepository.insertBinding} with the existing cap-loss
+   * cleanup ({@link AttachmentService.deleteIfUnbound}). A copy with a copied
+   * extraction is `ready` immediately with a real contextMode; a copy that kicked
+   * the pipeline shows `processing`.
+   */
+  async attachFromExisting(
+    workspaceId: string,
+    personaId: string,
+    caller: PersonaCaller,
+    sourceAttachmentId: string
+  ): Promise<PersonaAttachmentItem> {
+    const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
+    if (editable.kind !== "custom") throw customsOnly()
+
+    const source = await this.attachmentService.getById(sourceAttachmentId)
+    if (!source || source.workspaceId !== workspaceId) throw personaAttachmentSourceNotFound()
+
+    await this.assertCallerCanReadSource(source, workspaceId, caller.userId)
+
+    // Eligibility against the SOURCE row (INV-11 — loud, structured). CLEAN only:
+    // rejects e2e_unscanned / pending scan / quarantined; the explicit e2e_only
+    // guard is belt-and-suspenders (an e2e file is never CLEAN anyway).
+    if (source.safetyStatus !== AttachmentSafetyStatuses.CLEAN || source.e2eOnly) {
+      throw new HttpError("This file cannot be attached as persona knowledge (not a scanned-clean file)", {
+        status: 400,
+        code: "PERSONA_ATTACHMENT_SOURCE_NOT_CLEAN",
+      })
+    }
+    this.assertPersonaMimeAndSizeEligible(source)
+
+    const newId = generateAttachmentId()
+    const copy = await this.attachmentService.copyForPersona({
+      source,
+      newId,
+      uploadedBy: caller.userId,
+    })
+
+    let binding
+    try {
+      binding = await withTransaction(this.pool, async (client) =>
+        PersonaAttachmentRepository.insertBinding(client, {
+          attachmentId: newId,
+          workspaceId,
+          personaId,
+          createdBy: caller.userId,
+          maxCount: PERSONA_ATTACHMENT_MAX_COUNT,
+        })
+      )
+    } catch (error) {
+      // The copy is a brand-new id, so a unique-PK collision cannot be a real
+      // "already bound" case — clean up the just-created copy and rethrow.
+      await this.attachmentService.deleteIfUnbound(newId).catch((err) => {
+        logger.error({ err, attachmentId: newId }, "failed to clean up persona copy after bind error")
+      })
+      throw error
+    }
+    if (!binding) {
+      // Cap reached. The copy is unbound, so hard-delete it cleanly (its bytes +
+      // extraction go with it) — race-safe so a message that somehow claimed it
+      // keeps its bytes (INV-20; mirrors bind's cap-loss cleanup).
+      await this.attachmentService.deleteIfUnbound(newId).catch((err) => {
+        logger.error({ err, attachmentId: newId }, "failed to clean up persona copy after cap race")
+      })
+      throw personaAttachmentLimitReached()
+    }
+
+    // Return the item exactly as the config GET would render it — re-read through
+    // the same budget planner so the contextMode can't drift (decision 2g): a
+    // copied extraction yields a real mode now; a kicked pipeline is `processing`.
+    const items = await this.listAttachments(workspaceId, personaId)
+    const created = items.find((item) => item.id === newId)
+    if (created) return created
+
+    // Unreachable in practice (we just bound it); construct a safe fallback
+    // rather than throw after a committed copy+bind (the operation succeeded).
+    return {
+      id: newId,
+      filename: copy.filename,
+      mimeType: copy.mimeType,
+      sizeBytes: copy.sizeBytes,
       processingStatus: "processing",
       contextMode: null,
       position: binding.position,

@@ -558,6 +558,140 @@ test.describe("Persona roster + editors", () => {
     await expect(page.getByText(fileNameB)).toBeVisible()
     await expect(page.getByText("1 of 50 files")).toBeVisible({ timeout: 10000 })
   })
+
+  /**
+   * Knowledge by reference (copy-on-attach), end to end. A .md posted in a
+   * scratchpad becomes a message-bound CLEAN file the workspace can search; a
+   * forked persona's editor attaches it through the Attach-existing picker (search
+   * → pick a row), and the copy lands as an ordinary Knowledge row — filename, an
+   * "In full" context label (the extraction is copied, so the row is ready at once,
+   * no processing badge), and the cap hint moves to 1 of 50.
+   *
+   * The copy is INDEPENDENT by design: deleting the source message never touches
+   * the persona's copy. The message delete drives the real hover menu (reveal the
+   * row's "Message actions", confirm the dialog); the disappearance is asserted
+   * only over the main timeline rows (`main .message-item`), because the
+   * sidebar last-message preview carries the same text. Reloading the editor proves
+   * the copy survived a fresh fetch, not just an optimistic cache entry.
+   */
+  test("Knowledge by reference: attach an existing chat file to a persona, copy survives source deletion", async ({
+    page,
+  }) => {
+    test.setTimeout(90000)
+
+    const { testId } = await loginAndCreateWorkspace(page, "persona-attach-existing")
+    const workspaceId = page.url().match(/\/w\/(ws_[^/]+)/)![1]
+    // The picker's search is FTS. A filename indexes as a single lexeme, so the
+    // exact full filename is the reliable query term (it matches the filename
+    // search_vector directly, independent of the extraction text — which is a stub
+    // placeholder under the test AI). A separate clean token marks the message body
+    // so the source row is locatable for deletion.
+    const token = `kref${testId}`
+    const fileName = `runbook-${testId}.md`
+
+    // ──── Post the .md in a scratchpad and let it settle into a searchable file ────
+
+    const padRes = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+      data: { type: "scratchpad", displayName: `src-pad-${testId}` },
+    })
+    await expectApiOk(padRes, "Scratchpad creation")
+    const streamId = ((await padRes.json()) as { stream: { id: string } }).stream.id
+
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    const mainEditor = page.locator("[data-editor-zone='main'] [contenteditable='true']").last()
+    await expect(mainEditor).toBeVisible({ timeout: 15000 })
+    await mainEditor.click()
+    await page.keyboard.type(token)
+
+    // Paste the .md as a composer attachment (mirrors inline-file-upload.spec):
+    // the bytes stream through the upload manager and the reference chip appears.
+    await mainEditor.evaluate(
+      (el, { content, name }) => {
+        const blob = new Blob([content], { type: "text/markdown" })
+        const file = new File([blob], name, { type: "text/markdown" })
+        const dataTransfer = new DataTransfer()
+        dataTransfer.items.add(file)
+        el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dataTransfer }))
+      },
+      { content: `# Deploy runbook\n\n${token}\n\nStep 1: rotate the key.\nStep 2: redeploy.\n`, name: fileName }
+    )
+    await expect(mainEditor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 15000 })
+
+    // Send via the button, not Enter — Enter races the async paste insertion.
+    await page.getByRole("button", { name: "Send", exact: true }).first().click()
+    await expect(mainEditor.locator("span[data-type='attachment-reference']")).toHaveCount(0, { timeout: 15000 })
+
+    // The file is searchable once it is message-bound AND scanned CLEAN — the exact
+    // gate the picker's search enforces. Poll the same endpoint the picker uses so
+    // the UI step below is deterministic rather than racing the scan.
+    await expect
+      .poll(
+        async () => {
+          const res = await page.request.post(`/api/workspaces/${workspaceId}/attachments/search`, {
+            data: { queryText: fileName },
+          })
+          if (!res.ok()) return 0
+          const body = (await res.json()) as { items: Array<{ filename: string }> }
+          return body.items.filter((i) => i.filename === fileName).length
+        },
+        { timeout: 40000, intervals: [500, 1000, 2000] }
+      )
+      .toBeGreaterThan(0)
+
+    // ──── Fork a persona and open its editor at an empty Knowledge section ────
+
+    const forkRes = await page.request.post(`/api/workspaces/${workspaceId}/personas`, {
+      data: { sourcePersonaId: "persona_system_ariadne", name: `Attach agent ${testId}` },
+    })
+    await expectApiOk(forkRes, "Persona fork")
+    const personaId = ((await forkRes.json()) as { persona: { id: string } }).persona.id
+
+    const editorUrl = `/w/${workspaceId}/settings/personas/${personaId}`
+    await page.goto(editorUrl)
+    await expect(page.getByRole("heading", { name: `Edit Attach agent ${testId}` })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText("0 of 50 files")).toBeVisible()
+
+    // ──── Attach existing → search → pick the row ────
+
+    await page.getByRole("button", { name: "Attach existing" }).click()
+    const pickerDialog = page.getByTestId("attach-existing-dialog")
+    await expect(pickerDialog).toBeVisible({ timeout: 10000 })
+    await pickerDialog.getByRole("textbox", { name: "Search files" }).fill(fileName)
+
+    // Rows are buttons named by their filename; picking one copies the file onto the
+    // persona and closes the dialog (single-pick v1, INV-63 — the row is the signal).
+    await pickerDialog.getByRole("button", { name: fileName }).click({ timeout: 15000 })
+    await expect(pickerDialog).toHaveCount(0, { timeout: 10000 })
+
+    // The copy appears as an ordinary bound Knowledge row: filename + "In full"
+    // (extraction copied, so ready immediately), and the cap hint increments.
+    const knowledgeRow = page.getByRole("listitem").filter({ hasText: fileName })
+    await expect(knowledgeRow).toBeVisible({ timeout: 10000 })
+    await expect(knowledgeRow).toContainText("In full", { timeout: 10000 })
+    await expect(page.getByText("1 of 50 files")).toBeVisible({ timeout: 10000 })
+
+    // ──── Delete the source message; the persona's copy is independent ────
+
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    const sourceRow = page.locator("main .message-item").filter({ hasText: token })
+    await expect(sourceRow).toBeVisible({ timeout: 15000 })
+    await sourceRow.hover()
+    await sourceRow.getByRole("button", { name: "Message actions" }).click({ force: true })
+    await page.getByRole("menuitem", { name: "Delete message" }).click()
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click()
+    // Scope the disappearance to the main timeline — the sidebar preview matches the
+    // same text, so an unscoped assertion would never reach zero.
+    await expect(page.locator("main .message-item").filter({ hasText: token })).toHaveCount(0, { timeout: 15000 })
+
+    // ──── Reload the editor: the copy survives a fresh fetch (real independence) ────
+
+    await page.goto(editorUrl)
+    await expect(page.getByRole("heading", { name: `Edit Attach agent ${testId}` })).toBeVisible({ timeout: 10000 })
+    const survivingRow = page.getByRole("listitem").filter({ hasText: fileName })
+    await expect(survivingRow).toBeVisible({ timeout: 10000 })
+    await expect(survivingRow).toContainText("In full")
+    await expect(page.getByText("1 of 50 files")).toBeVisible()
+  })
 })
 
 /** Focus the main composer and type an @-mention trigger, opening the suggestion popup. */

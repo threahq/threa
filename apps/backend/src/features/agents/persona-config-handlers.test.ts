@@ -513,6 +513,39 @@ describe("persona config avatar handlers", () => {
     expect(bindAttachment).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, CALLER, "attach_1")
   })
 
+  it("POST attachments/from-existing 400s when the body has no sourceAttachmentId (INV-55)", async () => {
+    const attachFromExisting = mock(async () => ({}) as never)
+    const handlers = makeHandlers({ attachFromExisting } as unknown as Partial<PersonaConfigService>)
+
+    await expect(
+      handlers.attachFromExisting(fakeReq({ params: { personaId: CUSTOM_ID }, body: {} }), fakeRes())
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    expect(attachFromExisting).not.toHaveBeenCalled()
+  })
+
+  it("POST attachments/from-existing copies the source id and returns 201", async () => {
+    const item = {
+      id: "attach_copy_1",
+      filename: "runbook.md",
+      mimeType: "text/markdown",
+      sizeBytes: 512,
+      processingStatus: "ready",
+      contextMode: "full",
+      position: 0,
+      createdAt: "2026-07-13T00:00:00.000Z",
+    }
+    const attachFromExisting = mock(async () => item)
+    const handlers = makeHandlers({ attachFromExisting } as unknown as Partial<PersonaConfigService>)
+    const req = fakeReq({ params: { personaId: CUSTOM_ID }, body: { sourceAttachmentId: "attach_source_1" } })
+    const res = fakeRes()
+
+    await handlers.attachFromExisting(req, res)
+
+    expect(res.statusCode).toBe(201)
+    expect(res.body).toEqual({ attachment: item })
+    expect(attachFromExisting).toHaveBeenCalledWith("workspace_1", CUSTOM_ID, CALLER, "attach_source_1")
+  })
+
   it("DELETE attachment authorizes via the service and 204s", async () => {
     const removeAttachment = mock(async () => undefined)
     const handlers = makeHandlers({ removeAttachment } as unknown as Partial<PersonaConfigService>)

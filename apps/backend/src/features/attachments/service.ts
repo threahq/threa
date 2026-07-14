@@ -15,7 +15,7 @@ import {
   type AttachmentUploadStatus,
 } from "@threa/types"
 import { isAttachmentSafeForSharing, safetyStatusBlockReason, type MalwareScanner } from "./upload-safety-policy"
-import { attachmentUploadId } from "../../lib/id"
+import { attachmentUploadId, extractionId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 
 /**
@@ -655,6 +655,103 @@ export class AttachmentService {
     }
 
     return { status: "blocked", reason: blockReason }
+  }
+
+  /**
+   * Copy an existing CLEAN attachment's bytes + extraction into a fresh
+   * uploader-owned, message-unbound row (persona knowledge-by-reference,
+   * copy-on-attach). The result is an INDEPENDENT copy the persona owns
+   * outright: a server-side S3 copy of the object (and its thumbnail when
+   * present — persona-eligible mimes never carry one, but honour it), an
+   * `attachments` row with `stream_id`/`message_id` NULL and `safety_status`
+   * CLEAN, and either a copied `attachment_extractions` row — carrying
+   * `summary_embedding` natively, no re-embed — or, when the source has no
+   * extraction yet (still processing / failed), an `attachment:uploaded` outbox
+   * event so the normal pipeline extracts the copy (INV-4, same transaction).
+   *
+   * `pdf_page_extractions` are deliberately NOT copied: the persona knowledge
+   * path reads only `attachment_extractions`, and `read_attachment` (the only
+   * per-page reader) is message-scoped, so a persona copy can never surface a
+   * per-page read.
+   *
+   * The S3 copy runs BEFORE the row insert so an `attachments` row never points
+   * at bytes that failed to land; a best-effort object cleanup runs if the
+   * insert transaction throws so a copied object is never orphaned. Eligibility
+   * (CLEAN / not e2e / mime / size) is the caller's gate — this assumes a
+   * validated source.
+   */
+  async copyForPersona(params: { source: Attachment; newId: string; uploadedBy: string }): Promise<Attachment> {
+    const { source, newId, uploadedBy } = params
+    const newStoragePath = `${source.workspaceId}/${newId}/${source.filename}`
+    let newThumbnailStoragePath: string | null = null
+
+    // The cleanup guard starts BEFORE the first copy: a thumbnail copy that
+    // rejects after the primary landed must still reap the primary object.
+    try {
+      await this.storage.copyObject(source.storagePath, newStoragePath)
+
+      if (source.thumbnailStoragePath) {
+        newThumbnailStoragePath = `${source.workspaceId}/${newId}/thumbnail.webp`
+        await this.storage.copyObject(source.thumbnailStoragePath, newThumbnailStoragePath)
+      }
+
+      return await withTransaction(this.pool, async (client) => {
+        const attachment = await AttachmentRepository.insert(client, {
+          id: newId,
+          workspaceId: source.workspaceId,
+          uploadedBy,
+          filename: source.filename,
+          mimeType: source.mimeType,
+          sizeBytes: source.sizeBytes,
+          storagePath: newStoragePath,
+          safetyStatus: AttachmentSafetyStatuses.CLEAN,
+          processingStatus: source.processingStatus,
+        })
+        if (newThumbnailStoragePath && source.width != null && source.height != null) {
+          await AttachmentRepository.updateImageVariant(client, newId, {
+            thumbnailStoragePath: newThumbnailStoragePath,
+            width: source.width,
+            height: source.height,
+          })
+        }
+
+        const extractionCopied = await AttachmentExtractionRepository.copyForAttachment(client, {
+          id: extractionId(),
+          sourceAttachmentId: source.id,
+          attachmentId: newId,
+          workspaceId: source.workspaceId,
+        })
+        if (!extractionCopied) {
+          // No extraction on the source yet — kick the normal pipeline for the
+          // copy in the same transaction (INV-4), mirroring create()'s emit.
+          await OutboxRepository.insert(client, "attachment:uploaded", {
+            workspaceId: source.workspaceId,
+            attachmentId: newId,
+            filename: source.filename,
+            mimeType: source.mimeType,
+            sizeBytes: source.sizeBytes,
+            storagePath: newStoragePath,
+          })
+        }
+
+        return attachment
+      })
+    } catch (err) {
+      // Never leave a copied object without its row. Best-effort — the caller
+      // surfaces the original error.
+      await this.storage.delete(newStoragePath).catch((cleanupErr) => {
+        logger.error({ cleanupErr, storagePath: newStoragePath }, "Failed to clean up persona copy object after error")
+      })
+      if (newThumbnailStoragePath) {
+        await this.storage.delete(newThumbnailStoragePath).catch((cleanupErr) => {
+          logger.error(
+            { cleanupErr, storagePath: newThumbnailStoragePath },
+            "Failed to clean up persona copy thumbnail after error"
+          )
+        })
+      }
+      throw err
+    }
   }
 
   getSharingBlockReason(attachment: Attachment): string | null {

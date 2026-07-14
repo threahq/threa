@@ -12,7 +12,7 @@ export { createAttachmentUploadSweepWorker } from "./upload-sweep-worker"
 // Fallback access helper — `getDownloadUrl` and create-message validation
 // both walk share-grant + inline-reference after their stream-access fast
 // path fails. See `access.ts`.
-export { isAttachmentReadableViaShareOrReference } from "./access"
+export { isAttachmentReadableViaShareOrReference, unboundAttachmentBlockedForCaller } from "./access"
 
 export { toAttachmentSummary, fetchUploadStatuses, hydrateAttachmentSummaries } from "./summary"
 
