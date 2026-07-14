@@ -401,6 +401,78 @@ describe("useConversationAutoRead", () => {
     expect(markRead).toHaveBeenCalledWith("m_a")
   })
 
+  it("wedge fix: a pin on a static, continuously-attended card releases on a blur→refocus cycle", () => {
+    const messages = [msg("m_a", 0), msg("m_b", 1)]
+    messages.forEach((m) => addRow(m.id))
+    const { rerender } = mount(messages, { m_a: "unread", m_b: "unread" })
+
+    // Rows are on screen; the viewer marks the card unread while attentive.
+    enter("m_a", "m_b")
+    act(() => explicitUnreadPin!())
+
+    // Static board, attention never drops: the pin sticks, nothing re-reads —
+    // the exact wedge that used to persist forever.
+    advance(60_000)
+    expect(markRead).not.toHaveBeenCalled()
+
+    // The viewer tabs away and back: a genuine re-attention boundary.
+    attention = false
+    rerender({ messages, rowState: makeRowState({ m_a: "unread", m_b: "unread" }) })
+    attention = true
+    rerender({ messages, rowState: makeRowState({ m_a: "unread", m_b: "unread" }) })
+
+    // The rebuilt observer sees the rows still on screen; the pin has released,
+    // so they dwell and auto-read.
+    enter("m_a", "m_b")
+    settle()
+    expect(markRead).toHaveBeenCalledTimes(1)
+    expect(markRead).toHaveBeenCalledWith("m_b")
+  })
+
+  it("stick-while-looking: a pin with no re-attention boundary never auto-reads", () => {
+    const messages = [msg("m_a", 0), msg("m_b", 1)]
+    messages.forEach((m) => addRow(m.id))
+    mount(messages, { m_a: "unread", m_b: "unread" })
+
+    enter("m_a", "m_b")
+    act(() => explicitUnreadPin!())
+
+    // No blur, no leave — the viewer keeps looking. Re-reported intersections of
+    // the still-on-screen rows must not un-stick the pin.
+    advance(60_000)
+    enter("m_a", "m_b")
+    advance(60_000)
+    expect(markRead).not.toHaveBeenCalled()
+  })
+
+  it("cross-device pin parity: a regression pin engaged while attentive releases on the same attention cycle", () => {
+    const messages = [msg("m_a", 0, "1"), msg("m_b", 1, "2")]
+    messages.forEach((m) => addRow(m.id))
+    readTruth[ROOT] = { lastReadSequence: "2", readMessageIds: [] }
+    const { rerender } = mount(messages, { m_a: "read", m_b: "read" })
+
+    // On screen and attentive; another device marks unread from m_a — the
+    // watermark regresses and the rows derive unread.
+    enter("m_a", "m_b")
+    readTruth[ROOT] = { lastReadSequence: "0", readMessageIds: [] }
+    rerender({ messages, rowState: makeRowState({ m_a: "unread", m_b: "unread" }) })
+
+    // Pinned: static + attentive → no re-mark.
+    advance(10_000)
+    expect(markRead).not.toHaveBeenCalled()
+
+    // The same blur→refocus boundary releases the cross-device pin too.
+    attention = false
+    rerender({ messages, rowState: makeRowState({ m_a: "unread", m_b: "unread" }) })
+    attention = true
+    rerender({ messages, rowState: makeRowState({ m_a: "unread", m_b: "unread" }) })
+
+    enter("m_a", "m_b")
+    settle()
+    expect(markRead).toHaveBeenCalledTimes(1)
+    expect(markRead).toHaveBeenCalledWith("m_b")
+  })
+
   it("releases the dedup after a failed mark so a later evaluation retries", async () => {
     markRead.mockRejectedValueOnce(new Error("offline"))
     const messages = [msg("m_a", 0), msg("m_b", 1)]
