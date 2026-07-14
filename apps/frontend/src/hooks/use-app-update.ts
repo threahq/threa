@@ -4,6 +4,9 @@ import { usePageActivity } from "./use-page-activity"
 import { useSocketReconnectCount } from "@/contexts"
 import * as swRecovery from "@/lib/sw-recovery"
 import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
+import { currentAppVersion } from "@/lib/app-build"
+
+export { currentAppBuiltAt, currentAppInstalledAt, currentAppVersion } from "@/lib/app-build"
 
 export const APP_UPDATE_POLL_INTERVAL_MS = 300_000
 const TOAST_ID = "app-update"
@@ -12,12 +15,6 @@ const IS_DEV = import.meta.env.DEV
 export const WAITING_WORKER_TIMEOUT_MS = 1500
 export const RELOAD_FALLBACK_TIMEOUT_MS = 3000
 export const CLICK_UPDATE_TIMEOUT_MS = 5000
-
-// The build version baked into this bundle at build time (vite `define`). The
-// running app otherwise has no idea which build it is, so it can't tell whether a
-// reload actually swapped in new code — see reconcilePostReload.
-declare const __APP_VERSION__: string
-declare const __APP_BUILT_AT__: string
 
 // True only in the Playwright E2E build (vite `define`, gated on VITE_BACKEND_PORT).
 // The update toast uses `duration: Infinity` and renders in the aria-live
@@ -317,34 +314,6 @@ async function announceIfPageStale(registration: ServiceWorkerRegistration): Pro
   if (registration.waiting || registration.installing) return
   announcedStaleVersion = latest
   showUpdateToast()
-}
-
-/** This bundle's build version, or null if the `define` wasn't applied (e.g. some test envs). */
-export function currentAppVersion(): string | null {
-  return typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : null
-}
-
-/** UTC timestamp for when this bundle was built. */
-export function currentAppBuiltAt(): string | null {
-  return typeof __APP_BUILT_AT__ === "string" ? __APP_BUILT_AT__ : null
-}
-
-export function currentAppInstalledAt(now: Date = new Date()): Date | null {
-  const version = currentAppVersion()
-  if (!version) return null
-
-  try {
-    const key = `app-version-installed-at:${version}`
-    const stored = localStorage.getItem(key)
-    if (stored) {
-      const parsed = new Date(stored)
-      if (!Number.isNaN(parsed.getTime())) return parsed
-    }
-    localStorage.setItem(key, now.toISOString())
-    return now
-  } catch {
-    return null
-  }
 }
 
 export function useIsServiceWorkerControlled(): boolean {
