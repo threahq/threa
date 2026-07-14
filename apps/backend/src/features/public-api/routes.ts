@@ -26,6 +26,7 @@ import {
   EXTRACTION_CONTENT_TYPES,
   THREA_CALLBACK_TOKEN_HEADER,
   DELEGATION_STATUSES,
+  CONVERSATION_STATUSES,
 } from "@threa/types"
 import type { WorkspacePermissionSlug } from "@threa/types"
 import {
@@ -33,6 +34,7 @@ import {
   listMyBotsSchema,
   listStreamsSchema,
   listMessagesSchema,
+  listConversationsSchema,
   sendMessageSchema,
   updateMessageSchema,
   updateStreamSchema,
@@ -114,6 +116,28 @@ const messageSchema = z.object({
   attachments: z.array(attachmentSummarySchema).optional(),
   editedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime(),
+})
+
+// A conversation: an AI-clustered topic thread over a stream's messages, the
+// unit the board view renders. `messageCount` and `participantIds` summarize
+// membership; fetch the ordered messages via the `/messages` sub-resource.
+const conversationSchema = z.object({
+  id: z.string(),
+  streamId: z.string().describe("Stream the conversation is anchored in (a channel, DM, or thread)"),
+  topicSummary: z.string().nullable().describe("Short 2-5 word topic title; null until the extractor names it"),
+  summary: z
+    .string()
+    .nullable()
+    .describe("Rolling prose summary of what the conversation covers; null until first revisit"),
+  status: z.enum(CONVERSATION_STATUSES).describe("active | stalled | resolved"),
+  completenessScore: z.number().int().describe("1-7 estimate of how fully the topic is resolved"),
+  confidence: z.number().describe("0-1 extractor confidence in the clustering"),
+  messageCount: z.number().int().describe("Number of messages whose primary conversation is this one"),
+  participantIds: z.array(z.string()).describe("Distinct authors of the conversation's primary messages"),
+  parentConversationId: z.string().nullable(),
+  lastActivityAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
 })
 
 const searchResultSchema = z.object({
@@ -588,6 +612,14 @@ const memoIdParam = {
   description: "Memo ID (prefixed ULID)",
 }
 
+const conversationIdParam = {
+  name: "conversationId",
+  in: "path" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Conversation ID (prefixed ULID)",
+}
+
 const attachmentIdParam = {
   name: "attachmentId",
   in: "path" as const,
@@ -662,6 +694,9 @@ export type OperationId =
   | "getStream"
   | "updateStream"
   | "listMembers"
+  | "listConversations"
+  | "getConversation"
+  | "listConversationMessages"
   | "listMessages"
   | "sendMessage"
   | "findMessagesByMetadata"
@@ -1189,6 +1224,46 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
 
   {
     method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/conversations",
+    operationId: "listConversations",
+    summary: "List conversations",
+    description:
+      "List AI-clustered conversations across streams accessible to this API key, newest activity first. Filter by `status` or a single `streamId` (its channel and threads). Cursor-paginated via `after`.",
+    tags: ["Conversations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ],
+    parameters: [workspaceIdParam],
+    requestSchema: listConversationsSchema,
+    requestIn: "query",
+    responseSchema: paginated(conversationSchema),
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/conversations/{conversationId}",
+    operationId: "getConversation",
+    summary: "Get a conversation",
+    description: "Retrieve a single conversation's topic, summary, status, and membership counts.",
+    tags: ["Conversations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ],
+    parameters: [workspaceIdParam, conversationIdParam],
+    responseSchema: dataEnvelope(conversationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/conversations/{conversationId}/messages",
+    operationId: "listConversationMessages",
+    summary: "List a conversation's messages",
+    description:
+      "The conversation's messages in assignment order — the coherent context an agent can pull in when a conversation is referenced. Returns primary-membership messages only.",
+    tags: ["Conversations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ],
+    parameters: [workspaceIdParam, conversationIdParam],
+    responseSchema: dataArrayEnvelope(messageSchema),
+    canReturn404: true,
+  },
+
+  {
+    method: "get",
     path: "/api/v1/workspaces/{workspaceId}/streams/{streamId}/messages",
     operationId: "listMessages",
     summary: "List messages in a stream",
@@ -1424,6 +1499,7 @@ export {
 // Wire types derived from schemas — serializers annotate their return types with these
 export type WireStream = z.infer<typeof streamSchema>
 export type WireMessage = z.infer<typeof messageSchema>
+export type WireConversation = z.infer<typeof conversationSchema>
 export type WireSearchResult = z.infer<typeof searchResultSchema>
 export type WireMember = z.infer<typeof memberSchema>
 export type WireUser = z.infer<typeof userSchema>

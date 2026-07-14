@@ -636,6 +636,64 @@ export const ConversationRepository = {
     return result.rows.map(mapRowToConversation)
   },
 
+  /**
+   * Public-API conversation feed: conversations the caller can read, newest
+   * activity first, keyset-paginated. Unlike {@link findByWorkspaceForViewer}
+   * (the first-party board, which filters by a user's membership predicate and
+   * layers on lens/mute/hide/label board machinery), access here is expressed as
+   * the pre-resolved set of stream ids the API key can reach — the same
+   * `getAccessibleStreamIds` set the public API's stream/message endpoints use,
+   * so it works uniformly for user keys and bot keys. Each conversation is
+   * matched by its EFFECTIVE ROOT (`COALESCE(root_stream_id, id)`, INV-62): a
+   * thread-anchored conversation is reachable exactly when its root channel is,
+   * and a bot's grant/public set (root ids only) still matches thread-anchored
+   * rows. Empty shells (`cardinality(message_ids) = 0`, left by a reassign that
+   * vacated the last message) are excluded, matching the board feed. Order and
+   * cursor compare on ms-truncated `last_activity_at` (id breaks ties) so the
+   * total order is stable at the cursor's own granularity.
+   */
+  async listByAccessibleStreams(
+    db: Querier,
+    workspaceId: string,
+    params: {
+      accessibleStreamIds: string[]
+      status?: ConversationStatus
+      /** Effective root to narrow to a single channel and its threads. */
+      scopeRootStreamId?: string
+      limit: number
+      cursor?: { lastActivityAt: string; id: string }
+    }
+  ): Promise<Conversation[]> {
+    if (params.accessibleStreamIds.length === 0) return []
+
+    const fields = sql`${sql.raw(SELECT_FIELDS)}`
+    const statusCond = params.status ? composeSql`AND status = ${params.status}` : sql``
+    const scopeCond = params.scopeRootStreamId
+      ? composeSql`AND COALESCE(anchor_s.root_stream_id, anchor_s.id) = ${params.scopeRootStreamId}`
+      : sql``
+    const cursorCond = params.cursor
+      ? composeSql`AND (date_trunc('milliseconds', last_activity_at), id) < (${params.cursor.lastActivityAt}::timestamptz, ${params.cursor.id})`
+      : sql``
+
+    const result = await db.query<ConversationRow>(composeSql`
+      SELECT ${fields} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND cardinality(message_ids) > 0
+        ${statusCond}
+        AND EXISTS (
+          SELECT 1 FROM streams anchor_s
+          WHERE anchor_s.id = conversations.stream_id
+            AND anchor_s.workspace_id = conversations.workspace_id
+            AND COALESCE(anchor_s.root_stream_id, anchor_s.id) = ANY(${params.accessibleStreamIds})
+            ${scopeCond}
+        )
+        ${cursorCond}
+      ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC
+      LIMIT ${params.limit}
+    `)
+    return result.rows.map(mapRowToConversation)
+  },
+
   async insert(db: Querier, params: InsertConversationParams): Promise<Conversation> {
     const result = await db.query<ConversationRow>(sql`
       INSERT INTO conversations (

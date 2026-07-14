@@ -235,6 +235,28 @@ export class ConversationService {
   }
 
   /**
+   * Flat conversation list for the public API: conversations anchored in the
+   * caller's accessible streams, newest activity first, keyset-paginated. Access
+   * is the pre-resolved accessible-stream-id set (works for user and bot keys
+   * alike) matched by effective root in SQL — no board projection, lens, or
+   * per-viewer overlay. Callers over-fetch (`limit + 1`) to detect a next page.
+   */
+  async listAccessible(
+    workspaceId: string,
+    params: {
+      accessibleStreamIds: string[]
+      status?: ConversationStatus
+      scopeRootStreamId?: string
+      limit: number
+      cursor?: { lastActivityAt: string; id: string }
+    }
+  ): Promise<ConversationWithStaleness[]> {
+    // Single query, INV-30
+    const rows = await ConversationRepository.listByAccessibleStreams(this.pool, workspaceId, params)
+    return rows.map(addStalenessFields)
+  }
+
+  /**
    * The board post for a single conversation — the same projection
    * {@link listByWorkspace} builds per row, for the conversation panel
    * (Mechanism B, board-view-design.md). Access is the caller's responsibility

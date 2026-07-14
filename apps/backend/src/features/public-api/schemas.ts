@@ -21,6 +21,7 @@ import {
   SOURCE_TYPES,
   LABELABLE_RESOURCE_TYPES,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
+  CONVERSATION_STATUSES,
 } from "@threa/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
 import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
@@ -59,6 +60,16 @@ export const searchAttachmentsSchema = z.object({
   streams: z.array(z.string()).optional(),
   contentTypes: z.array(z.enum(EXTRACTION_CONTENT_TYPES)).optional(),
   limit: z.coerce.number().int().min(1).max(PUBLIC_ATTACHMENT_SEARCH_MAX_LIMIT).optional().default(20),
+})
+
+// Cross-stream conversation feed. `streamId` narrows to a single channel and its
+// threads (matched by effective root); `after` is an opaque keyset cursor minted
+// by a prior page's `cursor`. Numbers arrive as query strings, hence `coerce`.
+export const listConversationsSchema = z.object({
+  status: z.enum(CONVERSATION_STATUSES).optional(),
+  streamId: z.string().min(1).max(64).optional(),
+  after: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
 })
 
 export const listStreamsSchema = z.object({

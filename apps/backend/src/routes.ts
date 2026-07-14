@@ -949,6 +949,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     eventService,
     labelService,
     labelAssignmentService,
+    conversationService,
     pool,
     io: deps.io,
   })
@@ -996,6 +997,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     getStream: publicApi.getStream,
     updateStream: publicApi.updateStream,
     listMembers: publicApi.listMembers,
+    listConversations: publicApi.listConversations,
+    getConversation: publicApi.getConversation,
+    listConversationMessages: publicApi.listConversationMessages,
     listMessages: publicApi.listMessages,
     sendMessage: publicApi.sendMessage,
     findMessagesByMetadata: publicApi.findMessagesByMetadata,
