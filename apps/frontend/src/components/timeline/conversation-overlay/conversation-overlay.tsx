@@ -247,9 +247,13 @@ export function ConversationOverlayRow({
   const isDimmed = focusedConversationId != null && annotation.conversationId !== focusedConversationId
   const isPending = pendingMessageIds.has(messageId)
   const [correctionMenuOpen, setCorrectionMenuOpen] = useState(false)
-  const conversationCandidates = correctionMenuOpen
-    ? sortConversationsByTemporalProximity(model.conversations, messageCreatedAt)
-    : model.conversations
+  const conversationCandidates = useMemo(
+    () =>
+      correctionMenuOpen
+        ? sortConversationsByTemporalProximity(model.conversations, messageCreatedAt)
+        : model.conversations,
+    [correctionMenuOpen, model.conversations, messageCreatedAt]
+  )
 
   // React 19 ref-callback cleanup: registration is undone when the row
   // unmounts or its conversation changes (reassignment). MUST be memoized —

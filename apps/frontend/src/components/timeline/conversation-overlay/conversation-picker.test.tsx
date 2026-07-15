@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import type { ConversationWithStaleness } from "@threa/types"
-import { ConversationPickerDrawer } from "./conversation-overlay"
+import { ConversationOverlayRow, ConversationPickerDrawer } from "./conversation-overlay"
 import { buildConversationOverlayModel, type ConversationOverlayContext } from "./model"
 
 function makeConversation(overrides: Partial<ConversationWithStaleness>): ConversationWithStaleness {
@@ -44,7 +45,7 @@ function makeOverlay(
   }
 }
 
-describe("ConversationPickerDrawer", () => {
+describe("conversation correction pickers", () => {
   it("reassigns to an existing conversation by id", () => {
     const onReassignMessage = vi.fn<(messageId: string, toConversationId: string | null) => void>()
     render(
@@ -78,6 +79,33 @@ describe("ConversationPickerDrawer", () => {
         messageCreatedAt="2026-06-01T10:00:00.000Z"
       />
     )
+
+    expect(screen.getAllByText(/^(Before|After|Oldest)$/).map((element) => element.textContent)).toEqual([
+      "Before",
+      "After",
+      "Oldest",
+    ])
+  })
+
+  it("orders rail-dropdown suggestions by createdAt distance from the message", async () => {
+    const onReassignMessage = vi.fn<(messageId: string, toConversationId: string | null) => void>()
+    const conversations = [
+      makeConversation({ id: "conv_oldest", topicSummary: "Oldest", createdAt: "2026-06-01T09:00:00.000Z" }),
+      makeConversation({ id: "conv_after", topicSummary: "After", createdAt: "2026-06-01T10:01:00.000Z" }),
+      makeConversation({ id: "conv_before", topicSummary: "Before", createdAt: "2026-06-01T09:59:00.000Z" }),
+    ]
+    render(
+      <ConversationOverlayRow
+        overlay={makeOverlay(onReassignMessage, conversations)}
+        annotation={{ conversationId: null, blockStart: false }}
+        messageId="msg_1"
+        messageCreatedAt="2026-06-01T10:00:00.000Z"
+      >
+        <span>Message</span>
+      </ConversationOverlayRow>
+    )
+
+    await userEvent.click(screen.getByRole("button", { name: "Correct conversation for this message" }))
 
     expect(screen.getAllByText(/^(Before|After|Oldest)$/).map((element) => element.textContent)).toEqual([
       "Before",
