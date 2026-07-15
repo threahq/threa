@@ -57,6 +57,28 @@ Default to Bun instead of Node.js:
 - `bun run <script>` instead of `npm run <script>`
 - Bun auto-loads `.env` - do not use `dotenv`
 
+## Previewing HTML
+
+**Use Seer, not Claude/Anthropic artifacts.** Claude artifacts do not render for this user — never publish a preview there. Reach for Seer liberally: plans, diagrams, examples, mockups, charts, dashboards, rendered reports — anything easier to grasp as a rendered page than as terminal text belongs here. Default to publishing and handing back the URL rather than pasting a wall of HTML or ASCII.
+
+Seer hosts self-contained HTML bundles behind a bearer token. The token is `SEER_API_KEY` in this runtime (already set; never print it).
+
+Upload flow:
+
+1. Build in a fresh temp dir so parallel sessions never clobber each other: `dir=$(mktemp -d)`. Put `index.html` at its root; use relative asset paths (`./style.css`, `assets/app.js`) since bundles serve under `/b/<slug>/`. Prefer inlined/self-contained assets over external requests.
+2. Zip from inside the build dir: `(cd "$dir" && zip -r bundle.zip . -x bundle.zip)`
+3. `PUT` under a slug matching `[a-z0-9][a-z0-9-]{0,63}`. Make it unique so concurrent sessions don't overwrite each other's previews — suffix a short random token (e.g. `plan-$(openssl rand -hex 3)`). Reuse the same slug only when you deliberately want to update an existing preview at its URL.
+
+```sh
+curl -X PUT --data-binary @"$dir/bundle.zip" \
+  -H "Authorization: Bearer $SEER_API_KEY" \
+  https://seer.build/api/bundles/<slug>
+```
+
+The `200` response JSON carries `url` (latest, live-reload) and `versionUrl` (pinned) — give the user the `url`. Re-`PUT`ting the same slug publishes a new version at the same URL. Limit 50 MB; `..`/absolute-path zip entries are rejected; viewing requires the user's Google sign-in.
+
+Full contract: https://seer.build/skill.md
+
 ## Workflow and Verification
 
 Prefer test-first development: write or update a failing test that captures the desired behavior, then implement the fix.
