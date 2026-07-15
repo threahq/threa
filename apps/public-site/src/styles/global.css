@@ -4,6 +4,47 @@
  * warm-neutral paper canvas, gold (=== --primary) as the thread.
  */
 
+/* ---------- SELF-HOSTED TYPE ----------
+   Shared system with apps/frontend: Switzer body/UI, Commit Mono data/code,
+   plus Cabinet Grotesk as the marketing display face (hero + wordmark + section
+   heads). Files in public/fonts; no Google CDN. Switzer and Cabinet Grotesk are
+   variable (one file, all weights); Commit Mono ships static weights. */
+@font-face {
+  font-family: "Switzer";
+  src: url("/fonts/switzer.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Cabinet Grotesk";
+  src: url("/fonts/cabinet-grotesk.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("/fonts/commit-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("/fonts/commit-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("/fonts/commit-mono-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+  font-style: normal;
+}
+
 /* ---------- TOKENS ---------- */
 :root {
   /* Tokens tuned to the real app (apps/frontend/src/index.css):
@@ -28,9 +69,9 @@
   --emerald: 142 64% 38%;
   --emerald-soft: 142 60% 92%;
 
-  --font-display: "Space Grotesk", system-ui, -apple-system, sans-serif;
-  --font-body: "Space Grotesk", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "Cabinet Grotesk", "Switzer", system-ui, -apple-system, sans-serif;
+  --font-body: "Switzer", system-ui, -apple-system, sans-serif;
+  --font-mono: "Commit Mono", ui-monospace, monospace;
 
   --pad-x: 56px;
 
@@ -295,7 +336,7 @@ body::after {
 /* Login — the app's own primary button, dropped into the marketing nav so the
    door into the app looks like the app. Mirrors the Shadcn `Button` default
    variant in apps/frontend/src/components/ui/button.tsx: solid --primary fill
-   with --primary-foreground text, Space Grotesk medium at text-sm, and the
+   with --primary-foreground text, Switzer medium at text-sm, and the
    app's 10px button radius. --gold === app --primary and --paper ===
    --primary-foreground, so it tracks light/dark exactly. Hover shifts instantly
    (no transition): a var-based color transition freezes on this static site's

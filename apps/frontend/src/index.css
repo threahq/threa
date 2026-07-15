@@ -1,5 +1,37 @@
 /* OpenDyslexic font loaded via <link> in index.html to avoid render-blocking @import */
 
+/* Self-hosted type system (shared with apps/public-site): Switzer body/UI,
+   Commit Mono for data/code. Files in public/fonts. Switzer is a variable
+   font (one file, all weights); Commit Mono ships static weights. */
+@font-face {
+  font-family: "Switzer";
+  src: url("/fonts/switzer.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("/fonts/commit-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("/fonts/commit-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("/fonts/commit-mono-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+  font-style: normal;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -256,7 +288,7 @@ html[data-input="mouse"] .message-hover-wash:hover {
   body {
     @apply bg-background text-foreground;
     font-family:
-      "Space Grotesk",
+      "Switzer",
       system-ui,
       -apple-system,
       BlinkMacSystemFont,
@@ -395,7 +427,7 @@ html[data-input="mouse"] .message-hover-wash:hover {
     background: hsl(var(--muted));
     border-radius: 4px;
     font-size: 11px;
-    font-family: ui-monospace, monospace;
+    font-family: "Commit Mono", ui-monospace, monospace;
   }
 }
 
@@ -755,7 +787,7 @@ html[data-input="mouse"] .message-hover-wash:hover {
 [data-font-family="system"],
 [data-font-family="system"] body {
   font-family:
-    "Space Grotesk",
+    "Switzer",
     system-ui,
     -apple-system,
     BlinkMacSystemFont,
