@@ -59,18 +59,18 @@ Default to Bun instead of Node.js:
 
 ## Previewing HTML
 
-**Use Seer, not Claude/Anthropic artifacts.** Claude artifacts do not render for this user — never publish a preview there. When you build anything meant to be looked at in a browser (a page, mockup, chart, dashboard, diagram, rendered report), be eager to publish it to Seer and hand back the URL.
+**Use Seer, not Claude/Anthropic artifacts.** Claude artifacts do not render for this user — never publish a preview there. Reach for Seer liberally: plans, diagrams, examples, mockups, charts, dashboards, rendered reports — anything easier to grasp as a rendered page than as terminal text belongs here. Default to publishing and handing back the URL rather than pasting a wall of HTML or ASCII.
 
 Seer hosts self-contained HTML bundles behind a bearer token. The token is `SEER_API_KEY` in this runtime (already set; never print it).
 
 Upload flow:
 
-1. Build a directory with `index.html` at its root; use relative asset paths (`./style.css`, `assets/app.js`) since bundles serve under `/b/<slug>/`. Prefer inlined/self-contained assets over external requests.
-2. Zip from inside the build dir: `zip -r ../bundle.zip .`
-3. `PUT` it under a slug matching `[a-z0-9][a-z0-9-]{0,63}`:
+1. Build in a fresh temp dir so parallel sessions never clobber each other: `dir=$(mktemp -d)`. Put `index.html` at its root; use relative asset paths (`./style.css`, `assets/app.js`) since bundles serve under `/b/<slug>/`. Prefer inlined/self-contained assets over external requests.
+2. Zip from inside the build dir: `(cd "$dir" && zip -r bundle.zip . -x bundle.zip)`
+3. `PUT` under a slug matching `[a-z0-9][a-z0-9-]{0,63}`. Make it unique so concurrent sessions don't overwrite each other's previews — suffix a short random token (e.g. `plan-$(openssl rand -hex 3)`). Reuse the same slug only when you deliberately want to update an existing preview at its URL.
 
 ```sh
-curl -X PUT --data-binary @bundle.zip \
+curl -X PUT --data-binary @"$dir/bundle.zip" \
   -H "Authorization: Bearer $SEER_API_KEY" \
   https://seer.build/api/bundles/<slug>
 ```
