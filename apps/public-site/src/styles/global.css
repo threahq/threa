@@ -421,12 +421,15 @@ body::after {
 
 .tl-row {
   display: grid;
-  grid-template-columns: 36px 1fr;
-  gap: 14px;
-  padding: 8px 12px 8px 12px;
+  grid-template-columns: 32px 1fr;
+  gap: 12px;
+  align-items: start;
+  /* App message-row metrics (h-8 avatar, gap-3, pt-3/pb-0.5), shared by the
+     hero demo and the board section so they match. Square, not rounded. */
+  padding: 12px 12px 2px;
   margin: 0;
   position: relative;
-  border-radius: 2px;
+  border-radius: 0;
   background-color: hsl(var(--gold) / 0); /* highlight target */
 }
 /* Rows that animate in start invisible AND collapsed (zero height), so
@@ -449,15 +452,15 @@ body::after {
 }
 
 .tl-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: var(--font-body);
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: 12px;
   letter-spacing: 0.01em;
   flex-shrink: 0;
 }
@@ -478,8 +481,8 @@ body::after {
   color: hsl(var(--gold));
 }
 .tl-avatar.av-ariadne svg {
-  width: 22px;
-  height: 22px;
+  width: 19px;
+  height: 19px;
 }
 
 .tl-body {
@@ -2466,20 +2469,14 @@ body::after {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
   gap: 22px;
-  align-items: stretch;
+  /* The two panes are different heights (the board's cards run taller than the
+     flat stream); center them against each other. The gutter stretches so its
+     hairline still spans the full height. */
+  align-items: center;
   margin-top: 6px;
 }
 .board-col {
   min-width: 0;
-}
-/* The stream column is a flex column so its composer pins to the bottom
-   (via the spring), keeping the two sides level against the board's cards. */
-.board-col.is-stream {
-  display: flex;
-  flex-direction: column;
-}
-.board-spring {
-  flex: 1 1 18px;
 }
 .board-lens {
   display: flex;
@@ -2509,6 +2506,9 @@ body::after {
    a hole in the line. */
 .board-gutter {
   position: relative;
+  /* Stretch to the full row height even though the columns are centered, so the
+     hairline spans the taller (board) pane. */
+  align-self: stretch;
 }
 .board-gutter::before {
   content: "";
@@ -2610,28 +2610,6 @@ body::after {
 .trace-card.is-static .trace-icon-done {
   opacity: 1;
   animation: none;
-}
-
-/* Floating stream composer — same card language as the hero composer, but
-   in-flow (the hero's is absolutely positioned over its scroll region). */
-.board-composer {
-  border: 1px solid hsl(28 14% 88%);
-  background: hsl(var(--paper));
-  border-radius: 14px;
-  padding: 12px 14px 10px;
-  box-shadow:
-    0 1px 0 hsl(33 28% 97%) inset,
-    0 8px 24px -14px hsl(28 30% 22% / 0.18),
-    0 2px 6px -2px hsl(28 30% 22% / 0.06);
-}
-[data-theme="dark"] .board-composer {
-  border-color: hsl(var(--line));
-  box-shadow: 0 8px 24px -16px hsl(0 0% 0% / 0.6);
-}
-.board-composer .composer-editor {
-  color: hsl(var(--muted));
-  font-size: 14px;
-  padding: 2px 2px 10px;
 }
 
 /* ---------- board card (mirrors the app board card at rest + PR #1349 hover) ---------- */
@@ -2744,34 +2722,11 @@ body::after {
   margin-top: 10px;
 }
 
-/* Message rows match the app's real metrics (Kris compared against the app):
-   32px md avatar (radius 8), gap-3 (12px), pt-3/pb-0.5 vertical, top-aligned —
-   NOT the hero widget's larger 36px/14px/8px rows. Horizontal padding comes from
-   the wrapper below so the hover wash can bleed full-width. */
-.board-shell .tl-row {
-  grid-template-columns: 32px 1fr;
-  gap: 12px;
-  align-items: start;
-  padding: 12px 0 2px;
-  border-radius: 0;
-}
-.board-shell .tl-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  font-size: 12px;
-}
-.board-shell .tl-avatar.av-ariadne svg {
-  width: 18px;
-  height: 18px;
-}
-/* Stream rows: wash fills the column, content padded in. */
-.board-col.is-stream .tl-row {
-  padding-left: 12px;
-  padding-right: 12px;
-}
-/* Card rows: break out to the card edge so the wash (and the persona accent
-   stripe) bleeds full-width like the app, then re-pad content to align with the
+/* The message-row metrics (32px avatar, gap-3, pt-3/pb-0.5, square) now live on
+   the base `.tl-row`/`.tl-avatar` so the hero demo and the board section match.
+   Only the board card's full-bleed breakout is board-specific:
+   Card rows break out to the card edge so the wash (and the persona accent
+   stripe) bleed full-width like the app, then re-pad content to align with the
    header. Breakout equals the card padding exactly. */
 .board-card-body .tl-row {
   margin-left: calc(-1 * var(--bc-pad));
