@@ -2440,3 +2440,462 @@ body::after {
 [data-theme="dark"] .os-terminal {
   border-color: hsl(26 12% 26%);
 }
+
+/* ============================================================
+   BOARD SECTION — "the same channel, two ways"
+   A frameless side-by-side: the stream (flat, on the paper, with a
+   floating composer like the hero) vs the board (real conversation
+   cards). Same messages both sides; the board groups the channel's
+   feed into its topics. Reuses the timeline-demo message vocabulary
+   (.tl-row / .tl-avatar / .mention / .reactions / .trace-card /
+   .recall-memo-card / composer parts) so it can't drift from the hero.
+   Card rest + hover mirror the app (PR #1349): a static bordered card
+   whose border warms on hover (no lift), plus a per-message hover wash
+   and an inset action pill — both gated to a real mouse pointer.
+   ============================================================ */
+
+/* The board section shares .memo-shell (heading, lede, width, rhythm)
+   but sits in the intro zone with the hero, so it drops the thread spine
+   (the golden thread still starts at the memory section below). */
+.board-shell::before,
+.board-shell::after {
+  display: none;
+}
+
+.board-compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+  gap: 22px;
+  align-items: stretch;
+  margin-top: 6px;
+}
+.board-col {
+  min-width: 0;
+}
+/* The stream column is a flex column so its composer pins to the bottom
+   (via the spring), keeping the two sides level against the board's cards. */
+.board-col.is-stream {
+  display: flex;
+  flex-direction: column;
+}
+.board-spring {
+  flex: 1 1 18px;
+}
+.board-lens {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 0 4px 16px;
+}
+.board-lens .k {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: hsl(var(--ink));
+}
+.board-lens .m {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+}
+
+/* Center gutter: a thin hairline down the middle carrying a "same messages"
+   badge. On mobile it collapses to STAND horizontally between the stacked
+   panes (see the 880px block). Badge bg matches the warm frame so it punches
+   a hole in the line. */
+.board-gutter {
+  position: relative;
+}
+.board-gutter::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 26px;
+  bottom: 26px;
+  width: 1px;
+  transform: translateX(-0.5px);
+  background: linear-gradient(hsl(var(--line) / 0), hsl(var(--line)) 12%, hsl(var(--line)) 88%, hsl(var(--line) / 0));
+}
+.board-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  background: hsl(var(--paper-warm));
+  padding: 12px 0;
+}
+.board-badge .ic {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid hsl(var(--line));
+  background: hsl(var(--paper));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--gold));
+  box-shadow: 0 2px 10px -4px hsl(28 30% 20% / 0.22);
+}
+.board-badge .ic svg {
+  width: 15px;
+  height: 15px;
+}
+.board-badge .lbl {
+  writing-mode: vertical-rl;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+}
+[data-theme="dark"] .board-badge .ic {
+  box-shadow: 0 2px 12px -4px hsl(0 0% 0% / 0.6);
+}
+
+/* On-message conversation-provenance chip (mirrors the app's
+   ConversationProvenanceChip): a Layers glyph + "continues <topic> · <time>"
+   on the stream row that jumps topic. It names the card that topic becomes. */
+.board-prov {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  min-height: 22px;
+  font-size: 12.5px;
+  color: hsl(var(--muted));
+}
+.board-prov svg {
+  width: 13px;
+  height: 13px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.board-prov .topic {
+  font-weight: 500;
+  color: hsl(var(--ink-soft));
+}
+.board-prov .sep {
+  opacity: 0.4;
+}
+
+/* Static "Session complete" trace — reuses .trace-card but forces the DONE
+   state visible. The hero drives .trace-card (and its rows/icons) with running
+   `trace-life`/`trace-running`/`trace-done` animations that would otherwise keep
+   this collapsed until their beat, so `animation: none` hands control back to
+   these static values. */
+.trace-card.is-static {
+  opacity: 1;
+  max-height: none;
+  border-width: 1px;
+  padding: 9px 14px;
+  /* Air above and below, mirroring the app's `py-3` (12px) wrapper around
+     AgentSessionEvent — messages sit flush, an event breathes. */
+  margin: 12px 0;
+  animation: none;
+}
+.trace-card.is-static .trace-row-running,
+.trace-card.is-static .trace-icon-running {
+  opacity: 0;
+  animation: none;
+}
+.trace-card.is-static .trace-row-done,
+.trace-card.is-static .trace-icon-done {
+  opacity: 1;
+  animation: none;
+}
+
+/* Floating stream composer — same card language as the hero composer, but
+   in-flow (the hero's is absolutely positioned over its scroll region). */
+.board-composer {
+  border: 1px solid hsl(28 14% 88%);
+  background: hsl(var(--paper));
+  border-radius: 14px;
+  padding: 12px 14px 10px;
+  box-shadow:
+    0 1px 0 hsl(33 28% 97%) inset,
+    0 8px 24px -14px hsl(28 30% 22% / 0.18),
+    0 2px 6px -2px hsl(28 30% 22% / 0.06);
+}
+[data-theme="dark"] .board-composer {
+  border-color: hsl(var(--line));
+  box-shadow: 0 8px 24px -16px hsl(0 0% 0% / 0.6);
+}
+.board-composer .composer-editor {
+  color: hsl(var(--muted));
+  font-size: 14px;
+  padding: 2px 2px 10px;
+}
+
+/* ---------- board card (mirrors the app board card at rest + PR #1349 hover) ---------- */
+.board-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.board-card {
+  --bc-pad: 16px; /* app board card = p-4 (16px); rows break out by this */
+  position: relative;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 14px;
+  padding: var(--bc-pad);
+  box-shadow:
+    0 1px 2px hsl(28 30% 20% / 0.04),
+    0 6px 16px -10px hsl(28 30% 20% / 0.14);
+}
+[data-theme="dark"] .board-card {
+  box-shadow:
+    0 1px 2px hsl(0 0% 0% / 0.4),
+    0 8px 18px -10px hsl(0 0% 0% / 0.55);
+}
+.board-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.board-card .chev {
+  width: 15px;
+  height: 15px;
+  color: hsl(var(--muted) / 0.8);
+  flex-shrink: 0;
+}
+.board-card .title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  color: hsl(var(--ink));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-card .unread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: hsl(var(--gold));
+  flex-shrink: 0;
+}
+.board-hbtn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted));
+  flex-shrink: 0;
+}
+.board-hbtn svg {
+  width: 14px;
+  height: 14px;
+}
+.board-locator {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 5px;
+  font-size: 12px;
+  color: hsl(var(--muted));
+}
+/* Reserved (empty) unread-dot footprint so a read card's title line aligns with
+   an unread one — no layout shift (INV-21). */
+.board-card .dot-slot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+}
+.board-tile {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: hsl(var(--paper-warm));
+  color: hsl(200 55% 48%);
+}
+[data-theme="dark"] .board-tile {
+  background: hsl(26 10% 22%);
+}
+.board-tile svg {
+  width: 11px;
+  height: 11px;
+}
+.board-locator .lstream {
+  font-weight: 500;
+  color: hsl(var(--ink-soft));
+}
+.board-locator .sep {
+  opacity: 0.5;
+}
+.board-card-body {
+  margin-top: 10px;
+}
+
+/* Message rows match the app's real metrics (Kris compared against the app):
+   32px md avatar (radius 8), gap-3 (12px), pt-3/pb-0.5 vertical, top-aligned —
+   NOT the hero widget's larger 36px/14px/8px rows. Horizontal padding comes from
+   the wrapper below so the hover wash can bleed full-width. */
+.board-shell .tl-row {
+  grid-template-columns: 32px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 0 2px;
+  border-radius: 0;
+}
+.board-shell .tl-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.board-shell .tl-avatar.av-ariadne svg {
+  width: 18px;
+  height: 18px;
+}
+/* Stream rows: wash fills the column, content padded in. */
+.board-col.is-stream .tl-row {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+/* Card rows: break out to the card edge so the wash (and the persona accent
+   stripe) bleeds full-width like the app, then re-pad content to align with the
+   header. Breakout equals the card padding exactly. */
+.board-card-body .tl-row {
+  margin-left: calc(-1 * var(--bc-pad));
+  margin-right: calc(-1 * var(--bc-pad));
+  padding-left: var(--bc-pad);
+  padding-right: var(--bc-pad);
+}
+
+/* ---------- per-message hover (PR #1349): wash + inset action pill ---------- */
+.board-actions {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 140ms ease-out;
+}
+.board-actions .ab {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid hsl(var(--line));
+  background: hsl(var(--paper));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--ink-soft));
+  box-shadow: 0 1px 2px hsl(28 30% 20% / 0.07);
+}
+.board-actions .ab svg {
+  width: 15px;
+  height: 15px;
+}
+[data-theme="dark"] .board-actions .ab {
+  background: hsl(26 10% 18%);
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.4);
+}
+/* Reserve room so the pill never overlays text when it fades in (INV-21) —
+   mirrors the app's pr-16. */
+.board-hoverable .tl-body {
+  padding-right: 56px;
+}
+
+/* Card border-warm + row wash + pill reveal — all gated to a real mouse
+   pointer (matches PR #1349's data-input model: no sticky hover on touch). */
+@media (hover: hover) and (pointer: fine) {
+  .board-card {
+    transition: border-color 200ms ease-out;
+  }
+  .board-card:hover {
+    border-color: hsl(var(--gold) / 0.5);
+  }
+  [data-theme="dark"] .board-card:hover {
+    border-color: hsl(var(--gold) / 0.55);
+  }
+  .board-hoverable {
+    transition: background-color 160ms ease-out;
+  }
+  .board-hoverable:hover {
+    background-color: hsl(38 14% 92%);
+  }
+  [data-theme="dark"] .board-hoverable:hover {
+    background-color: hsl(26 9% 19%);
+  }
+  .board-hoverable:hover .board-actions {
+    opacity: 1;
+  }
+}
+
+/* Avatar colour for Sam (the hero palette only defines maya/jordan/alex/ariadne). */
+.tl-avatar.av-sam {
+  background: hsl(150 26% 82%);
+  color: hsl(150 38% 24%);
+}
+
+@media (max-width: 880px) {
+  .board-compare {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  /* App board card is p-3 (12px) on mobile; the row breakout follows the var. */
+  .board-card {
+    --bc-pad: 12px;
+  }
+  /* Gutter collapses to a horizontal divider standing between the stacked
+     panes (stream above, board below); the swap arrows turn to point down. */
+  .board-gutter {
+    padding: 20px 0;
+  }
+  .board-gutter::before {
+    left: 20px;
+    right: 20px;
+    top: 50%;
+    bottom: auto;
+    width: auto;
+    height: 1px;
+    transform: translateY(-0.5px);
+    background: linear-gradient(
+      90deg,
+      hsl(var(--line) / 0),
+      hsl(var(--line)) 12%,
+      hsl(var(--line)) 88%,
+      hsl(var(--line) / 0)
+    );
+  }
+  .board-badge {
+    position: static;
+    transform: none;
+    flex-direction: row;
+    width: max-content;
+    margin: 0 auto;
+    padding: 0 14px;
+  }
+  .board-badge .ic svg {
+    transform: rotate(90deg);
+  }
+  .board-badge .lbl {
+    writing-mode: horizontal-tb;
+  }
+}
+
+/* The hero's reaction pills start opacity:0 and animate in via the hero
+   script; the board section is static, so force them visible here. */
+.board-shell .rxn {
+  opacity: 1;
+}
