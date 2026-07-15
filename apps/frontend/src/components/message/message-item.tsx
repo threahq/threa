@@ -444,11 +444,12 @@ export function MessageItem({
   // `reveal-host`, and `reveal-actions-hover-only` keeps this cluster
   // opacity-0 + pointer-events-none for touch (so a tap can't trigger the
   // invisible button — it passes through), revealing it on mouse hover / focus.
-  // Touch reaches the same actions through the long-press drawer below. The body
-  // columns carry `pr-14` so this absolute react+overflow cluster never overlays
-  // the row's top-right content (INV-21).
+  // Touch reaches the same actions through the long-press drawer below. Inset from
+  // the row's top-right corner (not flush to the surface edge); the body columns
+  // carry `pr-16` so this absolute react+overflow cluster never overlays the row's
+  // top-right content (INV-21).
   const overflowMenu = (
-    <div className="reveal-actions-hover-only absolute right-0 top-0 flex items-center gap-0.5">
+    <div className="reveal-actions-hover-only absolute right-2 top-1.5 flex items-center gap-0.5">
       <ReactionEmojiPicker
         workspaceId={workspaceId}
         onSelect={handleAddReaction}
@@ -669,11 +670,18 @@ export function MessageItem({
         {swipeReveal}
         <div
           className={cn(
-            "group reveal-host relative flex gap-3",
+            // transition scoped to bg + opacity (NOT transform): the swipe gesture
+            // drives `transform` via inline style, and transitioning it would lag
+            // the drag.
+            "group reveal-host relative flex gap-3 transition-[background-color,opacity]",
+            // Slack-style per-message hover wash — `.message-hover-wash` is gated
+            // to mouse input in index.css (no sticky hover on touch); composes
+            // under the actor accent so persona/bot stays colored on hover.
+            "message-hover-wash",
             MESSAGE_ROW_CONTINUATION_PADDING,
             surfaceClassName,
             rowAccentClass,
-            longPress.isPressed && "opacity-70 transition-opacity",
+            longPress.isPressed && "opacity-70",
             isHighlighted && "animate-highlight-flash"
           )}
           style={swipeStyle}
@@ -686,7 +694,7 @@ export function MessageItem({
           >
             {formatTime(sentAt)}
           </div>
-          <div className="message-content min-w-0 flex-1 pr-14">
+          <div className="message-content min-w-0 flex-1 pr-16">
             {inlineEditing ? (
               editForm
             ) : (
@@ -726,11 +734,18 @@ export function MessageItem({
       {swipeReveal}
       <div
         className={cn(
-          "group reveal-host relative flex items-start gap-3",
+          // transition scoped to bg + opacity (NOT transform): the swipe gesture
+          // drives `transform` via inline style, and transitioning it would lag
+          // the drag.
+          "group reveal-host relative flex items-start gap-3 transition-[background-color,opacity]",
+          // Slack-style per-message hover wash — `.message-hover-wash` is gated
+          // to mouse input in index.css (no sticky hover on touch); composes
+          // under the actor accent so persona/bot stays colored on hover.
+          "message-hover-wash",
           MESSAGE_ROW_HEAD_PADDING,
           surfaceClassName,
           rowAccentClass,
-          longPress.isPressed && "opacity-70 transition-opacity",
+          longPress.isPressed && "opacity-70",
           isHighlighted && "animate-highlight-flash"
         )}
         style={swipeStyle}
@@ -743,7 +758,7 @@ export function MessageItem({
           alt={authorName}
           showStatus={false}
         />
-        <div className="message-content min-w-0 flex-1 pr-14">
+        <div className="message-content min-w-0 flex-1 pr-16">
           <div className="mb-0.5 flex items-baseline gap-2">
             {interactiveName ? (
               <button

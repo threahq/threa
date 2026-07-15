@@ -60,6 +60,19 @@
   }
 }
 
+/* Per-message hover wash (Slack-style row highlight) — GATED to mouse input via
+   the same `html[data-input]` model as the reveal-actions above, so a tap on
+   touch never sticks a hover background (we already carry enough awkward mobile
+   hover states). Unlayered on purpose: it must win over the row's own
+   `bg-card`/`bg-background` utility on hover, which a @layer rule wouldn't. It's
+   a background-COLOR change, so it composes UNDER the actor-accent gradient
+   (background-image) + inset stripe (box-shadow) — the persona/bot accent
+   survives the hover instead of washing flat. Applied by MessageItem (board /
+   conversation / label) and MessageEvent (stream timeline). */
+html[data-input="mouse"] .message-hover-wash:hover {
+  background-color: hsl(var(--muted) / 0.8);
+}
+
 /*
  * Threa - Golden Thread Theme
  *
@@ -450,42 +463,22 @@
   }
 }
 
-/* Board card hover life: on pointer hover the card lifts and its border warms to
-   the primary (Ariadne thread) tint over a deeper float shadow, so the board
-   reads as tactile rather than static. A border-color change (constant width) +
-   transform + box-shadow — nothing reflows (INV-21). A warmed border, not an
-   inset left bar, so it doesn't compete with the per-message actor accent already
-   on the card's left. Gated to a real hover pointer so a tap on touch can't stick
-   the lifted state; the light/dark shadow split matches the card's rest shadow. */
+/* Board card hover: the card holds still and its border warms to the primary
+   (Ariadne thread) tint — a link-style highlight, no lift or float shadow, so
+   nothing moves or reflows (INV-21). Per-message hover is a separate row-level
+   wash (see MessageItem); the card only warms its border, so the two hover
+   levels never compete. A warmed border, not an inset left bar, so it doesn't
+   collide with the per-message actor accent already on the card's left. Gated to
+   a real hover pointer so a tap on touch can't stick the hover state. */
 @media (hover: hover) and (pointer: fine) {
-  .board-card-lift {
-    transition:
-      transform 200ms ease-out,
-      box-shadow 200ms ease-out,
-      border-color 200ms ease-out;
+  .board-card-hover {
+    transition: border-color 200ms ease-out;
   }
-  .board-card-lift:hover {
-    transform: translateY(-3px);
+  .board-card-hover:hover {
     border-color: hsl(var(--primary) / 0.5);
-    box-shadow:
-      0 4px 6px rgb(0 0 0 / 0.07),
-      0 16px 30px -12px rgb(0 0 0 / 0.22);
   }
-  .dark .board-card-lift:hover {
+  .dark .board-card-hover:hover {
     border-color: hsl(var(--primary) / 0.55);
-    box-shadow:
-      0 4px 6px rgb(0 0 0 / 0.55),
-      0 20px 36px -12px rgb(0 0 0 / 0.65);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .board-card-lift {
-      transition:
-        box-shadow 200ms ease-out,
-        border-color 200ms ease-out;
-    }
-    .board-card-lift:hover {
-      transform: none;
-    }
   }
 }
 

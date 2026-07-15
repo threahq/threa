@@ -741,11 +741,19 @@ function MessageLayout({
       )}
       <div
         className={cn(
-          // Opaque background so swipe-to-quote icon shows behind the message
-          "message-item group reveal-host relative flex gap-3 px-3 sm:px-6 bg-background",
+          // Opaque background so swipe-to-quote icon shows behind the message.
+          // `transition-[background-color]` (NOT transform — the swipe drives
+          // transform via inline style and a transition would lag the drag).
+          "message-item group reveal-host relative flex gap-3 px-3 sm:px-6 bg-background transition-[background-color]",
           rowVerticalPadding,
           // Per-actor accent (gradient + inset stripe) — see ACTOR_ROW_THEME.
           theme.rowAccent,
+          // Slack-style per-message hover wash — `.message-hover-wash` is gated
+          // to mouse input in index.css (no sticky hover on touch); a
+          // background-COLOR change, so it composes UNDER the actor accent's
+          // gradient + inset stripe (persona/bot accent survives the hover).
+          // Suppressed in batch mode, where the selection tint owns the bg.
+          !batchEnabled && "message-hover-wash",
           // Edit mode: pseudo-element background so no layout shift — applied
           // only when the row doesn't already have an actor-accent gradient to
           // avoid stacking two backgrounds.
