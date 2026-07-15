@@ -652,7 +652,11 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
         {moveToSubtopic.moveDialog}
         <div
           ref={listRef}
-          className="min-h-0 flex-1 overflow-y-auto px-4"
+          // pt-4 reserves headroom for the first row's hover toolbar, which floats
+          // ~14px above its row (MessageItem's float-above chip). Without it the
+          // scroll container's top edge clips the first message's toolbar — the
+          // stream timeline reserves the same room via its header spacer.
+          className="min-h-0 flex-1 overflow-y-auto px-4 pt-4"
           // pb-3 baseline, plus room for the mobile floating composer while one
           // is open so the conversation tail can scroll above the pill.
           style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
