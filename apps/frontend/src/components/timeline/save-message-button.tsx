@@ -10,6 +10,10 @@ import { ReminderPopoverContent } from "./reminder-popover-content"
 interface SaveMessageButtonProps {
   workspaceId: string
   messageId: string
+  /** Set on conversation surfaces (board card / panel) so the saved row — and any
+   * reminder created from the popover — deep-links back into the conversation
+   * panel. Omitted in the stream timeline, where a message has no conversation. */
+  conversationId?: string
 }
 
 /**
@@ -18,7 +22,7 @@ interface SaveMessageButtonProps {
  * (matches the spec: "pressing the bookmark saves, hovering shows the
  * popover").
  */
-export function SaveMessageButton({ workspaceId, messageId }: SaveMessageButtonProps) {
+export function SaveMessageButton({ workspaceId, messageId, conversationId }: SaveMessageButtonProps) {
   const saved = useSavedForMessage(workspaceId, messageId)
   const saveMutation = useSaveMessage(workspaceId)
   const updateMutation = useUpdateSaved(workspaceId)
@@ -37,7 +41,7 @@ export function SaveMessageButton({ workspaceId, messageId }: SaveMessageButtonP
     if (isPending) return
     if (!saved) {
       saveMutation.mutate(
-        { messageId },
+        { messageId, conversationId },
         {
           onError: () => toast.error("Could not save message"),
         }
@@ -47,7 +51,7 @@ export function SaveMessageButton({ workspaceId, messageId }: SaveMessageButtonP
     if (saved.status !== "saved") {
       // Re-saving a done/archived item brings it back to the Saved tab per spec.
       saveMutation.mutate(
-        { messageId },
+        { messageId, conversationId },
         {
           onError: () => toast.error("Could not restore saved item"),
         }
@@ -78,7 +82,12 @@ export function SaveMessageButton({ workspaceId, messageId }: SaveMessageButtonP
         </Button>
       </HoverCardTrigger>
       <HoverCardContent align="end" className="w-72 p-0">
-        <ReminderPopoverContent workspaceId={workspaceId} messageId={messageId} saved={saved ?? null} />
+        <ReminderPopoverContent
+          workspaceId={workspaceId}
+          messageId={messageId}
+          conversationId={conversationId}
+          saved={saved ?? null}
+        />
       </HoverCardContent>
     </HoverCard>
   )
