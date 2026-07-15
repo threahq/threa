@@ -1585,6 +1585,7 @@ function SentMessageEvent({
           overlay={conversationOverlayRow.overlay}
           annotation={conversationOverlayRow.annotation}
           messageId={payload.messageId}
+          messageCreatedAt={event.createdAt}
         />
       )}
     </>

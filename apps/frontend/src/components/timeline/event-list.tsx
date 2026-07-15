@@ -804,6 +804,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
           overlay={ctx.conversationOverlay}
           annotation={item.conversationRow}
           messageId={overlayMessageId}
+          messageCreatedAt={item.event.createdAt}
           // Split-select keeps the overlay mounted for its coloring, but the row
           // is a selection toggle then — hide the single-message correction swatch
           // so it can't steal the tap (it renders outside the row's `inert` slot).

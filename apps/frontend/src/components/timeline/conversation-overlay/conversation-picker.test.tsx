@@ -27,11 +27,13 @@ function makeConversation(overrides: Partial<ConversationWithStaleness>): Conver
   }
 }
 
-function makeOverlay(onReassignMessage: ConversationOverlayContext["onReassignMessage"]): ConversationOverlayContext {
-  const conversations = [
+function makeOverlay(
+  onReassignMessage: ConversationOverlayContext["onReassignMessage"],
+  conversations = [
     makeConversation({ id: "conv_a", topicSummary: "Pizza", messageIds: ["msg_1"] }),
     makeConversation({ id: "conv_b", topicSummary: "Deploys", messageIds: ["msg_2"] }),
   ]
+): ConversationOverlayContext {
   return {
     model: buildConversationOverlayModel(conversations, "stream_123"),
     focusedConversationId: null,
@@ -52,10 +54,36 @@ describe("ConversationPickerDrawer", () => {
         overlay={makeOverlay(onReassignMessage)}
         annotation={{ conversationId: "conv_a", blockStart: true }}
         messageId="msg_1"
+        messageCreatedAt="2026-06-01T00:00:00.000Z"
       />
     )
     fireEvent.click(screen.getByText("Deploys"))
     expect(onReassignMessage).toHaveBeenCalledWith("msg_1", "conv_b")
+  })
+
+  it("orders suggestions by createdAt distance from the message", () => {
+    const onReassignMessage = vi.fn<(messageId: string, toConversationId: string | null) => void>()
+    const conversations = [
+      makeConversation({ id: "conv_oldest", topicSummary: "Oldest", createdAt: "2026-06-01T09:00:00.000Z" }),
+      makeConversation({ id: "conv_after", topicSummary: "After", createdAt: "2026-06-01T10:01:00.000Z" }),
+      makeConversation({ id: "conv_before", topicSummary: "Before", createdAt: "2026-06-01T09:59:00.000Z" }),
+    ]
+    render(
+      <ConversationPickerDrawer
+        open
+        onOpenChange={vi.fn()}
+        overlay={makeOverlay(onReassignMessage, conversations)}
+        annotation={{ conversationId: null, blockStart: false }}
+        messageId="msg_1"
+        messageCreatedAt="2026-06-01T10:00:00.000Z"
+      />
+    )
+
+    expect(screen.getAllByText(/^(Before|After|Oldest)$/).map((element) => element.textContent)).toEqual([
+      "Before",
+      "After",
+      "Oldest",
+    ])
   })
 
   it("moves the message to a new conversation with a null target", () => {
@@ -67,6 +95,7 @@ describe("ConversationPickerDrawer", () => {
         overlay={makeOverlay(onReassignMessage)}
         annotation={{ conversationId: "conv_a", blockStart: true }}
         messageId="msg_1"
+        messageCreatedAt="2026-06-01T00:00:00.000Z"
       />
     )
     fireEvent.click(screen.getByText("New conversation"))

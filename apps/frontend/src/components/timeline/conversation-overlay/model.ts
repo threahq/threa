@@ -54,6 +54,31 @@ export function buildConversationOverlayModel(
   return { conversations: ordered, conversationsById, colorIndexById, conversationIdByMessageId }
 }
 
+/** Picker-only ranking; palette assignment remains chronological and stable. */
+export function sortConversationsByTemporalProximity(
+  conversations: readonly ConversationWithStaleness[],
+  messageCreatedAt: string
+): ConversationWithStaleness[] {
+  const messageTime = Date.parse(messageCreatedAt)
+  if (!Number.isFinite(messageTime)) throw new RangeError(`Invalid message createdAt: ${messageCreatedAt}`)
+
+  return conversations
+    .map((conversation) => {
+      const createdAt = Date.parse(conversation.createdAt)
+      if (!Number.isFinite(createdAt)) {
+        throw new RangeError(`Invalid conversation createdAt: ${conversation.createdAt}`)
+      }
+      return { conversation, createdAt }
+    })
+    .sort(
+      (a, b) =>
+        Math.abs(a.createdAt - messageTime) - Math.abs(b.createdAt - messageTime) ||
+        a.createdAt - b.createdAt ||
+        a.conversation.id.localeCompare(b.conversation.id)
+    )
+    .map(({ conversation }) => conversation)
+}
+
 /**
  * Map every message id in `conversations` to the conversation it belongs to,
  * for the "Show in conversation" action. Unlike {@link buildConversationOverlayModel}
