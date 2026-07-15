@@ -43,8 +43,8 @@ const schema = [
       <div class="hero-stage">
         <div>
           <h1 class="h-display">
-            Team chat that<br/>
-            <span class="accent">holds the why</span>.
+            Chat that remembers<br/>
+            <span class="accent">the decisions</span>.
           </h1>
           <p class="lede">
             Channels, threads, and DMs, with a memory underneath.
@@ -200,6 +200,195 @@ const schema = [
             </div>
             <div class="composer-hint-foot">Enter to send · Shift+Enter for new line</div>
 
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     BOARD — the same channel, two ways
+     A frameless side-by-side: the stream (flat, on the paper, with a
+     floating composer) vs the board (real conversation cards). Same
+     messages both sides. Reuses the timeline-demo vocabulary (.tl-row,
+     .tl-avatar, .mention, .reactions, .trace-card, .recall-memo-card,
+     composer parts) so it tracks the hero. Card rest + hover mirror the
+     app (PR #1349): static bordered card, border warms on hover (no
+     lift), per-message hover wash + inset action pill, mouse-gated.
+     ============================================================ -->
+<div class="frame warm" id="board">
+  <div class="memo-shell board-shell">
+    <div class="section-meta">
+      <span>The board</span>
+    </div>
+    <h2>Chat you can actually find later.</h2>
+    <p class="lede">
+      A timeline is great for real-time chat. It's linear and immediate,
+      and good for keeping up with what's latest. Where it falls short is
+      discoverability. Once a discussion gets long or complex, it's hard to
+      find again weeks later. The board answers that: the same messages,
+      grouped by topic, so you can go back and find a conversation instead
+      of scrolling for it.
+    </p>
+
+    <div class="board-compare">
+      <!-- STREAM: flat feed on the paper, composer pinned to the bottom -->
+      <div class="board-col is-stream">
+        <div class="board-lens"><span class="k">Stream</span><span class="m"># product · today</span></div>
+
+        <div class="tl-row board-hoverable">
+          <div class="tl-avatar av-maya">MR</div>
+          <div class="tl-body">
+            <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">14:03</span></div>
+            <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
+          </div>
+          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+        </div>
+
+        <div class="tl-row board-hoverable">
+          <div class="tl-avatar av-sam">SP</div>
+          <div class="tl-body">
+            <div class="tl-head-line"><span class="tl-name">Sam Patel</span><span class="tl-time">14:04</span></div>
+            <div class="tl-text">Empty states for the board are on staging now. The board one especially came out nice.</div>
+            <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
+          </div>
+          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+        </div>
+
+        <div class="tl-row board-hoverable">
+          <div class="tl-avatar av-jordan">JL</div>
+          <div class="tl-body">
+            <div class="tl-head-line"><span class="tl-name">Jordan Lee</span><span class="tl-time">14:05</span></div>
+            <div class="tl-text">There were open concerns but I can't find the thread.</div>
+            <div class="board-prov"><svg><use href="#icon-layers"/></svg><span>continues <span class="topic">Auth refactor: pause or push?</span></span><span class="sep">·</span><span>2m</span></div>
+          </div>
+          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+        </div>
+
+        <div class="tl-row board-hoverable">
+          <div class="tl-avatar av-alex">AP</div>
+          <div class="tl-body">
+            <div class="tl-head-line"><span class="tl-name">Alex Park</span><span class="tl-time">14:05</span></div>
+            <div class="tl-text"><span class="mention">@ariadne</span> do you know?</div>
+          </div>
+          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+        </div>
+
+        <div class="trace-card is-static">
+          <div class="trace-icon-slot">
+            <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
+            <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
+          </div>
+          <div class="trace-main">
+            <div class="trace-row trace-row-running"><div class="trace-title">Ariadne is working…</div><div class="trace-sub">searching</div></div>
+            <div class="trace-row trace-row-done"><div class="trace-title">Session complete</div><div class="trace-sub">5 steps · 3.7s</div></div>
+          </div>
+          <div class="trace-time">14:05</div>
+        </div>
+
+        <div class="tl-row persona board-hoverable">
+          <div class="tl-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
+          <div class="tl-body">
+            <div class="tl-head-line"><span class="tl-name">Ariadne</span><span class="tl-time">14:05</span></div>
+            <div class="tl-text">You paused it for Jordan's review of the token-rotation model. The concern was migrating live sessions without a forced re-auth.</div>
+          </div>
+          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+        </div>
+
+      </div>
+
+      <!-- center gutter: "same messages" (stands horizontal on mobile) -->
+      <div class="board-gutter"><div class="board-badge"><span class="ic"><svg><use href="#icon-swap"/></svg></span><span class="lbl">same messages</span></div></div>
+
+      <!-- BOARD: the same messages grouped into two topic cards -->
+      <div class="board-col">
+        <div class="board-lens"><span class="k">Board</span><span class="m"># product · by topic</span></div>
+        <div class="board-list">
+          <div class="board-card">
+            <div class="board-card-title">
+              <svg class="chev"><use href="#icon-chevron"/></svg>
+              <span class="title">Auth refactor: pause or push?</span>
+              <span class="unread-dot"></span>
+              <span class="board-hbtn" aria-label="Open conversation"><svg><use href="#icon-panelright"/></svg></span>
+              <span class="board-hbtn" aria-label="More"><svg><use href="#icon-morevert"/></svg></span>
+            </div>
+            <div class="board-locator"><span class="board-tile"><svg><use href="#icon-hash"/></svg></span><span class="lstream">product</span><span class="sep">·</span><span>now</span></div>
+            <div class="board-card-body">
+              <div class="tl-row board-hoverable">
+                <div class="tl-avatar av-maya">MR</div>
+                <div class="tl-body">
+                  <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">14:03</span></div>
+                  <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
+                </div>
+                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+              </div>
+              <div class="tl-row board-hoverable">
+                <div class="tl-avatar av-jordan">JL</div>
+                <div class="tl-body">
+                  <div class="tl-head-line"><span class="tl-name">Jordan Lee</span><span class="tl-time">14:05</span></div>
+                  <div class="tl-text">There were open concerns but I can't find the thread.</div>
+                </div>
+                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+              </div>
+              <div class="tl-row board-hoverable">
+                <div class="tl-avatar av-alex">AP</div>
+                <div class="tl-body">
+                  <div class="tl-head-line"><span class="tl-name">Alex Park</span><span class="tl-time">14:05</span></div>
+                  <div class="tl-text"><span class="mention">@ariadne</span> do you know?</div>
+                </div>
+                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+              </div>
+              <div class="trace-card is-static">
+                <div class="trace-icon-slot">
+                  <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
+                  <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
+                </div>
+                <div class="trace-main">
+                  <div class="trace-row trace-row-running"><div class="trace-title">Ariadne is working…</div><div class="trace-sub">searching</div></div>
+                  <div class="trace-row trace-row-done"><div class="trace-title">Session complete</div><div class="trace-sub">5 steps · 3.7s</div></div>
+                </div>
+                <div class="trace-time">14:05</div>
+              </div>
+              <div class="tl-row persona board-hoverable">
+                <div class="tl-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
+                <div class="tl-body">
+                  <div class="tl-head-line"><span class="tl-name">Ariadne</span><span class="tl-time">14:05</span></div>
+                  <div class="tl-text">You paused it for Jordan's review of the token-rotation model.</div>
+                  <div class="recall-memo-card">
+                    <div class="rmc-icon"><svg><use href="#icon-compass"/></svg></div>
+                    <div class="rmc-body">
+                      <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#product</span></div>
+                      <div class="rmc-title">Auth refactor held pending token-rotation review</div>
+                    </div>
+                    <div class="rmc-meta">Mar 12</div>
+                  </div>
+                </div>
+                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="board-card">
+            <div class="board-card-title">
+              <svg class="chev"><use href="#icon-chevron"/></svg>
+              <span class="title">Empty states shipped to staging</span>
+              <span class="dot-slot"></span>
+              <span class="board-hbtn" aria-label="Open conversation"><svg><use href="#icon-panelright"/></svg></span>
+              <span class="board-hbtn" aria-label="More"><svg><use href="#icon-morevert"/></svg></span>
+            </div>
+            <div class="board-locator"><span class="board-tile"><svg><use href="#icon-hash"/></svg></span><span class="lstream">product</span><span class="sep">·</span><span>now</span></div>
+            <div class="board-card-body">
+              <div class="tl-row board-hoverable">
+                <div class="tl-avatar av-sam">SP</div>
+                <div class="tl-body">
+                  <div class="tl-head-line"><span class="tl-name">Sam Patel</span><span class="tl-time">14:04</span></div>
+                  <div class="tl-text">Empty states for the board are on staging now. The board one especially came out nice.</div>
+                  <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
+                </div>
+                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -652,7 +841,7 @@ const schema = [
 <div class="frame night" id="waitlist">
   <div class="cta-shell">
     <div>
-      <h3>Workplace chat that <span class="accent">remembers</span>.<br/>Get on the list.</h3>
+      <h3>Get <span class="accent">early</span> access.</h3>
     </div>
     <div>
       <form class="wl-form" id="waitlist-form" novalidate>
