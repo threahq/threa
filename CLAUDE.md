@@ -57,6 +57,28 @@ Default to Bun instead of Node.js:
 - `bun run <script>` instead of `npm run <script>`
 - Bun auto-loads `.env` - do not use `dotenv`
 
+## Previewing HTML
+
+**Use Seer, not Claude/Anthropic artifacts.** Claude artifacts do not render for this user — never publish a preview there. When you build anything meant to be looked at in a browser (a page, mockup, chart, dashboard, diagram, rendered report), be eager to publish it to Seer and hand back the URL.
+
+Seer hosts self-contained HTML bundles behind a bearer token. The token is `SEER_API_KEY` in this runtime (already set; never print it).
+
+Upload flow:
+
+1. Build a directory with `index.html` at its root; use relative asset paths (`./style.css`, `assets/app.js`) since bundles serve under `/b/<slug>/`. Prefer inlined/self-contained assets over external requests.
+2. Zip from inside the build dir: `zip -r ../bundle.zip .`
+3. `PUT` it under a slug matching `[a-z0-9][a-z0-9-]{0,63}`:
+
+```sh
+curl -X PUT --data-binary @bundle.zip \
+  -H "Authorization: Bearer $SEER_API_KEY" \
+  https://seer.build/api/bundles/<slug>
+```
+
+The `200` response JSON carries `url` (latest, live-reload) and `versionUrl` (pinned) — give the user the `url`. Re-`PUT`ting the same slug publishes a new version at the same URL. Limit 50 MB; `..`/absolute-path zip entries are rejected; viewing requires the user's Google sign-in.
+
+Full contract: https://seer.build/skill.md
+
 ## Workflow and Verification
 
 Prefer test-first development: write or update a failing test that captures the desired behavior, then implement the fix.
