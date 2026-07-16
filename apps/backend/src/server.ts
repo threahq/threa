@@ -27,6 +27,7 @@ import {
   EnclaveDispatchHandler,
 } from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
+import { createGithubWebhookWorker } from "./features/github-webhooks"
 import { GiphyService } from "./features/giphy"
 import { WorkspaceIntegrationService, registerGithubInstallationBackfill } from "./features/workspace-integrations"
 import { WorkspaceAuthzService } from "./features/workspace-authz"
@@ -716,6 +717,7 @@ export async function startServer(): Promise<ServerInstance> {
     apiKeyService,
     botChannelService,
     linkPreviewService,
+    jobQueue,
     giphyService,
     workspaceIntegrationService,
     workspaceAuthzService,
@@ -1227,6 +1229,14 @@ export async function startServer(): Promise<ServerInstance> {
   // Link preview worker — fast HTTP fetch, not LLM-bound
   const linkPreviewWorker = createLinkPreviewWorker({ linkPreviewService, workspaceIntegrationService })
   jobQueue.registerHandler(JobQueues.LINK_PREVIEW_EXTRACT, linkPreviewWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
+  // GitHub webhook worker — resolves workspaces by installation, force-refreshes
+  // matching link previews via GitHub fetch (fast HTTP, not LLM-bound)
+  const githubWebhookWorker = createGithubWebhookWorker({ pool, linkPreviewService, workspaceIntegrationService })
+  jobQueue.registerHandler(JobQueues.GITHUB_WEBHOOK_PROCESS, githubWebhookWorker, {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })

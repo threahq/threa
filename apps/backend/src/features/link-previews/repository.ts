@@ -247,6 +247,44 @@ export const LinkPreviewRepository = {
     )
   },
 
+  /**
+   * Every completed preview row whose normalized URL starts with `prefix`, for
+   * webhook-driven refresh matching. `prefix` MUST already be LIKE-escaped by the
+   * caller (see `escapeLikePattern`); the trailing `%` and `ESCAPE` are applied
+   * here so a repo name containing `_`/`%` can't widen the match. The caller
+   * re-validates each row (parse the URL, compare owner/repo/number) — the prefix
+   * is only a coarse DB-side narrowing.
+   *
+   * `ILIKE` (not `LIKE`): the caller's identity re-check lowercases owner/repo
+   * (GitHub treats them case-insensitively), but `normalizeUrl` preserves path
+   * casing, so a preview stored from a pasted non-canonical URL (`.../React/...`)
+   * keeps that casing in `normalized_url` while a webhook derives the canonical
+   * lowercase base (`.../react/...`). A case-sensitive prefix would drop the row
+   * here before the case-insensitive re-check could confirm it, so this step must
+   * be case-insensitive to agree with the re-check.
+   */
+  async findByNormalizedUrlPrefix(
+    querier: Querier,
+    workspaceId: string,
+    escapedPrefix: string
+  ): Promise<LinkPreview[]> {
+    const result = await querier.query(
+      sql`SELECT * FROM link_previews
+          WHERE workspace_id = $1 AND status = 'completed' AND normalized_url ILIKE $2 ESCAPE '\'`,
+      [workspaceId, `${escapedPrefix}%`]
+    )
+    return result.rows.map(mapRow)
+  },
+
+  /** Message ids currently linked to a preview row (reverse of `findByMessageId`). */
+  async findMessageIdsByPreviewId(querier: Querier, workspaceId: string, linkPreviewId: string): Promise<string[]> {
+    const result = await querier.query(
+      sql`SELECT message_id FROM message_link_previews WHERE workspace_id = $1 AND link_preview_id = $2`,
+      [workspaceId, linkPreviewId]
+    )
+    return result.rows.map((row) => row.message_id as string)
+  },
+
   async findByMessageId(querier: Querier, workspaceId: string, messageId: string): Promise<LinkPreview[]> {
     const result = await querier.query(
       sql`SELECT lp.* FROM link_previews lp

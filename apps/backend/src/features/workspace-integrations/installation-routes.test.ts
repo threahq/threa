@@ -254,3 +254,106 @@ describe("backfillGithubRoute", () => {
     expect(client.registerIntegrationRoute).not.toHaveBeenCalled()
   })
 })
+
+describe("listActiveWorkspaceIdsForInstallation", () => {
+  it("returns every active workspace on the installation, scoped by (provider, installation_id, active)", async () => {
+    const { pool, calls } = recordingPool([
+      githubRow({ id: "wsi_1", workspace_id: "ws_1" }),
+      githubRow({ id: "wsi_2", workspace_id: "ws_2" }),
+    ])
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      controlPlaneClient: null,
+      region: "eu-north-1",
+    })
+
+    const workspaceIds = await service.listActiveWorkspaceIdsForInstallation("42")
+
+    expect(workspaceIds).toEqual(["ws_1", "ws_2"])
+    const select = calls.find((c) => c.text.includes("SELECT * FROM workspace_integrations"))
+    expect(select?.text).toContain("installation_id")
+    expect(select?.text).toContain("status = 'active'")
+    expect(select?.values).toEqual(["github", "42"])
+  })
+})
+
+describe("deactivateInstallation", () => {
+  it("marks each workspace's integration inactive and unregisters its CP route", async () => {
+    const { pool, calls } = recordingPool([githubRow({ workspace_id: "ws_1" })])
+    const client = fakeControlPlaneClient()
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      controlPlaneClient: client,
+      region: "eu-north-1",
+    })
+
+    const result = await service.deactivateInstallation("42")
+
+    expect(result).toEqual({ deactivatedWorkspaceIds: ["ws_1"] })
+    const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
+    expect(update?.values).toContain("inactive")
+    // Guarded on active so a concurrent reconnect isn't clobbered.
+    expect(update?.values).toContain("active")
+    expect(client.unregisterIntegrationRoute).toHaveBeenCalledWith({
+      provider: "github",
+      externalId: "42",
+      workspaceId: "ws_1",
+    })
+  })
+
+  it("unregisters the CP route BEFORE flipping status inactive", async () => {
+    // Load-bearing ordering: listActiveByInstallationId gates on status='active',
+    // so if the flip ran first and the CP unregister then threw, a retry would
+    // re-list [] and never re-attempt the DELETE — stranding a CP route that fans
+    // webhooks to a dead region. Pin the order so a reorder can't regress silently.
+    const events: string[] = []
+    const pool = {
+      query: async (query: unknown, values: unknown[] = []) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        if (text.includes("UPDATE workspace_integrations")) events.push("update")
+        return { rows: [githubRow({ workspace_id: "ws_1" })], rowCount: 1 }
+      },
+    } as unknown as Pool
+    const client = {
+      registerIntegrationRoute: mock(async () => {}),
+      unregisterIntegrationRoute: mock(async () => {
+        events.push("unregister")
+      }),
+    } as unknown as ControlPlaneClient & {
+      registerIntegrationRoute: ReturnType<typeof mock>
+      unregisterIntegrationRoute: ReturnType<typeof mock>
+    }
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      controlPlaneClient: client,
+      region: "eu-north-1",
+    })
+
+    await service.deactivateInstallation("42")
+
+    expect(events).toEqual(["unregister", "update"])
+  })
+
+  it("no-ops with no active integrations", async () => {
+    const { pool } = recordingPool([])
+    const client = fakeControlPlaneClient()
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      controlPlaneClient: client,
+      region: "eu-north-1",
+    })
+
+    const result = await service.deactivateInstallation("42")
+
+    expect(result).toEqual({ deactivatedWorkspaceIds: [] })
+    expect(client.unregisterIntegrationRoute).not.toHaveBeenCalled()
+  })
+})

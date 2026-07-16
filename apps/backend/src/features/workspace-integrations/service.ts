@@ -268,6 +268,55 @@ export class WorkspaceIntegrationService {
   }
 
   /**
+   * All workspaces whose active GitHub integration belongs to `installationId`.
+   * The webhook worker uses this to fan a delivery out to every subscribed
+   * workspace (installs are per org, so this is normally >1 — INV-8 keeps
+   * workspace resolution regional).
+   */
+  async listActiveWorkspaceIdsForInstallation(installationId: string): Promise<string[]> {
+    const records = await WorkspaceIntegrationRepository.listActiveByInstallationId(
+      this.deps.pool,
+      WorkspaceIntegrationProviders.GITHUB,
+      installationId
+    )
+    return records.map((record) => record.workspaceId)
+  }
+
+  /**
+   * Tear down every workspace's GitHub integration for a deleted/suspended
+   * installation (webhook `installation` event). Drops each control-plane route
+   * so no further webhooks fan to this region, then marks the row inactive.
+   *
+   * Order matters: the route DELETE runs BEFORE the status flip because the flip
+   * is what makes a row invisible to the next `listActiveByInstallationId`. If
+   * unregister throws (CP down), the job fails and QueueManager retries; the row
+   * is still active, so the retry re-lists it and re-attempts the DELETE. Flip
+   * first and a failed DELETE would strand the CP route forever (retry finds
+   * nothing active). Both the route DELETE and the status flip are idempotent, so
+   * re-running after a partial failure is safe.
+   */
+  async deactivateInstallation(installationId: string): Promise<{ deactivatedWorkspaceIds: string[] }> {
+    const records = await WorkspaceIntegrationRepository.listActiveByInstallationId(
+      this.deps.pool,
+      WorkspaceIntegrationProviders.GITHUB,
+      installationId
+    )
+    const deactivatedWorkspaceIds: string[] = []
+    for (const record of records) {
+      await this.unregisterGithubRoute(record.workspaceId, installationId)
+      await WorkspaceIntegrationRepository.update(
+        this.deps.pool,
+        record.workspaceId,
+        WorkspaceIntegrationProviders.GITHUB,
+        { status: WorkspaceIntegrationStatuses.INACTIVE },
+        { expectedStatus: WorkspaceIntegrationStatuses.ACTIVE }
+      )
+      deactivatedWorkspaceIds.push(record.workspaceId)
+    }
+    return { deactivatedWorkspaceIds }
+  }
+
+  /**
    * Backfill one workspace's GitHub reverse index: derive the installation id
    * (plaintext column, else decrypt), persist it to the plaintext column, and
    * register the CP route. Idempotent — safe to re-run. Returns the number of

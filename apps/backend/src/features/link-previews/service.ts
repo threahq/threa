@@ -276,6 +276,48 @@ export class LinkPreviewService {
     })
   }
 
+  /**
+   * Overwrite one already-fetched preview row with freshly-fetched metadata and
+   * broadcast the change to every message that renders it (INV-6: service owns
+   * the transaction). Used by the webhook refresh path — the row is re-fetched
+   * outside any transaction first (INV-41), then this commits the overwrite and
+   * the `link_preview:ready` events together. Each affected message gets its FULL
+   * current completed-preview set (the frontend replaces `linkPreviews` wholesale
+   * on `link_preview:ready`), grouped one event per stream/message.
+   */
+  async applyRefreshedMetadata(
+    workspaceId: string,
+    previewId: string,
+    metadata: UpdateLinkPreviewParams
+  ): Promise<void> {
+    await withTransaction(this.deps.pool, async (client) => {
+      const updated = await LinkPreviewRepository.overwriteMetadata(client, workspaceId, previewId, metadata)
+      if (!updated) return
+
+      const messageIds = await LinkPreviewRepository.findMessageIdsByPreviewId(client, workspaceId, previewId)
+      if (messageIds.length === 0) return
+
+      const streamIds = await MessageRepository.findStreamIdsByIds(client, messageIds)
+      const previewsByMessage = await LinkPreviewRepository.findByMessageIds(client, workspaceId, messageIds)
+
+      for (const messageId of messageIds) {
+        const streamId = streamIds.get(messageId)
+        if (!streamId) continue
+
+        const previews = (previewsByMessage.get(messageId) ?? [])
+          .filter((preview) => preview.status === "completed")
+          .map((preview, index) => toLinkPreviewSummary(preview, index))
+
+        await OutboxRepository.insert(client, "link_preview:ready", {
+          workspaceId,
+          streamId,
+          messageId,
+          previews,
+        })
+      }
+    })
+  }
+
   /** Filters out failed/pending previews. */
   async getPreviewsForMessage(workspaceId: string, messageId: string): Promise<LinkPreviewSummary[]> {
     const previews = await LinkPreviewRepository.findByMessageId(this.deps.pool, workspaceId, messageId)

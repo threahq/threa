@@ -67,6 +67,24 @@ export const WorkspaceIntegrationRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  /**
+   * Reverse index for webhook fan-out: every active integration for a provider's
+   * installation id. Multiple workspaces per installation is the normal case
+   * (GitHub installs are per org, not per workspace), so this returns a list.
+   */
+  async listActiveByInstallationId(
+    querier: Querier,
+    provider: WorkspaceIntegrationProvider,
+    installationId: string
+  ): Promise<WorkspaceIntegrationRecord[]> {
+    const result = await querier.query(
+      sql`SELECT * FROM workspace_integrations
+          WHERE provider = $1 AND installation_id = $2 AND status = 'active'`,
+      [provider, installationId]
+    )
+    return result.rows.map(mapRow)
+  },
+
   async upsert(querier: Querier, params: UpsertWorkspaceIntegrationParams): Promise<WorkspaceIntegrationRecord> {
     const result = await querier.query(
       sql`INSERT INTO workspace_integrations (
