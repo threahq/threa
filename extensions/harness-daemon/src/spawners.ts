@@ -108,7 +108,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const session = tmuxSession(options)
     ensureTmuxSession(session)
     const { worktree, branch } = this.createWorktree(options)
-    const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa"
+    const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
     const channelDir = join(worktree, "extensions", "claude-code-remote")
     const channelEntry = join(channelDir, "src", "index.ts")
     if (!existsSync(channelEntry)) die(`Claude channel entry not found: ${channelEntry}`)
