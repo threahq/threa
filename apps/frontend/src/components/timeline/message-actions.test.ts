@@ -37,6 +37,19 @@ describe("getVisibleActions", () => {
     expect(ids).toEqual(["show-trace", "reply-in-thread", "copy-as-markdown", "copy-as-plain-text"])
   })
 
+  it("should include show-trace for bot messages with sessionId and traceUrl", () => {
+    const actions = getVisibleActions(
+      createContext({
+        actorType: "bot",
+        sessionId: "session_123",
+        traceUrl: "/trace/session_123",
+      })
+    )
+    const ids = actions.map((a) => a.id)
+
+    expect(ids).toContain("show-trace")
+  })
+
   it("should not include show-trace for persona messages without sessionId", () => {
     const actions = getVisibleActions(createContext({ actorType: "persona", traceUrl: "/trace/x" }))
     const ids = actions.map((a) => a.id)

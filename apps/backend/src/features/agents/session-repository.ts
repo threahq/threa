@@ -562,11 +562,15 @@ export const AgentSessionRepository = {
   /**
    * Find a running session for a stream.
    *
-   * NOTE: This is a utility method for inspection/debugging. The main session
-   * creation flow uses `insertRunningOrSkip()` which atomically prevents duplicates
-   * via the partial unique index on (stream_id) WHERE status='running'.
+   * NOTE: Session *creation* never uses this — that goes through
+   * `insertRunningOrSkip()`, which atomically prevents duplicates via the partial
+   * unique index on (stream_id) WHERE status='running'. This read is for
+   * opportunistic trace stamping: the public-API bot `sendMessage` path calls it
+   * to deep-link a bot message to its live session.
    *
-   * Uses FOR UPDATE SKIP LOCKED to avoid blocking concurrent transactions.
+   * FOR UPDATE SKIP LOCKED means a momentarily-locked session row is treated as
+   * absent (returns null), so a caller racing an in-flight invocation simply skips
+   * the stamp rather than blocking — best-effort by design.
    */
   async findRunningByStream(db: Querier, streamId: string): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(

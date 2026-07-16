@@ -29,6 +29,15 @@ import { stripMarkdown } from "@/lib/markdown"
 import { buildStreamLink, buildConversationLink } from "@/lib/stream-links"
 
 /**
+ * Actor types whose messages can carry an agent trace. The single source of
+ * truth shared with the `traceUrl` derivation in message-event.tsx so the two
+ * gates cannot drift when a new trace-eligible actor is added.
+ */
+export function isAgentTraceActor(actorType: string | null | undefined): boolean {
+  return actorType === "persona" || actorType === "bot"
+}
+
+/**
  * Context available to message actions.
  * Mirrors the Command pattern used in quick-switcher/commands.ts.
  */
@@ -40,7 +49,7 @@ export interface MessageActionContext {
   isThreadParent?: boolean
   /** URL for "reply in thread" */
   replyUrl: string
-  /** URL for "show trace" (only for persona messages) */
+  /** URL for "show trace" (persona or bot messages sent during a session) */
   traceUrl?: string
   /** Message ID for edit/delete operations */
   messageId?: string
@@ -316,7 +325,7 @@ export const messageActions: MessageAction[] = [
     id: "show-trace",
     label: "Show trace and sources",
     icon: Sparkles,
-    when: (ctx) => ctx.actorType === "persona" && !!ctx.sessionId && !!ctx.traceUrl,
+    when: (ctx) => isAgentTraceActor(ctx.actorType) && !!ctx.sessionId && !!ctx.traceUrl,
     getHref: (ctx) => ctx.traceUrl,
   },
   {
