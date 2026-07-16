@@ -1,0 +1,21 @@
+{
+  "name": "@threa/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "threa": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5"
+  }
+}
