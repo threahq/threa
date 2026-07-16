@@ -4,6 +4,7 @@ import type { StreamingSubstep } from "@/hooks/use-agent-trace"
 import { TraceStep } from "./trace-step"
 import { cn } from "@/lib/utils"
 import { STEP_DISPLAY_CONFIG } from "@/lib/step-config"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ChevronRight, Loader2, TerminalSquare } from "lucide-react"
 
@@ -16,7 +17,10 @@ const WORK_CONFIG = STEP_DISPLAY_CONFIG.tool_call
 const workHue = (alpha?: number) =>
   `hsl(${WORK_CONFIG.hue} ${WORK_CONFIG.saturation}% ${WORK_CONFIG.lightness}%${alpha === undefined ? "" : ` / ${alpha}`})`
 
+/** The row's own `N tool calls` carries the total, so the chips never need a "+N" tail. */
 const MAX_TOOL_CHIPS = 3
+/** A phone fits two chips on the wrapped line; a third truncates all of them to noise. */
+const MAX_TOOL_CHIPS_MOBILE = 2
 
 interface TraceStepListProps {
   steps: AgentSessionStep[]
@@ -32,7 +36,7 @@ interface TraceStepListProps {
 
 type TraceStepDisplayItem =
   | { kind: "step"; step: AgentSessionStep }
-  | { kind: "phase"; id: string; nested: boolean; tools: AgentSessionStep[] }
+  | { kind: "phase"; id: string; tools: AgentSessionStep[] }
 
 export function TraceStepList({
   steps,
@@ -105,7 +109,6 @@ export function TraceStepList({
             key={item.id}
             tools={item.tools}
             active={item.id === activePhaseId}
-            nested={item.nested}
             highlightedMessageId={highlightMessageId}
             renderStep={renderStep}
           />
@@ -118,16 +121,15 @@ export function TraceStepList({
 function BotWorkingSection({
   tools,
   active,
-  nested,
   highlightedMessageId,
   renderStep,
 }: {
   tools: AgentSessionStep[]
   active: boolean
-  nested: boolean
   highlightedMessageId: string | null
   renderStep: (step: AgentSessionStep) => ReactNode
 }) {
+  const isMobile = useIsMobile()
   const errorCount = tools.filter((step) => step.stepType === "tool_error").length
   const containsHighlight = tools.some((step) => step.messageId === highlightedMessageId)
   const [detailsOpen, setDetailsOpen] = useState(errorCount > 0)
@@ -139,19 +141,20 @@ function BotWorkingSection({
     if (errorCount > 0) setDetailsOpen(true)
   }, [errorCount])
   const toolLabel = `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}`
-  const chips = tools.slice(0, MAX_TOOL_CHIPS)
-  const overflow = tools.length - chips.length
+  const chips = tools.slice(0, isMobile ? MAX_TOOL_CHIPS_MOBILE : MAX_TOOL_CHIPS)
 
   return (
     <div
-      className={cn("border-b border-border", nested && "ml-6")}
+      className="border-b border-border"
       style={{
         background: workHue(open ? 0.05 : 0.035),
         borderLeft: `2px solid ${workHue(open ? 0.55 : 0.3)}`,
       }}
     >
       <Collapsible open={open} onOpenChange={setDetailsOpen}>
-        <CollapsibleTrigger className="group flex min-h-11 w-full items-center gap-2.5 px-5 py-2 text-left transition-colors hover:bg-foreground/[0.03]">
+        {/* pl-[22px] + the 2px rail lands the icon on the same left edge as the
+            step pills in the rows above and below. */}
+        <CollapsibleTrigger className="group flex min-h-11 w-full flex-wrap items-center gap-x-2.5 gap-y-1 py-2 pl-[22px] pr-4 text-left transition-colors hover:bg-foreground/[0.03]">
           <span
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
             style={{ background: workHue(0.12), color: workHue(), boxShadow: `inset 0 0 0 1px ${workHue(0.22)}` }}
@@ -162,11 +165,7 @@ function BotWorkingSection({
             Working
           </span>
           <span className="sr-only">{active ? "Working in progress" : "Working complete"}</span>
-          {/* While a phase runs, a phone's width goes to the live preview, not
-              the count — the preview names the tool the count only totals. */}
-          <span className={cn("shrink-0 text-[11px] tabular-nums text-muted-foreground", preview && "max-sm:hidden")}>
-            {toolLabel}
-          </span>
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{toolLabel}</span>
           {errorCount > 0 && (
             <span className="shrink-0 text-[11px] font-medium text-destructive">
               {errorCount} {errorCount === 1 ? "error" : "errors"}
@@ -175,21 +174,23 @@ function BotWorkingSection({
 
           {/* The collapsed row carries the work itself: the live tool headline
               while the phase runs, else a chip per call. Once expanded the rows
-              below say it in full, so the chips step aside. */}
+              below say it in full, so the chips step aside.
+
+              Both wrap to a full-width second line below `sm` (order-last keeps
+              them under the label + chevron); on `sm` and up they take the rest
+              of the first line. A phone can't fit a headline and its output on
+              one 44px line without truncating both to nothing. */}
           {preview && (
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+            <span className="order-last flex min-w-0 basis-full flex-col gap-0.5 sm:order-none sm:basis-0 sm:flex-1 sm:flex-row sm:items-baseline sm:gap-2">
               <span className="truncate font-mono text-[11.5px] text-foreground/90">{preview.headline}</span>
               {preview.detail && <span className="truncate text-[11px] text-muted-foreground">{preview.detail}</span>}
             </span>
           )}
           {!preview && !open && (
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+            <span className="order-last flex min-w-0 basis-full items-center gap-1.5 overflow-hidden sm:order-none sm:basis-0 sm:flex-1">
               {chips.map((step) => (
                 <ToolChip key={step.id} step={step} />
               ))}
-              {overflow > 0 && (
-                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">+{overflow}</span>
-              )}
             </span>
           )}
 
@@ -214,7 +215,7 @@ function ToolChip({ step }: { step: AgentSessionStep }) {
   return (
     <span
       className={cn(
-        "max-w-[180px] shrink-0 truncate rounded-full px-2 py-0.5 font-mono text-[10.5px] leading-[1.45]",
+        "max-w-[42vw] shrink-0 truncate rounded-full px-2 py-0.5 font-mono text-[10.5px] leading-[1.45] sm:max-w-[180px]",
         isError ? "bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive/25" : "text-foreground/75"
       )}
       style={isError ? undefined : { background: workHue(0.09), boxShadow: `inset 0 0 0 1px ${workHue(0.22)}` }}
@@ -226,19 +227,17 @@ function ToolChip({ step }: { step: AgentSessionStep }) {
 
 function groupBotWorkByThinking(steps: AgentSessionStep[]): TraceStepDisplayItem[] {
   const items: TraceStepDisplayItem[] = []
-  let nested = false
   let activePhase: Extract<TraceStepDisplayItem, { kind: "phase" }> | null = null
 
   for (const step of steps) {
     if (step.stepType === "thinking") {
       items.push({ kind: "step", step })
-      nested = true
       activePhase = null
       continue
     }
     if (isLowLevelBotToolStep(step)) {
       if (!activePhase) {
-        activePhase = { kind: "phase", id: `${nested ? "nested" : "work"}-${step.id}`, nested, tools: [] }
+        activePhase = { kind: "phase", id: `work-${step.id}`, tools: [] }
         items.push(activePhase)
       }
       activePhase.tools.push(step)
