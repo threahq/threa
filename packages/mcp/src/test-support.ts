@@ -27,3 +27,13 @@ export function textPayload(result: CallToolResult): Record<string, unknown> {
   if (first?.type !== "text") throw new Error("expected text content")
   return JSON.parse(first.text) as Record<string, unknown>
 }
+
+type FetchSpy = { mock: { calls: unknown[][] } }
+
+export function requestInit(fetchSpy: FetchSpy, index = 0): RequestInit {
+  return (fetchSpy.mock.calls[index]?.[1] ?? {}) as RequestInit
+}
+
+export function requestBody(fetchSpy: FetchSpy, index = 0): Record<string, unknown> {
+  return JSON.parse(String(requestInit(fetchSpy, index).body)) as Record<string, unknown>
+}

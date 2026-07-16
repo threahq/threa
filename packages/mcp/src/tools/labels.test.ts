@@ -1,20 +1,12 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { afterEach, expect, spyOn, test } from "bun:test"
-import { connectClient, jsonResponse, textPayload } from "../test-support"
+import { connectClient, jsonResponse, requestBody, requestInit, textPayload } from "../test-support"
 
 const fetchSpy = spyOn(globalThis, "fetch")
 
 afterEach(() => {
   fetchSpy.mockReset()
 })
-
-function requestInit(): RequestInit {
-  return (fetchSpy.mock.calls[0]?.[1] ?? {}) as RequestInit
-}
-
-function requestBody(): Record<string, unknown> {
-  return JSON.parse(String(requestInit().body)) as Record<string, unknown>
-}
 
 test("list_labels reads the label catalog", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: { labels: [], assignments: [] } }))
@@ -24,7 +16,7 @@ test("list_labels reads the label catalog", async () => {
   expect(result.isError).toBeFalsy()
 
   const url = new URL(String(fetchSpy.mock.calls[0]?.[0]))
-  expect(requestInit().method).toBe("GET")
+  expect(requestInit(fetchSpy).method).toBe("GET")
   expect(url.pathname).toBe("/api/v1/workspaces/ws_1/labels")
   expect(textPayload(result)).toEqual({ data: { labels: [], assignments: [] } })
 })
@@ -39,11 +31,11 @@ test("apply_label posts a stream assignment by name with appearance fields", asy
   })) as CallToolResult
   expect(result.isError).toBeFalsy()
 
-  const init = requestInit()
+  const init = requestInit(fetchSpy)
   expect(init.method).toBe("POST")
   const url = new URL(String(fetchSpy.mock.calls[0]?.[0]))
   expect(url.pathname).toBe("/api/v1/workspaces/ws_1/labels/assignments")
-  expect(requestBody()).toEqual({
+  expect(requestBody(fetchSpy)).toEqual({
     name: "urgent",
     color: "#ff0000",
     emoji: "🔥",
@@ -62,7 +54,7 @@ test("remove_label deletes the assignment via query params and handles the 204 r
   })) as CallToolResult
   expect(result.isError).toBeFalsy()
 
-  const init = requestInit()
+  const init = requestInit(fetchSpy)
   expect(init.method).toBe("DELETE")
   const url = new URL(String(fetchSpy.mock.calls[0]?.[0]))
   expect(url.pathname).toBe("/api/v1/workspaces/ws_1/labels/assignments")
