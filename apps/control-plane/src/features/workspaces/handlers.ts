@@ -12,6 +12,10 @@ interface Dependencies {
 const createWorkspaceSchema = z.object({
   name: z.string().min(1).max(100),
   region: z.string().min(1).optional(),
+  // The creator's IANA zone; the region seeds the workspace's billing timezone
+  // from it. Bounded but not resolved here — the control plane never draws a
+  // month, and the regional backend re-validates before storing.
+  timezone: z.string().min(1).max(64).optional(),
 })
 
 export function createWorkspaceHandlers({ workspaceService, shadowService }: Dependencies) {
@@ -41,6 +45,7 @@ export function createWorkspaceHandlers({ workspaceService, shadowService }: Dep
       const workspace = await workspaceService.create({
         name: parsed.data.name,
         region: parsed.data.region,
+        timezone: parsed.data.timezone,
         workosUserId: req.workosUserId,
         authUser: req.authUser,
       })
