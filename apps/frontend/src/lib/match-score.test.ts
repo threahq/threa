@@ -2,26 +2,66 @@ import { describe, it, expect } from "vitest"
 import { scoreMatch, rankMatches } from "./match-score"
 
 describe("scoreMatch", () => {
-  it("returns 0 for an empty query (no scoring required)", () => {
+  it("returns 0 for an empty or whitespace-only query (no scoring required)", () => {
     expect(scoreMatch("", ["View Saved"], ["bookmark"])).toBe(0)
+    expect(scoreMatch("   ", ["View Saved"], ["bookmark"])).toBe(0)
   })
 
   it("tiers label matches: exact < prefix < contains", () => {
     expect(scoreMatch("view saved", ["View Saved"])).toBe(0)
-    expect(scoreMatch("view", ["View Saved"])).toBe(1)
-    expect(scoreMatch("saved", ["View Saved"])).toBe(2)
+    expect(scoreMatch("view", ["View Saved"])).toBe(2)
+    expect(scoreMatch("saved", ["View Saved"])).toBe(4)
+  })
+
+  it("treats whitespace, underscore, and dash as interchangeable separators", () => {
+    expect(scoreMatch("thumbs up", ["thumbs_up"])).toBe(1)
+    expect(scoreMatch("thumbsup", ["thumbs_up"])).toBe(1)
+    expect(scoreMatch("thumbs-up", ["thumbs_up"])).toBe(1)
+    expect(scoreMatch("thumbsu", ["thumbs_up"])).toBe(3)
+    expect(scoreMatch("bs up", ["thumbs_up"])).toBe(5)
+  })
+
+  it("ranks a raw match above its separator-normalized counterpart", () => {
+    expect(scoreMatch("thumbs_up", ["thumbs_up"])).toBeLessThan(scoreMatch("thumbs up", ["thumbs_up"]))
+    expect(scoreMatch("thumbs", ["thumbs_up"])).toBeLessThan(scoreMatch("thumbsu", ["thumbs_up"]))
   })
 
   it("tiers keyword matches a whole band below label matches", () => {
-    expect(scoreMatch("saved", ["Add To-do"], ["saved"])).toBe(3)
-    expect(scoreMatch("sav", ["Add To-do"], ["saved"])).toBe(4)
-    expect(scoreMatch("ave", ["Add To-do"], ["saved"])).toBe(5)
+    expect(scoreMatch("saved", ["Add To-do"], ["saved"])).toBe(6)
+    expect(scoreMatch("sav", ["Add To-do"], ["saved"])).toBe(8)
+    expect(scoreMatch("ave", ["Add To-do"], ["saved"])).toBe(10)
   })
 
-  it("ranks any label match above any keyword match", () => {
+  it("ranks any label substring match above any keyword substring match", () => {
     const labelContains = scoreMatch("saved", ["View Saved"], [])
     const keywordExact = scoreMatch("saved", ["Add To-do"], ["saved"])
     expect(labelContains).toBeLessThan(keywordExact)
+  })
+
+  it("admits fuzzy subsequence matches below every substring match", () => {
+    const fuzzy = scoreMatch("thup", ["thumbs_up"])
+    expect(fuzzy).not.toBe(Infinity)
+    expect(fuzzy).toBeGreaterThan(scoreMatch("ave", ["Add To-do"], ["saved"]))
+  })
+
+  it("ranks a keyword substring match above a label fuzzy match", () => {
+    const keywordContains = scoreMatch("humb", ["Something Else"], ["thumbs"])
+    const labelFuzzy = scoreMatch("thup", ["thumbs_up"])
+    expect(keywordContains).toBeLessThan(labelFuzzy)
+  })
+
+  it("ranks label fuzzy above keyword fuzzy, and compact fuzzy above scattered", () => {
+    const labelFuzzy = scoreMatch("thup", ["thumbs_up"])
+    const keywordFuzzy = scoreMatch("thup", ["Something Else"], ["thumbs_up"])
+    // Both sides must be admitted matches — an Infinity on the right would
+    // let a broken fuzzy band pass a bare lessThan comparison.
+    expect(keywordFuzzy).not.toBe(Infinity)
+    expect(labelFuzzy).toBeLessThan(keywordFuzzy)
+
+    const compact = scoreMatch("cat", ["cat_face"])
+    const scattered = scoreMatch("cat", ["congratulations"])
+    expect(scattered).not.toBe(Infinity)
+    expect(compact).toBeLessThan(scattered)
   })
 
   it("takes the best score across multiple labels", () => {
@@ -30,11 +70,17 @@ describe("scoreMatch", () => {
 
   it("returns Infinity when nothing matches", () => {
     expect(scoreMatch("zzz", ["View Saved"], ["bookmark"])).toBe(Infinity)
+    expect(scoreMatch("vwx", ["View Saved"])).toBe(Infinity)
   })
 
   it("is case-insensitive on both sides", () => {
-    expect(scoreMatch("SAVED", ["view saved"])).toBe(2)
-    expect(scoreMatch("saved", ["VIEW SAVED"])).toBe(2)
+    expect(scoreMatch("SAVED", ["view saved"])).toBe(4)
+    expect(scoreMatch("saved", ["VIEW SAVED"])).toBe(4)
+  })
+
+  it("handles separator-only queries without matching everything", () => {
+    expect(scoreMatch("-", ["View Saved"])).toBe(Infinity)
+    expect(scoreMatch("-", ["to-do"])).toBe(4)
   })
 })
 
@@ -45,9 +91,10 @@ describe("rankMatches", () => {
   }
   const text = (item: Item) => ({ labels: [item.label], keywords: item.keywords })
 
-  it("returns the input unchanged for an empty query", () => {
+  it("returns the input unchanged for an empty or whitespace-only query", () => {
     const items: Item[] = [{ label: "b" }, { label: "a" }]
     expect(rankMatches(items, "", text)).toEqual(items)
+    expect(rankMatches(items, "  ", text)).toEqual(items)
   })
 
   it("drops non-matches", () => {
@@ -65,5 +112,11 @@ describe("rankMatches", () => {
     const items: Item[] = [{ label: "saver" }, { label: "saved" }]
     // Both are label-prefix matches for "save"; definition order decides.
     expect(rankMatches(items, "save", text)).toEqual(items)
+  })
+
+  it("appends fuzzy matches after substring matches", () => {
+    const items: Item[] = [{ label: "thumbs_up" }, { label: "setup" }, { label: "sun_with_face" }]
+    // "setup" contains "tup" raw; "thumbs_up" only matches as a subsequence.
+    expect(rankMatches(items, "tup", text)).toEqual([{ label: "setup" }, { label: "thumbs_up" }])
   })
 })

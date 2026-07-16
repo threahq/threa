@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { StreamSortToggle } from "./stream-sort-toggle"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useStreamPickerGroups } from "@/hooks/use-stream-picker-groups"
+import { scoreMatch } from "@/lib/match-score"
 import { useStoredStreamSortMode } from "@/lib/stream-sort"
 import {
   useWorkspaceStreams,
@@ -89,7 +90,8 @@ export function StreamTargetPicker({
   const isSearching = lower.length > 0
 
   const newOptions = useMemo(
-    () => (includeNewOptions ? NEW_OPTIONS.filter((o) => !isSearching || o.label.toLowerCase().includes(lower)) : []),
+    () =>
+      includeNewOptions ? NEW_OPTIONS.filter((o) => !isSearching || scoreMatch(lower, [o.label]) !== Infinity) : [],
     [includeNewOptions, isSearching, lower]
   )
 

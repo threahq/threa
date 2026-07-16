@@ -77,6 +77,23 @@ describe("filterBySearch", () => {
     expect(matches.map((e) => e.shortcode)).toEqual(["poop"])
   })
 
+  it("matches regardless of whitespace/dash/underscore separators", () => {
+    const thumbsUp = make("thumbs_up", "people", 1, ["thumbs_up", "+1"])
+    for (const query of ["thumbs up", "thumbs-up", "thumbsup"]) {
+      expect(filterBySearch([smile, thumbsUp], query).map((e) => e.shortcode)).toEqual(["thumbs_up"])
+    }
+  })
+
+  it("admits fuzzy subsequence matches after substring matches", () => {
+    const thumbsUp = make("thumbs_up", "people", 1, ["thumbs_up", "+1"])
+    const tulip = make("tulip", "animals", 1)
+    const setup = make("setup", "objects", 1)
+    // "setup" contains "tup" raw; thumbs_up (boundary-aligned, quality 1) and
+    // tulip (gapped) only match as subsequences, in quality order behind it.
+    const matches = filterBySearch([smile, tulip, thumbsUp, setup], "tup")
+    expect(matches.map((e) => e.shortcode)).toEqual(["setup", "thumbs_up", "tulip"])
+  })
+
   it("ranks visible shortcode matches above hidden alias matches regardless of input order", () => {
     const happy = make("happy_face", "people", 1, ["happy_face", "smile_alt"])
     const matches = filterBySearch([happy, smile], "smile")

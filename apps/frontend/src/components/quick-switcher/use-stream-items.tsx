@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
+import { scoreMatch } from "@/lib/match-score"
 import { compareStreamEntries, scoreStreamMatch } from "@/lib/stream-sort"
 import { FilterSelect } from "./filter-select"
 import {
@@ -223,14 +224,10 @@ export function useStreamItems(context: ModeContext): ModeResult {
     const virtualDmItems = users!
       .filter((workspaceUser) => workspaceUser.id !== currentUserId)
       .filter((workspaceUser) => !existingDmPeerIds.has(workspaceUser.id))
-      .map((workspaceUser) => {
-        const name = workspaceUser.name
-        let score = 0
-        if (searchText && !name.toLowerCase().includes(lowerQuery)) {
-          score = Infinity
-        }
-        return { workspaceUser, score }
-      })
+      .map((workspaceUser) => ({
+        workspaceUser,
+        score: searchText ? scoreMatch(lowerQuery, [workspaceUser.name]) : 0,
+      }))
       .filter(({ score }) => score !== Infinity)
       .sort((a, b) => a.workspaceUser.name.localeCompare(b.workspaceUser.name))
       .map(

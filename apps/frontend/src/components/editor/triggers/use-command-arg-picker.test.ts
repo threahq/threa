@@ -65,8 +65,13 @@ describe("filterArgSuggestions", () => {
     ])
   })
 
-  it("matches on the human label", () => {
-    expect(filterArgSuggestions(MODEL_SUGGESTIONS, "opus").map((s) => s.value)).toEqual(["anthropic/claude-opus-4"])
+  it("matches on the human label, ranking it above fuzzy tail matches", () => {
+    // "opus" is also an in-order subsequence of "anthropic/claude-sonnet-4",
+    // so the fuzzy tier admits it — but only below the substring match.
+    const values = filterArgSuggestions(MODEL_SUGGESTIONS, "opus").map((s) => s.value)
+    expect(values[0]).toBe("anthropic/claude-opus-4")
+    expect(values).toContain("anthropic/claude-sonnet-4")
+    expect(values).not.toContain("openai/gpt-5")
   })
 
   it("matches on the raw value the backend resolves on", () => {

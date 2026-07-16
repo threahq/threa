@@ -58,16 +58,29 @@ describe("scoreStreamMatch", () => {
     expect(scoreStreamMatch(makeStream({ slug: "general" }), "")).toBe(0)
   })
 
-  it("ranks exact match best, then prefix, then substring, then id-fallback", () => {
+  it("ranks exact match best, then prefix, then substring, then fuzzy, then id-fallback", () => {
     const general = makeStream({ id: "stream_a", slug: "general" })
     const generic = makeStream({ id: "stream_b", slug: "generic" })
     const ageneral = makeStream({ id: "stream_c", slug: "ageneral" })
+    const fuzzy = makeStream({ id: "stream_d", slug: "growth-plan" })
     const idMatch = makeStream({ id: "stream_general_id", slug: "elsewhere" })
 
-    expect(scoreStreamMatch(general, "#general")).toBe(0)
-    expect(scoreStreamMatch(generic, "#gen")).toBe(1)
-    expect(scoreStreamMatch(ageneral, "general")).toBe(2)
-    expect(scoreStreamMatch(idMatch, "general")).toBe(3)
+    const scores = [
+      scoreStreamMatch(general, "#general"),
+      scoreStreamMatch(generic, "#gen"),
+      scoreStreamMatch(ageneral, "general"),
+      scoreStreamMatch(fuzzy, "grpl"),
+      scoreStreamMatch(idMatch, "general"),
+    ]
+    expect(scores[0]).toBe(0)
+    expect(scores.every((s) => s !== Infinity)).toBe(true)
+    expect([...scores]).toEqual([...scores].sort((a, b) => a - b))
+  })
+
+  it("matches across separator differences", () => {
+    const stream = makeStream({ slug: "growth-plan" })
+    expect(scoreStreamMatch(stream, "growth plan")).not.toBe(Infinity)
+    expect(scoreStreamMatch(stream, "growthplan")).not.toBe(Infinity)
   })
 
   it("returns Infinity when no part of the stream matches", () => {
