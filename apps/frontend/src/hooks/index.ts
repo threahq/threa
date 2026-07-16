@@ -164,6 +164,8 @@ export { useThreadAncestors } from "./use-thread-ancestors"
 export { useAgentActivity, getStepLabel, type MessageAgentActivity } from "./use-agent-activity"
 
 export { useAbortSession } from "./use-abort-session"
+export { useStopAgentSession } from "./use-stop-agent-session"
+export { useSteerAgentSession } from "./use-steer-agent-session"
 
 export { usePreloadImages } from "./use-preload-images"
 

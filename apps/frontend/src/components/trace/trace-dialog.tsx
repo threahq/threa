@@ -16,6 +16,7 @@ import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { TraceStepList } from "./trace-step-list"
 import { commandsApi } from "@/api"
 import { findVisibleZoneEditor } from "@/components/timeline/message-event"
+import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 import { X } from "lucide-react"
 import { toast } from "sonner"
 import { formatDuration } from "@/lib/dates"
@@ -128,10 +129,7 @@ export function TraceDialog() {
     void (async () => {
       if (workspaceId && session?.streamId) {
         const advertised = await resolveRuntimeCommands({ workspaceId, streamId: session.streamId, runtimeCommands })
-        if (advertised.has("steer")) {
-          await commandsApi.dispatch(workspaceId, { streamId: session.streamId, command: "/steer" })
-          return
-        }
+        if (advertised.has("steer")) queueComposerCommandRequest(session.streamId, "/steer ")
       }
 
       for (const zone of document.querySelectorAll<HTMLElement>("[data-editor-zone]")) {

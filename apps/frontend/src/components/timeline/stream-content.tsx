@@ -21,7 +21,8 @@ import {
   useNewMessageIndicator,
   useAgentActivity,
   type MessageAgentActivity,
-  useAbortSession,
+  useSteerAgentSession,
+  useStopAgentSession,
   useEditLastMessageTrigger,
   useKeyboardShortcuts,
   streamKeys,
@@ -2772,7 +2773,8 @@ function TimelineMessageList({
 }) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
-  const abortSession = useAbortSession(socket)
+  const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
+  const steerAgentSession = useSteerAgentSession(workspaceId, streamId)
 
   // Tracks whether this component has ever rendered with real timeline content.
   // Drives the empty fallback below: until the first paint, useEvents has not
@@ -2805,10 +2807,7 @@ function TimelineMessageList({
     return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps }
   }, [agentActivity])
 
-  const handleStopSession = useCallback(
-    (sessionId: string) => abortSession({ sessionId, workspaceId }),
-    [abortSession, workspaceId]
-  )
+  const handleStopSession = useCallback((sessionId: string) => stopAgentSession(sessionId), [stopAgentSession])
 
   // First-message lookup for the context-bag attachment badge anchor.
   // Computed once per timeline change; the Virtuoso path threads this through
@@ -2831,6 +2830,7 @@ function TimelineMessageList({
       sessionLiveCounts,
       sessionLiveSubsteps,
       onStopSession: handleStopSession,
+      onSteerSession: steerAgentSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
       botAccessStatusPatches,
@@ -2851,6 +2851,7 @@ function TimelineMessageList({
       sessionLiveCounts,
       sessionLiveSubsteps,
       handleStopSession,
+      steerAgentSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
       botAccessStatusPatches,
