@@ -99,6 +99,7 @@ describe("TraceStepList", () => {
     )
 
     expect(screen.getAllByText("Working")).toHaveLength(2)
+    expect(screen.getByText("Working in progress")).toBeInTheDocument()
     expect(screen.getByText("Run current test")).toBeInTheDocument()
     expect(screen.getByText("latest preview")).toBeInTheDocument()
     expect(screen.queryByText("Read old file")).not.toBeInTheDocument()
@@ -113,9 +114,9 @@ describe("TraceStepList", () => {
       createStep({ id: "tool_2", stepNumber: 4 }),
     ])
 
-    const workingLabels = screen.getAllByText("Working")
-    expect(workingLabels).toHaveLength(2)
-    expect(workingLabels.every((label) => label.closest(".ml-6"))).toBe(true)
+    const workingLabel = screen.getByText("Working")
+    expect(workingLabel.closest(".ml-6")).toBeInTheDocument()
+    expect(screen.getByText("2 tool calls")).toBeInTheDocument()
   })
 
   it("previews a truncated latest tool without exposing malformed content", () => {
@@ -157,6 +158,7 @@ describe("TraceStepList", () => {
     ])
 
     expect(screen.getByText("Working")).toBeInTheDocument()
+    expect(screen.getByText("Working complete")).toBeInTheDocument()
     expect(screen.queryByText("Run bash")).not.toBeInTheDocument()
     expect(screen.queryByText("first output line")).not.toBeInTheDocument()
   })

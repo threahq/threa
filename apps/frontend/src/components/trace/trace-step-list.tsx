@@ -136,6 +136,7 @@ function BotWorkingSection({
         </div>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Working</div>
+          <span className="sr-only">{active ? "Working in progress" : "Working complete"}</span>
           <div className="text-xs text-muted-foreground">
             {toolLabel}
             {errorLabel}
@@ -164,30 +165,25 @@ function BotWorkingSection({
 function groupBotWorkByThinking(steps: AgentSessionStep[]): TraceStepDisplayItem[] {
   const items: TraceStepDisplayItem[] = []
   let nested = false
-  let tools: AgentSessionStep[] = []
-
-  const flush = () => {
-    if (tools.length > 0) {
-      items.push({ kind: "phase", id: `${nested ? "nested" : "work"}-${tools[0]!.id}`, nested, tools })
-    }
-    tools = []
-  }
+  let activePhase: Extract<TraceStepDisplayItem, { kind: "phase" }> | null = null
 
   for (const step of steps) {
     if (step.stepType === "thinking") {
-      flush()
       items.push({ kind: "step", step })
       nested = true
+      activePhase = null
       continue
     }
     if (isLowLevelBotToolStep(step)) {
-      tools.push(step)
+      if (!activePhase) {
+        activePhase = { kind: "phase", id: `${nested ? "nested" : "work"}-${step.id}`, nested, tools: [] }
+        items.push(activePhase)
+      }
+      activePhase.tools.push(step)
       continue
     }
-    flush()
     items.push({ kind: "step", step })
   }
-  flush()
 
   return items
 }
