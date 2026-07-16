@@ -48,9 +48,10 @@ export function formatTimezoneLabel(timezone: string): string {
 interface TimezonePickerProps {
   value: string
   onChange: (timezone: string) => void
+  disabled?: boolean
 }
 
-export function TimezonePicker({ value, onChange }: TimezonePickerProps) {
+export function TimezonePicker({ value, onChange, disabled }: TimezonePickerProps) {
   const detectedTimezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, [])
   const timezones = useMemo(() => getAvailableTimezones(), [])
   // Precompute the formatted label for every timezone once. formatTimezoneLabel
@@ -68,6 +69,7 @@ export function TimezonePicker({ value, onChange }: TimezonePickerProps) {
       items={timezones}
       value={value}
       onChange={onChange}
+      disabled={disabled}
       getKey={(tz) => tz}
       getKeywords={(tz) => [tz, tz.replace(/_/g, " "), labelFor(tz)]}
       searchPlaceholder="Search timezone..."

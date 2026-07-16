@@ -29,7 +29,7 @@ const updateWorkspaceSettingsSchema = z.object({
   defaultCompanionPersonaId: z.string().min(1).max(64).nullable().optional(),
   // The workspace's reporting timezone for AI spend. Rejected unless it is a real
   // IANA zone — a bad value would make every downstream Intl call throw.
-  billingTimezone: z
+  reportingTimezone: z
     .string()
     .refine(isValidIanaTimezone, { message: "must be a valid IANA timezone identifier" })
     .optional(),

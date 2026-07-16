@@ -1,14 +1,13 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getUtcOffset } from "@/components/ui/timezone-picker"
-
-/** Which timezone the dashboard draws its day and month lines in. */
-export type UsageTimezoneMode = "device" | "workspace"
+import type { UsageTimezoneMode } from "@/lib/usage-timezone-params"
 
 interface UsageTimezoneSelectorProps {
   mode: UsageTimezoneMode
   onModeChange: (mode: UsageTimezoneMode) => void
   deviceTimezone: string
-  workspaceTimezone: string
+  /** null until the workspace's setting has loaded. */
+  workspaceTimezone: string | null
 }
 
 function zoneHint(timezone: string): string {
@@ -41,7 +40,9 @@ export function UsageTimezoneSelector({
         </SelectItem>
         <SelectItem value="workspace">
           <span className="text-xs">Workspace timezone</span>
-          <span className="ml-2 text-[11px] tabular-nums text-muted-foreground">{zoneHint(workspaceTimezone)}</span>
+          <span className="ml-2 text-[11px] tabular-nums text-muted-foreground">
+            {workspaceTimezone ? zoneHint(workspaceTimezone) : "…"}
+          </span>
         </SelectItem>
       </SelectContent>
     </Select>

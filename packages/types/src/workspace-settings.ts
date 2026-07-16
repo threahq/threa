@@ -69,8 +69,11 @@ export interface WorkspaceSettings {
    * stays UTC timestamps; this is a presentation anchor the AI usage dashboard
    * offers alongside the viewer's device timezone. Defaults to "UTC" rather than
    * a member's zone — a shared reporting boundary has to be a deliberate choice.
+   *
+   * Reporting only: budget *enforcement* (`budget-service.checkBudget`) resolves
+   * its own month window and never reads this.
    */
-  billingTimezone: string
+  reportingTimezone: string
   createdAt: string
   updatedAt: string
 }
@@ -83,7 +86,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   voiceSteeringWords: [],
   maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
   defaultCompanionPersonaId: null,
-  billingTimezone: "UTC",
+  reportingTimezone: "UTC",
 }
 
 /** Partial update — only provided fields are changed. */
@@ -94,7 +97,7 @@ export interface UpdateWorkspaceSettingsInput {
   voiceSteeringWords?: string[]
   maxPendingFollowUps?: number
   defaultCompanionPersonaId?: string | null
-  billingTimezone?: string
+  reportingTimezone?: string
 }
 
 /** Valid top-level settings keys that can be overridden. */

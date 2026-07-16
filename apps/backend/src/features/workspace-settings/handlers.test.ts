@@ -47,21 +47,21 @@ describe("updateWorkspaceSettingsSchema defaultCompanionPersonaId", () => {
   })
 })
 
-describe("updateWorkspaceSettingsSchema billingTimezone", () => {
+describe("updateWorkspaceSettingsSchema reportingTimezone", () => {
   it("accepts an IANA zone", () => {
-    expect(updateWorkspaceSettingsSchema.parse({ billingTimezone: "Europe/Stockholm" }).billingTimezone).toBe(
+    expect(updateWorkspaceSettingsSchema.parse({ reportingTimezone: "Europe/Stockholm" }).reportingTimezone).toBe(
       "Europe/Stockholm"
     )
-    expect(updateWorkspaceSettingsSchema.parse({ billingTimezone: "UTC" }).billingTimezone).toBe("UTC")
+    expect(updateWorkspaceSettingsSchema.parse({ reportingTimezone: "UTC" }).reportingTimezone).toBe("UTC")
   })
 
   it("rejects a zone Intl cannot resolve", () => {
-    expect(updateWorkspaceSettingsSchema.safeParse({ billingTimezone: "Mars/Olympus" }).success).toBe(false)
-    expect(updateWorkspaceSettingsSchema.safeParse({ billingTimezone: "UTC+1" }).success).toBe(false)
-    expect(updateWorkspaceSettingsSchema.safeParse({ billingTimezone: "" }).success).toBe(false)
+    expect(updateWorkspaceSettingsSchema.safeParse({ reportingTimezone: "Mars/Olympus" }).success).toBe(false)
+    expect(updateWorkspaceSettingsSchema.safeParse({ reportingTimezone: "UTC+1" }).success).toBe(false)
+    expect(updateWorkspaceSettingsSchema.safeParse({ reportingTimezone: "" }).success).toBe(false)
   })
 
   it("treats the field as optional", () => {
-    expect(updateWorkspaceSettingsSchema.parse({}).billingTimezone).toBeUndefined()
+    expect(updateWorkspaceSettingsSchema.parse({}).reportingTimezone).toBeUndefined()
   })
 })

@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { ArrowLeft, DollarSign } from "lucide-react"
-import { DEFAULT_WORKSPACE_SETTINGS } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { useAIBudget, useAIUsage, useUpdateAIBudget } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
-import { UsageTimezoneSelector, type UsageTimezoneMode } from "@/components/ai-usage/timezone-selector"
+import { UsageTimezoneSelector } from "@/components/ai-usage/timezone-selector"
+import {
+  USAGE_ZONE_PARAM,
+  parseUsageTimezoneMode,
+  writeUsageTimezoneMode,
+  type UsageTimezoneMode,
+} from "@/lib/usage-timezone-params"
 import { BudgetControlsPanel } from "@/components/ai-usage/budget-controls-panel"
 import { BudgetHealthHero } from "@/components/ai-usage/budget-health-hero"
 import { CapabilityBreakdown } from "@/components/ai-usage/capability-breakdown"
@@ -20,29 +25,23 @@ export function AIUsageAdminPage() {
   const idbUsers = useWorkspaceUsers(workspaceId ?? "")
 
   // The reporting timezone is view state, so it lives in the URL (INV-59) — a
-  // shared link or a refresh lands on the same month lines. The param names the
-  // mode rather than a fixed zone, so "workspace" keeps tracking the setting
-  // after an admin changes it.
+  // shared link or a refresh lands on the same month lines.
   const [searchParams, setSearchParams] = useSearchParams()
-  const tzMode: UsageTimezoneMode = searchParams.get("tz") === "workspace" ? "workspace" : "device"
+  const tzMode = parseUsageTimezoneMode(searchParams.get(USAGE_ZONE_PARAM))
   const setTzMode = useCallback(
     (next: UsageTimezoneMode) => {
-      setSearchParams(
-        (prev) => {
-          const params = new URLSearchParams(prev)
-          if (next === "device") params.delete("tz")
-          else params.set("tz", next)
-          return params
-        },
-        { replace: true }
-      )
+      setSearchParams((prev) => writeUsageTimezoneMode(prev, next), { replace: true })
     },
     [setSearchParams]
   )
 
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
   const deviceTimezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, [])
-  const workspaceTimezone = bootstrap?.workspaceSettings?.billingTimezone ?? DEFAULT_WORKSPACE_SETTINGS.billingTimezone
+  // null while bootstrap is still in flight — the dashboard can mount off the IDB
+  // read model before that query lands, and defaulting to "UTC" here would render
+  // a whole month of the wrong window under a "Workspace timezone" label, then
+  // silently swap once it resolved (INV-11). Unknown holds the fetch instead.
+  const workspaceTimezone = bootstrap?.workspaceSettings?.reportingTimezone ?? null
   const timezone = tzMode === "workspace" ? workspaceTimezone : deviceTimezone
 
   const { data: usage, isLoading: usageLoading } = useAIUsage(workspaceId ?? "", timezone)
@@ -153,7 +152,11 @@ export function AIUsageAdminPage() {
     return null
   }
 
-  const isLoading = usageLoading || budgetLoading
+  // A null zone means the workspace setting has not loaded yet, so the queries
+  // are held and there is nothing real to draw — show the loading state rather
+  // than empty numbers under a zone we would have had to guess.
+  const zoneResolving = timezone === null
+  const isLoading = usageLoading || budgetLoading || zoneResolving
 
   return (
     <div className="flex h-full flex-col">
@@ -179,7 +182,7 @@ export function AIUsageAdminPage() {
       </header>
       <main className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="mx-auto max-w-6xl space-y-6">
-          <BudgetHealthHero metrics={metrics} timezone={timezone} isLoading={isLoading} />
+          <BudgetHealthHero metrics={metrics} timezone={timezone ?? deviceTimezone} isLoading={isLoading} />
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="space-y-6">
@@ -187,14 +190,14 @@ export function AIUsageAdminPage() {
                 byDay={usage?.byDay ?? []}
                 periodStart={usage?.period.start ?? new Date().toISOString()}
                 periodEnd={usage?.period.end ?? new Date().toISOString()}
-                timeZone={timezone}
-                isLoading={usageLoading}
+                timeZone={timezone ?? deviceTimezone}
+                isLoading={usageLoading || zoneResolving}
               />
               <CapabilityBreakdown
                 byFunction={usage?.byFunction ?? []}
                 byModel={usage?.byModel ?? []}
                 totalCost={usage?.total.totalCostUsd ?? 0}
-                isLoading={usageLoading}
+                isLoading={usageLoading || zoneResolving}
               />
               <UsageSplitCard
                 systemCost={systemCost}
@@ -215,7 +218,7 @@ export function AIUsageAdminPage() {
                 workspaceId={workspaceId}
                 budget={budget?.budget ?? null}
                 nextReset={budget?.nextReset ?? new Date().toISOString()}
-                reportingTimezone={timezone}
+                reportingTimezone={timezone ?? deviceTimezone}
                 metrics={metrics}
                 localBudget={localBudget}
                 onBudgetChange={setLocalBudget}

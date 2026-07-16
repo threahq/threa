@@ -23,8 +23,9 @@ interface Dependencies {
   pool: Pool
 }
 
-// The dashboard's day buckets and month window follow the viewer's timezone
-// (Stripe's model: money is stored as timestamps, day/month lines are drawn at
+// The dashboard's day buckets and month window follow whatever zone the caller
+// names — the viewer's device zone or the workspace's reporting zone (Stripe's
+// model: money is stored as timestamps, day/month lines are drawn at
 // presentation). Budget *enforcement* in budget-service keeps its own window.
 const timezoneQuerySchema = z.object({
   tz: z
