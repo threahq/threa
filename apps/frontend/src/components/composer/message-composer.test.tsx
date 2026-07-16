@@ -4,6 +4,8 @@ import { render, screen, fireEvent, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react"
 import { MessageComposer } from "./message-composer"
+import { StashedDraftsPicker } from "./stashed-drafts-picker"
+import type { CachedDraft } from "@/hooks"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import type { JSONContent } from "@threa/types"
 import * as useMobileModule from "@/hooks/use-mobile"
@@ -421,6 +423,59 @@ describe("MessageComposer", () => {
       expect(screen.getByTestId("mobile-editor-toolbar")).toHaveAttribute("data-has-special-input-controls", "yes")
       expect(screen.getByRole("button", { name: "Indent" })).toBeInTheDocument()
       expect(screen.getByRole("button", { name: "Dedent" })).toBeInTheDocument()
+    })
+  })
+
+  describe("stash shortcut (Cmd/Ctrl+S)", () => {
+    const draft: CachedDraft = {
+      id: "draft_1",
+      workspaceId: "ws_1",
+      scope: "stream:stream_1",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "stashed body" }] }] },
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    }
+
+    function renderWithPicker(props: Partial<Parameters<typeof MessageComposer>[0]> = {}) {
+      const onStashDraft = vi.fn()
+      const onRestore = vi.fn()
+      render(
+        <MessageComposer
+          {...defaultProps}
+          onStashDraft={onStashDraft}
+          stashedDraftsTrigger={
+            <StashedDraftsPicker
+              drafts={[draft]}
+              canStashCurrent={false}
+              onStashCurrent={vi.fn()}
+              onRestore={onRestore}
+              onDelete={vi.fn()}
+            />
+          }
+          {...props}
+        />
+      )
+      return { onStashDraft, onRestore }
+    }
+
+    it("opens the drafts picker instead of stashing when the composer is empty", async () => {
+      const { onStashDraft } = renderWithPicker({ content: EMPTY_DOC })
+
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "s", metaKey: true })
+
+      expect(await screen.findByText("stashed body")).toBeInTheDocument()
+      expect(onStashDraft).not.toHaveBeenCalled()
+    })
+
+    it("stashes (and does not open the picker) when the composer has content", () => {
+      const { onStashDraft } = renderWithPicker({
+        content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "wip" }] }] },
+      })
+
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "s", metaKey: true })
+
+      expect(onStashDraft).toHaveBeenCalledOnce()
+      expect(screen.queryByText("stashed body")).not.toBeInTheDocument()
     })
   })
 })

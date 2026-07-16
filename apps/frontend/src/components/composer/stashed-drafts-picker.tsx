@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
 import { FileEdit, FilePlus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import { useFabDrawerClose } from "./fab-drawer-close-context"
+import { useRegisterStashedDraftsOpen } from "./stashed-drafts-open-context"
 import { useComposerAnchor } from "./use-composer-anchor"
 import type { CachedDraft, DraftPreview } from "@/hooks"
 
@@ -77,6 +78,12 @@ export function StashedDraftsPicker({
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
   const closeFabDrawer = useFabDrawerClose()
   const { setTriggerRef, anchor } = useComposerAnchor(open)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // Cmd/Ctrl+S on an empty composer opens the list (registered with the
+  // hosting MessageComposer via context).
+  const openFromShortcut = useCallback(() => setOpen(true), [])
+  useRegisterStashedDraftsOpen(openFromShortcut)
   // Active input drives the virtual-keyboard guard and the "Tap"/"Press" +
   // keyboard-shortcut copy — a hardware keyboard is present only with a mouse.
   const isTouch = useInputMode() === "touch"
@@ -115,6 +122,21 @@ export function StashedDraftsPicker({
     if (draftToDelete) onDelete(draftToDelete)
     setDraftToDelete(null)
   }, [draftToDelete, onDelete])
+
+  // Arrow keys walk the draft rows so a keyboard-opened list (Cmd/Ctrl+S on an
+  // empty composer) is pick-able without a mouse; Enter activates the focused
+  // row natively.
+  const handleContentKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
+    const rows = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>("[data-draft-row]"))
+    if (rows.length === 0) return
+    e.preventDefault()
+    const idx = rows.indexOf(document.activeElement as HTMLButtonElement)
+    const step = e.key === "ArrowDown" ? 1 : -1
+    // Focus outside the rows (idx -1): Down enters at the top, Up at the bottom.
+    const next = idx === -1 && step === -1 ? rows.length - 1 : (idx + step + rows.length) % rows.length
+    rows[next]?.focus()
+  }, [])
 
   const triggerSizeClass = size === "fab" ? "h-[30px] w-[30px] rounded-md bg-background shadow-md" : "h-7 w-7"
   const triggerIconClass = size === "fab" ? "h-4 w-4" : "h-3.5 w-3.5"
@@ -157,7 +179,31 @@ export function StashedDraftsPicker({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="end" side="top" sideOffset={8} className="w-80 p-0" {...keepEditorFocusProps(isTouch)}>
+        <PopoverContent
+          ref={contentRef}
+          align="end"
+          side="top"
+          sideOffset={8}
+          className="w-80 p-0"
+          {...keepEditorFocusProps(isTouch)}
+          onKeyDown={handleContentKeyDown}
+          onOpenAutoFocus={(e) => {
+            // Touch keeps the editor focused (keepEditorFocusProps behavior,
+            // re-stated here because this prop overrides the spread). Desktop
+            // lands focus on the first draft row so ArrowUp/Down + Enter work
+            // immediately after a keyboard open; with no rows Radix's default
+            // content focus stands.
+            if (isTouch) {
+              e.preventDefault()
+              return
+            }
+            const first = contentRef.current?.querySelector<HTMLButtonElement>("[data-draft-row]")
+            if (first) {
+              e.preventDefault()
+              first.focus()
+            }
+          }}
+        >
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
             <p className="text-sm font-medium">
               Drafts
@@ -198,6 +244,7 @@ export function StashedDraftsPicker({
                     <div className="flex items-start gap-2 px-3 py-2 hover:bg-muted/60 focus-within:bg-muted/60">
                       <button
                         type="button"
+                        data-draft-row
                         onClick={() => handleRestore(draft.id)}
                         className="flex-1 min-w-0 text-left focus:outline-none"
                       >

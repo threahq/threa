@@ -115,6 +115,33 @@ describe("StashedDraftsPicker", () => {
     })
   })
 
+  describe("keyboard navigation (desktop)", () => {
+    it("focuses the first draft row on open and walks rows with ArrowUp/Down, Enter restores", async () => {
+      isTouchMockValue = false
+      const { onRestore } = renderPicker({
+        drafts: [makeDraft("draft_1", "Saved one"), makeDraft("draft_2", "Saved two")],
+      })
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+
+      const rowOne = screen.getByText("Saved one").closest("button")!
+      const rowTwo = screen.getByText("Saved two").closest("button")!
+      expect(rowOne).toHaveFocus()
+
+      await userEvent.keyboard("{ArrowDown}")
+      expect(rowTwo).toHaveFocus()
+
+      await userEvent.keyboard("{ArrowDown}")
+      expect(rowOne).toHaveFocus()
+
+      await userEvent.keyboard("{ArrowUp}")
+      expect(rowTwo).toHaveFocus()
+
+      await userEvent.keyboard("{Enter}")
+      expect(onRestore).toHaveBeenCalledWith("draft_2")
+    })
+  })
+
   describe("preview rendering", () => {
     const sealed = makeDraft("draft_e", "placeholder")
     const open = () => userEvent.click(screen.getByRole("button", { name: /drafts/i }))

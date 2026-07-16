@@ -24,6 +24,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { MicButton, type MicButtonHandle } from "./mic-button"
 import { FabDrawerCloseContext } from "./fab-drawer-close-context"
+import { StashedDraftsOpenContext } from "./stashed-drafts-open-context"
 import { ComposerActionBar } from "./composer-action-bar"
 import { ComposerLinkPreviews } from "./composer-link-previews"
 import { ContextRefStrip } from "./context-ref-strip"
@@ -655,6 +656,11 @@ export function MessageComposer({
   const preferencesCtx = usePreferencesOptional()
   const stashBinding = getEffectiveKeyBinding("draftStash", preferencesCtx?.preferences?.keyboardShortcuts ?? {})
 
+  // Cmd/Ctrl+S with nothing to stash flips to "show me my drafts": open the
+  // hosted picker (registered via context — the picker is a slot node).
+  const stashedDraftsOpenRef = useRef<(() => void) | null>(null)
+  const composerEmpty = isEmptyContent(content) && pendingAttachments.length === 0
+
   const handleStashKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (!stashBinding) return
@@ -662,9 +668,13 @@ export function MessageComposer({
 
       event.preventDefault()
       event.stopPropagation()
+      if (composerEmpty) {
+        stashedDraftsOpenRef.current?.()
+        return
+      }
       onStashDraft?.()
     },
-    [onStashDraft, stashBinding]
+    [onStashDraft, stashBinding, composerEmpty]
   )
 
   const sharedEditor = (
@@ -819,16 +829,290 @@ export function MessageComposer({
   if (expanded) {
     return (
       <TooltipProvider delayDuration={300}>
+        <StashedDraftsOpenContext.Provider value={stashedDraftsOpenRef}>
+          <div
+            ref={expandedShellRef}
+            className={cn("relative flex flex-col h-full bg-background", className)}
+            tabIndex={-1}
+            onKeyDown={handleExpandedShellKeyDown}
+            onKeyDownCapture={handleStashKeyDown}
+          >
+            <p id={instructionsId} className="sr-only">
+              {screenReaderInstructions}
+            </p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={onFileSelect}
+              disabled={controlsDisabled}
+            />
+
+            {/* Editor — fills remaining space, toolbar + actions in one bar via toolbarTrailingContent */}
+            <div
+              className="flex-1 min-h-0 overflow-y-auto px-4 [&_.tiptap]:max-h-none [&_.tiptap]:min-h-[200px]"
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
+                  return
+                richEditorRef.current?.focus()
+              }}
+            >
+              <RichEditor
+                ref={setRichEditorHandle}
+                value={content}
+                onChange={handleContentChange}
+                onSubmit={handleSubmit}
+                onFileUpload={onFileUpload}
+                imageCount={imageCount}
+                placeholder={placeholder}
+                disabled={disabled}
+                messageSendMode="cmdEnter"
+                autoFocus
+                scopeId={scopeId}
+                staticToolbarOpen
+                disableSelectionToolbar
+                onEditLastMessage={onEditLastMessage}
+                toolbarTrailingContent={expandedTrailingContent}
+                ariaLabel="Fullscreen message editor"
+                ariaDescribedBy={instructionsId}
+                blurOnEscape
+                onEscapeBlur={focusExpandedShell}
+                streamContext={streamContext}
+                memoAnchorStreamId={memoAnchorStreamId}
+                belowToolbarContent={
+                  pendingAttachments.length > 0 || (contextRefs && contextRefs.length > 0) ? (
+                    <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">
+                      <PendingAttachments
+                        attachments={pendingAttachments}
+                        onRemove={onRemoveAttachment}
+                        onCancelUpload={onCancelAttachmentUpload}
+                        workspaceId={workspaceId}
+                        beforePills={
+                          contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
+                            <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />
+                          ) : null
+                        }
+                      />
+                    </div>
+                  ) : undefined
+                }
+              />
+              {/* Extra space so the writing position can be centered on screen */}
+              <div className="h-[50vh]" />
+            </div>
+
+            <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10 flex items-center gap-1.5">
+              {/* Action drawer — always visible on desktop; on touch (no hover) it
+                stays behind the + button and opens on tap. `inert` while
+                collapsed on mobile so its buttons drop out of tab order instead
+                of sitting invisibly ahead of the visible "+" button. */}
+              <div
+                inert={isMobile && !fabActionsOpen}
+                className={cn(
+                  "flex items-center gap-1 overflow-hidden transition-all duration-200 ease-out",
+                  isMobile ? "max-w-0 opacity-0" : "max-w-[240px] opacity-100",
+                  fabActionsOpen && "max-w-[240px] opacity-100"
+                )}
+              >
+                <FabDrawerCloseContext.Provider value={closeFabDrawer}>
+                  {stashedDraftsTriggerFab}
+                  {scheduledMessagesTriggerFab}
+                </FabDrawerCloseContext.Provider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label="Insert emoji"
+                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
+                      onPointerDown={(e) => {
+                        e.preventDefault()
+                        closeFabDrawer()
+                        richEditorRef.current?.insertEmoji()
+                      }}
+                      disabled={controlsDisabled}
+                    >
+                      <span className="text-sm leading-none">😊</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    Emoji
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label="Insert mention"
+                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
+                      onPointerDown={(e) => {
+                        e.preventDefault()
+                        closeFabDrawer()
+                        richEditorRef.current?.insertMention()
+                      }}
+                      disabled={controlsDisabled}
+                    >
+                      <AtSign className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    Mention
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label="Insert command"
+                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
+                      onPointerDown={(e) => {
+                        e.preventDefault()
+                        closeFabDrawer()
+                        richEditorRef.current?.insertSlash()
+                      }}
+                      disabled={controlsDisabled}
+                    >
+                      <Slash className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    Command
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label="Attach files"
+                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
+                      onClick={() => {
+                        closeFabDrawer()
+                        handleAttachClick()
+                      }}
+                      disabled={controlsDisabled}
+                    >
+                      <Paperclip className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    Attach files
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              {isMobile ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label={fabActionsOpen ? "Hide actions" : "Show actions"}
+                  aria-expanded={fabActionsOpen}
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={() => setFabActionsOpen((v) => !v)}
+                  className={cn(
+                    "h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md [&_svg]:transition-transform",
+                    fabActionsOpen && "[&_svg]:rotate-45"
+                  )}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              ) : null}
+              {micButtonFab}
+              {hasFailed ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        disabled
+                        className="h-[30px] w-[30px] shrink-0 p-0 pointer-events-none rounded-md shadow-md"
+                        aria-label={submitLabel}
+                      >
+                        <ArrowUp className="h-4 w-4" />
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p>Remove failed uploads before sending</p>
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      onPointerDown={(e) => e.preventDefault()}
+                      onClick={handleSubmit}
+                      disabled={!canSubmit}
+                      aria-label={isSubmitting ? submittingLabel : submitLabel}
+                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md shadow-md"
+                    >
+                      <ArrowUp className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" className="text-xs">
+                    {sendHint}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          </div>
+        </StashedDraftsOpenContext.Provider>
+      </TooltipProvider>
+    )
+  }
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <StashedDraftsOpenContext.Provider value={stashedDraftsOpenRef}>
+        {/* Message input wrapper — dvh units respect the virtual keyboard on mobile */}
         <div
-          ref={expandedShellRef}
-          className={cn("relative flex flex-col h-full bg-background", className)}
-          tabIndex={-1}
-          onKeyDown={handleExpandedShellKeyDown}
+          ref={mobileRootRef}
+          data-composer-expanded={mobileExpanded ? true : undefined}
+          className={cn(
+            // No transition on max/min-height: animating the shell's layout box
+            // re-runs layout every frame, and the timeline scroller above resizes
+            // with it — each frame fires its ResizeObserver, re-pins to bottom,
+            // and forces a virtua re-measure (~10fps on low-end Android, see
+            // docs/stream-timeline-perceived-performance.md). Snap instead, same
+            // as the keyboard choreography.
+            "flex flex-col",
+            mobileExpanded ? "max-h-[75dvh] min-h-[75dvh]" : "max-h-[380px] min-h-0",
+            className
+          )}
+          onFocusCapture={isMobile ? handleFocusCapture : undefined}
+          onBlurCapture={isMobile ? handleBlurCapture : undefined}
           onKeyDownCapture={handleStashKeyDown}
         >
           <p id={instructionsId} className="sr-only">
             {screenReaderInstructions}
           </p>
+          <PendingAttachments
+            attachments={pendingAttachments}
+            onRemove={onRemoveAttachment}
+            onCancelUpload={onCancelAttachmentUpload}
+            workspaceId={workspaceId}
+            beforePills={
+              contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
+                <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />
+              ) : null
+            }
+          />
+
+          {/* Live in-app link previews for the draft. Above the card (like
+            attachments) so they read as attached to this message and stay clear
+            of the keyboard on mobile. Hidden in the mobile resting state to keep
+            the single-line bar minimal. */}
+          {workspaceId && (!isMobile || mobileChromeOpen) && (
+            <ComposerLinkPreviews content={content} workspaceId={workspaceId} className="mb-2" />
+          )}
+
           <input
             ref={fileInputRef}
             type="file"
@@ -838,343 +1122,74 @@ export function MessageComposer({
             disabled={controlsDisabled}
           />
 
-          {/* Editor — fills remaining space, toolbar + actions in one bar via toolbarTrailingContent */}
-          <div
-            className="flex-1 min-h-0 overflow-y-auto px-4 [&_.tiptap]:max-h-none [&_.tiptap]:min-h-[200px]"
-            onClick={(e) => {
-              if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']")) return
-              richEditorRef.current?.focus()
-            }}
-          >
-            <RichEditor
-              ref={setRichEditorHandle}
-              value={content}
-              onChange={handleContentChange}
-              onSubmit={handleSubmit}
-              onFileUpload={onFileUpload}
-              imageCount={imageCount}
-              placeholder={placeholder}
-              disabled={disabled}
-              messageSendMode="cmdEnter"
-              autoFocus
-              scopeId={scopeId}
-              staticToolbarOpen
-              disableSelectionToolbar
-              onEditLastMessage={onEditLastMessage}
-              toolbarTrailingContent={expandedTrailingContent}
-              ariaLabel="Fullscreen message editor"
-              ariaDescribedBy={instructionsId}
-              blurOnEscape
-              onEscapeBlur={focusExpandedShell}
-              streamContext={streamContext}
-              memoAnchorStreamId={memoAnchorStreamId}
-              belowToolbarContent={
-                pendingAttachments.length > 0 || (contextRefs && contextRefs.length > 0) ? (
-                  <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">
-                    <PendingAttachments
-                      attachments={pendingAttachments}
-                      onRemove={onRemoveAttachment}
-                      onCancelUpload={onCancelAttachmentUpload}
-                      workspaceId={workspaceId}
-                      beforePills={
-                        contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
-                          <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />
-                        ) : null
-                      }
-                    />
-                  </div>
-                ) : undefined
-              }
-            />
-            {/* Extra space so the writing position can be centered on screen */}
-            <div className="h-[50vh]" />
-          </div>
-
-          <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10 flex items-center gap-1.5">
-            {/* Action drawer — always visible on desktop; on touch (no hover) it
-                stays behind the + button and opens on tap. `inert` while
-                collapsed on mobile so its buttons drop out of tab order instead
-                of sitting invisibly ahead of the visible "+" button. */}
+          <div className="input-glow-wrapper flex-1 flex flex-col min-h-0">
             <div
-              inert={isMobile && !fabActionsOpen}
+              data-composer-card
               className={cn(
-                "flex items-center gap-1 overflow-hidden transition-all duration-200 ease-out",
-                isMobile ? "max-w-0 opacity-0" : "max-w-[240px] opacity-100",
-                fabActionsOpen && "max-w-[240px] opacity-100"
+                "rounded-[16px] border border-input flex flex-col flex-1 min-h-0",
+                // Floating-composer shadow on the inline (non-expanded) card; the
+                // expanded fullscreen sheet stays flat.
+                !mobileExpanded && COLLAPSED_COMPOSER_SHADOW,
+                // Glass (translucent + backdrop-blur) lets the timeline show through
+                // the floating composer, but backdrop-filter re-rasterizes the blurred
+                // backdrop on every repaint — cheap on desktop, a frame-killer on
+                // mobile over a long, image-heavy timeline while typing. Opaque on
+                // mobile; keep the glass on desktop where the GPU absorbs it.
+                !mobileExpanded && !isMobile ? "bg-card/75 backdrop-blur-md" : "bg-card",
+                // Compact padding when mobile-unfocused (single line), normal otherwise
+                isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
+                // When mobile-expanded, let the editor grow and override its internal max-height
+                mobileExpanded && "[&_.tiptap]:max-h-none"
               )}
-            >
-              <FabDrawerCloseContext.Provider value={closeFabDrawer}>
-                {stashedDraftsTriggerFab}
-                {scheduledMessagesTriggerFab}
-              </FabDrawerCloseContext.Provider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label="Insert emoji"
-                    className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                    onPointerDown={(e) => {
-                      e.preventDefault()
-                      closeFabDrawer()
-                      richEditorRef.current?.insertEmoji()
-                    }}
-                    disabled={controlsDisabled}
-                  >
-                    <span className="text-sm leading-none">😊</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
-                  Emoji
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label="Insert mention"
-                    className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                    onPointerDown={(e) => {
-                      e.preventDefault()
-                      closeFabDrawer()
-                      richEditorRef.current?.insertMention()
-                    }}
-                    disabled={controlsDisabled}
-                  >
-                    <AtSign className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
-                  Mention
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label="Insert command"
-                    className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                    onPointerDown={(e) => {
-                      e.preventDefault()
-                      closeFabDrawer()
-                      richEditorRef.current?.insertSlash()
-                    }}
-                    disabled={controlsDisabled}
-                  >
-                    <Slash className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
-                  Command
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label="Attach files"
-                    className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                    onClick={() => {
-                      closeFabDrawer()
-                      handleAttachClick()
-                    }}
-                    disabled={controlsDisabled}
-                  >
-                    <Paperclip className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
-                  Attach files
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            {isMobile ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                aria-label={fabActionsOpen ? "Hide actions" : "Show actions"}
-                aria-expanded={fabActionsOpen}
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => setFabActionsOpen((v) => !v)}
-                className={cn(
-                  "h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md [&_svg]:transition-transform",
-                  fabActionsOpen && "[&_svg]:rotate-45"
-                )}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            ) : null}
-            {micButtonFab}
-            {hasFailed ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button
-                      disabled
-                      className="h-[30px] w-[30px] shrink-0 p-0 pointer-events-none rounded-md shadow-md"
-                      aria-label={submitLabel}
-                    >
-                      <ArrowUp className="h-4 w-4" />
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  <p>Remove failed uploads before sending</p>
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    onPointerDown={(e) => e.preventDefault()}
-                    onClick={handleSubmit}
-                    disabled={!canSubmit}
-                    aria-label={isSubmitting ? submittingLabel : submitLabel}
-                    className="h-[30px] w-[30px] shrink-0 p-0 rounded-md shadow-md"
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="text-xs">
-                  {sendHint}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        </div>
-      </TooltipProvider>
-    )
-  }
-
-  return (
-    <TooltipProvider delayDuration={300}>
-      {/* Message input wrapper — dvh units respect the virtual keyboard on mobile */}
-      <div
-        ref={mobileRootRef}
-        data-composer-expanded={mobileExpanded ? true : undefined}
-        className={cn(
-          // No transition on max/min-height: animating the shell's layout box
-          // re-runs layout every frame, and the timeline scroller above resizes
-          // with it — each frame fires its ResizeObserver, re-pins to bottom,
-          // and forces a virtua re-measure (~10fps on low-end Android, see
-          // docs/stream-timeline-perceived-performance.md). Snap instead, same
-          // as the keyboard choreography.
-          "flex flex-col",
-          mobileExpanded ? "max-h-[75dvh] min-h-[75dvh]" : "max-h-[380px] min-h-0",
-          className
-        )}
-        onFocusCapture={isMobile ? handleFocusCapture : undefined}
-        onBlurCapture={isMobile ? handleBlurCapture : undefined}
-        onKeyDownCapture={handleStashKeyDown}
-      >
-        <p id={instructionsId} className="sr-only">
-          {screenReaderInstructions}
-        </p>
-        <PendingAttachments
-          attachments={pendingAttachments}
-          onRemove={onRemoveAttachment}
-          onCancelUpload={onCancelAttachmentUpload}
-          workspaceId={workspaceId}
-          beforePills={
-            contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
-              <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />
-            ) : null
-          }
-        />
-
-        {/* Live in-app link previews for the draft. Above the card (like
-            attachments) so they read as attached to this message and stay clear
-            of the keyboard on mobile. Hidden in the mobile resting state to keep
-            the single-line bar minimal. */}
-        {workspaceId && (!isMobile || mobileChromeOpen) && (
-          <ComposerLinkPreviews content={content} workspaceId={workspaceId} className="mb-2" />
-        )}
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={onFileSelect}
-          disabled={controlsDisabled}
-        />
-
-        <div className="input-glow-wrapper flex-1 flex flex-col min-h-0">
-          <div
-            data-composer-card
-            className={cn(
-              "rounded-[16px] border border-input flex flex-col flex-1 min-h-0",
-              // Floating-composer shadow on the inline (non-expanded) card; the
-              // expanded fullscreen sheet stays flat.
-              !mobileExpanded && COLLAPSED_COMPOSER_SHADOW,
-              // Glass (translucent + backdrop-blur) lets the timeline show through
-              // the floating composer, but backdrop-filter re-rasterizes the blurred
-              // backdrop on every repaint — cheap on desktop, a frame-killer on
-              // mobile over a long, image-heavy timeline while typing. Opaque on
-              // mobile; keep the glass on desktop where the GPU absorbs it.
-              !mobileExpanded && !isMobile ? "bg-card/75 backdrop-blur-md" : "bg-card",
-              // Compact padding when mobile-unfocused (single line), normal otherwise
-              isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
-              // When mobile-expanded, let the editor grow and override its internal max-height
-              mobileExpanded && "[&_.tiptap]:max-h-none"
-            )}
-            onClick={(e) => {
-              if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']")) return
-              // On mobile unfocused, focus the (still zero-height) editor now —
-              // raising the keyboard — and expand the chrome together with the
-              // keyboard's viewport resize, so the open is a single snap.
-              if (isMobile && !mobileChromeOpen) {
-                openMobileChromeWithKeyboard()
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
+                  return
+                // On mobile unfocused, focus the (still zero-height) editor now —
+                // raising the keyboard — and expand the chrome together with the
+                // keyboard's viewport resize, so the open is a single snap.
+                if (isMobile && !mobileChromeOpen) {
+                  openMobileChromeWithKeyboard()
+                  richEditorRef.current?.focus()
+                  return
+                }
                 richEditorRef.current?.focus()
-                return
-              }
-              richEditorRef.current?.focus()
-            }}
-          >
-            {isMobile && !mobileChromeOpen && (
-              <div className={cn(COLLAPSED_COMPOSER_ROW, "text-sm select-none pointer-events-none")}>
-                <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
-                <div className="pointer-events-auto">{sendButton}</div>
-              </div>
-            )}
+              }}
+            >
+              {isMobile && !mobileChromeOpen && (
+                <div className={cn(COLLAPSED_COMPOSER_ROW, "text-sm select-none pointer-events-none")}>
+                  <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
+                  <div className="pointer-events-auto">{sendButton}</div>
+                </div>
+              )}
 
-            {/* Mobile-only table hint — the floating selection toolbar is
+              {/* Mobile-only table hint — the floating selection toolbar is
                suppressed on mobile (it conflicts with the OS selection popup),
                so without this banner there's no visible cue that the row /
                column / delete controls live behind the Aa button. */}
-            {isMobile && mobileChromeOpen && isInTable && !formatOpen && (
-              <button
-                type="button"
-                onClick={() => setFormatOpen(true)}
-                onMouseDown={(e) => e.preventDefault()}
-                className="flex items-center gap-2 self-start rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-              >
-                Editing table — tap{" "}
-                <span className="rounded bg-background px-1 py-0.5 text-[11px] font-bold leading-none">Aa</span> to add
-                or delete rows and columns
-              </button>
-            )}
-
-            {/* Editor — always mounted to preserve state; hidden in preview mode */}
-            <div
-              className={cn(
-                isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
-                mobileExpanded && "overflow-y-auto"
+              {isMobile && mobileChromeOpen && isInTable && !formatOpen && (
+                <button
+                  type="button"
+                  onClick={() => setFormatOpen(true)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  className="flex items-center gap-2 self-start rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                >
+                  Editing table — tap{" "}
+                  <span className="rounded bg-background px-1 py-0.5 text-[11px] font-bold leading-none">Aa</span> to
+                  add or delete rows and columns
+                </button>
               )}
-            >
-              <div className="h-full">{sharedEditor}</div>
-            </div>
 
-            {/* Bottom action bar — visible on desktop always, on mobile when focused or dictating.
+              {/* Editor — always mounted to preserve state; hidden in preview mode */}
+              <div
+                className={cn(
+                  isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
+                  mobileExpanded && "overflow-y-auto"
+                )}
+              >
+                <div className="h-full">{sharedEditor}</div>
+              </div>
+
+              {/* Bottom action bar — visible on desktop always, on mobile when focused or dictating.
                onMouseDown preventDefault keeps editor focus on mobile so the virtual keyboard
                stays open when tapping any button in this bar.
 
@@ -1187,77 +1202,78 @@ export function MessageComposer({
                DOM-subtree guard below limits the suppression to elements actually
                living under this wrapper — buttons in our own action bar — and
                leaves portaled content untouched. */}
-            {(!isMobile || mobileChromeOpen) && (
-              <div
-                ref={actionBarWrapperRef}
-                onMouseDown={(e) => {
-                  if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
-                  e.preventDefault()
-                }}
-              >
-                {isMobile ? (
-                  <EditorActionBar
-                    editorHandle={richEditorRef.current}
-                    disabled={controlsDisabled}
-                    formatOpen={formatOpen}
-                    onFormatOpenChange={setFormatOpen}
-                    mobileExpanded={mobileExpanded}
-                    onMobileExpandedChange={setMobileExpanded}
-                    showAttach
-                    onAttachClick={handleAttachClick}
-                    trailingContent={
-                      micButton || stashedDraftsTrigger || scheduledMessagesTrigger ? (
-                        <div className="flex items-center gap-1">
-                          {micButton}
-                          {stashedDraftsTrigger}
-                          {scheduledMessagesTrigger}
-                          {sendButton}
-                        </div>
-                      ) : (
-                        sendButton
-                      )
-                    }
-                  />
-                ) : (
-                  <ComposerActionBar
-                    disabled={controlsDisabled}
-                    formatOpen={formatOpen}
-                    onToggleFormat={() => setFormatOpen((v) => !v)}
-                    onInsertEmoji={insertEmoji}
-                    onInsertMention={insertMention}
-                    onInsertCommand={insertSlash}
-                    onAttachClick={handleAttachClick}
-                    onExpandClick={onExpandClick}
-                    micButton={micButton}
-                    stashedDraftsTrigger={stashedDraftsTrigger}
-                    scheduledMessagesTrigger={scheduledMessagesTrigger}
-                    sendButton={sendButton}
-                  />
-                )}
-              </div>
-            )}
+              {(!isMobile || mobileChromeOpen) && (
+                <div
+                  ref={actionBarWrapperRef}
+                  onMouseDown={(e) => {
+                    if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
+                    e.preventDefault()
+                  }}
+                >
+                  {isMobile ? (
+                    <EditorActionBar
+                      editorHandle={richEditorRef.current}
+                      disabled={controlsDisabled}
+                      formatOpen={formatOpen}
+                      onFormatOpenChange={setFormatOpen}
+                      mobileExpanded={mobileExpanded}
+                      onMobileExpandedChange={setMobileExpanded}
+                      showAttach
+                      onAttachClick={handleAttachClick}
+                      trailingContent={
+                        micButton || stashedDraftsTrigger || scheduledMessagesTrigger ? (
+                          <div className="flex items-center gap-1">
+                            {micButton}
+                            {stashedDraftsTrigger}
+                            {scheduledMessagesTrigger}
+                            {sendButton}
+                          </div>
+                        ) : (
+                          sendButton
+                        )
+                      }
+                    />
+                  ) : (
+                    <ComposerActionBar
+                      disabled={controlsDisabled}
+                      formatOpen={formatOpen}
+                      onToggleFormat={() => setFormatOpen((v) => !v)}
+                      onInsertEmoji={insertEmoji}
+                      onInsertMention={insertMention}
+                      onInsertCommand={insertSlash}
+                      onAttachClick={handleAttachClick}
+                      onExpandClick={onExpandClick}
+                      micButton={micButton}
+                      stashedDraftsTrigger={stashedDraftsTrigger}
+                      scheduledMessagesTrigger={scheduledMessagesTrigger}
+                      sendButton={sendButton}
+                    />
+                  )}
+                </div>
+              )}
 
-            {/* Mobile formatting toolbar — rendered below action bar, above keyboard */}
-            {isMobile && formatOpen && (
-              <EditorToolbar
-                editor={mobileToolbarEditor}
-                isVisible
-                inline
-                inlinePosition="below"
-                linkPopoverOpen={mobileLinkPopoverOpen}
-                onLinkPopoverOpenChange={setMobileLinkPopoverOpen}
-                showSpecialInputControls
-              />
-            )}
+              {/* Mobile formatting toolbar — rendered below action bar, above keyboard */}
+              {isMobile && formatOpen && (
+                <EditorToolbar
+                  editor={mobileToolbarEditor}
+                  isVisible
+                  inline
+                  inlinePosition="below"
+                  linkPopoverOpen={mobileLinkPopoverOpen}
+                  onLinkPopoverOpenChange={setMobileLinkPopoverOpen}
+                  showSpecialInputControls
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end px-1 pt-1">
+            <span className="text-[10px] text-muted-foreground opacity-60 hidden sm:block select-none pointer-events-none">
+              {sendHint}
+            </span>
           </div>
         </div>
-
-        <div className="flex justify-end px-1 pt-1">
-          <span className="text-[10px] text-muted-foreground opacity-60 hidden sm:block select-none pointer-events-none">
-            {sendHint}
-          </span>
-        </div>
-      </div>
+      </StashedDraftsOpenContext.Provider>
     </TooltipProvider>
   )
 }
