@@ -84,7 +84,7 @@ export THREA_PERMISSION_RELAY=1                    # 1 (default) to relay approv
 Register the server at **local** scope so it stays private to your machine and never touches a tracked file:
 
 ```bash
-claude mcp add threa --scope local -- bun /ABSOLUTE/PATH/TO/threa/extensions/claude-code-remote/src/index.ts
+claude mcp add threa-channel --scope local -- bun /ABSOLUTE/PATH/TO/threa/extensions/claude-code-remote/src/index.ts
 ```
 
 This writes to `~/.claude.json` under the current project, not to `.mcp.json`. Credentials come from step 3 (the home-dir config file or your shell), so no `env` block is needed. The path to `src/index.ts` must be **absolute**.
@@ -98,12 +98,12 @@ If you do want the server defined in a checked-in `.mcp.json` (e.g. to share its
 Custom channels are not on the research-preview allowlist, so start Claude Code with the development flag:
 
 ```bash
-claude --dangerously-load-development-channels server:threa
+claude --dangerously-load-development-channels server:threa-channel
 ```
 
 A dim line under the banner confirms the channel registered. The channel logs the scratchpad URL to stderr on startup (see `~/.claude/debug/<session-id>.txt`); the scratchpad also appears in the Threa sidebar as `Claude Code - <project>`.
 
-The flag is required for the scratchpad to link at all: the server checks its parent Claude process's command line for `--dangerously-load-development-channels server:threa` and, when absent, serves as a plain (idle) MCP server without creating anything. This makes a global (user-scope) registration safe — a bare `claude` session loads the server but links no scratchpad. Two consequences: the launch command must reference the server by the name `threa`, and the registration must run `bun` directly (a shell wrapper that doesn't `exec` would hide the Claude process's command line from the gate).
+The flag is required for the scratchpad to link at all: the server checks its parent Claude process's command line for `--dangerously-load-development-channels server:threa-channel` and, when absent, serves as a plain (idle) MCP server without creating anything. This makes a global (user-scope) registration safe — a bare `claude` session loads the server but links no scratchpad. Two consequences: the launch command must reference the server by the name `threa-channel`, and the registration must run `bun` directly (a shell wrapper that doesn't `exec` would hide the Claude process's command line from the gate).
 
 ### 6. Drive it from Threa
 
@@ -121,7 +121,7 @@ Reply `yes <id>` or `no <id>` in the scratchpad and the channel forwards your ve
 For fully unattended use you can instead skip prompts entirely:
 
 ```bash
-claude --dangerously-load-development-channels server:threa --dangerously-skip-permissions
+claude --dangerously-load-development-channels server:threa-channel --dangerously-skip-permissions
 ```
 
 Only do that in a directory you trust. Also consider pre-allowing the `mcp__threa__reply` tool so posting replies never prompts.
@@ -193,8 +193,8 @@ Sealed-turn differences: `THREA_ATTACH:` files are encrypted locally under a fre
 
 ## Troubleshooting
 
-- **The channel doesn't show in `/mcp` and never prompts.** If you ever answered "No" to the _"Use this MCP server?"_ prompt for `threa` in a project, Claude Code records it in `disabledMcpjsonServers` in that project's `.claude/settings.local.json` and then silently skips it — no prompt, no `/mcp` entry, no hint. Remove `"threa"` from `disabledMcpjsonServers` (or add it to `enabledMcpjsonServers`) there, or re-enable it from the `/mcp` menu, then restart.
-- **`--channels server:threa` warns it's "not on the approved list."** That flag only loads allowlisted plugins; a custom channel is loaded with `--dangerously-load-development-channels server:threa` instead — drop `--channels`.
-- **The channel vanished mid-session (scratchpad stuck "busy", no replies).** A stdio MCP server is **not** respawned by Claude Code if it exits — it stays dead until you reconnect it from the `/mcp` menu or relaunch (e.g. `claude --resume … --dangerously-load-development-channels server:threa`). When the channel does go down it now exits gracefully — it marks presence offline and fails the in-flight turn, so the scratchpad flips to offline instead of hanging on "busy", and it logs why: grep `~/.claude/debug/<session-id>.txt` for `[threa-channel] shutting down (…)`. The reason in parentheses tells you the death path: `SIGTERM`/`SIGINT`/`SIGHUP` (Claude Code or your shell stopped it), `stdin closed by parent` (Claude Code crashed or was replaced by an auto-update), or `uncaughtException`/`unhandledRejection` (a bug — file the stack that precedes it).
+- **The channel doesn't show in `/mcp` and never prompts.** If you ever answered "No" to the _"Use this MCP server?"_ prompt for `threa-channel` in a project, Claude Code records it in `disabledMcpjsonServers` in that project's `.claude/settings.local.json` and then silently skips it — no prompt, no `/mcp` entry, no hint. Remove `"threa-channel"` from `disabledMcpjsonServers` (or add it to `enabledMcpjsonServers`) there, or re-enable it from the `/mcp` menu, then restart.
+- **`--channels server:threa-channel` warns it's "not on the approved list."** That flag only loads allowlisted plugins; a custom channel is loaded with `--dangerously-load-development-channels server:threa-channel` instead — drop `--channels`.
+- **The channel vanished mid-session (scratchpad stuck "busy", no replies).** A stdio MCP server is **not** respawned by Claude Code if it exits — it stays dead until you reconnect it from the `/mcp` menu or relaunch (e.g. `claude --resume … --dangerously-load-development-channels server:threa-channel`). When the channel does go down it now exits gracefully — it marks presence offline and fails the in-flight turn, so the scratchpad flips to offline instead of hanging on "busy", and it logs why: grep `~/.claude/debug/<session-id>.txt` for `[threa-channel] shutting down (…)`. The reason in parentheses tells you the death path: `SIGTERM`/`SIGINT`/`SIGHUP` (Claude Code or your shell stopped it), `stdin closed by parent` (Claude Code crashed or was replaced by an auto-update), or `uncaughtException`/`unhandledRejection` (a bug — file the stack that precedes it).
 - **A restart linked the wrong scratchpad / a stale "Claude Code - <project>" lingers.** The scratchpad is keyed by `hostname + cwd` (and the channel runs the `src/index.ts` you registered with `claude mcp add`). Launch Claude Code from a **different git worktree** of the same repo and you get a _different_ cwd, hence a _different_ scratchpad — and if the worktree you registered against is later moved or deleted, `bun /abs/path/.../src/index.ts` fails to start at all. Register the channel against a **stable checkout path** (your main clone, not a throwaway worktree), or pin `THREA_INSTANCE_ID` / `THREA_RUNTIME_SESSION_ID` so the same scratchpad follows you across directories.
 - **Logs.** Diagnostics go to stderr, captured by Claude Code in `~/.claude/debug/<session-id>.txt`: `[threa-channel] linked to scratchpad …` means it connected; `could not link …` means the backend is unreachable (check `THREA_BASE_URL`).

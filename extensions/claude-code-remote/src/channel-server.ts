@@ -23,7 +23,7 @@ import { interrupt, killOwnWindow, steerText, submitLine, tmuxAvailable } from "
 import { TranscriptTracer } from "./transcript-trace"
 
 const RUNTIME_KIND = "claude-code-channel"
-export const CHANNEL_SOURCE = "threa"
+export const CHANNEL_SOURCE = "threa-channel"
 
 // The session-control slash commands this channel can actuate via tmux. Only
 // advertised when running inside tmux. `run` types an arbitrary slash command
