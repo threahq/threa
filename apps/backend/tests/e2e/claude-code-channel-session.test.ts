@@ -256,16 +256,16 @@ describe("claude-code-channel runtime sessions", () => {
     await archiveStream(client, workspace.id, first.data.data.rootStreamId)
 
     // Wait for the outbox to end the link (the default/wait contract 409s).
-    let sawArchivedConflict = false
-    for (let i = 0; i < 50 && !sawArchivedConflict; i++) {
+    let archivedConflict: { status: number; data: { code?: string } } | undefined
+    for (let i = 0; i < 50 && !archivedConflict; i++) {
       const whileArchived = await botApiPost<{ code?: string }>(client, workspace.id, "/bot-runtime/sessions", apiKey, {
         ...body,
         ifArchived: "wait",
       })
-      if (whileArchived.status === 409) sawArchivedConflict = true
+      if (whileArchived.status === 409) archivedConflict = whileArchived
       else await new Promise((resolve) => setTimeout(resolve, 200))
     }
-    expect(sawArchivedConflict).toBe(true)
+    expect(archivedConflict).toMatchObject({ status: 409, data: { code: "SCRATCHPAD_ARCHIVED" } })
 
     const replaced = await botApiPost<{ data: SessionLinkData }>(
       client,

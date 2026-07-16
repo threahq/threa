@@ -215,21 +215,24 @@ describe("createBotRuntimeSession reattach after unarchive", () => {
   })
 
   it("ifArchived=wait (and default) keeps the 409 SCRATCHPAD_ARCHIVED contract", async () => {
-    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
-    const retireArchivedRuntimeSession = mock(() => Promise.resolve(true))
-    const handlers = createHandlers({
-      findActivePiRemoteSession: mock(() => Promise.resolve(null)),
-      reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "archived_stream" })),
-      retireArchivedRuntimeSession,
-      createLinkedScratchpadSession: mock(() => Promise.reject(new Error("must not create a new scratchpad"))),
-    })
-    const req = botRequest()
-    ;(req.body as Record<string, unknown>).ifArchived = "wait"
+    for (const ifArchived of ["wait", undefined]) {
+      spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+      const retireArchivedRuntimeSession = mock(() => Promise.resolve(true))
+      const handlers = createHandlers({
+        findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+        reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "archived_stream" })),
+        retireArchivedRuntimeSession,
+        createLinkedScratchpadSession: mock(() => Promise.reject(new Error("must not create a new scratchpad"))),
+      })
+      const req = botRequest()
+      if (ifArchived !== undefined) (req.body as Record<string, unknown>).ifArchived = ifArchived
 
-    await expect(handlers.createBotRuntimeSession(req, createResponse().res)).rejects.toMatchObject({
-      status: 409,
-      code: "SCRATCHPAD_ARCHIVED",
-    })
-    expect(retireArchivedRuntimeSession).not.toHaveBeenCalled()
+      await expect(handlers.createBotRuntimeSession(req, createResponse().res)).rejects.toMatchObject({
+        status: 409,
+        code: "SCRATCHPAD_ARCHIVED",
+      })
+      expect(retireArchivedRuntimeSession).not.toHaveBeenCalled()
+      mock.restore()
+    }
   })
 })
