@@ -75,6 +75,27 @@ describe("applyExternalEditorContent", () => {
     applyExternalEditorContent(editor, DOC, isInternalUpdate)
 
     expect(focus).toHaveBeenCalledTimes(1)
+    expect(focus).toHaveBeenCalledWith("end")
+  })
+
+  it("moves the caret to the end when the doc is replaced while focused", () => {
+    // Focus follows the content: setContent leaves the selection at the doc
+    // start, which strands the caret before a just-restored draft body.
+    const { editor, focus } = makeEditor({ isFocused: true })
+    const isInternalUpdate = { current: false }
+
+    applyExternalEditorContent(editor, DOC, isInternalUpdate)
+
+    expect(focus).toHaveBeenCalledWith("end")
+  })
+
+  it("does not touch focus when the editor was not focused", () => {
+    const { editor, focus } = makeEditor({ isFocused: false })
+    const isInternalUpdate = { current: false }
+
+    applyExternalEditorContent(editor, DOC, isInternalUpdate)
+
+    expect(focus).not.toHaveBeenCalled()
   })
 
   it("does not try to restore focus when the content failed to apply", () => {

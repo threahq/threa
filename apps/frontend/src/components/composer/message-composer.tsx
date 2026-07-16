@@ -24,7 +24,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { MicButton, type MicButtonHandle } from "./mic-button"
 import { FabDrawerCloseContext } from "./fab-drawer-close-context"
-import { StashedDraftsOpenContext } from "./stashed-drafts-open-context"
+import { StashedDraftsComposerBridgeContext, type StashedDraftsComposerBridge } from "./stashed-drafts-open-context"
 import { ComposerActionBar } from "./composer-action-bar"
 import { ComposerLinkPreviews } from "./composer-link-previews"
 import { ContextRefStrip } from "./context-ref-strip"
@@ -659,6 +659,13 @@ export function MessageComposer({
   // Cmd/Ctrl+S with nothing to stash flips to "show me my drafts": open the
   // hosted picker (registered via context — the picker is a slot node).
   const stashedDraftsOpenRef = useRef<(() => void) | null>(null)
+  const stashedDraftsBridge = useMemo<StashedDraftsComposerBridge>(
+    () => ({
+      openRef: stashedDraftsOpenRef,
+      focusComposer: () => richEditorRef.current?.focus(),
+    }),
+    []
+  )
   const composerEmpty = isEmptyContent(content) && pendingAttachments.length === 0
 
   const handleStashKeyDown = useCallback(
@@ -829,7 +836,7 @@ export function MessageComposer({
   if (expanded) {
     return (
       <TooltipProvider delayDuration={300}>
-        <StashedDraftsOpenContext.Provider value={stashedDraftsOpenRef}>
+        <StashedDraftsComposerBridgeContext.Provider value={stashedDraftsBridge}>
           <div
             ref={expandedShellRef}
             className={cn("relative flex flex-col h-full bg-background", className)}
@@ -1063,14 +1070,14 @@ export function MessageComposer({
               )}
             </div>
           </div>
-        </StashedDraftsOpenContext.Provider>
+        </StashedDraftsComposerBridgeContext.Provider>
       </TooltipProvider>
     )
   }
 
   return (
     <TooltipProvider delayDuration={300}>
-      <StashedDraftsOpenContext.Provider value={stashedDraftsOpenRef}>
+      <StashedDraftsComposerBridgeContext.Provider value={stashedDraftsBridge}>
         {/* Message input wrapper — dvh units respect the virtual keyboard on mobile */}
         <div
           ref={mobileRootRef}
@@ -1273,7 +1280,7 @@ export function MessageComposer({
             </span>
           </div>
         </div>
-      </StashedDraftsOpenContext.Provider>
+      </StashedDraftsComposerBridgeContext.Provider>
     </TooltipProvider>
   )
 }

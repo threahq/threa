@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
 import { FabDrawerCloseContext } from "./fab-drawer-close-context"
+import { StashedDraftsComposerBridgeContext } from "./stashed-drafts-open-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import type { CachedDraft, DraftPreview } from "@/hooks"
 
@@ -30,14 +31,17 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
     ...overrides,
   }
   const closeFabDrawer = vi.fn()
+  const focusComposer = vi.fn()
   render(
     <TooltipProvider>
       <FabDrawerCloseContext.Provider value={closeFabDrawer}>
-        <StashedDraftsPicker {...props} />
+        <StashedDraftsComposerBridgeContext.Provider value={{ openRef: { current: null }, focusComposer }}>
+          <StashedDraftsPicker {...props} />
+        </StashedDraftsComposerBridgeContext.Provider>
       </FabDrawerCloseContext.Provider>
     </TooltipProvider>
   )
-  return { ...props, closeFabDrawer }
+  return { ...props, closeFabDrawer, focusComposer }
 }
 
 describe("StashedDraftsPicker", () => {
@@ -112,6 +116,16 @@ describe("StashedDraftsPicker", () => {
       expect(onRestore).toHaveBeenCalledWith("draft_1")
       await waitFor(() => expect(screen.queryByText("Saved one")).not.toBeInTheDocument())
       expect(closeFabDrawer).toHaveBeenCalled()
+    })
+
+    it("focuses the composer after a restore instead of the trigger", async () => {
+      const { focusComposer } = renderPicker()
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      await userEvent.click(screen.getByText("Saved one"))
+
+      await waitFor(() => expect(focusComposer).toHaveBeenCalled())
+      expect(screen.getByRole("button", { name: /drafts/i })).not.toHaveFocus()
     })
   })
 
