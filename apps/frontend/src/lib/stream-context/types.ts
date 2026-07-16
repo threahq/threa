@@ -28,9 +28,10 @@ export interface LinkContextItem extends ContextItemBase {
   siteName: string | null
   faviconUrl: string | null
   imageUrl: string | null
-  /** Drives the small type badge: GitHub PR/issue, Linear, or none. */
-  previewKind: "github" | "linear" | "generic"
-  /** A short label for the preview kind ("PR", "Issue", "Linear", …) or null. */
+  /** Drives the small type badge: GitHub PR/issue, Linear, an in-app Threa
+   *  reference (shared message, channel, memo, conversation, task), or none. */
+  previewKind: "github" | "linear" | "in-app" | "generic"
+  /** A short label for the preview kind ("PR", "Issue", "Message", …) or null. */
   badge: string | null
   /** How many loaded messages referenced this URL. */
   refCount: number

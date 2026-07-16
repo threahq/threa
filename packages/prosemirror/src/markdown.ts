@@ -1111,7 +1111,16 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
         lastIndex = match.index + match[0].length
         continue
       }
-      const innerContent = parseInlineMarkdown(linkText, options)
+      // Link text is a display label: `[#1358](https://github…/pull/1358)` is a
+      // titled external link, not a channel reference — materializing a
+      // mention/channelLink node here would bury the href in a mark that
+      // consumers of the node tree (collectLinkUrls, the resolver) don't treat
+      // as the link it is. Pointer forms (`user:`/`channel:`) were handled above.
+      const innerContent = parseInlineMarkdown(linkText, {
+        ...options,
+        enableMentions: false,
+        enableChannels: false,
+      })
       for (const node of innerContent) {
         result.push({
           ...node,

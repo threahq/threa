@@ -679,6 +679,49 @@ describe("collectLinkUrls", () => {
 
     expect(collectLinkUrls(doc)).toEqual([])
   })
+
+  it("reads a link mark carried by a non-text node (stored channelLink from the [#text](url) parse quirk)", () => {
+    // Documents like this exist at rest: `[#1358](https://github…/pull/1358)`
+    // used to parse into a channelLink node with the href only in a mark.
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "PR open: " },
+            {
+              type: "channelLink",
+              attrs: { id: "1358", slug: "1358" },
+              marks: [{ type: "link", attrs: { href: "https://github.com/threahq/threa/pull/1358" } }],
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://github.com/threahq/threa/pull/1358"])
+  })
+
+  it("ignores non-http link marks on non-text nodes", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "channelLink",
+              attrs: { id: "stream_1", slug: "general" },
+              marks: [{ type: "link", attrs: { href: "channel:stream_1" } }],
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual([])
+  })
 })
 
 const giphyEmbed = (giphyUrl: string, attrs: Record<string, unknown> = {}): JSONContent => ({

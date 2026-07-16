@@ -68,11 +68,28 @@ const LINEAR_BADGES: Record<string, string> = {
   linear_project: "Project",
   linear_document: "Doc",
 }
+// Labels stay type-agnostic where the reference can point at several stream
+// kinds: a stream_link may be a channel, scratchpad, or DM, and the per-viewer
+// streamType needed to distinguish them (inAppData) is absent on broadcast
+// events — "Stream" is correct for all three. Memo/delegation wording matches
+// this panel's own filter chips ("Memories", "Delegations").
+const IN_APP_BADGES: Record<string, string> = {
+  message_link: "Message",
+  stream_link: "Stream",
+  memo_link: "Memory",
+  conversation_link: "Conversation",
+  delegation_link: "Delegation",
+}
 
-function linkBadge(previewType: string | null | undefined): {
+function linkBadge(preview: LinkPreviewSummary | undefined): {
   previewKind: LinkContextItem["previewKind"]
   badge: string | null
 } {
+  if (!preview) return { previewKind: "generic", badge: null }
+  if (isInAppLinkContentType(preview.contentType)) {
+    return { previewKind: "in-app", badge: IN_APP_BADGES[preview.contentType] ?? "Threa" }
+  }
+  const previewType = preview.previewType
   if (!previewType) return { previewKind: "generic", badge: null }
   if (previewType.startsWith("github_")) {
     return { previewKind: "github", badge: GITHUB_BADGES[previewType] ?? "GitHub" }
@@ -87,7 +104,9 @@ function linkBadge(previewType: string | null | undefined): {
  * Derive the "In this stream" overview from a stream's loaded timeline events.
  *
  * Pure and reactive: callers pass the live `useStreamEvents` array and re-run
- * on every change. Collects external links, media (images/GIFs/videos), file
+ * on every change. Collects links (external URLs and in-app references —
+ * shared messages, channels, memos, conversations, delegated tasks — badged by
+ * their preview contentType), media (images/GIFs/videos), file
  * attachments, captured memories, and threads branched from this stream — each
  * carrying the source message id for "jump to origin". Items dedup within their
  * category (links by normalized URL, attachments by id, memos by memoId,
@@ -158,7 +177,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         existing.refCount += 1
         return
       }
-      const { previewKind, badge } = linkBadge(preview?.previewType)
+      const { previewKind, badge } = linkBadge(preview)
       links.set(norm, {
         key: `link:${norm}`,
         category: "link",
@@ -182,14 +201,10 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
     const contentJson = payload.contentJson
     if (contentJson) {
       for (const url of collectLinkUrls(contentJson)) {
-        const preview = previewsByUrl.get(normalizeUrl(url))
-        // In-app resources belong to "related", not the external-links list.
-        if (preview && isInAppLinkContentType(preview.contentType)) continue
-        addLink(url, preview)
+        addLink(url, previewsByUrl.get(normalizeUrl(url)))
       }
     } else {
       for (const preview of previewsByUrl.values()) {
-        if (isInAppLinkContentType(preview.contentType)) continue
         addLink(preview.url, preview)
       }
     }
