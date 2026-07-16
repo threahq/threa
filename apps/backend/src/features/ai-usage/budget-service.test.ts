@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Pool, QueryConfig, QueryResult } from "pg"
 import { AIBudgetService } from "./budget-service"
+import { resolveBillingTimezone, resolveBudgetMonthRange } from "./billing-window"
 import { monthRangeInTimezone } from "../../lib/temporal"
 
 interface Captured {
@@ -125,5 +126,30 @@ describe("AIBudgetService.checkBudget enforcement window", () => {
       recommendedModel: "openrouter:anthropic/claude-haiku-4.5",
     })
     expect(captured.usagePeriod).toEqual(monthRangeInTimezone("Asia/Tokyo"))
+  })
+})
+
+describe("resolveBillingTimezone", () => {
+  function querier(storedTimezone: unknown) {
+    return {
+      query: mock(async () => ({
+        rows: storedTimezone === undefined ? [] : [{ key: "billingTimezone", value: storedTimezone }],
+        rowCount: storedTimezone === undefined ? 0 : 1,
+      })),
+    } as never
+  }
+
+  it("reads the workspace's stored zone", async () => {
+    expect(await resolveBillingTimezone(querier("Europe/Stockholm"), "ws_1")).toBe("Europe/Stockholm")
+  })
+
+  it("falls back to UTC for unset, non-string, and invalid zones", async () => {
+    expect(await resolveBillingTimezone(querier(undefined), "ws_1")).toBe("UTC")
+    expect(await resolveBillingTimezone(querier(42), "ws_1")).toBe("UTC")
+    expect(await resolveBillingTimezone(querier("Mars/Olympus"), "ws_1")).toBe("UTC")
+  })
+
+  it("cuts the enforcement month on the stored zone", async () => {
+    expect(await resolveBudgetMonthRange(querier("Asia/Tokyo"), "ws_1")).toEqual(monthRangeInTimezone("Asia/Tokyo"))
   })
 })

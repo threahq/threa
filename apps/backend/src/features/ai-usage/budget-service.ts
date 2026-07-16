@@ -1,15 +1,10 @@
 import type { Pool, PoolClient } from "pg"
-import { DEFAULT_WORKSPACE_SETTINGS, type WorkspaceSettings } from "@threa/types"
-import { withClient, type Querier } from "../../db"
+import { withClient } from "../../db"
 import { AIBudgetRepository } from "./budget-repository"
 import { AIUsageRepository } from "./usage-repository"
-import { WorkspaceSettingsRepository } from "../workspace-settings"
+import { resolveBudgetMonthRange } from "./billing-window"
 import { aiBudgetId } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import { isValidIanaTimezone, monthRangeInTimezone } from "../../lib/temporal"
-
-/** Type-checked against the interface so renaming the setting breaks the build (INV-33). */
-const BILLING_TIMEZONE_KEY = "billingTimezone" satisfies keyof WorkspaceSettings
 
 const DEFAULT_MONTHLY_BUDGET_USD = 50.0
 
@@ -176,26 +171,4 @@ export class AIBudgetService implements AIBudgetServiceLike {
       hardLimitEnabled: false, // Don't block by default
     })
   }
-}
-
-/**
- * The month the budget is enforced over, cut on the workspace's own timezone
- * (`billingTimezone`) — so degradation and the hard limit reset on the
- * workspace's midnight rather than whichever zone the server happens to run in.
- *
- * Unset falls to `"UTC"`, the code default, NOT the server's local zone: the
- * boundary money resets on must not move when the deploy region does. This is
- * the one behavioural difference from the old server-local window.
- *
- * Note this is the workspace's zone, not the viewer's: a dashboard read in
- * device mode (`?tz=<device>`) draws a different window than the one enforced
- * here, so the two totals can differ for spend near the month boundary.
- */
-async function resolveBudgetMonthRange(db: Querier, workspaceId: string): Promise<{ start: Date; end: Date }> {
-  const override = await WorkspaceSettingsRepository.findOverride(db, workspaceId, BILLING_TIMEZONE_KEY)
-  const stored = typeof override?.value === "string" ? override.value : null
-  // A stored zone is validated at write time; re-check rather than let a hand-
-  // edited row throw on every AI call in the workspace.
-  const timezone = stored && isValidIanaTimezone(stored) ? stored : DEFAULT_WORKSPACE_SETTINGS.billingTimezone
-  return monthRangeInTimezone(timezone)
 }

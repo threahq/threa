@@ -1,10 +1,11 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { withClient } from "../../db"
+import { withClient, type Querier } from "../../db"
 import { AIUsageRepository } from "./usage-repository"
 import { AIBudgetRepository } from "./budget-repository"
 import { categorizeFunction, aggregateUsageByDay } from "./categories"
+import { resolveBudgetMonthRange } from "./billing-window"
 import { aiBudgetId } from "../../lib/id"
 import { validateRequest } from "../../lib/validation"
 import { isValidIanaTimezone, monthRangeInTimezone } from "../../lib/temporal"
@@ -24,9 +25,13 @@ interface Dependencies {
 }
 
 // The dashboard's day buckets and month window follow whatever zone the caller
-// names — the viewer's device zone or the workspace's reporting zone (Stripe's
-// model: money is stored as timestamps, day/month lines are drawn at
-// presentation). Budget *enforcement* in budget-service keeps its own window.
+// names — the viewer's device zone or the workspace's own (Stripe's model: money
+// is stored as timestamps, day/month lines are drawn at presentation).
+//
+// This lens governs what is *read*, never what is enforced: `nextReset` and
+// `budget-service.checkBudget` both resolve the workspace's `billingTimezone`
+// regardless of `tz`, so switching the dashboard to your device zone cannot move
+// the instant your budget rolls over.
 const timezoneQuerySchema = z.object({
   tz: z
     .string()
@@ -100,10 +105,11 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
       const { tz } = validateRequest(timezoneQuerySchema, req.query)
       const { start, end } = monthRangeInTimezone(tz)
 
-      const [budget, usage] = await withClient(pool, async (client) =>
+      const [budget, usage, nextReset] = await withClient(pool, async (client) =>
         Promise.all([
           AIBudgetRepository.findByWorkspace(client, workspaceId),
           AIUsageRepository.getWorkspaceUsage(client, workspaceId, start, end),
+          resolveNextReset(client, workspaceId),
         ])
       )
 
@@ -112,7 +118,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
           budget: null,
           currentUsage: usage,
           percentUsed: 0,
-          nextReset: end.toISOString(),
+          nextReset,
         })
       }
 
@@ -130,7 +136,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         },
         currentUsage: usage,
         percentUsed: Math.round(percentUsed * 100) / 100,
-        nextReset: end.toISOString(),
+        nextReset,
       })
     },
 
@@ -141,7 +147,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
       const { tz } = validateRequest(timezoneQuerySchema, req.query)
       const { start, end } = monthRangeInTimezone(tz)
 
-      const [budget, usage] = await withClient(pool, async (client) => {
+      const [budget, usage, nextReset] = await withClient(pool, async (client) => {
         // Creates with defaults if absent; otherwise updates only provided fields.
         const updatedBudget = await AIBudgetRepository.upsertPartial(client, {
           id: aiBudgetId(),
@@ -150,7 +156,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         })
 
         const currentUsage = await AIUsageRepository.getWorkspaceUsage(client, workspaceId, start, end)
-        return [updatedBudget, currentUsage]
+        return [updatedBudget, currentUsage, await resolveNextReset(client, workspaceId)] as const
       })
 
       if (!budget) {
@@ -171,8 +177,19 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         },
         currentUsage: usage,
         percentUsed: Math.round(percentUsed * 100) / 100,
-        nextReset: end.toISOString(),
+        nextReset,
       })
     },
   }
+}
+
+/**
+ * When the budget actually resets — the workspace's own month boundary, not the
+ * end of the caller's `?tz=` window. The lens changes which slice of history the
+ * dashboard reads; it cannot move the instant enforcement rolls over, and saying
+ * otherwise would promise a reset date that never happens.
+ */
+async function resolveNextReset(db: Querier, workspaceId: string): Promise<string> {
+  const { end } = await resolveBudgetMonthRange(db, workspaceId)
+  return end.toISOString()
 }
