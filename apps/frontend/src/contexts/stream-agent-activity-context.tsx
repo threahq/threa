@@ -1,13 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useRef,
-  useState,
-  type MutableRefObject,
-  type ReactNode,
-} from "react"
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react"
 
 /** One running agent session in the open stream (or its threads), for the header chip. */
 export interface AgentActivitySummaryEntry {
@@ -21,12 +12,6 @@ interface StreamAgentActivityContextValue {
   summary: AgentActivitySummaryEntry[]
   /** Called by the timeline to publish its running-session summary up to the header. */
   publishSummary: (summary: AgentActivitySummaryEntry[]) => void
-  /**
-   * The header chip's DOM element — the follow pill animates out of / back into
-   * it so the affordance visibly belongs to the chip. Null while the chip isn't
-   * mounted (the pill falls back to a plain fade from above).
-   */
-  chipRef: MutableRefObject<HTMLElement | null>
 }
 
 const EMPTY: AgentActivitySummaryEntry[] = []
@@ -36,7 +21,6 @@ const StreamAgentActivityContext = createContext<StreamAgentActivityContextValue
   // No-op when there's no provider (e.g. a thread-panel StreamContent, which is
   // mounted outside the open stream's provider and must not publish into it).
   publishSummary: () => {},
-  chipRef: { current: null },
 })
 
 function summaryEqual(a: AgentActivitySummaryEntry[], b: AgentActivitySummaryEntry[]): boolean {
@@ -60,12 +44,7 @@ export function StreamAgentActivityProvider({ children }: { children: ReactNode 
     setSummary((prev) => (summaryEqual(prev, next) ? prev : next))
   }, [])
 
-  const chipRef = useRef<HTMLElement | null>(null)
-
-  const value = useMemo<StreamAgentActivityContextValue>(
-    () => ({ summary, publishSummary, chipRef }),
-    [summary, publishSummary]
-  )
+  const value = useMemo<StreamAgentActivityContextValue>(() => ({ summary, publishSummary }), [summary, publishSummary])
 
   return <StreamAgentActivityContext.Provider value={value}>{children}</StreamAgentActivityContext.Provider>
 }
@@ -78,9 +57,4 @@ export function useAgentActivitySummary(): AgentActivitySummaryEntry[] {
 /** Get the publish function the timeline uses to hand its summary to the header. */
 export function usePublishAgentActivitySummary(): (summary: AgentActivitySummaryEntry[]) => void {
   return useContext(StreamAgentActivityContext).publishSummary
-}
-
-/** The header chip's element ref — assigned by the chip, read by the follow pill's animation. */
-export function useAgentActivityChipRef(): MutableRefObject<HTMLElement | null> {
-  return useContext(StreamAgentActivityContext).chipRef
 }
