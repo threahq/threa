@@ -1,8 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
+import { enrichMessages } from "../enrich"
+import type { RefResolver } from "../resolver"
 import { EXTRACTION_CONTENT_TYPES, KNOWLEDGE_TYPES, MEMO_SCOPES, MEMO_TYPES, STREAM_TYPES } from "./constants"
-import { runTool, toolError } from "./result"
+import { runTool, toolError, type PagedEnvelope } from "./result"
 
 const SEARCH_WHATS = ["messages", "memos", "attachments"] as const
 type SearchWhat = (typeof SEARCH_WHATS)[number]
@@ -29,7 +31,7 @@ const FILTER_KEYS = [
   "limit",
 ] as const
 
-export function registerSearchTools(server: McpServer, client: ThreaApiClient): void {
+export function registerSearchTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
   server.registerTool(
     "search",
     {
@@ -50,7 +52,9 @@ export function registerSearchTools(server: McpServer, client: ThreaApiClient): 
         "- what: 'attachments' — search accessible attachments by filename or extracted content. Filters: query " +
         "(required), stream_ids, content_types (chart, table, diagram, screenshot, photo, document, other), " +
         "limit (≤50, default 20).\n" +
-        "stream_ids maps to the API's source-stream scope. Results are the search envelope { data: [...] }. For " +
+        "stream_ids maps to the API's source-stream scope; each entry accepts a stream_ id or `#channel-slug`. " +
+        "For what='messages', result rows carry author { id, type, name, slug? }. " +
+        "Results are the search envelope { data: [...] }. For " +
         "exact metadata lookup use find_messages_by_metadata; for a memo's source provenance use get_memo.",
       inputSchema: {
         what: z.enum(SEARCH_WHATS),
@@ -99,25 +103,28 @@ export function registerSearchTools(server: McpServer, client: ThreaApiClient): 
       }
 
       if (what === "messages") {
-        return runTool(() =>
-          client.post("/messages/search", {
+        return runTool(async () => {
+          const streams = args.stream_ids ? await resolver.resolveStreams(args.stream_ids) : undefined
+          const response = await client.post<PagedEnvelope<unknown>>("/messages/search", {
             query,
             semantic: args.semantic,
             exact: args.exact,
-            streams: args.stream_ids,
+            streams,
             type: args.type,
             before: args.before,
             after: args.after,
             limit: args.limit,
           })
-        )
+          return { ...response, data: await enrichMessages(response.data, resolver) }
+        })
       }
       if (what === "memos") {
-        return runTool(() =>
-          client.post("/memos/search", {
+        return runTool(async () => {
+          const streams = args.stream_ids ? await resolver.resolveStreams(args.stream_ids) : undefined
+          return client.post("/memos/search", {
             query,
             exact: args.exact,
-            streams: args.stream_ids,
+            streams,
             memoType: args.memo_type,
             knowledgeType: args.knowledge_type,
             tags: args.tags,
@@ -126,16 +133,17 @@ export function registerSearchTools(server: McpServer, client: ThreaApiClient): 
             after: args.after,
             limit: args.limit,
           })
-        )
+        })
       }
-      return runTool(() =>
-        client.post("/attachments/search", {
+      return runTool(async () => {
+        const streams = args.stream_ids ? await resolver.resolveStreams(args.stream_ids) : undefined
+        return client.post("/attachments/search", {
           query,
-          streams: args.stream_ids,
+          streams,
           contentTypes: args.content_types,
           limit: args.limit,
         })
-      )
+      })
     }
   )
 }

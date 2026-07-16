@@ -1,10 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
+import { enrichMessages } from "../enrich"
+import type { RefResolver } from "../resolver"
 import { STREAM_TYPES } from "./constants"
 import { buildQuery, runTool, type Envelope, type PagedEnvelope } from "./result"
 
-export function registerStreamTools(server: McpServer, client: ThreaApiClient): void {
+export function registerStreamTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
   server.registerTool(
     "list_streams",
     {
@@ -29,9 +31,12 @@ export function registerStreamTools(server: McpServer, client: ThreaApiClient): 
     {
       title: "Read a stream with its messages",
       description:
-        "Fetch a stream and a page of its messages in one call (concurrent requests). Returns " +
-        "{ stream, messages: { data, hasMore } } and, when `include_members` is true, " +
-        "{ members: { data, hasMore, cursor } }. Message paging is by numeric message sequence, NOT a cursor: " +
+        "Fetch a stream and a page of its messages in one call (concurrent requests). `stream_id` accepts a " +
+        "stream_ id or a `#channel-slug` (an `@user-slug` DM ref is not resolvable — pass the DM's stream_ id). " +
+        "Returns { stream, messages: { data, hasMore } } and, when `include_members` is true, " +
+        "{ members: { data, hasMore, cursor } }. Message rows carry author { id, type, name, slug? } and members " +
+        "carry name/slug, so author identity needs no follow-up. Message paging is by numeric message sequence, " +
+        "NOT a cursor: " +
         "`before` returns messages before that sequence (older), `after` returns messages after it (newer); " +
         "pass at most one, and walk pages by taking the boundary message's `sequence`. limit ≤ 100 (default " +
         "50) applies to messages. If the stream cannot be read the whole call errors — no partial data is " +
@@ -46,7 +51,7 @@ export function registerStreamTools(server: McpServer, client: ThreaApiClient): 
     },
     async ({ stream_id, include_members, before, after, limit }) =>
       runTool(async () => {
-        const id = encodeURIComponent(stream_id)
+        const id = encodeURIComponent(await resolver.resolveStream(stream_id))
         const streamReq = client.get<Envelope<unknown>>(`/streams/${id}`)
         const messagesReq = client.get<PagedEnvelope<unknown>>(
           `/streams/${id}/messages${buildQuery({ before, after, limit })}`
@@ -61,7 +66,7 @@ export function registerStreamTools(server: McpServer, client: ThreaApiClient): 
 
         const result: Record<string, unknown> = {
           stream: streamResp.data,
-          messages: { data: messagesResp.data, hasMore: messagesResp.hasMore ?? false },
+          messages: { data: await enrichMessages(messagesResp.data, resolver), hasMore: messagesResp.hasMore ?? false },
         }
         if (membersResp) {
           result.members = {

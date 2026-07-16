@@ -20,6 +20,16 @@ The `threa` MCP server wraps one Threa workspace's public API. One key, one work
 
 Call `whoami` before anything else. It confirms the key works, tells you whether you are a `user` or a `bot` principal, and reports the workspace and base URL you are bound to. Your identity decides what you can do: a user key acts as the person and posts attributed to them; a bot key acts as the bot, and only a bot key can call `request_delegation_access`. Knowing which you are avoids surprises later in the session.
 
+## Refer to streams and users by slug
+
+You rarely need to look up an id first. Any stream argument (`read_stream.stream_id`, `send_message.stream_id`, `search.stream_ids`, `find_messages_by_metadata.stream_id`, `list_conversations.stream_id`, `apply_label.stream_id`, `remove_label.stream_id`) takes a `stream_…` id or a `#channel-slug`. Any user argument takes a `usr_`/`bot_` id or an `@user-slug`. A ref that matches nothing or is ambiguous fails before any API call with `code: "UNRESOLVED_REF"`, listing the candidates or pointing you at `list_streams`/`list_users`; resolution is cached for the session.
+
+Two things you cannot do this way, by design of the API: an `@user-slug` will not stand in for your DM with that user (DM streams hide their counterpart on the wire), and bots/personas are not queryable by slug. For a DM, find its `stream_…` id with `list_streams` (`type: "dm"`) + `list_stream_members`; for a bot/persona, pass its id.
+
+## Payloads name their authors
+
+Read results already carry author identity, so you seldom need a second call to name who said what. Message rows carry `author: { id, type, name, slug? }` (a bot/persona author has no slug and its name comes from `authorDisplayName`). Conversations carry a `participants` array parallel to `participantIds` with each participant's name and slug. Stream members carry name and slug. Use these fields directly instead of calling `list_users` per id.
+
 ## Search memory before asking a human
 
 `search` with `what: "memos"` searches GAM, the knowledge Threa extracts from this workspace's conversations: decisions, learnings, procedures, context, references. When the question is "what did we decide", "how do we do X", or "why is it this way", the answer usually already lives there. Search it before you ask a person or guess.

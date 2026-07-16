@@ -1,15 +1,18 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { runTool, toolError } from "./result"
+import { enrichMessages } from "../enrich"
+import type { RefResolver } from "../resolver"
+import { runTool, toolError, type PagedEnvelope } from "./result"
 
-export function registerMessageTools(server: McpServer, client: ThreaApiClient): void {
+export function registerMessageTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
   server.registerTool(
     "send_message",
     {
       title: "Send a message to a stream",
       description:
-        "Post a markdown message to a stream. Content is markdown: mentions are `[@slug](user:usr_x)` / " +
+        "Post a markdown message to a stream. `stream_id` accepts a stream_ id or a `#channel-slug` (an " +
+        "`@user-slug` DM ref is not resolvable — pass the DM's stream_ id). Content is markdown: mentions are `[@slug](user:usr_x)` / " +
         "`[@slug](persona:persona_x)` / `[#slug](channel:stream_x)`, and plain URLs unfurl into link previews. " +
         "Conversation control: pass `conversation_id` to append to an existing conversation (it must live under " +
         "the same root stream as the target, else the API returns 400 CONVERSATION_NOT_IN_ROOT), or set " +
@@ -41,8 +44,9 @@ export function registerMessageTools(server: McpServer, client: ThreaApiClient):
       if (conversation_id) body.conversation = { intent: "existing", conversationId: conversation_id }
       else if (start_conversation) body.conversation = { intent: "new" }
       return runTool(async () => {
+        const streamId = await resolver.resolveStream(stream_id)
         const response = await client.post<{ data: unknown; conversationId?: string }>(
-          `/streams/${encodeURIComponent(stream_id)}/messages`,
+          `/streams/${encodeURIComponent(streamId)}/messages`,
           body
         )
         return { ...response, clientMessageId }
@@ -92,7 +96,8 @@ export function registerMessageTools(server: McpServer, client: ThreaApiClient):
         "Find non-deleted messages whose `metadata` contains every given key/value pair (exact AND-containment, " +
         "not text search). Use this for dedup and lookup by external reference you stamped at send time, e.g. " +
         '{ "github.pr": "org/repo#42" } to check whether a message was already posted for that PR. Narrow ' +
-        "with `stream_id`. limit ≤ 100 (default 20).",
+        "with `stream_id` (accepts a stream_ id or `#channel-slug`). limit ≤ 100 (default 20). Message rows " +
+        "carry author { id, type, name, slug? }.",
       inputSchema: {
         metadata: z.record(z.string(), z.string()),
         stream_id: z.string().optional(),
@@ -100,6 +105,14 @@ export function registerMessageTools(server: McpServer, client: ThreaApiClient):
       },
     },
     async ({ metadata, stream_id, limit }) =>
-      runTool(() => client.post("/messages/find-by-metadata", { metadata, streamId: stream_id, limit }))
+      runTool(async () => {
+        const streamId = stream_id ? await resolver.resolveStream(stream_id) : undefined
+        const response = await client.post<PagedEnvelope<unknown>>("/messages/find-by-metadata", {
+          metadata,
+          streamId,
+          limit,
+        })
+        return { ...response, data: await enrichMessages(response.data, resolver) }
+      })
   )
 }

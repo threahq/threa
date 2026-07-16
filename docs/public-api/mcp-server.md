@@ -84,6 +84,20 @@ The API allows 60 requests per minute per key and 600 per minute per workspace, 
 
 Tool output is JSON text in the API envelope. A single resource comes back under `data`, a list as `{ data, hasMore, cursor? }`, and a search as `{ data: [...] }`. A failure returns an error result with `{ code, message, hint? }`, and the hint spells out the 404 scope case and the rate-limit case. Message content is passed through in full and never truncated.
 
+## Referencing streams and users
+
+Identifier arguments take either a raw id or a sigil-prefixed slug, so you seldom have to look an id up first. A stream argument accepts a `stream_…` id or a `#channel-slug`, and a `#slug` resolves to the channel whose slug matches exactly. A user argument accepts a `usr_…` or `bot_…` id or an `@user-slug`, and an `@slug` resolves to the user whose slug matches exactly. This applies to the stream fields on `read_stream`, `send_message`, `search`, `find_messages_by_metadata`, `list_conversations`, `apply_label`, and `remove_label`.
+
+Resolution is cached for five minutes. A ref that matches nothing, or matches more than one candidate, fails before any API call with the code `UNRESOLVED_REF` and a message that lists the candidates or points you at `list_streams` or `list_users`.
+
+Two limits come from the public API itself. An `@user-slug` cannot stand in for a DM stream, because DM streams do not expose their counterpart on the wire and there is no lookup for the DM you share with a given user. The resolver validates the user and then returns an error naming the resolved id, and it tells you to find the DM's `stream_…` id with `list_streams` set to `type: "dm"` and `list_stream_members`. Bots and personas are not queryable by slug, because the public API has no bot or persona listing, so `@slug` resolves users only and you pass a `bot_…` or `persona_…` id directly.
+
+## Self-descriptive payloads
+
+Read payloads carry enough identity that a standard read needs no follow-up call. Message rows gain an `author` object with `id`, `type`, `name`, and `slug` when it can be resolved, on `read_stream`, `read_conversation`, `find_messages_by_metadata`, and `search` with `what: "messages"`. A bot or persona author is absent from the users list, so its name falls back to the wire's `authorDisplayName` and its slug is omitted. Conversation objects mirror their `participantIds` with a `participants` array of `id`, `name`, and `slug`, on `list_conversations` and `read_conversation`. Stream members already carry `name` and `slug` from the API on `read_stream` with `include_members`.
+
+Enrichment is additive and best-effort. The server fetches the workspace users once, caches them, and maps ids locally, so it never adds a fetch per row. If that fetch fails, the raw payload comes back unchanged and one line is written to stderr, so a read never fails because enrichment could not run.
+
 ## Tool catalog
 
 Identity: `whoami` returns the principal, the resolved API version, and the base URL and workspace the server is bound to.
