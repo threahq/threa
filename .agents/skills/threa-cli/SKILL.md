@@ -1,5 +1,5 @@
 ---
-name: threa-mcp
+name: threa-cli
 description: >-
   Use the Threa workspace client well, either as the `threa` command-line tool
   (on PATH or run in-repo with `bun packages/cli/src/cli.ts`) or as the Threa MCP

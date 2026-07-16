@@ -31,6 +31,8 @@ export interface CommandSpec {
   options: ParseOptions
   /** `mcp serve` runs a long-lived server the run() seam cannot buffer. */
   serve?: boolean
+  /** Command needs no workspace config (no API calls) — run() skips loadConfig. */
+  noConfig?: boolean
   run(ctx: CommandContext, positionals: string[], values: Record<string, unknown>): Promise<unknown>
   render?(payload: unknown): string
 }

@@ -105,6 +105,10 @@ Claim tokens are persisted to `~/.threa/state.json` (mode 0600), keyed by worksp
 
 ## MCP head
 
+### Agent skill
+
+`threa skill install` copies the `threa-cli` skill into `~/.claude/skills/threa-cli/`, so Claude Code sessions in any project on this machine load it on demand. The skill teaches ref forms, the piped-JSON and exit-code contract, search selection, and the delegation loop. Re-run after pulling a newer checkout. The in-repo copy at `.agents/skills/threa-cli/SKILL.md` is the source of truth.
+
 ### The two Threa MCP servers (do not confuse the sends)
 
 A Claude Code session bridged through the remote-control channel also has the channel server `threa-channel` (from `extensions/claude-code-remote`) whose `send` and `reply` tools carry channel invocation ids; `reply` is what closes a channel request. This package's server registers as `threa` and its `send_message` posts a plain message as the API key's identity. It never closes a channel request. In a bridged session, answer channel events with the channel's `reply`; use `threa send` / `send_message` for everything else.

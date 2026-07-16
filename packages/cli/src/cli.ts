@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util"
+import { skillCommand } from "./commands/skill"
 import { ThreaApiClient } from "./api-client"
 import { TokenStore } from "./token-store"
 import { attachmentCommand } from "./commands/attachments"
@@ -43,6 +44,7 @@ const COMMANDS: CommandSpec[] = [
   labelCommand,
   unlabelCommand,
   delegationsCommand,
+  skillCommand,
   mcpCommand,
 ]
 
@@ -123,6 +125,14 @@ export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult
     if (spec.serve) {
       await spec.run(SERVE_STUB, positionals, values)
       return { exitCode: 0, stdout: "", stderr: "", serve: true }
+    }
+    if (spec.noConfig) {
+      const payload = await spec.run(SERVE_STUB, positionals, values)
+      return {
+        exitCode: 0,
+        stdout: `${formatSuccess(spec, payload, { json: values.json === true, isTTY })}\n`,
+        stderr: "",
+      }
     }
     const config = deps.config ?? loadConfig()
     const client = new ThreaApiClient({
