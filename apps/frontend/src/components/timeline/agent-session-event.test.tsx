@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import type { StreamEvent } from "@threa/types"
 import * as contextsModule from "@/contexts"
@@ -233,7 +233,7 @@ describe("AgentSessionEvent", () => {
       expect(onStopSession).toHaveBeenCalledWith("session_run")
     })
 
-    it("Redirect prepares runtime steering, focuses the surface's composer, and shows the fold-in hint", () => {
+    it("Redirect prepares runtime steering before focusing the surface's composer", async () => {
       const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
       const onSteerSession = vi.fn()
 
@@ -259,14 +259,20 @@ describe("AgentSessionEvent", () => {
       fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
 
       expect(onSteerSession).toHaveBeenCalledTimes(1)
-      expect(focusAtEnd).toHaveBeenCalledWith(zoneEditor)
+      await waitFor(() => expect(focusAtEnd).toHaveBeenCalledWith(zoneEditor))
       expect(screen.getByText("Ariadne will fold your message into the current work")).toBeInTheDocument()
     })
 
-    it("Redirect calls onRedirect (board card) instead of walking the DOM, and shows the hint", () => {
+    it("Redirect prepares steering before opening the board composer", async () => {
       const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
       const onRedirect = vi.fn()
-      const onSteerSession = vi.fn()
+      let finishSteer!: () => void
+      const onSteerSession = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishSteer = resolve
+          })
+      )
 
       // No [data-editor-zone] in the tree — the board card has none; the surface
       // owns opening + focusing its own composer via onRedirect.
@@ -281,8 +287,10 @@ describe("AgentSessionEvent", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
 
-      expect(onRedirect).toHaveBeenCalledTimes(1)
       expect(onSteerSession).toHaveBeenCalledTimes(1)
+      expect(onRedirect).not.toHaveBeenCalled()
+      finishSteer()
+      await waitFor(() => expect(onRedirect).toHaveBeenCalledTimes(1))
       expect(focusAtEnd).not.toHaveBeenCalled()
       expect(screen.getByText("Ariadne will fold your message into the current work")).toBeInTheDocument()
     })

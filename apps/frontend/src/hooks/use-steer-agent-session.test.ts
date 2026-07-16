@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { act, renderHook, waitFor } from "@testing-library/react"
+import { act, renderHook } from "@testing-library/react"
 import { commandsApi } from "@/api"
 import { consumeComposerCommandRequest } from "@/stores/composer-command-request-store"
 import { useSteerAgentSession } from "./use-steer-agent-session"
@@ -16,18 +16,18 @@ describe("useSteerAgentSession", () => {
     ])
     const { result } = renderHook(() => useSteerAgentSession("ws_1", "stream_1"))
 
-    act(() => result.current())
+    await act(() => result.current())
 
-    await waitFor(() => expect(commandsApi.listForStream).toHaveBeenCalledWith("ws_1", "stream_1"))
-    await waitFor(() => expect(consumeComposerCommandRequest("stream_1")).toBe("/steer "))
+    expect(commandsApi.listForStream).toHaveBeenCalledWith("ws_1", "stream_1")
+    expect(consumeComposerCommandRequest("stream_1")).toBe("/steer ")
   })
 
   it("leaves persona composers unchanged when no runtime steer command is advertised", async () => {
     const { result } = renderHook(() => useSteerAgentSession("ws_1", "stream_2"))
 
-    act(() => result.current())
+    await act(() => result.current())
 
-    await waitFor(() => expect(commandsApi.listForStream).toHaveBeenCalled())
+    expect(commandsApi.listForStream).toHaveBeenCalled()
     expect(consumeComposerCommandRequest("stream_2")).toBeNull()
   })
 })

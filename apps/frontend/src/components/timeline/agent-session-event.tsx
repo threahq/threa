@@ -40,7 +40,7 @@ interface AgentSessionEventProps {
    */
   onRedirect?: () => void
   /** Route the next composed message through the runtime's /steer command when available. */
-  onSteerSession?: () => void
+  onSteerSession?: () => Promise<void>
 }
 
 type SessionStatus = "running" | "retrying" | "completed" | "failed" | "deleted"
@@ -326,10 +326,10 @@ export function AgentSessionEvent({
 
   // Redirect focuses the composer. External runtimes prepend /steer to the
   // next message; hosted agents keep their existing mid-run fold-in path.
-  const handleRedirect = (e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleRedirect = async (e: React.MouseEvent<HTMLButtonElement>) => {
     if (onRedirect) {
       // The surface owns opening + focusing its composer (board card).
-      onSteerSession?.()
+      await onSteerSession?.()
       onRedirect()
     } else {
       // No composer on this surface (non-member public channel, archived or
@@ -337,7 +337,7 @@ export function AgentSessionEvent({
       // can't happen.
       const editor = findVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
       if (!editor) return
-      onSteerSession?.()
+      await onSteerSession?.()
       focusAtEnd(editor)
     }
     if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)

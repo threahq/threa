@@ -730,7 +730,7 @@ export interface TimelineItemRenderContext {
   /** Click handler for the session card's Stop button. */
   onStopSession?: (sessionId: string) => void
   /** Prepare the composer to dispatch its next message through /steer when supported. */
-  onSteerSession?: () => void
+  onSteerSession?: () => Promise<void>
   /**
    * followUpIds that have a matching `agent:follow_up_cancelled` row in the
    * loaded window. Lets a scheduled follow-up card show its cancelled state
