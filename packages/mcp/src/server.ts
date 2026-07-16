@@ -3,6 +3,7 @@ import { ThreaApiClient } from "./api-client"
 import type { ThreaMcpConfig } from "./config"
 import { registerAttachmentTools } from "./tools/attachments"
 import { registerConversationTools } from "./tools/conversations"
+import { registerDelegationTools } from "./tools/delegations"
 import { registerIdentityTools } from "./tools/identity"
 import { registerLabelTools } from "./tools/labels"
 import { registerMemoTools } from "./tools/memos"
@@ -26,7 +27,13 @@ const INSTRUCTIONS =
   "key actor and found-or-created by name). Memory: search_memos searches GAM (the knowledge extracted from " +
   "this workspace's conversations) — search it before asking a human — and get_memo traces a memo to its " +
   "source messages. Attachments: search_attachments (by filename or extracted content), get_attachment " +
-  "(metadata plus extracted text), get_attachment_download_url (short-lived signed URL for the raw bytes)."
+  "(metadata plus extracted text), get_attachment_download_url (short-lived signed URL for the raw bytes). " +
+  "Delegations: close the loop on a delegated task with list_delegations (the open queue) → claim_delegation " +
+  "(returns a claim token shown once and stored in memory for this session; 15-min TTL) → " +
+  "report_delegation_status / delegation_heartbeat while working (renew the claim) → complete_delegation or " +
+  "fail_delegation. A completed result is posted into the delegation's stream so GAM memorizes it. Lifecycle " +
+  "tools reuse the stored token; pass claim_token to override or to recover after a server restart. " +
+  "request_delegation_access is bot-key only."
 
 export function createThreaMcpServer(config: ThreaMcpConfig): McpServer {
   const server = new McpServer({ name: "threa", version: "0.1.0" }, { instructions: INSTRUCTIONS })
@@ -44,6 +51,7 @@ export function createThreaMcpServer(config: ThreaMcpConfig): McpServer {
   registerLabelTools(server, client)
   registerMemoTools(server, client)
   registerAttachmentTools(server, client)
+  registerDelegationTools(server, client)
 
   return server
 }

@@ -1,5 +1,6 @@
 // Mirrors @threa/types constants; inlined because @threa/mcp stays dependency-light
 // against the version-pinned public API.
+export const CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
 export const STREAM_TYPES = ["scratchpad", "channel", "dm", "thread", "system"] as const
 export const CONVERSATION_STATUSES = ["active", "stalled", "resolved"] as const
 export const MEMO_TYPES = ["message", "conversation"] as const

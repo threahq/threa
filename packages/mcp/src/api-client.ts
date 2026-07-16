@@ -52,8 +52,8 @@ export class ThreaApiClient {
     return this.request<T>("GET", path)
   }
 
-  post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("POST", path, body)
+  post<T>(path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
+    return this.request<T>("POST", path, body, headers)
   }
 
   patch<T>(path: string, body?: unknown): Promise<T> {
@@ -68,7 +68,12 @@ export class ThreaApiClient {
     return `${this.baseUrl}/api/v1/workspaces/${this.workspaceId}${path}`
   }
 
-  private async request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: Method,
+    path: string,
+    body?: unknown,
+    extraHeaders?: Record<string, string>
+  ): Promise<T> {
     const url = this.workspacePath(path)
     const hasBody = body !== undefined
     // 429 is safe to retry for any method: the request never executed server-side.
@@ -83,6 +88,7 @@ export class ThreaApiClient {
           headers: {
             Authorization: `Bearer ${this.apiKey}`,
             ...(hasBody ? { "Content-Type": "application/json" } : {}),
+            ...(extraHeaders ?? {}),
           },
           ...(hasBody ? { body: JSON.stringify(body) } : {}),
         })
