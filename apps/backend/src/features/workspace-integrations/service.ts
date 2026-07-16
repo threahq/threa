@@ -4,6 +4,7 @@ import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
 import { workspaceIntegrationId } from "../../lib/id"
 import type { GitHubAppConfig, LinearOAuthConfig } from "../../lib/env"
+import type { ControlPlaneClient } from "../../lib/control-plane-client"
 import { UserRepository } from "../workspaces"
 import {
   permissionsForRole,
@@ -164,7 +165,13 @@ interface WorkspaceIntegrationServiceDeps {
   pool: Pool
   github: GitHubAppConfig
   linear: LinearOAuthConfig
+  // Route-registration collaborators. Null in local single-region dev (no
+  // control plane); route (un)registration then degrades to a debug log.
+  controlPlaneClient?: ControlPlaneClient | null
+  region?: string | null
 }
+
+const GITHUB_ROUTE_PROVIDER = WorkspaceIntegrationProviders.GITHUB
 
 export class WorkspaceIntegrationService {
   private app: App | null
@@ -239,11 +246,83 @@ export class WorkspaceIntegrationService {
   }
 
   async disconnectGithubIntegration(workspaceId: string): Promise<void> {
+    const record = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.GITHUB
+    )
+    const installationId = record ? this.resolveInstallationId(workspaceId, record) : null
+
     await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.GITHUB, {
       status: WorkspaceIntegrationStatuses.INACTIVE,
       credentials: {},
       metadata: {},
     })
+
+    // Drop the CP routing entry so webhooks for this installation stop fanning
+    // to this region. Read before the update clears credentials; the plaintext
+    // column survives the clear but we already captured the id.
+    if (installationId) {
+      await this.unregisterGithubRoute(workspaceId, installationId)
+    }
+  }
+
+  /**
+   * Backfill one workspace's GitHub reverse index: derive the installation id
+   * (plaintext column, else decrypt), persist it to the plaintext column, and
+   * register the CP route. Idempotent — safe to re-run. Returns the number of
+   * integrations processed (0 or 1). A row whose credentials can't be decrypted
+   * is skipped (processed 0) rather than retried forever; a route-registration
+   * failure throws so the backfill framework retries the chunk.
+   */
+  async backfillGithubRoute(workspaceId: string): Promise<{ processed: number }> {
+    const record = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.GITHUB
+    )
+    if (!record || record.status !== WorkspaceIntegrationStatuses.ACTIVE) {
+      return { processed: 0 }
+    }
+
+    const installationId = this.resolveInstallationId(workspaceId, record)
+    if (!installationId) {
+      log.warn({ workspaceId }, "GitHub installation id could not be resolved during backfill; skipping")
+      return { processed: 0 }
+    }
+
+    // Persist the plaintext id under an optimistic status='active' guard so a
+    // concurrent disconnect (which flips status to 'inactive' and unregisters
+    // the CP route) can't be resurrected by a stale re-register here. The write
+    // is idempotent, so running it unconditionally also serves as the guard
+    // when the id already matches (INV-20).
+    const updated = await WorkspaceIntegrationRepository.update(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.GITHUB,
+      { installationId },
+      { expectedStatus: WorkspaceIntegrationStatuses.ACTIVE }
+    )
+    if (!updated) {
+      return { processed: 0 }
+    }
+
+    await this.registerGithubRoute(workspaceId, installationId)
+    return { processed: 1 }
+  }
+
+  /**
+   * The plaintext `installation_id` column is the source of truth for the
+   * reverse index; fall back to decrypting credentials for pre-backfill rows
+   * that predate the column.
+   */
+  private resolveInstallationId(workspaceId: string, record: WorkspaceIntegrationRecord): string | null {
+    if (record.installationId) return record.installationId
+    try {
+      return String(this.parseCredentials(workspaceId, record.credentials).installationId)
+    } catch {
+      return null
+    }
   }
 
   async syncGithubRepositories(workspaceId: string): Promise<GitHubWorkspaceIntegration> {
@@ -500,6 +579,7 @@ export class WorkspaceIntegrationService {
         credentials: {},
         metadata: {},
         installedBy: installedByUserId,
+        installationId: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -522,6 +602,42 @@ export class WorkspaceIntegrationService {
         code: "GITHUB_INTEGRATION_ACTIVATION_FAILED",
       })
     }
+
+    await this.registerGithubRoute(workspaceId, String(installationId))
+  }
+
+  /**
+   * Register this workspace's GitHub installation in the control-plane routing
+   * table so webhooks for the installation fan out to this region. The install
+   * callback already transits CP, so CP being reachable is a precondition —
+   * failure here fails loudly (INV-11). Null client = local single-region dev.
+   */
+  private async registerGithubRoute(workspaceId: string, installationId: string): Promise<void> {
+    const client = this.deps.controlPlaneClient
+    const region = this.deps.region
+    if (!client || !region) {
+      log.debug({ workspaceId, installationId }, "Skipping GitHub route registration — no control plane configured")
+      return
+    }
+    await client.registerIntegrationRoute({
+      provider: GITHUB_ROUTE_PROVIDER,
+      externalId: installationId,
+      region,
+      workspaceId,
+    })
+  }
+
+  private async unregisterGithubRoute(workspaceId: string, installationId: string): Promise<void> {
+    const client = this.deps.controlPlaneClient
+    if (!client) {
+      log.debug({ workspaceId, installationId }, "Skipping GitHub route unregistration — no control plane configured")
+      return
+    }
+    await client.unregisterIntegrationRoute({
+      provider: GITHUB_ROUTE_PROVIDER,
+      externalId: installationId,
+      workspaceId,
+    })
   }
 
   private async refreshGithubCredentials(
@@ -568,6 +684,7 @@ export class WorkspaceIntegrationService {
         ),
         metadata: nextMetadata,
         installedBy: installedByOverride ?? record.installedBy,
+        installationId: String(installationId),
       })
 
       return {
@@ -881,6 +998,7 @@ export class WorkspaceIntegrationService {
       credentials: {},
       metadata: {},
       installedBy: installedByUserId,
+      installationId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     }

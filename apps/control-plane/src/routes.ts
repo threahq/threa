@@ -11,6 +11,7 @@ import {
 import { createControlPlaneAuthHandlers, createAuthStubHandlers } from "./features/auth"
 import { createAccountsHandlers, AccountsService } from "./features/accounts"
 import { createIntegrationHandlers } from "./features/integrations"
+import { createIntegrationRouteHandlers } from "./features/integration-routes"
 import { createWorkspaceHandlers, type ControlPlaneWorkspaceService } from "./features/workspaces"
 import { createInvitationShadowHandlers, type InvitationShadowService } from "./features/invitation-shadows"
 import { createWaitlistHandlers, type WaitlistService } from "./features/waitlist"
@@ -93,6 +94,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const shadow = createInvitationShadowHandlers({ shadowService })
   const waitlist = createWaitlistHandlers({ waitlistService })
   const integrations = createIntegrationHandlers({ workspaceService, regions: deps.regions })
+  const integrationRoutes = createIntegrationRouteHandlers({ pool })
   const backoffice = createBackofficeHandlers({ backofficeService })
   const featureFlags = createFeatureFlagHandlers({ featureFlagService })
   const backofficeAuthz = createBackofficeAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
@@ -215,6 +217,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/internal/invitation-shadows/:id/claim", internalAuth, shadow.notifyClaim)
   app.post("/internal/workspaces/:workspaceId/members/:userId/role", internalAuth, internalAuthz.changeRole)
   app.delete("/internal/workspaces/:workspaceId/members/:userId", internalAuth, internalAuthz.removeMember)
+  app.put("/internal/integration-routes", internalAuth, integrationRoutes.register)
+  app.delete("/internal/integration-routes", internalAuth, integrationRoutes.unregister)
 
   app.use(errorHandler)
 }

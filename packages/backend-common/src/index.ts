@@ -122,6 +122,7 @@ export {
   agentConfigOverrideId,
   personaConfigDraftId,
   personaConfigRevisionId,
+  integrationRouteId,
 } from "./id"
 export {
   parseCookies,

@@ -28,7 +28,7 @@ import {
 } from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
 import { GiphyService } from "./features/giphy"
-import { WorkspaceIntegrationService } from "./features/workspace-integrations"
+import { WorkspaceIntegrationService, registerGithubInstallationBackfill } from "./features/workspace-integrations"
 import { WorkspaceAuthzService } from "./features/workspace-authz"
 import {
   WorkspaceService,
@@ -641,6 +641,8 @@ export async function startServer(): Promise<ServerInstance> {
     pool,
     github: config.github,
     linear: config.linear,
+    controlPlaneClient,
+    region: config.region,
   })
   const linkPreviewService = new LinkPreviewService({ pool, streamService, memoExplorerService, delegationService })
   const giphyService = new GiphyService({ config: config.giphy })
@@ -1246,6 +1248,7 @@ export async function startServer(): Promise<ServerInstance> {
   // Generic backfill framework. Register definitions BEFORE the workers can run
   // so a redelivered plan/chunk job can always resolve its definition by name.
   registerMentionBackfill()
+  registerGithubInstallationBackfill({ workspaceIntegrationService })
   jobQueue.registerHandler(JobQueues.BACKFILL_PLAN, createBackfillPlanWorker({ pool }), {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
