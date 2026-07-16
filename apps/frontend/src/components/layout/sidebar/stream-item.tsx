@@ -7,6 +7,7 @@ import {
   FolderPlus,
   Hash,
   Link2,
+  Loader2,
   Lock,
   MessageSquareText,
   Plus,
@@ -169,16 +170,16 @@ export function AgentActivityDot() {
 }
 
 /**
- * The preview-line takeover shown while an agent works: `✦ {label}` in the agent
- * accent, replacing the last-message preview for the run's duration. Same text
- * size/height as {@link StreamItemPreview} so the swap shifts nothing (INV-21).
+ * The preview-line takeover shown while an agent works: spinner + `{label}` in
+ * the agent accent, replacing the last-message preview for the run's duration.
+ * Same text size/height as {@link StreamItemPreview} so the swap shifts nothing
+ * (INV-21). The spinning Loader2 is the app's one "working" glyph — the session
+ * card, header chip, and follow pill all use it.
  */
 export function AgentActivityPreviewLine({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-1.5 text-xs text-primary">
-      <span aria-hidden className="shrink-0">
-        ✦
-      </span>
+      <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin" />
       <span className="truncate">{label}</span>
     </div>
   )
