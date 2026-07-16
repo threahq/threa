@@ -63,7 +63,7 @@ test("stream #slug resolves the channel then reads the stream and its messages",
     })
   )
 
-  const result = await run(["stream", "#eng", "--json"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["streams", "read", "#eng", "--json"], { config: TEST_CONFIG, isTTY: false })
 
   expect(result.exitCode).toBe(0)
   const payload = JSON.parse(result.stdout) as { stream: { id: string } }
@@ -106,7 +106,7 @@ test("search what=messages posts to /messages/search and maps --stream to stream
 test("find-by-metadata parses k=v positionals into the metadata body", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: [] }))
 
-  const result = await run(["find-by-metadata", "github.pr=org/repo#42", "--json"], {
+  const result = await run(["messages", "find-by-metadata", "github.pr=org/repo#42", "--json"], {
     config: TEST_CONFIG,
     isTTY: false,
   })
@@ -138,16 +138,54 @@ test("an unknown flag is a usage error (exit 2) carrying the command usage", asy
 })
 
 test("a missing required positional is a usage error (exit 2)", async () => {
-  const result = await run(["stream"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["streams", "read"], { config: TEST_CONFIG, isTTY: false })
 
   expect(result.exitCode).toBe(2)
   expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
 })
 
+test("a bare noun with no subcommand is a usage error (exit 2) listing its verbs", async () => {
+  const result = await run(["delegations"], { config: TEST_CONFIG, isTTY: false })
+
+  expect(result.exitCode).toBe(2)
+  const err = JSON.parse(result.stderr) as { code: string; message: string; hint?: string }
+  expect(err.code).toBe("USAGE")
+  expect(err.message).toContain("claim")
+  expect(err.hint).toContain("Subcommands:")
+  expect(fetchSpy).not.toHaveBeenCalled()
+})
+
+test("an unknown subcommand under a noun is a usage error (exit 2) naming valid verbs", async () => {
+  const result = await run(["streams", "frobnicate"], { config: TEST_CONFIG, isTTY: false })
+
+  expect(result.exitCode).toBe(2)
+  const err = JSON.parse(result.stderr) as { code: string; message: string }
+  expect(err.code).toBe("USAGE")
+  expect(err.message).toContain("read")
+  expect(fetchSpy).not.toHaveBeenCalled()
+})
+
+test("noun --help lists the noun's subcommands, exit 0", async () => {
+  const result = await run(["messages", "--help"], { config: TEST_CONFIG, isTTY: true })
+
+  expect(result.exitCode).toBe(0)
+  for (const verb of ["send", "edit", "delete", "find-by-metadata"]) {
+    expect(result.stdout).toContain(verb)
+  }
+})
+
+test("noun verb --help documents that verb's flags, exit 0", async () => {
+  const result = await run(["messages", "send", "--help"], { config: TEST_CONFIG, isTTY: true })
+
+  expect(result.exitCode).toBe(0)
+  expect(result.stdout).toContain("threa messages send")
+  expect(result.stdout).toContain("--new-conversation")
+})
+
 test("an API error surfaces as exit 1 with the scope hint on 404", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(404, { error: "gone", code: "NOT_FOUND" }))
 
-  const result = await run(["memo", "memo_x", "--json"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["memos", "get", "memo_x", "--json"], { config: TEST_CONFIG, isTTY: false })
 
   expect(result.exitCode).toBe(1)
   const err = JSON.parse(result.stderr) as { code: string; hint?: string }
@@ -159,7 +197,20 @@ test("top-level --help lists every command, exit 0", async () => {
   const result = await run(["--help"], { config: TEST_CONFIG, isTTY: true })
 
   expect(result.exitCode).toBe(0)
-  for (const name of ["whoami", "streams", "stream", "search", "conversation", "memo", "attachment", "mcp"]) {
+  for (const name of [
+    "whoami",
+    "messages",
+    "streams",
+    "conversations",
+    "users",
+    "memos",
+    "attachments",
+    "labels",
+    "delegations",
+    "search",
+    "skill",
+    "mcp",
+  ]) {
     expect(result.stdout).toContain(name)
   }
 })

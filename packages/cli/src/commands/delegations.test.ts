@@ -148,10 +148,10 @@ test("an explicit --claim-token overrides the stored one", async () => {
   expect(callbackHeader(1)).toBe("tok_explicit")
 })
 
-test("delegations with no subcommand lists the open queue with the since filter", async () => {
+test("delegations list returns the open queue with the since filter", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: [{ id: "dlg_1" }] }))
 
-  const result = await run(["delegations", "--since", "2026-07-16T00:00:00.000Z"], {
+  const result = await run(["delegations", "list", "--since", "2026-07-16T00:00:00.000Z"], {
     config: TEST_CONFIG,
     isTTY: false,
   })

@@ -1,13 +1,22 @@
 import { listConversations, readConversation } from "../ops"
-import { cursorFooter, enumFlag, intFlag, stringFlag, UsageError, type CommandSpec } from "../output"
+import {
+  cursorFooter,
+  enumFlag,
+  intFlag,
+  renderList,
+  stringFlag,
+  UsageError,
+  type NounSpec,
+  type VerbSpec,
+} from "../output"
 import { CONVERSATION_STATUSES } from "../tools/constants"
 
-export const conversationsCommand: CommandSpec = {
-  name: "conversations",
+const listVerb: VerbSpec = {
+  name: "list",
   summary: "List conversations, optionally scoped to a stream",
-  usage: "threa conversations [--stream ref] [--status s] [--cursor c] [--limit n]",
+  usage: "threa conversations list [--stream ref] [--status s] [--cursor c] [--limit n]",
   help:
-    "threa conversations [flags]\n\n" +
+    "threa conversations list [flags]\n\n" +
     "List conversations (grouped runs of messages under a stream's effective root), newest activity first.\n\n" +
     "Flags:\n" +
     "  --stream ref   scope to a stream (stream_ id or #slug) and its threads\n" +
@@ -31,25 +40,20 @@ export const conversationsCommand: CommandSpec = {
       cursor: stringFlag(values, "cursor"),
       limit: intFlag(values, "limit"),
     }),
-  render: (payload) => {
-    const p = payload as {
-      data?: Array<{ id?: string; status?: string; title?: string; summary?: string }>
-      hasMore?: boolean
-      cursor?: string | null
-    }
-    const rows = p.data ?? []
-    const lines = rows.map((c) => `${c.id ?? "?"}  ${c.status ?? "?"}  ${c.title ?? c.summary ?? ""}`.trimEnd())
-    lines.push(...cursorFooter(p, "cursor"))
-    return lines.join("\n") || "(no conversations)"
-  },
+  render: (payload) =>
+    renderList<{ id?: string; status?: string; title?: string; summary?: string }>(
+      payload,
+      (c) => `${c.id ?? "?"}  ${c.status ?? "?"}  ${c.title ?? c.summary ?? ""}`.trimEnd(),
+      { empty: "(no conversations)", cursorFlag: "cursor" }
+    ),
 }
 
-export const conversationCommand: CommandSpec = {
-  name: "conversation",
+const readVerb: VerbSpec = {
+  name: "read",
   summary: "Read a conversation with a page of its messages",
-  usage: "threa conversation <id> [--cursor c] [--limit n]",
+  usage: "threa conversations read <id> [--cursor c] [--limit n]",
   help:
-    "threa conversation <id> [flags]\n\n" +
+    "threa conversations read <id> [flags]\n\n" +
     "Fetch a conversation and a page of its member messages. Page with --cursor from the previous response.\n\n" +
     "Flags:\n" +
     "  --cursor c   pagination cursor from a previous response\n" +
@@ -62,7 +66,7 @@ export const conversationCommand: CommandSpec = {
   },
   run: (ctx, positionals, values) => {
     const id = positionals[0]
-    if (!id) throw new UsageError("conversation requires a <id> (a conv_ id)")
+    if (!id) throw new UsageError("conversations read requires a <id> (a conv_ id)")
     return readConversation(ctx.client, ctx.resolver, {
       conversationId: id,
       cursor: stringFlag(values, "cursor"),
@@ -90,4 +94,10 @@ export const conversationCommand: CommandSpec = {
     }
     return lines.join("\n")
   },
+}
+
+export const conversationsNoun: NounSpec = {
+  name: "conversations",
+  summary: "List conversations and read one with its messages",
+  verbs: [listVerb, readVerb],
 }

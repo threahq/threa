@@ -67,22 +67,22 @@ Mint a key in the app. The prefix sets the identity. A `threa_uk_` key is a pers
 
 A key is bound to one workspace, and a request for another workspace returns 403. What a key can do inside its workspace is set by the scopes granted to it. A key that lacks the scope for a resource does not receive a 403 on that route. It receives a 404, because Threa hides existence from keys that cannot see a resource. A 404 from any command or tool therefore means either the resource is absent or the key lacks the scope.
 
-Scopes map to command and tool areas as follows. Some operations span more than one scope. Reading a stream (`threa stream`, the `read_stream` tool) reads a stream and its messages in one call, so it needs both `streams:read` and `messages:read`, and a missing scope on either leg fails the whole call. Search routes by its `what`, so it needs the scope for the kind you search.
+Scopes map to command and tool areas as follows. Some operations span more than one scope. Reading a stream (`threa streams read`, the `read_stream` tool) reads a stream and its messages in one call, so it needs both `streams:read` and `messages:read`, and a missing scope on either leg fails the whole call. Search routes by its `what`, so it needs the scope for the kind you search.
 
-| Scope               | Commands (MCP tools)                                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------- |
-| none                | `whoami`                                                                                    |
-| `streams:read`      | `streams`, `stream` (`list_streams`, `read_stream`)                                         |
-| `users:read`        | `users` (`list_users`)                                                                      |
-| `messages:read`     | `stream` messages leg, `conversation`, `conversations`, `find-by-metadata`                  |
-| `messages:search`   | `search --what messages`                                                                    |
-| `messages:write`    | `send`, `edit`, `delete` (`send_message`, `update_message`, `delete_message`)               |
-| `memos:read`        | `search --what memos`, `memo` (`get_memo`)                                                  |
-| `attachments:read`  | `search --what attachments`, `attachment` (`get_attachment`, `get_attachment_download_url`) |
-| `labels:read`       | `labels` (`list_labels`)                                                                    |
-| `labels:write`      | `label`, `unlabel` (`apply_label`, `remove_label`)                                          |
-| `delegations:read`  | `delegations` (`list_delegations`)                                                          |
-| `delegations:write` | `delegations claim`, `update`, `finish`, `request-access`                                   |
+| Scope               | Commands (MCP tools)                                                                                     |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| none                | `whoami`                                                                                                 |
+| `streams:read`      | `streams list`, `streams read` (`list_streams`, `read_stream`)                                           |
+| `users:read`        | `users list` (`list_users`)                                                                              |
+| `messages:read`     | `streams read` messages leg, `conversations read`, `conversations list`, `messages find-by-metadata`     |
+| `messages:search`   | `search --what messages`                                                                                 |
+| `messages:write`    | `messages send`, `messages edit`, `messages delete` (`send_message`, `update_message`, `delete_message`) |
+| `memos:read`        | `search --what memos`, `memos get` (`get_memo`)                                                          |
+| `attachments:read`  | `search --what attachments`, `attachments get` (`get_attachment`, `get_attachment_download_url`)         |
+| `labels:read`       | `labels list` (`list_labels`)                                                                            |
+| `labels:write`      | `labels add`, `labels remove` (`apply_label`, `remove_label`)                                            |
+| `delegations:read`  | `delegations list` (`list_delegations`)                                                                  |
+| `delegations:write` | `delegations claim`, `delegations update`, `delegations finish`, `delegations request-access`            |
 
 ## Rate limits
 
@@ -96,7 +96,7 @@ Command output is JSON when piped, or human-readable text on a terminal. MCP too
 
 Identifier arguments take either a raw id or a sigil-prefixed slug, so you seldom have to look an id up first. A stream argument accepts a `stream_…` id or a `#channel-slug`, and a `#slug` resolves to the channel whose slug matches exactly. A user argument accepts a `usr_…` or `bot_…` id or an `@user-slug`, and an `@slug` resolves to the user whose slug matches exactly. Resolution is cached for five minutes. A ref that matches nothing or matches more than one candidate fails before any API call with the code `UNRESOLVED_REF` and a message that lists the candidates or points you at the list command or tool.
 
-Two limits come from the public API itself. An `@user-slug` cannot stand in for a DM stream, because DM streams do not expose their counterpart on the wire and there is no lookup for the DM you share with a given user. Find the DM's `stream_…` id with `threa streams --type dm` and `threa stream <id> --members`, then pass that id. Bots and personas are not queryable by slug, because the public API has no bot or persona listing, so `@slug` resolves users only and you pass a `bot_…` or `persona_…` id directly.
+Two limits come from the public API itself. An `@user-slug` cannot stand in for a DM stream, because DM streams do not expose their counterpart on the wire and there is no lookup for the DM you share with a given user. Find the DM's `stream_…` id with `threa streams list --type dm` and `threa streams read <id> --members`, then pass that id. Bots and personas are not queryable by slug, because the public API has no bot or persona listing, so `@slug` resolves users only and you pass a `bot_…` or `persona_…` id directly.
 
 ## Self-descriptive payloads
 
@@ -104,24 +104,26 @@ Read payloads carry enough identity that a standard read needs no follow-up call
 
 ## Command reference
 
+Commands are grouped by noun, each with a verb subcommand (`threa messages send`, `threa streams read`). Every noun requires a verb; `threa <noun>` alone and `threa <noun> --help` list that noun's verbs. There are no aliases. `whoami`, `search`, `skill`, and `mcp` are top-level.
+
 Identity: `whoami` returns the principal, the resolved API version, and the base URL and workspace the client is bound to. Run it first to confirm the key.
 
-Streams: `streams` filters by type and name and pages with `--after`. `stream <ref>` returns one stream together with a page of its messages in a single call, paging the messages by numeric `--before` and `--after` sequence, and returns the stream's members too when `--members` is set.
+Streams: `streams list` filters by type and name and pages with `--after`. `streams read <ref>` returns one stream together with a page of its messages in a single call, paging the messages by numeric `--before` and `--after` sequence, and returns the stream's members too when `--members` is set.
 
-Users: `users` filters by name or email, and pages with `--after`.
+Users: `users list` filters by name or email, and pages with `--after`.
 
 Search: `search <query> --what messages|memos|attachments` is one command routed by `--what`. With `messages` it searches accessible streams full-text, by meaning with `--semantic`, or as a literal phrase with `--exact`, and a query is required. With `memos` it searches the knowledge extracted from the workspace's conversations, the query is optional and matches by meaning, and an empty query browses recent memos. With `attachments` it searches by filename or extracted content, and a query is required. Each `--what` accepts only its own filters, and passing another filter returns an error that names it.
 
-Messages: `find-by-metadata k=v` looks messages up by the metadata stamped on them at send time. `send <stream-ref> <content>` posts markdown, reads stdin when content is `-`, and starts or resumes a conversation with `--new-conversation` or `--conversation`. `edit <message-id> <content>` and `delete <message-id>` act on messages the key itself sent.
+Messages: `messages find-by-metadata k=v` looks messages up by the metadata stamped on them at send time. `messages send <stream-ref> <content>` posts markdown, reads stdin when content is `-`, and starts or resumes a conversation with `--new-conversation` or `--conversation`. `messages edit <message-id> <content>` and `messages delete <message-id>` act on messages the key itself sent.
 
-Conversations: `conversations` lists conversations under a stream's root. `conversation <id>` returns one conversation together with a page of its messages and pages with `--cursor`.
+Conversations: `conversations list` lists conversations under a stream's root. `conversations read <id>` returns one conversation together with a page of its messages and pages with `--cursor`.
 
-Memos: `memo <id>` returns a memo with its source messages. Find memos with `search --what memos`.
+Memos: `memos get <id>` returns a memo with its source messages. Find memos with `search --what memos`.
 
-Attachments: `attachment <id>` returns metadata and extracted text, and `attachment <id> --url` returns a short-lived signed URL for the bytes. Find attachments with `search --what attachments`.
+Attachments: `attachments get <id>` returns metadata and extracted text, and `attachments get <id> --url` returns a short-lived signed URL for the bytes. Find attachments with `search --what attachments`.
 
-Labels: `labels` lists the key actor's labels, `label <name> <stream-ref>` attaches a label to a stream by name, and `unlabel <name> <stream-ref>` removes the assignment.
+Labels: `labels list` lists the key actor's labels, `labels add <name> <stream-ref>` attaches a label to a stream by name, and `labels remove <name> <stream-ref>` removes the assignment.
 
-Delegations: `delegations` shows open tasks and filters with `--since`. `delegations claim <id> --label who` claims a task and returns a claim token shown once. `delegations update <id>` keeps a claim alive: pass `--note` to mark the task running and post a progress note, or omit it for a pure heartbeat, and either way the claim's TTL is renewed. `delegations finish <id> --outcome complete|fail` ends the task, with `--result` posted into the delegation's stream on success or `--error` recorded on the card on failure. `delegations request-access <id>` is for bot keys that need a grant on the stream.
+Delegations: `delegations list` shows open tasks and filters with `--since`. `delegations claim <id> --label who` claims a task and returns a claim token shown once. `delegations update <id>` keeps a claim alive: pass `--note` to mark the task running and post a progress note, or omit it for a pure heartbeat, and either way the claim's TTL is renewed. `delegations finish <id> --outcome complete|fail` ends the task, with `--result` posted into the delegation's stream on success or `--error` recorded on the card on failure. `delegations request-access <id>` is for bot keys that need a grant on the stream.
 
 The claim token is persisted to `~/.threa/state.json` at mode 0600, keyed by workspace and delegation, and written atomically. Update and finish reuse it across separate invocations, and finish clears it. Pass `--claim-token` to override the stored token or to recover it on another machine. Override the file path with `THREA_STATE_FILE`. The MCP head shares the same store, so a claim made through one head is usable from the other. A corrupt state file logs one warning to stderr and starts empty. A failed write surfaces as a delegation-command error rather than passing silently.

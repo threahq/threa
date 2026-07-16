@@ -29,7 +29,7 @@ Prefer the CLI when you have a shell. Check for it first: `threa whoami` if it i
 
 ## Channel sessions have a different `send` (use `reply` to answer)
 
-If your session is bridged through the Threa remote-control channel, you also have the channel MCP server (`threa-channel`) with `send` and `reply` tools bound to channel invocation ids. Those are the ONLY way to answer a `<channel>` event: `reply` closes the request. This skill's `threa send` command (and the workspace server's `send_message` tool) posts a plain message as the API key's identity and never closes a channel request. Rule: answering a channel event → channel `reply`; posting anything else into a stream → `threa send`. If you answer a channel event with `threa send`, the message appears but the request stays open until it expires.
+If your session is bridged through the Threa remote-control channel, you also have the channel MCP server (`threa-channel`) with `send` and `reply` tools bound to channel invocation ids. Those are the ONLY way to answer a `<channel>` event: `reply` closes the request. This skill's `threa messages send` command (and the workspace server's `send_message` tool) posts a plain message as the API key's identity and never closes a channel request. Rule: answering a channel event → channel `reply`; posting anything else into a stream → `threa messages send`. If you answer a channel event with `threa messages send`, the message appears but the request stays open until it expires.
 
 ## Start with `whoami`
 
@@ -37,9 +37,9 @@ Run `whoami` (tool `whoami`) before anything else. It confirms the key works, te
 
 ## Refer to streams and users by slug
 
-You rarely need to look up an id first. Any stream argument takes a `stream_…` id or a `#channel-slug`: the `stream` positional, `send`/`label`/`unlabel` stream refs, `search --stream`, `conversations --stream`, `find-by-metadata --stream` (tools `read_stream`, `send_message`, `apply_label`, `remove_label`, `search.stream_ids`, `list_conversations.stream_id`, `find_messages_by_metadata.stream_id`). Any user argument takes a `usr_`/`bot_` id or an `@user-slug`. A ref that matches nothing or is ambiguous fails before any API call with `code: "UNRESOLVED_REF"`, listing the candidates or pointing you at `streams`/`users`.
+You rarely need to look up an id first. Any stream argument takes a `stream_…` id or a `#channel-slug`: the `streams read` positional, `messages send`/`labels add`/`labels remove` stream refs, `search --stream`, `conversations list --stream`, `messages find-by-metadata --stream` (tools `read_stream`, `send_message`, `apply_label`, `remove_label`, `search.stream_ids`, `list_conversations.stream_id`, `find_messages_by_metadata.stream_id`). Any user argument takes a `usr_`/`bot_` id or an `@user-slug`. A ref that matches nothing or is ambiguous fails before any API call with `code: "UNRESOLVED_REF"`, listing the candidates or pointing you at `streams list`/`users list`.
 
-Two things you cannot do this way, by design of the API: an `@user-slug` will not stand in for your DM with that user (DM streams hide their counterpart on the wire), and bots and personas are not queryable by slug. For a DM, find its `stream_…` id with `threa streams --type dm` and `threa stream <id> --members`; for a bot or persona, pass its id.
+Two things you cannot do this way, by design of the API: an `@user-slug` will not stand in for your DM with that user (DM streams hide their counterpart on the wire), and bots and personas are not queryable by slug. For a DM, find its `stream_…` id with `threa streams list --type dm` and `threa streams read <id> --members`; for a bot or persona, pass its id.
 
 ## Payloads name their authors
 
@@ -52,7 +52,7 @@ Read results already carry author identity, so you seldom need a second call to 
 - The query is semantic by default and optional. Pass the idea you are after even if you do not know the exact wording; leave it empty (`--what memos` with no query) to browse the most recent memos.
 - Pass `--exact` to match a literal phrase.
 - Narrow with `--stream`, `--knowledge-type`, `--memo-type`, `--tag`, `--scope`, and `--before`/`--after`.
-- Follow a hit with `threa memo <id>` (tool `get_memo`) to see the source messages it was extracted from, so you can cite or verify the origin.
+- Follow a hit with `threa memos get <id>` (tool `get_memo`) to see the source messages it was extracted from, so you can cite or verify the origin.
 
 ## Conversation create and resume
 
@@ -62,15 +62,15 @@ A conversation groups a run of messages under a stream's root. To hold a threade
 2. Save that `conversationId`.
 3. On every later send in the same exchange, pass `--conversation <saved id>` (tool: `conversation_id`) instead of `--new-conversation`. Setting both is an error before any HTTP call.
 
-The resumed conversation must live under the same root stream as the target, or the API returns 400 `CONVERSATION_NOT_IN_ROOT`. Read a conversation and a page of its messages together with `threa conversation <id>` (tool `read_conversation`).
+The resumed conversation must live under the same root stream as the target, or the API returns 400 `CONVERSATION_NOT_IN_ROOT`. Read a conversation and a page of its messages together with `threa conversations read <id>` (tool `read_conversation`).
 
-`send` auto-generates a client message id (`mcp-<uuid>`) when you omit `--client-message-id`, so a retried send never double-posts; it is returned as `clientMessageId`. To dedup across separate attempts, stamp your own `--metadata k=v` (a flat string map) and check with `threa find-by-metadata k=v` (tool `find_messages_by_metadata`) before posting, for example `github.pr=org/repo#42`. Send content can be `-` to read from stdin, which is how you post a long body without shell-quoting it.
+`messages send` auto-generates a client message id (`mcp-<uuid>`) when you omit `--client-message-id`, so a retried send never double-posts; it is returned as `clientMessageId`. To dedup across separate attempts, stamp your own `--metadata k=v` (a flat string map) and check with `threa messages find-by-metadata k=v` (tool `find_messages_by_metadata`) before posting, for example `github.pr=org/repo#42`. Send content can be `-` to read from stdin, which is how you post a long body without shell-quoting it.
 
 ## The delegation loop
 
 A delegation is a task handed to a local agent. Run the whole loop, and treat the claim token as the thing that keeps the task yours.
 
-1. `threa delegations` (tool `list_delegations`) shows open tasks. Pass `--since <iso>` to poll for a cheap delta.
+1. `threa delegations list` (tool `list_delegations`) shows open tasks. Pass `--since <iso>` to poll for a cheap delta.
 2. Before claiming, generate and persist an idempotency key (8 to 128 chars). Then `threa delegations claim <id> --label "who you are" --idempotency-key <key>` (tool `claim_delegation`). The result carries the brief, the context refs, and a `claimToken` shown once.
 3. The token is persisted to `~/.threa/state.json` (mode 0600, keyed by workspace and delegation), so later `update` and `finish` calls reuse it across separate `threa` invocations without you passing it. The MCP head shares the same store.
 4. The claim has a 15-minute TTL. Run `threa delegations update <id>` (tool `update_delegation`) before it lapses to renew it, or the task returns to the queue. Pass `--note "..."` to also report progress on the card; omit it for a pure heartbeat.
@@ -86,14 +86,14 @@ One `search` command covers all three kinds; pick with `--what`, and pass only t
 
 - **`--what messages`**, default full-text: you know the words that appear in the message. Add `--semantic` when you know the idea but not the wording, or `--exact` to match the query as a literal phrase. Query required.
 - **`--what memos`**: search workspace memory (see the memory section). Query optional and semantic; an empty query browses recent memos.
-- **`--what attachments`**: search files by filename or extracted content, then `threa attachment <id>` (tool `get_attachment`) for the full extracted text, or `threa attachment <id> --url` (tool `get_attachment_download_url`) only when you need the raw bytes. Query required.
-- **`find-by-metadata`**: you want messages by a reference you stamped at send time, not by text. It is exact key/value AND-containment, the right tool for dedup and external-id lookup.
+- **`--what attachments`**: search files by filename or extracted content, then `threa attachments get <id>` (tool `get_attachment`) for the full extracted text, or `threa attachments get <id> --url` (tool `get_attachment_download_url`) only when you need the raw bytes. Query required.
+- **`messages find-by-metadata`**: you want messages by a reference you stamped at send time, not by text. It is exact key/value AND-containment, the right tool for dedup and external-id lookup.
 
 ## Paging
 
-Most lists return `{ data, hasMore, cursor }`. When `hasMore` is true, pass `cursor` back as the paging argument (`--after` for streams and users, `--cursor` for conversations) and repeat until `hasMore` is false. Two exceptions:
+Most lists return `{ data, hasMore, cursor }`. When `hasMore` is true, pass `cursor` back as the paging argument (`--after` for `streams list` and `users list`, `--cursor` for `conversations list`) and repeat until `hasMore` is false. Two exceptions:
 
-- `stream` pages its messages by numeric message sequence. The messages envelope is `{ data, hasMore }` with no cursor. Walk pages with `--before` (older) or `--after` (newer), taking the boundary message's `sequence`. Pass at most one. Its member list (with `--members`) pages by cursor.
+- `streams read` pages its messages by numeric message sequence. The messages envelope is `{ data, hasMore }` with no cursor. Walk pages with `--before` (older) or `--after` (newer), taking the boundary message's `sequence`. Pass at most one. Its member list (with `--members`) pages by cursor.
 - `search` returns `{ data: [...] }` and is bounded by `--limit` and time filters rather than a cursor.
 
 ## 404 can mean missing scope

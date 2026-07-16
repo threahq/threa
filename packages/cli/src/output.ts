@@ -37,11 +37,33 @@ export interface CommandSpec {
   render?(payload: unknown): string
 }
 
+/** One verb under a noun (`threa <noun> <verb>`): its own flags, help, and run. */
+export interface VerbSpec {
+  name: string
+  summary: string
+  usage: string
+  help: string
+  options: ParseOptions
+  run(ctx: CommandContext, positionals: string[], values: Record<string, unknown>): Promise<unknown>
+  render?(payload: unknown): string
+}
+
+/** A noun command that owns named verb subcommands (`threa messages send …`). */
+export interface NounSpec {
+  name: string
+  summary: string
+  verbs: VerbSpec[]
+}
+
 export type ErrorObject = ErrorShape
 
 export const errorObject = toErrorShape
 
-export function formatSuccess(spec: CommandSpec, payload: unknown, opts: { json: boolean; isTTY: boolean }): string {
+export function formatSuccess(
+  spec: { render?(payload: unknown): string },
+  payload: unknown,
+  opts: { json: boolean; isTTY: boolean }
+): string {
   if (opts.json || !opts.isTTY || !spec.render) return JSON.stringify(payload, null, 2)
   try {
     return spec.render(payload)
@@ -129,4 +151,15 @@ export function enumArrayFlag<T extends string>(
 
 export function cursorFooter(p: { hasMore?: boolean; cursor?: string | null }, flag: string): string[] {
   return p.hasMore && p.cursor ? [`… more (--${flag} ${p.cursor})`] : []
+}
+
+export function renderList<T>(
+  payload: unknown,
+  formatRow: (row: T) => string,
+  opts: { empty: string; cursorFlag?: string }
+): string {
+  const p = payload as { data?: T[]; hasMore?: boolean; cursor?: string | null }
+  const lines = (p.data ?? []).map(formatRow)
+  if (opts.cursorFlag) lines.push(...cursorFooter(p, opts.cursorFlag))
+  return lines.join("\n") || opts.empty
 }

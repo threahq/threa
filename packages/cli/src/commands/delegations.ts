@@ -6,47 +6,137 @@ import {
   requestDelegationAccess,
   updateDelegation,
 } from "../ops"
-import { arrayFlag, enumFlag, kvPairs, stringFlag, UsageError, type CommandContext, type CommandSpec } from "../output"
+import {
+  arrayFlag,
+  enumFlag,
+  kvPairs,
+  renderList,
+  stringFlag,
+  UsageError,
+  type NounSpec,
+  type VerbSpec,
+} from "../output"
 
 const OUTCOMES = ["complete", "fail"] as const
 
-async function runSubcommand(
-  ctx: CommandContext,
-  positionals: string[],
-  values: Record<string, unknown>
-): Promise<unknown> {
-  const [sub, ...rest] = positionals
-  const store = ctx.tokenStore
-  const workspaceId = ctx.config.workspaceId
+function renderLifecycle(payload: unknown): string {
+  const data = (payload as { data?: { id?: string; claimToken?: string; status?: string } }).data
+  const lines: string[] = []
+  if (data?.id) lines.push(`delegation: ${data.id}`)
+  if (data?.status) lines.push(`status: ${data.status}`)
+  if (data?.claimToken) lines.push(`claimToken (shown once): ${data.claimToken}`)
+  return lines.join("\n") || JSON.stringify(payload)
+}
 
-  if (sub === undefined) {
-    return listDelegations(ctx.client, { since: stringFlag(values, "since") })
-  }
+const listVerb: VerbSpec = {
+  name: "list",
+  summary: "List open delegations; --since iso returns only tasks after that instant",
+  usage: "threa delegations list [--since iso]",
+  help:
+    "threa delegations list [flags]\n\n" +
+    "List open delegations. Pass --since to poll for a cheap delta.\n\n" +
+    "Flags:\n" +
+    "  --since iso   tasks created after this ISO-8601 instant\n" +
+    "  --json        force JSON output\n" +
+    "  --help        show this help",
+  options: {
+    since: { type: "string" },
+  },
+  run: (ctx, _positionals, values) => listDelegations(ctx.client, { since: stringFlag(values, "since") }),
+  render: (payload) => {
+    return renderList<{ id?: string; title?: string; brief?: string }>(
+      payload,
+      (d) => `${d.id ?? "?"}  ${d.title ?? d.brief ?? ""}`.trimEnd(),
+      { empty: "(no open delegations)" }
+    )
+  },
+}
 
-  if (sub === "claim") {
-    const id = rest[0]
+const claimVerb: VerbSpec = {
+  name: "claim",
+  summary: "Claim an open task; requires --label; --idempotency-key re-keys a crashed claim",
+  usage: "threa delegations claim <id> --label who [--idempotency-key k]",
+  help:
+    "threa delegations claim <id> --label who [flags]\n\n" +
+    "Claim an open task. The claim token is persisted to ~/.threa/state.json (mode 0600, keyed by workspace and " +
+    "delegation), so update and finish reuse it across separate `threa` invocations. Claim shows the token once.\n\n" +
+    "Flags:\n" +
+    "  --label who           human-readable identity shown on the card (required)\n" +
+    "  --idempotency-key k   persist before claiming to re-key a crashed claim (8-128 chars)\n" +
+    "  --json                force JSON output\n" +
+    "  --help                show this help",
+  options: {
+    label: { type: "string" },
+    "idempotency-key": { type: "string" },
+  },
+  run: (ctx, positionals, values) => {
+    const id = positionals[0]
     if (!id) throw new UsageError("delegations claim requires a <delegation-id>")
     const label = stringFlag(values, "label")
     if (!label) throw new UsageError('delegations claim requires --label "who is claiming"')
-    return claimDelegation(ctx.client, store, workspaceId, {
+    return claimDelegation(ctx.client, ctx.tokenStore, ctx.config.workspaceId, {
       delegationId: id,
       claimedByLabel: label,
       idempotencyKey: stringFlag(values, "idempotency-key"),
     })
-  }
+  },
+  render: renderLifecycle,
+}
 
-  if (sub === "update") {
-    const id = rest[0]
+const updateVerb: VerbSpec = {
+  name: "update",
+  summary: "Renew the claim; --note posts progress, no note is a pure heartbeat",
+  usage: "threa delegations update <id> [--note ...] [--claim-token t]",
+  help:
+    "threa delegations update <id> [flags]\n\n" +
+    "Renew the claim (15-min TTL). Reuses the stored claim token; pass --claim-token to override or recover it.\n\n" +
+    "Flags:\n" +
+    "  --note text        progress note (renews the TTL); omit for a pure heartbeat\n" +
+    "  --claim-token t    override the stored token\n" +
+    "  --json             force JSON output\n" +
+    "  --help             show this help",
+  options: {
+    note: { type: "string" },
+    "claim-token": { type: "string" },
+  },
+  run: (ctx, positionals, values) => {
+    const id = positionals[0]
     if (!id) throw new UsageError("delegations update requires a <delegation-id>")
-    return updateDelegation(ctx.client, store, workspaceId, {
+    return updateDelegation(ctx.client, ctx.tokenStore, ctx.config.workspaceId, {
       delegationId: id,
       statusNote: stringFlag(values, "note"),
       claimToken: stringFlag(values, "claim-token"),
     })
-  }
+  },
+  render: renderLifecycle,
+}
 
-  if (sub === "finish") {
-    const id = rest[0]
+const finishVerb: VerbSpec = {
+  name: "finish",
+  summary: "Close the task; --outcome complete|fail (fail requires --error)",
+  usage:
+    "threa delegations finish <id> --outcome complete|fail [--result md|-] [--error msg] [--metadata k=v]... " +
+    "[--claim-token t]",
+  help:
+    "threa delegations finish <id> --outcome complete|fail [flags]\n\n" +
+    "Close a claimed task. Reuses the stored claim token; --claim-token overrides it. Finish clears the token.\n\n" +
+    "Flags:\n" +
+    "  --outcome o        complete | fail (required)\n" +
+    "  --result md        outcome (complete): markdown posted into the stream; `-` reads stdin\n" +
+    "  --error msg        outcome (fail): why it failed\n" +
+    "  --metadata k=v     outcome (complete): stamp the result message; repeatable\n" +
+    "  --claim-token t    override the stored token\n" +
+    "  --json             force JSON output\n" +
+    "  --help             show this help",
+  options: {
+    outcome: { type: "string" },
+    result: { type: "string" },
+    error: { type: "string" },
+    metadata: { type: "string", multiple: true },
+    "claim-token": { type: "string" },
+  },
+  run: async (ctx, positionals, values) => {
+    const id = positionals[0]
     if (!id) throw new UsageError("delegations finish requires a <delegation-id>")
     const outcome = enumFlag(values, "outcome", OUTCOMES)
     if (!outcome) throw new UsageError("delegations finish requires --outcome complete|fail")
@@ -63,76 +153,32 @@ async function runSubcommand(
     }
     const argError = finishDelegationArgError(params)
     if (argError) throw new UsageError(argError)
-    return finishDelegation(ctx.client, store, workspaceId, params)
-  }
-
-  if (sub === "request-access") {
-    const id = rest[0]
-    if (!id) throw new UsageError("delegations request-access requires a <delegation-id>")
-    return requestDelegationAccess(ctx.client, id)
-  }
-
-  throw new UsageError(
-    `unknown delegations subcommand "${sub}" — expected one of: claim, update, finish, request-access`
-  )
+    return finishDelegation(ctx.client, ctx.tokenStore, ctx.config.workspaceId, params)
+  },
+  render: renderLifecycle,
 }
 
-export const delegationsCommand: CommandSpec = {
-  name: "delegations",
-  summary: "List and run the delegation lifecycle (claim / update / finish)",
-  usage:
-    "threa delegations [--since iso] | claim <id> --label who [--idempotency-key k] | " +
-    "update <id> [--note ...] [--claim-token t] | " +
-    "finish <id> --outcome complete|fail [--result md|-] [--error msg] [--metadata k=v]... [--claim-token t] | " +
-    "request-access <id>",
+const requestAccessVerb: VerbSpec = {
+  name: "request-access",
+  summary: "Bot-key only; file an access request for a stream the bot cannot see",
+  usage: "threa delegations request-access <id>",
   help:
-    "threa delegations [subcommand] [flags]\n\n" +
-    "Run a delegated task end to end. With no subcommand, list the open queue.\n\n" +
-    "The claim token is persisted to ~/.threa/state.json (mode 0600, keyed by workspace and delegation), so " +
-    "update and finish reuse it across separate `threa` invocations. Claim shows the token once; pass " +
-    "--claim-token to override or recover it on another machine.\n\n" +
-    "Subcommands:\n" +
-    "  (none)                list open delegations; --since iso returns only tasks after that instant\n" +
-    "  claim <id>            claim an open task; requires --label; --idempotency-key re-keys a crashed claim\n" +
-    "  update <id>           renew the claim; --note posts progress, no note is a pure heartbeat\n" +
-    "  finish <id>           close the task; --outcome complete|fail (fail requires --error)\n" +
-    "  request-access <id>   bot-key only; file an access request for a stream the bot cannot see\n\n" +
+    "threa delegations request-access <id> [flags]\n\n" +
+    "Bot-key only. File an access request for a stream the bot cannot see, so an admin can grant it.\n\n" +
     "Flags:\n" +
-    "  --since iso           list filter: tasks created after this ISO-8601 instant\n" +
-    "  --label who           claim: human-readable identity shown on the card\n" +
-    "  --idempotency-key k   claim: persist before claiming to re-key a crashed claim (8-128 chars)\n" +
-    "  --note text           update: progress note (renews the 15-min TTL)\n" +
-    "  --outcome o           finish: complete | fail\n" +
-    "  --result md           finish (complete): markdown posted into the stream; `-` reads stdin\n" +
-    "  --error msg           finish (fail): why it failed\n" +
-    "  --metadata k=v        finish (complete): stamp the result message; repeatable\n" +
-    "  --claim-token t       update/finish: override the stored token\n" +
-    "  --json                force JSON output\n" +
-    "  --help                show this help",
-  options: {
-    since: { type: "string" },
-    label: { type: "string" },
-    "idempotency-key": { type: "string" },
-    note: { type: "string" },
-    outcome: { type: "string" },
-    result: { type: "string" },
-    error: { type: "string" },
-    metadata: { type: "string", multiple: true },
-    "claim-token": { type: "string" },
+    "  --json    force JSON output\n" +
+    "  --help    show this help",
+  options: {},
+  run: (ctx, positionals) => {
+    const id = positionals[0]
+    if (!id) throw new UsageError("delegations request-access requires a <delegation-id>")
+    return requestDelegationAccess(ctx.client, id)
   },
-  run: runSubcommand,
-  render: (payload) => {
-    if (Array.isArray((payload as { data?: unknown }).data)) {
-      const rows = (payload as { data: Array<{ id?: string; title?: string; brief?: string }> }).data
-      return (
-        rows.map((d) => `${d.id ?? "?"}  ${d.title ?? d.brief ?? ""}`.trimEnd()).join("\n") || "(no open delegations)"
-      )
-    }
-    const data = (payload as { data?: { id?: string; claimToken?: string; status?: string } }).data
-    const lines: string[] = []
-    if (data?.id) lines.push(`delegation: ${data.id}`)
-    if (data?.status) lines.push(`status: ${data.status}`)
-    if (data?.claimToken) lines.push(`claimToken (shown once): ${data.claimToken}`)
-    return lines.join("\n") || JSON.stringify(payload)
-  },
+  render: renderLifecycle,
+}
+
+export const delegationsNoun: NounSpec = {
+  name: "delegations",
+  summary: "Run the delegation lifecycle end to end",
+  verbs: [listVerb, claimVerb, updateVerb, finishVerb, requestAccessVerb],
 }

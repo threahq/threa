@@ -59,49 +59,51 @@ Run `threa --help` for the command list and `threa <command> --help` for a comma
 
 ## Command catalog
 
+Commands are grouped by noun, with a verb subcommand under each noun (the `gh`/`railway` pattern). Every noun requires a subcommand; `threa <noun>` alone (and `threa <noun> --help`) lists that noun's verbs. There are no aliases. `whoami`, `search`, `skill`, and `mcp` are top-level.
+
 ```bash
-threa whoami                                   # authenticated principal, api version, binding
-threa streams --type channel --query eng       # list accessible streams (page with --after)
-threa stream #eng --members --limit 20         # a stream plus a page of its messages
-threa users --query alice                       # workspace users
-threa search "deploy plan" --what messages      # search messages (--semantic, --exact, --type)
+threa whoami                                        # authenticated principal, api version, binding
+threa streams list --type channel --query eng       # list accessible streams (page with --after)
+threa streams read #eng --members --limit 20        # a stream plus a page of its messages
+threa users list --query alice                      # workspace users
+threa search "deploy plan" --what messages          # search messages (--semantic, --exact, --type)
 threa search "" --what memos --knowledge-type decision   # browse workspace memory (empty query allowed)
-threa search invoice --what attachments         # search attachments by name or extracted text
-threa conversations --stream #eng --status active
-threa conversation conv_123 --limit 50
-threa find-by-metadata github.pr=org/repo#42 --stream #eng
-threa memo memo_123
-threa attachment att_123 --url                  # --url returns a short-lived signed download URL
+threa search invoice --what attachments             # search attachments by name or extracted text
+threa conversations list --stream #eng --status active
+threa conversations read conv_123 --limit 50
+threa messages find-by-metadata github.pr=org/repo#42 --stream #eng
+threa memos get memo_123
+threa attachments get att_123 --url                 # --url returns a short-lived signed download URL
 
 # writes
-threa send #eng "Deploy is green"               # post markdown (content `-` reads stdin)
-threa send #eng - --new-conversation < notes.md # open a conversation from piped content
-threa send #eng "reply" --conversation conv_123 --metadata run=42
-threa edit msg_123 "corrected text"
-threa delete msg_123
-threa labels
-threa label urgent #eng --color '#ff0000' --emoji 🔥
-threa unlabel urgent #eng
+threa messages send #eng "Deploy is green"          # post markdown (content `-` reads stdin)
+threa messages send #eng - --new-conversation < notes.md # open a conversation from piped content
+threa messages send #eng "reply" --conversation conv_123 --metadata run=42
+threa messages edit msg_123 "corrected text"
+threa messages delete msg_123
+threa labels list
+threa labels add urgent #eng --color '#ff0000' --emoji 🔥
+threa labels remove urgent #eng
 
 # delegations
-threa delegations --since 2026-07-16T00:00:00Z
+threa delegations list --since 2026-07-16T00:00:00Z
 threa delegations claim dlg_123 --label "Kris's MacBook / Claude Code" --idempotency-key run-abc123
 threa delegations update dlg_123 --note "halfway through"
 threa delegations finish dlg_123 --outcome complete --result - < report.md
 threa delegations finish dlg_123 --outcome fail --error "build broke"
-threa delegations request-access dlg_123        # bot-key only
+threa delegations request-access dlg_123            # bot-key only
 
 # mcp head
 threa mcp serve
 ```
 
-Any stream argument (`stream`, `send`, `label`, `unlabel`, `search --stream`, `conversations --stream`, `find-by-metadata --stream`) accepts a `stream_…` id or a `#channel-slug`. An `@user-slug` is not resolvable as a stream (a DM hides its counterpart on the wire); pass the DM's `stream_…` id. A ref that matches nothing or is ambiguous fails before any API call with code `UNRESOLVED_REF`.
+Any stream argument (`streams read`, `messages send`, `labels add`, `labels remove`, `search --stream`, `conversations list --stream`, `messages find-by-metadata --stream`) accepts a `stream_…` id or a `#channel-slug`. An `@user-slug` is not resolvable as a stream (a DM hides its counterpart on the wire); pass the DM's `stream_…` id. A ref that matches nothing or is ambiguous fails before any API call with code `UNRESOLVED_REF`.
 
-`send` and `edit` take content as an argument; `send` reads stdin when the content argument is `-`. `delegations finish --result -` also reads the result markdown from stdin.
+`messages send` and `messages edit` take content as an argument; `messages send` reads stdin when the content argument is `-`. `delegations finish --result -` also reads the result markdown from stdin.
 
 ## Delegation state file
 
-Claim tokens are persisted to `~/.threa/state.json` (mode 0600), keyed by workspace and delegation, written atomically. `threa delegations claim` prints the token once and stores it; `update` and `finish` reuse the stored token across separate `threa` invocations, and `finish` clears it. Pass `--claim-token` to override the stored token or to recover it on another machine. The same store backs the MCP head, so a claim made through one head is usable from the other. Override the path with `THREA_STATE_FILE`. A corrupt state file logs one warning to stderr and starts empty; a failed write surfaces as a delegation-command error.
+Claim tokens are persisted to `~/.threa/state.json` (mode 0600), keyed by workspace and delegation, written atomically. `threa delegations claim` prints the token once and stores it; `delegations update` and `delegations finish` reuse the stored token across separate `threa` invocations, and `finish` clears it. Pass `--claim-token` to override the stored token or to recover it on another machine. The same store backs the MCP head, so a claim made through one head is usable from the other. Override the path with `THREA_STATE_FILE`. A corrupt state file logs one warning to stderr and starts empty; a failed write surfaces as a delegation-command error.
 
 ## MCP head
 
@@ -111,7 +113,7 @@ Claim tokens are persisted to `~/.threa/state.json` (mode 0600), keyed by worksp
 
 ### The two Threa MCP servers (do not confuse the sends)
 
-A Claude Code session bridged through the remote-control channel also has the channel server `threa-channel` (from `extensions/claude-code-remote`) whose `send` and `reply` tools carry channel invocation ids; `reply` is what closes a channel request. This package's server registers as `threa` and its `send_message` posts a plain message as the API key's identity. It never closes a channel request. In a bridged session, answer channel events with the channel's `reply`; use `threa send` / `send_message` for everything else.
+A Claude Code session bridged through the remote-control channel also has the channel server `threa-channel` (from `extensions/claude-code-remote`) whose `send` and `reply` tools carry channel invocation ids; `reply` is what closes a channel request. This package's server registers as `threa` and its `send_message` posts a plain message as the API key's identity. It never closes a channel request. In a bridged session, answer channel events with the channel's `reply`; use `threa messages send` / `send_message` for everything else.
 
 `threa mcp serve` runs the same operations as MCP tools over stdio, for an MCP client such as Claude Code.
 
@@ -156,20 +158,20 @@ The scopes on the key decide which areas work. A key without a scope does not ge
 
 ### Scopes by area
 
-| Scope               | Unlocks                                                                                       |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| (none)              | `whoami`                                                                                      |
-| `streams:read`      | `streams`, `stream` (stream and member legs)                                                  |
-| `users:read`        | `users`                                                                                       |
-| `messages:read`     | `stream` (messages leg), `conversation`, `conversations`, `find-by-metadata`                  |
-| `messages:search`   | `search --what messages`                                                                      |
-| `messages:write`    | `send`, `edit`, `delete`                                                                      |
-| `memos:read`        | `search --what memos`, `memo`                                                                 |
-| `attachments:read`  | `search --what attachments`, `attachment`                                                     |
-| `labels:read`       | `labels`                                                                                      |
-| `labels:write`      | `label`, `unlabel`                                                                            |
-| `delegations:read`  | `delegations`                                                                                 |
-| `delegations:write` | `delegations claim`, `delegations update`, `delegations finish`, `delegations request-access` |
+| Scope               | Unlocks                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------ |
+| (none)              | `whoami`                                                                                               |
+| `streams:read`      | `streams list`, `streams read` (stream and member legs)                                                |
+| `users:read`        | `users list`                                                                                           |
+| `messages:read`     | `streams read` (messages leg), `conversations read`, `conversations list`, `messages find-by-metadata` |
+| `messages:search`   | `search --what messages`                                                                               |
+| `messages:write`    | `messages send`, `messages edit`, `messages delete`                                                    |
+| `memos:read`        | `search --what memos`, `memos get`                                                                     |
+| `attachments:read`  | `search --what attachments`, `attachments get`                                                         |
+| `labels:read`       | `labels list`                                                                                          |
+| `labels:write`      | `labels add`, `labels remove`                                                                          |
+| `delegations:read`  | `delegations list`                                                                                     |
+| `delegations:write` | `delegations claim`, `delegations update`, `delegations finish`, `delegations request-access`          |
 
 ## Rate limits
 

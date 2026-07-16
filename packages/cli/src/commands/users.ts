@@ -1,12 +1,12 @@
 import { listUsers } from "../ops"
-import { cursorFooter, intFlag, stringFlag, type CommandSpec } from "../output"
+import { cursorFooter, intFlag, renderList, stringFlag, type NounSpec, type VerbSpec } from "../output"
 
-export const usersCommand: CommandSpec = {
-  name: "users",
+const listVerb: VerbSpec = {
+  name: "list",
   summary: "List workspace users",
-  usage: "threa users [--query q] [--after cursor] [--limit n]",
+  usage: "threa users list [--query q] [--after cursor] [--limit n]",
   help:
-    "threa users [flags]\n\n" +
+    "threa users list [flags]\n\n" +
     "List users in this workspace. --query matches on name or email (not slug).\n\n" +
     "Flags:\n" +
     "  --query q    text match on name or email\n" +
@@ -25,17 +25,16 @@ export const usersCommand: CommandSpec = {
       after: stringFlag(values, "after"),
       limit: intFlag(values, "limit"),
     }),
-  render: (payload) => {
-    const p = payload as {
-      data?: Array<{ id?: string; name?: string; slug?: string; email?: string }>
-      hasMore?: boolean
-      cursor?: string | null
-    }
-    const rows = p.data ?? []
-    const lines = rows.map((u) =>
-      `${u.id ?? "?"}  ${u.name ?? "?"}  ${u.slug ? `@${u.slug}` : ""}  ${u.email ?? ""}`.trimEnd()
-    )
-    lines.push(...cursorFooter(p, "after"))
-    return lines.join("\n") || "(no users)"
-  },
+  render: (payload) =>
+    renderList<{ id?: string; name?: string; slug?: string; email?: string }>(
+      payload,
+      (u) => `${u.id ?? "?"}  ${u.name ?? "?"}  ${u.slug ? `@${u.slug}` : ""}  ${u.email ?? ""}`.trimEnd(),
+      { empty: "(no users)", cursorFlag: "after" }
+    ),
+}
+
+export const usersNoun: NounSpec = {
+  name: "users",
+  summary: "List workspace users",
+  verbs: [listVerb],
 }

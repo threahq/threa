@@ -15,7 +15,7 @@ function sendBody(): Record<string, unknown> {
 test("send with --new-conversation posts a new-intent directive and auto-generates a client message id", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(201, { data: { id: "msg_1" }, conversationId: "conv_1" }))
 
-  const result = await run(["send", "stream_1", "kickoff", "--new-conversation", "--metadata", "k=v"], {
+  const result = await run(["messages", "send", "stream_1", "kickoff", "--new-conversation", "--metadata", "k=v"], {
     config: TEST_CONFIG,
     isTTY: false,
   })
@@ -35,7 +35,7 @@ test("send with --new-conversation posts a new-intent directive and auto-generat
 test("send with --conversation appends an existing-intent directive", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(201, { data: { id: "msg_2" }, conversationId: "conv_9" }))
 
-  const result = await run(["send", "stream_1", "follow up", "--conversation", "conv_9"], {
+  const result = await run(["messages", "send", "stream_1", "follow up", "--conversation", "conv_9"], {
     config: TEST_CONFIG,
     isTTY: false,
   })
@@ -45,7 +45,7 @@ test("send with --conversation appends an existing-intent directive", async () =
 })
 
 test("send with both --new-conversation and --conversation is a usage error (exit 2) before any HTTP", async () => {
-  const result = await run(["send", "stream_1", "x", "--new-conversation", "--conversation", "conv_9"], {
+  const result = await run(["messages", "send", "stream_1", "x", "--new-conversation", "--conversation", "conv_9"], {
     config: TEST_CONFIG,
     isTTY: false,
   })
@@ -59,7 +59,7 @@ test("send with both --new-conversation and --conversation is a usage error (exi
 test("send reads content from stdin when the content arg is `-`", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(201, { data: { id: "msg_3" } }))
 
-  const result = await run(["send", "stream_1", "-"], {
+  const result = await run(["messages", "send", "stream_1", "-"], {
     config: TEST_CONFIG,
     isTTY: false,
     readStdin: () => Promise.resolve("piped **body**\n"),
@@ -72,7 +72,7 @@ test("send reads content from stdin when the content arg is `-`", async () => {
 test("edit sends a PATCH with the new content", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: { id: "msg_1", content: "edited" } }))
 
-  const result = await run(["edit", "msg_1", "edited"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["messages", "edit", "msg_1", "edited"], { config: TEST_CONFIG, isTTY: false })
 
   expect(result.exitCode).toBe(0)
   expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("PATCH")
@@ -83,7 +83,7 @@ test("edit sends a PATCH with the new content", async () => {
 test("delete sends a DELETE and reports the id, handling a 204 body", async () => {
   fetchSpy.mockResolvedValue(new Response(null, { status: 204 }))
 
-  const result = await run(["delete", "msg_1", "--json"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["messages", "delete", "msg_1", "--json"], { config: TEST_CONFIG, isTTY: false })
 
   expect(result.exitCode).toBe(0)
   expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("DELETE")

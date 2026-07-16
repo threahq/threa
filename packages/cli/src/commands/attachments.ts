@@ -1,12 +1,12 @@
 import { getAttachment, getAttachmentDownloadUrl } from "../ops"
-import { boolFlag, UsageError, type CommandSpec } from "../output"
+import { boolFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
 
-export const attachmentCommand: CommandSpec = {
-  name: "attachment",
+const getVerb: VerbSpec = {
+  name: "get",
   summary: "Get an attachment's metadata and extracted text, or a signed download URL",
-  usage: "threa attachment <id> [--url]",
+  usage: "threa attachments get <id> [--url]",
   help:
-    "threa attachment <id> [flags]\n\n" +
+    "threa attachments get <id> [flags]\n\n" +
     "Retrieve an attachment's metadata and extracted text. With --url, instead return a short-lived signed URL " +
     "to download the raw bytes.\n\n" +
     "Flags:\n" +
@@ -18,7 +18,13 @@ export const attachmentCommand: CommandSpec = {
   },
   run: (ctx, positionals, values) => {
     const id = positionals[0]
-    if (!id) throw new UsageError("attachment requires a <id> (an att_ id)")
+    if (!id) throw new UsageError("attachments get requires a <id> (an att_ id)")
     return boolFlag(values, "url") ? getAttachmentDownloadUrl(ctx.client, id) : getAttachment(ctx.client, id)
   },
+}
+
+export const attachmentsNoun: NounSpec = {
+  name: "attachments",
+  summary: "Get an attachment's text or a signed download URL",
+  verbs: [getVerb],
 }

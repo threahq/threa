@@ -3,17 +3,17 @@ import { parseArgs } from "node:util"
 import { skillCommand } from "./commands/skill"
 import { ThreaApiClient } from "./api-client"
 import { TokenStore } from "./token-store"
-import { attachmentCommand } from "./commands/attachments"
-import { conversationCommand, conversationsCommand } from "./commands/conversations"
-import { delegationsCommand } from "./commands/delegations"
+import { attachmentsNoun } from "./commands/attachments"
+import { conversationsNoun } from "./commands/conversations"
+import { delegationsNoun } from "./commands/delegations"
 import { whoamiCommand } from "./commands/identity"
-import { labelCommand, labelsCommand, unlabelCommand } from "./commands/labels"
+import { labelsNoun } from "./commands/labels"
 import { mcpCommand, serveMcp } from "./commands/mcp"
-import { deleteCommand, editCommand, findByMetadataCommand, sendCommand } from "./commands/messages"
-import { memoCommand } from "./commands/memos"
+import { messagesNoun } from "./commands/messages"
+import { memosNoun } from "./commands/memos"
 import { searchCommand } from "./commands/search"
-import { streamCommand, streamsCommand } from "./commands/streams"
-import { usersCommand } from "./commands/users"
+import { streamsNoun } from "./commands/streams"
+import { usersNoun } from "./commands/users"
 import { loadConfig } from "./config"
 import {
   errorObject,
@@ -23,49 +23,70 @@ import {
   withGlobalOptions,
   type CommandContext,
   type CommandSpec,
+  type NounSpec,
+  type VerbSpec,
 } from "./output"
 import { RefResolver } from "./resolver"
 
-const COMMANDS: CommandSpec[] = [
-  whoamiCommand,
-  streamsCommand,
-  streamCommand,
-  usersCommand,
-  searchCommand,
-  conversationsCommand,
-  conversationCommand,
-  findByMetadataCommand,
-  memoCommand,
-  attachmentCommand,
-  sendCommand,
-  editCommand,
-  deleteCommand,
-  labelsCommand,
-  labelCommand,
-  unlabelCommand,
-  delegationsCommand,
-  skillCommand,
-  mcpCommand,
+const FLAT_COMMANDS: CommandSpec[] = [whoamiCommand, searchCommand, skillCommand, mcpCommand]
+
+const NOUNS: NounSpec[] = [
+  messagesNoun,
+  streamsNoun,
+  conversationsNoun,
+  usersNoun,
+  memosNoun,
+  attachmentsNoun,
+  labelsNoun,
+  delegationsNoun,
 ]
 
-const REGISTRY = new Map(COMMANDS.map((c) => [c.name, c]))
+const FLAT_REGISTRY = new Map(FLAT_COMMANDS.map((c) => [c.name, c]))
+const NOUN_REGISTRY = new Map(NOUNS.map((n) => [n.name, n]))
 
 const SERVE_STUB = {} as CommandContext
 
+/** Every top-level name, in a stable presentation order, with what it does. */
+const TOP_ENTRIES: Array<{ name: string; summary: string; verbs?: string }> = [
+  { name: whoamiCommand.name, summary: whoamiCommand.summary },
+  ...NOUNS.map((n) => ({ name: n.name, summary: n.summary, verbs: n.verbs.map((v) => v.name).join(", ") })),
+  { name: searchCommand.name, summary: searchCommand.summary },
+  { name: skillCommand.name, summary: skillCommand.summary },
+  { name: mcpCommand.name, summary: mcpCommand.summary },
+]
+
 function topHelp(): string {
-  const width = Math.max(...COMMANDS.map((c) => c.name.length))
-  const lines = COMMANDS.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`)
+  const width = Math.max(...TOP_ENTRIES.map((e) => e.name.length))
+  const lines = TOP_ENTRIES.map((e) => {
+    const verbs = e.verbs ? ` (${e.verbs})` : ""
+    return `  ${e.name.padEnd(width)}  ${e.summary}${verbs}`
+  })
   return [
     "threa — command-line access to a Threa workspace (one API key, bound via config).",
     "",
-    "Usage: threa <command> [args] [flags]",
+    "Usage: threa <command> [subcommand] [args] [flags]",
     "",
     "Commands:",
     ...lines,
     "",
     "Global flags: --json (force JSON output), --help (per-command help).",
     "Config: THREA_API_KEY and THREA_WORKSPACE_ID (env, or ~/.threa/mcp.json); THREA_BASE_URL optional.",
-    "Run `threa <command> --help` for a command's flags.",
+    "Run `threa <command> --help` for a command's subcommands or flags.",
+  ].join("\n")
+}
+
+function nounHelp(noun: NounSpec): string {
+  const width = Math.max(...noun.verbs.map((v) => v.name.length))
+  const lines = noun.verbs.map((v) => `  ${v.name.padEnd(width)}  ${v.summary}`)
+  return [
+    `threa ${noun.name} <subcommand> [args] [flags]`,
+    "",
+    noun.summary,
+    "",
+    "Subcommands:",
+    ...lines,
+    "",
+    `Run \`threa ${noun.name} <subcommand> --help\` for a subcommand's flags.`,
   ].join("\n")
 }
 
@@ -84,53 +105,47 @@ export interface RunDeps {
   tokenStore?: TokenStore
 }
 
-export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult> {
-  const isTTY = deps.isTTY ?? Boolean(process.stdout.isTTY)
+type Leaf = CommandSpec | VerbSpec
 
-  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
-    return { exitCode: 0, stdout: `${topHelp()}\n`, stderr: "" }
+function leafFlags(leaf: Leaf): { serve: boolean; noConfig: boolean } {
+  return {
+    serve: (leaf as CommandSpec).serve === true,
+    noConfig: (leaf as CommandSpec).noConfig === true,
   }
+}
 
-  const name = argv[0]!
-  const spec = REGISTRY.get(name)
-  if (!spec) {
-    return {
-      exitCode: 2,
-      stdout: "",
-      stderr: stderrJson({ code: "UNKNOWN_COMMAND", message: `unknown command "${name}"`, hint: topHelp() }),
-    }
-  }
-
+async function executeLeaf(leaf: Leaf, args: string[], deps: RunDeps, isTTY: boolean): Promise<RunResult> {
   let parsed
   try {
     parsed = parseArgs({
-      args: argv.slice(1),
-      options: withGlobalOptions(spec.options),
+      args,
+      options: withGlobalOptions(leaf.options),
       allowPositionals: true,
       strict: true,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { exitCode: 2, stdout: "", stderr: stderrJson({ code: "USAGE", message, hint: spec.usage }) }
+    return { exitCode: 2, stdout: "", stderr: stderrJson({ code: "USAGE", message, hint: leaf.usage }) }
   }
 
   const values = parsed.values as Record<string, unknown>
   const positionals = parsed.positionals
 
   if (values.help === true) {
-    return { exitCode: 0, stdout: `${spec.help}\n`, stderr: "" }
+    return { exitCode: 0, stdout: `${leaf.help}\n`, stderr: "" }
   }
 
+  const { serve, noConfig } = leafFlags(leaf)
   try {
-    if (spec.serve) {
-      await spec.run(SERVE_STUB, positionals, values)
+    if (serve) {
+      await leaf.run(SERVE_STUB, positionals, values)
       return { exitCode: 0, stdout: "", stderr: "", serve: true }
     }
-    if (spec.noConfig) {
-      const payload = await spec.run(SERVE_STUB, positionals, values)
+    if (noConfig) {
+      const payload = await leaf.run(SERVE_STUB, positionals, values)
       return {
         exitCode: 0,
-        stdout: `${formatSuccess(spec, payload, { json: values.json === true, isTTY })}\n`,
+        stdout: `${formatSuccess(leaf, payload, { json: values.json === true, isTTY })}\n`,
         stderr: "",
       }
     }
@@ -143,10 +158,10 @@ export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult
     const resolver = new RefResolver({ client })
     const readStdin = deps.readStdin ?? (() => Bun.stdin.text())
     const tokenStore = deps.tokenStore ?? new TokenStore()
-    const payload = await spec.run({ client, resolver, config, tokenStore, readStdin }, positionals, values)
+    const payload = await leaf.run({ client, resolver, config, tokenStore, readStdin }, positionals, values)
     return {
       exitCode: 0,
-      stdout: `${formatSuccess(spec, payload, { json: values.json === true, isTTY })}\n`,
+      stdout: `${formatSuccess(leaf, payload, { json: values.json === true, isTTY })}\n`,
       stderr: "",
     }
   } catch (error) {
@@ -154,10 +169,69 @@ export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult
       return {
         exitCode: 2,
         stdout: "",
-        stderr: stderrJson({ code: "USAGE", message: error.message, hint: spec.usage }),
+        stderr: stderrJson({ code: "USAGE", message: error.message, hint: leaf.usage }),
       }
     }
     return { exitCode: 1, stdout: "", stderr: stderrJson(errorObject(error)) }
+  }
+}
+
+async function runNoun(noun: NounSpec, args: string[], deps: RunDeps, isTTY: boolean): Promise<RunResult> {
+  const verbName = args[0]
+
+  if (verbName === undefined) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: stderrJson({
+        code: "USAGE",
+        message: `"${noun.name}" needs a subcommand: ${noun.verbs.map((v) => v.name).join(", ")}`,
+        hint: nounHelp(noun),
+      }),
+    }
+  }
+
+  if (verbName === "--help" || verbName === "-h") {
+    return { exitCode: 0, stdout: `${nounHelp(noun)}\n`, stderr: "" }
+  }
+
+  const verb = noun.verbs.find((v) => v.name === verbName)
+  if (!verb) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: stderrJson({
+        code: "USAGE",
+        message: `unknown ${noun.name} subcommand "${verbName}" — expected one of: ${noun.verbs
+          .map((v) => v.name)
+          .join(", ")}`,
+        hint: nounHelp(noun),
+      }),
+    }
+  }
+
+  return executeLeaf(verb, args.slice(1), deps, isTTY)
+}
+
+export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult> {
+  const isTTY = deps.isTTY ?? Boolean(process.stdout.isTTY)
+
+  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
+    return { exitCode: 0, stdout: `${topHelp()}\n`, stderr: "" }
+  }
+
+  const name = argv[0]!
+
+  const flat = FLAT_REGISTRY.get(name)
+  if (flat) return executeLeaf(flat, argv.slice(1), deps, isTTY)
+
+  const noun = NOUN_REGISTRY.get(name)
+  if (noun) return runNoun(noun, argv.slice(1), deps, isTTY)
+
+  return {
+    exitCode: 2,
+    stdout: "",
+    stderr: stderrJson({ code: "UNKNOWN_COMMAND", message: `unknown command "${name}"`, hint: topHelp() }),
   }
 }
 

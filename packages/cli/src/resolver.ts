@@ -96,7 +96,7 @@ export class RefResolver {
       )
     }
     throw new UnresolvedRefError(
-      `No user matches "@${slug}". List the workspace users (list_users tool / \`threa users\`) to find them, then pass the usr_ id. ` +
+      `No user matches "@${slug}". List the workspace users (list_users tool / \`threa users list\`) to find them, then pass the usr_ id. ` +
         "Bots and personas are not queryable by slug on the public API; pass their bot_/persona_ id."
     )
   }
@@ -126,7 +126,7 @@ export class RefResolver {
       )
     }
     throw new UnresolvedRefError(
-      `No channel matches "#${slug}". List channels (list_streams tool / \`threa streams --type channel\`) to find it, then pass the stream_ id.`
+      `No channel matches "#${slug}". List channels (list_streams tool / \`threa streams list --type channel\`) to find it, then pass the stream_ id.`
     )
   }
 
@@ -134,8 +134,8 @@ export class RefResolver {
     const userId = await this.resolveUserSlug(slug)
     throw new UnresolvedRefError(
       `Found user @${slug} (${userId}), but the public API does not expose which DM stream is your 1:1 with them ` +
-        "(DM streams carry no counterpart on the wire). List your DMs (list_streams tool / `threa streams --type dm`), " +
-        `then read the members of each (read_stream with include_members / \`threa stream <id> --members\`) to find the one whose members include ${userId}, and pass that stream_ id. ` +
+        "(DM streams carry no counterpart on the wire). List your DMs (list_streams tool / `threa streams list --type dm`), " +
+        `then read the members of each (read_stream with include_members / \`threa streams read <id> --members\`) to find the one whose members include ${userId}, and pass that stream_ id. ` +
         "Or target a channel with #channel-slug."
     )
   }

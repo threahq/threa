@@ -1,5 +1,15 @@
 import { listStreams, readStream } from "../ops"
-import { boolFlag, cursorFooter, enumArrayFlag, intFlag, stringFlag, UsageError, type CommandSpec } from "../output"
+import {
+  boolFlag,
+  cursorFooter,
+  enumArrayFlag,
+  intFlag,
+  renderList,
+  stringFlag,
+  UsageError,
+  type NounSpec,
+  type VerbSpec,
+} from "../output"
 import { STREAM_TYPES } from "../tools/constants"
 
 interface StreamRow {
@@ -14,12 +24,12 @@ function streamLabel(s: StreamRow): string {
   return s.displayName ?? s.name ?? (s.slug ? `#${s.slug}` : (s.id ?? "?"))
 }
 
-export const streamsCommand: CommandSpec = {
-  name: "streams",
+const listVerb: VerbSpec = {
+  name: "list",
   summary: "List streams this key can access",
-  usage: "threa streams [--type t]... [--query q] [--after cursor] [--limit n]",
+  usage: "threa streams list [--type t]... [--query q] [--after cursor] [--limit n]",
   help:
-    "threa streams [flags]\n\n" +
+    "threa streams list [flags]\n\n" +
     "List streams this key can access. Page by passing the previous response's cursor back as --after.\n\n" +
     "Flags:\n" +
     "  --type t     filter by stream type (" +
@@ -43,21 +53,19 @@ export const streamsCommand: CommandSpec = {
       after: stringFlag(values, "after"),
       limit: intFlag(values, "limit"),
     }),
-  render: (payload) => {
-    const p = payload as { data?: StreamRow[]; hasMore?: boolean; cursor?: string | null }
-    const rows = p.data ?? []
-    const lines = rows.map((s) => `${s.id ?? "?"}  ${s.type ?? "?"}  ${streamLabel(s)}`)
-    lines.push(...cursorFooter(p, "after"))
-    return lines.join("\n") || "(no streams)"
-  },
+  render: (payload) =>
+    renderList<StreamRow>(payload, (s) => `${s.id ?? "?"}  ${s.type ?? "?"}  ${streamLabel(s)}`, {
+      empty: "(no streams)",
+      cursorFlag: "after",
+    }),
 }
 
-export const streamCommand: CommandSpec = {
-  name: "stream",
+const readVerb: VerbSpec = {
+  name: "read",
   summary: "Read a stream with a page of its messages (accepts a stream_ id or #slug)",
-  usage: "threa stream <ref> [--members] [--before seq] [--after seq] [--limit n]",
+  usage: "threa streams read <ref> [--members] [--before seq] [--after seq] [--limit n]",
   help:
-    "threa stream <ref> [flags]\n\n" +
+    "threa streams read <ref> [flags]\n\n" +
     "Fetch a stream and a page of its messages. <ref> is a stream_ id or a #channel-slug.\n" +
     "Message paging is by numeric sequence, not a cursor: --before returns older messages, --after newer; " +
     "pass at most one and walk pages by the boundary message's sequence.\n\n" +
@@ -76,7 +84,7 @@ export const streamCommand: CommandSpec = {
   },
   run: (ctx, positionals, values) => {
     const ref = positionals[0]
-    if (!ref) throw new UsageError("stream requires a <ref> (a stream_ id or #channel-slug)")
+    if (!ref) throw new UsageError("streams read requires a <ref> (a stream_ id or #channel-slug)")
     return readStream(ctx.client, ctx.resolver, {
       streamId: ref,
       includeMembers: boolFlag(values, "members"),
@@ -108,4 +116,10 @@ export const streamCommand: CommandSpec = {
     }
     return lines.join("\n")
   },
+}
+
+export const streamsNoun: NounSpec = {
+  name: "streams",
+  summary: "List streams and read a stream with its messages",
+  verbs: [listVerb, readVerb],
 }
