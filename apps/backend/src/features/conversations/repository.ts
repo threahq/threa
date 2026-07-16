@@ -636,6 +636,54 @@ export const ConversationRepository = {
     return result.rows.map(mapRowToConversation)
   },
 
+  /**
+   * Feed variant for callers whose access is an explicit set of readable ROOT
+   * streams rather than a user id (the public API's bot keys: public streams +
+   * channel grants). A conversation qualifies when its anchor's effective root
+   * (`COALESCE(root_stream_id, id)`, INV-62) is in the set and that root is not
+   * archived — mirroring `isStreamAccessibleForBot`, which denies archived
+   * streams per-id. Same tombstone exclusion and keyset order as
+   * {@link findByWorkspaceForViewer} (see its cursor-truncation comment).
+   */
+  async findByWorkspaceForRoots(
+    db: Querier,
+    workspaceId: string,
+    rootStreamIds: string[],
+    options?: {
+      status?: ConversationStatus
+      limit?: number
+      cursor?: { lastActivityAt: string; id: string }
+    }
+  ): Promise<Conversation[]> {
+    if (rootStreamIds.length === 0) return []
+    const limit = options?.limit ?? 50
+    const fields = sql`${sql.raw(SELECT_FIELDS)}`
+    const statusCond = options?.status ? composeSql`AND status = ${options.status}` : sql``
+    const cursorCond = options?.cursor
+      ? composeSql`AND (date_trunc('milliseconds', last_activity_at), id) < (${options.cursor.lastActivityAt}::timestamptz, ${options.cursor.id})`
+      : sql``
+
+    const result = await db.query<ConversationRow>(composeSql`
+      SELECT ${fields} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND cardinality(message_ids) > 0
+        ${statusCond}
+        ${cursorCond}
+        AND EXISTS (
+          SELECT 1
+          FROM streams eff_s
+          JOIN streams eff_root ON eff_root.id = COALESCE(eff_s.root_stream_id, eff_s.id)
+          WHERE eff_s.id = conversations.stream_id
+            AND eff_s.workspace_id = ${workspaceId}
+            AND eff_root.id = ANY(${rootStreamIds}::text[])
+            AND eff_root.archived_at IS NULL
+        )
+      ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC
+      LIMIT ${limit}
+    `)
+    return result.rows.map(mapRowToConversation)
+  },
+
   async insert(db: Querier, params: InsertConversationParams): Promise<Conversation> {
     const result = await db.query<ConversationRow>(sql`
       INSERT INTO conversations (
