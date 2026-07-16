@@ -162,7 +162,11 @@ function BotWorkingSection({
             Working
           </span>
           <span className="sr-only">{active ? "Working in progress" : "Working complete"}</span>
-          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{toolLabel}</span>
+          {/* While a phase runs, a phone's width goes to the live preview, not
+              the count — the preview names the tool the count only totals. */}
+          <span className={cn("shrink-0 text-[11px] tabular-nums text-muted-foreground", preview && "max-sm:hidden")}>
+            {toolLabel}
+          </span>
           {errorCount > 0 && (
             <span className="shrink-0 text-[11px] font-medium text-destructive">
               {errorCount} {errorCount === 1 ? "error" : "errors"}
@@ -173,11 +177,9 @@ function BotWorkingSection({
               while the phase runs, else a chip per call. Once expanded the rows
               below say it in full, so the chips step aside. */}
           {preview && (
-            <span className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
               <span className="truncate font-mono text-[11.5px] text-foreground/90">{preview.headline}</span>
-              {preview.detail && (
-                <span className="hidden truncate text-[11px] text-muted-foreground sm:inline">{preview.detail}</span>
-              )}
+              {preview.detail && <span className="truncate text-[11px] text-muted-foreground">{preview.detail}</span>}
             </span>
           )}
           {!preview && !open && (
