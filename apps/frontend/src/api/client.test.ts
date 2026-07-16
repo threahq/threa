@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { THREA_AUTH_MODE_HEADER } from "@threa/types"
 import { api, ApiError, parseApiError } from "./client"
 
 const originalFetch = globalThis.fetch
@@ -100,6 +101,95 @@ describe("apiFetch request timeout", () => {
 
     await vi.advanceTimersByTimeAsync(1)
     expect(((await p) as Error).message).toBe("Request timed out after 1000ms")
+  })
+})
+
+describe("apiFetch client-coordinated session refresh", () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn() as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  const expired = () => mockResponse(401, { error: "Session expired", code: "TOKEN_EXPIRED" })
+  const ok = (body: unknown) => mockResponse(200, body)
+
+  function fetchCalls(): Array<{ url: string; init: RequestInit | undefined }> {
+    return vi.mocked(globalThis.fetch).mock.calls.map(([url, init]) => ({ url: String(url), init }))
+  }
+
+  it("sends the auth-mode header on every request", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(ok({ fine: true }))
+    await api.get("/anything")
+    const headers = fetchCalls()[0]!.init?.headers as Record<string, string>
+    expect(headers[THREA_AUTH_MODE_HEADER]).toBe("client-refresh")
+  })
+
+  it("on TOKEN_EXPIRED: refreshes once (without the header) and retries the request once", async () => {
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(expired()) // original request
+      .mockResolvedValueOnce(ok({ data: { ok: true } })) // POST /api/auth/refresh
+      .mockResolvedValueOnce(ok({ answer: 42 })) // retried request
+
+    const result = await api.get<{ answer: number }>("/data")
+
+    expect(result).toEqual({ answer: 42 })
+    const calls = fetchCalls()
+    expect(calls.map((c) => c.url)).toEqual(["/data", "/api/auth/refresh", "/data"])
+    // The refresh call must take the LEGACY implicit-refresh path — no auth-mode header.
+    const refreshHeaders = (calls[1]!.init?.headers ?? {}) as Record<string, string>
+    expect(refreshHeaders[THREA_AUTH_MODE_HEADER]).toBeUndefined()
+  })
+
+  it("coalesces concurrent TOKEN_EXPIRED failures into ONE refresh", async () => {
+    let refreshCount = 0
+    vi.mocked(globalThis.fetch).mockImplementation(async (url: RequestInfo | URL) => {
+      const path = String(url)
+      if (path === "/api/auth/refresh") {
+        refreshCount++
+        // Yield so both callers are queued on the shared promise before it settles.
+        await new Promise((r) => setTimeout(r, 10))
+        return ok({ data: { ok: true } })
+      }
+      return refreshCount > 0 ? ok({ path }) : expired()
+    })
+
+    const [a, b] = await Promise.all([api.get<{ path: string }>("/a"), api.get<{ path: string }>("/b")])
+
+    expect(refreshCount).toBe(1)
+    expect([a.path, b.path]).toEqual(["/a", "/b"])
+  })
+
+  it("a dead session (SESSION_INVALID refresh) rethrows the original 401 so the login redirect fires", async () => {
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(expired())
+      .mockResolvedValueOnce(mockResponse(401, { error: "Session expired", code: "SESSION_INVALID" }))
+
+    const err = (await api.get("/data").catch((e) => e)) as ApiError
+    expect(ApiError.isApiError(err)).toBe(true)
+    expect(err).toMatchObject({ status: 401, code: "TOKEN_EXPIRED" })
+    expect(fetchCalls()).toHaveLength(2) // no retry of the original request
+  })
+
+  it("an unavailable refresh (outage) throws a NON-ApiError so the app is not bounced to login", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(expired()).mockRejectedValueOnce(new TypeError("Failed to fetch"))
+
+    const err = (await api.get("/data").catch((e) => e)) as Error
+    expect(err).toBeInstanceOf(Error)
+    expect(ApiError.isApiError(err)).toBe(false)
+    expect(err.message).toContain("Session refresh unavailable")
+  })
+
+  it("a 401 with a non-expired code (e.g. SESSION_INVALID) is thrown as-is with no refresh attempt", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      mockResponse(401, { error: "Session expired", code: "SESSION_INVALID" })
+    )
+
+    const err = (await api.get("/data").catch((e) => e)) as ApiError
+    expect(err).toMatchObject({ status: 401, code: "SESSION_INVALID" })
+    expect(fetchCalls()).toHaveLength(1)
   })
 })
 

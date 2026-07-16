@@ -1112,6 +1112,20 @@ export const THREA_CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
 // it's a documented public header, named like Stripe-Version.
 export const THREA_VERSION_HEADER = "Threa-Version"
 
+// Client-coordinated session refresh. A request carrying
+// `X-Threa-Auth-Mode: client-refresh` opts into verify-only auth: the server
+// never refreshes the WorkOS session inline — an expired token 401s fast with
+// TOKEN_EXPIRED and the CLIENT runs exactly one refresh (deduped across
+// queries and tabs) against POST /api/auth/refresh, then retries. Requests
+// without the header keep the legacy implicit-refresh middleware behavior.
+export const THREA_AUTH_MODE_HEADER = "X-Threa-Auth-Mode"
+export const THREA_AUTH_MODE_CLIENT_REFRESH = "client-refresh"
+// 401 codes the auth middleware emits: refresh-then-retry vs. dead session vs.
+// transient validation outage (keep the session, do NOT bounce to login).
+export const AUTH_TOKEN_EXPIRED_CODE = "TOKEN_EXPIRED"
+export const AUTH_SESSION_INVALID_CODE = "SESSION_INVALID"
+export const AUTH_UNAVAILABLE_CODE = "AUTH_UNAVAILABLE"
+
 // Original client-facing host (e.g. `admin.threa.io`, `pr-204-staging.threa.io`)
 // carried from the Cloudflare routers to the control-plane.
 //

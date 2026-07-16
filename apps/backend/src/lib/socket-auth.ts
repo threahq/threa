@@ -21,7 +21,12 @@ export function createSocketAuthMiddleware(authService: AuthService) {
     // throwing auth call (network/WorkOS error) would hang the connection until
     // timeout. Fail closed: reject the connection rather than leave it pending.
     try {
-      const result = await authService.authenticateSession(session)
+      // Verify-only, NEVER refresh: a WS handshake can't carry Set-Cookie back,
+      // so a server-side refresh here rotates the WorkOS refresh token into a
+      // sealed session the browser never receives — silently consuming the
+      // token the browser's cookie still holds. An expired cookie is rejected
+      // instead; the HTTP layer refreshes it and socket.io's reconnect succeeds.
+      const result = await authService.verifySession(session)
       if (!result.success || !result.user) return next(new Error("Authentication failed"))
       socket.data.workosUserId = result.user.id
       next()
