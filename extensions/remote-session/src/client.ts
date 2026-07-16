@@ -128,16 +128,26 @@ export class ThreaClient {
       // cap it — a proxy/server 5xx can return a large HTML page, which we must
       // not pull into memory.
       let code: string | undefined
+      let serverMessage: string | undefined
       if (response.headers.get("content-type")?.includes("application/json")) {
         try {
           const body = (await response.text()).slice(0, 2000)
-          const parsed = JSON.parse(body) as { code?: unknown }
+          const parsed = JSON.parse(body) as { code?: unknown; error?: unknown }
           if (typeof parsed.code === "string") code = parsed.code
+          if (typeof parsed.error === "string") serverMessage = parsed.error
         } catch {
           code = undefined
         }
       }
-      throw new ThreaApiError(`Threa API ${response.status}: ${response.statusText}`, response.status, code)
+      // Carry the structured code + server message in the text too — most call
+      // sites log `error.message` only, and "Threa API 409: Conflict" gives the
+      // user nothing to act on.
+      const detail = [code, serverMessage].filter(Boolean).join(" — ")
+      throw new ThreaApiError(
+        `Threa API ${response.status}${detail ? ` (${detail})` : `: ${response.statusText}`}`,
+        response.status,
+        code
+      )
     }
     if (response.status === 204) return undefined as T
     return (await response.json()) as T

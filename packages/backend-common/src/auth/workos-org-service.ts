@@ -1,6 +1,6 @@
 import { WorkOS } from "@workos-inc/node"
 import { logger } from "../logger"
-import type { WorkosConfig } from "./types"
+import { WORKOS_REQUEST_TIMEOUT_MS, type WorkosConfig } from "./types"
 
 type WidgetScope =
   | "widgets:api-keys:manage"
@@ -146,7 +146,7 @@ export class WorkosOrgServiceImpl implements WorkosOrgService {
   private workos: WorkOS
 
   constructor(config: WorkosConfig) {
-    this.workos = new WorkOS(config.apiKey, { clientId: config.clientId })
+    this.workos = new WorkOS(config.apiKey, { clientId: config.clientId, timeout: WORKOS_REQUEST_TIMEOUT_MS })
   }
 
   async createOrganization(params: { name: string; externalId: string }): Promise<{ id: string }> {

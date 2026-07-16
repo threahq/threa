@@ -1,7 +1,11 @@
-import { WorkOS } from "@workos-inc/node"
+import {
+  AuthenticateWithSessionCookieFailureReason,
+  RefreshAndSealSessionDataFailureReason,
+  WorkOS,
+} from "@workos-inc/node"
 import type { SocialProvider } from "@threa/types"
 import { logger } from "../logger"
-import type { WorkosConfig } from "./types"
+import { WORKOS_REQUEST_TIMEOUT_MS, type WorkosConfig } from "./types"
 
 export interface AuthResult {
   success: boolean
@@ -25,6 +29,18 @@ export interface AuthResult {
   sealedSession?: string
   refreshed: boolean
   reason?: string
+  /**
+   * Set on failures: true only when WorkOS definitively rejected the SESSION
+   * itself (unsealable cookie, MFA/SSO required), so clearing the cookie is
+   * safe. False for `invalid_grant` — in a concurrent-request burst it usually
+   * means a sibling request just rotated this refresh token and its Set-Cookie
+   * is already on the wire (WorkOS rotates refresh tokens on use); clearing
+   * here would destroy that newer session. Also false when WorkOS was simply
+   * unreachable (timeout/network/5xx) — an outage says nothing about the
+   * session's validity, and clearing turned the 2026-07-16 WorkOS incident
+   * into mass forced logouts.
+   */
+  terminal?: boolean
 }
 
 /**
@@ -100,6 +116,19 @@ export interface AuthService {
   revokeSession(sealedSession: string): Promise<boolean>
 }
 
+/**
+ * Whether a WorkOS refresh rejection kills the session for good.
+ * `invalid_grant` deliberately is NOT terminal: with rotating refresh tokens
+ * it usually means a concurrent request already rotated this token (its
+ * Set-Cookie is on the wire); a genuinely revoked session just keeps 401ing
+ * until the client re-authenticates — no cookie clearing needed. MFA/SSO
+ * requirements ARE terminal: the session cannot proceed without a fresh login
+ * flow, so keeping the cookie only loops the failure.
+ */
+function isTerminalRefreshReason(reason: RefreshAndSealSessionDataFailureReason): boolean {
+  return reason !== RefreshAndSealSessionDataFailureReason.INVALID_GRANT
+}
+
 export class WorkosAuthService implements AuthService {
   private workos: WorkOS
   private clientId: string
@@ -110,7 +139,7 @@ export class WorkosAuthService implements AuthService {
     this.clientId = config.clientId
     this.cookiePassword = config.cookiePassword
     this.redirectUri = config.redirectUri
-    this.workos = new WorkOS(config.apiKey, { clientId: this.clientId })
+    this.workos = new WorkOS(config.apiKey, { clientId: this.clientId, timeout: WORKOS_REQUEST_TIMEOUT_MS })
   }
 
   async authenticateSession(sealedSession: string): Promise<AuthResult> {
@@ -119,6 +148,7 @@ export class WorkosAuthService implements AuthService {
         success: false,
         refreshed: false,
         reason: "no_session_cookie_provided",
+        terminal: true,
       }
     }
 
@@ -143,7 +173,11 @@ export class WorkosAuthService implements AuthService {
       }
     }
 
-    if (authRes.reason !== "no_session_cookie_provided") {
+    // Refresh only when the cookie unsealed fine but its JWT is stale
+    // (INVALID_JWT). An unsealable cookie must not reach refresh(): the SDK
+    // re-unseals there WITHOUT a catch, so it would throw into the
+    // network-error path below and the dead cookie would never be cleared.
+    if (authRes.reason === AuthenticateWithSessionCookieFailureReason.INVALID_JWT) {
       try {
         const refreshResult = await session.refresh({
           cookiePassword: this.cookiePassword,
@@ -163,8 +197,22 @@ export class WorkosAuthService implements AuthService {
             refreshed: true,
           }
         }
+        // WorkOS definitively rejected the refresh (the SDK returns instead of
+        // throwing for known OAuth errors). Only a subset is terminal — see
+        // isTerminalRefreshReason for why invalid_grant is deliberately not.
+        if (!refreshResult.authenticated) {
+          return {
+            success: false,
+            refreshed: false,
+            reason: refreshResult.reason,
+            terminal: isTerminalRefreshReason(refreshResult.reason),
+          }
+        }
       } catch (error) {
+        // WorkOS unreachable (timeout / network / 5xx): says nothing about the
+        // session's validity — never terminal, the client retries.
         logger.error({ err: error, reason: authRes.reason }, "Session refresh error")
+        return { success: false, refreshed: false, reason: authRes.reason, terminal: false }
       }
     }
 
@@ -172,6 +220,9 @@ export class WorkosAuthService implements AuthService {
       success: false,
       refreshed: false,
       reason: authRes.reason,
+      // Reached with an unsealable/empty cookie (no refresh was possible) —
+      // retrying the same value can never succeed, so clearing is safe.
+      terminal: true,
     }
   }
 

@@ -157,4 +157,82 @@ describe("createBotRuntimeSession reattach after unarchive", () => {
     expect(createLinkedScratchpadSession).toHaveBeenCalled()
     expect(cap.body()).toMatchObject({ data: { linkId: "brsl_new", rootStreamId: "stream_new" } })
   })
+
+  it("ifArchived=replace retires the archived link and creates a fresh scratchpad instead of 409ing", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    const retireArchivedRuntimeSession = mock(() => Promise.resolve(true))
+    const createLinkedScratchpadSession = mock(() =>
+      Promise.resolve({
+        link: { id: "brsl_new", rootStreamId: "stream_new", activeStreamId: "stream_new", runtimeSessionId: "sess_1" },
+        stream: { id: "stream_new" },
+      })
+    )
+    const handlers = createHandlers({
+      findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+      reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "archived_stream" })),
+      retireArchivedRuntimeSession,
+      createLinkedScratchpadSession,
+    })
+    const req = botRequest()
+    ;(req.body as Record<string, unknown>).ifArchived = "replace"
+    const cap = createResponse()
+
+    await handlers.createBotRuntimeSession(req, cap.res)
+
+    expect(retireArchivedRuntimeSession).toHaveBeenCalled()
+    expect(createLinkedScratchpadSession).toHaveBeenCalled()
+    expect(cap.body()).toMatchObject({ data: { linkId: "brsl_new", rootStreamId: "stream_new" } })
+  })
+
+  it("ifArchived=replace resumes the revived link when a concurrent unarchive wins the retire race", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as never))
+    const createLinkedScratchpadSession = mock(() => Promise.reject(new Error("must not create a new scratchpad")))
+    // Nothing to retire (the stream is no longer archived) → the handler re-runs
+    // the reattach and resumes the link the unarchive consumer revived.
+    const reattach = mock()
+      .mockResolvedValueOnce({ status: "archived_stream" })
+      .mockResolvedValueOnce({
+        status: "reattached",
+        link: { id: "brsl_1", rootStreamId: "stream_old", activeStreamId: "stream_old", runtimeSessionId: "sess_1" },
+      })
+    const handlers = createHandlers({
+      findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+      reattachArchivedRuntimeSession: reattach,
+      retireArchivedRuntimeSession: mock(() => Promise.resolve(false)),
+      repairBotTraitsInTransaction: mock(() => Promise.resolve()),
+      createLinkedScratchpadSession,
+    })
+    const req = botRequest()
+    ;(req.body as Record<string, unknown>).ifArchived = "replace"
+    const cap = createResponse()
+
+    await handlers.createBotRuntimeSession(req, cap.res)
+
+    expect(createLinkedScratchpadSession).not.toHaveBeenCalled()
+    expect(cap.body()).toMatchObject({ data: { linkId: "brsl_1", rootStreamId: "stream_old" } })
+  })
+
+  it("ifArchived=wait (and default) keeps the 409 SCRATCHPAD_ARCHIVED contract", async () => {
+    for (const ifArchived of ["wait", undefined]) {
+      spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+      const retireArchivedRuntimeSession = mock(() => Promise.resolve(true))
+      const handlers = createHandlers({
+        findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+        reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "archived_stream" })),
+        retireArchivedRuntimeSession,
+        createLinkedScratchpadSession: mock(() => Promise.reject(new Error("must not create a new scratchpad"))),
+      })
+      const req = botRequest()
+      if (ifArchived !== undefined) (req.body as Record<string, unknown>).ifArchived = ifArchived
+
+      await expect(handlers.createBotRuntimeSession(req, createResponse().res)).rejects.toMatchObject({
+        status: 409,
+        code: "SCRATCHPAD_ARCHIVED",
+      })
+      expect(retireArchivedRuntimeSession).not.toHaveBeenCalled()
+      mock.restore()
+    }
+  })
 })

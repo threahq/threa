@@ -451,9 +451,38 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await new Promise((resolve) => setTimeout(resolve, 250))
 
     expect(created.length).toBeGreaterThanOrEqual(1)
+    // The probe WAITS on the archived scratchpad (grace-window reattach) — it
+    // must never ask the server to replace it with a fresh one.
+    expect((created[0] as Record<string, unknown>).ifArchived).toBe("wait")
     expect(asInternal(session).archivePending).toBeUndefined()
     expect(asInternal(session).link).toMatchObject({ rootStreamId: "stream_root" })
     expect(archived).toEqual([])
+    await session.shutdown()
+  })
+
+  test("a cold-start link asks the server to replace an archived scratchpad (ifArchived=replace)", async () => {
+    const created: unknown[] = []
+    const client = {
+      createSession: async (body: unknown) => {
+        created.push(body)
+        return {
+          linkId: "brsl_1",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_root",
+          runtimeSessionId: "rts-test",
+          streamUrlPath: "/w/ws_1/s/stream_root",
+        }
+      },
+    } as unknown as ThreaClient
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+
+    await (session as unknown as { ensureLink: () => Promise<void> }).ensureLink()
+
+    // No archivePending at cold start: a deterministic identity pointing at a
+    // scratchpad the user archived must mint a fresh one, not wedge on 409s.
+    expect(created).toHaveLength(1)
+    expect((created[0] as Record<string, unknown>).ifArchived).toBe("replace")
     await session.shutdown()
   })
 

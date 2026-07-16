@@ -48,7 +48,13 @@ export function createAuthMiddleware({ authService }: Dependencies) {
     const result = await authService.authenticateSession(session)
 
     if (!result.success || !result.user) {
-      clearSessionCookie(res)
+      // Clear the cookie only when the session is definitively dead
+      // (result.terminal). On an invalid_grant race a sibling request just
+      // rotated the token and its Set-Cookie is already on the wire — clearing
+      // here would arrive later and destroy that newer session. On a WorkOS
+      // outage (refresh threw) the session may be perfectly valid — clearing
+      // turns a provider blip into a mass forced logout.
+      if (result.terminal) clearSessionCookie(res)
       return res.status(401).json({ error: "Session expired" })
     }
 

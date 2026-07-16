@@ -544,6 +544,38 @@ export class BotRuntimeService {
     })
   }
 
+  /**
+   * Session-create `ifArchived: "replace"`: the caller is a cold-started
+   * runtime whose deterministic identity points at an archived scratchpad the
+   * user is done with. Retire that link (terminal, identity renamed out of the
+   * unique key's way) so a fresh scratchpad can be created under the same
+   * identity. Returns false when there was nothing to retire — either the
+   * scratchpad got unarchived concurrently (the caller should retry the
+   * reattach) or the link is already gone.
+   */
+  async retireArchivedRuntimeSession(params: {
+    workspaceId: string
+    botId: string
+    runtimeKind: BotRuntimeKind
+    instanceId: string
+    runtimeSessionId: string
+  }): Promise<boolean> {
+    return withTransaction(this.pool, async (db) => {
+      const retired = await BotRuntimeSessionLinkRepository.retireArchivedByRuntimeSession(db, params)
+      if (!retired) return false
+      logger.info(
+        {
+          workspaceId: params.workspaceId,
+          botId: params.botId,
+          rootStreamId: retired.rootStreamId,
+          linkId: retired.id,
+        },
+        "Retired archived runtime session link for replacement"
+      )
+      return true
+    })
+  }
+
   async createInvocation(params: {
     workspaceId: string
     rootStreamId: string

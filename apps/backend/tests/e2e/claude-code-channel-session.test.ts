@@ -218,6 +218,86 @@ describe("claude-code-channel runtime sessions", () => {
     expect(claimed.promptMarkdown).toContain("back-from-archive")
   })
 
+  // Cold-start replace: a fresh channel launch whose deterministic identity
+  // points at a scratchpad the user archived must NOT wedge on 409s —
+  // `ifArchived: "replace"` retires the archived link and mints a fresh
+  // scratchpad under the same identity. A later unarchive of the old
+  // scratchpad must not hijack the identity back.
+  test("ifArchived=replace creates a fresh scratchpad when the linked scratchpad is archived", async () => {
+    const client = new TestClient()
+    await loginAs(client, `cc-repl-${testRunId}@test.com`, "CC Replace User")
+    const workspace = await createWorkspace(client, `CC Replace WS ${testRunId}`)
+    const bot = await createBot(client, workspace.id, {
+      type: "personal",
+      name: `CCP ${testRunId}`,
+      slug: `ccp-${testRunId}`,
+      traits: [BotTraits.ACTIVE_SCRATCHPAD, BotTraits.MENTIONABLE],
+    })
+    const apiKey = await createBotKey(client, workspace.id, bot.id, [
+      WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
+    ])
+
+    const body = {
+      runtimeKind: "claude-code-channel",
+      instanceId: `ccp-inst-${testRunId}`,
+      runtimeSessionId: `ccp-sess-${testRunId}`,
+      displayName: "Claude Code - repl",
+      localCwd: "/tmp/threa-cc-repl",
+    }
+    const first = await botApiPost<{ data: SessionLinkData }>(
+      client,
+      workspace.id,
+      "/bot-runtime/sessions",
+      apiKey,
+      body
+    )
+    expect(first.status).toBe(200)
+    await archiveStream(client, workspace.id, first.data.data.rootStreamId)
+
+    // Wait for the outbox to end the link (the default/wait contract 409s).
+    let archivedConflict: { status: number; data: { code?: string } } | undefined
+    for (let i = 0; i < 50 && !archivedConflict; i++) {
+      const whileArchived = await botApiPost<{ code?: string }>(client, workspace.id, "/bot-runtime/sessions", apiKey, {
+        ...body,
+        ifArchived: "wait",
+      })
+      if (whileArchived.status === 409) archivedConflict = whileArchived
+      else await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+    expect(archivedConflict).toMatchObject({ status: 409, data: { code: "SCRATCHPAD_ARCHIVED" } })
+
+    const replaced = await botApiPost<{ data: SessionLinkData }>(
+      client,
+      workspace.id,
+      "/bot-runtime/sessions",
+      apiKey,
+      {
+        ...body,
+        ifArchived: "replace",
+      }
+    )
+    expect(replaced.status).toBe(200)
+    // A fresh scratchpad under the same identity — not the archived one.
+    expect(replaced.data.data.rootStreamId).not.toBe(first.data.data.rootStreamId)
+    expect(replaced.data.data.linkId).not.toBe(first.data.data.linkId)
+    expect(replaced.data.data.runtimeSessionId).toBe(body.runtimeSessionId)
+
+    // Unarchiving the OLD scratchpad must not steal the identity back: the
+    // retired link is terminal, so a repeat create resumes the replacement.
+    await unarchiveStream(client, workspace.id, first.data.data.rootStreamId)
+    const after = await botApiPost<{ data: SessionLinkData }>(
+      client,
+      workspace.id,
+      "/bot-runtime/sessions",
+      apiKey,
+      body
+    )
+    expect(after.status).toBe(200)
+    expect(after.data.data.linkId).toBe(replaced.data.data.linkId)
+    expect(after.data.data.rootStreamId).toBe(replaced.data.data.rootStreamId)
+  })
+
   test("rejects a link-free runtime kind", async () => {
     const client = new TestClient()
     await loginAs(client, `cc-reject-${testRunId}@test.com`, "CC Reject User")

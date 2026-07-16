@@ -565,6 +565,53 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
+  /**
+   * Retire the newest archive-ended link for one runtime session identity —
+   * the session-create `ifArchived: "replace"` path. The identity's unique key
+   * (workspace, bot, kind, instance, session) is unconditional, so an archived
+   * link permanently blocks a fresh create until its runtime_session_id is
+   * renamed out of the way; the terminal 'ended' status keeps a later
+   * stream:unarchived from reviving a link no connector can reach anymore.
+   *
+   * The stream guard is the inverse of reactivate's: only retire while the
+   * scratchpad IS still archived, with the stream row share-locked in the same
+   * candidate select so a concurrent unarchive serializes against this commit
+   * (its consumer then finds no 'archived' link — the retire won) instead of
+   * racing the same row. Call inside a transaction.
+   */
+  async retireArchivedByRuntimeSession(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      runtimeKind: BotRuntimeKind
+      instanceId: string
+      runtimeSessionId: string
+    }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(sql`WITH candidate AS (
+        SELECT l.id FROM bot_runtime_session_links l
+        JOIN streams s
+          ON s.workspace_id = l.workspace_id AND s.id = l.root_stream_id AND s.archived_at IS NOT NULL
+        WHERE l.workspace_id = ${params.workspaceId}
+          AND l.bot_id = ${params.botId}
+          AND l.runtime_kind = ${params.runtimeKind}
+          AND l.instance_id = ${params.instanceId}
+          AND l.runtime_session_id = ${params.runtimeSessionId}
+          AND l.status = 'archived'
+        ORDER BY l.updated_at DESC
+        LIMIT 1
+        FOR UPDATE OF l SKIP LOCKED
+        FOR SHARE OF s
+      )
+      UPDATE bot_runtime_session_links l
+      SET status = 'ended', runtime_session_id = l.runtime_session_id || ':retired:' || l.id, updated_at = NOW()
+      FROM candidate
+      WHERE l.id = candidate.id
+      RETURNING l.*`)
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
+
   /** Newest archive-ended link for one runtime session identity (regardless of the stream's archive state). */
   async findArchivedByRuntimeSession(
     db: Querier,

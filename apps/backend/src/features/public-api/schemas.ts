@@ -165,6 +165,13 @@ export const createRuntimeSessionSchema = z.object({
   // follow-up provisioning call, because the wrap AAD binds to the server-minted
   // stream id. Personal bots only (a shared bot has no owner to wrap to).
   e2e: z.object({ ownerKeyId: z.string().min(1).max(128) }).optional(),
+  // What to do when this identity's link exists but its scratchpad is archived.
+  // "wait" (default) 409s with SCRATCHPAD_ARCHIVED — the archive-grace reattach
+  // probe uses it so an unarchive within the window revives the SAME scratchpad.
+  // "replace" retires the archived link (terminal, identity freed) and creates a
+  // fresh scratchpad — cold starts use it so a deliberately archived scratchpad
+  // can never wedge auto-connect for its project directory.
+  ifArchived: z.enum(["wait", "replace"]).optional(),
 })
 
 // Generation-0 SSK wraps a sealed harness provisions right after creating its
