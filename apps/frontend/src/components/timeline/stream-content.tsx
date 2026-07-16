@@ -3248,7 +3248,18 @@ function TimelineMessageList({
         onJumpToDate={onJumpToDate}
         scrollerRef={scrollerRef}
       />
-      <AgentFollowPill state={followPill} belowUnreadBanner={unreadBannerVisible} onFollow={onFollowSession} />
+      <AgentFollowPill
+        state={followPill}
+        belowUnreadBanner={unreadBannerVisible}
+        onFollow={(anchorId) => {
+          // Hide immediately — the convergent scroll can take a beat and the next
+          // recompute waits for a scroll event or step tick, which would leave the
+          // pill hanging over the card it just revealed. If the jump fails to
+          // bring the card into view, the next scroll/tick re-shows it.
+          setFollowPill(null)
+          onFollowSession(anchorId)
+        }}
+      />
       {isInitialSettling && (
         <div aria-hidden className="pointer-events-none absolute inset-0 z-10 bg-background">
           {skeleton}
