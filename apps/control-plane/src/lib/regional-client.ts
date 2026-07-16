@@ -198,6 +198,26 @@ export class RegionalClient {
   }
 
   /**
+   * Forward one verified GitHub webhook delivery to a region's internal
+   * ingestion endpoint. The webhook is an invalidation signal — the region
+   * derives canonical URLs from `payload` and force-refreshes matching link
+   * previews. Idempotency at the region keys on `deliveryGuid`.
+   */
+  async dispatchGithubWebhook(
+    region: string,
+    data: {
+      deliveryGuid: string
+      eventType: string
+      action: string | null
+      installationId: string | null
+      repositoryFullName: string | null
+      payload: Record<string, unknown>
+    }
+  ): Promise<void> {
+    await this.postInternal(region, "/internal/github/webhook-events", data, "GitHub webhook dispatch")
+  }
+
+  /**
    * Forward a link-invitation claim from CP to the regional backend that owns
    * the row. Regional performs the atomic claim (INV-20). On 4xx, surfaces the
    * upstream error code so CP can map it to an HTTP status without parsing.

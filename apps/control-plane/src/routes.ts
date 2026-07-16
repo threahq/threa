@@ -1,4 +1,4 @@
-import type { Express, Request } from "express"
+import express, { type Express, type Request } from "express"
 import type { Pool } from "pg"
 import {
   createAuthMiddleware,
@@ -12,6 +12,7 @@ import { createControlPlaneAuthHandlers, createAuthStubHandlers } from "./featur
 import { createAccountsHandlers, AccountsService } from "./features/accounts"
 import { createIntegrationHandlers } from "./features/integrations"
 import { createIntegrationRouteHandlers } from "./features/integration-routes"
+import { createGithubWebhookHandlers, GithubWebhookService, GITHUB_WEBHOOK_PATH } from "./features/github-webhooks"
 import { createWorkspaceHandlers, type ControlPlaneWorkspaceService } from "./features/workspaces"
 import { createInvitationShadowHandlers, type InvitationShadowService } from "./features/invitation-shadows"
 import { createWaitlistHandlers, type WaitlistService } from "./features/waitlist"
@@ -47,6 +48,7 @@ interface Dependencies {
   regions: Record<string, RegionConfig>
   workosDedicatedRedirectHosts: string[]
   rateLimits: RateLimitConfig
+  githubWebhookSecret: string | null
 }
 
 export function registerRoutes(app: Express, deps: Dependencies) {
@@ -73,6 +75,16 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     windowMs: 60_000,
     max: deps.rateLimits.globalMax,
     key: ipKey,
+    // GitHub webhooks arrive from a small pool of source IPs and a delivery storm
+    // (force-push / review flurry) can exceed the global per-IP cap. A 429 reads
+    // as a broken endpoint and GitHub auto-disables the App's single webhook URL,
+    // so this path must never rate-limit — authenticity is the HMAC signature.
+    // Trailing-slash tolerance mirrors app.ts's JSON-parser skip and the router
+    // regex so `/webhook/` is exempt too.
+    skip: (req: Request) => {
+      const path = req.path.length > 1 ? req.path.replace(/\/$/, "") : req.path
+      return path === GITHUB_WEBHOOK_PATH
+    },
   })
   const authLimit = createRateLimit({ name: "cp-auth", windowMs: 60_000, max: deps.rateLimits.authMax, key: ipKey })
   const waitlistLimit = createRateLimit({
@@ -135,6 +147,16 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/auth/me", auth, authHandlers.me)
   app.get("/api/integrations/github/callback", auth, integrations.githubCallback)
   app.get("/api/integrations/linear/callback", auth, integrations.linearCallback)
+
+  // GitHub App webhook ingress. Unauthenticated by session — authenticity is the
+  // HMAC signature over the raw body. Mounted only when the secret is configured
+  // (INV-11); otherwise the path 404s. express.raw preserves the exact bytes the
+  // signature was computed over (the JSON parser is skipped for this path in app.ts).
+  if (deps.githubWebhookSecret) {
+    const githubWebhookService = new GithubWebhookService({ pool, webhookSecret: deps.githubWebhookSecret })
+    const githubWebhook = createGithubWebhookHandlers({ service: githubWebhookService })
+    app.post(GITHUB_WEBHOOK_PATH, express.raw({ type: "application/json", limit: "5mb" }), githubWebhook.receive)
+  }
 
   // Multi-account: list/resolve/switch/remove run *after* the existing `auth`
   // middleware, which validates only the single active session cookie. Parked

@@ -6,6 +6,7 @@ import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
 import { INTERNAL_API_KEY_HEADER } from "@threa/types"
 import { logger, createCorsOriginChecker } from "@threa/backend-common"
+import { GITHUB_WEBHOOK_PATH } from "./features/github-webhooks"
 
 interface CreateAppOptions {
   corsAllowedOrigins: string[]
@@ -36,7 +37,18 @@ export function createApp(options: CreateAppOptions): Express {
 
   app.use(cors({ origin: createCorsOriginChecker(options.corsAllowedOrigins), credentials: true }))
   app.use(cookieParser())
-  app.use(express.json())
+  // The GitHub webhook route needs the raw request bytes for HMAC verification,
+  // so the JSON parser must not consume its body first. The route mounts its own
+  // express.raw() parser in registerRoutes.
+  const jsonParser = express.json()
+  app.use((req, res, next) => {
+    // Match the trailing-slash tolerance of the webhook route (Express non-strict
+    // routing) and the router regex, so a POST to `/webhook/` still skips the JSON
+    // parser and reaches express.raw() with an intact body for HMAC verification.
+    const path = req.path.length > 1 ? req.path.replace(/\/$/, "") : req.path
+    if (path === GITHUB_WEBHOOK_PATH) return next()
+    return jsonParser(req, res, next)
+  })
   app.use(express.urlencoded({ extended: false }))
 
   app.use(

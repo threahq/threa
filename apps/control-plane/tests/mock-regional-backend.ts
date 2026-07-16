@@ -54,6 +54,15 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
       return
     }
 
+    // POST /internal/github/webhook-events — mock the regional webhook ingress so
+    // outbox dispatch of github_webhook_dispatch events succeeds cleanly (the real
+    // endpoint arrives in Step 3).
+    if (req.method === "POST" && url === "/internal/github/webhook-events") {
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ ok: true }))
+      return
+    }
+
     // Fallback 404
     res.writeHead(404, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ error: "Not found" }))
