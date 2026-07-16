@@ -31,6 +31,8 @@ export interface ThreaApiClientOptions {
   apiKey: string
   /** Injectable for tests so 429 backoff does not actually wait. Defaults to a real timer. */
   sleep?: (ms: number) => Promise<void>
+  /** Injectable for tests. Defaults to 30s. */
+  timeoutMs?: number
 }
 
 type Method = "GET" | "POST" | "PATCH" | "DELETE"
@@ -40,12 +42,14 @@ export class ThreaApiClient {
   private readonly workspaceId: string
   private readonly apiKey: string
   private readonly sleep: (ms: number) => Promise<void>
+  private readonly timeoutMs: number
 
   constructor(opts: ThreaApiClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, "")
     this.workspaceId = opts.workspaceId
     this.apiKey = opts.apiKey
     this.sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    this.timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS
   }
 
   get<T>(path: string): Promise<T> {
@@ -79,10 +83,13 @@ export class ThreaApiClient {
     // 429 is safe to retry for any method: the request never executed server-side.
     for (let attempt = 0; ; attempt++) {
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-      let response: Response
+      // The timer must stay armed across the body read: fetch resolves at headers,
+      // and response.json()/text() stream the body — clearing earlier would leave a
+      // stalled body with no timeout at all.
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+      let retryAfter429 = false
       try {
-        response = await fetch(url, {
+        const response = await fetch(url, {
           method,
           signal: controller.signal,
           headers: {
@@ -92,21 +99,28 @@ export class ThreaApiClient {
           },
           ...(hasBody ? { body: JSON.stringify(body) } : {}),
         })
+        if (response.status === 429 && attempt < RETRY_DELAYS_MS.length) {
+          retryAfter429 = true
+        } else {
+          if (!response.ok) {
+            throw await this.toError(response)
+          }
+          if (response.status === 204) return undefined as T
+          return (await response.json()) as T
+        }
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new ThreaApiError({
+            status: 0,
+            code: "TIMEOUT",
+            message: `Threa API ${method} ${path} timed out after ${this.timeoutMs}ms`,
+          })
+        }
+        throw error
       } finally {
         clearTimeout(timeout)
       }
-
-      if (response.status === 429 && attempt < RETRY_DELAYS_MS.length) {
-        await this.sleep(RETRY_DELAYS_MS[attempt]!)
-        continue
-      }
-
-      if (!response.ok) {
-        throw await this.toError(response)
-      }
-
-      if (response.status === 204) return undefined as T
-      return (await response.json()) as T
+      if (retryAfter429) await this.sleep(RETRY_DELAYS_MS[attempt]!)
     }
   }
 

@@ -111,7 +111,7 @@ Resolution is cached for five minutes. A ref that matches nothing, or matches mo
 
 Two affordance gaps, by design of the public API:
 
-- **`@user-slug` as a stream (a DM) is not resolvable.** DM streams do not expose their counterpart on the wire, and there is no "my DM with user X" lookup. The resolver still validates the user and then errors with the resolved id, telling you to find the DM's `stream_…` id via `list_streams` (`type: "dm"`) + `list_stream_members`. Pass that id.
+- **`@user-slug` as a stream (a DM) is not resolvable.** DM streams do not expose their counterpart on the wire, and there is no "my DM with user X" lookup. The resolver still validates the user and then errors with the resolved id, telling you to find the DM's `stream_…` id via `list_streams` (`type: "dm"`) + `read_stream` (`include_members: true`). Pass that id.
 - **Bots and personas are not queryable by slug.** There is no public bot/persona listing, so `@slug` resolves users only. Pass a `bot_…`/`persona_…` id directly.
 
 ## Self-descriptive payloads
@@ -139,7 +139,7 @@ Results are JSON text in the API's envelope: single resources under `data`, list
 
 ### Users
 
-- **`list_users`** — workspace users, filterable by name/slug `query`; page with `after`.
+- **`list_users`** — workspace users, filterable by name/email `query` (not slug); page with `after`.
 
 ### Search
 

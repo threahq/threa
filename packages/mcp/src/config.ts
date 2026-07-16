@@ -58,5 +58,27 @@ export function loadConfig(): ThreaMcpConfig {
     )
   }
 
+  assertSafeBaseUrl(baseUrl)
+
   return { apiKey: apiKey!, workspaceId: workspaceId!, baseUrl }
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"])
+
+// The bearer key rides every request to this host — a plaintext or mistyped
+// base URL hands the key to whoever answers, so reject anything but HTTPS
+// (loopback HTTP allowed for local dev stacks).
+function assertSafeBaseUrl(baseUrl: string): void {
+  let url: URL
+  try {
+    url = new URL(baseUrl)
+  } catch {
+    throw new Error(`[threa-mcp] THREA_BASE_URL is not a valid URL: ${baseUrl}`)
+  }
+  if (url.protocol === "https:") return
+  if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return
+  throw new Error(
+    `[threa-mcp] THREA_BASE_URL must be https:// (http:// is allowed only for localhost) — got ${baseUrl}. ` +
+      `The API key is sent as a bearer token to this host on every request.`
+  )
 }

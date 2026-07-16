@@ -135,7 +135,7 @@ export class RefResolver {
     throw new UnresolvedRefError(
       `Found user @${slug} (${userId}), but the public API does not expose which DM stream is your 1:1 with them ` +
         '(DM streams carry no counterpart on the wire). Get the DM\'s stream_ id with list_streams (type: "dm"), ' +
-        `then list_stream_members to find the one whose members include ${userId}, and pass that stream_ id. ` +
+        `then read_stream with include_members: true to find the one whose members include ${userId}, and pass that stream_ id. ` +
         "Or target a channel with #channel-slug."
     )
   }

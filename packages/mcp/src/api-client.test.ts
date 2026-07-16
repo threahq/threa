@@ -98,3 +98,24 @@ test("204 returns undefined without parsing a body", async () => {
 
   expect(await client.delete("/messages/msg_1")).toBeUndefined()
 })
+
+test("a hung request aborts at the timeout and maps to a TIMEOUT ThreaApiError", async () => {
+  const hangUntilAbort = ((_url: unknown, init?: RequestInit) =>
+    new Promise((_, reject) => {
+      init?.signal?.addEventListener("abort", () =>
+        reject(Object.assign(new Error("The operation was aborted."), { name: "AbortError" }))
+      )
+    })) as unknown as typeof fetch
+  fetchSpy.mockImplementation(hangUntilAbort)
+  const client = new ThreaApiClient({
+    baseUrl: "https://app.threa.io",
+    workspaceId: "ws_1",
+    apiKey: "threa_uk_secret",
+    timeoutMs: 20,
+  })
+
+  const error = (await client.get("/me").catch((e) => e)) as ThreaApiError
+  expect(error).toBeInstanceOf(ThreaApiError)
+  expect(error.code).toBe("TIMEOUT")
+  expect(error.message).toContain("timed out after 20ms")
+})

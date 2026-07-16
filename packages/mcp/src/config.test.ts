@@ -95,3 +95,17 @@ test("explicit THREA_MCP_CONFIG that cannot be read fails loudly", () => {
   process.env.THREA_MCP_CONFIG = join(home, "does-not-exist.json")
   expect(() => loadConfig()).toThrow(/THREA_MCP_CONFIG/)
 })
+
+test("loadConfig rejects a non-https base URL", () => {
+  process.env.THREA_API_KEY = "threa_uk_x"
+  process.env.THREA_WORKSPACE_ID = "ws_x"
+  process.env.THREA_BASE_URL = "http://attacker.example"
+  expect(() => loadConfig()).toThrow(/must be https/)
+})
+
+test("loadConfig allows http for localhost", () => {
+  process.env.THREA_API_KEY = "threa_uk_x"
+  process.env.THREA_WORKSPACE_ID = "ws_x"
+  process.env.THREA_BASE_URL = "http://localhost:4471"
+  expect(loadConfig().baseUrl).toBe("http://localhost:4471")
+})

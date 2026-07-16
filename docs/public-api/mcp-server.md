@@ -90,7 +90,7 @@ Identifier arguments take either a raw id or a sigil-prefixed slug, so you seldo
 
 Resolution is cached for five minutes. A ref that matches nothing, or matches more than one candidate, fails before any API call with the code `UNRESOLVED_REF` and a message that lists the candidates or points you at `list_streams` or `list_users`.
 
-Two limits come from the public API itself. An `@user-slug` cannot stand in for a DM stream, because DM streams do not expose their counterpart on the wire and there is no lookup for the DM you share with a given user. The resolver validates the user and then returns an error naming the resolved id, and it tells you to find the DM's `stream_…` id with `list_streams` set to `type: "dm"` and `list_stream_members`. Bots and personas are not queryable by slug, because the public API has no bot or persona listing, so `@slug` resolves users only and you pass a `bot_…` or `persona_…` id directly.
+Two limits come from the public API itself. An `@user-slug` cannot stand in for a DM stream, because DM streams do not expose their counterpart on the wire and there is no lookup for the DM you share with a given user. The resolver validates the user and then returns an error naming the resolved id, and it tells you to find the DM's `stream_…` id with `list_streams` set to `type: "dm"` and `read_stream` with `include_members: true`. Bots and personas are not queryable by slug, because the public API has no bot or persona listing, so `@slug` resolves users only and you pass a `bot_…` or `persona_…` id directly.
 
 ## Self-descriptive payloads
 
@@ -104,7 +104,7 @@ Identity: `whoami` returns the principal, the resolved API version, and the base
 
 Streams: `list_streams` filters by type and name and pages with `after`. `read_stream` returns one stream together with a page of its messages in a single call, paging the messages by numeric `before` and `after` sequence, and returns the stream's members too when `include_members` is set. If any leg of `read_stream` fails, the whole call fails and no partial data comes back.
 
-Users: `list_users` filters by name or slug and pages with `after`.
+Users: `list_users` filters by name or email, not slug, and pages with `after`.
 
 Search: `search` is one tool routed by its `what` argument. With `what: "messages"` it searches accessible streams full-text, by meaning with `semantic`, or as a literal phrase with `exact`, and `query` is required. With `what: "memos"` it searches the knowledge extracted from the workspace's conversations, `query` is optional and matches by meaning, and an empty query browses recent memos. With `what: "attachments"` it searches by filename or extracted content, and `query` is required. Each `what` accepts only its own filters, and passing another filter returns an error that names it.
 

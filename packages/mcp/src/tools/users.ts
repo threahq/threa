@@ -9,7 +9,7 @@ export function registerUserTools(server: McpServer, client: ThreaApiClient): vo
     {
       title: "List workspace users",
       description:
-        "List users in this workspace. Filter with `query` (text match on name or slug). Page by passing the " +
+        "List users in this workspace. Filter with `query` (text match on name or email — NOT slug; slugs resolve via the @slug ref form). Page by passing the " +
         "previous response's `cursor` value back as `after`; `hasMore` tells you when to stop. limit ≤ 200 " +
         "(default 50).",
       inputSchema: {
