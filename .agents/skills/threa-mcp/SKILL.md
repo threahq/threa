@@ -27,6 +27,10 @@ Prefer the CLI when you have a shell. Check for it first: `threa whoami` if it i
 - Results follow the API envelope: a single resource under `data`, a list as `{ data, hasMore, cursor? }`, a search as `{ data: [...] }`.
 - The MCP tools return the same JSON; a failure is an `isError` result carrying `{ code, message, hint? }`.
 
+## Channel sessions have a different `send` (use `reply` to answer)
+
+If your session is bridged through the Threa remote-control channel, you also have a `threa` MCP server with `send` and `reply` tools bound to channel invocation ids. Those are the ONLY way to answer a `<channel>` event: `reply` closes the request. This skill's `threa send` command (and the `threa-workspace` server's `send_message` tool) posts a plain message as the API key's identity and never closes a channel request. Rule: answering a channel event → channel `reply`; posting anything else into a stream → `threa send`. If you answer a channel event with `threa send`, the message appears but the request stays open until it expires.
+
 ## Start with `whoami`
 
 Run `whoami` (tool `whoami`) before anything else. It confirms the key works, tells you whether you are a `user` or a `bot` principal, and reports the workspace and base URL you are bound to. A user key acts as the person and posts attributed to them; a bot key acts as the bot, and only a bot key can request access to a delegation's stream. Knowing which you are avoids surprises later.

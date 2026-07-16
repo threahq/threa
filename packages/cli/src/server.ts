@@ -52,7 +52,7 @@ export interface ThreaMcpServerDeps {
 }
 
 export function createThreaMcpServer(config: ThreaMcpConfig, deps: ThreaMcpServerDeps = {}): McpServer {
-  const server = new McpServer({ name: "threa", version: "0.1.0" }, { instructions: INSTRUCTIONS })
+  const server = new McpServer({ name: "threa-workspace", version: "0.1.0" }, { instructions: INSTRUCTIONS })
   const client = new ThreaApiClient({
     baseUrl: config.baseUrl,
     workspaceId: config.workspaceId,

@@ -33,7 +33,7 @@ On a terminal the CLI prints concise human-readable text. When output is piped i
 `threa mcp serve` runs the same operations as MCP tools over stdio. Register it persistently for the current project:
 
 ```bash
-claude mcp add threa --scope local \
+claude mcp add threa-workspace --scope local \
   --env THREA_API_KEY=threa_uk_… \
   --env THREA_WORKSPACE_ID=ws_… \
   -- bun /abs/path/to/threa/packages/cli/src/cli.ts mcp serve
@@ -46,7 +46,7 @@ If you run more than one worktree of the repository, prefer a session-scoped reg
 ```json
 {
   "mcpServers": {
-    "threa": {
+    "threa-workspace": {
       "type": "stdio",
       "command": "bun",
       "args": ["/abs/path/to/threa/packages/cli/src/cli.ts", "mcp", "serve"],
