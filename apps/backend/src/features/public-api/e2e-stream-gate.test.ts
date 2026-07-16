@@ -272,27 +272,33 @@ describe("public API E2E-stream plaintext gate", () => {
 
   it("lets a plaintext sendMessage into a non-E2E stream through to createMessage", async () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    const createMessage = mock(() =>
+    const createMessageReturningConversation = mock(() =>
       Promise.resolve({
-        id: "msg_new",
-        streamId: "stream_1",
-        sequence: 1n,
-        authorId: "usr_1",
-        authorType: "user",
-        contentJson: { type: "doc", content: [] },
-        contentMarkdown: "hello",
-        reactions: {},
-        metadata: {},
-        editedAt: null,
-        createdAt: new Date(),
+        message: {
+          id: "msg_new",
+          streamId: "stream_1",
+          sequence: 1n,
+          authorId: "usr_1",
+          authorType: "user",
+          contentJson: { type: "doc", content: [] },
+          contentMarkdown: "hello",
+          reactions: {},
+          metadata: {},
+          editedAt: null,
+          createdAt: new Date(),
+        },
+        conversationId: undefined,
       })
     )
     const handlers = createHandlers({
-      eventService: { createMessage, getMessageById: mock(() => Promise.resolve(null)) } as unknown as EventService,
+      eventService: {
+        createMessageReturningConversation,
+        getMessageById: mock(() => Promise.resolve(null)),
+      } as unknown as EventService,
     })
 
     await handlers.sendMessage(userRequest(), createResponse())
-    expect(createMessage).toHaveBeenCalled()
+    expect(createMessageReturningConversation).toHaveBeenCalled()
   })
 })
 

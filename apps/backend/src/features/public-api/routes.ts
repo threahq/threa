@@ -12,6 +12,7 @@ import {
   BOT_RUNTIME_KINDS,
   BOT_RUNTIME_STATUSES,
   BOT_TRAITS,
+  CONVERSATION_STATUSES,
   WORKSPACE_PERMISSION_SCOPES,
   STREAM_TYPES,
   MEMORY_MODES,
@@ -33,6 +34,8 @@ import {
   listMyBotsSchema,
   listStreamsSchema,
   listMessagesSchema,
+  listConversationsSchema,
+  listConversationMessagesSchema,
   sendMessageSchema,
   updateMessageSchema,
   updateStreamSchema,
@@ -114,6 +117,31 @@ const messageSchema = z.object({
   attachments: z.array(attachmentSummarySchema).optional(),
   editedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime(),
+})
+
+// A conversation: a first-class grouping of messages under one effective root
+// stream (the root plus any of its threads). Membership is curated by declared
+// send directives and the async boundary extractor.
+const conversationSchema = z.object({
+  id: z.string(),
+  streamId: z.string().describe("Anchor stream the conversation lives in (may be a thread)"),
+  rootStreamId: z.string().describe("Effective root of the anchor — the stream whose access governs the conversation"),
+  topicSummary: z.string().nullable(),
+  summary: z.string().nullable(),
+  status: z.enum(CONVERSATION_STATUSES),
+  messageCount: z.number().int().describe("Number of primary member messages"),
+  participantIds: z.array(z.string()).describe("Distinct author ids of the member messages"),
+  lastActivityAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+})
+
+const sendMessageResponseSchema = z.object({
+  data: messageSchema,
+  conversationId: z
+    .string()
+    .optional()
+    .describe("The conversation the message was assigned to; present when the request declared a `conversation`."),
 })
 
 const searchResultSchema = z.object({
@@ -580,6 +608,14 @@ const messageIdParam = {
   description: "Message ID (prefixed ULID)",
 }
 
+const conversationIdParam = {
+  name: "conversationId",
+  in: "path" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Conversation ID (prefixed ULID)",
+}
+
 const memoIdParam = {
   name: "memoId",
   in: "path" as const,
@@ -664,6 +700,9 @@ export type OperationId =
   | "listMembers"
   | "listMessages"
   | "sendMessage"
+  | "listConversations"
+  | "getConversation"
+  | "listConversationMessages"
   | "findMessagesByMetadata"
   | "updateMessage"
   | "deleteMessage"
@@ -1209,14 +1248,59 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "sendMessage",
     summary: "Send a message",
     description:
-      "Send a message. Workspace-scoped keys send as a bot; user-scoped keys send on behalf of the key owner.",
+      "Send a message. Workspace-scoped keys send as a bot; user-scoped keys send on behalf of the key owner. " +
+      'Optionally declare the message\'s conversation via `conversation`: `{intent: "new"}` starts a fresh ' +
+      'conversation, `{intent: "existing", conversationId}` posts into one under the same root stream.',
     tags: ["Messages"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE],
     parameters: [workspaceIdParam, streamIdParam],
     requestSchema: sendMessageSchema,
     requestIn: "body",
-    responseSchema: dataEnvelope(messageSchema),
+    responseSchema: sendMessageResponseSchema,
     successStatus: 201,
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/conversations",
+    operationId: "listConversations",
+    summary: "List conversations",
+    description:
+      "Cursor-paginated conversation feed across accessible streams, newest activity first. " +
+      "Filter with `streamId` (scopes to that stream's root and its threads) and `status`.",
+    tags: ["Conversations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ],
+    parameters: [workspaceIdParam],
+    requestSchema: listConversationsSchema,
+    requestIn: "query",
+    responseSchema: paginated(conversationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/conversations/{conversationId}",
+    operationId: "getConversation",
+    summary: "Get a conversation",
+    tags: ["Conversations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ],
+    parameters: [workspaceIdParam, conversationIdParam],
+    responseSchema: dataEnvelope(conversationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/conversations/{conversationId}/messages",
+    operationId: "listConversationMessages",
+    summary: "List a conversation's messages",
+    description:
+      "The conversation's member messages in chronological order, cursor-paginated. Messages can span the " +
+      "conversation's root stream and its threads; each message carries its own `streamId`.",
+    tags: ["Conversations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ],
+    parameters: [workspaceIdParam, conversationIdParam],
+    requestSchema: listConversationMessagesSchema,
+    requestIn: "query",
+    responseSchema: paginated(messageSchema),
+    canReturn404: true,
   },
   {
     method: "post",
@@ -1403,6 +1487,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
 export {
   streamSchema,
   messageSchema,
+  conversationSchema,
   searchResultSchema,
   memberSchema,
   userSchema,
@@ -1424,6 +1509,7 @@ export {
 // Wire types derived from schemas — serializers annotate their return types with these
 export type WireStream = z.infer<typeof streamSchema>
 export type WireMessage = z.infer<typeof messageSchema>
+export type WireConversation = z.infer<typeof conversationSchema>
 export type WireSearchResult = z.infer<typeof searchResultSchema>
 export type WireMember = z.infer<typeof memberSchema>
 export type WireUser = z.infer<typeof userSchema>

@@ -11,6 +11,7 @@ import {
   BOT_RUNTIME_KINDS,
   BOT_RUNTIME_STATUSES,
   BOT_TRAITS,
+  CONVERSATION_STATUSES,
   STREAM_TYPES,
   MEMORY_MODES,
   MEMO_TYPES,
@@ -358,10 +359,23 @@ export const listMessagesSchema = z
     message: "Provide at most one of 'before' or 'after'",
   })
 
+// Public subset of the internal `ConversationDirective`: declare the message's
+// conversation at send instead of leaving it to the async boundary extractor —
+// the same mechanism the board's composer uses. `existing` must target a
+// conversation under the same effective root as the target stream (one-root
+// rule; violations return 400 CONVERSATION_NOT_IN_ROOT). The thread-split
+// intents (`threadFromMessage`, `newSubtopic`) stay internal until an external
+// consumer needs them (INV-36).
+export const publicConversationDirectiveSchema = z.discriminatedUnion("intent", [
+  z.object({ intent: z.literal("new") }),
+  z.object({ intent: z.literal("existing"), conversationId: z.string().min(1).max(64) }),
+])
+
 export const sendMessageSchema = z.object({
   content: z.string().min(1, "content is required"),
   clientMessageId: z.string().max(128).optional(),
   metadata: messageMetadataSchema.optional(),
+  conversation: publicConversationDirectiveSchema.optional(),
 })
 
 export const updateMessageSchema = z.object({
@@ -380,6 +394,21 @@ export const findMessagesByMetadataSchema = z.object({
   /** Optional — narrow the search to a single accessible stream. */
   streamId: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+})
+
+export const listConversationsSchema = z.object({
+  /** Narrow to conversations under one stream's effective root (a thread id resolves to its root). */
+  streamId: z.string().optional(),
+  status: z.enum(CONVERSATION_STATUSES).optional(),
+  /** Opaque cursor from a prior page's `cursor`. */
+  after: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+})
+
+export const listConversationMessagesSchema = z.object({
+  /** Opaque cursor from a prior page's `cursor`. */
+  after: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
 })
 
 export const listMembersSchema = z.object({

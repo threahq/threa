@@ -4322,7 +4322,7 @@
         "operationId": "sendMessage",
         "summary": "Send a message",
         "tags": ["Messages"],
-        "description": "Send a message. Workspace-scoped keys send as a bot; user-scoped keys send on behalf of the key owner.",
+        "description": "Send a message. Workspace-scoped keys send as a bot; user-scoped keys send on behalf of the key owner. Optionally declare the message's conversation via `conversation`: `{intent: \"new\"}` starts a fresh conversation, `{intent: \"existing\", conversationId}` posts into one under the same root stream.",
         "security": [{ "apiKey": ["messages:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -4360,6 +4360,25 @@
                       "pattern": "^[a-zA-Z0-9_.\\-:]+$"
                     },
                     "additionalProperties": { "type": "string", "maxLength": 256 }
+                  },
+                  "conversation": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": { "intent": { "type": "string", "const": "new" } },
+                        "required": ["intent"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "intent": { "type": "string", "const": "existing" },
+                          "conversationId": { "type": "string", "minLength": 1, "maxLength": 64 }
+                        },
+                        "required": ["intent", "conversationId"],
+                        "additionalProperties": false
+                      }
+                    ]
                   }
                 },
                 "required": ["content"],
@@ -4439,6 +4458,10 @@
                         "createdAt"
                       ],
                       "additionalProperties": false
+                    },
+                    "conversationId": {
+                      "description": "The conversation the message was assigned to; present when the request declared a `conversation`.",
+                      "type": "string"
                     }
                   },
                   "required": ["data"],
@@ -4474,6 +4497,407 @@
           },
           "401": { "description": "Missing or invalid API key" },
           "403": { "description": "Insufficient permissions or inaccessible resource" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/conversations": {
+      "get": {
+        "operationId": "listConversations",
+        "summary": "List conversations",
+        "tags": ["Conversations"],
+        "description": "Cursor-paginated conversation feed across accessible streams, newest activity first. Filter with `streamId` (scopes to that stream's root and its threads) and `status`.",
+        "security": [{ "apiKey": ["messages:read"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          { "name": "streamId", "in": "query", "required": false, "schema": { "type": "string" } },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["active", "stalled", "resolved"] }
+          },
+          { "name": "after", "in": "query", "required": false, "schema": { "type": "string" } },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "streamId": {
+                            "type": "string",
+                            "description": "Anchor stream the conversation lives in (may be a thread)"
+                          },
+                          "rootStreamId": {
+                            "type": "string",
+                            "description": "Effective root of the anchor — the stream whose access governs the conversation"
+                          },
+                          "topicSummary": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                          "summary": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                          "status": { "type": "string", "enum": ["active", "stalled", "resolved"] },
+                          "messageCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991,
+                            "description": "Number of primary member messages"
+                          },
+                          "participantIds": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Distinct author ids of the member messages"
+                          },
+                          "lastActivityAt": { "type": "string", "format": "date-time" },
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "updatedAt": { "type": "string", "format": "date-time" }
+                        },
+                        "required": [
+                          "id",
+                          "streamId",
+                          "rootStreamId",
+                          "topicSummary",
+                          "summary",
+                          "status",
+                          "messageCount",
+                          "participantIds",
+                          "lastActivityAt",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "hasMore": { "type": "boolean" },
+                    "cursor": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+                  },
+                  "required": ["data", "hasMore", "cursor"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/conversations/{conversationId}": {
+      "get": {
+        "operationId": "getConversation",
+        "summary": "Get a conversation",
+        "tags": ["Conversations"],
+        "security": [{ "apiKey": ["messages:read"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Conversation ID (prefixed ULID)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "streamId": {
+                          "type": "string",
+                          "description": "Anchor stream the conversation lives in (may be a thread)"
+                        },
+                        "rootStreamId": {
+                          "type": "string",
+                          "description": "Effective root of the anchor — the stream whose access governs the conversation"
+                        },
+                        "topicSummary": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "summary": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "status": { "type": "string", "enum": ["active", "stalled", "resolved"] },
+                        "messageCount": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "description": "Number of primary member messages"
+                        },
+                        "participantIds": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "Distinct author ids of the member messages"
+                        },
+                        "lastActivityAt": { "type": "string", "format": "date-time" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "updatedAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": [
+                        "id",
+                        "streamId",
+                        "rootStreamId",
+                        "topicSummary",
+                        "summary",
+                        "status",
+                        "messageCount",
+                        "participantIds",
+                        "lastActivityAt",
+                        "createdAt",
+                        "updatedAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/conversations/{conversationId}/messages": {
+      "get": {
+        "operationId": "listConversationMessages",
+        "summary": "List a conversation's messages",
+        "tags": ["Conversations"],
+        "description": "The conversation's member messages in chronological order, cursor-paginated. Messages can span the conversation's root stream and its threads; each message carries its own `streamId`.",
+        "security": [{ "apiKey": ["messages:read"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Conversation ID (prefixed ULID)"
+          },
+          { "name": "after", "in": "query", "required": false, "schema": { "type": "string" } },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "streamId": { "type": "string" },
+                          "sequence": { "type": "string", "description": "Numeric sequence as string" },
+                          "authorId": { "type": "string" },
+                          "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                          "authorDisplayName": { "type": "string" },
+                          "content": { "type": "string" },
+                          "replyCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "threadStreamId": { "type": "string" },
+                          "clientMessageId": { "type": "string" },
+                          "sentVia": {
+                            "description": "Present when message was sent via API on behalf of a user",
+                            "type": "string"
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "propertyNames": { "type": "string" },
+                            "additionalProperties": { "type": "string" },
+                            "description": "External references attached by the sender. Always present; empty when unset."
+                          },
+                          "attachments": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": { "type": "string" },
+                                "filename": { "type": "string" },
+                                "mimeType": { "type": "string" },
+                                "sizeBytes": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "processingStatus": {
+                                  "type": "string",
+                                  "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                },
+                                "width": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "height": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": ["id", "filename", "mimeType", "sizeBytes"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "editedAt": { "type": "string", "format": "date-time" },
+                          "createdAt": { "type": "string", "format": "date-time" }
+                        },
+                        "required": [
+                          "id",
+                          "streamId",
+                          "sequence",
+                          "authorId",
+                          "authorType",
+                          "content",
+                          "replyCount",
+                          "metadata",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "hasMore": { "type": "boolean" },
+                    "cursor": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+                  },
+                  "required": ["data", "hasMore", "cursor"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
         }
       }
     },
@@ -5889,6 +6313,10 @@
     { "name": "Identity", "description": "Confirm who a key belongs to and list the bots you own." },
     { "name": "Streams", "description": "List and inspect streams (channels, scratchpads, threads)" },
     { "name": "Messages", "description": "Read, send, update, and delete messages" },
+    {
+      "name": "Conversations",
+      "description": "Browse first-class conversations — topic-level groupings of messages under a root stream and its threads"
+    },
     { "name": "Memos", "description": "Search preserved workspace knowledge and inspect memo provenance" },
     { "name": "Attachments", "description": "Search attachments, inspect extracted content, and fetch download URLs" },
     { "name": "Users", "description": "List workspace users" },

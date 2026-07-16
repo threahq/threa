@@ -22,6 +22,7 @@ import {
   type StreamService,
 } from "../streams"
 import { UserRepository } from "../workspaces"
+import { ConversationRepository, ConversationService, type Conversation } from "../conversations"
 import {
   E2eStreamActorsRepository,
   E2eStreamsRepository,
@@ -101,6 +102,7 @@ import { listMyBotsSchema } from "./schemas"
 import type {
   WireStream,
   WireMessage,
+  WireConversation,
   WireSearchResult,
   WireUser,
   WireMember,
@@ -119,6 +121,8 @@ import {
   publicSearchSchema,
   listStreamsSchema,
   listMessagesSchema,
+  listConversationsSchema,
+  listConversationMessagesSchema,
   sendMessageSchema,
   updateMessageSchema,
   updateStreamSchema,
@@ -212,6 +216,33 @@ function serializeMessage(
     ...(message.editedAt != null && { editedAt: message.editedAt.toISOString() }),
     createdAt: message.createdAt.toISOString(),
   }
+}
+
+function serializeConversation(conversation: Conversation, rootStreamId: string): WireConversation {
+  return {
+    id: conversation.id,
+    streamId: conversation.streamId,
+    rootStreamId,
+    topicSummary: conversation.topicSummary,
+    summary: conversation.summary,
+    status: conversation.status,
+    messageCount: conversation.messageIds.length,
+    participantIds: conversation.participantIds,
+    lastActivityAt: conversation.lastActivityAt.toISOString(),
+    createdAt: conversation.createdAt.toISOString(),
+    updatedAt: conversation.updatedAt.toISOString(),
+  }
+}
+
+/**
+ * Map each conversation's anchor stream to its effective root
+ * (`COALESCE(root_stream_id, id)`, INV-62) for the wire `rootStreamId`.
+ */
+async function resolveConversationRoots(pool: Pool, conversations: Conversation[]): Promise<Map<string, string>> {
+  const streamIds = [...new Set(conversations.map((c) => c.streamId))]
+  if (streamIds.length === 0) return new Map()
+  const streams = await StreamRepository.findByIds(pool, streamIds)
+  return new Map(streams.map((s) => [s.id, s.rootStreamId ?? s.id]))
 }
 
 // Label domain dates are already ISO strings on the wire shape; the only
@@ -654,6 +685,12 @@ export interface PublicApiDeps {
   botRuntimeWriteOps?: BotRuntimeWriteOps
   streamService: StreamService
   eventService: EventService
+  /**
+   * Production wires the shared instance from `registerRoutes` (INV-13); when
+   * omitted (tests, standalone construction) one is built from `pool`, which is
+   * its only dependency.
+   */
+  conversationService?: ConversationService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
   pool: Pool
@@ -669,6 +706,7 @@ export function createPublicApiHandlers({
   botRuntimeWriteOps: providedWriteOps,
   streamService,
   eventService,
+  conversationService: providedConversationService,
   labelService,
   labelAssignmentService,
   pool,
@@ -676,6 +714,7 @@ export function createPublicApiHandlers({
 }: PublicApiDeps) {
   const botRuntimeWriteOps =
     providedWriteOps ?? createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
+  const conversationService = providedConversationService ?? new ConversationService(pool)
   /** Resolve accessible stream IDs for the current key (user-scoped or bot) */
   async function getAccessibleStreamIds(req: Request, filters: SearchFilters = {}): Promise<string[]> {
     if (req.userApiKey) {
@@ -778,6 +817,20 @@ export function createPublicApiHandlers({
     }
 
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  /**
+   * Find a conversation and verify the key can read it. Access is the anchor
+   * stream's (a thread anchor resolves through its root, INV-62); a missing or
+   * cross-workspace id is a 404.
+   */
+  async function resolveAccessibleConversation(req: Request, conversationId: string): Promise<Conversation> {
+    const conversation = await ConversationRepository.findById(pool, conversationId)
+    if (!conversation || conversation.workspaceId !== req.workspaceId) {
+      throw new HttpError("Conversation not found", { status: 404, code: "NOT_FOUND" })
+    }
+    await assertStreamAccessible(req, conversation.streamId)
+    return conversation
   }
 
   async function resolveAccessibleAttachment(req: Request, attachmentId: string): Promise<Attachment> {
@@ -2102,6 +2155,126 @@ export function createPublicApiHandlers({
     },
 
     /**
+     * Cursor-paginated conversation feed. User keys reuse the board feed's
+     * SQL access predicate (INV-62); bot keys filter by the bot's readable
+     * roots (public streams + channel grants).
+     */
+    async listConversations(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const { streamId, status, after, limit } = validateRequest(listConversationsSchema, req.query)
+
+      let scopeRootIds: string[] | undefined
+      if (streamId) {
+        await assertStreamAccessible(req, streamId)
+        const stream = await StreamRepository.findByIdForWorkspace(pool, streamId, workspaceId)
+        if (!stream) {
+          throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
+        }
+        scopeRootIds = [stream.rootStreamId ?? stream.id]
+      }
+
+      const decoded = after ? decodeCursor(after) : undefined
+      const cursor = decoded ? { lastActivityAt: decoded.sortKey.toISOString(), id: decoded.id } : undefined
+
+      let rows: Conversation[]
+      if (req.userApiKey) {
+        rows = await ConversationRepository.findByWorkspaceForViewer(pool, workspaceId, req.user!.id, {
+          status,
+          scopeStreamIds: scopeRootIds,
+          limit: limit + 1,
+          cursor,
+        })
+      } else if (req.botApiKey) {
+        const rootIds =
+          scopeRootIds ?? (await botChannelService.getAccessibleStreamIdsForBot(workspaceId, req.botApiKey.botId))
+        rows = await ConversationRepository.findByWorkspaceForRoots(pool, workspaceId, rootIds, {
+          status,
+          limit: limit + 1,
+          cursor,
+        })
+      } else {
+        throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+      }
+
+      const hasMore = rows.length > limit
+      const page = hasMore ? rows.slice(0, limit) : rows
+      const rootByStream = await resolveConversationRoots(pool, page)
+      const last = page[page.length - 1]
+
+      res.json({
+        data: page.map((c) => serializeConversation(c, rootByStream.get(c.streamId) ?? c.streamId)),
+        hasMore,
+        cursor: last ? encodeCursor(last.lastActivityAt, last.id) : null,
+      })
+    },
+
+    async getConversation(req: Request, res: Response) {
+      const conversation = await resolveAccessibleConversation(req, req.params.conversationId)
+      const rootByStream = await resolveConversationRoots(pool, [conversation])
+      res.json({
+        data: serializeConversation(conversation, rootByStream.get(conversation.streamId) ?? conversation.streamId),
+      })
+    },
+
+    /**
+     * The conversation's member messages, chronological, cursor-paginated.
+     * Membership is bounded (one conversation's `message_ids`), so the page is
+     * cut in memory after one batch fetch rather than paginated in SQL.
+     */
+    async listConversationMessages(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const { after, limit } = validateRequest(listConversationMessagesSchema, req.query)
+      const conversation = await resolveAccessibleConversation(req, req.params.conversationId)
+
+      const members = await conversationService.getMessages(conversation.id)
+      const sorted = members
+        .filter((m) => !m.deletedAt)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
+
+      const cursor = after ? decodeCursor(after) : undefined
+      const remaining = cursor
+        ? sorted.filter(
+            (m) =>
+              m.createdAt.getTime() > cursor.sortKey.getTime() ||
+              (m.createdAt.getTime() === cursor.sortKey.getTime() && m.id > cursor.id)
+          )
+        : sorted
+      const page = remaining.slice(0, limit)
+      const hasMore = remaining.length > limit
+
+      // A conversation can span its root and that root's threads, so thread
+      // lookups group by each message's own stream.
+      const byStream = new Map<string, string[]>()
+      for (const m of page) {
+        const ids = byStream.get(m.streamId) ?? []
+        ids.push(m.id)
+        byStream.set(m.streamId, ids)
+      }
+      const pageMessageIds = page.map((m) => m.id)
+      const [authorNames, threadMaps, attachmentsByMessage] = await Promise.all([
+        resolveAuthorDisplayNames(pool, workspaceId, page),
+        Promise.all(
+          [...byStream.entries()].map(([sid, ids]) => StreamRepository.findThreadsForMessageIds(pool, sid, ids))
+        ),
+        AttachmentRepository.findByMessageIds(pool, pageMessageIds),
+      ])
+      const threadMap = new Map(threadMaps.flatMap((m) => [...m.entries()]))
+      const lastMessage = page[page.length - 1]
+
+      res.json({
+        data: page.map((m) =>
+          serializeMessage(m, {
+            authorDisplayName: authorNames.get(m.authorId) ?? null,
+            threadStreamId: threadMap.get(m.id) ?? null,
+            attachments: attachmentsByMessage.get(m.id) ?? [],
+          })
+        ),
+        hasMore,
+        cursor: lastMessage ? encodeCursor(lastMessage.createdAt, lastMessage.id) : null,
+      })
+    },
+
+    /**
      * Find messages by metadata (AND-containment), scoped to streams accessible
      * to this API key. Intended for dedup flows — e.g. "has a message already
      * been posted for this GitHub PR event?".
@@ -2142,7 +2315,7 @@ export function createPublicApiHandlers({
       const workspaceId = req.workspaceId!
       const streamId = req.params.streamId
 
-      const { content, clientMessageId, metadata } = validateRequest(sendMessageSchema, req.body)
+      const { content, clientMessageId, metadata, conversation } = validateRequest(sendMessageSchema, req.body)
 
       await assertStreamAccessible(req, streamId)
       await assertNotE2eStream(workspaceId, streamId)
@@ -2161,7 +2334,7 @@ export function createPublicApiHandlers({
       if (req.userApiKey) {
         const user = req.user!
 
-        const message = await eventService.createMessage({
+        const { message, conversationId } = await eventService.createMessageReturningConversation({
           workspaceId,
           streamId,
           authorId: user.id,
@@ -2172,9 +2345,13 @@ export function createPublicApiHandlers({
           clientMessageId,
           sentVia: sentViaApiKey(req.userApiKey.id),
           metadata,
+          conversation,
         })
 
-        res.status(201).json({ data: serializeMessage(message, { authorDisplayName: user.name }) })
+        res.status(201).json({
+          data: serializeMessage(message, { authorDisplayName: user.name }),
+          ...(conversationId && { conversationId }),
+        })
         return
       }
 
@@ -2184,7 +2361,7 @@ export function createPublicApiHandlers({
           throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
         }
 
-        const message = await eventService.createMessage({
+        const { message, conversationId } = await eventService.createMessageReturningConversation({
           workspaceId,
           streamId,
           authorId: bot.id,
@@ -2194,9 +2371,13 @@ export function createPublicApiHandlers({
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
           clientMessageId,
           metadata,
+          conversation,
         })
 
-        res.status(201).json({ data: serializeMessage(message, { authorDisplayName: bot.name }) })
+        res.status(201).json({
+          data: serializeMessage(message, { authorDisplayName: bot.name }),
+          ...(conversationId && { conversationId }),
+        })
         return
       }
 
