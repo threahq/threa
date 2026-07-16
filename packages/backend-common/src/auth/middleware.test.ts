@@ -27,10 +27,17 @@ class FakeAuthService implements AuthService {
   }
 }
 
-function makeRes(): Response {
+interface CapturingRes {
+  statusCode: number
+  body: unknown
+  clearedCookies: string[]
+}
+
+function makeRes(): Response & CapturingRes {
   const res = {
     statusCode: 0,
     body: undefined as unknown,
+    clearedCookies: [] as string[],
     status(code: number) {
       this.statusCode = code
       return this
@@ -39,14 +46,15 @@ function makeRes(): Response {
       this.body = body
       return this
     },
-    clearCookie() {
+    clearCookie(name: string) {
+      this.clearedCookies.push(name)
       return this
     },
     cookie() {
       return this
     },
   }
-  return res as unknown as Response
+  return res as unknown as Response & CapturingRes
 }
 
 describe("createAuthMiddleware", () => {
@@ -130,5 +138,36 @@ describe("createAuthMiddleware", () => {
     await middleware(req, makeRes(), () => {})
 
     expect(req.authUser?.permissions).toBeNull()
+  })
+
+  test("non-terminal auth failure 401s WITHOUT clearing the session cookie (refresh race / WorkOS outage)", async () => {
+    const middleware = createAuthMiddleware({
+      authService: new FakeAuthService({ success: false, refreshed: false, reason: "invalid_grant", terminal: false }),
+    })
+
+    const req = { cookies: { [sessionCookieName]: "session" } } as unknown as Request
+    const res = makeRes()
+    await middleware(req, res, () => {})
+
+    expect(res.statusCode).toBe(401)
+    expect(res.clearedCookies).toEqual([])
+  })
+
+  test("terminal auth failure clears the session cookie", async () => {
+    const middleware = createAuthMiddleware({
+      authService: new FakeAuthService({
+        success: false,
+        refreshed: false,
+        reason: "invalid_session_cookie",
+        terminal: true,
+      }),
+    })
+
+    const req = { cookies: { [sessionCookieName]: "session" } } as unknown as Request
+    const res = makeRes()
+    await middleware(req, res, () => {})
+
+    expect(res.statusCode).toBe(401)
+    expect(res.clearedCookies).toContain(sessionCookieName)
   })
 })

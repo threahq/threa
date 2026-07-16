@@ -80,16 +80,17 @@ export class StubAuthService implements AuthService {
         success: false,
         refreshed: false,
         reason: "no_session_cookie_provided",
+        terminal: true,
       }
     }
 
     const match = sealedSession.match(/^test_session_(.+)$/)
     if (!match) {
-      return { success: false, refreshed: false, reason: "invalid_session_format" }
+      return { success: false, refreshed: false, reason: "invalid_session_format", terminal: true }
     }
 
     if (this.revoked.has(sealedSession)) {
-      return { success: false, refreshed: false, reason: "session_revoked" }
+      return { success: false, refreshed: false, reason: "session_revoked", terminal: true }
     }
 
     const userId = match[1]
