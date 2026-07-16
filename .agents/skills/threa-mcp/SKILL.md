@@ -29,7 +29,7 @@ Prefer the CLI when you have a shell. Check for it first: `threa whoami` if it i
 
 ## Channel sessions have a different `send` (use `reply` to answer)
 
-If your session is bridged through the Threa remote-control channel, you also have a `threa` MCP server with `send` and `reply` tools bound to channel invocation ids. Those are the ONLY way to answer a `<channel>` event: `reply` closes the request. This skill's `threa send` command (and the `threa-workspace` server's `send_message` tool) posts a plain message as the API key's identity and never closes a channel request. Rule: answering a channel event → channel `reply`; posting anything else into a stream → `threa send`. If you answer a channel event with `threa send`, the message appears but the request stays open until it expires.
+If your session is bridged through the Threa remote-control channel, you also have the channel MCP server (`threa-channel`) with `send` and `reply` tools bound to channel invocation ids. Those are the ONLY way to answer a `<channel>` event: `reply` closes the request. This skill's `threa send` command (and the workspace server's `send_message` tool) posts a plain message as the API key's identity and never closes a channel request. Rule: answering a channel event → channel `reply`; posting anything else into a stream → `threa send`. If you answer a channel event with `threa send`, the message appears but the request stays open until it expires.
 
 ## Start with `whoami`
 

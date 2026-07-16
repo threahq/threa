@@ -107,14 +107,14 @@ Claim tokens are persisted to `~/.threa/state.json` (mode 0600), keyed by worksp
 
 ### The two Threa MCP servers (do not confuse the sends)
 
-A Claude Code session bridged through the remote-control channel already has a server named `threa` (from `extensions/claude-code-remote`) whose `send` and `reply` tools carry channel invocation ids; `reply` is what closes a channel request. This package's server registers as `threa-workspace` and its `send_message` posts a plain message as the API key's identity. It never closes a channel request. In a bridged session, answer channel events with the channel's `reply`; use `threa send` / `send_message` for everything else. The `threa-workspace` name exists so the two servers can coexist without key collision.
+A Claude Code session bridged through the remote-control channel also has the channel server `threa-channel` (from `extensions/claude-code-remote`) whose `send` and `reply` tools carry channel invocation ids; `reply` is what closes a channel request. This package's server registers as `threa` and its `send_message` posts a plain message as the API key's identity. It never closes a channel request. In a bridged session, answer channel events with the channel's `reply`; use `threa send` / `send_message` for everything else.
 
 `threa mcp serve` runs the same operations as MCP tools over stdio, for an MCP client such as Claude Code.
 
 Register it persistently for the current project:
 
 ```bash
-claude mcp add threa-workspace --scope local \
+claude mcp add threa --scope local \
   --env THREA_API_KEY=threa_uk_… \
   --env THREA_WORKSPACE_ID=ws_… \
   -- bun /abs/path/to/threa/packages/cli/src/cli.ts mcp serve
@@ -125,7 +125,7 @@ Claude Code maps every worktree of a repo to the same project entry, so a persis
 ```json
 {
   "mcpServers": {
-    "threa-workspace": {
+    "threa": {
       "type": "stdio",
       "command": "bun",
       "args": ["/abs/path/to/threa/packages/cli/src/cli.ts", "mcp", "serve"],
