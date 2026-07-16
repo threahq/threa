@@ -986,13 +986,22 @@ export function createPublicApiHandlers({
       // (same scratchpad) rather than minting a duplicate; while the scratchpad
       // is still archived, refuse loudly so a self-healing client can tell
       // "wait" apart from "create" (INV-11).
-      const reattach = await botRuntimeService.reattachArchivedRuntimeSession({
+      const reattachParams = {
         workspaceId: req.workspaceId!,
         botId: bot.id,
         runtimeKind: data.runtimeKind,
         instanceId: data.instanceId,
         runtimeSessionId: data.runtimeSessionId,
-      })
+      }
+      let reattach = await botRuntimeService.reattachArchivedRuntimeSession(reattachParams)
+      if (reattach.status === "archived_stream" && data.ifArchived === "replace") {
+        // A cold start doesn't wait on an archived scratchpad the user is done
+        // with: retire its link (frees the identity) and fall through to a
+        // fresh create. Nothing to retire means a concurrent unarchive won the
+        // row — re-run the reattach so that revived link is resumed instead.
+        const retired = await botRuntimeService.retireArchivedRuntimeSession(reattachParams)
+        reattach = retired ? { status: "none" } : await botRuntimeService.reattachArchivedRuntimeSession(reattachParams)
+      }
       if (reattach.status === "archived_stream") {
         throw new HttpError("The linked scratchpad is archived; unarchive it to reattach", {
           status: 409,

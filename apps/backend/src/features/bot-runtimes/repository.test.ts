@@ -325,6 +325,41 @@ describe("BotRuntimeSessionLinkRepository.reactivateArchivedByRuntimeSession", (
   })
 })
 
+describe("BotRuntimeSessionLinkRepository.retireArchivedByRuntimeSession", () => {
+  afterEach(() => mock.restore())
+
+  it("retires the newest archived link (identity renamed, terminal 'ended') only while its root stream is still archived", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [
+      makeSessionLinkRow({ status: "ended", runtime_session_id: "sess_1:retired:brsl_1" }),
+    ])
+
+    const result = await BotRuntimeSessionLinkRepository.retireArchivedByRuntimeSession(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      runtimeKind: "claude-code-channel",
+      instanceId: "inst_99",
+      runtimeSessionId: "sess_1",
+    })
+
+    // Same race-safe CTE shape as reactivate, with the INVERSE stream guard:
+    // only retire while the scratchpad IS archived, so a concurrent unarchive
+    // serializes against the share lock instead of racing the row.
+    expect(captured.text).toContain("SET status = 'ended'")
+    expect(captured.text).toContain("runtime_session_id = l.runtime_session_id || ':retired:' || l.id")
+    expect(captured.text).toContain("status = 'archived'")
+    expect(captured.text).toContain("JOIN streams s")
+    expect(captured.text).toContain("archived_at IS NOT NULL")
+    expect(captured.text).toContain("FOR UPDATE OF l SKIP LOCKED")
+    expect(captured.text).toContain("FOR SHARE OF s")
+    expect(captured.text).toContain("LIMIT 1")
+    expect(captured.values).toEqual(
+      expect.arrayContaining(["ws_1", "bot_alice", "claude-code-channel", "inst_99", "sess_1"])
+    )
+    expect(result?.status).toBe("ended")
+  })
+})
+
 describe("BotRuntimeSessionLinkRepository.findArchivedByRuntimeSession", () => {
   afterEach(() => mock.restore())
 

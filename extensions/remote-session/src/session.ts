@@ -443,8 +443,20 @@ export class RemoteSession {
       this.log(`linked to scratchpad ${this.config.baseUrl}${this.link.streamUrlPath}`)
       await this.syncPresence()
     } catch (error) {
-      this.log(`could not link to Threa (will retry): ${this.summarize(error)}`)
+      this.log(`could not link to Threa (will retry): ${this.summarize(error)}${this.linkErrorHint(error)}`)
     }
+  }
+
+  /** Actionable next step for the link failures a retry alone will never fix. */
+  private linkErrorHint(error: unknown): string {
+    if (!(error instanceof ThreaApiError)) return ""
+    if (error.status === 401 || error.status === 403) {
+      return " — check THREA_API_KEY (must be a bot key, threa_bk_…) and THREA_WORKSPACE_ID"
+    }
+    if (error.code === "SCRATCHPAD_ARCHIVED" && !this.archivePending) {
+      return " — the server does not support ifArchived replace yet; unarchive the scratchpad in Threa to link"
+    }
+    return ""
   }
 
   async shutdown(): Promise<void> {
@@ -497,6 +509,12 @@ export class RemoteSession {
       runtimeSessionId: this.config.runtimeSessionId,
       displayName: this.config.displayName,
       localCwd: process.cwd(),
+      // Detached-pending-restore probes must WAIT on the archived scratchpad so
+      // an unarchive inside the grace window reattaches the same one. A cold
+      // start must not: the deterministic identity pointing at a scratchpad the
+      // user archived would otherwise wedge linking forever — replace it with a
+      // fresh scratchpad instead.
+      ifArchived: this.archivePending ? "wait" : "replace",
       ...(this.config.defaultLabel && { labelName: this.config.defaultLabel }),
       ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
     })

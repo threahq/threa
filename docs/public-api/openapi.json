@@ -1119,7 +1119,8 @@
                     "properties": { "ownerKeyId": { "type": "string", "minLength": 1, "maxLength": 128 } },
                     "required": ["ownerKeyId"],
                     "additionalProperties": false
-                  }
+                  },
+                  "ifArchived": { "type": "string", "enum": ["wait", "replace"] }
                 },
                 "required": ["runtimeKind", "instanceId", "runtimeSessionId", "displayName"],
                 "additionalProperties": false
