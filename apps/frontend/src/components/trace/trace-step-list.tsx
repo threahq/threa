@@ -3,8 +3,20 @@ import { PI_TOOL_TRACE_FORMAT, type AgentSessionStep, type AgentStepType } from 
 import type { StreamingSubstep } from "@/hooks/use-agent-trace"
 import { TraceStep } from "./trace-step"
 import { cn } from "@/lib/utils"
+import { STEP_DISPLAY_CONFIG } from "@/lib/step-config"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ChevronRight, Loader2, TerminalSquare } from "lucide-react"
+
+/**
+ * Tool work borrows the `tool_call` hue so a Working group reads as the same
+ * family as the rows it collapses — and as a different type from the thinking
+ * (amber) and response (green) rows it sits between.
+ */
+const WORK_CONFIG = STEP_DISPLAY_CONFIG.tool_call
+const workHue = (alpha?: number) =>
+  `hsl(${WORK_CONFIG.hue} ${WORK_CONFIG.saturation}% ${WORK_CONFIG.lightness}%${alpha === undefined ? "" : ` / ${alpha}`})`
+
+const MAX_TOOL_CHIPS = 3
 
 interface TraceStepListProps {
   steps: AgentSessionStep[]
@@ -119,6 +131,7 @@ function BotWorkingSection({
   const errorCount = tools.filter((step) => step.stepType === "tool_error").length
   const containsHighlight = tools.some((step) => step.messageId === highlightedMessageId)
   const [detailsOpen, setDetailsOpen] = useState(errorCount > 0)
+  const open = containsHighlight || detailsOpen
   const lastTool = tools.at(-1)!
   const preview = active ? toolPreview(lastTool.content) : null
 
@@ -126,39 +139,86 @@ function BotWorkingSection({
     if (errorCount > 0) setDetailsOpen(true)
   }, [errorCount])
   const toolLabel = `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}`
-  const errorLabel = errorCount > 0 ? ` • ${errorCount} ${errorCount === 1 ? "error" : "errors"}` : ""
+  const chips = tools.slice(0, MAX_TOOL_CHIPS)
+  const overflow = tools.length - chips.length
 
   return (
-    <div className={cn("border-b border-border bg-muted/15", nested && "ml-6 border-l")}>
-      <div className="flex items-start gap-2 px-5 py-3.5">
-        <div className="mt-0.5 rounded-md bg-muted px-2 py-1 text-muted-foreground">
-          {active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TerminalSquare className="h-3.5 w-3.5" />}
-        </div>
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Working</div>
+    <div
+      className={cn("border-b border-border", nested && "ml-6")}
+      style={{
+        background: workHue(open ? 0.05 : 0.035),
+        borderLeft: `2px solid ${workHue(open ? 0.55 : 0.3)}`,
+      }}
+    >
+      <Collapsible open={open} onOpenChange={setDetailsOpen}>
+        <CollapsibleTrigger className="group flex min-h-11 w-full items-center gap-2.5 px-5 py-2 text-left transition-colors hover:bg-foreground/[0.03]">
+          <span
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+            style={{ background: workHue(0.12), color: workHue(), boxShadow: `inset 0 0 0 1px ${workHue(0.22)}` }}
+          >
+            {active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TerminalSquare className="h-3.5 w-3.5" />}
+          </span>
+          <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: workHue() }}>
+            Working
+          </span>
           <span className="sr-only">{active ? "Working in progress" : "Working complete"}</span>
-          <div className="text-xs text-muted-foreground">
-            {toolLabel}
-            {errorLabel}
-          </div>
-          {preview && (
-            <div className="rounded-md border border-border/70 bg-background/70 px-3 py-2 text-xs">
-              <div className="break-all font-mono text-foreground/90">{preview.headline}</div>
-              {preview.detail && <div className="mt-1 truncate text-muted-foreground">{preview.detail}</div>}
-            </div>
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{toolLabel}</span>
+          {errorCount > 0 && (
+            <span className="shrink-0 text-[11px] font-medium text-destructive">
+              {errorCount} {errorCount === 1 ? "error" : "errors"}
+            </span>
           )}
-        </div>
-      </div>
-      <Collapsible open={containsHighlight || detailsOpen} onOpenChange={setDetailsOpen}>
-        <CollapsibleTrigger className="group flex min-h-11 w-full items-center gap-1.5 px-5 py-2 text-left text-xs text-muted-foreground hover:text-foreground transition-colors">
-          <ChevronRight className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90" />
-          Full tool details
+
+          {/* The collapsed row carries the work itself: the live tool headline
+              while the phase runs, else a chip per call. Once expanded the rows
+              below say it in full, so the chips step aside. */}
+          {preview && (
+            <span className="flex min-w-0 flex-1 items-baseline gap-2">
+              <span className="truncate font-mono text-[11.5px] text-foreground/90">{preview.headline}</span>
+              {preview.detail && (
+                <span className="hidden truncate text-[11px] text-muted-foreground sm:inline">{preview.detail}</span>
+              )}
+            </span>
+          )}
+          {!preview && !open && (
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+              {chips.map((step) => (
+                <ToolChip key={step.id} step={step} />
+              ))}
+              {overflow > 0 && (
+                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">+{overflow}</span>
+              )}
+            </span>
+          )}
+
+          <ChevronRight
+            className="ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90"
+            aria-hidden
+          />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="border-t border-border bg-background/70">{tools.map(renderStep)}</div>
+          <div className="border-t bg-background/60" style={{ borderColor: workHue(0.18) }}>
+            {tools.map(renderStep)}
+          </div>
         </CollapsibleContent>
       </Collapsible>
     </div>
+  )
+}
+
+function ToolChip({ step }: { step: AgentSessionStep }) {
+  const isError = step.stepType === "tool_error"
+  const label = toolPreview(step.content)?.headline ?? "Tool call"
+  return (
+    <span
+      className={cn(
+        "max-w-[180px] shrink-0 truncate rounded-full px-2 py-0.5 font-mono text-[10.5px] leading-[1.45]",
+        isError ? "bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive/25" : "text-foreground/75"
+      )}
+      style={isError ? undefined : { background: workHue(0.09), boxShadow: `inset 0 0 0 1px ${workHue(0.22)}` }}
+    >
+      {label}
+    </span>
   )
 }
 

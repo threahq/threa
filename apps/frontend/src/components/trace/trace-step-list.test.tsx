@@ -66,11 +66,11 @@ describe("TraceStepList", () => {
     expect(screen.getByText("Revised plan")).toBeInTheDocument()
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
     expect(screen.getByText("1 tool call")).toBeInTheDocument()
-    expect(screen.getAllByText("Full tool details")).toHaveLength(2)
+    expect(screen.getAllByRole("button", { name: /working/i })).toHaveLength(2)
     expect(screen.queryByText(/0 errors/)).not.toBeInTheDocument()
   })
 
-  it("previews only the latest tool in the active thinking phase", () => {
+  it("previews the latest tool in the active phase and summarises settled phases as chips", () => {
     renderList(
       [
         thinking("think_1", 1, "First plan"),
@@ -102,7 +102,8 @@ describe("TraceStepList", () => {
     expect(screen.getByText("Working in progress")).toBeInTheDocument()
     expect(screen.getByText("Run current test")).toBeInTheDocument()
     expect(screen.getByText("latest preview")).toBeInTheDocument()
-    expect(screen.queryByText("Read old file")).not.toBeInTheDocument()
+    // The settled phase keeps its headline as a chip, but never a stale preview body.
+    expect(screen.getByText("Read old file")).toBeInTheDocument()
     expect(screen.queryByText("old preview")).not.toBeInTheDocument()
   })
 
@@ -146,7 +147,6 @@ describe("TraceStepList", () => {
     )
 
     expect(screen.getByText("New plan")).toBeInTheDocument()
-    expect(screen.queryByText("Run bash")).not.toBeInTheDocument()
     expect(screen.queryByText("first output line")).not.toBeInTheDocument()
   })
 
@@ -159,7 +159,6 @@ describe("TraceStepList", () => {
 
     expect(screen.getByText("Working")).toBeInTheDocument()
     expect(screen.getByText("Working complete")).toBeInTheDocument()
-    expect(screen.queryByText("Run bash")).not.toBeInTheDocument()
     expect(screen.queryByText("first output line")).not.toBeInTheDocument()
   })
 
@@ -167,7 +166,7 @@ describe("TraceStepList", () => {
     const initial = [thinking("think_1", 1, "Plan"), createStep({ id: "tool_1", stepNumber: 2 })]
     const view = renderList(initial, true)
 
-    expect(screen.getByRole("button", { name: /full tool details/i })).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "false")
 
     view.rerender(
       listElement(
@@ -195,11 +194,11 @@ describe("TraceStepList", () => {
     const steps = [thinking("think_1", 1, "Plan"), createStep({ id: "tool_1", stepNumber: 2, messageId: "msg_tool" })]
     const view = renderList(steps)
 
-    expect(screen.getByRole("button", { name: /full tool details/i })).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "false")
 
     view.rerender(listElement(steps, false, "msg_tool"))
 
-    expect(screen.getByRole("button", { name: /full tool details/i })).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "true")
     expect(screen.getByText("Run bash")).toBeInTheDocument()
   })
 
@@ -223,7 +222,7 @@ describe("TraceStepList", () => {
     expect(screen.getByText(/1 error/)).toBeInTheDocument()
     expect(screen.getByText("boom stack")).toBeInTheDocument()
 
-    await user.click(screen.getByRole("button", { name: /full tool details/i }))
+    await user.click(screen.getByRole("button", { name: /working/i }))
     expect(screen.queryByText("boom stack")).not.toBeInTheDocument()
   })
 
