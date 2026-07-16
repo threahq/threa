@@ -145,6 +145,9 @@ jobs:
       - name: Run enclave tests
         run: bun run --cwd apps/enclave test
 
+      - name: Run mcp tests
+        run: bun run --cwd packages/mcp test
+
   extension-tests:
     name: Extension Tests
     runs-on: ubuntu-latest

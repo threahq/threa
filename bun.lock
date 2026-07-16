@@ -425,6 +425,21 @@
         "vitest": "^4.0.16",
       },
     },
+    "packages/mcp": {
+      "name": "@threa/mcp",
+      "version": "0.1.0",
+      "bin": {
+        "threa-mcp": "./src/index.ts",
+      },
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.29.0",
+        "zod": "^4.2.0",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5",
+      },
+    },
     "packages/prosemirror": {
       "name": "@threa/prosemirror",
       "version": "0.1.0",
@@ -1597,6 +1612,8 @@
     "@threa/enclave": ["@threa/enclave@workspace:apps/enclave"],
 
     "@threa/frontend": ["@threa/frontend@workspace:apps/frontend"],
+
+    "@threa/mcp": ["@threa/mcp@workspace:packages/mcp"],
 
     "@threa/prosemirror": ["@threa/prosemirror@workspace:packages/prosemirror"],
 
