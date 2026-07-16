@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
-import { HttpError } from "@threa/backend-common"
+import { HttpError, isValidIanaTimezone } from "@threa/backend-common"
 import type { ControlPlaneWorkspaceService } from "./service"
 import type { InvitationShadowService } from "../invitation-shadows"
 
@@ -12,11 +12,14 @@ interface Dependencies {
 const createWorkspaceSchema = z.object({
   name: z.string().min(1).max(100),
   region: z.string().min(1).optional(),
-  // The creator's IANA zone; the region seeds the workspace's billing timezone
-  // from it. Bounded but not resolved here — the control plane never draws a
-  // month, and the regional backend re-validates before storing.
-  timezone: z.string().min(1).max(64).optional(),
+  // The creator's IANA zone, which the region seeds the workspace's billing
+  // timezone from. Validated here, not just regionally: a value the region
+  // rejects fails the whole provisioning call, leaving the workspace registered
+  // in the control plane but never created in its region.
+  timezone: z.string().refine(isValidIanaTimezone, { message: "must be a valid IANA timezone identifier" }).optional(),
 })
+
+export { createWorkspaceSchema }
 
 export function createWorkspaceHandlers({ workspaceService, shadowService }: Dependencies) {
   return {

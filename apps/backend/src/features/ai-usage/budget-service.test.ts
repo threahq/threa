@@ -26,7 +26,12 @@ const BUDGET_ROW = {
  * Routes by table so the service's real query order stays an implementation
  * detail — the test only cares which period the usage scan is given.
  */
-function createPool(captured: Captured, storedTimezone: unknown, spentUsd = "10"): Pool {
+function createPool(
+  captured: Captured,
+  storedTimezone: unknown,
+  spentUsd = "10",
+  budgetOverrides: Partial<typeof BUDGET_ROW> = {}
+): Pool {
   const client = {
     query: mock(async (q: unknown) => {
       const config = q as QueryConfig
@@ -40,7 +45,7 @@ function createPool(captured: Captured, storedTimezone: unknown, spentUsd = "10"
         } as QueryResult
       }
       if (text.includes("ai_budgets")) {
-        return { rows: [BUDGET_ROW], rowCount: 1 } as QueryResult
+        return { rows: [{ ...BUDGET_ROW, ...budgetOverrides }], rowCount: 1 } as QueryResult
       }
       if (text.includes("ai_usage_records")) {
         captured.usagePeriod = { start: values[1] as Date, end: values[2] as Date }
@@ -110,12 +115,10 @@ describe("AIBudgetService.checkBudget enforcement window", () => {
     expect(end.getUTCMilliseconds()).toBe(0)
   })
 
-  it("still enforces the hard limit against the workspace-zone window", async () => {
+  it("degrades the model off spend read from the workspace-zone window", async () => {
     const captured: Captured = { usagePeriod: null }
-    const pool = createPool(captured, "Asia/Tokyo", "60")
-    const service = new AIBudgetService({ pool })
-    // Hard limit is off on the default row, so degradation is the observable
-    // signal that the spend read from this window reached the service.
+    const service = new AIBudgetService({ pool: createPool(captured, "Asia/Tokyo", "60") })
+
     const status = await service.checkBudget("ws_1", "openrouter:anthropic/claude-sonnet-5")
 
     expect(status).toMatchObject({
@@ -126,6 +129,35 @@ describe("AIBudgetService.checkBudget enforcement window", () => {
       recommendedModel: "openrouter:anthropic/claude-haiku-4.5",
     })
     expect(captured.usagePeriod).toEqual(monthRangeInTimezone("Asia/Tokyo"))
+  })
+
+  it("blocks the call when spend in the workspace-zone window trips an enabled hard limit", async () => {
+    const captured: Captured = { usagePeriod: null }
+    const service = new AIBudgetService({
+      pool: createPool(captured, "Asia/Tokyo", "60", { hard_limit_enabled: true, hard_limit_percent: 100 }),
+    })
+
+    const status = await service.checkBudget("ws_1", "openrouter:anthropic/claude-sonnet-5")
+
+    expect(status).toMatchObject({
+      allowed: false,
+      reason: "hard_limit",
+      currentUsageUsd: 60,
+      budgetUsd: 50,
+    })
+    expect(captured.usagePeriod).toEqual(monthRangeInTimezone("Asia/Tokyo"))
+  })
+
+  it("allows the call when the same spend sits under the hard limit's threshold", async () => {
+    const captured: Captured = { usagePeriod: null }
+    const service = new AIBudgetService({
+      // 60 of 50 is 120% — under a 200% limit, so the limit must not fire.
+      pool: createPool(captured, "Asia/Tokyo", "60", { hard_limit_enabled: true, hard_limit_percent: 200 }),
+    })
+
+    const status = await service.checkBudget("ws_1")
+
+    expect(status).toMatchObject({ allowed: true, reason: "soft_limit" })
   })
 })
 
