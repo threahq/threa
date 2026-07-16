@@ -20,13 +20,20 @@ import {
   useIsMobile,
   useNewMessageIndicator,
   useAgentActivity,
+  type MessageAgentActivity,
   useAbortSession,
   useEditLastMessageTrigger,
   useKeyboardShortcuts,
   streamKeys,
   workspaceKeys,
 } from "@/hooks"
-import { useSocket, useCoordinatedLoading, usePreferencesOptional } from "@/contexts"
+import {
+  useSocket,
+  useCoordinatedLoading,
+  usePreferencesOptional,
+  usePublishAgentActivitySummary,
+  type AgentActivitySummaryEntry,
+} from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams, useWorkspaceStreamMemberships } from "@/stores/workspace-store"
@@ -57,6 +64,7 @@ import {
   type DelegationStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
   type UnreadOpenPosition,
+  type AgentSessionStartedPayload,
 } from "@threa/types"
 import {
   EventList,
@@ -534,6 +542,70 @@ function followPillEqual(a: FollowPillState | null, b: FollowPillState | null): 
   )
 }
 
+const EMPTY_ACTIVITY_SUMMARY: AgentActivitySummaryEntry[] = []
+
+/** One running session collapsed from the per-message activity map. */
+export interface DedupedRunningSession {
+  sessionId: string
+  personaName: string
+  stepCount: number
+  /** Every message id the session is aliased under (thread sessions appear under trigger + parent). */
+  anchors: string[]
+}
+
+/**
+ * Collapse the per-message agent-activity map to one entry per session. The map
+ * aliases a thread session under two keys (trigger + parent message), so first
+ * occurrence wins for personaName/stepCount while `anchors` accumulates every
+ * key. Single source of the dedup rule for both the header-chip summary and the
+ * follow-pill cards, so they can never disagree on a session's step count.
+ */
+export function dedupeRunningSessions(
+  agentActivity: Map<string, MessageAgentActivity> | undefined
+): DedupedRunningSession[] {
+  if (!agentActivity || agentActivity.size === 0) return []
+  const bySession = new Map<string, DedupedRunningSession>()
+  for (const [anchorMessageId, activity] of agentActivity) {
+    const existing = bySession.get(activity.sessionId)
+    if (existing) existing.anchors.push(anchorMessageId)
+    else
+      bySession.set(activity.sessionId, {
+        sessionId: activity.sessionId,
+        personaName: activity.personaName,
+        stepCount: activity.stepCount,
+        anchors: [anchorMessageId],
+      })
+  }
+  return Array.from(bySession.values())
+}
+
+/**
+ * Order the running sessions into the header chip's summary: most recently
+ * started first. Ordering keys off each session's `started` event when the
+ * timeline holds it (its own stream); channel-view sessions known only from
+ * socket carry no start time and sort last, so the chip's "most recent" click
+ * target favours a session whose lifecycle this stream actually owns.
+ */
+export function buildAgentActivitySummary(
+  agentActivity: Map<string, MessageAgentActivity> | undefined,
+  events: StreamEvent[]
+): AgentActivitySummaryEntry[] {
+  const sessions = dedupeRunningSessions(agentActivity)
+  if (sessions.length === 0) return EMPTY_ACTIVITY_SUMMARY
+  const startedAtBySession = new Map<string, string>()
+  for (const event of events) {
+    if (event.eventType === "agent_session:started") {
+      const payload = event.payload as AgentSessionStartedPayload
+      startedAtBySession.set(payload.sessionId, payload.startedAt)
+    }
+  }
+  const list = sessions.map(({ sessionId, personaName, stepCount }) => ({ sessionId, personaName, stepCount }))
+  list.sort((a, b) =>
+    (startedAtBySession.get(b.sessionId) ?? "").localeCompare(startedAtBySession.get(a.sessionId) ?? "")
+  )
+  return list
+}
+
 interface StreamContentProps {
   workspaceId: string
   streamId: string
@@ -807,6 +879,15 @@ export function StreamContent({
   // In channels, session cards are hidden (responses go to threads) and inline activity shows on trigger messages instead.
   const isChannel = stream?.type === StreamTypes.CHANNEL
   const agentActivity = useAgentActivity(events, socket, workspaceId, currentWorkspaceUserId)
+
+  // Publish a running-session summary up to the header chip. No-ops for a
+  // thread-panel StreamContent (mounted outside the open stream's provider).
+  const publishAgentActivitySummary = usePublishAgentActivitySummary()
+  const agentActivitySummary = useMemo(() => buildAgentActivitySummary(agentActivity, events), [agentActivity, events])
+  useEffect(() => {
+    publishAgentActivitySummary(agentActivitySummary)
+  }, [agentActivitySummary, publishAgentActivitySummary])
+  useEffect(() => () => publishAgentActivitySummary(EMPTY_ACTIVITY_SUMMARY), [publishAgentActivitySummary])
 
   // E2E streams search decrypted bodies client-side (the server only holds
   // ciphertext); pass the flag + viewer id so the hook can resolve the session.
@@ -2829,20 +2910,8 @@ function TimelineMessageList({
   // sessionId — the activity map aliases thread sessions under two keys.
   const [followPill, setFollowPill] = useState<FollowPillState | null>(null)
   const runningSessionCards = useMemo<RunningSessionCard[]>(() => {
-    if (!agentActivity || agentActivity.size === 0) return []
-    const bySession = new Map<string, { personaName: string; stepCount: number; anchors: string[] }>()
-    for (const [anchorMessageId, activity] of agentActivity) {
-      const existing = bySession.get(activity.sessionId)
-      if (existing) existing.anchors.push(anchorMessageId)
-      else
-        bySession.set(activity.sessionId, {
-          personaName: activity.personaName,
-          stepCount: activity.stepCount,
-          anchors: [anchorMessageId],
-        })
-    }
     const cards: RunningSessionCard[] = []
-    for (const [sessionId, info] of bySession) {
+    for (const { sessionId, personaName, stepCount, anchors } of dedupeRunningSessions(agentActivity)) {
       const sessionItemIndex = visibleItems.findIndex((it) => it.type === "session_group" && it.sessionId === sessionId)
       let itemIndex = sessionItemIndex
       // Anchor id keys the scroll driver: a session card resolves to its first
@@ -2853,7 +2922,7 @@ function TimelineMessageList({
         const item = visibleItems[sessionItemIndex]
         if (item.type === "session_group") anchorId = item.events[0]?.id ?? ""
       } else {
-        for (const anchor of info.anchors) {
+        for (const anchor of anchors) {
           const idx = findMessageItemIndex(visibleItems, anchor)
           if (idx >= 0) {
             itemIndex = idx
@@ -2862,7 +2931,7 @@ function TimelineMessageList({
           }
         }
       }
-      cards.push({ sessionId, personaName: info.personaName, stepCount: info.stepCount, itemIndex, anchorId })
+      cards.push({ sessionId, personaName, stepCount, itemIndex, anchorId })
     }
     return cards
   }, [agentActivity, visibleItems])

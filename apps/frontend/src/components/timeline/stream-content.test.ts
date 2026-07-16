@@ -12,10 +12,12 @@ import {
   remapSuppressedWatermark,
   resolveUnreadMarkerOpen,
   resolveFollowPill,
+  buildAgentActivitySummary,
   type RunningSessionCard,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
 import type { StreamEvent } from "@threa/types"
+import type { MessageAgentActivity } from "@/hooks"
 
 const DEADLINE = 4000
 
@@ -640,5 +642,64 @@ describe("resolveFollowPill", () => {
       bottomIndex: 40,
     })
     expect(result).toMatchObject({ sessionId: "offscreen", personaName: "Ariadne", count: 1 })
+  })
+})
+
+describe("buildAgentActivitySummary", () => {
+  const activity = (over: Partial<MessageAgentActivity> & { sessionId: string }): MessageAgentActivity => ({
+    personaName: "Ariadne",
+    currentStepType: null,
+    stepCount: 0,
+    messageCount: 0,
+    substep: null,
+    ...over,
+  })
+  const startedEvent = (sessionId: string, startedAt: string) =>
+    ({
+      eventType: "agent_session:started",
+      payload: { sessionId, startedAt },
+    }) as unknown as StreamEvent
+
+  it("returns an empty array when no session is running", () => {
+    expect(buildAgentActivitySummary(new Map(), [])).toEqual([])
+    expect(buildAgentActivitySummary(undefined, [])).toEqual([])
+  })
+
+  it("returns one entry per running session with its live step count", () => {
+    const map = new Map<string, MessageAgentActivity>([
+      ["trigger_1", activity({ sessionId: "s1", personaName: "Ariadne", stepCount: 4 })],
+    ])
+    expect(buildAgentActivitySummary(map, [])).toEqual([{ sessionId: "s1", personaName: "Ariadne", stepCount: 4 }])
+  })
+
+  it("dedupes a thread session aliased under both its trigger and parent-message keys", () => {
+    // useAgentActivity keys a thread session under two ids; the summary is per session.
+    const shared = activity({ sessionId: "s1", stepCount: 2 })
+    const map = new Map<string, MessageAgentActivity>([
+      ["trigger_1", shared],
+      ["parent_msg_1", shared],
+    ])
+    expect(buildAgentActivitySummary(map, [])).toEqual([{ sessionId: "s1", personaName: "Ariadne", stepCount: 2 }])
+  })
+
+  it("orders most recently started first using the started events", () => {
+    const map = new Map<string, MessageAgentActivity>([
+      ["t_old", activity({ sessionId: "s_old", personaName: "Older" })],
+      ["t_new", activity({ sessionId: "s_new", personaName: "Newer" })],
+    ])
+    const events = [
+      startedEvent("s_old", "2026-07-16T10:00:00.000Z"),
+      startedEvent("s_new", "2026-07-16T10:05:00.000Z"),
+    ]
+    expect(buildAgentActivitySummary(map, events).map((e) => e.sessionId)).toEqual(["s_new", "s_old"])
+  })
+
+  it("sorts a session with no started event (socket-only channel view) after one that has one", () => {
+    const map = new Map<string, MessageAgentActivity>([
+      ["t_known", activity({ sessionId: "s_known" })],
+      ["t_socket", activity({ sessionId: "s_socket" })],
+    ])
+    const events = [startedEvent("s_known", "2026-07-16T10:00:00.000Z")]
+    expect(buildAgentActivitySummary(map, events).map((e) => e.sessionId)).toEqual(["s_known", "s_socket"])
   })
 })
