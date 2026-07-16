@@ -87,9 +87,11 @@ describe("filterBySearch", () => {
   it("admits fuzzy subsequence matches after substring matches", () => {
     const thumbsUp = make("thumbs_up", "people", 1, ["thumbs_up", "+1"])
     const tulip = make("tulip", "animals", 1)
-    // "tup" is a raw substring of neither; both match as subsequences.
-    const matches = filterBySearch([smile, thumbsUp, tulip], "tup")
-    expect(new Set(matches.map((e) => e.shortcode))).toEqual(new Set(["thumbs_up", "tulip"]))
+    const setup = make("setup", "objects", 1)
+    // "setup" contains "tup" raw; thumbs_up (boundary-aligned, quality 1) and
+    // tulip (gapped) only match as subsequences, in quality order behind it.
+    const matches = filterBySearch([smile, tulip, thumbsUp, setup], "tup")
+    expect(matches.map((e) => e.shortcode)).toEqual(["setup", "thumbs_up", "tulip"])
   })
 
   it("ranks visible shortcode matches above hidden alias matches regardless of input order", () => {

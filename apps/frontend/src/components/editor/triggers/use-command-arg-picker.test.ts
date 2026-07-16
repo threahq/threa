@@ -70,6 +70,7 @@ describe("filterArgSuggestions", () => {
     // so the fuzzy tier admits it — but only below the substring match.
     const values = filterArgSuggestions(MODEL_SUGGESTIONS, "opus").map((s) => s.value)
     expect(values[0]).toBe("anthropic/claude-opus-4")
+    expect(values).toContain("anthropic/claude-sonnet-4")
     expect(values).not.toContain("openai/gpt-5")
   })
 

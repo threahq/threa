@@ -60,8 +60,10 @@ function bestFuzzy(texts: readonly string[], normQuery: string): number {
 }
 
 export function scoreMatch(query: string, labels: readonly string[], keywords: readonly string[] = []): number {
-  if (!query) return 0
-  const lowerQuery = query.toLowerCase()
+  // A whitespace-only query is "not searching yet", same as empty — without
+  // the trim it would fold to an empty normQuery and match nothing at all.
+  const lowerQuery = query.trim().toLowerCase()
+  if (!lowerQuery) return 0
   const normQuery = foldSeparators(lowerQuery)
   let best = Infinity
   for (const label of labels) {
@@ -84,14 +86,15 @@ export function scoreMatch(query: string, labels: readonly string[], keywords: r
 /**
  * Filter and rank items by `scoreMatch`. Non-matches are dropped; ties keep
  * input order (sort is stable), so each surface's curated ordering still
- * breaks ties within a tier. An empty query returns the input unchanged.
+ * breaks ties within a tier. An empty or whitespace-only query returns the
+ * input unchanged.
  */
 export function rankMatches<T>(
   items: readonly T[],
   query: string,
   getText: (item: T) => { labels: readonly string[]; keywords?: readonly string[] }
 ): T[] {
-  if (!query) return [...items]
+  if (!query.trim()) return [...items]
   return items
     .map((item) => {
       const { labels, keywords } = getText(item)

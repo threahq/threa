@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest"
 import { scoreMatch, rankMatches } from "./match-score"
 
 describe("scoreMatch", () => {
-  it("returns 0 for an empty query (no scoring required)", () => {
+  it("returns 0 for an empty or whitespace-only query (no scoring required)", () => {
     expect(scoreMatch("", ["View Saved"], ["bookmark"])).toBe(0)
+    expect(scoreMatch("   ", ["View Saved"], ["bookmark"])).toBe(0)
   })
 
   it("tiers label matches: exact < prefix < contains", () => {
@@ -52,10 +53,14 @@ describe("scoreMatch", () => {
   it("ranks label fuzzy above keyword fuzzy, and compact fuzzy above scattered", () => {
     const labelFuzzy = scoreMatch("thup", ["thumbs_up"])
     const keywordFuzzy = scoreMatch("thup", ["Something Else"], ["thumbs_up"])
+    // Both sides must be admitted matches — an Infinity on the right would
+    // let a broken fuzzy band pass a bare lessThan comparison.
+    expect(keywordFuzzy).not.toBe(Infinity)
     expect(labelFuzzy).toBeLessThan(keywordFuzzy)
 
     const compact = scoreMatch("cat", ["cat_face"])
     const scattered = scoreMatch("cat", ["congratulations"])
+    expect(scattered).not.toBe(Infinity)
     expect(compact).toBeLessThan(scattered)
   })
 
@@ -86,9 +91,10 @@ describe("rankMatches", () => {
   }
   const text = (item: Item) => ({ labels: [item.label], keywords: item.keywords })
 
-  it("returns the input unchanged for an empty query", () => {
+  it("returns the input unchanged for an empty or whitespace-only query", () => {
     const items: Item[] = [{ label: "b" }, { label: "a" }]
     expect(rankMatches(items, "", text)).toEqual(items)
+    expect(rankMatches(items, "  ", text)).toEqual(items)
   })
 
   it("drops non-matches", () => {
