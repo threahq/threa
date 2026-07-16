@@ -1,11 +1,14 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util"
 import { ThreaApiClient } from "./api-client"
+import { TokenStore } from "./token-store"
 import { attachmentCommand } from "./commands/attachments"
 import { conversationCommand, conversationsCommand } from "./commands/conversations"
+import { delegationsCommand } from "./commands/delegations"
 import { whoamiCommand } from "./commands/identity"
+import { labelCommand, labelsCommand, unlabelCommand } from "./commands/labels"
 import { mcpCommand, serveMcp } from "./commands/mcp"
-import { findByMetadataCommand } from "./commands/messages"
+import { deleteCommand, editCommand, findByMetadataCommand, sendCommand } from "./commands/messages"
 import { memoCommand } from "./commands/memos"
 import { searchCommand } from "./commands/search"
 import { streamCommand, streamsCommand } from "./commands/streams"
@@ -33,6 +36,13 @@ const COMMANDS: CommandSpec[] = [
   findByMetadataCommand,
   memoCommand,
   attachmentCommand,
+  sendCommand,
+  editCommand,
+  deleteCommand,
+  labelsCommand,
+  labelCommand,
+  unlabelCommand,
+  delegationsCommand,
   mcpCommand,
 ]
 
@@ -68,6 +78,8 @@ export interface RunResult {
 export interface RunDeps {
   config?: import("./config").ThreaMcpConfig
   isTTY?: boolean
+  readStdin?: () => Promise<string>
+  tokenStore?: TokenStore
 }
 
 export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult> {
@@ -119,7 +131,9 @@ export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult
       apiKey: config.apiKey,
     })
     const resolver = new RefResolver({ client })
-    const payload = await spec.run({ client, resolver, config }, positionals, values)
+    const readStdin = deps.readStdin ?? (() => Bun.stdin.text())
+    const tokenStore = deps.tokenStore ?? new TokenStore()
+    const payload = await spec.run({ client, resolver, config, tokenStore, readStdin }, positionals, values)
     return {
       exitCode: 0,
       stdout: `${formatSuccess(spec, payload, { json: values.json === true, isTTY })}\n`,

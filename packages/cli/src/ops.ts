@@ -2,7 +2,15 @@ import type { ThreaApiClient } from "./api-client"
 import type { ThreaMcpConfig } from "./config"
 import { enrichConversation, enrichMessages } from "./enrich"
 import type { RefResolver } from "./resolver"
-import { EXTRACTION_CONTENT_TYPES, KNOWLEDGE_TYPES, MEMO_SCOPES, MEMO_TYPES, STREAM_TYPES } from "./tools/constants"
+import type { TokenStore } from "./token-store"
+import {
+  CALLBACK_TOKEN_HEADER,
+  EXTRACTION_CONTENT_TYPES,
+  KNOWLEDGE_TYPES,
+  MEMO_SCOPES,
+  MEMO_TYPES,
+  STREAM_TYPES,
+} from "./tools/constants"
 import { buildQuery, ToolInputError, type Envelope, type PagedEnvelope } from "./tools/result"
 
 interface Principal {
@@ -265,4 +273,208 @@ export async function search(client: ThreaApiClient, resolver: RefResolver, args
     contentTypes: args.content_types,
     limit: args.limit,
   })
+}
+
+export interface SendMessageParams {
+  streamRef: string
+  content: string
+  clientMessageId?: string
+  metadata?: Record<string, string>
+  conversationId?: string
+  startConversation?: boolean
+}
+
+export function sendConversationArgError(p: {
+  conversationId?: string
+  startConversation?: boolean
+}): string | undefined {
+  if (p.conversationId && p.startConversation) {
+    return "Pass either conversation_id (resume an existing conversation) or start_conversation (open a new one), not both."
+  }
+  return undefined
+}
+
+export async function sendMessage(
+  client: ThreaApiClient,
+  resolver: RefResolver,
+  p: SendMessageParams
+): Promise<unknown> {
+  const argError = sendConversationArgError(p)
+  if (argError) {
+    throw new ToolInputError("INVALID_ARGUMENT", argError)
+  }
+  const clientMessageId = p.clientMessageId ?? `mcp-${crypto.randomUUID()}`
+  const body: Record<string, unknown> = { content: p.content, clientMessageId }
+  if (p.metadata) body.metadata = p.metadata
+  if (p.conversationId) body.conversation = { intent: "existing", conversationId: p.conversationId }
+  else if (p.startConversation) body.conversation = { intent: "new" }
+  const streamId = await resolver.resolveStream(p.streamRef)
+  const response = await client.post<{ data: unknown; conversationId?: string }>(
+    `/streams/${encodeURIComponent(streamId)}/messages`,
+    body
+  )
+  return { ...response, clientMessageId }
+}
+
+export function updateMessage(client: ThreaApiClient, messageId: string, content: string): Promise<unknown> {
+  return client.patch(`/messages/${encodeURIComponent(messageId)}`, { content })
+}
+
+export async function deleteMessage(client: ThreaApiClient, messageId: string): Promise<unknown> {
+  await client.delete(`/messages/${encodeURIComponent(messageId)}`)
+  return { deleted: true, message_id: messageId }
+}
+
+export function listLabels(client: ThreaApiClient): Promise<unknown> {
+  return client.get("/labels")
+}
+
+export interface ApplyLabelParams {
+  name: string
+  streamRef: string
+  color?: string
+  emoji?: string
+  description?: string
+}
+
+export async function applyLabel(client: ThreaApiClient, resolver: RefResolver, p: ApplyLabelParams): Promise<unknown> {
+  return client.post("/labels/assignments", {
+    name: p.name,
+    color: p.color,
+    emoji: p.emoji,
+    description: p.description,
+    resourceType: "stream",
+    resourceId: await resolver.resolveStream(p.streamRef),
+  })
+}
+
+export async function removeLabel(
+  client: ThreaApiClient,
+  resolver: RefResolver,
+  p: { name: string; streamRef: string }
+): Promise<unknown> {
+  const resourceId = await resolver.resolveStream(p.streamRef)
+  await client.delete(`/labels/assignments${buildQuery({ name: p.name, resourceType: "stream", resourceId })}`)
+  return { removed: true, name: p.name, stream_id: resourceId }
+}
+
+export interface ListDelegationsParams {
+  status?: "open"
+  since?: string
+}
+
+export function listDelegations(client: ThreaApiClient, p: ListDelegationsParams): Promise<unknown> {
+  return client.get(`/delegations${buildQuery({ status: p.status, since: p.since })}`)
+}
+
+export interface ClaimDelegationParams {
+  delegationId: string
+  claimedByLabel: string
+  idempotencyKey?: string
+}
+
+export async function claimDelegation(
+  client: ThreaApiClient,
+  store: TokenStore,
+  workspaceId: string,
+  p: ClaimDelegationParams
+): Promise<unknown> {
+  const response = await client.post<{ data: { claimToken?: string } }>(
+    `/delegations/${encodeURIComponent(p.delegationId)}/claim`,
+    { claimedByLabel: p.claimedByLabel, idempotencyKey: p.idempotencyKey }
+  )
+  const token = response.data?.claimToken
+  if (token) store.set(workspaceId, p.delegationId, token)
+  return response
+}
+
+function resolveDelegationToken(
+  store: TokenStore,
+  workspaceId: string,
+  delegationId: string,
+  explicit: string | undefined
+): string {
+  const token = explicit ?? store.get(workspaceId, delegationId)
+  if (!token) {
+    throw new ToolInputError(
+      "MISSING_CLAIM_TOKEN",
+      "No claim token for this delegation. Pass claim_token — the value the claim returned once. The persistent " +
+        "store has no token for this id (you never claimed it, or the claim was already finished and cleared)."
+    )
+  }
+  return token
+}
+
+export interface UpdateDelegationParams {
+  delegationId: string
+  statusNote?: string
+  claimToken?: string
+}
+
+export function updateDelegation(
+  client: ThreaApiClient,
+  store: TokenStore,
+  workspaceId: string,
+  p: UpdateDelegationParams
+): Promise<unknown> {
+  const headers = { [CALLBACK_TOKEN_HEADER]: resolveDelegationToken(store, workspaceId, p.delegationId, p.claimToken) }
+  const id = encodeURIComponent(p.delegationId)
+  return p.statusNote
+    ? client.post(`/delegations/${id}/status`, { statusNote: p.statusNote }, headers)
+    : client.post(`/delegations/${id}/heartbeat`, undefined, headers)
+}
+
+export interface FinishDelegationParams {
+  delegationId: string
+  outcome: "complete" | "fail"
+  resultMarkdown?: string
+  metadata?: Record<string, string>
+  errorMessage?: string
+  claimToken?: string
+}
+
+export function finishDelegationArgError(p: FinishDelegationParams): string | undefined {
+  if (p.outcome === "fail") {
+    if (!p.errorMessage) return "outcome=fail requires error_message."
+    const misplaced: string[] = []
+    if (p.resultMarkdown !== undefined) misplaced.push("result_markdown")
+    if (p.metadata !== undefined) misplaced.push("metadata")
+    if (misplaced.length > 0) {
+      return `outcome=fail does not accept ${misplaced.join(", ")} — those belong to outcome=complete.`
+    }
+    return undefined
+  }
+  if (p.errorMessage !== undefined) {
+    return "outcome=complete does not accept error_message — that belongs to outcome=fail."
+  }
+  return undefined
+}
+
+export async function finishDelegation(
+  client: ThreaApiClient,
+  store: TokenStore,
+  workspaceId: string,
+  p: FinishDelegationParams
+): Promise<unknown> {
+  const argError = finishDelegationArgError(p)
+  if (argError) throw new ToolInputError("INVALID_ARGUMENT", argError)
+  const headers = { [CALLBACK_TOKEN_HEADER]: resolveDelegationToken(store, workspaceId, p.delegationId, p.claimToken) }
+  const id = encodeURIComponent(p.delegationId)
+  const body: Record<string, unknown> = {}
+  let path: string
+  if (p.outcome === "fail") {
+    path = `/delegations/${id}/fail`
+    body.errorMessage = p.errorMessage
+  } else {
+    path = `/delegations/${id}/complete`
+    if (p.resultMarkdown) body.resultMarkdown = p.resultMarkdown
+    if (p.metadata) body.metadata = p.metadata
+  }
+  const response = await client.post(path, body, headers)
+  store.delete(workspaceId, p.delegationId)
+  return response
+}
+
+export function requestDelegationAccess(client: ThreaApiClient, delegationId: string): Promise<unknown> {
+  return client.post(`/delegations/${encodeURIComponent(delegationId)}/request-access`, {})
 }

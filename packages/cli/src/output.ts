@@ -2,6 +2,7 @@ import type { ParseArgsConfig } from "node:util"
 import type { ThreaMcpConfig } from "./config"
 import type { ThreaApiClient } from "./api-client"
 import type { RefResolver } from "./resolver"
+import type { TokenStore } from "./token-store"
 import { toErrorShape, type ErrorShape } from "./tools/result"
 
 export class UsageError extends Error {
@@ -15,6 +16,9 @@ export interface CommandContext {
   client: ThreaApiClient
   resolver: RefResolver
   config: ThreaMcpConfig
+  tokenStore: TokenStore
+  /** Reads piped stdin for a `-` content arg. Injectable so tests feed content without a real pipe. */
+  readStdin: () => Promise<string>
 }
 
 export type ParseOptions = NonNullable<ParseArgsConfig["options"]>

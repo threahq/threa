@@ -1,34 +1,16 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { CALLBACK_TOKEN_HEADER } from "./constants"
-import { buildQuery, runTool, toolError } from "./result"
+import { claimDelegation, finishDelegation, listDelegations, requestDelegationAccess, updateDelegation } from "../ops"
+import type { TokenStore } from "../token-store"
+import { runTool } from "./result"
 
-export function registerDelegationTools(server: McpServer, client: ThreaApiClient): void {
-  const claimTokens = new Map<string, string>()
-
-  function resolveToken(delegationId: string, explicit: string | undefined): string | undefined {
-    return explicit ?? claimTokens.get(delegationId)
-  }
-
-  const missingTokenError = () =>
-    toolError(
-      "MISSING_CLAIM_TOKEN",
-      "No claim token for this delegation. Pass claim_token — the value claim_delegation returned once. " +
-        "The in-memory store has no token for this id (you did not claim it in this session, or the server " +
-        "restarted since you claimed and lost the map)."
-    )
-
-  function withToken(
-    delegationId: string,
-    explicit: string | undefined,
-    fn: (headers: Record<string, string>) => Promise<unknown>
-  ) {
-    const token = resolveToken(delegationId, explicit)
-    if (!token) return Promise.resolve(missingTokenError())
-    return runTool(() => fn({ [CALLBACK_TOKEN_HEADER]: token }))
-  }
-
+export function registerDelegationTools(
+  server: McpServer,
+  client: ThreaApiClient,
+  store: TokenStore,
+  workspaceId: string
+): void {
   server.registerTool(
     "list_delegations",
     {
@@ -45,7 +27,7 @@ export function registerDelegationTools(server: McpServer, client: ThreaApiClien
         since: z.string().optional(),
       },
     },
-    async ({ status, since }) => runTool(() => client.get(`/delegations${buildQuery({ status, since })}`))
+    async ({ status, since }) => runTool(() => listDelegations(client, { status, since }))
   )
 
   server.registerTool(
@@ -55,14 +37,14 @@ export function registerDelegationTools(server: McpServer, client: ThreaApiClien
       description:
         "Atomically claim an open delegation so you can work it. On success the result carries the brief, the " +
         "context refs, and `claimToken` — SHOWN ONCE. Every later lifecycle call for this delegation needs that " +
-        "token; this server also stashes it in memory so you can omit `claim_token` on the follow-up calls in " +
-        "this session. The claim has a 15-minute TTL: call update_delegation to renew it before it lapses, or " +
-        "the task returns to the queue. `claimed_by_label` is your human-readable " +
-        'identity shown on the card (e.g. "Kris\'s MacBook / Claude Code"). `idempotency_key` re-keys your own ' +
-        "live claim after a crash: persist it BEFORE claiming, and a retry bearing the same key hands back a " +
-        "fresh token and lease instead of a 409. A 409 DELEGATION_NOT_OPEN means you lost the race — another " +
-        "runner already claimed it. After claiming, keep the lease alive with update_delegation and close out " +
-        "with finish_delegation.",
+        "token; this server also stashes it in a persistent state file (`~/.threa/state.json`) so you can omit " +
+        "`claim_token` on the follow-up calls, and it survives a server restart. The claim has a 15-minute TTL: " +
+        "call update_delegation to renew it before it lapses, or the task returns to the queue. `claimed_by_label` " +
+        'is your human-readable identity shown on the card (e.g. "Kris\'s MacBook / Claude Code"). ' +
+        "`idempotency_key` re-keys your own live claim after a crash: persist it BEFORE claiming, and a retry " +
+        "bearing the same key hands back a fresh token and lease instead of a 409. A 409 DELEGATION_NOT_OPEN means " +
+        "you lost the race — another runner already claimed it. After claiming, keep the lease alive with " +
+        "update_delegation and close out with finish_delegation.",
       inputSchema: {
         delegation_id: z.string(),
         claimed_by_label: z.string().min(1).max(200),
@@ -70,15 +52,13 @@ export function registerDelegationTools(server: McpServer, client: ThreaApiClien
       },
     },
     async ({ delegation_id, claimed_by_label, idempotency_key }) =>
-      runTool(async () => {
-        const response = await client.post<{ data: { claimToken?: string } }>(
-          `/delegations/${encodeURIComponent(delegation_id)}/claim`,
-          { claimedByLabel: claimed_by_label, idempotencyKey: idempotency_key }
-        )
-        const token = response.data?.claimToken
-        if (token) claimTokens.set(delegation_id, token)
-        return response
-      })
+      runTool(() =>
+        claimDelegation(client, store, workspaceId, {
+          delegationId: delegation_id,
+          claimedByLabel: claimed_by_label,
+          idempotencyKey: idempotency_key,
+        })
+      )
   )
 
   server.registerTool(
@@ -89,9 +69,9 @@ export function registerDelegationTools(server: McpServer, client: ThreaApiClien
         "Keep a claimed delegation alive and, optionally, report progress. Pass `status_note` to mark the " +
         "delegation running and put a free-text note on its card (each note replaces the previous one) — this " +
         "also renews the claim's 15-minute TTL. Omit `status_note` for a pure heartbeat: liveness only, no card " +
-        "change, TTL renewed. Uses the claim token from claim_delegation (stored in memory this session); pass " +
-        "`claim_token` to override the stored one or recover after a server restart. A 404 means the claim " +
-        "lapsed or was lost — re-claim the delegation.",
+        "change, TTL renewed. Uses the claim token from claim_delegation (persisted to `~/.threa/state.json`); " +
+        "pass `claim_token` to override the stored one. A 404 means the claim lapsed or was lost — re-claim the " +
+        "delegation.",
       inputSchema: {
         delegation_id: z.string(),
         status_note: z.string().min(1).max(2000).optional(),
@@ -99,14 +79,12 @@ export function registerDelegationTools(server: McpServer, client: ThreaApiClien
       },
     },
     async ({ delegation_id, status_note, claim_token }) =>
-      withToken(delegation_id, claim_token, (headers) =>
-        status_note
-          ? client.post(
-              `/delegations/${encodeURIComponent(delegation_id)}/status`,
-              { statusNote: status_note },
-              headers
-            )
-          : client.post(`/delegations/${encodeURIComponent(delegation_id)}/heartbeat`, undefined, headers)
+      runTool(() =>
+        updateDelegation(client, store, workspaceId, {
+          delegationId: delegation_id,
+          statusNote: status_note,
+          claimToken: claim_token,
+        })
       )
   )
 
@@ -121,8 +99,8 @@ export function registerDelegationTools(server: McpServer, client: ThreaApiClien
         "string→string map) stamps the result message for later find_messages_by_metadata lookup. " +
         '`outcome: "fail"` marks failure and REQUIRES `error_message` (recorded on the card so the delegator ' +
         "knows why); it rejects result_markdown/metadata. `error_message` is only valid with outcome=fail. Uses " +
-        "the stored claim token (pass `claim_token` to override or recover). On success the stored token is " +
-        "cleared — the claim is spent.",
+        "the stored claim token (pass `claim_token` to override). On success the stored token is cleared — the " +
+        "claim is spent.",
       inputSchema: {
         delegation_id: z.string(),
         outcome: z.enum(["complete", "fail"]),
@@ -132,45 +110,17 @@ export function registerDelegationTools(server: McpServer, client: ThreaApiClien
         claim_token: z.string().optional(),
       },
     },
-    async ({ delegation_id, outcome, result_markdown, metadata, error_message, claim_token }) => {
-      if (outcome === "fail") {
-        if (!error_message) {
-          return toolError("INVALID_ARGUMENT", "outcome=fail requires error_message.")
-        }
-        const misplaced: string[] = []
-        if (result_markdown !== undefined) misplaced.push("result_markdown")
-        if (metadata !== undefined) misplaced.push("metadata")
-        if (misplaced.length > 0) {
-          return toolError(
-            "INVALID_ARGUMENT",
-            `outcome=fail does not accept ${misplaced.join(", ")} — those belong to outcome=complete.`
-          )
-        }
-      } else if (error_message !== undefined) {
-        return toolError(
-          "INVALID_ARGUMENT",
-          "outcome=complete does not accept error_message — that belongs to outcome=fail."
-        )
-      }
-
-      const path =
-        outcome === "fail"
-          ? `/delegations/${encodeURIComponent(delegation_id)}/fail`
-          : `/delegations/${encodeURIComponent(delegation_id)}/complete`
-      const body: Record<string, unknown> = {}
-      if (outcome === "fail") {
-        body.errorMessage = error_message
-      } else {
-        if (result_markdown) body.resultMarkdown = result_markdown
-        if (metadata) body.metadata = metadata
-      }
-
-      return withToken(delegation_id, claim_token, async (headers) => {
-        const response = await client.post(path, body, headers)
-        claimTokens.delete(delegation_id)
-        return response
-      })
-    }
+    async ({ delegation_id, outcome, result_markdown, metadata, error_message, claim_token }) =>
+      runTool(() =>
+        finishDelegation(client, store, workspaceId, {
+          delegationId: delegation_id,
+          outcome,
+          resultMarkdown: result_markdown,
+          metadata,
+          errorMessage: error_message,
+          claimToken: claim_token,
+        })
+      )
   )
 
   server.registerTool(
@@ -187,7 +137,6 @@ export function registerDelegationTools(server: McpServer, client: ThreaApiClien
         delegation_id: z.string(),
       },
     },
-    async ({ delegation_id }) =>
-      runTool(() => client.post(`/delegations/${encodeURIComponent(delegation_id)}/request-access`, {}))
+    async ({ delegation_id }) => runTool(() => requestDelegationAccess(client, delegation_id))
   )
 }

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { ThreaApiClient } from "./api-client"
 import type { ThreaMcpConfig } from "./config"
 import { RefResolver } from "./resolver"
+import { TokenStore } from "./token-store"
 import { registerAttachmentTools } from "./tools/attachments"
 import { registerConversationTools } from "./tools/conversations"
 import { registerDelegationTools } from "./tools/delegations"
@@ -39,13 +40,18 @@ const INSTRUCTIONS =
   "memo to its source messages. Attachments: get_attachment (metadata plus extracted text), " +
   "get_attachment_download_url (short-lived signed URL for the raw bytes). Delegations: close the loop on a " +
   "delegated task with list_delegations (the open queue) → claim_delegation (returns a claim token shown once " +
-  "and stored in memory for this session; 15-min TTL) → update_delegation while working (status_note reports " +
+  "and persisted to ~/.threa/state.json; 15-min TTL) → update_delegation while working (status_note reports " +
   "progress and renews the claim, no note is a pure heartbeat) → finish_delegation (outcome complete or fail). " +
   "A completed result is posted into the delegation's stream so GAM memorizes it. Lifecycle tools reuse the " +
-  "stored token; pass claim_token to override or to recover after a server restart. request_delegation_access " +
+  "stored token; pass claim_token to override or to recover on another machine. request_delegation_access " +
   "is bot-key only."
 
-export function createThreaMcpServer(config: ThreaMcpConfig): McpServer {
+export interface ThreaMcpServerDeps {
+  /** Injectable so tests point the persistent claim-token store at a temp file. */
+  tokenStore?: TokenStore
+}
+
+export function createThreaMcpServer(config: ThreaMcpConfig, deps: ThreaMcpServerDeps = {}): McpServer {
   const server = new McpServer({ name: "threa", version: "0.1.0" }, { instructions: INSTRUCTIONS })
   const client = new ThreaApiClient({
     baseUrl: config.baseUrl,
@@ -53,6 +59,7 @@ export function createThreaMcpServer(config: ThreaMcpConfig): McpServer {
     apiKey: config.apiKey,
   })
   const resolver = new RefResolver({ client })
+  const tokenStore = deps.tokenStore ?? new TokenStore()
 
   registerIdentityTools(server, client, config)
   registerStreamTools(server, client, resolver)
@@ -63,7 +70,7 @@ export function createThreaMcpServer(config: ThreaMcpConfig): McpServer {
   registerLabelTools(server, client, resolver)
   registerMemoTools(server, client)
   registerAttachmentTools(server, client)
-  registerDelegationTools(server, client)
+  registerDelegationTools(server, client, tokenStore, config.workspaceId)
 
   return server
 }

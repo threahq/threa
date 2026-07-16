@@ -1,8 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { createThreaMcpServer } from "./server"
 import type { ThreaMcpConfig } from "./config"
+import { TokenStore } from "./token-store"
 
 export const TEST_CONFIG: ThreaMcpConfig = {
   apiKey: "threa_uk_secret",
@@ -19,7 +22,8 @@ export function fetchByPath(handler: (path: string) => Response): typeof fetch {
 }
 
 export async function connectClient(config: ThreaMcpConfig = TEST_CONFIG): Promise<Client> {
-  const server = createThreaMcpServer(config)
+  const tokenStore = new TokenStore(join(tmpdir(), `threa-cli-test-${crypto.randomUUID()}.json`))
+  const server = createThreaMcpServer(config, { tokenStore })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   const client = new Client({ name: "test", version: "0.0.0" })
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])

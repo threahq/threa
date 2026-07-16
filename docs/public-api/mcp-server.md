@@ -1,14 +1,12 @@
-# MCP server
+# CLI and MCP server
 
-Threa ships a Model Context Protocol server that wraps the public REST API. It lets a local agent, such as Claude Code, work against one Threa workspace through MCP tools instead of raw HTTP: read and search streams, users, messages, conversations, memos, and attachments, send and edit messages, manage labels, and run the delegation lifecycle.
+Threa ships `threa`, a command-line client that wraps the public REST API for one workspace. A local agent or a script can read and search streams, users, messages, conversations, memos, and attachments, send and edit messages, manage labels, and run the delegation lifecycle, all with one API key. The same core is served over the Model Context Protocol with `threa mcp serve`, so an MCP client such as Claude Code can call the same operations as tools.
 
-The server speaks stdio and holds no long-lived connection. Every tool is a single call against `<baseUrl>/api/v1/workspaces/{workspaceId}/…`. It lives in this repository at `packages/mcp` and runs under Bun with no build step.
+Both heads bind to one workspace and one API key from configuration, so no command and no tool takes a workspace id. There is no long-lived connection. Every call goes to `<baseUrl>/api/v1/workspaces/{workspaceId}/…`. The package lives in this repository at `packages/cli` and runs under Bun with no build step.
 
 ## What it needs
 
-One workspace and one API key, both fixed by configuration. No tool takes a workspace id, because the server is bound to one workspace when it starts. The key decides who the agent acts as and what it can touch.
-
-Configuration resolves from environment variables first, then from an optional JSON file. Environment variables win over the file.
+One workspace and one API key, both fixed by configuration. Configuration resolves from environment variables first, then from an optional JSON file. Environment variables win over the file.
 
 | Setting      | Environment variable | File key      | Required                               |
 | ------------ | -------------------- | ------------- | -------------------------------------- |
@@ -16,19 +14,29 @@ Configuration resolves from environment variables first, then from an optional J
 | Workspace id | `THREA_WORKSPACE_ID` | `workspaceId` | yes                                    |
 | Base URL     | `THREA_BASE_URL`     | `baseUrl`     | no, defaults to `https://app.threa.io` |
 
-The file is read from the path in `THREA_MCP_CONFIG`, or from `~/.threa/mcp.json` when that variable is unset. Its shape is `{ "apiKey": …, "workspaceId": …, "baseUrl": … }`. If the two required values cannot be resolved from either source, the server exits with a message naming what is missing. The key is never written to logs.
+The file is read from the path in `THREA_MCP_CONFIG`, or from `~/.threa/mcp.json` when that variable is unset. Its shape is `{ "apiKey": …, "workspaceId": …, "baseUrl": … }`. If the two required values cannot be resolved from either source, the CLI exits with a message naming what is missing. The key is never written to logs.
 
-## Registering it
+## Running the CLI
 
-The server runs the TypeScript entry point directly under Bun. It needs Bun on the machine and this repository checked out. It works from any project, including projects that have nothing to do with Threa.
+The CLI runs the TypeScript entry point directly under Bun. It needs Bun on the machine and this repository checked out. It works from any project, including projects unrelated to Threa.
 
-To register it persistently for the current project:
+Link the bin onto your PATH from `packages/cli` with `bun link`, or invoke the entry point by absolute path:
+
+```bash
+bun /abs/path/to/threa/packages/cli/src/cli.ts whoami
+```
+
+On a terminal the CLI prints concise human-readable text. When output is piped it prints JSON, which is what an agent or a script reads. The `--json` flag forces JSON on a terminal. Errors go to stderr as one JSON object with `code`, `message`, and an optional `hint`. The exit code is `0` on success, `1` on an API or tool error, and `2` on a usage error such as an unknown command or a missing argument. Run `threa --help` for the command list and `threa <command> --help` for a command's flags.
+
+## Running the MCP server
+
+`threa mcp serve` runs the same operations as MCP tools over stdio. Register it persistently for the current project:
 
 ```bash
 claude mcp add threa --scope local \
   --env THREA_API_KEY=threa_uk_… \
   --env THREA_WORKSPACE_ID=ws_… \
-  -- bun /abs/path/to/threa/packages/mcp/src/index.ts
+  -- bun /abs/path/to/threa/packages/cli/src/cli.ts mcp serve
 ```
 
 Point `--env THREA_BASE_URL` at another host to use staging.
@@ -41,7 +49,7 @@ If you run more than one worktree of the repository, prefer a session-scoped reg
     "threa": {
       "type": "stdio",
       "command": "bun",
-      "args": ["/abs/path/to/threa/packages/mcp/src/index.ts"],
+      "args": ["/abs/path/to/threa/packages/cli/src/cli.ts", "mcp", "serve"],
       "env": {
         "THREA_API_KEY": "threa_uk_…",
         "THREA_WORKSPACE_ID": "ws_…"
@@ -55,67 +63,65 @@ Launch with `claude --mcp-config <path>`. The registration lasts for that sessio
 
 ## Keys and access
 
-Mint a key in the app. The prefix sets the identity. A `threa_uk_` key is a personal access key: it acts as you, carries your access, and cannot do more than you can, and its messages are attributed to you with a via-API marker. A `threa_bk_` key is a bot key: it acts as the bot with the bot's own identity and access. Only a bot key can call `request_delegation_access`.
+Mint a key in the app. The prefix sets the identity. A `threa_uk_` key is a personal access key. It acts as you, carries your access, cannot do more than you can, and its messages are attributed to you with a via-API marker. A `threa_bk_` key is a bot key. It acts as the bot with the bot's own identity and access. Only a bot key can request access to a delegation's stream.
 
-A key is bound to one workspace, and a request for another workspace returns 403. What a key can do inside its workspace is set by the scopes granted to it. A key that lacks the scope for a resource does not receive a 403 on that route. It receives a 404, because Threa hides existence from keys that cannot see a resource. A 404 from any tool therefore means either the resource is absent or the key lacks the scope.
+A key is bound to one workspace, and a request for another workspace returns 403. What a key can do inside its workspace is set by the scopes granted to it. A key that lacks the scope for a resource does not receive a 403 on that route. It receives a 404, because Threa hides existence from keys that cannot see a resource. A 404 from any command or tool therefore means either the resource is absent or the key lacks the scope.
 
-Scopes map to tool areas as follows. Some tools span more than one scope. `read_stream` reads a stream and its messages in one call, so it needs both `streams:read` and `messages:read`, and a missing scope on either leg fails the whole call. `search` routes by its `what` argument, so it needs the scope for the kind you search.
+Scopes map to command and tool areas as follows. Some operations span more than one scope. Reading a stream (`threa stream`, the `read_stream` tool) reads a stream and its messages in one call, so it needs both `streams:read` and `messages:read`, and a missing scope on either leg fails the whole call. Search routes by its `what`, so it needs the scope for the kind you search.
 
-| Scope               | Tools                                                                                                |
-| ------------------- | ---------------------------------------------------------------------------------------------------- |
-| none                | `whoami`                                                                                             |
-| `streams:read`      | `list_streams`, `read_stream` (stream and member legs)                                               |
-| `users:read`        | `list_users`                                                                                         |
-| `messages:read`     | `read_stream` (messages leg), `read_conversation`, `list_conversations`, `find_messages_by_metadata` |
-| `messages:search`   | `search` with `what: "messages"`                                                                     |
-| `messages:write`    | `send_message`, `update_message`, `delete_message`                                                   |
-| `memos:read`        | `search` with `what: "memos"`, `get_memo`                                                            |
-| `attachments:read`  | `search` with `what: "attachments"`, `get_attachment`, `get_attachment_download_url`                 |
-| `labels:read`       | `list_labels`                                                                                        |
-| `labels:write`      | `apply_label`, `remove_label`                                                                        |
-| `delegations:read`  | `list_delegations`                                                                                   |
-| `delegations:write` | `claim_delegation`, `update_delegation`, `finish_delegation`, `request_delegation_access`            |
+| Scope               | Commands (MCP tools)                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------------- |
+| none                | `whoami`                                                                                    |
+| `streams:read`      | `streams`, `stream` (`list_streams`, `read_stream`)                                         |
+| `users:read`        | `users` (`list_users`)                                                                      |
+| `messages:read`     | `stream` messages leg, `conversation`, `conversations`, `find-by-metadata`                  |
+| `messages:search`   | `search --what messages`                                                                    |
+| `messages:write`    | `send`, `edit`, `delete` (`send_message`, `update_message`, `delete_message`)               |
+| `memos:read`        | `search --what memos`, `memo` (`get_memo`)                                                  |
+| `attachments:read`  | `search --what attachments`, `attachment` (`get_attachment`, `get_attachment_download_url`) |
+| `labels:read`       | `labels` (`list_labels`)                                                                    |
+| `labels:write`      | `label`, `unlabel` (`apply_label`, `remove_label`)                                          |
+| `delegations:read`  | `delegations` (`list_delegations`)                                                          |
+| `delegations:write` | `delegations claim`, `update`, `finish`, `request-access`                                   |
 
 ## Rate limits
 
-The API allows 60 requests per minute per key and 600 per minute per workspace, measured over 60-second windows. On a 429 the server retries with backoff at 2, 4, and 8 seconds for up to three attempts, then returns a rate-limit error. A 429 is the only status it retries automatically, for reads and writes alike, since a rate-limited request never executed. Any other failure surfaces immediately. Space out bulk reads to stay under the limit.
+The API allows 60 requests per minute per key and 600 per minute per workspace, measured over 60-second windows. On a 429 the client retries with backoff at 2, 4, and 8 seconds for up to three attempts, then returns a rate-limit error. A 429 is the only status it retries automatically, for reads and writes alike, since a rate-limited request never executed. Any other failure surfaces immediately. Space out bulk reads to stay under the limit.
 
-## Tool results
+## Results
 
-Tool output is JSON text in the API envelope. A single resource comes back under `data`, a list as `{ data, hasMore, cursor? }`, and a search as `{ data: [...] }`. A failure returns an error result with `{ code, message, hint? }`, and the hint spells out the 404 scope case and the rate-limit case. Message content is passed through in full and never truncated.
+Command output is JSON when piped, or human-readable text on a terminal. MCP tool output is JSON text in the API envelope. A single resource comes back under `data`, a list as `{ data, hasMore, cursor? }`, and a search as `{ data: [...] }`. A failure returns an error object with `code`, `message`, and an optional `hint` that spells out the 404 scope case and the rate-limit case. Message content is passed through in full and is never truncated.
 
 ## Referencing streams and users
 
-Identifier arguments take either a raw id or a sigil-prefixed slug, so you seldom have to look an id up first. A stream argument accepts a `stream_…` id or a `#channel-slug`, and a `#slug` resolves to the channel whose slug matches exactly. A user argument accepts a `usr_…` or `bot_…` id or an `@user-slug`, and an `@slug` resolves to the user whose slug matches exactly. This applies to the stream fields on `read_stream`, `send_message`, `search`, `find_messages_by_metadata`, `list_conversations`, `apply_label`, and `remove_label`.
+Identifier arguments take either a raw id or a sigil-prefixed slug, so you seldom have to look an id up first. A stream argument accepts a `stream_…` id or a `#channel-slug`, and a `#slug` resolves to the channel whose slug matches exactly. A user argument accepts a `usr_…` or `bot_…` id or an `@user-slug`, and an `@slug` resolves to the user whose slug matches exactly. Resolution is cached for five minutes. A ref that matches nothing or matches more than one candidate fails before any API call with the code `UNRESOLVED_REF` and a message that lists the candidates or points you at the list command or tool.
 
-Resolution is cached for five minutes. A ref that matches nothing, or matches more than one candidate, fails before any API call with the code `UNRESOLVED_REF` and a message that lists the candidates or points you at `list_streams` or `list_users`.
-
-Two limits come from the public API itself. An `@user-slug` cannot stand in for a DM stream, because DM streams do not expose their counterpart on the wire and there is no lookup for the DM you share with a given user. The resolver validates the user and then returns an error naming the resolved id, and it tells you to find the DM's `stream_…` id with `list_streams` set to `type: "dm"` and `read_stream` with `include_members: true`. Bots and personas are not queryable by slug, because the public API has no bot or persona listing, so `@slug` resolves users only and you pass a `bot_…` or `persona_…` id directly.
+Two limits come from the public API itself. An `@user-slug` cannot stand in for a DM stream, because DM streams do not expose their counterpart on the wire and there is no lookup for the DM you share with a given user. Find the DM's `stream_…` id with `threa streams --type dm` and `threa stream <id> --members`, then pass that id. Bots and personas are not queryable by slug, because the public API has no bot or persona listing, so `@slug` resolves users only and you pass a `bot_…` or `persona_…` id directly.
 
 ## Self-descriptive payloads
 
-Read payloads carry enough identity that a standard read needs no follow-up call. Message rows gain an `author` object with `id`, `type`, `name`, and `slug` when it can be resolved, on `read_stream`, `read_conversation`, `find_messages_by_metadata`, and `search` with `what: "messages"`. A bot or persona author is absent from the users list, so its name falls back to the wire's `authorDisplayName` and its slug is omitted. Conversation objects mirror their `participantIds` with a `participants` array of `id`, `name`, and `slug`, on `list_conversations` and `read_conversation`. Stream members already carry `name` and `slug` from the API on `read_stream` with `include_members`.
+Read payloads carry enough identity that a standard read needs no follow-up call. Message rows gain an `author` object with `id`, `type`, `name`, and a `slug` when it can be resolved. A bot or persona author is absent from the users list, so its name falls back to the wire's `authorDisplayName` and its slug is omitted. Conversation objects mirror their `participantIds` with a `participants` array of `id`, `name`, and `slug`. Stream members carry `name` and `slug` from the API. Enrichment is additive and best-effort. The client fetches the workspace users once, caches them, and maps ids locally, so it never adds a fetch per row. If that fetch fails, the raw payload comes back unchanged and one line is written to stderr, so a read never fails because enrichment could not run.
 
-Enrichment is additive and best-effort. The server fetches the workspace users once, caches them, and maps ids locally, so it never adds a fetch per row. If that fetch fails, the raw payload comes back unchanged and one line is written to stderr, so a read never fails because enrichment could not run.
+## Command reference
 
-## Tool catalog
+Identity: `whoami` returns the principal, the resolved API version, and the base URL and workspace the client is bound to. Run it first to confirm the key.
 
-Identity: `whoami` returns the principal, the resolved API version, and the base URL and workspace the server is bound to.
+Streams: `streams` filters by type and name and pages with `--after`. `stream <ref>` returns one stream together with a page of its messages in a single call, paging the messages by numeric `--before` and `--after` sequence, and returns the stream's members too when `--members` is set.
 
-Streams: `list_streams` filters by type and name and pages with `after`. `read_stream` returns one stream together with a page of its messages in a single call, paging the messages by numeric `before` and `after` sequence, and returns the stream's members too when `include_members` is set. If any leg of `read_stream` fails, the whole call fails and no partial data comes back.
+Users: `users` filters by name or email, and pages with `--after`.
 
-Users: `list_users` filters by name or email, not slug, and pages with `after`.
+Search: `search <query> --what messages|memos|attachments` is one command routed by `--what`. With `messages` it searches accessible streams full-text, by meaning with `--semantic`, or as a literal phrase with `--exact`, and a query is required. With `memos` it searches the knowledge extracted from the workspace's conversations, the query is optional and matches by meaning, and an empty query browses recent memos. With `attachments` it searches by filename or extracted content, and a query is required. Each `--what` accepts only its own filters, and passing another filter returns an error that names it.
 
-Search: `search` is one tool routed by its `what` argument. With `what: "messages"` it searches accessible streams full-text, by meaning with `semantic`, or as a literal phrase with `exact`, and `query` is required. With `what: "memos"` it searches the knowledge extracted from the workspace's conversations, `query` is optional and matches by meaning, and an empty query browses recent memos. With `what: "attachments"` it searches by filename or extracted content, and `query` is required. Each `what` accepts only its own filters, and passing another filter returns an error that names it.
+Messages: `find-by-metadata k=v` looks messages up by the metadata stamped on them at send time. `send <stream-ref> <content>` posts markdown, reads stdin when content is `-`, and starts or resumes a conversation with `--new-conversation` or `--conversation`. `edit <message-id> <content>` and `delete <message-id>` act on messages the key itself sent.
 
-Messages: `find_messages_by_metadata` looks messages up by the metadata stamped on them at send time. `send_message` posts markdown and can start or resume a conversation. `update_message` and `delete_message` act on messages the key itself sent.
+Conversations: `conversations` lists conversations under a stream's root. `conversation <id>` returns one conversation together with a page of its messages and pages with `--cursor`.
 
-Conversations: `list_conversations` lists conversations under a stream's root. `read_conversation` returns one conversation together with a page of its messages in a single call and pages the messages with `cursor`. If either leg fails, the whole call fails.
+Memos: `memo <id>` returns a memo with its source messages. Find memos with `search --what memos`.
 
-Memos: `get_memo` returns a memo with its source messages. Find memos with `search` and `what: "memos"`.
+Attachments: `attachment <id>` returns metadata and extracted text, and `attachment <id> --url` returns a short-lived signed URL for the bytes. Find attachments with `search --what attachments`.
 
-Attachments: `get_attachment` returns metadata and extracted text, and `get_attachment_download_url` returns a short-lived signed URL for the bytes. Find attachments with `search` and `what: "attachments"`.
+Labels: `labels` lists the key actor's labels, `label <name> <stream-ref>` attaches a label to a stream by name, and `unlabel <name> <stream-ref>` removes the assignment.
 
-Labels: `list_labels` lists the key actor's labels, `apply_label` attaches a label to a stream by name, and `remove_label` removes the assignment.
+Delegations: `delegations` shows open tasks and filters with `--since`. `delegations claim <id> --label who` claims a task and returns a claim token shown once. `delegations update <id>` keeps a claim alive: pass `--note` to mark the task running and post a progress note, or omit it for a pure heartbeat, and either way the claim's TTL is renewed. `delegations finish <id> --outcome complete|fail` ends the task, with `--result` posted into the delegation's stream on success or `--error` recorded on the card on failure. `delegations request-access <id>` is for bot keys that need a grant on the stream.
 
-Delegations: `list_delegations` shows open tasks. `claim_delegation` claims one and returns a claim token that is shown once and cached in memory for the session. `update_delegation` keeps a claim alive: pass `status_note` to mark the task running and post a progress note, or omit the note for a pure heartbeat, and either way the claim's TTL is renewed. `finish_delegation` ends the task, with `outcome: "complete"` for success (an optional `result_markdown` is posted into the delegation's stream) or `outcome: "fail"` for failure, which requires `error_message`. `request_delegation_access` is for bot keys that need a grant on the stream. Lifecycle tools reuse the cached token, and you can pass `claim_token` to override it or to recover after a restart.
+The claim token is persisted to `~/.threa/state.json` at mode 0600, keyed by workspace and delegation, and written atomically. Update and finish reuse it across separate invocations, and finish clears it. Pass `--claim-token` to override the stored token or to recover it on another machine. Override the file path with `THREA_STATE_FILE`. The MCP head shares the same store, so a claim made through one head is usable from the other. A corrupt state file logs one warning to stderr and starts empty. A failed write surfaces as a delegation-command error rather than passing silently.

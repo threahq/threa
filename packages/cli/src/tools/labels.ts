@@ -1,8 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
+import { applyLabel, listLabels, removeLabel } from "../ops"
 import type { RefResolver } from "../resolver"
-import { buildQuery, runTool } from "./result"
+import { runTool } from "./result"
 
 export function registerLabelTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
   server.registerTool(
@@ -14,7 +15,7 @@ export function registerLabelTools(server: McpServer, client: ThreaApiClient, re
         "the API key acts as; you never see another actor's labels.",
       inputSchema: {},
     },
-    async () => runTool(() => client.get("/labels"))
+    async () => runTool(() => listLabels(client))
   )
 
   server.registerTool(
@@ -37,16 +38,7 @@ export function registerLabelTools(server: McpServer, client: ThreaApiClient, re
       },
     },
     async ({ name, stream_id, color, emoji, description }) =>
-      runTool(async () =>
-        client.post("/labels/assignments", {
-          name,
-          color,
-          emoji,
-          description,
-          resourceType: "stream",
-          resourceId: await resolver.resolveStream(stream_id),
-        })
-      )
+      runTool(() => applyLabel(client, resolver, { name, streamRef: stream_id, color, emoji, description }))
   )
 
   server.registerTool(
@@ -61,11 +53,6 @@ export function registerLabelTools(server: McpServer, client: ThreaApiClient, re
         stream_id: z.string(),
       },
     },
-    async ({ name, stream_id }) =>
-      runTool(async () => {
-        const resourceId = await resolver.resolveStream(stream_id)
-        await client.delete(`/labels/assignments${buildQuery({ name, resourceType: "stream", resourceId })}`)
-        return { removed: true, name, stream_id: resourceId }
-      })
+    async ({ name, stream_id }) => runTool(() => removeLabel(client, resolver, { name, streamRef: stream_id }))
   )
 }

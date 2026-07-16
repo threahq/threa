@@ -1,9 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { findMessagesByMetadata } from "../ops"
+import { deleteMessage, findMessagesByMetadata, sendMessage, updateMessage } from "../ops"
 import type { RefResolver } from "../resolver"
-import { runTool, toolError } from "./result"
+import { runTool } from "./result"
 
 export function registerMessageTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
   server.registerTool(
@@ -31,27 +31,17 @@ export function registerMessageTools(server: McpServer, client: ThreaApiClient, 
         start_conversation: z.boolean().optional(),
       },
     },
-    async ({ stream_id, content, client_message_id, metadata, conversation_id, start_conversation }) => {
-      if (conversation_id && start_conversation) {
-        return toolError(
-          "INVALID_ARGUMENT",
-          "Pass either conversation_id (resume an existing conversation) or start_conversation (open a new one), not both."
-        )
-      }
-      const clientMessageId = client_message_id ?? `mcp-${crypto.randomUUID()}`
-      const body: Record<string, unknown> = { content, clientMessageId }
-      if (metadata) body.metadata = metadata
-      if (conversation_id) body.conversation = { intent: "existing", conversationId: conversation_id }
-      else if (start_conversation) body.conversation = { intent: "new" }
-      return runTool(async () => {
-        const streamId = await resolver.resolveStream(stream_id)
-        const response = await client.post<{ data: unknown; conversationId?: string }>(
-          `/streams/${encodeURIComponent(streamId)}/messages`,
-          body
-        )
-        return { ...response, clientMessageId }
-      })
-    }
+    async ({ stream_id, content, client_message_id, metadata, conversation_id, start_conversation }) =>
+      runTool(() =>
+        sendMessage(client, resolver, {
+          streamRef: stream_id,
+          content,
+          clientMessageId: client_message_id,
+          metadata,
+          conversationId: conversation_id,
+          startConversation: start_conversation,
+        })
+      )
   )
 
   server.registerTool(
@@ -66,8 +56,7 @@ export function registerMessageTools(server: McpServer, client: ThreaApiClient, 
         content: z.string().min(1),
       },
     },
-    async ({ message_id, content }) =>
-      runTool(() => client.patch(`/messages/${encodeURIComponent(message_id)}`, { content }))
+    async ({ message_id, content }) => runTool(() => updateMessage(client, message_id, content))
   )
 
   server.registerTool(
@@ -81,11 +70,7 @@ export function registerMessageTools(server: McpServer, client: ThreaApiClient, 
         message_id: z.string(),
       },
     },
-    async ({ message_id }) =>
-      runTool(async () => {
-        await client.delete(`/messages/${encodeURIComponent(message_id)}`)
-        return { deleted: true, message_id }
-      })
+    async ({ message_id }) => runTool(() => deleteMessage(client, message_id))
   )
 
   server.registerTool(
