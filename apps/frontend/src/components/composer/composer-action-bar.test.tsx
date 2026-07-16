@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest"
-import { planActionOverflow, planTriggerVisibility } from "./composer-action-bar"
+import { describe, it, expect, vi, afterEach } from "vitest"
+import { render, screen } from "@testing-library/react"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import * as elementWidthModule from "@/hooks/use-element-width"
+import { ComposerActionBar, planActionOverflow, planTriggerVisibility } from "./composer-action-bar"
 
 // Mirrors the real bar's secondary actions: array order is the left-to-right
 // display order; `collapsePriority` (lower folds first) is independent of it.
@@ -99,5 +102,36 @@ describe("planTriggerVisibility", () => {
       const inlineControls = 3 + visible
       expect(inlineControls * CONTROL_PX).toBeLessThanOrEqual(width)
     }
+  })
+})
+
+describe("squeezed trigger mounting", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("keeps a dropped trigger mounted (hidden) so its shortcut registration survives", () => {
+    // 100px → 0 visible triggers (see planTriggerVisibility cases above). The
+    // stash trigger must stay in the DOM: the drafts picker registers the
+    // empty-composer Cmd/Ctrl+S handler on mount.
+    vi.spyOn(elementWidthModule, "useElementWidth").mockReturnValue(100)
+    render(
+      <TooltipProvider>
+        <ComposerActionBar
+          formatOpen={false}
+          onToggleFormat={() => {}}
+          onInsertEmoji={() => {}}
+          onInsertMention={() => {}}
+          onInsertCommand={() => {}}
+          onAttachClick={() => {}}
+          stashedDraftsTrigger={<button type="button" data-testid="stash-trigger" />}
+          sendButton={<button type="button">Send</button>}
+        />
+      </TooltipProvider>
+    )
+
+    const trigger = screen.getByTestId("stash-trigger")
+    expect(trigger).toBeInTheDocument()
+    expect(trigger).not.toBeVisible()
   })
 })

@@ -320,6 +320,18 @@ export function ComposerActionBar({
       {visibleTriggers.map((t) => (
         <Fragment key={t.key}>{t.node}</Fragment>
       ))}
+      {/* Triggers dropped under extreme squeeze stay MOUNTED, just hidden:
+          the drafts picker registers the empty-composer Cmd/Ctrl+S open
+          handler on mount, and its popover anchors to the composer card
+          rather than the trigger — unmounting would silently kill the
+          shortcut whenever the bar is squeezed. */}
+      {triggers.length > visibleTriggerCount && (
+        <div hidden>
+          {triggers.slice(visibleTriggerCount).map((t) => (
+            <Fragment key={t.key}>{t.node}</Fragment>
+          ))}
+        </div>
+      )}
       {sendButton}
     </div>
   )
