@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
+import { getAttachment, getAttachmentDownloadUrl } from "../ops"
 import { runTool } from "./result"
 
 export function registerAttachmentTools(server: McpServer, client: ThreaApiClient): void {
@@ -17,7 +18,7 @@ export function registerAttachmentTools(server: McpServer, client: ThreaApiClien
         attachment_id: z.string(),
       },
     },
-    async ({ attachment_id }) => runTool(() => client.get(`/attachments/${encodeURIComponent(attachment_id)}`))
+    async ({ attachment_id }) => runTool(() => getAttachment(client, attachment_id))
   )
 
   server.registerTool(
@@ -32,6 +33,6 @@ export function registerAttachmentTools(server: McpServer, client: ThreaApiClien
         attachment_id: z.string(),
       },
     },
-    async ({ attachment_id }) => runTool(() => client.get(`/attachments/${encodeURIComponent(attachment_id)}/url`))
+    async ({ attachment_id }) => runTool(() => getAttachmentDownloadUrl(client, attachment_id))
   )
 }

@@ -1,10 +1,10 @@
 {
-  "name": "@threa/mcp",
+  "name": "@threa/cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "threa-mcp": "./src/index.ts"
+    "threa": "./src/cli.ts"
   },
   "scripts": {
     "test": "bun test",

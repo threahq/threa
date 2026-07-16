@@ -1,10 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { enrichConversation, enrichMessages } from "../enrich"
+import { listConversations, readConversation } from "../ops"
 import type { RefResolver } from "../resolver"
 import { CONVERSATION_STATUSES } from "./constants"
-import { buildQuery, runTool, type Envelope, type PagedEnvelope } from "./result"
+import { runTool } from "./result"
 
 export function registerConversationTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
   server.registerTool(
@@ -25,14 +25,7 @@ export function registerConversationTools(server: McpServer, client: ThreaApiCli
       },
     },
     async ({ stream_id, status, cursor, limit }) =>
-      runTool(async () => {
-        const streamId = stream_id ? await resolver.resolveStream(stream_id) : undefined
-        const response = await client.get<PagedEnvelope<unknown>>(
-          `/conversations${buildQuery({ streamId, status, after: cursor, limit })}`
-        )
-        const data = await Promise.all(response.data.map((c) => enrichConversation(c, resolver)))
-        return { ...response, data }
-      })
+      runTool(() => listConversations(client, resolver, { streamRef: stream_id, status, cursor, limit }))
   )
 
   server.registerTool(
@@ -55,20 +48,6 @@ export function registerConversationTools(server: McpServer, client: ThreaApiCli
       },
     },
     async ({ conversation_id, cursor, limit }) =>
-      runTool(async () => {
-        const id = encodeURIComponent(conversation_id)
-        const [conversationResp, messagesResp] = await Promise.all([
-          client.get<Envelope<unknown>>(`/conversations/${id}`),
-          client.get<PagedEnvelope<unknown>>(`/conversations/${id}/messages${buildQuery({ after: cursor, limit })}`),
-        ])
-        return {
-          conversation: await enrichConversation(conversationResp.data, resolver),
-          messages: {
-            data: await enrichMessages(messagesResp.data, resolver),
-            hasMore: messagesResp.hasMore ?? false,
-            cursor: messagesResp.cursor ?? null,
-          },
-        }
-      })
+      runTool(() => readConversation(client, resolver, { conversationId: conversation_id, cursor, limit }))
   )
 }

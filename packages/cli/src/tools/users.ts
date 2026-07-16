@@ -1,7 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { buildQuery, runTool } from "./result"
+import { listUsers } from "../ops"
+import { runTool } from "./result"
 
 export function registerUserTools(server: McpServer, client: ThreaApiClient): void {
   server.registerTool(
@@ -18,6 +19,6 @@ export function registerUserTools(server: McpServer, client: ThreaApiClient): vo
         limit: z.number().int().min(1).max(200).optional(),
       },
     },
-    async ({ query, after, limit }) => runTool(() => client.get(`/users${buildQuery({ query, after, limit })}`))
+    async ({ query, after, limit }) => runTool(() => listUsers(client, { query, after, limit }))
   )
 }

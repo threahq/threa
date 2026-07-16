@@ -8,6 +8,15 @@ export class UnresolvedRefError extends Error {
   }
 }
 
+export class ToolInputError extends Error {
+  readonly code: string
+  constructor(code: string, message: string) {
+    super(message)
+    this.name = "ToolInputError"
+    this.code = code
+  }
+}
+
 export function jsonResult(payload: unknown): CallToolResult {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] }
 }
@@ -40,18 +49,25 @@ export async function runTool(fn: () => Promise<unknown>): Promise<CallToolResul
   }
 }
 
-export function errorResult(error: unknown): CallToolResult {
-  if (error instanceof UnresolvedRefError) {
-    return toolError("UNRESOLVED_REF", error.message)
-  }
+export interface ErrorShape {
+  code: string
+  message: string
+  hint?: string
+}
+
+export function toErrorShape(error: unknown): ErrorShape {
+  if (error instanceof UnresolvedRefError) return { code: "UNRESOLVED_REF", message: error.message }
+  if (error instanceof ToolInputError) return { code: error.code, message: error.message }
   if (error instanceof ThreaApiError) {
-    const body: { code?: string; message: string; hint?: string } = { message: error.message }
-    if (error.code) body.code = error.code
-    if (error.hint) body.hint = error.hint
-    return { isError: true, content: [{ type: "text", text: JSON.stringify(body, null, 2) }] }
+    const shape: ErrorShape = { code: error.code ?? `HTTP_${error.status}`, message: error.message }
+    if (error.hint) shape.hint = error.hint
+    return shape
   }
-  const message = error instanceof Error ? error.message : String(error)
-  return { isError: true, content: [{ type: "text", text: JSON.stringify({ message }, null, 2) }] }
+  return { code: "ERROR", message: error instanceof Error ? error.message : String(error) }
+}
+
+export function errorResult(error: unknown): CallToolResult {
+  return { isError: true, content: [{ type: "text", text: JSON.stringify(toErrorShape(error), null, 2) }] }
 }
 
 export type Envelope<T> = { data: T }

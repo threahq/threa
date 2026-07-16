@@ -24,7 +24,7 @@ function readFileConfig(): FileConfig {
     raw = readFileSync(path, "utf8")
   } catch {
     if (explicit) {
-      throw new Error(`[threa-mcp] THREA_MCP_CONFIG points to ${path}, but it could not be read.`)
+      throw new Error(`[threa] THREA_MCP_CONFIG points to ${path}, but it could not be read.`)
     }
     return {}
   }
@@ -32,10 +32,10 @@ function readFileConfig(): FileConfig {
   try {
     parsed = JSON.parse(raw)
   } catch {
-    throw new Error(`[threa-mcp] Config file ${path} is not valid JSON.`)
+    throw new Error(`[threa] Config file ${path} is not valid JSON.`)
   }
   if (typeof parsed !== "object" || parsed === null) {
-    throw new Error(`[threa-mcp] Config file ${path} must contain a JSON object with { apiKey, workspaceId, baseUrl }.`)
+    throw new Error(`[threa] Config file ${path} must contain a JSON object with { apiKey, workspaceId, baseUrl }.`)
   }
   return parsed as FileConfig
 }
@@ -52,7 +52,7 @@ export function loadConfig(): ThreaMcpConfig {
   if (!workspaceId) missing.push("THREA_WORKSPACE_ID")
   if (missing.length > 0) {
     throw new Error(
-      `[threa-mcp] Missing required config: ${missing.join(", ")}. ` +
+      `[threa] Missing required config: ${missing.join(", ")}. ` +
         `Set them as environment variables, or provide a JSON file at ~/.threa/mcp.json ` +
         `(or the path in THREA_MCP_CONFIG) with { apiKey, workspaceId, baseUrl }. Environment variables win over the file.`
     )
@@ -73,12 +73,12 @@ function assertSafeBaseUrl(baseUrl: string): void {
   try {
     url = new URL(baseUrl)
   } catch {
-    throw new Error(`[threa-mcp] THREA_BASE_URL is not a valid URL: ${baseUrl}`)
+    throw new Error(`[threa] THREA_BASE_URL is not a valid URL: ${baseUrl}`)
   }
   if (url.protocol === "https:") return
   if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return
   throw new Error(
-    `[threa-mcp] THREA_BASE_URL must be https:// (http:// is allowed only for localhost) — got ${baseUrl}. ` +
+    `[threa] THREA_BASE_URL must be https:// (http:// is allowed only for localhost) — got ${baseUrl}. ` +
       `The API key is sent as a bearer token to this host on every request.`
   )
 }

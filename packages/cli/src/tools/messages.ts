@@ -1,9 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { enrichMessages } from "../enrich"
+import { findMessagesByMetadata } from "../ops"
 import type { RefResolver } from "../resolver"
-import { runTool, toolError, type PagedEnvelope } from "./result"
+import { runTool, toolError } from "./result"
 
 export function registerMessageTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
   server.registerTool(
@@ -105,14 +105,6 @@ export function registerMessageTools(server: McpServer, client: ThreaApiClient, 
       },
     },
     async ({ metadata, stream_id, limit }) =>
-      runTool(async () => {
-        const streamId = stream_id ? await resolver.resolveStream(stream_id) : undefined
-        const response = await client.post<PagedEnvelope<unknown>>("/messages/find-by-metadata", {
-          metadata,
-          streamId,
-          limit,
-        })
-        return { ...response, data: await enrichMessages(response.data, resolver) }
-      })
+      runTool(() => findMessagesByMetadata(client, resolver, { metadata, streamRef: stream_id, limit }))
   )
 }

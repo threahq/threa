@@ -14,7 +14,7 @@ async function loadUsersById(resolver: RefResolver): Promise<UsersById | null> {
     return new Map(users.map((u) => [u.id, { name: u.name, slug: u.slug }]))
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    process.stderr.write(`[threa-mcp] enrichment skipped: users fetch failed: ${detail}\n`)
+    process.stderr.write(`[threa] enrichment skipped: users fetch failed: ${detail}\n`)
     return null
   }
 }

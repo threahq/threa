@@ -1,10 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { enrichMessages } from "../enrich"
+import { listStreams, readStream } from "../ops"
 import type { RefResolver } from "../resolver"
 import { STREAM_TYPES } from "./constants"
-import { buildQuery, runTool, type Envelope, type PagedEnvelope } from "./result"
+import { runTool } from "./result"
 
 export function registerStreamTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
   server.registerTool(
@@ -22,8 +22,7 @@ export function registerStreamTools(server: McpServer, client: ThreaApiClient, r
         limit: z.number().int().min(1).max(200).optional(),
       },
     },
-    async ({ type, query, after, limit }) =>
-      runTool(() => client.get(`/streams${buildQuery({ type, query, after, limit })}`))
+    async ({ type, query, after, limit }) => runTool(() => listStreams(client, { type, query, after, limit }))
   )
 
   server.registerTool(
@@ -50,32 +49,8 @@ export function registerStreamTools(server: McpServer, client: ThreaApiClient, r
       },
     },
     async ({ stream_id, include_members, before, after, limit }) =>
-      runTool(async () => {
-        const id = encodeURIComponent(await resolver.resolveStream(stream_id))
-        const streamReq = client.get<Envelope<unknown>>(`/streams/${id}`)
-        const messagesReq = client.get<PagedEnvelope<unknown>>(
-          `/streams/${id}/messages${buildQuery({ before, after, limit })}`
-        )
-        const membersReq = include_members ? client.get<PagedEnvelope<unknown>>(`/streams/${id}/members`) : undefined
-
-        const [streamResp, messagesResp, membersResp] = await Promise.all([
-          streamReq,
-          messagesReq,
-          membersReq ?? Promise.resolve(undefined),
-        ])
-
-        const result: Record<string, unknown> = {
-          stream: streamResp.data,
-          messages: { data: await enrichMessages(messagesResp.data, resolver), hasMore: messagesResp.hasMore ?? false },
-        }
-        if (membersResp) {
-          result.members = {
-            data: membersResp.data,
-            hasMore: membersResp.hasMore ?? false,
-            cursor: membersResp.cursor ?? null,
-          }
-        }
-        return result
-      })
+      runTool(() =>
+        readStream(client, resolver, { streamId: stream_id, includeMembers: include_members, before, after, limit })
+      )
   )
 }
