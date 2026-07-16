@@ -253,18 +253,20 @@ export class WorkspaceIntegrationService {
     )
     const installationId = record ? this.resolveInstallationId(workspaceId, record) : null
 
+    // Drop the CP routing entry BEFORE clearing the row, mirroring
+    // deactivateInstallation: if unregister throws (CP down), the integration is
+    // still intact — credentials included — so a retry can re-resolve the id and
+    // re-attempt the DELETE. Clear first and a pre-backfill row (null plaintext
+    // column) would lose its only copy of the id, stranding the CP route forever.
+    if (installationId) {
+      await this.unregisterGithubRoute(workspaceId, installationId)
+    }
+
     await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.GITHUB, {
       status: WorkspaceIntegrationStatuses.INACTIVE,
       credentials: {},
       metadata: {},
     })
-
-    // Drop the CP routing entry so webhooks for this installation stop fanning
-    // to this region. Read before the update clears credentials; the plaintext
-    // column survives the clear but we already captured the id.
-    if (installationId) {
-      await this.unregisterGithubRoute(workspaceId, installationId)
-    }
   }
 
   /**

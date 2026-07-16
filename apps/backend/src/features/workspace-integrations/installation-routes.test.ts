@@ -118,6 +118,38 @@ describe("disconnectGithubIntegration route unregistration", () => {
     })
   })
 
+  it("unregisters the CP route BEFORE clearing the row", async () => {
+    // Mirrors deactivateInstallation's ordering: the update wipes credentials,
+    // which for a pre-backfill row (null plaintext column) is the only copy of
+    // the installation id. If unregister throws after the clear, a retry can't
+    // re-resolve the id and the CP route is stranded forever.
+    const events: string[] = []
+    const pool = {
+      query: async (query: unknown) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        if (text.includes("UPDATE workspace_integrations")) events.push("update")
+        return { rows: [githubRow()], rowCount: 1 }
+      },
+    } as unknown as Pool
+    const client = {
+      registerIntegrationRoute: mock(async () => {}),
+      unregisterIntegrationRoute: mock(async () => {
+        events.push("unregister")
+      }),
+    } as unknown as ControlPlaneClient
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      controlPlaneClient: client,
+      region: "eu-north-1",
+    })
+
+    await service.disconnectGithubIntegration("ws_1")
+
+    expect(events).toEqual(["unregister", "update"])
+  })
+
   it("skips unregistration when no control plane is configured (local dev)", async () => {
     const { pool } = recordingPool([githubRow()])
     const service = new WorkspaceIntegrationService({
