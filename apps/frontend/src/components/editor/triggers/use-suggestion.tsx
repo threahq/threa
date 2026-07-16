@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, type RefObject, type ReactNode } from "react"
+import { useState, useCallback, useEffect, useMemo, useRef, type RefObject, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import type { Editor } from "@tiptap/react"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
@@ -166,6 +166,28 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
     setState(null)
   }, [setPopupVisible])
 
+  // A pointer down outside both the popup and the editor dismisses the popup
+  // (same contract as use-command-arg-picker). Blur alone never fires TipTap's
+  // onExit — the selection doesn't move — so without this a popup opened by a
+  // typed trigger survives a tap-outside and lingers over whatever replaced
+  // the editor (e.g. the collapsed mobile composer bar, where it swallows the
+  // reopen tap). Capture phase so the popup is gone before the tap's click
+  // lands; taps inside the editor stay with TipTap's own lifecycle, and taps
+  // on a list option pass through to the option's click handler.
+  const isActive = state !== null
+  useEffect(() => {
+    if (!isActive) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('[role="listbox"]')) return
+      const editor = editorRef.current
+      if (editor && !editor.isDestroyed && target && editor.view.dom.contains(target)) return
+      close()
+    }
+    document.addEventListener("pointerdown", onPointerDown, true)
+    return () => document.removeEventListener("pointerdown", onPointerDown, true)
+  }, [isActive, close])
+
   const onKeyDown = useCallback(
     (props: SuggestionKeyDownProps) => {
       if (props.event.key === "Escape") {
@@ -210,7 +232,7 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
   return {
     suggestionConfig,
     renderSuggestionList,
-    isActive: state !== null,
+    isActive,
     close,
   }
 }

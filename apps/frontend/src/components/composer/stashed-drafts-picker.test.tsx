@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, createEvent } from "@testing-library/react"
+import { render, screen, fireEvent, createEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
+import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import type { CachedDraft, DraftPreview } from "@/hooks"
 
@@ -28,12 +29,15 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
     onDelete: vi.fn(),
     ...overrides,
   }
+  const closeFabDrawer = vi.fn()
   render(
     <TooltipProvider>
-      <StashedDraftsPicker {...props} />
+      <FabDrawerCloseContext.Provider value={closeFabDrawer}>
+        <StashedDraftsPicker {...props} />
+      </FabDrawerCloseContext.Provider>
     </TooltipProvider>
   )
-  return props
+  return { ...props, closeFabDrawer }
 }
 
 describe("StashedDraftsPicker", () => {
@@ -81,8 +85,34 @@ describe("StashedDraftsPicker", () => {
     await userEvent.click(screen.getByRole("button", { name: /save current/i }))
     expect(onStashCurrent).toHaveBeenCalledOnce()
 
+    // Save closes the popover; reopen it for the restore click.
+    await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
     await userEvent.click(screen.getByText("Saved one"))
     expect(onRestore).toHaveBeenCalledWith("draft_1")
+  })
+
+  describe("close on action", () => {
+    it("closes the popover and the hosting FAB drawer after Save current", async () => {
+      const { onStashCurrent, closeFabDrawer } = renderPicker()
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      await userEvent.click(screen.getByRole("button", { name: /save current/i }))
+
+      expect(onStashCurrent).toHaveBeenCalledOnce()
+      await waitFor(() => expect(screen.queryByRole("button", { name: /save current/i })).not.toBeInTheDocument())
+      expect(closeFabDrawer).toHaveBeenCalled()
+    })
+
+    it("closes the popover and the hosting FAB drawer after restoring a draft", async () => {
+      const { onRestore, closeFabDrawer } = renderPicker()
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      await userEvent.click(screen.getByText("Saved one"))
+
+      expect(onRestore).toHaveBeenCalledWith("draft_1")
+      await waitFor(() => expect(screen.queryByText("Saved one")).not.toBeInTheDocument())
+      expect(closeFabDrawer).toHaveBeenCalled()
+    })
   })
 
   describe("preview rendering", () => {

@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, createEvent } from "@testing-library/react"
+import { render, screen, fireEvent, createEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { DEFAULT_WORK_SCHEDULE } from "@threa/types"
 import { spyOnExport } from "@/test/spy"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ScheduledMessagesPicker } from "./scheduled-messages-picker"
+import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as hooks from "@/hooks"
 import * as workScheduleModule from "@/hooks/use-work-schedule"
@@ -15,12 +16,15 @@ let isTouchMockValue = true
 
 function renderPicker() {
   const onSchedule = vi.fn()
+  const closeFabDrawer = vi.fn()
   const result = render(
     <TooltipProvider>
-      <ScheduledMessagesPicker workspaceId="ws_1" streamId="stream_1" canSchedule onSchedule={onSchedule} />
+      <FabDrawerCloseContext.Provider value={closeFabDrawer}>
+        <ScheduledMessagesPicker workspaceId="ws_1" streamId="stream_1" canSchedule onSchedule={onSchedule} />
+      </FabDrawerCloseContext.Provider>
     </TooltipProvider>
   )
-  return { ...result, onSchedule }
+  return { ...result, onSchedule, closeFabDrawer }
 }
 
 describe("ScheduledMessagesPicker", () => {
@@ -86,5 +90,25 @@ describe("ScheduledMessagesPicker", () => {
     const scheduledAt = onSchedule.mock.calls[0]?.[0] as Date
     expect(scheduledAt.getTime()).toBeGreaterThanOrEqual(before + 30 * 60_000)
     expect(scheduledAt.getTime()).toBeLessThanOrEqual(Date.now() + 30 * 60_000)
+  })
+
+  it("stays open through the picking flow and closes popover + FAB drawer only once a time is picked", async () => {
+    const { onSchedule, closeFabDrawer } = renderPicker()
+
+    await userEvent.click(screen.getByRole("button", { name: /scheduled/i }))
+    await userEvent.click(screen.getByRole("button", { name: /schedule send/i }))
+
+    // Mode switch is NOT the end of the flow — nothing closes yet.
+    expect(closeFabDrawer).not.toHaveBeenCalled()
+    expect(screen.getByRole("button", { name: /pick a time/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /custom duration/i }))
+    expect(closeFabDrawer).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole("button", { name: /^schedule$/i }))
+
+    expect(onSchedule).toHaveBeenCalledOnce()
+    await waitFor(() => expect(screen.queryByRole("button", { name: /pick a time/i })).not.toBeInTheDocument())
+    expect(closeFabDrawer).toHaveBeenCalled()
   })
 })

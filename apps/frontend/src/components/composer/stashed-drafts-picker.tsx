@@ -9,6 +9,7 @@ import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
+import { useFabDrawerClose } from "./fab-drawer-close-context"
 import { useComposerAnchor } from "./use-composer-anchor"
 import type { CachedDraft, DraftPreview } from "@/hooks"
 
@@ -74,6 +75,7 @@ export function StashedDraftsPicker({
 }: StashedDraftsPickerProps) {
   const [open, setOpen] = useState(false)
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
+  const closeFabDrawer = useFabDrawerClose()
   const { setTriggerRef, anchor } = useComposerAnchor(open)
   // Active input drives the virtual-keyboard guard and the "Tap"/"Press" +
   // keyboard-shortcut copy — a hardware keyboard is present only with a mouse.
@@ -83,27 +85,31 @@ export function StashedDraftsPicker({
 
   const handleStashCurrent = useCallback(() => {
     onStashCurrent()
-    // Keep the popover open so the user sees their draft land in the list —
-    // feels more affirmative than a silent close. Closing on restore is
-    // handled inside the row handler below.
-  }, [onStashCurrent])
+    setOpen(false)
+    closeFabDrawer?.()
+  }, [onStashCurrent, closeFabDrawer])
 
   const handleRestore = useCallback(
     (id: string) => {
       onRestore(id)
       setOpen(false)
+      closeFabDrawer?.()
     },
-    [onRestore]
+    [onRestore, closeFabDrawer]
   )
 
   // Two-step delete: the trash icon opens a confirm dialog (parity with the
   // Drafts explorer — a draft is a draft, so both surfaces guard a delete the
   // same way). Close the popover first so the modal isn't trapped behind it. No
   // success toast by design: the confirm already makes the delete deliberate.
-  const requestDelete = useCallback((id: string) => {
-    setOpen(false)
-    setDraftToDelete(id)
-  }, [])
+  const requestDelete = useCallback(
+    (id: string) => {
+      setOpen(false)
+      closeFabDrawer?.()
+      setDraftToDelete(id)
+    },
+    [closeFabDrawer]
+  )
 
   const confirmDelete = useCallback(() => {
     if (draftToDelete) onDelete(draftToDelete)

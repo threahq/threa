@@ -23,6 +23,7 @@ import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { MicButton, type MicButtonHandle } from "./mic-button"
+import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { ComposerActionBar } from "./composer-action-bar"
 import { ComposerLinkPreviews } from "./composer-link-previews"
 import { ContextRefStrip } from "./context-ref-strip"
@@ -327,6 +328,9 @@ export function MessageComposer({
   // Expanded-mode FAB actions are always visible on desktop. Touch has no hover,
   // so a tap on the "+" toggles them instead.
   const [fabActionsOpen, setFabActionsOpen] = useState(false)
+  // Every drawer action collapses the drawer once it's done its job — the "+"
+  // toggle is for browsing, not a mode the user should have to un-toggle.
+  const closeFabDrawer = useCallback(() => setFabActionsOpen(false), [])
   const [mobileFocused, setMobileFocused] = useState(initialMobileChromeOpen)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
   // True while a dictation take is in flight. Keeps the mobile chrome (and the
@@ -899,8 +903,10 @@ export function MessageComposer({
                 fabActionsOpen && "max-w-[240px] opacity-100"
               )}
             >
-              {stashedDraftsTriggerFab}
-              {scheduledMessagesTriggerFab}
+              <FabDrawerCloseContext.Provider value={closeFabDrawer}>
+                {stashedDraftsTriggerFab}
+                {scheduledMessagesTriggerFab}
+              </FabDrawerCloseContext.Provider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -911,6 +917,7 @@ export function MessageComposer({
                     className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
                     onPointerDown={(e) => {
                       e.preventDefault()
+                      closeFabDrawer()
                       richEditorRef.current?.insertEmoji()
                     }}
                     disabled={controlsDisabled}
@@ -932,6 +939,7 @@ export function MessageComposer({
                     className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
                     onPointerDown={(e) => {
                       e.preventDefault()
+                      closeFabDrawer()
                       richEditorRef.current?.insertMention()
                     }}
                     disabled={controlsDisabled}
@@ -953,6 +961,7 @@ export function MessageComposer({
                     className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
                     onPointerDown={(e) => {
                       e.preventDefault()
+                      closeFabDrawer()
                       richEditorRef.current?.insertSlash()
                     }}
                     disabled={controlsDisabled}
@@ -972,7 +981,10 @@ export function MessageComposer({
                     size="icon"
                     aria-label="Attach files"
                     className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                    onClick={handleAttachClick}
+                    onClick={() => {
+                      closeFabDrawer()
+                      handleAttachClick()
+                    }}
                     disabled={controlsDisabled}
                   >
                     <Paperclip className="h-4 w-4" />

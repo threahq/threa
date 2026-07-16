@@ -1047,7 +1047,14 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         return
       }
 
-      editor.chain().focus().insertContent(trigger).run()
+      // The suggestion plugins only activate at a word boundary — inserting a
+      // bare trigger right after text appends a dead "@"/":"/"/" that opens
+      // nothing. Prepend a space when the caret follows a non-whitespace char
+      // (same rule as insertTranscribedText below).
+      const { from } = selection
+      const charBefore = from > 0 ? editor.state.doc.textBetween(from - 1, from) : ""
+      const prefix = charBefore && !/\s/.test(charBefore) ? " " : ""
+      editor.chain().focus().insertContent(`${prefix}${trigger}`).run()
     },
     [editor]
   )
