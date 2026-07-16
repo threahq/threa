@@ -6,6 +6,7 @@ import {
   buildMessageConversationMap,
   CONVERSATION_COLOR_COUNT,
   conversationColor,
+  sortConversationsByTemporalProximity,
 } from "./model"
 
 function makeConversation(overrides: Partial<ConversationWithStaleness>): ConversationWithStaleness {
@@ -129,6 +130,33 @@ describe("buildMessageConversationMap", () => {
 
     const lastId = model.conversations[CONVERSATION_COLOR_COUNT].id
     expect(model.colorIndexById.get(lastId)).toBe(0)
+  })
+})
+
+describe("sortConversationsByTemporalProximity", () => {
+  it("ranks conversations by createdAt distance from the message, with stable chronological ties", () => {
+    const conversations = [
+      makeConversation({
+        id: "conv_oldest",
+        createdAt: "2026-06-01T09:00:00.000Z",
+        lastActivityAt: "2026-06-01T10:01:00.000Z",
+      }),
+      makeConversation({
+        id: "conv_after",
+        createdAt: "2026-06-01T10:01:00.000Z",
+        lastActivityAt: "2026-06-01T09:00:00.000Z",
+      }),
+      makeConversation({
+        id: "conv_before",
+        createdAt: "2026-06-01T09:59:00.000Z",
+        lastActivityAt: "2026-06-01T08:00:00.000Z",
+      }),
+    ]
+
+    const ranked = sortConversationsByTemporalProximity(conversations, "2026-06-01T10:00:00.000Z")
+
+    expect(ranked.map((conversation) => conversation.id)).toEqual(["conv_before", "conv_after", "conv_oldest"])
+    expect(conversations.map((conversation) => conversation.id)).toEqual(["conv_oldest", "conv_after", "conv_before"])
   })
 })
 

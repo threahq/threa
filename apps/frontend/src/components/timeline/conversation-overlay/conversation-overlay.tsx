@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react"
+import { useCallback, useMemo, useState, type ReactNode } from "react"
 import { Check, ChevronUp, Layers, Loader2, Plus, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -14,7 +14,12 @@ import {
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { ConversationWithStaleness } from "@threa/types"
-import { conversationColor, type ConversationOverlayContext, type ConversationRowAnnotation } from "./model"
+import {
+  conversationColor,
+  sortConversationsByTemporalProximity,
+  type ConversationOverlayContext,
+  type ConversationRowAnnotation,
+} from "./model"
 import { ConversationOverlayRowProvider } from "./row-context"
 
 /**
@@ -222,12 +227,14 @@ export function ConversationOverlayRow({
   overlay,
   annotation,
   messageId,
+  messageCreatedAt,
   selectionActive = false,
   children,
 }: {
   overlay: ConversationOverlayContext
   annotation: ConversationRowAnnotation
   messageId: string
+  messageCreatedAt: string
   /** While a split selection is active the row is a selection toggle; the
    *  single-message correction swatch is hidden so it can't intercept the tap. */
   selectionActive?: boolean
@@ -239,6 +246,14 @@ export function ConversationOverlayRow({
   const colorIndex = conversation ? (model.colorIndexById.get(conversation.id) ?? 0) : null
   const isDimmed = focusedConversationId != null && annotation.conversationId !== focusedConversationId
   const isPending = pendingMessageIds.has(messageId)
+  const [correctionMenuOpen, setCorrectionMenuOpen] = useState(false)
+  const conversationCandidates = useMemo(
+    () =>
+      correctionMenuOpen
+        ? sortConversationsByTemporalProximity(model.conversations, messageCreatedAt)
+        : model.conversations,
+    [correctionMenuOpen, model.conversations, messageCreatedAt]
+  )
 
   // React 19 ref-callback cleanup: registration is undone when the row
   // unmounts or its conversation changes (reassignment). MUST be memoized —
@@ -299,7 +314,7 @@ export function ConversationOverlayRow({
           </span>
         )}
         {!selectionActive && (
-          <DropdownMenu>
+          <DropdownMenu open={correctionMenuOpen} onOpenChange={setCorrectionMenuOpen}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
@@ -329,7 +344,7 @@ export function ConversationOverlayRow({
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
                 This message belongs to…
               </DropdownMenuLabel>
-              {model.conversations.map((candidate) => {
+              {conversationCandidates.map((candidate) => {
                 const isCurrent = candidate.id === annotation.conversationId
                 const candidateColorIndex = model.colorIndexById.get(candidate.id) ?? 0
                 return (
@@ -381,24 +396,30 @@ export function ConversationPickerDrawer({
   overlay,
   annotation,
   messageId,
+  messageCreatedAt,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   overlay: ConversationOverlayContext
   annotation: ConversationRowAnnotation
   messageId: string
+  messageCreatedAt: string
 }) {
   const { model, onReassignMessage, pendingMessageIds } = overlay
   // Mirror the rail swatch menu: ignore picks while this message's
   // reassignment is already in flight, so rapid taps can't enqueue
   // duplicate corrections.
   const isPending = pendingMessageIds.has(messageId)
+  const conversationCandidates = useMemo(
+    () => sortConversationsByTemporalProximity(model.conversations, messageCreatedAt),
+    [model.conversations, messageCreatedAt]
+  )
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerContent>
         <DrawerTitle className="px-5 pb-2 pt-1 text-sm font-semibold">This message belongs to…</DrawerTitle>
         <div className="max-h-[60dvh] overflow-y-auto px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
-          {model.conversations.map((candidate) => {
+          {conversationCandidates.map((candidate) => {
             const isCurrent = candidate.id === annotation.conversationId
             const colorIndex = model.colorIndexById.get(candidate.id) ?? 0
             return (
