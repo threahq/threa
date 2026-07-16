@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, createEvent } from "@testing-library/react"
+import { render, screen, fireEvent, createEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
+import { FabDrawerCloseContext } from "./fab-drawer-close-context"
+import { StashedDraftsComposerBridgeContext } from "./stashed-drafts-open-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import type { CachedDraft, DraftPreview } from "@/hooks"
 
@@ -28,12 +30,18 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
     onDelete: vi.fn(),
     ...overrides,
   }
+  const closeFabDrawer = vi.fn()
+  const focusComposer = vi.fn()
   render(
     <TooltipProvider>
-      <StashedDraftsPicker {...props} />
+      <FabDrawerCloseContext.Provider value={closeFabDrawer}>
+        <StashedDraftsComposerBridgeContext.Provider value={{ openRef: { current: null }, focusComposer }}>
+          <StashedDraftsPicker {...props} />
+        </StashedDraftsComposerBridgeContext.Provider>
+      </FabDrawerCloseContext.Provider>
     </TooltipProvider>
   )
-  return props
+  return { ...props, closeFabDrawer, focusComposer }
 }
 
 describe("StashedDraftsPicker", () => {
@@ -81,8 +89,71 @@ describe("StashedDraftsPicker", () => {
     await userEvent.click(screen.getByRole("button", { name: /save current/i }))
     expect(onStashCurrent).toHaveBeenCalledOnce()
 
+    // Save closes the popover; reopen it for the restore click.
+    await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
     await userEvent.click(screen.getByText("Saved one"))
     expect(onRestore).toHaveBeenCalledWith("draft_1")
+  })
+
+  describe("close on action", () => {
+    it("closes the popover and the hosting FAB drawer after Save current", async () => {
+      const { onStashCurrent, closeFabDrawer } = renderPicker()
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      await userEvent.click(screen.getByRole("button", { name: /save current/i }))
+
+      expect(onStashCurrent).toHaveBeenCalledOnce()
+      await waitFor(() => expect(screen.queryByRole("button", { name: /save current/i })).not.toBeInTheDocument())
+      expect(closeFabDrawer).toHaveBeenCalled()
+    })
+
+    it("closes the popover and the hosting FAB drawer after restoring a draft", async () => {
+      const { onRestore, closeFabDrawer } = renderPicker()
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      await userEvent.click(screen.getByText("Saved one"))
+
+      expect(onRestore).toHaveBeenCalledWith("draft_1")
+      await waitFor(() => expect(screen.queryByText("Saved one")).not.toBeInTheDocument())
+      expect(closeFabDrawer).toHaveBeenCalled()
+    })
+
+    it("focuses the composer after a restore instead of the trigger", async () => {
+      const { focusComposer } = renderPicker()
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      await userEvent.click(screen.getByText("Saved one"))
+
+      await waitFor(() => expect(focusComposer).toHaveBeenCalled())
+      expect(screen.getByRole("button", { name: /drafts/i })).not.toHaveFocus()
+    })
+  })
+
+  describe("keyboard navigation (desktop)", () => {
+    it("focuses the first draft row on open and walks rows with ArrowUp/Down, Enter restores", async () => {
+      isTouchMockValue = false
+      const { onRestore } = renderPicker({
+        drafts: [makeDraft("draft_1", "Saved one"), makeDraft("draft_2", "Saved two")],
+      })
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+
+      const rowOne = screen.getByText("Saved one").closest("button")!
+      const rowTwo = screen.getByText("Saved two").closest("button")!
+      expect(rowOne).toHaveFocus()
+
+      await userEvent.keyboard("{ArrowDown}")
+      expect(rowTwo).toHaveFocus()
+
+      await userEvent.keyboard("{ArrowDown}")
+      expect(rowOne).toHaveFocus()
+
+      await userEvent.keyboard("{ArrowUp}")
+      expect(rowTwo).toHaveFocus()
+
+      await userEvent.keyboard("{Enter}")
+      expect(onRestore).toHaveBeenCalledWith("draft_2")
+    })
   })
 
   describe("preview rendering", () => {

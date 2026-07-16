@@ -9,7 +9,7 @@ export interface ExternalContentEditor {
   isFocused: boolean
   commands: {
     setContent: (content: JSONContent) => void
-    focus: () => void
+    focus: (position?: "end") => void
   }
 }
 
@@ -43,10 +43,14 @@ export function applyExternalEditorContent(
     isInternalUpdate.current = false
   }
 
-  // Mobile browsers can drop focus when contenteditable content is replaced.
-  // Restore it to keep the virtual keyboard open — only when we actually applied.
-  if (applied && hadFocus && !editor.isFocused) {
-    editor.commands.focus()
+  // Focus follows the content: a focused editor whose doc was just replaced
+  // (draft restore, send-clear) gets the caret at the END of the new body —
+  // `setContent` otherwise leaves the selection at the start, stranding the
+  // caret before the text the user just restored. This also covers mobile
+  // browsers dropping focus when contenteditable content is replaced (the
+  // refocus keeps the virtual keyboard open). Only when we actually applied.
+  if (applied && hadFocus) {
+    editor.commands.focus("end")
   }
 
   return applied

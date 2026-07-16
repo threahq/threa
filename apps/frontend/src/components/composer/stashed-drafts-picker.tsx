@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
 import { FileEdit, FilePlus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -9,11 +9,12 @@ import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
+import { usePreferencesOptional } from "@/contexts"
+import { formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
+import { useFabDrawerClose } from "./fab-drawer-close-context"
+import { useRegisterStashedDraftsOpen, useStashedDraftsBridge } from "./stashed-drafts-open-context"
 import { useComposerAnchor } from "./use-composer-anchor"
 import type { CachedDraft, DraftPreview } from "@/hooks"
-
-/** Keystroke hint for the "Save current" action. Rendered only for fine pointers (no hardware keyboard on touch). */
-const MOD_SYMBOL = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "⌘" : "Ctrl+"
 
 interface StashedDraftsPickerProps {
   drafts: CachedDraft[]
@@ -74,7 +75,25 @@ export function StashedDraftsPicker({
 }: StashedDraftsPickerProps) {
   const [open, setOpen] = useState(false)
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
+  const closeFabDrawer = useFabDrawerClose()
+  const bridge = useStashedDraftsBridge()
   const { setTriggerRef, anchor } = useComposerAnchor(open)
+  const contentRef = useRef<HTMLDivElement>(null)
+  // Set when a restore closes the popover: Radix's close-autofocus (back to
+  // the trigger) is suppressed so focus can follow the restored content into
+  // the editor instead.
+  const suppressCloseFocusRef = useRef(false)
+
+  // Cmd/Ctrl+S on an empty composer opens the list (registered with the
+  // hosting MessageComposer via the bridge).
+  const openFromShortcut = useCallback(() => setOpen(true), [])
+  useRegisterStashedDraftsOpen(openFromShortcut)
+
+  // The stash shortcut hint mirrors the user's effective (remappable)
+  // `draftStash` binding rather than a hardcoded ⌘S.
+  const keyboardShortcuts = usePreferencesOptional()?.preferences?.keyboardShortcuts ?? {}
+  const stashBinding = getEffectiveKeyBinding("draftStash", keyboardShortcuts)
+  const stashBindingLabel = stashBinding ? formatKeyBinding(stashBinding) : null
   // Active input drives the virtual-keyboard guard and the "Tap"/"Press" +
   // keyboard-shortcut copy — a hardware keyboard is present only with a mouse.
   const isTouch = useInputMode() === "touch"
@@ -83,32 +102,58 @@ export function StashedDraftsPicker({
 
   const handleStashCurrent = useCallback(() => {
     onStashCurrent()
-    // Keep the popover open so the user sees their draft land in the list —
-    // feels more affirmative than a silent close. Closing on restore is
-    // handled inside the row handler below.
-  }, [onStashCurrent])
+    setOpen(false)
+    closeFabDrawer?.()
+  }, [onStashCurrent, closeFabDrawer])
 
   const handleRestore = useCallback(
     (id: string) => {
       onRestore(id)
       setOpen(false)
+      closeFabDrawer?.()
+      // Focus follows the restored content: skip Radix's trigger refocus and
+      // land in the editor once the popover has torn down. The caret ends up
+      // after the restored body via applyExternalEditorContent's end-focus
+      // when the async rehydrate delivers it.
+      suppressCloseFocusRef.current = true
+      const focusComposer = bridge?.focusComposer
+      if (focusComposer) setTimeout(() => focusComposer(), 0)
     },
-    [onRestore]
+    [onRestore, closeFabDrawer, bridge]
   )
 
   // Two-step delete: the trash icon opens a confirm dialog (parity with the
   // Drafts explorer — a draft is a draft, so both surfaces guard a delete the
   // same way). Close the popover first so the modal isn't trapped behind it. No
   // success toast by design: the confirm already makes the delete deliberate.
-  const requestDelete = useCallback((id: string) => {
-    setOpen(false)
-    setDraftToDelete(id)
-  }, [])
+  const requestDelete = useCallback(
+    (id: string) => {
+      setOpen(false)
+      closeFabDrawer?.()
+      setDraftToDelete(id)
+    },
+    [closeFabDrawer]
+  )
 
   const confirmDelete = useCallback(() => {
     if (draftToDelete) onDelete(draftToDelete)
     setDraftToDelete(null)
   }, [draftToDelete, onDelete])
+
+  // Arrow keys walk the draft rows so a keyboard-opened list (Cmd/Ctrl+S on an
+  // empty composer) is pick-able without a mouse; Enter activates the focused
+  // row natively.
+  const handleContentKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
+    const rows = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>("[data-draft-row]"))
+    if (rows.length === 0) return
+    e.preventDefault()
+    const idx = rows.indexOf(document.activeElement as HTMLButtonElement)
+    const step = e.key === "ArrowDown" ? 1 : -1
+    // Focus outside the rows (idx -1): Down enters at the top, Up at the bottom.
+    const next = idx === -1 && step === -1 ? rows.length - 1 : (idx + step + rows.length) % rows.length
+    rows[next]?.focus()
+  }, [])
 
   const triggerSizeClass = size === "fab" ? "h-[30px] w-[30px] rounded-md bg-background shadow-md" : "h-7 w-7"
   const triggerIconClass = size === "fab" ? "h-4 w-4" : "h-3.5 w-3.5"
@@ -151,7 +196,38 @@ export function StashedDraftsPicker({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="end" side="top" sideOffset={8} className="w-80 p-0" {...keepEditorFocusProps(isTouch)}>
+        <PopoverContent
+          ref={contentRef}
+          align="end"
+          side="top"
+          sideOffset={8}
+          className="w-80 p-0"
+          {...keepEditorFocusProps(isTouch)}
+          onKeyDown={handleContentKeyDown}
+          onCloseAutoFocus={(e) => {
+            // Touch never refocuses the trigger (keepEditorFocusProps
+            // behavior, re-stated since this prop overrides the spread); a
+            // restore-close skips it too so focus can land in the editor.
+            if (isTouch || suppressCloseFocusRef.current) e.preventDefault()
+            suppressCloseFocusRef.current = false
+          }}
+          onOpenAutoFocus={(e) => {
+            // Touch keeps the editor focused (keepEditorFocusProps behavior,
+            // re-stated here because this prop overrides the spread). Desktop
+            // lands focus on the first draft row so ArrowUp/Down + Enter work
+            // immediately after a keyboard open; with no rows Radix's default
+            // content focus stands.
+            if (isTouch) {
+              e.preventDefault()
+              return
+            }
+            const first = contentRef.current?.querySelector<HTMLButtonElement>("[data-draft-row]")
+            if (first) {
+              e.preventDefault()
+              first.focus()
+            }
+          }}
+        >
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
             <p className="text-sm font-medium">
               Drafts
@@ -167,18 +243,21 @@ export function StashedDraftsPicker({
             >
               <FilePlus className="h-3.5 w-3.5" />
               <span>Save current</span>
-              {!isTouch && <span className="text-muted-foreground ml-1">{MOD_SYMBOL}S</span>}
+              {!isTouch && stashBindingLabel && <span className="text-muted-foreground ml-1">{stashBindingLabel}</span>}
             </Button>
           </div>
 
           {drafts.length === 0 ? (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-              {isTouch ? (
-                <>No saved drafts yet. Tap "Save current" to stash what you're typing and start fresh.</>
+              {isTouch || !stashBindingLabel ? (
+                <>
+                  No saved drafts yet. {isTouch ? "Tap" : "Use"} "Save current" to stash what you're typing and start
+                  fresh.
+                </>
               ) : (
                 <>
-                  No saved drafts yet. Press <span className="font-medium text-foreground">{MOD_SYMBOL}S</span> to stash
-                  what you're typing and start fresh.
+                  No saved drafts yet. Press <span className="font-medium text-foreground">{stashBindingLabel}</span> to
+                  stash what you're typing and start fresh.
                 </>
               )}
             </div>
@@ -192,6 +271,7 @@ export function StashedDraftsPicker({
                     <div className="flex items-start gap-2 px-3 py-2 hover:bg-muted/60 focus-within:bg-muted/60">
                       <button
                         type="button"
+                        data-draft-row
                         onClick={() => handleRestore(draft.id)}
                         className="flex-1 min-w-0 text-left focus:outline-none"
                       >

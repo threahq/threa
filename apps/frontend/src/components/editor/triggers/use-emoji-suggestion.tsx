@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo, type RefObject, type ReactNode } from "react"
+import { useState, useCallback, useEffect, useRef, useMemo, type RefObject, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import type { Editor } from "@tiptap/react"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
@@ -131,6 +131,23 @@ export function useEmojiSuggestion(config: UseEmojiSuggestionConfig): UseEmojiSu
     setState(null)
   }, [setPopupVisible])
 
+  // Outside-pointerdown dismiss, mirroring useSuggestion — see the comment
+  // there. Without it a `:` popup survives a tap-outside collapse on mobile
+  // and sits over the collapsed composer bar.
+  const isActive = state !== null
+  useEffect(() => {
+    if (!isActive) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('[role="listbox"]')) return
+      const editor = editorRef.current
+      if (editor && !editor.isDestroyed && target && editor.view.dom.contains(target)) return
+      close()
+    }
+    document.addEventListener("pointerdown", onPointerDown, true)
+    return () => document.removeEventListener("pointerdown", onPointerDown, true)
+  }, [isActive, close])
+
   const onKeyDown = useCallback(
     (props: SuggestionKeyDownProps) => {
       if (props.event.key === "Escape") {
@@ -175,7 +192,7 @@ export function useEmojiSuggestion(config: UseEmojiSuggestionConfig): UseEmojiSu
   return {
     suggestionConfig,
     renderEmojiGrid,
-    isActive: state !== null,
+    isActive,
     close,
   }
 }
