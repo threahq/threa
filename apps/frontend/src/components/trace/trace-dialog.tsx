@@ -180,7 +180,7 @@ export function TraceDialog() {
   return (
     <ResponsiveDialog open onOpenChange={(open) => !open && closeTraceModal()}>
       <ResponsiveDialogContent
-        desktopClassName="max-w-3xl max-h-[85vh] sm:flex flex-col p-0 gap-0 [&>button:last-child]:hidden"
+        desktopClassName="max-w-4xl max-h-[90vh] sm:flex flex-col p-0 gap-0 [&>button:last-child]:hidden"
         drawerClassName="flex flex-col p-0"
         hideCloseButton
       >
