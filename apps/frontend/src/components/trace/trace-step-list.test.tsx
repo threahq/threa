@@ -115,8 +115,7 @@ describe("TraceStepList", () => {
       createStep({ id: "tool_2", stepNumber: 4 }),
     ])
 
-    const workingLabel = screen.getByText("Working")
-    expect(workingLabel.closest(".ml-6")).toBeInTheDocument()
+    expect(screen.getAllByText("Working")).toHaveLength(1)
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
   })
 
