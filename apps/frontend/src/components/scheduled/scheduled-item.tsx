@@ -152,10 +152,10 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
           </button>
         )}
 
-        {/* Persistent on touch (send-now/cancel stay reachable by finger),
-            hover/focus-reveal for a mouse. ScheduledActions renders only the
-            icon buttons; reveal-actions owns the visibility. */}
-        <div className="flex shrink-0 items-center gap-1 reveal-actions">
+        {/* Hidden on touch (tap opens the edit dialog, long-press opens the
+            action drawer), hover/focus-reveal for a mouse — matching the
+            composer popover row so touch behaves the same on both surfaces. */}
+        <div className="flex shrink-0 items-center gap-1 reveal-actions-hover-only">
           <ScheduledActions
             scheduled={scheduled}
             variant="hover-cluster"

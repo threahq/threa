@@ -301,7 +301,10 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     return null
   })()
 
-  const deleteLabel = isFailed ? "Remove" : "Delete"
+  // Match the shared ScheduledActions verb ("Cancel"/"Remove") so the same
+  // useCancelScheduled mutation reads identically here and in the popover /
+  // drawer / /scheduled cluster.
+  const deleteLabel = isFailed ? "Remove" : "Cancel"
   const saveLabel = isPast ? "Send" : "Save"
   const title = isPast ? "Send scheduled message" : "Edit scheduled message"
 
@@ -356,6 +359,8 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
   const trailingActions = (
     <ScheduledEditActions
       isPending={isPending}
+      isPast={isPast}
+      compact={isMobile}
       canSubmit={canSubmit}
       busy={busy}
       isSaving={isSaving}
@@ -497,8 +502,12 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
 }
 
 interface ScheduledEditActionsProps {
-  /** Send now + Save show only for pending rows; failed rows get Delete alone. */
+  /** Send now + Save show only for pending rows; failed rows get the destructive action alone. */
   isPending: boolean
+  /** Send time already past — the primary button IS "Send", so the separate "Send now" is hidden as a duplicate. */
+  isPast: boolean
+  /** Mobile: render "Send now" icon-only so [Cancel][Send now][Save] never pushes Save off a narrow footer. */
+  compact: boolean
   /** False for local placeholders or an empty send time — disables the writes. */
   canSubmit: boolean
   /** Any mutation in flight — disables the whole cluster. */
@@ -513,13 +522,17 @@ interface ScheduledEditActionsProps {
 
 /**
  * Footer action cluster for the scheduled-message edit dialog, shared by the
- * mobile drawer and desktop dialog. Delete (destructive, icon-only so the row
- * of buttons still fits a phone), then Send now, then the primary Save/Send.
- * `onPointerDown` preventDefault keeps focus on the editor so the mobile soft
- * keyboard doesn't tear down mid-tap.
+ * mobile drawer and desktop dialog. Destructive action (icon-only), then
+ * "Send now", then the primary Save/Send. "Send now" is hidden when the row is
+ * already past-due (the primary is "Send" = the same thing) and collapses to an
+ * icon on mobile so the primary button always fits. `onPointerDown`
+ * preventDefault keeps focus on the editor so the mobile soft keyboard doesn't
+ * tear down mid-tap.
  */
 export function ScheduledEditActions({
   isPending,
+  isPast,
+  compact,
   canSubmit,
   busy,
   isSaving,
@@ -529,6 +542,7 @@ export function ScheduledEditActions({
   onSendNow,
   onSave,
 }: ScheduledEditActionsProps) {
+  const showSendNow = isPending && !isPast
   return (
     <>
       <Button
@@ -544,8 +558,22 @@ export function ScheduledEditActions({
       >
         <Trash2 className="h-4 w-4" />
       </Button>
-      {isPending && (
-        <>
+      {showSendNow &&
+        (compact ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={onSendNow}
+            disabled={busy || !canSubmit}
+            title="Send now"
+            aria-label="Send now"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        ) : (
           <Button
             type="button"
             variant="ghost"
@@ -558,18 +586,19 @@ export function ScheduledEditActions({
             <Send className="h-3.5 w-3.5 mr-1.5" />
             Send now
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 px-3 text-xs shrink-0"
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={onSave}
-            disabled={busy || !canSubmit}
-          >
-            {isSaving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-            {isSaving ? "Saving…" : saveLabel}
-          </Button>
-        </>
+        ))}
+      {isPending && (
+        <Button
+          type="button"
+          size="sm"
+          className="h-8 px-3 text-xs shrink-0"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={onSave}
+          disabled={busy || !canSubmit}
+        >
+          {isSaving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          {isSaving ? "Saving…" : saveLabel}
+        </Button>
       )}
     </>
   )
