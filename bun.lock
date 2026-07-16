@@ -413,6 +413,21 @@
         "typescript": "^5",
       },
     },
+    "packages/cli": {
+      "name": "@threa/cli",
+      "version": "0.1.0",
+      "bin": {
+        "threa": "./src/cli.ts",
+      },
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.29.0",
+        "zod": "^4.2.0",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5",
+      },
+    },
     "packages/crypto": {
       "name": "@threa/crypto",
       "version": "0.1.0",
@@ -1587,6 +1602,8 @@
     "@threa/backend-common": ["@threa/backend-common@workspace:packages/backend-common"],
 
     "@threa/backoffice": ["@threa/backoffice@workspace:apps/backoffice"],
+
+    "@threa/cli": ["@threa/cli@workspace:packages/cli"],
 
     "@threa/control-plane": ["@threa/control-plane@workspace:apps/control-plane"],
 
