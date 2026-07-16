@@ -64,5 +64,6 @@ export {
   StreamAgentActivityProvider,
   useAgentActivitySummary,
   usePublishAgentActivitySummary,
+  useAgentActivityChipRef,
   type AgentActivitySummaryEntry,
 } from "./stream-agent-activity-context"

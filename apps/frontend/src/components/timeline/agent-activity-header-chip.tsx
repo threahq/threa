@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useTrace, useAgentActivitySummary } from "@/contexts"
+import { useTrace, useAgentActivitySummary, useAgentActivityChipRef } from "@/contexts"
 
 /**
  * Top-bar chip shown while ≥1 agent session runs in the open stream (root or its
@@ -15,6 +15,10 @@ import { useTrace, useAgentActivitySummary } from "@/contexts"
 export function AgentActivityHeaderChip({ compact = false }: { compact?: boolean }) {
   const summary = useAgentActivitySummary()
   const { getTraceUrl } = useTrace()
+  const chipRef = useAgentActivityChipRef()
+  const assignChip = (el: HTMLAnchorElement | null) => {
+    chipRef.current = el
+  }
 
   if (summary.length === 0) return null
 
@@ -29,6 +33,7 @@ export function AgentActivityHeaderChip({ compact = false }: { compact?: boolean
   if (compact) {
     return (
       <Link
+        ref={assignChip}
         to={getTraceUrl(target.sessionId)}
         aria-label={ariaLabel}
         className="inline-flex shrink-0 items-center rounded-full border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-primary transition-colors hover:bg-primary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -40,6 +45,7 @@ export function AgentActivityHeaderChip({ compact = false }: { compact?: boolean
 
   return (
     <Link
+      ref={assignChip}
       to={getTraceUrl(target.sessionId)}
       aria-label={ariaLabel}
       className={cn(

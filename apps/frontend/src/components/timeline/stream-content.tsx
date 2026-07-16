@@ -3083,7 +3083,11 @@ function TimelineMessageList({
   // Reads the cards off a ref so the callback stays stable like updateDatePill.
   const updateFollowPill = useCallback(() => {
     const cards = runningSessionCardsRef.current
-    const suppressed = isSearchOpen || batch?.enabled || isInitialSettling
+    // scrollAbortRef non-null = a programmatic jump (search, date, follow) is
+    // converging; intermediate frames have the card legitimately off-screen and
+    // would flash the pill mid-flight. Stay hidden until the jump settles — the
+    // next scroll event or step tick recomputes from the rest position.
+    const suppressed = isSearchOpen || batch?.enabled || isInitialSettling || scrollAbortRef.current !== null
     if (suppressed || cards.length === 0) {
       setFollowPill((prev) => (prev === null ? prev : null))
       return
@@ -3100,7 +3104,7 @@ function TimelineMessageList({
     }
     const next = resolveFollowPill({ sessions: cards, topIndex, bottomIndex })
     setFollowPill((prev) => (followPillEqual(prev, next) ? prev : next))
-  }, [listRef, isSearchOpen, batch?.enabled, isInitialSettling])
+  }, [listRef, isSearchOpen, batch?.enabled, isInitialSettling, scrollAbortRef])
 
   // Recompute when the running set or window changes (step ticks, session end,
   // a prepend/append shifting indices) — a scroll may not follow those.
