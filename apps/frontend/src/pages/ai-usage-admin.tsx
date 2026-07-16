@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useParams, useSearchParams } from "react-router-dom"
 import { ArrowLeft, DollarSign } from "lucide-react"
+import { DEFAULT_WORKSPACE_SETTINGS } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { useAIBudget, useAIUsage, useUpdateAIBudget } from "@/hooks"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
+import { UsageTimezoneSelector, type UsageTimezoneMode } from "@/components/ai-usage/timezone-selector"
 import { BudgetControlsPanel } from "@/components/ai-usage/budget-controls-panel"
 import { BudgetHealthHero } from "@/components/ai-usage/budget-health-hero"
 import { CapabilityBreakdown } from "@/components/ai-usage/capability-breakdown"
@@ -16,8 +19,34 @@ export function AIUsageAdminPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const idbUsers = useWorkspaceUsers(workspaceId ?? "")
 
-  const { data: usage, isLoading: usageLoading } = useAIUsage(workspaceId ?? "")
-  const { data: budget, isLoading: budgetLoading } = useAIBudget(workspaceId ?? "")
+  // The reporting timezone is view state, so it lives in the URL (INV-59) — a
+  // shared link or a refresh lands on the same month lines. The param names the
+  // mode rather than a fixed zone, so "workspace" keeps tracking the setting
+  // after an admin changes it.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tzMode: UsageTimezoneMode = searchParams.get("tz") === "workspace" ? "workspace" : "device"
+  const setTzMode = useCallback(
+    (next: UsageTimezoneMode) => {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev)
+          if (next === "device") params.delete("tz")
+          else params.set("tz", next)
+          return params
+        },
+        { replace: true }
+      )
+    },
+    [setSearchParams]
+  )
+
+  const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
+  const deviceTimezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, [])
+  const workspaceTimezone = bootstrap?.workspaceSettings?.billingTimezone ?? DEFAULT_WORKSPACE_SETTINGS.billingTimezone
+  const timezone = tzMode === "workspace" ? workspaceTimezone : deviceTimezone
+
+  const { data: usage, isLoading: usageLoading } = useAIUsage(workspaceId ?? "", timezone)
+  const { data: budget, isLoading: budgetLoading } = useAIBudget(workspaceId ?? "", timezone)
 
   // Local state for inline-editable budget + hard limit. Synced from server,
   // committed on blur.
@@ -26,7 +55,7 @@ export function AIUsageAdminPage() {
   const [localBudget, setLocalBudget] = useState<string>(String(initialBudget))
   const [localHardLimit, setLocalHardLimit] = useState<string>(String(initialHardLimit))
 
-  const updateBudget = useUpdateAIBudget(workspaceId ?? "")
+  const updateBudget = useUpdateAIBudget(workspaceId ?? "", timezone)
 
   useEffect(() => {
     if (budget?.budget?.monthlyBudgetUsd !== undefined) {
@@ -139,10 +168,18 @@ export function AIUsageAdminPage() {
           <DollarSign className="h-5 w-5 text-muted-foreground" />
           <h1 className="font-semibold">AI Usage &amp; Budget</h1>
         </div>
+        <div className="ml-auto">
+          <UsageTimezoneSelector
+            mode={tzMode}
+            onModeChange={setTzMode}
+            deviceTimezone={deviceTimezone}
+            workspaceTimezone={workspaceTimezone}
+          />
+        </div>
       </header>
       <main className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="mx-auto max-w-6xl space-y-6">
-          <BudgetHealthHero metrics={metrics} isLoading={isLoading} />
+          <BudgetHealthHero metrics={metrics} timezone={timezone} isLoading={isLoading} />
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="space-y-6">
@@ -150,6 +187,7 @@ export function AIUsageAdminPage() {
                 byDay={usage?.byDay ?? []}
                 periodStart={usage?.period.start ?? new Date().toISOString()}
                 periodEnd={usage?.period.end ?? new Date().toISOString()}
+                timeZone={timezone}
                 isLoading={usageLoading}
               />
               <CapabilityBreakdown
@@ -177,6 +215,7 @@ export function AIUsageAdminPage() {
                 workspaceId={workspaceId}
                 budget={budget?.budget ?? null}
                 nextReset={budget?.nextReset ?? new Date().toISOString()}
+                reportingTimezone={timezone}
                 metrics={metrics}
                 localBudget={localBudget}
                 onBudgetChange={setLocalBudget}

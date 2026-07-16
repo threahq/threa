@@ -13,6 +13,7 @@ import { SectionLabel } from "./primitives"
 
 export function BudgetControlsPanel({
   workspaceId,
+  reportingTimezone,
   budget,
   nextReset,
   metrics,
@@ -35,6 +36,11 @@ export function BudgetControlsPanel({
     hardLimitPercent: number
   } | null
   nextReset: string
+  /**
+   * The zone the dashboard's month window is drawn in. Keys the budget mutation
+   * to the same cached response the page reads, and names the reset date.
+   */
+  reportingTimezone: string
   metrics: BudgetMetrics
   localBudget: string
   onBudgetChange: (v: string) => void
@@ -44,9 +50,7 @@ export function BudgetControlsPanel({
   onHardLimitCommit: () => void
   isLoading: boolean
 }) {
-  const updateBudget = useUpdateAIBudget(workspaceId)
-  // Browser-local timezone — UI surfaces always render in device-local.
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const updateBudget = useUpdateAIBudget(workspaceId, reportingTimezone)
 
   const handleUpdate = useCallback(
     (updates: UpdateAIBudgetInput) => {
@@ -69,10 +73,13 @@ export function BudgetControlsPanel({
   }
 
   const resetDate = new Date(nextReset)
+  // The reset lands on the reporting zone's month boundary, so it is named in
+  // that zone — device-local would contradict the cycle the hero just drew.
+  // Identical in the default mode, where the reporting zone is the device's.
   const resetDateStr = resetDate.toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
-    timeZone: timezone,
+    timeZone: reportingTimezone,
   })
 
   const usedPct = metrics.percentUsed

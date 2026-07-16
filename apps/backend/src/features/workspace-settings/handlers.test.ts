@@ -46,3 +46,22 @@ describe("updateWorkspaceSettingsSchema defaultCompanionPersonaId", () => {
     expect(updateWorkspaceSettingsSchema.parse({}).defaultCompanionPersonaId).toBeUndefined()
   })
 })
+
+describe("updateWorkspaceSettingsSchema billingTimezone", () => {
+  it("accepts an IANA zone", () => {
+    expect(updateWorkspaceSettingsSchema.parse({ billingTimezone: "Europe/Stockholm" }).billingTimezone).toBe(
+      "Europe/Stockholm"
+    )
+    expect(updateWorkspaceSettingsSchema.parse({ billingTimezone: "UTC" }).billingTimezone).toBe("UTC")
+  })
+
+  it("rejects a zone Intl cannot resolve", () => {
+    expect(updateWorkspaceSettingsSchema.safeParse({ billingTimezone: "Mars/Olympus" }).success).toBe(false)
+    expect(updateWorkspaceSettingsSchema.safeParse({ billingTimezone: "UTC+1" }).success).toBe(false)
+    expect(updateWorkspaceSettingsSchema.safeParse({ billingTimezone: "" }).success).toBe(false)
+  })
+
+  it("treats the field as optional", () => {
+    expect(updateWorkspaceSettingsSchema.parse({}).billingTimezone).toBeUndefined()
+  })
+})

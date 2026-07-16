@@ -51,15 +51,20 @@ export function DailySpendChart({
   byDay,
   periodStart,
   periodEnd,
+  timeZone,
   isLoading,
 }: {
   byDay: AIUsageByDay[]
   periodStart: string
   periodEnd: string
+  /**
+   * The zone the backend bucketed `byDay` in — must be the same one the page
+   * sent as `?tz=`, or the zero-fill range and the bucket labels disagree at the
+   * month's boundary days and a real day silently drops off the chart.
+   */
+  timeZone: string
   isLoading: boolean
 }) {
-  // Same device timezone the API layer sent as ?tz=, so buckets and fill agree.
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
   const data = useMemo(
     () => buildDailySpendData(byDay, periodStart, periodEnd, timeZone),
     [byDay, periodStart, periodEnd, timeZone]

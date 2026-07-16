@@ -9,6 +9,7 @@ import {
 import type { WorkspaceSettingsService } from "./service"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"
+import { isValidIanaTimezone } from "../../lib/temporal"
 
 const updateWorkspaceSettingsSchema = z.object({
   defaultWorkSchedule: workScheduleSchema.optional(),
@@ -26,6 +27,12 @@ const updateWorkspaceSettingsSchema = z.object({
   // Workspace default companion persona id; null clears back to built-in Ariadne.
   // Semantic validation (active persona in this workspace) runs in the service.
   defaultCompanionPersonaId: z.string().min(1).max(64).nullable().optional(),
+  // The workspace's reporting timezone for AI spend. Rejected unless it is a real
+  // IANA zone — a bad value would make every downstream Intl call throw.
+  billingTimezone: z
+    .string()
+    .refine(isValidIanaTimezone, { message: "must be a valid IANA timezone identifier" })
+    .optional(),
 })
 
 export { updateWorkspaceSettingsSchema }

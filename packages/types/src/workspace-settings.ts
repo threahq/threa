@@ -63,6 +63,14 @@ export interface WorkspaceSettings {
    * write-time validation rejects an id that isn't an active persona here.
    */
   defaultCompanionPersonaId: string | null
+  /**
+   * The workspace's own IANA timezone, used to draw day and month lines over AI
+   * spend for everyone in the workspace regardless of where they sit. Storage
+   * stays UTC timestamps; this is a presentation anchor the AI usage dashboard
+   * offers alongside the viewer's device timezone. Defaults to "UTC" rather than
+   * a member's zone — a shared reporting boundary has to be a deliberate choice.
+   */
+  billingTimezone: string
   createdAt: string
   updatedAt: string
 }
@@ -75,6 +83,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   voiceSteeringWords: [],
   maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
   defaultCompanionPersonaId: null,
+  billingTimezone: "UTC",
 }
 
 /** Partial update — only provided fields are changed. */
@@ -85,6 +94,7 @@ export interface UpdateWorkspaceSettingsInput {
   voiceSteeringWords?: string[]
   maxPendingFollowUps?: number
   defaultCompanionPersonaId?: string | null
+  billingTimezone?: string
 }
 
 /** Valid top-level settings keys that can be overridden. */
