@@ -1,7 +1,7 @@
 import { WorkOS } from "@workos-inc/node"
 import type { SocialProvider } from "@threa/types"
 import { logger } from "../logger"
-import type { WorkosConfig } from "./types"
+import { WORKOS_REQUEST_TIMEOUT_MS, type WorkosConfig } from "./types"
 
 export interface AuthResult {
   success: boolean
@@ -110,7 +110,7 @@ export class WorkosAuthService implements AuthService {
     this.clientId = config.clientId
     this.cookiePassword = config.cookiePassword
     this.redirectUri = config.redirectUri
-    this.workos = new WorkOS(config.apiKey, { clientId: this.clientId })
+    this.workos = new WorkOS(config.apiKey, { clientId: this.clientId, timeout: WORKOS_REQUEST_TIMEOUT_MS })
   }
 
   async authenticateSession(sealedSession: string): Promise<AuthResult> {

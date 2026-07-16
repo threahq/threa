@@ -1,6 +1,6 @@
 import { WorkOS } from "@workos-inc/node"
 import { logger } from "../logger"
-import type { WorkosConfig } from "./types"
+import { WORKOS_REQUEST_TIMEOUT_MS, type WorkosConfig } from "./types"
 
 export interface ValidatedApiKey {
   id: string
@@ -17,7 +17,7 @@ export class WorkosApiKeyService implements ApiKeyService {
   private workos: WorkOS
 
   constructor(config: WorkosConfig) {
-    this.workos = new WorkOS(config.apiKey, { clientId: config.clientId })
+    this.workos = new WorkOS(config.apiKey, { clientId: config.clientId, timeout: WORKOS_REQUEST_TIMEOUT_MS })
   }
 
   async validateApiKey(value: string): Promise<ValidatedApiKey | null> {
