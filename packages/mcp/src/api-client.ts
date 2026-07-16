@@ -110,10 +110,11 @@ export class ThreaApiClient {
     if (response.headers.get("content-type")?.includes("application/json")) {
       try {
         const parsed = JSON.parse((await response.text()).slice(0, 4_000)) as {
-          error?: { code?: unknown; message?: unknown }
+          error?: unknown
+          code?: unknown
         }
-        if (typeof parsed.error?.code === "string") code = parsed.error.code
-        if (typeof parsed.error?.message === "string") message = parsed.error.message
+        if (typeof parsed.error === "string") message = parsed.error
+        if (typeof parsed.code === "string") code = parsed.code
       } catch {
         // Non-JSON or malformed body: fall through to the status-line message.
       }

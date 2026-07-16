@@ -35,7 +35,7 @@ test("whoami is listed and round-trips the /me principal with binding info", asy
 })
 
 test("whoami surfaces an API error as an isError result carrying the scope hint", async () => {
-  fetchSpy.mockResolvedValue(jsonResponse(404, { error: { code: "NOT_FOUND", message: "gone" } }))
+  fetchSpy.mockResolvedValue(jsonResponse(404, { error: "gone", code: "NOT_FOUND" }))
   const client = await connectClient()
 
   const result = (await client.callTool({ name: "whoami", arguments: {} })) as CallToolResult

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { ThreaApiClient } from "../api-client"
 import type { ThreaMcpConfig } from "../config"
-import { errorResult, jsonResult } from "./result"
+import { runTool } from "./result"
 
 interface Principal {
   kind: string
@@ -18,17 +18,10 @@ export function registerIdentityTools(server: McpServer, client: ThreaApiClient,
         "version info, and the base URL and workspace this server is bound to. Use it to confirm the key " +
         "works and to discover your identity before other calls.",
     },
-    async () => {
-      try {
+    async () =>
+      runTool(async () => {
         const { data } = await client.get<{ data: Principal }>("/me")
-        return jsonResult({
-          principal: data,
-          baseUrl: config.baseUrl,
-          workspaceId: config.workspaceId,
-        })
-      } catch (error) {
-        return errorResult(error)
-      }
-    }
+        return { principal: data, baseUrl: config.baseUrl, workspaceId: config.workspaceId }
+      })
   )
 }

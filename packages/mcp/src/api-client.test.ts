@@ -43,7 +43,7 @@ test("post serializes the body with a json content-type", async () => {
 })
 
 test("error body maps into ThreaApiError status/code/message", async () => {
-  fetchSpy.mockResolvedValue(jsonResponse(400, { error: { code: "VALIDATION_ERROR", message: "bad input" } }))
+  fetchSpy.mockResolvedValue(jsonResponse(400, { error: "bad input", code: "VALIDATION_ERROR" }))
   const client = makeClient()
 
   const error = (await client.get("/streams").catch((e) => e)) as ThreaApiError
@@ -54,7 +54,7 @@ test("error body maps into ThreaApiError status/code/message", async () => {
 })
 
 test("404 carries the missing-scope hint", async () => {
-  fetchSpy.mockResolvedValue(jsonResponse(404, { error: { code: "NOT_FOUND", message: "no stream" } }))
+  fetchSpy.mockResolvedValue(jsonResponse(404, { error: "no stream", code: "NOT_FOUND" }))
   const client = makeClient()
 
   const error = (await client.get("/streams/stream_x").catch((e) => e)) as ThreaApiError
@@ -65,8 +65,8 @@ test("404 carries the missing-scope hint", async () => {
 test("429 retries with exponential backoff then succeeds", async () => {
   const delays: number[] = []
   fetchSpy
-    .mockResolvedValueOnce(jsonResponse(429, { error: { code: "RATE_LIMITED", message: "slow down" } }))
-    .mockResolvedValueOnce(jsonResponse(429, { error: { code: "RATE_LIMITED", message: "slow down" } }))
+    .mockResolvedValueOnce(jsonResponse(429, { error: "slow down", code: "RATE_LIMITED" }))
+    .mockResolvedValueOnce(jsonResponse(429, { error: "slow down", code: "RATE_LIMITED" }))
     .mockResolvedValueOnce(jsonResponse(200, { data: { ok: true } }))
   const client = makeClient(async (ms) => {
     delays.push(ms)
@@ -80,7 +80,7 @@ test("429 retries with exponential backoff then succeeds", async () => {
 
 test("429 gives up after three retries and throws with a rate-limit hint", async () => {
   const delays: number[] = []
-  fetchSpy.mockResolvedValue(jsonResponse(429, { error: { code: "RATE_LIMITED", message: "slow down" } }))
+  fetchSpy.mockResolvedValue(jsonResponse(429, { error: "slow down", code: "RATE_LIMITED" }))
   const client = makeClient(async (ms) => {
     delays.push(ms)
   })
