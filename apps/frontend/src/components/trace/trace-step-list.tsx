@@ -1,4 +1,4 @@
-import { useRef, useEffect, type ReactNode } from "react"
+import { useRef, useEffect, useState, type ReactNode } from "react"
 import { PI_TOOL_TRACE_FORMAT, type AgentSessionStep, type AgentStepType } from "@threa/types"
 import type { StreamingSubstep } from "@/hooks/use-agent-trace"
 import { TraceStep } from "./trace-step"
@@ -95,6 +95,7 @@ export function TraceStepList({
               tools={item.tools}
               active={item.id === activePhaseId}
               nested={Boolean(item.thinking)}
+              highlightedMessageId={highlightMessageId}
               renderStep={renderStep}
             />
           </div>
@@ -108,16 +109,24 @@ function BotWorkingSection({
   tools,
   active,
   nested,
+  highlightedMessageId,
   renderStep,
 }: {
   tools: AgentSessionStep[]
   active: boolean
   nested: boolean
+  highlightedMessageId: string | null
   renderStep: (step: AgentSessionStep) => ReactNode
 }) {
   const errorCount = tools.filter((step) => step.stepType === "tool_error").length
+  const containsHighlight = tools.some((step) => step.messageId === highlightedMessageId)
+  const [detailsOpen, setDetailsOpen] = useState(errorCount > 0 || containsHighlight)
   const lastTool = tools.at(-1)!
   const preview = active ? toolPreview(lastTool.content) : null
+
+  useEffect(() => {
+    if (errorCount > 0 || containsHighlight) setDetailsOpen(true)
+  }, [errorCount, containsHighlight])
   const toolLabel = `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}`
   const errorLabel = errorCount > 0 ? ` • ${errorCount} ${errorCount === 1 ? "error" : "errors"}` : ""
 
@@ -135,13 +144,13 @@ function BotWorkingSection({
           </div>
           {preview && (
             <div className="rounded-md border border-border/70 bg-background/70 px-3 py-2 text-xs">
-              <div className="font-mono text-foreground/90">{preview.headline}</div>
+              <div className="break-all font-mono text-foreground/90">{preview.headline}</div>
               {preview.detail && <div className="mt-1 truncate text-muted-foreground">{preview.detail}</div>}
             </div>
           )}
         </div>
       </div>
-      <Collapsible defaultOpen={errorCount > 0}>
+      <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
         <CollapsibleTrigger className="group flex w-full items-center gap-1.5 px-5 pb-3 text-left text-xs text-muted-foreground hover:text-foreground transition-colors">
           <ChevronRight className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90" />
           Full tool details
@@ -195,7 +204,9 @@ function isLowLevelBotToolStep(step: AgentSessionStep): boolean {
 
 function toolPreview(content: unknown): { headline: string; detail: string | null } | null {
   const parsed = parseToolTrace(content)
-  if (!parsed) return null
+  if (!parsed) {
+    return looksLikeTruncatedToolTrace(content) ? { headline: "Tool trace was truncated", detail: null } : null
+  }
   const headline = typeof parsed.headline === "string" && parsed.headline.trim() ? parsed.headline.trim() : "Tool call"
   const sections: unknown[] = Array.isArray(parsed.sections) ? parsed.sections : []
   const lastSection = sections.at(-1)

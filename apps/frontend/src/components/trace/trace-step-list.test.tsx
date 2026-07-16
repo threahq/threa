@@ -27,18 +27,22 @@ function thinking(id: string, stepNumber: number, content: string): AgentSession
   return createStep({ id, stepNumber, stepType: "thinking", content })
 }
 
-function renderList(steps: AgentSessionStep[], isSessionRunning = false) {
-  return render(
+function listElement(steps: AgentSessionStep[], isSessionRunning = false, highlightMessageId: string | null = null) {
+  return (
     <MemoryRouter>
       <TraceStepList
         steps={steps}
-        highlightMessageId={null}
+        highlightMessageId={highlightMessageId}
         workspaceId="ws_1"
         streamId="stream_1"
         isSessionRunning={isSessionRunning}
       />
     </MemoryRouter>
   )
+}
+
+function renderList(steps: AgentSessionStep[], isSessionRunning = false, highlightMessageId: string | null = null) {
+  return render(listElement(steps, isSessionRunning, highlightMessageId))
 }
 
 describe("TraceStepList", () => {
@@ -101,6 +105,22 @@ describe("TraceStepList", () => {
     expect(screen.queryByText("old preview")).not.toBeInTheDocument()
   })
 
+  it("previews a truncated latest tool without exposing malformed content", () => {
+    renderList(
+      [
+        thinking("think_1", 1, "Plan"),
+        createStep({
+          id: "tool_1",
+          stepNumber: 2,
+          content: `{"format":"${PI_TOOL_TRACE_FORMAT}","headline":"Run command","sections":[`,
+        }),
+      ],
+      true
+    )
+
+    expect(screen.getByText("Tool trace was truncated")).toBeInTheDocument()
+  })
+
   it("removes the previous preview when a new thinking header starts", () => {
     renderList(
       [
@@ -126,6 +146,45 @@ describe("TraceStepList", () => {
     expect(screen.getByText("Working")).toBeInTheDocument()
     expect(screen.queryByText("Run bash")).not.toBeInTheDocument()
     expect(screen.queryByText("first output line")).not.toBeInTheDocument()
+  })
+
+  it("opens an existing phase when a live tool error arrives", () => {
+    const initial = [thinking("think_1", 1, "Plan"), createStep({ id: "tool_1", stepNumber: 2 })]
+    const view = renderList(initial, true)
+
+    expect(screen.getByRole("button", { name: /full tool details/i })).toHaveAttribute("aria-expanded", "false")
+
+    view.rerender(
+      listElement(
+        [
+          ...initial,
+          createStep({
+            id: "tool_2",
+            stepNumber: 3,
+            stepType: "tool_error",
+            content: JSON.stringify({
+              format: PI_TOOL_TRACE_FORMAT,
+              headline: "Run bash",
+              sections: [{ label: PiToolTraceSectionLabels.ERROR_OUTPUT, body: "live boom", lang: null }],
+            }),
+          }),
+        ],
+        true
+      )
+    )
+
+    expect(screen.getAllByText("live boom")).toHaveLength(2)
+  })
+
+  it("opens full details when a grouped tool step is highlighted", () => {
+    renderList(
+      [thinking("think_1", 1, "Plan"), createStep({ id: "tool_1", stepNumber: 2, messageId: "msg_tool" })],
+      false,
+      "msg_tool"
+    )
+
+    expect(screen.getByRole("button", { name: /full tool details/i })).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByText("Run bash")).toBeInTheDocument()
   })
 
   it("shows error counts, opens error groups, and preserves full tool detail", async () => {
