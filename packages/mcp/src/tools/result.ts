@@ -43,3 +43,6 @@ export function errorResult(error: unknown): CallToolResult {
   const message = error instanceof Error ? error.message : String(error)
   return { isError: true, content: [{ type: "text", text: JSON.stringify({ message }, null, 2) }] }
 }
+
+export type Envelope<T> = { data: T }
+export type PagedEnvelope<T> = { data: T[]; hasMore?: boolean; cursor?: string | null }

@@ -8,58 +8,6 @@ afterEach(() => {
   fetchSpy.mockReset()
 })
 
-test("get_messages pages by numeric sequence and passes the cursor-less envelope through", async () => {
-  fetchSpy.mockResolvedValue(jsonResponse(200, { data: [{ id: "msg_1", sequence: "42" }], hasMore: true }))
-  const client = await connectClient()
-
-  const result = (await client.callTool({
-    name: "get_messages",
-    arguments: { stream_id: "stream_1", before: "100", limit: 25 },
-  })) as CallToolResult
-  expect(result.isError).toBeFalsy()
-
-  const url = new URL(String(fetchSpy.mock.calls[0]?.[0]))
-  expect(url.pathname).toBe("/api/v1/workspaces/ws_1/streams/stream_1/messages")
-  expect(url.searchParams.get("before")).toBe("100")
-  expect(url.searchParams.get("limit")).toBe("25")
-  expect(url.searchParams.has("after")).toBe(false)
-
-  expect(textPayload(result)).toEqual({ data: [{ id: "msg_1", sequence: "42" }], hasMore: true })
-})
-
-test("search_messages maps stream_ids to the wire `streams` body field with the search flags", async () => {
-  fetchSpy.mockResolvedValue(jsonResponse(200, { data: [{ id: "msg_2", rank: 0.9 }] }))
-  const client = await connectClient()
-
-  const result = (await client.callTool({
-    name: "search_messages",
-    arguments: {
-      query: "deploy plan",
-      semantic: true,
-      exact: false,
-      stream_ids: ["stream_1", "stream_2"],
-      type: ["channel"],
-      limit: 10,
-    },
-  })) as CallToolResult
-  expect(result.isError).toBeFalsy()
-
-  const init = requestInit(fetchSpy)
-  expect(init.method).toBe("POST")
-  const url = new URL(String(fetchSpy.mock.calls[0]?.[0]))
-  expect(url.pathname).toBe("/api/v1/workspaces/ws_1/messages/search")
-  expect(requestBody(fetchSpy)).toEqual({
-    query: "deploy plan",
-    semantic: true,
-    exact: false,
-    streams: ["stream_1", "stream_2"],
-    type: ["channel"],
-    limit: 10,
-  })
-
-  expect(textPayload(result)).toEqual({ data: [{ id: "msg_2", rank: 0.9 }] })
-})
-
 test("find_messages_by_metadata maps stream_id to the wire `streamId` body field", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: [] }))
   const client = await connectClient()
@@ -176,13 +124,13 @@ test("delete_message handles a 204 no-body response and reports the deletion", a
   expect(textPayload(result)).toEqual({ deleted: true, message_id: "msg_1" })
 })
 
-test("search_messages surfaces an API error as an isError result", async () => {
-  fetchSpy.mockResolvedValue(jsonResponse(400, { error: "query is required", code: "VALIDATION_ERROR" }))
+test("send_message surfaces an API error as an isError result", async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(400, { error: "content is required", code: "VALIDATION_ERROR" }))
   const client = await connectClient()
 
   const result = (await client.callTool({
-    name: "search_messages",
-    arguments: { query: "x" },
+    name: "send_message",
+    arguments: { stream_id: "stream_1", content: "x" },
   })) as CallToolResult
   expect(result.isError).toBe(true)
   expect(textPayload(result).code).toBe("VALIDATION_ERROR")

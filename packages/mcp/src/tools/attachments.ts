@@ -1,38 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { EXTRACTION_CONTENT_TYPES } from "./constants"
 import { runTool } from "./result"
 
 export function registerAttachmentTools(server: McpServer, client: ThreaApiClient): void {
-  server.registerTool(
-    "search_attachments",
-    {
-      title: "Search attachments",
-      description:
-        "Search accessible attachments by filename or by their extracted content (Threa extracts text and a " +
-        "summary from uploaded files). `query` is the search text (required). Narrow with `stream_ids` (source " +
-        "streams) and `content_types`, which classify the extracted content: chart, table, diagram, screenshot, " +
-        "photo, document, other. limit ≤ 50 (default 20). Each hit carries the attachment id, filename, mime " +
-        "type, content type, and summary — call get_attachment for the full extracted text.",
-      inputSchema: {
-        query: z.string().min(1),
-        stream_ids: z.array(z.string()).optional(),
-        content_types: z.array(z.enum(EXTRACTION_CONTENT_TYPES)).optional(),
-        limit: z.number().int().min(1).max(50).optional(),
-      },
-    },
-    async ({ query, stream_ids, content_types, limit }) =>
-      runTool(() =>
-        client.post("/attachments/search", {
-          query,
-          streams: stream_ids,
-          contentTypes: content_types,
-          limit,
-        })
-      )
-  )
-
   server.registerTool(
     "get_attachment",
     {

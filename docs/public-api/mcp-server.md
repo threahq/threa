@@ -59,22 +59,22 @@ Mint a key in the app. The prefix sets the identity. A `threa_uk_` key is a pers
 
 A key is bound to one workspace, and a request for another workspace returns 403. What a key can do inside its workspace is set by the scopes granted to it. A key that lacks the scope for a resource does not receive a 403 on that route. It receives a 404, because Threa hides existence from keys that cannot see a resource. A 404 from any tool therefore means either the resource is absent or the key lacks the scope.
 
-Scopes map to tool areas as follows.
+Scopes map to tool areas as follows. Some tools span more than one scope. `read_stream` reads a stream and its messages in one call, so it needs both `streams:read` and `messages:read`, and a missing scope on either leg fails the whole call. `search` routes by its `what` argument, so it needs the scope for the kind you search.
 
-| Scope               | Tools                                                                                                                                         |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| none                | `whoami`                                                                                                                                      |
-| `streams:read`      | `list_streams`, `get_stream`, `list_stream_members`                                                                                           |
-| `users:read`        | `list_users`                                                                                                                                  |
-| `messages:read`     | `get_messages`, `find_messages_by_metadata`, `list_conversations`, `get_conversation`, `get_conversation_messages`                            |
-| `messages:search`   | `search_messages`                                                                                                                             |
-| `messages:write`    | `send_message`, `update_message`, `delete_message`                                                                                            |
-| `memos:read`        | `search_memos`, `get_memo`                                                                                                                    |
-| `attachments:read`  | `search_attachments`, `get_attachment`, `get_attachment_download_url`                                                                         |
-| `labels:read`       | `list_labels`                                                                                                                                 |
-| `labels:write`      | `apply_label`, `remove_label`                                                                                                                 |
-| `delegations:read`  | `list_delegations`                                                                                                                            |
-| `delegations:write` | `claim_delegation`, `delegation_heartbeat`, `report_delegation_status`, `complete_delegation`, `fail_delegation`, `request_delegation_access` |
+| Scope               | Tools                                                                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| none                | `whoami`                                                                                             |
+| `streams:read`      | `list_streams`, `read_stream` (stream and member legs)                                               |
+| `users:read`        | `list_users`                                                                                         |
+| `messages:read`     | `read_stream` (messages leg), `read_conversation`, `list_conversations`, `find_messages_by_metadata` |
+| `messages:search`   | `search` with `what: "messages"`                                                                     |
+| `messages:write`    | `send_message`, `update_message`, `delete_message`                                                   |
+| `memos:read`        | `search` with `what: "memos"`, `get_memo`                                                            |
+| `attachments:read`  | `search` with `what: "attachments"`, `get_attachment`, `get_attachment_download_url`                 |
+| `labels:read`       | `list_labels`                                                                                        |
+| `labels:write`      | `apply_label`, `remove_label`                                                                        |
+| `delegations:read`  | `list_delegations`                                                                                   |
+| `delegations:write` | `claim_delegation`, `update_delegation`, `finish_delegation`, `request_delegation_access`            |
 
 ## Rate limits
 
@@ -88,18 +88,20 @@ Tool output is JSON text in the API envelope. A single resource comes back under
 
 Identity: `whoami` returns the principal, the resolved API version, and the base URL and workspace the server is bound to.
 
-Streams: `list_streams` filters by type and name and pages with `after`; `get_stream` reads one stream; `list_stream_members` lists a stream's members and pages with `cursor`.
+Streams: `list_streams` filters by type and name and pages with `after`. `read_stream` returns one stream together with a page of its messages in a single call, paging the messages by numeric `before` and `after` sequence, and returns the stream's members too when `include_members` is set. If any leg of `read_stream` fails, the whole call fails and no partial data comes back.
 
 Users: `list_users` filters by name or slug and pages with `after`.
 
-Messages: `get_messages` reads a stream in sequence order, paging by numeric `before` and `after`; `search_messages` searches accessible streams full-text, by meaning with `semantic`, or as a literal phrase with `exact`; `find_messages_by_metadata` looks messages up by the metadata stamped on them at send time; `send_message` posts markdown and can start or resume a conversation; `update_message` and `delete_message` act on messages the key itself sent.
+Search: `search` is one tool routed by its `what` argument. With `what: "messages"` it searches accessible streams full-text, by meaning with `semantic`, or as a literal phrase with `exact`, and `query` is required. With `what: "memos"` it searches the knowledge extracted from the workspace's conversations, `query` is optional and matches by meaning, and an empty query browses recent memos. With `what: "attachments"` it searches by filename or extracted content, and `query` is required. Each `what` accepts only its own filters, and passing another filter returns an error that names it.
 
-Conversations: `list_conversations` lists conversations under a stream's root; `get_conversation` reads one; `get_conversation_messages` walks its messages.
+Messages: `find_messages_by_metadata` looks messages up by the metadata stamped on them at send time. `send_message` posts markdown and can start or resume a conversation. `update_message` and `delete_message` act on messages the key itself sent.
 
-Memos: `search_memos` searches the knowledge extracted from the workspace's conversations, and `get_memo` returns a memo with its source messages.
+Conversations: `list_conversations` lists conversations under a stream's root. `read_conversation` returns one conversation together with a page of its messages in a single call and pages the messages with `cursor`. If either leg fails, the whole call fails.
 
-Attachments: `search_attachments` searches by filename or extracted content; `get_attachment` returns metadata and extracted text; `get_attachment_download_url` returns a short-lived signed URL for the bytes.
+Memos: `get_memo` returns a memo with its source messages. Find memos with `search` and `what: "memos"`.
 
-Labels: `list_labels` lists the key actor's labels; `apply_label` attaches a label to a stream by name; `remove_label` removes the assignment.
+Attachments: `get_attachment` returns metadata and extracted text, and `get_attachment_download_url` returns a short-lived signed URL for the bytes. Find attachments with `search` and `what: "attachments"`.
 
-Delegations: `list_delegations` shows open tasks; `claim_delegation` claims one and returns a claim token that is shown once and cached in memory for the session; `delegation_heartbeat` and `report_delegation_status` renew the claim while work is in flight; `complete_delegation` and `fail_delegation` end it; `request_delegation_access` is for bot keys that need a grant on the stream. Lifecycle tools reuse the cached token, and you can pass `claim_token` to override it or to recover after a restart.
+Labels: `list_labels` lists the key actor's labels, `apply_label` attaches a label to a stream by name, and `remove_label` removes the assignment.
+
+Delegations: `list_delegations` shows open tasks. `claim_delegation` claims one and returns a claim token that is shown once and cached in memory for the session. `update_delegation` keeps a claim alive: pass `status_note` to mark the task running and post a progress note, or omit the note for a pure heartbeat, and either way the claim's TTL is renewed. `finish_delegation` ends the task, with `outcome: "complete"` for success (an optional `result_markdown` is posted into the delegation's stream) or `outcome: "fail"` for failure, which requires `error_message`. `request_delegation_access` is for bot keys that need a grant on the stream. Lifecycle tools reuse the cached token, and you can pass `claim_token` to override it or to recover after a restart.

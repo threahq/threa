@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
 import { STREAM_TYPES } from "./constants"
-import { buildQuery, runTool } from "./result"
+import { buildQuery, runTool, type Envelope, type PagedEnvelope } from "./result"
 
 export function registerStreamTools(server: McpServer, client: ThreaApiClient): void {
   server.registerTool(
@@ -25,31 +25,52 @@ export function registerStreamTools(server: McpServer, client: ThreaApiClient): 
   )
 
   server.registerTool(
-    "get_stream",
+    "read_stream",
     {
-      title: "Get a stream",
-      description: "Fetch one stream by id, including its type, name, visibility, and memory mode.",
-      inputSchema: { stream_id: z.string() },
-    },
-    async ({ stream_id }) => runTool(() => client.get(`/streams/${encodeURIComponent(stream_id)}`))
-  )
-
-  server.registerTool(
-    "list_stream_members",
-    {
-      title: "List stream members",
+      title: "Read a stream with its messages",
       description:
-        "List the users who are members of a stream. Page by passing the previous response's `cursor` value " +
-        "back as `cursor`; `hasMore` tells you when to stop. limit ≤ 200 (default 50).",
+        "Fetch a stream and a page of its messages in one call (concurrent requests). Returns " +
+        "{ stream, messages: { data, hasMore } } and, when `include_members` is true, " +
+        "{ members: { data, hasMore, cursor } }. Message paging is by numeric message sequence, NOT a cursor: " +
+        "`before` returns messages before that sequence (older), `after` returns messages after it (newer); " +
+        "pass at most one, and walk pages by taking the boundary message's `sequence`. limit ≤ 100 (default " +
+        "50) applies to messages. If the stream cannot be read the whole call errors — no partial data is " +
+        "returned.",
       inputSchema: {
         stream_id: z.string(),
-        cursor: z.string().optional(),
-        limit: z.number().int().min(1).max(200).optional(),
+        include_members: z.boolean().optional(),
+        before: z.string().optional(),
+        after: z.string().optional(),
+        limit: z.number().int().min(1).max(100).optional(),
       },
     },
-    async ({ stream_id, cursor, limit }) =>
-      runTool(() =>
-        client.get(`/streams/${encodeURIComponent(stream_id)}/members${buildQuery({ after: cursor, limit })}`)
-      )
+    async ({ stream_id, include_members, before, after, limit }) =>
+      runTool(async () => {
+        const id = encodeURIComponent(stream_id)
+        const streamReq = client.get<Envelope<unknown>>(`/streams/${id}`)
+        const messagesReq = client.get<PagedEnvelope<unknown>>(
+          `/streams/${id}/messages${buildQuery({ before, after, limit })}`
+        )
+        const membersReq = include_members ? client.get<PagedEnvelope<unknown>>(`/streams/${id}/members`) : undefined
+
+        const [streamResp, messagesResp, membersResp] = await Promise.all([
+          streamReq,
+          messagesReq,
+          membersReq ?? Promise.resolve(undefined),
+        ])
+
+        const result: Record<string, unknown> = {
+          stream: streamResp.data,
+          messages: { data: messagesResp.data, hasMore: messagesResp.hasMore ?? false },
+        }
+        if (membersResp) {
+          result.members = {
+            data: membersResp.data,
+            hasMore: membersResp.hasMore ?? false,
+            cursor: membersResp.cursor ?? null,
+          }
+        }
+        return result
+      })
   )
 }

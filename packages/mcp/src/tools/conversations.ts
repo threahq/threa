@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
 import { CONVERSATION_STATUSES } from "./constants"
-import { buildQuery, runTool } from "./result"
+import { buildQuery, runTool, type Envelope, type PagedEnvelope } from "./result"
 
 export function registerConversationTools(server: McpServer, client: ThreaApiClient): void {
   server.registerTool(
@@ -26,23 +26,16 @@ export function registerConversationTools(server: McpServer, client: ThreaApiCli
   )
 
   server.registerTool(
-    "get_conversation",
+    "read_conversation",
     {
-      title: "Get a conversation",
-      description: "Fetch one conversation by id, including its topic summary, status, and participant ids.",
-      inputSchema: { conversation_id: z.string() },
-    },
-    async ({ conversation_id }) => runTool(() => client.get(`/conversations/${encodeURIComponent(conversation_id)}`))
-  )
-
-  server.registerTool(
-    "get_conversation_messages",
-    {
-      title: "Get a conversation's messages",
+      title: "Read a conversation with its messages",
       description:
-        "List a conversation's member messages in chronological order. Messages may span the conversation's " +
-        "root stream and its threads; each carries its own `streamId`. Page by passing the previous response's " +
-        "`cursor` value back as `cursor`; `hasMore` tells you when to stop. limit ≤ 100 (default 50).",
+        "Fetch a conversation and a page of its member messages in one call (concurrent requests). Returns " +
+        "{ conversation, messages: { data, hasMore, cursor } }. Messages are chronological and may span the " +
+        "conversation's root stream and its threads; each carries its own `streamId`. Page the messages by " +
+        "passing the previous response's `cursor` value back as `cursor`; `hasMore` tells you when to stop. " +
+        "limit ≤ 100 (default 50) applies to messages. If the conversation cannot be read the whole call " +
+        "errors — no partial data is returned.",
       inputSchema: {
         conversation_id: z.string(),
         cursor: z.string().optional(),
@@ -50,10 +43,20 @@ export function registerConversationTools(server: McpServer, client: ThreaApiCli
       },
     },
     async ({ conversation_id, cursor, limit }) =>
-      runTool(() =>
-        client.get(
-          `/conversations/${encodeURIComponent(conversation_id)}/messages${buildQuery({ after: cursor, limit })}`
-        )
-      )
+      runTool(async () => {
+        const id = encodeURIComponent(conversation_id)
+        const [conversationResp, messagesResp] = await Promise.all([
+          client.get<Envelope<unknown>>(`/conversations/${id}`),
+          client.get<PagedEnvelope<unknown>>(`/conversations/${id}/messages${buildQuery({ after: cursor, limit })}`),
+        ])
+        return {
+          conversation: conversationResp.data,
+          messages: {
+            data: messagesResp.data,
+            hasMore: messagesResp.hasMore ?? false,
+            cursor: messagesResp.cursor ?? null,
+          },
+        }
+      })
   )
 }

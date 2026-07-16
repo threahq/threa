@@ -14,6 +14,10 @@ export function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
 }
 
+export function fetchByPath(handler: (path: string) => Response): typeof fetch {
+  return (async (input: RequestInfo | URL) => handler(new URL(String(input)).pathname)) as unknown as typeof fetch
+}
+
 export async function connectClient(config: ThreaMcpConfig = TEST_CONFIG): Promise<Client> {
   const server = createThreaMcpServer(config)
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()

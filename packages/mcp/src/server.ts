@@ -8,6 +8,7 @@ import { registerIdentityTools } from "./tools/identity"
 import { registerLabelTools } from "./tools/labels"
 import { registerMemoTools } from "./tools/memos"
 import { registerMessageTools } from "./tools/messages"
+import { registerSearchTools } from "./tools/search"
 import { registerStreamTools } from "./tools/streams"
 import { registerUserTools } from "./tools/users"
 
@@ -18,22 +19,23 @@ const INSTRUCTIONS =
   "as the paging arg to continue); " +
   "failures come back as isError results carrying { code, message, hint? }. A 404 can mean the resource " +
   "does not exist or that the key lacks the required scope. Start with `whoami` to confirm the key and " +
-  "identity. Read tools: list_streams / get_stream / list_stream_members, list_users, get_messages " +
-  "(numeric-sequence paging), search_messages (full-text, semantic, or exact), find_messages_by_metadata " +
-  "(exact reference lookup), and list_conversations / get_conversation / get_conversation_messages. Write " +
-  "tools: send_message (markdown; optional conversation resume via conversation_id or a new one via " +
-  "start_conversation; auto client_message_id for idempotent retries), update_message / delete_message " +
-  "(only messages this key sent), and list_labels / apply_label / remove_label (labels are private to the " +
-  "key actor and found-or-created by name). Memory: search_memos searches GAM (the knowledge extracted from " +
-  "this workspace's conversations) — search it before asking a human — and get_memo traces a memo to its " +
-  "source messages. Attachments: search_attachments (by filename or extracted content), get_attachment " +
-  "(metadata plus extracted text), get_attachment_download_url (short-lived signed URL for the raw bytes). " +
-  "Delegations: close the loop on a delegated task with list_delegations (the open queue) → claim_delegation " +
-  "(returns a claim token shown once and stored in memory for this session; 15-min TTL) → " +
-  "report_delegation_status / delegation_heartbeat while working (renew the claim) → complete_delegation or " +
-  "fail_delegation. A completed result is posted into the delegation's stream so GAM memorizes it. Lifecycle " +
-  "tools reuse the stored token; pass claim_token to override or to recover after a server restart. " +
-  "request_delegation_access is bot-key only."
+  "identity. Read tools: list_streams and read_stream (one call returns a stream plus a page of its messages " +
+  "by numeric sequence, and its members when include_members is set), list_users, list_conversations and " +
+  "read_conversation (a conversation plus a page of its messages), and find_messages_by_metadata (exact " +
+  "reference lookup). Search: one `search` tool with what = messages | memos | attachments — memos is GAM " +
+  "(the knowledge extracted from this workspace's conversations), search it before asking a human; each " +
+  "`what` accepts only its own filters. Write tools: send_message (markdown; optional conversation resume via " +
+  "conversation_id or a new one via start_conversation; auto client_message_id for idempotent retries), " +
+  "update_message / delete_message (only messages this key sent), and list_labels / apply_label / remove_label " +
+  "(labels are private to the key actor and found-or-created by name). Memory provenance: get_memo traces a " +
+  "memo to its source messages. Attachments: get_attachment (metadata plus extracted text), " +
+  "get_attachment_download_url (short-lived signed URL for the raw bytes). Delegations: close the loop on a " +
+  "delegated task with list_delegations (the open queue) → claim_delegation (returns a claim token shown once " +
+  "and stored in memory for this session; 15-min TTL) → update_delegation while working (status_note reports " +
+  "progress and renews the claim, no note is a pure heartbeat) → finish_delegation (outcome complete or fail). " +
+  "A completed result is posted into the delegation's stream so GAM memorizes it. Lifecycle tools reuse the " +
+  "stored token; pass claim_token to override or to recover after a server restart. request_delegation_access " +
+  "is bot-key only."
 
 export function createThreaMcpServer(config: ThreaMcpConfig): McpServer {
   const server = new McpServer({ name: "threa", version: "0.1.0" }, { instructions: INSTRUCTIONS })
@@ -47,6 +49,7 @@ export function createThreaMcpServer(config: ThreaMcpConfig): McpServer {
   registerStreamTools(server, client)
   registerUserTools(server, client)
   registerMessageTools(server, client)
+  registerSearchTools(server, client)
   registerConversationTools(server, client)
   registerLabelTools(server, client)
   registerMemoTools(server, client)
