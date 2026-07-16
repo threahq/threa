@@ -222,7 +222,7 @@ describe("TraceStepList", () => {
   it("leaves non-bot tool steps as regular trace rows", () => {
     renderList([
       createStep({
-        content: JSON.stringify({ tool: "workspace_search", args: { query: "pricing" } }),
+        content: JSON.stringify({ tool: "workspace_search", args: { query: "pricing", format: PI_TOOL_TRACE_FORMAT } }),
       }),
     ])
 

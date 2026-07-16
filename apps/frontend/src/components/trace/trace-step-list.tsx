@@ -151,7 +151,7 @@ function BotWorkingSection({
         </div>
       </div>
       <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <CollapsibleTrigger className="group flex w-full items-center gap-1.5 px-5 pb-3 text-left text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <CollapsibleTrigger className="group flex min-h-11 w-full items-center gap-1.5 px-5 py-2 text-left text-xs text-muted-foreground hover:text-foreground transition-colors">
           <ChevronRight className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90" />
           Full tool details
         </CollapsibleTrigger>
@@ -235,5 +235,7 @@ function parseToolTrace(content: unknown): Record<string, unknown> | null {
 }
 
 function looksLikeTruncatedToolTrace(content: unknown): boolean {
-  return typeof content === "string" && new RegExp(`"format"\\s*:\\s*"${PI_TOOL_TRACE_FORMAT}"`).test(content)
+  return (
+    typeof content === "string" && new RegExp(`^\\s*\\{\\s*"format"\\s*:\\s*"${PI_TOOL_TRACE_FORMAT}"`).test(content)
+  )
 }
