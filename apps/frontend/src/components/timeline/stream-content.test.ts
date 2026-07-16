@@ -11,6 +11,8 @@ import {
   resolveDateJumpAnchor,
   remapSuppressedWatermark,
   resolveUnreadMarkerOpen,
+  resolveFollowPill,
+  type RunningSessionCard,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
 import type { StreamEvent } from "@threa/types"
@@ -560,5 +562,83 @@ describe("resolveUnreadMarkerOpen", () => {
 
   it("consumes the decision as skip (not wait) for a deep-link even while still loading — a deep-linked stream never marker-scrolls", () => {
     expect(resolveUnreadMarkerOpen({ ...base, hasDeepLink: true, isLoading: true })).toBe("skip")
+  })
+})
+
+describe("resolveFollowPill", () => {
+  const card = (over: Partial<RunningSessionCard> & { sessionId: string; itemIndex: number }): RunningSessionCard => ({
+    personaName: "Ariadne",
+    stepCount: 3,
+    anchorId: `anchor_${over.sessionId}`,
+    ...over,
+  })
+
+  it("shows nothing when no session is running", () => {
+    expect(resolveFollowPill({ sessions: [], topIndex: 0, bottomIndex: 10 })).toBeNull()
+  })
+
+  it("shows nothing while the only running card is inside the visible range (inclusive of the edges)", () => {
+    for (const itemIndex of [5, 20, 40]) {
+      expect(
+        resolveFollowPill({ sessions: [card({ sessionId: "s1", itemIndex })], topIndex: 5, bottomIndex: 40 })
+      ).toBeNull()
+    }
+  })
+
+  it("points up with the persona label when a single card sits above the viewport", () => {
+    expect(
+      resolveFollowPill({
+        sessions: [card({ sessionId: "s1", itemIndex: 2, stepCount: 7 })],
+        topIndex: 5,
+        bottomIndex: 40,
+      })
+    ).toEqual({
+      sessionId: "s1",
+      anchorId: "anchor_s1",
+      direction: "up",
+      personaName: "Ariadne",
+      stepCount: 7,
+      count: 1,
+    })
+  })
+
+  it("points down when a single card sits below the viewport", () => {
+    expect(
+      resolveFollowPill({ sessions: [card({ sessionId: "s1", itemIndex: 60 })], topIndex: 5, bottomIndex: 40 })
+        ?.direction
+    ).toBe("down")
+  })
+
+  it("ignores sessions whose card is not in the rendered window (itemIndex -1)", () => {
+    expect(
+      resolveFollowPill({ sessions: [card({ sessionId: "s1", itemIndex: -1 })], topIndex: 5, bottomIndex: 40 })
+    ).toBeNull()
+  })
+
+  it("aggregates the label and jumps to the nearest off-screen card when several run", () => {
+    const result = resolveFollowPill({
+      sessions: [
+        card({ sessionId: "far_up", itemIndex: 0 }), // distance 5 from top
+        card({ sessionId: "near_down", itemIndex: 42 }), // distance 2 from bottom
+      ],
+      topIndex: 5,
+      bottomIndex: 40,
+    })
+    expect(result).toMatchObject({
+      sessionId: "near_down",
+      anchorId: "anchor_near_down",
+      direction: "down",
+      personaName: null,
+      count: 2,
+    })
+  })
+
+  it("only counts off-screen cards toward the aggregate — an on-screen session doesn't bump the count", () => {
+    const result = resolveFollowPill({
+      sessions: [card({ sessionId: "onscreen", itemIndex: 20 }), card({ sessionId: "offscreen", itemIndex: 2 })],
+      topIndex: 5,
+      bottomIndex: 40,
+    })
+    expect(result).toMatchObject({ sessionId: "offscreen", personaName: "Ariadne", count: 1 })
   })
 })
