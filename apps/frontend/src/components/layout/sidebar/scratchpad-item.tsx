@@ -40,8 +40,11 @@ import {
   StreamItemPreview,
   BoardTileToggle,
   BoardStatsLine,
+  AgentActivityPreviewLine,
+  agentActivityLabel,
   type BoardTileState,
 } from "./stream-item"
+import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { StreamLabelDots } from "./sidebar-labels"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { truncateContent } from "./utils"
@@ -89,6 +92,8 @@ export function ScratchpadItem({
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
   const hasUnread = unreadCount > 0
   const isDraft = isDraftId(streamWithPreview.id)
+  const agentSessions = useAgentActivityForStream(workspaceId, streamWithPreview.id)
+  const agentActive = agentSessions.length > 0
 
   const currentDisplayName = streamWithPreview.displayName ?? null
   const name = currentDisplayName || streamFallbackLabel("scratchpad", "sidebar")
@@ -254,6 +259,10 @@ export function ScratchpadItem({
     previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
   } else if (boardMode) {
     previewNode = <BoardStatsLine stats={boardMode.statsForStream(streamWithPreview.id)} />
+  } else if (agentActive) {
+    previewNode = (
+      <AgentActivityPreviewLine label={agentActivityLabel(agentSessions[0]?.personaName, agentSessions.length)} />
+    )
   } else {
     previewNode = (
       <StreamItemPreview
@@ -298,6 +307,7 @@ export function ScratchpadItem({
                 icon={<FileEdit className="h-3.5 w-3.5" />}
                 className="bg-primary/10 text-primary"
                 decoration={decoration}
+                agentActive={agentActive}
               />
 
               <div

@@ -25,6 +25,7 @@ import { isDraftId, useActors } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useSidebar } from "@/contexts"
+import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
@@ -139,9 +140,65 @@ interface StreamItemAvatarProps {
    * Renders as a small bordered circle, independent of `badge` (top-left).
    */
   decoration?: { icon: typeof Hash; color: string; ariaLabel?: string } | null
+  /**
+   * True while an agent session is running in this stream (or one of its
+   * threads). Renders a pulsing dot in the top-right slot, taking precedence over
+   * `decoration` — a transient "working now" signal outranks the static companion
+   * marker for the duration of the run.
+   */
+  agentActive?: boolean
 }
 
-export function StreamItemAvatar({ icon, className, avatarUrl, avatarAlt, badge, decoration }: StreamItemAvatarProps) {
+/**
+ * The pulsing "agent working" dot for the avatar's top-right slot — same radar
+ * pulse the timeline session card uses (`animate-activity-pulse`, agent accent).
+ * Absolutely positioned like {@link AvatarDecoration}, so toggling it shifts
+ * nothing (INV-21).
+ */
+export function AgentActivityDot() {
+  return (
+    <span
+      role="img"
+      aria-label="Agent working"
+      className="absolute -top-1 -right-1 inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-background"
+    >
+      <span className="absolute inline-flex h-1.5 w-1.5 rounded-full bg-primary opacity-60 animate-activity-pulse" />
+      <span className="relative inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+    </span>
+  )
+}
+
+/**
+ * The preview-line takeover shown while an agent works: `✦ {label}` in the agent
+ * accent, replacing the last-message preview for the run's duration. Same text
+ * size/height as {@link StreamItemPreview} so the swap shifts nothing (INV-21).
+ */
+export function AgentActivityPreviewLine({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-primary">
+      <span aria-hidden className="shrink-0">
+        ✦
+      </span>
+      <span className="truncate">{label}</span>
+    </div>
+  )
+}
+
+/** The preview-line label for a stream's running sessions ("Ada is working…"). */
+export function agentActivityLabel(personaName: string | undefined, count: number): string {
+  if (count > 1) return `${count} agents working…`
+  return `${personaName ?? "Agent"} is working…`
+}
+
+export function StreamItemAvatar({
+  icon,
+  className,
+  avatarUrl,
+  avatarAlt,
+  badge,
+  decoration,
+  agentActive,
+}: StreamItemAvatarProps) {
   // Thread-of-DM: thread icon as main content, avatar as small badge overlay
   if (badge && avatarUrl) {
     return (
@@ -153,7 +210,7 @@ export function StreamItemAvatar({ icon, className, avatarUrl, avatarAlt, badge,
             <badge.icon className="h-2 w-2" />
           </AvatarFallback>
         </Avatar>
-        {decoration && <AvatarDecoration {...decoration} />}
+        {agentActive ? <AgentActivityDot /> : decoration && <AvatarDecoration {...decoration} />}
       </div>
     )
   }
@@ -188,7 +245,7 @@ export function StreamItemAvatar({ icon, className, avatarUrl, avatarAlt, badge,
           <badge.icon className="h-2 w-2" />
         </div>
       )}
-      {decoration && <AvatarDecoration {...decoration} />}
+      {agentActive ? <AgentActivityDot /> : decoration && <AvatarDecoration {...decoration} />}
     </div>
   )
 }
@@ -305,6 +362,12 @@ export function StreamItem({
   const hasUnread = unreadCount > 0
   const preview = stream.lastMessagePreview
   const isVirtualDraft = isDraftId(stream.id)
+  // Activity is keyed by sidebar root (a thread session projects to its channel),
+  // so a thread row must look up its root, not its own id, or it never lights.
+  const agentActivityStreamId =
+    stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
+  const agentSessions = useAgentActivityForStream(workspaceId, agentActivityStreamId)
+  const agentActive = agentSessions.length > 0
 
   useUrgencyTracking(itemRef, stream.id, stream.urgency, scrollContainerRef)
 
@@ -478,12 +541,17 @@ export function StreamItem({
   const boardDimmed = boardExcluded || (boardMuted && !boardIncluded) || (isE2e && !!boardMode)
 
   // The row's second line: a board status line (muted/E2E — takes precedence),
-  // else the board topic stats (board mode), else the chats-mode message preview.
+  // else the board topic stats (board mode), else the agent-working takeover
+  // (chats mode, while a session runs), else the chats-mode message preview.
   let previewNode: ReactNode
   if (boardStatusLine) {
     previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
   } else if (boardMode) {
     previewNode = <BoardStatsLine stats={boardMode.statsForStream(boardScopeId)} />
+  } else if (agentActive) {
+    previewNode = (
+      <AgentActivityPreviewLine label={agentActivityLabel(agentSessions[0]?.personaName, agentSessions.length)} />
+    )
   } else {
     previewNode = (
       <StreamItemPreview
@@ -531,6 +599,7 @@ export function StreamItem({
                 avatarUrl={dmPeerAvatar?.avatarUrl}
                 avatarAlt={name}
                 badge={threadBadge}
+                agentActive={agentActive}
               />
 
               <div

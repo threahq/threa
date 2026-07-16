@@ -583,6 +583,48 @@ export const AgentSessionRepository = {
   },
 
   /**
+   * All RUNNING sessions in a workspace, each resolved to its sidebar root
+   * (`COALESCE(streams.root_stream_id, streams.id)`) — the row that lights up in
+   * the sidebar. Set-based single query (INV-56), workspace-scoped through the
+   * streams join (INV-8; `agent_sessions` has no `workspace_id` column). Seeds
+   * the bootstrap `activeAgentSessions`; the caller access-filters by the
+   * viewer's accessible root set (INV-62). `personaId` is a persona or bot id —
+   * the caller resolves the display name.
+   */
+  async listRunningByWorkspace(
+    db: Querier,
+    workspaceId: string
+  ): Promise<Array<{ sessionId: string; streamId: string; rootStreamId: string; personaId: string; startedAt: Date }>> {
+    const result = await db.query<{
+      session_id: string
+      stream_id: string
+      root_stream_id: string
+      persona_id: string
+      started_at: Date
+    }>(
+      sql`
+        SELECT
+          se.id AS session_id,
+          se.stream_id,
+          COALESCE(st.root_stream_id, se.stream_id) AS root_stream_id,
+          se.persona_id,
+          se.created_at AS started_at
+        FROM agent_sessions se
+        JOIN streams st ON st.id = se.stream_id
+        WHERE st.workspace_id = ${workspaceId}
+          AND se.status = ${SessionStatuses.RUNNING}
+      `
+    )
+    return result.rows.map((row) => ({
+      sessionId: row.session_id,
+      streamId: row.stream_id,
+      rootStreamId: row.root_stream_id,
+      personaId: row.persona_id,
+      startedAt: row.started_at,
+    }))
+  },
+
+  /**
    * Find the most recent COMPLETED session for a stream. Unlike
    * `findLatestByStream` this skips the in-flight RUNNING session a turn
    * inserts before it builds its context, so the context window policy reads

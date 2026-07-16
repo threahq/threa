@@ -18,6 +18,8 @@ import { getEmojiList } from "../emoji"
 import { getEffectiveLevel } from "../streams"
 import { SyncLogRepository } from "../sync"
 import { BotRepository, serializeBot } from "../public-api"
+import { AgentSessionRepository } from "../agents"
+import { projectActiveAgentSessions } from "./active-agent-sessions"
 import { displayNameFromWorkos, type WorkosOrgService } from "@threa/backend-common"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
@@ -170,6 +172,7 @@ export function createWorkspaceHandlers({
         labels,
         labelAssignments,
         configuredToolCategories,
+        runningSessions,
       ] = await Promise.all([
         workspaceService.getWorkspaceById(workspaceId),
         workspaceService.getUsers(workspaceId),
@@ -190,6 +193,7 @@ export function createWorkspaceHandlers({
         // scratchpad tool-policy picker (including the at-creation control, which
         // has no stream bootstrap yet).
         workspaceIntegrationService.getAvailableToolCategories(workspaceId),
+        AgentSessionRepository.listRunningByWorkspace(pool, workspaceId),
       ])
 
       if (!workspace) {
@@ -250,6 +254,17 @@ export function createWorkspaceHandlers({
         }
       }
 
+      // Running agent sessions → sidebar activity seed. Access-filter to the
+      // viewer's sidebar roots (INV-62: `resolvedStreams` is already the viewer's
+      // accessible stream set, so a session whose root isn't in it is invisible
+      // and dropped). Resolve the persona/bot display name from the lists already
+      // fetched above.
+      const accessibleRootIds = new Set(resolvedStreams.map((s) => s.id))
+      const agentNameById = new Map<string, string>()
+      for (const persona of personas) agentNameById.set(persona.id, persona.name)
+      for (const bot of bots) agentNameById.set(bot.id, bot.name)
+      const activeAgentSessions = projectActiveAgentSessions(runningSessions, accessibleRootIds, agentNameById)
+
       const commands = commandAvailabilityService.listWorkspaceCommands()
 
       // Compute muted stream IDs: streams where effective notification level is "muted".
@@ -308,6 +323,7 @@ export function createWorkspaceHandlers({
           viewerPermissions,
           viewerIsPlatformAdmin,
           configuredToolCategories,
+          activeAgentSessions,
           syncHead: syncHead.toString(),
         },
       })

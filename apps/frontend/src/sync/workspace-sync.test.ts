@@ -29,6 +29,7 @@ import {
   type Activity,
 } from "@threa/types"
 import { assignmentId } from "@/hooks/use-labels"
+import { getAgentActivityForStream, __resetAgentActivityStore } from "@/stores/agent-activity-store"
 import type { Socket } from "socket.io-client"
 
 function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
@@ -2035,5 +2036,128 @@ describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
 
     expect(merged.unreadCounts).toEqual({ stream_fresh: 2, stream_stale: 1 })
     expect(merged.messageCounts).toEqual({ stream_fresh: 11 })
+  })
+})
+
+describe("agent-activity sidebar socket handlers", () => {
+  // The started/progress/activity handlers await db.streams.get (fake-indexeddb),
+  // which settles over several ticks — a macrotask flush guarantees the async
+  // upsert lands before the assertion and never leaks into the next test.
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  const handlerRefs = {
+    getCurrentStreamId: () => undefined,
+    getCurrentUser: () => ({ id: "workos_1" }),
+    subscribeStream: vi.fn(),
+  }
+
+  async function putStream(id: string, rootStreamId: string | null) {
+    await db.streams.put({
+      id,
+      workspaceId: "ws_1",
+      type: rootStreamId ? "thread" : "channel",
+      displayName: id,
+      slug: null,
+      description: null,
+      visibility: "public",
+      parentStreamId: rootStreamId,
+      parentMessageId: null,
+      rootStreamId,
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "user_1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      archivedAt: null,
+      _cachedAt: Date.now(),
+    })
+  }
+
+  beforeEach(async () => {
+    __resetAgentActivityStore()
+    await db.streams.clear()
+  })
+
+  it("upserts on started (wrapped outbox shape), resolving the channel root, and removes on the flat session-room completed shape", async () => {
+    await putStream("stream_ch", null)
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      event: { payload: { sessionId: "sess_1", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+    await flush()
+
+    expect(getAgentActivityForStream("ws_1", "stream_ch").map((s) => s.sessionId)).toEqual(["sess_1"])
+
+    // Flat session-room shape (trace dialog open on the shared socket) — must not throw.
+    expect(() => emit("agent_session:completed", { sessionId: "sess_1" })).not.toThrow()
+    expect(getAgentActivityForStream("ws_1", "stream_ch")).toEqual([])
+
+    cleanup()
+  })
+
+  it("resolves a thread session to its channel root and honors the cross-workspace guard", async () => {
+    await putStream("stream_ch", null)
+    await putStream("stream_thr", "stream_ch")
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_thr",
+      event: { payload: { sessionId: "sess_thr", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+    await flush()
+    expect(getAgentActivityForStream("ws_1", "stream_ch").map((s) => s.sessionId)).toEqual(["sess_thr"])
+
+    // Different workspace — ignored.
+    emit("agent_session:started", {
+      workspaceId: "ws_other",
+      streamId: "stream_ch",
+      event: { payload: { sessionId: "sess_other", personaName: "X", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+    await flush()
+    expect(getAgentActivityForStream("ws_1", "stream_ch").map((s) => s.sessionId)).toEqual(["sess_thr"])
+
+    cleanup()
+  })
+
+  it("skips an uncached thread and leaves progress on a tracked session a no-op", async () => {
+    await putStream("stream_ch", null)
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    // Started for a stream not in the cache — skipped, nothing tracked.
+    emit("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_uncached",
+      event: { payload: { sessionId: "sess_u", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+    await flush()
+    expect(getAgentActivityForStream("ws_1", "stream_uncached")).toEqual([])
+
+    emit("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      event: { payload: { sessionId: "sess_p", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+    await flush()
+
+    emit("agent_session:progress", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      sessionId: "sess_p",
+      personaName: "Ariadne",
+    })
+    await flush()
+    expect(getAgentActivityForStream("ws_1", "stream_ch").map((s) => s.sessionId)).toEqual(["sess_p"])
+
+    cleanup()
   })
 })
