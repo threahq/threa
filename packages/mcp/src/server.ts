@@ -3,6 +3,7 @@ import { ThreaApiClient } from "./api-client"
 import type { ThreaMcpConfig } from "./config"
 import { registerConversationTools } from "./tools/conversations"
 import { registerIdentityTools } from "./tools/identity"
+import { registerLabelTools } from "./tools/labels"
 import { registerMessageTools } from "./tools/messages"
 import { registerStreamTools } from "./tools/streams"
 import { registerUserTools } from "./tools/users"
@@ -14,7 +15,11 @@ const INSTRUCTIONS =
   "does not exist or that the key lacks the required scope. Start with `whoami` to confirm the key and " +
   "identity. Read tools: list_streams / get_stream / list_stream_members, list_users, get_messages " +
   "(numeric-sequence paging), search_messages (full-text, semantic, or exact), find_messages_by_metadata " +
-  "(exact reference lookup), and list_conversations / get_conversation / get_conversation_messages."
+  "(exact reference lookup), and list_conversations / get_conversation / get_conversation_messages. Write " +
+  "tools: send_message (markdown; optional conversation resume via conversation_id or a new one via " +
+  "start_conversation; auto client_message_id for idempotent retries), update_message / delete_message " +
+  "(only messages this key sent), and list_labels / apply_label / remove_label (labels are private to the " +
+  "key actor and found-or-created by name)."
 
 export function createThreaMcpServer(config: ThreaMcpConfig): McpServer {
   const server = new McpServer({ name: "threa", version: "0.1.0" }, { instructions: INSTRUCTIONS })
@@ -29,6 +34,7 @@ export function createThreaMcpServer(config: ThreaMcpConfig): McpServer {
   registerUserTools(server, client)
   registerMessageTools(server, client)
   registerConversationTools(server, client)
+  registerLabelTools(server, client)
 
   return server
 }

@@ -21,6 +21,10 @@ export function buildQuery(params: Record<string, QueryValue>): string {
   return qs ? `?${qs}` : ""
 }
 
+export function toolError(code: string, message: string): CallToolResult {
+  return { isError: true, content: [{ type: "text", text: JSON.stringify({ code, message }, null, 2) }] }
+}
+
 export async function runTool(fn: () => Promise<unknown>): Promise<CallToolResult> {
   try {
     return jsonResult(await fn())
