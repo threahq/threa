@@ -105,6 +105,19 @@ describe("TraceStepList", () => {
     expect(screen.queryByText("old preview")).not.toBeInTheDocument()
   })
 
+  it("keeps later tool runs nested under the same thinking phase across incidental rows", () => {
+    renderList([
+      thinking("think_1", 1, "Plan"),
+      createStep({ id: "tool_1", stepNumber: 2 }),
+      createStep({ id: "reply_1", stepNumber: 3, stepType: "message_sent", content: "Interim" }),
+      createStep({ id: "tool_2", stepNumber: 4 }),
+    ])
+
+    const workingLabels = screen.getAllByText("Working")
+    expect(workingLabels).toHaveLength(2)
+    expect(workingLabels.every((label) => label.closest(".ml-6"))).toBe(true)
+  })
+
   it("previews a truncated latest tool without exposing malformed content", () => {
     renderList(
       [
@@ -176,12 +189,13 @@ describe("TraceStepList", () => {
     expect(screen.getAllByText("live boom")).toHaveLength(2)
   })
 
-  it("opens full details when a grouped tool step is highlighted", () => {
-    renderList(
-      [thinking("think_1", 1, "Plan"), createStep({ id: "tool_1", stepNumber: 2, messageId: "msg_tool" })],
-      false,
-      "msg_tool"
-    )
+  it("opens full details when an existing grouped tool step becomes highlighted", () => {
+    const steps = [thinking("think_1", 1, "Plan"), createStep({ id: "tool_1", stepNumber: 2, messageId: "msg_tool" })]
+    const view = renderList(steps)
+
+    expect(screen.getByRole("button", { name: /full tool details/i })).toHaveAttribute("aria-expanded", "false")
+
+    view.rerender(listElement(steps, false, "msg_tool"))
 
     expect(screen.getByRole("button", { name: /full tool details/i })).toHaveAttribute("aria-expanded", "true")
     expect(screen.getByText("Run bash")).toBeInTheDocument()

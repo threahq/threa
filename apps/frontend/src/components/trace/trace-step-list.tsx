@@ -20,7 +20,7 @@ interface TraceStepListProps {
 
 type TraceStepDisplayItem =
   | { kind: "step"; step: AgentSessionStep }
-  | { kind: "phase"; id: string; thinking?: AgentSessionStep; tools: AgentSessionStep[] }
+  | { kind: "phase"; id: string; nested: boolean; tools: AgentSessionStep[] }
 
 export function TraceStepList({
   steps,
@@ -89,16 +89,14 @@ export function TraceStepList({
       {displayItems.map((item) => {
         if (item.kind === "step") return renderStep(item.step)
         return (
-          <div key={item.id}>
-            {item.thinking && renderStep(item.thinking)}
-            <BotWorkingSection
-              tools={item.tools}
-              active={item.id === activePhaseId}
-              nested={Boolean(item.thinking)}
-              highlightedMessageId={highlightMessageId}
-              renderStep={renderStep}
-            />
-          </div>
+          <BotWorkingSection
+            key={item.id}
+            tools={item.tools}
+            active={item.id === activePhaseId}
+            nested={item.nested}
+            highlightedMessageId={highlightMessageId}
+            renderStep={renderStep}
+          />
         )
       })}
     </div>
@@ -120,13 +118,13 @@ function BotWorkingSection({
 }) {
   const errorCount = tools.filter((step) => step.stepType === "tool_error").length
   const containsHighlight = tools.some((step) => step.messageId === highlightedMessageId)
-  const [detailsOpen, setDetailsOpen] = useState(errorCount > 0 || containsHighlight)
+  const [detailsOpen, setDetailsOpen] = useState(errorCount > 0)
   const lastTool = tools.at(-1)!
   const preview = active ? toolPreview(lastTool.content) : null
 
   useEffect(() => {
-    if (errorCount > 0 || containsHighlight) setDetailsOpen(true)
-  }, [errorCount, containsHighlight])
+    if (errorCount > 0) setDetailsOpen(true)
+  }, [errorCount])
   const toolLabel = `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}`
   const errorLabel = errorCount > 0 ? ` • ${errorCount} ${errorCount === 1 ? "error" : "errors"}` : ""
 
@@ -150,7 +148,7 @@ function BotWorkingSection({
           )}
         </div>
       </div>
-      <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+      <Collapsible open={containsHighlight || detailsOpen} onOpenChange={setDetailsOpen}>
         <CollapsibleTrigger className="group flex min-h-11 w-full items-center gap-1.5 px-5 py-2 text-left text-xs text-muted-foreground hover:text-foreground transition-colors">
           <ChevronRight className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90" />
           Full tool details
@@ -165,23 +163,21 @@ function BotWorkingSection({
 
 function groupBotWorkByThinking(steps: AgentSessionStep[]): TraceStepDisplayItem[] {
   const items: TraceStepDisplayItem[] = []
-  let thinking: AgentSessionStep | undefined
+  let nested = false
   let tools: AgentSessionStep[] = []
 
   const flush = () => {
     if (tools.length > 0) {
-      items.push({ kind: "phase", id: `${thinking?.id ?? "work"}-${tools[0]!.id}`, thinking, tools })
-    } else if (thinking) {
-      items.push({ kind: "step", step: thinking })
+      items.push({ kind: "phase", id: `${nested ? "nested" : "work"}-${tools[0]!.id}`, nested, tools })
     }
-    thinking = undefined
     tools = []
   }
 
   for (const step of steps) {
     if (step.stepType === "thinking") {
       flush()
-      thinking = step
+      items.push({ kind: "step", step })
+      nested = true
       continue
     }
     if (isLowLevelBotToolStep(step)) {
