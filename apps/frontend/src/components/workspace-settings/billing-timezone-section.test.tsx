@@ -10,23 +10,23 @@ import {
 } from "@threa/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { workspaceSettingsApi } from "@/api"
-import { ReportingTimezoneSection } from "./reporting-timezone-section"
+import { BillingTimezoneSection } from "./billing-timezone-section"
 
 function seedBootstrap(
   queryClient: QueryClient,
   viewerPermissions: WorkspacePermissionSlug[],
-  reportingTimezone: string
+  billingTimezone: string
 ) {
   queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
     viewerPermissions,
-    workspaceSettings: { reportingTimezone } as WorkspaceSettings,
+    workspaceSettings: { billingTimezone } as WorkspaceSettings,
   } as unknown as WorkspaceBootstrap)
 }
 
 function renderSection(queryClient: QueryClient) {
   return render(
     <QueryClientProvider client={queryClient}>
-      <ReportingTimezoneSection workspaceId="ws_1" />
+      <BillingTimezoneSection workspaceId="ws_1" />
     </QueryClientProvider>
   )
 }
@@ -43,7 +43,7 @@ async function pickZone(user: ReturnType<typeof userEvent.setup>, zone: RegExp) 
   await user.click(matches[matches.length - 1])
 }
 
-describe("ReportingTimezoneSection", () => {
+describe("BillingTimezoneSection", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
   })
@@ -53,13 +53,13 @@ describe("ReportingTimezoneSection", () => {
     seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], "UTC")
     const update = vi
       .spyOn(workspaceSettingsApi, "update")
-      .mockResolvedValue({ reportingTimezone: "Europe/Stockholm" } as WorkspaceSettings)
+      .mockResolvedValue({ billingTimezone: "Europe/Stockholm" } as WorkspaceSettings)
     const user = userEvent.setup()
 
     renderSection(queryClient)
     await pickZone(user, /Europe\/Stockholm/)
 
-    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { reportingTimezone: "Europe/Stockholm" }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { billingTimezone: "Europe/Stockholm" }))
   })
 
   it("reflects an admin's pick immediately, before the save resolves", async () => {
@@ -87,7 +87,7 @@ describe("ReportingTimezoneSection", () => {
 
     // Assert the save was actually attempted, else the trailing UTC below would
     // pass just as well for a picker that never fired at all.
-    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { reportingTimezone: "Asia/Tokyo" }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { billingTimezone: "Asia/Tokyo" }))
     await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent(/UTC/))
   })
 

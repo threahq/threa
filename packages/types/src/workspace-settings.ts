@@ -64,16 +64,17 @@ export interface WorkspaceSettings {
    */
   defaultCompanionPersonaId: string | null
   /**
-   * The workspace's own IANA timezone, used to draw day and month lines over AI
-   * spend for everyone in the workspace regardless of where they sit. Storage
-   * stays UTC timestamps; this is a presentation anchor the AI usage dashboard
-   * offers alongside the viewer's device timezone. Defaults to "UTC" rather than
-   * a member's zone — a shared reporting boundary has to be a deliberate choice.
+   * The workspace's own IANA timezone: the boundary its AI spend month is cut
+   * on. Anchors both halves of the budget — `budget-service.checkBudget` resolves
+   * the enforcement window against it (so degradation and the hard limit reset on
+   * the workspace's midnight, not the server's), and the AI usage dashboard
+   * offers it as a reporting zone alongside the viewer's device zone.
    *
-   * Reporting only: budget *enforcement* (`budget-service.checkBudget`) resolves
-   * its own month window and never reads this.
+   * Storage stays UTC timestamps (`ai_usage_records.created_at`); this only moves
+   * where the month is cut. Defaults to "UTC" rather than a member's zone — a
+   * shared money boundary has to be a deliberate choice, not one member's laptop.
    */
-  reportingTimezone: string
+  billingTimezone: string
   createdAt: string
   updatedAt: string
 }
@@ -86,7 +87,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   voiceSteeringWords: [],
   maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
   defaultCompanionPersonaId: null,
-  reportingTimezone: "UTC",
+  billingTimezone: "UTC",
 }
 
 /** Partial update — only provided fields are changed. */
@@ -97,7 +98,7 @@ export interface UpdateWorkspaceSettingsInput {
   voiceSteeringWords?: string[]
   maxPendingFollowUps?: number
   defaultCompanionPersonaId?: string | null
-  reportingTimezone?: string
+  billingTimezone?: string
 }
 
 /** Valid top-level settings keys that can be overridden. */

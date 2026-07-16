@@ -5,7 +5,7 @@ import { hasPermission } from "@/lib/permissions"
 import { Label } from "@/components/ui/label"
 import { TimezonePicker, formatTimezoneLabel } from "@/components/ui/timezone-picker"
 
-interface ReportingTimezoneSectionProps {
+interface BillingTimezoneSectionProps {
   workspaceId: string
 }
 
@@ -15,17 +15,13 @@ interface ReportingTimezoneSectionProps {
  * one shared set of day and month lines. Editing is gated to admins; others see
  * the current zone read-only.
  */
-export function ReportingTimezoneSection({ workspaceId }: ReportingTimezoneSectionProps) {
+export function BillingTimezoneSection({ workspaceId }: BillingTimezoneSectionProps) {
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
   const canManage = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   const settings = bootstrap?.workspaceSettings ?? null
-  const savedValue = settings?.reportingTimezone ?? DEFAULT_WORKSPACE_SETTINGS.reportingTimezone
+  const savedValue = settings?.billingTimezone ?? DEFAULT_WORKSPACE_SETTINGS.billingTimezone
 
-  const mutation = useWorkspaceSettingMutation(
-    workspaceId,
-    "reportingTimezone",
-    "Failed to save the workspace timezone"
-  )
+  const mutation = useWorkspaceSettingMutation(workspaceId, "billingTimezone", "Failed to save the workspace timezone")
 
   return (
     <div>
@@ -39,8 +35,8 @@ export function ReportingTimezoneSection({ workspaceId }: ReportingTimezoneSecti
           <TimezonePicker
             value={savedValue}
             disabled={settings == null || mutation.isPending}
-            onChange={(reportingTimezone) => {
-              if (reportingTimezone !== savedValue) mutation.mutate(reportingTimezone)
+            onChange={(billingTimezone) => {
+              if (billingTimezone !== savedValue) mutation.mutate(billingTimezone)
             }}
           />
         </div>

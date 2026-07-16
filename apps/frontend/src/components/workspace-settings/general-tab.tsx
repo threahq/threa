@@ -1,7 +1,7 @@
 import { useFormattedDate } from "@/hooks"
 import { useWorkspaceFromStore } from "@/stores/workspace-store"
 import { formatRegion } from "@/lib/regions"
-import { ReportingTimezoneSection } from "./reporting-timezone-section"
+import { BillingTimezoneSection } from "./billing-timezone-section"
 
 interface GeneralTabProps {
   workspaceId: string
@@ -33,7 +33,7 @@ export function GeneralTab({ workspaceId }: GeneralTabProps) {
         </p>
       </div>
 
-      <ReportingTimezoneSection workspaceId={workspaceId} />
+      <BillingTimezoneSection workspaceId={workspaceId} />
     </div>
   )
 }

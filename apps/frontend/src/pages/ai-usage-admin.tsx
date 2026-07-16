@@ -41,7 +41,7 @@ export function AIUsageAdminPage() {
   // read model before that query lands, and defaulting to "UTC" here would render
   // a whole month of the wrong window under a "Workspace timezone" label, then
   // silently swap once it resolved (INV-11). Unknown holds the fetch instead.
-  const workspaceTimezone = bootstrap?.workspaceSettings?.reportingTimezone ?? null
+  const workspaceTimezone = bootstrap?.workspaceSettings?.billingTimezone ?? null
   const timezone = tzMode === "workspace" ? workspaceTimezone : deviceTimezone
 
   const { data: usage, isLoading: usageLoading } = useAIUsage(workspaceId ?? "", timezone)
