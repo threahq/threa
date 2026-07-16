@@ -209,6 +209,7 @@ export function TraceDialog() {
           workspaceId={workspaceId!}
           streamId={session?.streamId ?? ""}
           userId={userId}
+          isSessionRunning={status === "running"}
           onStopSession={status === "running" ? handleStopSession : undefined}
           onSteerSession={status === "running" ? handleSteerSession : undefined}
         />
@@ -346,6 +347,7 @@ function TraceBody({
   workspaceId,
   streamId,
   userId,
+  isSessionRunning,
   onStopSession,
   onSteerSession,
 }: {
@@ -357,6 +359,7 @@ function TraceBody({
   workspaceId: string
   streamId: string
   userId: string | null
+  isSessionRunning: boolean
   onStopSession?: () => void
   onSteerSession?: () => void
 }) {
@@ -368,6 +371,7 @@ function TraceBody({
       streamId={streamId}
       userId={userId}
       streamingSubsteps={streamingSubsteps}
+      isSessionRunning={isSessionRunning}
       onStopSession={onStopSession}
       onSteerSession={onSteerSession}
     />
