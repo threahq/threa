@@ -95,6 +95,68 @@ describe("AgentSessionRepository.updateStatus SQL guards", () => {
   })
 })
 
+describe("AgentSessionRepository.listRunningByWorkspace", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("scopes to the workspace + running status via the streams join and resolves the sidebar root", async () => {
+    const captured = { text: null as string | null, values: null as unknown[] | null }
+    const db: Querier = {
+      query: mock(async (queryTextOrConfig) => {
+        const config = queryTextOrConfig as QueryConfig
+        captured.text = config.text
+        captured.values = config.values ?? []
+        return {
+          rows: [
+            {
+              session_id: "session_root",
+              stream_id: "stream_channel",
+              root_stream_id: "stream_channel",
+              persona_id: "persona_1",
+              started_at: new Date("2026-06-10T10:00:00.000Z"),
+            },
+            {
+              session_id: "session_thread",
+              stream_id: "stream_thread",
+              root_stream_id: "stream_channel",
+              persona_id: "bot_1",
+              started_at: new Date("2026-06-10T10:05:00.000Z"),
+            },
+          ],
+          rowCount: 2,
+        } as QueryResult
+      }),
+    }
+
+    const rows = await AgentSessionRepository.listRunningByWorkspace(db, "ws_1")
+
+    expect(captured.text).toContain("JOIN streams st ON st.id = se.stream_id")
+    expect(captured.text).toContain("st.workspace_id =")
+    expect(captured.text).toContain("se.status =")
+    expect(captured.text).toContain("COALESCE(st.root_stream_id, se.stream_id)")
+    expect(captured.values).toContain("ws_1")
+    expect(captured.values).toContain(SessionStatuses.RUNNING)
+
+    expect(rows).toEqual([
+      {
+        sessionId: "session_root",
+        streamId: "stream_channel",
+        rootStreamId: "stream_channel",
+        personaId: "persona_1",
+        startedAt: new Date("2026-06-10T10:00:00.000Z"),
+      },
+      {
+        sessionId: "session_thread",
+        streamId: "stream_thread",
+        rootStreamId: "stream_channel",
+        personaId: "bot_1",
+        startedAt: new Date("2026-06-10T10:05:00.000Z"),
+      },
+    ])
+  })
+})
+
 describe("AgentSessionRepository.updateStep finalize-race guard", () => {
   afterEach(() => {
     mock.restore()

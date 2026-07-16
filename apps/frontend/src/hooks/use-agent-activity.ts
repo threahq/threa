@@ -74,10 +74,49 @@ export function useAgentActivity(
   events: StreamEvent[],
   socket: Socket | null,
   workspaceId: string,
-  userId: string | null
+  userId: string | null,
+  streamId?: string
 ): Map<string, MessageAgentActivity> {
   const [progressBySession, setProgressBySession] = useState<Map<string, ProgressEntry>>(new Map())
   const reconnectCount = useSocketReconnectCount()
+
+  // The socket sits in EVERY member stream's room (sync-engine joins them all
+  // for sidebar updates), so progress/activity events for unrelated streams'
+  // sessions arrive here too. A stream view passes `streamId` to gate entry
+  // creation to its own sessions: the session's stream, its thread (payload
+  // threadStreamId), or a thread under one of this view's messages (payload
+  // parentMessageId). Omit it (board rows) to accept all sessions — those
+  // callers match by sessionId themselves.
+  const viewMessageIds = useMemo(() => {
+    if (streamId === undefined) return null
+    const ids = new Set<string>()
+    for (const event of events) {
+      if (event.eventType === "message_created") {
+        ids.add((event.payload as { messageId: string }).messageId)
+      }
+    }
+    return ids
+  }, [events, streamId])
+  const viewMessageIdsRef = useRef(viewMessageIds)
+  useEffect(() => {
+    viewMessageIdsRef.current = viewMessageIds
+  }, [viewMessageIds])
+
+  const belongsToView = useCallback(
+    (payload: { streamId?: string; threadStreamId?: string; parentMessageId?: string }) => {
+      if (streamId === undefined) return true
+      if (payload.streamId === streamId || payload.threadStreamId === streamId) return true
+      return payload.parentMessageId !== undefined && (viewMessageIdsRef.current?.has(payload.parentMessageId) ?? false)
+    },
+    [streamId]
+  )
+
+  // StreamContent persists across `streamId` changes (the route param swaps in
+  // place), so without a reset the previous stream's socket-only entries would
+  // leak into the next view's map.
+  useEffect(() => {
+    setProgressBySession((prev) => (prev.size === 0 ? prev : new Map()))
+  }, [streamId])
 
   // Mirror of `progressBySession` for synchronous reads inside event handlers —
   // lets a substep capture the session's step generation at *arrival* time so a
@@ -170,46 +209,54 @@ export function useAgentActivity(
   }, [runningSessions, events])
 
   // Activity started: session just began, no step yet (renders "Working...")
-  const handleActivityStarted = useCallback((payload: AgentActivityStartedPayload) => {
-    setProgressBySession((prev) => {
-      const next = new Map(prev)
-      next.set(payload.sessionId, {
-        triggerMessageId: payload.triggerMessageId,
-        personaName: payload.personaName,
-        currentStepType: null,
-        stepCount: 0,
-        messageCount: 0,
-        substep: null,
-        threadStreamId: payload.threadStreamId,
-        parentMessageId: payload.parentMessageId,
+  const handleActivityStarted = useCallback(
+    (payload: AgentActivityStartedPayload) => {
+      if (!belongsToView(payload)) return
+      setProgressBySession((prev) => {
+        const next = new Map(prev)
+        next.set(payload.sessionId, {
+          triggerMessageId: payload.triggerMessageId,
+          personaName: payload.personaName,
+          currentStepType: null,
+          stepCount: 0,
+          messageCount: 0,
+          substep: null,
+          threadStreamId: payload.threadStreamId,
+          parentMessageId: payload.parentMessageId,
+        })
+        return next
       })
-      return next
-    })
-  }, [])
+    },
+    [belongsToView]
+  )
 
   // Progress: step type update during active session.
   // When the stepCount changes, the previous step's live substep is stale — clear it
   // so we don't show e.g. "Evaluating results…" left over from workspace_search after
   // we've moved on to "thinking" or "message_sent".
-  const handleProgress = useCallback((payload: AgentSessionProgressPayload) => {
-    setProgressBySession((prev) => {
-      const prior = prev.get(payload.sessionId)
-      const sameStep = prior?.stepCount === payload.stepCount
-      const next = new Map(prev)
-      next.set(payload.sessionId, {
-        triggerMessageId: payload.triggerMessageId,
-        personaName: payload.personaName,
-        currentStepType: payload.currentStepType,
-        stepCount: payload.stepCount,
-        messageCount: payload.messageCount,
-        substep: sameStep ? (prior?.substep ?? null) : null,
-        substepUpdatedAt: sameStep ? prior?.substepUpdatedAt : undefined,
-        threadStreamId: payload.threadStreamId,
-        parentMessageId: payload.parentMessageId,
+  const handleProgress = useCallback(
+    (payload: AgentSessionProgressPayload) => {
+      if (!belongsToView(payload)) return
+      setProgressBySession((prev) => {
+        const prior = prev.get(payload.sessionId)
+        const sameStep = prior?.stepCount === payload.stepCount
+        const next = new Map(prev)
+        next.set(payload.sessionId, {
+          triggerMessageId: payload.triggerMessageId,
+          personaName: payload.personaName,
+          currentStepType: payload.currentStepType,
+          stepCount: payload.stepCount,
+          messageCount: payload.messageCount,
+          substep: sameStep ? (prior?.substep ?? null) : null,
+          substepUpdatedAt: sameStep ? prior?.substepUpdatedAt : undefined,
+          threadStreamId: payload.threadStreamId,
+          parentMessageId: payload.parentMessageId,
+        })
+        return next
       })
-      return next
-    })
-  }, [])
+    },
+    [belongsToView]
+  )
 
   // Apply a decoded substep, gated against races: drop it if the session's step
   // generation advanced since the substep arrived (`stepCountAtArrival`), or if a

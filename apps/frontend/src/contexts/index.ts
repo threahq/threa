@@ -60,3 +60,9 @@ export { SidebarProvider, useSidebar, type UrgencyBlock, type CollapseState } fr
 export { TraceProvider, useTrace } from "./trace-context"
 export { MediaGalleryProvider, useMediaGallery } from "./media-gallery-context"
 export { DictationCoordinatorProvider, useDictationCoordinator } from "./dictation-coordinator-context"
+export {
+  StreamAgentActivityProvider,
+  useAgentActivitySummary,
+  usePublishAgentActivitySummary,
+  type AgentActivitySummaryEntry,
+} from "./stream-agent-activity-context"

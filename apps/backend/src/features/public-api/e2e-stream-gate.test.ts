@@ -302,6 +302,91 @@ describe("public API E2E-stream plaintext gate", () => {
   })
 })
 
+describe("public API bot send trace stamping", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  function botRequest(extra: Partial<Request> = {}): Request {
+    return {
+      workspaceId: "ws_1",
+      params: { streamId: "stream_1" },
+      body: { content: "hello" },
+      botApiKey: { botId: "bot_1" },
+      ...extra,
+    } as unknown as Request
+  }
+
+  function sendHarness() {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Bot", archivedAt: null } as never)
+    const createMessageReturningConversation = mock(() =>
+      Promise.resolve({
+        message: {
+          id: "msg_new",
+          streamId: "stream_1",
+          sequence: 1n,
+          authorId: "bot_1",
+          authorType: "bot",
+          contentJson: { type: "doc", content: [] },
+          contentMarkdown: "hello",
+          reactions: {},
+          metadata: {},
+          editedAt: null,
+          createdAt: new Date(),
+        },
+        conversationId: undefined,
+      })
+    )
+    const botChannelService = {
+      isStreamAccessibleForBot: mock(() => Promise.resolve(true)),
+    } as unknown as PublicApiDeps["botChannelService"]
+    const handlers = createHandlers({
+      eventService: {
+        createMessageReturningConversation,
+        getMessageById: mock(() => Promise.resolve(null)),
+      } as unknown as EventService,
+      botChannelService,
+    })
+    return { handlers, createMessageReturningConversation }
+  }
+
+  it("stamps sessionId when a running session on the stream belongs to this bot", async () => {
+    spyOn(AgentSessionRepository, "findRunningByStream").mockResolvedValue({
+      id: "session_1",
+      personaId: "bot_1",
+    } as never)
+    const { handlers, createMessageReturningConversation } = sendHarness()
+
+    await handlers.sendMessage(botRequest(), createResponse())
+
+    expect(createMessageReturningConversation).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "session_1", authorId: "bot_1" })
+    )
+  })
+
+  it("does not stamp when the running session belongs to a different bot", async () => {
+    spyOn(AgentSessionRepository, "findRunningByStream").mockResolvedValue({
+      id: "session_1",
+      personaId: "bot_2",
+    } as never)
+    const { handlers, createMessageReturningConversation } = sendHarness()
+
+    await handlers.sendMessage(botRequest(), createResponse())
+
+    expect(createMessageReturningConversation).toHaveBeenCalledWith(expect.objectContaining({ sessionId: undefined }))
+  })
+
+  it("does not stamp when no session is running on the stream", async () => {
+    spyOn(AgentSessionRepository, "findRunningByStream").mockResolvedValue(null)
+    const { handlers, createMessageReturningConversation } = sendHarness()
+
+    await handlers.sendMessage(botRequest(), createResponse())
+
+    expect(createMessageReturningConversation).toHaveBeenCalledWith(expect.objectContaining({ sessionId: undefined }))
+  })
+})
+
 // E2E uploads are bot-only: a sealed harness turn can bind the row via the
 // sealed-messages/sealed-complete `attachmentIds`, but a user API key has no
 // sealed message-write path, so its E2E upload could never be referenced.

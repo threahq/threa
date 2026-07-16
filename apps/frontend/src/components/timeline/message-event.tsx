@@ -60,6 +60,7 @@ import { ReminderPickerSheet } from "./reminder-picker-sheet"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { MessageActionDrawer } from "./message-action-drawer"
+import { isAgentTraceActor } from "./message-actions"
 import { ThreadSlot } from "./thread-slot"
 import { DeleteMessageDialog } from "./delete-message-dialog"
 import { MessageEditForm } from "./message-edit-form"
@@ -1149,7 +1150,7 @@ function SentMessageEvent({
       isThreadParent: panelId === threadId || isThreadParentProp,
       replyUrl: effectiveThreadId ? getPanelUrl(effectiveThreadId) : draftPanelUrl,
       traceUrl:
-        event.actorType === "persona" && payload.sessionId
+        isAgentTraceActor(event.actorType) && payload.sessionId
           ? getTraceUrl(payload.sessionId, payload.messageId)
           : undefined,
       messageId: payload.messageId,

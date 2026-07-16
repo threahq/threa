@@ -544,6 +544,7 @@ export type {
   // Workspaces
   CreateWorkspaceInput,
   WorkspaceBootstrap,
+  ActiveAgentSession,
   // Invitations
   PendingInvitation,
   SendInvitationsInput,

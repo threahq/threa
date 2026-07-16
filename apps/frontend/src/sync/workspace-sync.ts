@@ -1,5 +1,11 @@
 import { db, type CachedStream, type CachedStreamMembership, type CachedUnreadState } from "@/db"
 import { seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
+import {
+  seedAgentActivity,
+  upsertAgentSession,
+  removeAgentSession,
+  hasAgentSession,
+} from "@/stores/agent-activity-store"
 import type { SyncEventSource } from "./socket-event-gate"
 import type { QueryClient } from "@tanstack/react-query"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
@@ -19,6 +25,10 @@ import type {
   FeatureFlags,
   LastMessagePreview,
   Activity,
+  AgentSessionStartedPayload,
+  AgentSessionProgressPayload,
+  AgentActivityStartedPayload,
+  AgentActivityEndedPayload,
   ActivityCreatedPayload,
   SavedUpsertedPayload,
   SavedDeletedPayload,
@@ -1155,6 +1165,92 @@ export function registerWorkspaceSocketHandlers(
     )
   }
 
+  // Sidebar agent-activity: keep the running-session store live for stream rows
+  // the viewer isn't currently looking at. The sync engine joins every member
+  // stream's room, so these events arrive here for all of them. Root resolution
+  // rides the local streams cache (`db.streams` carries `rootStreamId`): a
+  // root-level session resolves to its own row; a thread session resolves to the
+  // channel row once the thread is cached (channel-mention threads are cached via
+  // their `stream:created`, which fans out to the parent room). An unresolved
+  // stream (uncached thread) is skipped — the next bootstrap/reconnect re-seed
+  // carries it. Terminal signals remove by session id (root-agnostic), so an end
+  // always clears regardless of which root resolved it.
+  const resolveRootStreamId = async (streamId: string): Promise<string | null> => {
+    const stream = await db.streams.get(streamId)
+    if (!stream) return null
+    return stream.rootStreamId ?? stream.id
+  }
+
+  const handleAgentSessionStartedActivity = async (payload: {
+    workspaceId: string
+    streamId: string
+    event: StreamEvent
+  }) => {
+    if (payload.workspaceId !== workspaceId) return
+    const inner = payload.event.payload as AgentSessionStartedPayload
+    const rootStreamId = await resolveRootStreamId(payload.streamId)
+    if (!rootStreamId) return
+    upsertAgentSession(workspaceId, {
+      sessionId: inner.sessionId,
+      streamId: payload.streamId,
+      rootStreamId,
+      personaName: inner.personaName,
+      startedAt: inner.startedAt,
+    })
+  }
+
+  const handleAgentSessionProgressActivity = async (payload: AgentSessionProgressPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    // Progress arrives per step, but only for the stream/parent rooms this viewer
+    // has joined (trace-emitter emits to streamRoom + parentRoom, never workspace-
+    // wide). Once the session is tracked, nothing the sidebar renders changes —
+    // skip the IDB root lookup and the no-op upsert entirely.
+    if (hasAgentSession(workspaceId, payload.sessionId)) return
+    const rootStreamId = await resolveRootStreamId(payload.streamId)
+    if (!rootStreamId) return
+    upsertAgentSession(workspaceId, {
+      sessionId: payload.sessionId,
+      streamId: payload.streamId,
+      rootStreamId,
+      personaName: payload.personaName,
+      // Progress carries no start time; anchor sort order to arrival.
+      startedAt: new Date().toISOString(),
+    })
+  }
+
+  const handleAgentActivityStarted = async (payload: AgentActivityStartedPayload) => {
+    const rootStreamId = await resolveRootStreamId(payload.threadStreamId)
+    if (!rootStreamId) return
+    upsertAgentSession(workspaceId, {
+      sessionId: payload.sessionId,
+      streamId: payload.threadStreamId,
+      rootStreamId,
+      personaName: payload.personaName,
+      startedAt: new Date().toISOString(),
+    })
+  }
+
+  const handleAgentActivityEnded = (payload: AgentActivityEndedPayload) => {
+    removeAgentSession(workspaceId, payload.sessionId)
+  }
+
+  // agent_session:completed/failed reach this socket in two shapes: the
+  // stream-scoped outbox form `{ workspaceId, streamId, event }`, and a flat
+  // session-room form `{ sessionId }` (trace-emitter/orphan-cleanup/enclave/
+  // public-api) delivered whenever the trace dialog holds the session room open
+  // on this same shared socket. Read the id from either and remove by it —
+  // removal is root-agnostic and a no-op for an id this workspace never tracked.
+  const handleAgentSessionEndedActivity = (payload: {
+    workspaceId?: string
+    streamId?: string
+    event?: StreamEvent
+    sessionId?: string
+  }) => {
+    if (payload.workspaceId !== undefined && payload.workspaceId !== workspaceId) return
+    const sessionId = (payload.event?.payload as { sessionId?: string } | undefined)?.sessionId ?? payload.sessionId
+    if (sessionId) removeAgentSession(workspaceId, sessionId)
+  }
+
   // Handle stream display name updated (from auto-naming service)
   const handleStreamDisplayNameUpdated = (payload: StreamDisplayNameUpdatedPayload) => {
     queryClient.setQueryData(streamKeys.detail(workspaceId, payload.streamId), (old: unknown) => {
@@ -1886,6 +1982,13 @@ export function registerWorkspaceSocketHandlers(
   socket.on("stream:read_all", handleStreamReadAll)
   socket.on("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
   socket.on("stream:activity", handleStreamActivity)
+  socket.on("agent_session:started", handleAgentSessionStartedActivity)
+  socket.on("agent_session:progress", handleAgentSessionProgressActivity)
+  socket.on("agent_session:activity_started", handleAgentActivityStarted)
+  socket.on("agent_session:activity_ended", handleAgentActivityEnded)
+  socket.on("agent_session:completed", handleAgentSessionEndedActivity)
+  socket.on("agent_session:failed", handleAgentSessionEndedActivity)
+  socket.on("agent_session:deleted", handleAgentSessionEndedActivity)
   socket.on("stream:display_name_updated", handleStreamDisplayNameUpdated)
   socket.on("stream:member_added", handleStreamMemberAdded)
   socket.on("stream:member_removed", handleStreamMemberRemoved)
@@ -1943,6 +2046,13 @@ export function registerWorkspaceSocketHandlers(
     socket.off("stream:read_all", handleStreamReadAll)
     socket.off("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
     socket.off("stream:activity", handleStreamActivity)
+    socket.off("agent_session:started", handleAgentSessionStartedActivity)
+    socket.off("agent_session:progress", handleAgentSessionProgressActivity)
+    socket.off("agent_session:activity_started", handleAgentActivityStarted)
+    socket.off("agent_session:activity_ended", handleAgentActivityEnded)
+    socket.off("agent_session:completed", handleAgentSessionEndedActivity)
+    socket.off("agent_session:failed", handleAgentSessionEndedActivity)
+    socket.off("agent_session:deleted", handleAgentSessionEndedActivity)
     socket.off("stream:display_name_updated", handleStreamDisplayNameUpdated)
     socket.off("stream:member_added", handleStreamMemberAdded)
     socket.off("stream:member_removed", handleStreamMemberRemoved)
@@ -2209,6 +2319,10 @@ export async function applyWorkspaceBootstrap(
       _cachedAt: now,
     },
   })
+
+  // Seed the sidebar agent-activity store so a session already running on cold
+  // load paints its stream row without waiting for a live event.
+  seedAgentActivity(workspaceId, bootstrap.activeAgentSessions ?? [])
 }
 
 export async function applyReconnectBootstrapBatch(
@@ -2430,6 +2544,10 @@ export async function applyReconnectBootstrapBatch(
   // caller; reflect the preserved local config so it doesn't carry the stale
   // snapshot value.
   finalBootstrap.sidebarConfig = effectiveSidebarConfig
+
+  // Re-seed the sidebar agent-activity store with the reconnect's running set —
+  // the authority that drops any entry whose end signal was missed (INV-53).
+  seedAgentActivity(workspaceId, finalBootstrap.activeAgentSessions ?? [])
 
   return { workspaceBootstrap: finalBootstrap, streamBootstraps }
 }

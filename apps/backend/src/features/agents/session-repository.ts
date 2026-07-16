@@ -562,11 +562,15 @@ export const AgentSessionRepository = {
   /**
    * Find a running session for a stream.
    *
-   * NOTE: This is a utility method for inspection/debugging. The main session
-   * creation flow uses `insertRunningOrSkip()` which atomically prevents duplicates
-   * via the partial unique index on (stream_id) WHERE status='running'.
+   * NOTE: Session *creation* never uses this — that goes through
+   * `insertRunningOrSkip()`, which atomically prevents duplicates via the partial
+   * unique index on (stream_id) WHERE status='running'. This read is for
+   * opportunistic trace stamping: the public-API bot `sendMessage` path calls it
+   * to deep-link a bot message to its live session.
    *
-   * Uses FOR UPDATE SKIP LOCKED to avoid blocking concurrent transactions.
+   * FOR UPDATE SKIP LOCKED means a momentarily-locked session row is treated as
+   * absent (returns null), so a caller racing an in-flight invocation simply skips
+   * the stamp rather than blocking — best-effort by design.
    */
   async findRunningByStream(db: Querier, streamId: string): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
@@ -580,6 +584,48 @@ export const AgentSessionRepository = {
       `
     )
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
+  },
+
+  /**
+   * All RUNNING sessions in a workspace, each resolved to its sidebar root
+   * (`COALESCE(streams.root_stream_id, streams.id)`) — the row that lights up in
+   * the sidebar. Set-based single query (INV-56), workspace-scoped through the
+   * streams join (INV-8; `agent_sessions` has no `workspace_id` column). Seeds
+   * the bootstrap `activeAgentSessions`; the caller access-filters by the
+   * viewer's accessible root set (INV-62). `personaId` is a persona or bot id —
+   * the caller resolves the display name.
+   */
+  async listRunningByWorkspace(
+    db: Querier,
+    workspaceId: string
+  ): Promise<Array<{ sessionId: string; streamId: string; rootStreamId: string; personaId: string; startedAt: Date }>> {
+    const result = await db.query<{
+      session_id: string
+      stream_id: string
+      root_stream_id: string
+      persona_id: string
+      started_at: Date
+    }>(
+      sql`
+        SELECT
+          se.id AS session_id,
+          se.stream_id,
+          COALESCE(st.root_stream_id, se.stream_id) AS root_stream_id,
+          se.persona_id,
+          se.created_at AS started_at
+        FROM agent_sessions se
+        JOIN streams st ON st.id = se.stream_id
+        WHERE st.workspace_id = ${workspaceId}
+          AND se.status = ${SessionStatuses.RUNNING}
+      `
+    )
+    return result.rows.map((row) => ({
+      sessionId: row.session_id,
+      streamId: row.stream_id,
+      rootStreamId: row.root_stream_id,
+      personaId: row.persona_id,
+      startedAt: row.started_at,
+    }))
   },
 
   /**

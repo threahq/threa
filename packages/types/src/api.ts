@@ -1599,6 +1599,31 @@ export interface WorkspaceBootstrap {
    * reconnect bootstraps that reuse this shape) omit it.
    */
   syncHead?: string
+  /**
+   * Agent sessions currently RUNNING in streams the viewer can access, resolved
+   * to their sidebar root (`rootStreamId`) so the sidebar can paint an
+   * "agent working" state cold (INV-62: access-filtered server-side; a session in
+   * a stream the viewer can't see is omitted). Live starts/ends ride the
+   * `agent_session:*` room events; this seeds the store and, on reconnect,
+   * re-seeds it as the authoritative running set (INV-53). Optional: payloads
+   * cached before this field shipped omit it (absent reads as empty).
+   */
+  activeAgentSessions?: ActiveAgentSession[]
+}
+
+/**
+ * One running agent session, projected for the sidebar activity indicator.
+ * `streamId` is the session's own stream (a channel/scratchpad/DM root, or a
+ * thread); `rootStreamId` is the non-thread ancestor whose sidebar row lights up
+ * (`COALESCE(streams.root_stream_id, streams.id)`). `personaName` is the
+ * persona or bot display name driving the session.
+ */
+export interface ActiveAgentSession {
+  sessionId: string
+  streamId: string
+  rootStreamId: string
+  personaName: string
+  startedAt: string
 }
 
 export interface PendingInvitation {

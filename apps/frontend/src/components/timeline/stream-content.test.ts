@@ -11,9 +11,13 @@ import {
   resolveDateJumpAnchor,
   remapSuppressedWatermark,
   resolveUnreadMarkerOpen,
+  resolveFollowPill,
+  buildAgentActivitySummary,
+  type RunningSessionCard,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
 import type { StreamEvent } from "@threa/types"
+import type { MessageAgentActivity } from "@/hooks"
 
 const DEADLINE = 4000
 
@@ -560,5 +564,142 @@ describe("resolveUnreadMarkerOpen", () => {
 
   it("consumes the decision as skip (not wait) for a deep-link even while still loading — a deep-linked stream never marker-scrolls", () => {
     expect(resolveUnreadMarkerOpen({ ...base, hasDeepLink: true, isLoading: true })).toBe("skip")
+  })
+})
+
+describe("resolveFollowPill", () => {
+  const card = (over: Partial<RunningSessionCard> & { sessionId: string; itemIndex: number }): RunningSessionCard => ({
+    personaName: "Ariadne",
+    stepCount: 3,
+    anchorId: `anchor_${over.sessionId}`,
+    ...over,
+  })
+
+  it("shows nothing when no session is running", () => {
+    expect(resolveFollowPill({ sessions: [], topIndex: 0, bottomIndex: 10 })).toBeNull()
+  })
+
+  it("shows nothing while the only running card is inside the visible range (inclusive of the edges)", () => {
+    for (const itemIndex of [5, 20, 40]) {
+      expect(
+        resolveFollowPill({ sessions: [card({ sessionId: "s1", itemIndex })], topIndex: 5, bottomIndex: 40 })
+      ).toBeNull()
+    }
+  })
+
+  it("points up with the persona label when a single card sits above the viewport", () => {
+    expect(
+      resolveFollowPill({
+        sessions: [card({ sessionId: "s1", itemIndex: 2, stepCount: 7 })],
+        topIndex: 5,
+        bottomIndex: 40,
+      })
+    ).toEqual({
+      sessionId: "s1",
+      anchorId: "anchor_s1",
+      direction: "up",
+      personaName: "Ariadne",
+      stepCount: 7,
+      count: 1,
+    })
+  })
+
+  it("points down when a single card sits below the viewport", () => {
+    expect(
+      resolveFollowPill({ sessions: [card({ sessionId: "s1", itemIndex: 60 })], topIndex: 5, bottomIndex: 40 })
+        ?.direction
+    ).toBe("down")
+  })
+
+  it("ignores sessions whose card is not in the rendered window (itemIndex -1)", () => {
+    expect(
+      resolveFollowPill({ sessions: [card({ sessionId: "s1", itemIndex: -1 })], topIndex: 5, bottomIndex: 40 })
+    ).toBeNull()
+  })
+
+  it("aggregates the label and jumps to the nearest off-screen card when several run", () => {
+    const result = resolveFollowPill({
+      sessions: [
+        card({ sessionId: "far_up", itemIndex: 0 }), // distance 5 from top
+        card({ sessionId: "near_down", itemIndex: 42 }), // distance 2 from bottom
+      ],
+      topIndex: 5,
+      bottomIndex: 40,
+    })
+    expect(result).toMatchObject({
+      sessionId: "near_down",
+      anchorId: "anchor_near_down",
+      direction: "down",
+      personaName: null,
+      count: 2,
+    })
+  })
+
+  it("only counts off-screen cards toward the aggregate — an on-screen session doesn't bump the count", () => {
+    const result = resolveFollowPill({
+      sessions: [card({ sessionId: "onscreen", itemIndex: 20 }), card({ sessionId: "offscreen", itemIndex: 2 })],
+      topIndex: 5,
+      bottomIndex: 40,
+    })
+    expect(result).toMatchObject({ sessionId: "offscreen", personaName: "Ariadne", count: 1 })
+  })
+})
+
+describe("buildAgentActivitySummary", () => {
+  const activity = (over: Partial<MessageAgentActivity> & { sessionId: string }): MessageAgentActivity => ({
+    personaName: "Ariadne",
+    currentStepType: null,
+    stepCount: 0,
+    messageCount: 0,
+    substep: null,
+    ...over,
+  })
+  const startedEvent = (sessionId: string, startedAt: string) =>
+    ({
+      eventType: "agent_session:started",
+      payload: { sessionId, startedAt },
+    }) as unknown as StreamEvent
+
+  it("returns an empty array when no session is running", () => {
+    expect(buildAgentActivitySummary(new Map(), [])).toEqual([])
+    expect(buildAgentActivitySummary(undefined, [])).toEqual([])
+  })
+
+  it("returns one entry per running session with its live step count", () => {
+    const map = new Map<string, MessageAgentActivity>([
+      ["trigger_1", activity({ sessionId: "s1", personaName: "Ariadne", stepCount: 4 })],
+    ])
+    expect(buildAgentActivitySummary(map, [])).toEqual([{ sessionId: "s1", personaName: "Ariadne", stepCount: 4 }])
+  })
+
+  it("dedupes a thread session aliased under both its trigger and parent-message keys", () => {
+    // useAgentActivity keys a thread session under two ids; the summary is per session.
+    const shared = activity({ sessionId: "s1", stepCount: 2 })
+    const map = new Map<string, MessageAgentActivity>([
+      ["trigger_1", shared],
+      ["parent_msg_1", shared],
+    ])
+    expect(buildAgentActivitySummary(map, [])).toEqual([{ sessionId: "s1", personaName: "Ariadne", stepCount: 2 }])
+  })
+
+  it("orders most recently started first using the started events", () => {
+    const map = new Map<string, MessageAgentActivity>([
+      ["t_old", activity({ sessionId: "s_old", personaName: "Older" })],
+      ["t_new", activity({ sessionId: "s_new", personaName: "Newer" })],
+    ])
+    const events = [
+      startedEvent("s_old", "2026-07-16T10:00:00.000Z"),
+      startedEvent("s_new", "2026-07-16T10:05:00.000Z"),
+    ]
+    expect(buildAgentActivitySummary(map, events).map((e) => e.sessionId)).toEqual(["s_new", "s_old"])
+  })
+
+  it("sorts a session with no started event (socket-only channel view) after one that has one", () => {
+    const map = new Map<string, MessageAgentActivity>([
+      ["t_known", activity({ sessionId: "s_known" })],
+      ["t_socket", activity({ sessionId: "s_socket" })],
+    ])
+    const events = [startedEvent("s_known", "2026-07-16T10:00:00.000Z")]
+    expect(buildAgentActivitySummary(map, events).map((e) => e.sessionId)).toEqual(["s_known", "s_socket"])
   })
 })

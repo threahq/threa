@@ -20,13 +20,20 @@ import {
   useIsMobile,
   useNewMessageIndicator,
   useAgentActivity,
+  type MessageAgentActivity,
   useAbortSession,
   useEditLastMessageTrigger,
   useKeyboardShortcuts,
   streamKeys,
   workspaceKeys,
 } from "@/hooks"
-import { useSocket, useCoordinatedLoading, usePreferencesOptional } from "@/contexts"
+import {
+  useSocket,
+  useCoordinatedLoading,
+  usePreferencesOptional,
+  usePublishAgentActivitySummary,
+  type AgentActivitySummaryEntry,
+} from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams, useWorkspaceStreamMemberships } from "@/stores/workspace-store"
@@ -57,6 +64,7 @@ import {
   type DelegationStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
   type UnreadOpenPosition,
+  type AgentSessionStartedPayload,
 } from "@threa/types"
 import {
   EventList,
@@ -99,6 +107,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MessageInput } from "./message-input"
 import { StreamDateHeader } from "./stream-date-header"
+import { AgentFollowPill } from "./agent-follow-pill"
 import { JoinChannelBar } from "./join-channel-bar"
 import { ThreadParentMessage } from "../thread/thread-parent-message"
 import { EditLastMessageContext } from "./edit-last-message-context"
@@ -464,6 +473,139 @@ export function resolveUnreadMarkerOpen(args: {
   return "scroll"
 }
 
+/** A running agent session and where its card sits in the rendered window. */
+export interface RunningSessionCard {
+  sessionId: string
+  personaName: string
+  stepCount: number
+  /** Index of the session's card (or trigger-message anchor) in the rendered items, or -1 when absent. */
+  itemIndex: number
+  /** Id the scroll driver keys on: the session card's first event, or the trigger message it's anchored on. */
+  anchorId: string
+}
+
+/** The follow-pill affordance: which off-screen running session to surface and how to point at it. */
+export interface FollowPillState {
+  /** The session the pill jumps to — the nearest off-screen card. */
+  sessionId: string
+  /** Id passed to `scrollToMessage` — the card's first event or the trigger message. */
+  anchorId: string
+  /** Which way the card sits relative to the viewport. */
+  direction: "up" | "down"
+  /** Persona name, shown only when a single session is off-screen; null when aggregated. */
+  personaName: string | null
+  stepCount: number
+  /** How many running sessions have off-screen cards. */
+  count: number
+}
+
+/**
+ * Decide the follow pill from the running sessions and the virtua visible range.
+ * The pill surfaces only sessions whose card sits outside [topIndex, bottomIndex];
+ * with several off-screen it aggregates the label and points at the nearest card.
+ * Returns null when every running card is on screen (or none is running).
+ */
+export function resolveFollowPill(args: {
+  sessions: RunningSessionCard[]
+  topIndex: number
+  bottomIndex: number
+}): FollowPillState | null {
+  const offscreen = args.sessions.filter(
+    (s) => s.itemIndex >= 0 && (s.itemIndex < args.topIndex || s.itemIndex > args.bottomIndex)
+  )
+  if (offscreen.length === 0) return null
+  const distance = (s: RunningSessionCard) =>
+    s.itemIndex < args.topIndex ? args.topIndex - s.itemIndex : s.itemIndex - args.bottomIndex
+  const nearest = offscreen.reduce((best, s) => (distance(s) < distance(best) ? s : best))
+  const single = offscreen.length === 1
+  return {
+    sessionId: nearest.sessionId,
+    anchorId: nearest.anchorId,
+    direction: nearest.itemIndex < args.topIndex ? "up" : "down",
+    personaName: single ? nearest.personaName : null,
+    stepCount: nearest.stepCount,
+    count: offscreen.length,
+  }
+}
+
+/** Shallow-compare two pill states so a scroll tick that changes nothing skips the re-render. */
+function followPillEqual(a: FollowPillState | null, b: FollowPillState | null): boolean {
+  if (a === b) return true
+  if (a === null || b === null) return false
+  return (
+    a.sessionId === b.sessionId &&
+    a.anchorId === b.anchorId &&
+    a.direction === b.direction &&
+    a.personaName === b.personaName &&
+    a.stepCount === b.stepCount &&
+    a.count === b.count
+  )
+}
+
+const EMPTY_ACTIVITY_SUMMARY: AgentActivitySummaryEntry[] = []
+
+/** One running session collapsed from the per-message activity map. */
+export interface DedupedRunningSession {
+  sessionId: string
+  personaName: string
+  stepCount: number
+  /** Every message id the session is aliased under (thread sessions appear under trigger + parent). */
+  anchors: string[]
+}
+
+/**
+ * Collapse the per-message agent-activity map to one entry per session. The map
+ * aliases a thread session under two keys (trigger + parent message), so first
+ * occurrence wins for personaName/stepCount while `anchors` accumulates every
+ * key. Single source of the dedup rule for both the header-chip summary and the
+ * follow-pill cards, so they can never disagree on a session's step count.
+ */
+export function dedupeRunningSessions(
+  agentActivity: Map<string, MessageAgentActivity> | undefined
+): DedupedRunningSession[] {
+  if (!agentActivity || agentActivity.size === 0) return []
+  const bySession = new Map<string, DedupedRunningSession>()
+  for (const [anchorMessageId, activity] of agentActivity) {
+    const existing = bySession.get(activity.sessionId)
+    if (existing) existing.anchors.push(anchorMessageId)
+    else
+      bySession.set(activity.sessionId, {
+        sessionId: activity.sessionId,
+        personaName: activity.personaName,
+        stepCount: activity.stepCount,
+        anchors: [anchorMessageId],
+      })
+  }
+  return Array.from(bySession.values())
+}
+
+/**
+ * Order the running sessions into the header chip's summary: most recently
+ * started first. Ordering keys off each session's `started` event when the
+ * timeline holds it (its own stream); channel-view sessions known only from
+ * socket carry no start time and sort last, so the chip's "most recent" click
+ * target favours a session whose lifecycle this stream actually owns.
+ */
+export function buildAgentActivitySummary(
+  agentActivity: Map<string, MessageAgentActivity> | undefined,
+  events: StreamEvent[]
+): AgentActivitySummaryEntry[] {
+  const sessions = dedupeRunningSessions(agentActivity)
+  if (sessions.length === 0) return EMPTY_ACTIVITY_SUMMARY
+  const startedAtBySession = new Map<string, string>()
+  for (const event of events) {
+    if (event.eventType === "agent_session:started") {
+      const payload = event.payload as AgentSessionStartedPayload
+      startedAtBySession.set(payload.sessionId, payload.startedAt)
+    }
+  }
+  const list = sessions.map(({ sessionId, personaName, stepCount }) => ({ sessionId, personaName, stepCount }))
+  list.sort((a, b) =>
+    (startedAtBySession.get(b.sessionId) ?? "").localeCompare(startedAtBySession.get(a.sessionId) ?? "")
+  )
+  return list
+}
+
 interface StreamContentProps {
   workspaceId: string
   streamId: string
@@ -736,7 +878,16 @@ export function StreamContent({
   // Track live agent session progress for all stream types (step/message counts on session cards).
   // In channels, session cards are hidden (responses go to threads) and inline activity shows on trigger messages instead.
   const isChannel = stream?.type === StreamTypes.CHANNEL
-  const agentActivity = useAgentActivity(events, socket, workspaceId, currentWorkspaceUserId)
+  const agentActivity = useAgentActivity(events, socket, workspaceId, currentWorkspaceUserId, streamId)
+
+  // Publish a running-session summary up to the header chip. No-ops for a
+  // thread-panel StreamContent (mounted outside the open stream's provider).
+  const publishAgentActivitySummary = usePublishAgentActivitySummary()
+  const agentActivitySummary = useMemo(() => buildAgentActivitySummary(agentActivity, events), [agentActivity, events])
+  useEffect(() => {
+    publishAgentActivitySummary(agentActivitySummary)
+  }, [agentActivitySummary, publishAgentActivitySummary])
+  useEffect(() => () => publishAgentActivitySummary(EMPTY_ACTIVITY_SUMMARY), [publishAgentActivitySummary])
 
   // E2E streams search decrypted bodies client-side (the server only holds
   // ciphertext); pass the flag + viewer id so the hook can resolve the session.
@@ -1675,6 +1826,20 @@ export function StreamContent({
     [events, hasOlderEvents, disableAutoScroll, scrollToMessage, jumpToEventByDate, resetShiftBaseline]
   )
 
+  // Follow-pill jump: scroll a running session's off-screen card into view.
+  // Reuses the convergent scrollToMessage driver — same as search / date jumps —
+  // because the card is usually virtualized far outside the measured window, and
+  // a one-shot scrollToIndex on unmeasured rows lands pages off target with no
+  // retry. Clearing the manual-control stamp (as handleSearchNavigate /
+  // handleJumpToDate do) lets the refine loop run for this explicit intent.
+  const handleFollowSession = useCallback(
+    (anchorId: string) => {
+      userInteractedAtRef.current = 0
+      scrollToMessage(anchorId, { align: "center" })
+    },
+    [scrollToMessage]
+  )
+
   // Highlight search matches in the DOM via CSS Custom Highlight API
   useSearchHighlight(
     scrollContainerRef,
@@ -2253,6 +2418,8 @@ export function StreamContent({
     )
   }
 
+  const unreadBannerVisible = unreadAboveViewport && unreadCount > 0 && !batchMode && !isSearchOpen
+
   return (
     <ReadFrontierContext.Provider value={readFrontier}>
       <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
@@ -2366,6 +2533,8 @@ export function StreamContent({
                           batchPointerHandlers={batchPointerHandlers}
                           conversationOverlay={activeConversationOverlay}
                           onJumpToDate={handleJumpToDate}
+                          onFollowSession={handleFollowSession}
+                          unreadBannerVisible={unreadBannerVisible}
                         />
                         {/* Overlay loading indicators — absolutely positioned so they
                     don't cause layout shift when prepending older messages. */}
@@ -2471,7 +2640,7 @@ export function StreamContent({
               Hidden while search is open: jumping the timeline would yank it out
               from under the active search-result navigation, and the Escape
               mark-read shortcut is gated on `!isSearchOpen` too. */}
-                  {unreadAboveViewport && unreadCount > 0 && !batchMode && !isSearchOpen && (
+                  {unreadBannerVisible && (
                     <div
                       // Sits clearly below the floating date pill (top-2, ~30px tall)
                       // so the top-center affordances never overlap.
@@ -2632,6 +2801,8 @@ function TimelineMessageList({
   batchPointerHandlers,
   conversationOverlay,
   onJumpToDate,
+  onFollowSession,
+  unreadBannerVisible,
 }: {
   visibleItems: TimelineItem[]
   cancelledFollowUpIds: Set<string>
@@ -2693,6 +2864,10 @@ function TimelineMessageList({
   conversationOverlay?: ConversationOverlayContext
   /** Jump to the first message on or after a date (floating date header). */
   onJumpToDate: (date: Date) => void
+  /** Jump the timeline to a running session's card (follow pill); reuses the convergent scroll driver. */
+  onFollowSession: (anchorId: string) => void
+  /** True while the "N new messages" banner occupies the top-3.5rem slot — the follow pill drops below it. */
+  unreadBannerVisible: boolean
 }) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -2728,6 +2903,40 @@ function TimelineMessageList({
     }
     return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps }
   }, [agentActivity])
+
+  // Running sessions in this window, each resolved to the row the follow pill
+  // points at: the session card when present (scratchpad/thread), else the
+  // trigger message it's anchored on (channels hide session cards). Deduped by
+  // sessionId — the activity map aliases thread sessions under two keys.
+  const [followPill, setFollowPill] = useState<FollowPillState | null>(null)
+  const runningSessionCards = useMemo<RunningSessionCard[]>(() => {
+    const cards: RunningSessionCard[] = []
+    for (const { sessionId, personaName, stepCount, anchors } of dedupeRunningSessions(agentActivity)) {
+      const sessionItemIndex = visibleItems.findIndex((it) => it.type === "session_group" && it.sessionId === sessionId)
+      let itemIndex = sessionItemIndex
+      // Anchor id keys the scroll driver: a session card resolves to its first
+      // event's id (the row's data-event-id); a channel trigger message to the
+      // message id itself. Both round-trip through findTimelineTargetIndex.
+      let anchorId = ""
+      if (sessionItemIndex >= 0) {
+        const item = visibleItems[sessionItemIndex]
+        if (item.type === "session_group") anchorId = item.events[0]?.id ?? ""
+      } else {
+        for (const anchor of anchors) {
+          const idx = findMessageItemIndex(visibleItems, anchor)
+          if (idx >= 0) {
+            itemIndex = idx
+            anchorId = anchor
+            break
+          }
+        }
+      }
+      cards.push({ sessionId, personaName, stepCount, itemIndex, anchorId })
+    }
+    return cards
+  }, [agentActivity, visibleItems])
+  const runningSessionCardsRef = useRef(runningSessionCards)
+  runningSessionCardsRef.current = runningSessionCards
 
   const handleStopSession = useCallback(
     (sessionId: string) => abortSession({ sessionId, workspaceId }),
@@ -2868,6 +3077,41 @@ function TimelineMessageList({
     setDatePillVisible((prev) => (prev === show ? prev : show))
   }, [listRef, scrollerRef, isSearchOpen, batch?.enabled, isFetchingOlder, isInitialSettling])
 
+  // Follow pill: while a running session's card is scrolled out of the viewport,
+  // surface a jump affordance pointing at it. Piggybacks on the scroll handler
+  // (virtua has no range event) and re-runs when the running set / window shifts.
+  // Reads the cards off a ref so the callback stays stable like updateDatePill.
+  const updateFollowPill = useCallback(() => {
+    const cards = runningSessionCardsRef.current
+    // scrollAbortRef non-null = a programmatic jump (search, date, follow) is
+    // converging; intermediate frames have the card legitimately off-screen and
+    // would flash the pill mid-flight. Stay hidden until the jump settles — the
+    // next scroll event or step tick recomputes from the rest position.
+    const suppressed = isSearchOpen || batch?.enabled || isInitialSettling || scrollAbortRef.current !== null
+    if (suppressed || cards.length === 0) {
+      setFollowPill((prev) => (prev === null ? prev : null))
+      return
+    }
+    const list = listRef.current
+    if (!list) return
+    let topIndex: number
+    let bottomIndex: number
+    try {
+      topIndex = list.findItemIndex(list.scrollOffset)
+      bottomIndex = list.findItemIndex(list.scrollOffset + list.viewportSize)
+    } catch {
+      return
+    }
+    const next = resolveFollowPill({ sessions: cards, topIndex, bottomIndex })
+    setFollowPill((prev) => (followPillEqual(prev, next) ? prev : next))
+  }, [listRef, isSearchOpen, batch?.enabled, isInitialSettling, scrollAbortRef])
+
+  // Recompute when the running set or window changes (step ticks, session end,
+  // a prepend/append shifting indices) — a scroll may not follow those.
+  useEffect(() => {
+    updateFollowPill()
+  }, [runningSessionCards, updateFollowPill])
+
   // Pagination is driven off the owned scroller's native scroll. virtua has no
   // rangeChanged, so we measure distance from each edge in px and prefetch when
   // within a lead distance. Gated so a programmatic deep-link scroll never
@@ -2875,6 +3119,7 @@ function TimelineMessageList({
   const handleScroll = useCallback(() => {
     onTimelineScroll()
     updateDatePill()
+    updateFollowPill()
     if (
       !shouldRunEdgePagination({
         scrollRefineActive: scrollAbortRef.current !== null,
@@ -2897,6 +3142,7 @@ function TimelineMessageList({
   }, [
     onTimelineScroll,
     updateDatePill,
+    updateFollowPill,
     scrollAbortRef,
     isJumpMode,
     userInteractedAtRef,
@@ -3074,6 +3320,18 @@ function TimelineMessageList({
         visible={datePillVisible}
         onJumpToDate={onJumpToDate}
         scrollerRef={scrollerRef}
+      />
+      <AgentFollowPill
+        state={followPill}
+        belowUnreadBanner={unreadBannerVisible}
+        onFollow={(anchorId) => {
+          // Hide immediately — the convergent scroll can take a beat and the next
+          // recompute waits for a scroll event or step tick, which would leave the
+          // pill hanging over the card it just revealed. If the jump fails to
+          // bring the card into view, the next scroll/tick re-shows it.
+          setFollowPill(null)
+          onFollowSession(anchorId)
+        }}
       />
       {isInitialSettling && (
         <div aria-hidden className="pointer-events-none absolute inset-0 z-10 bg-background">
