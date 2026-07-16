@@ -357,18 +357,28 @@ export const ScheduledMessagesRepository = {
    * worker defers because of the fence, and the user's PATCH 409s with
    * NOT_PENDING because of the same fence.
    *
+   * `force: true` additionally drops the `scheduled_for <= NOW()` guard so a
+   * user-initiated Send Now fires a still-future row immediately. This anchors
+   * the send on the DB clock (the CAS) rather than a JS `new Date()`: forcing
+   * a future row by rewriting `scheduled_for = new Date()` and re-running the
+   * guard raced app↔DB clock skew — an app clock a few hundred ms ahead of
+   * Postgres put the rewritten time just past the DB's NOW() and the send
+   * silently 409'd. Only the user-initiated `sendNow` path forces; the worker
+   * and the past-time save keep the guard.
+   *
    * Returns null on:
    *  - status not pending (cancelled, already sending/sent, failed)
-   *  - scheduled_for in the future (stale leased queue row that survived a
-   *    reschedule cancel — see service.fire's pre-check comment)
+   *  - scheduled_for in the future AND `force` is false (stale leased queue
+   *    row that survived a reschedule cancel — see service.fire's pre-check)
    *  - edit_active_until in the future AND `bypassFence` is false (worker
    *    path only; an editor is active, defer)
    */
   async tryStartSend(
     db: Querier,
-    params: { workspaceId: string; id: string; ttlSeconds: number; bypassFence?: boolean }
+    params: { workspaceId: string; id: string; ttlSeconds: number; bypassFence?: boolean; force?: boolean }
   ): Promise<ScheduledMessage | null> {
     const bypassFence = params.bypassFence ?? false
+    const force = params.force ?? false
     const result = await db.query<ScheduledMessageRow>(sql`
       UPDATE scheduled_messages SET
         status = ${ScheduledMessageStatuses.SENDING},
@@ -379,7 +389,7 @@ export const ScheduledMessagesRepository = {
       WHERE id = ${params.id}
         AND workspace_id = ${params.workspaceId}
         AND status = ${ScheduledMessageStatuses.PENDING}
-        AND scheduled_for <= NOW()
+        AND (${force}::boolean OR scheduled_for <= NOW())
         AND (
           ${bypassFence}::boolean
           OR edit_active_until IS NULL

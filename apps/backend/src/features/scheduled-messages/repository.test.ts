@@ -256,6 +256,28 @@ describe("ScheduledMessagesRepository.tryStartSend (worker CAS)", () => {
 
     expect(captured.values).toContain(true)
   })
+
+  it("drops the scheduled_for guard when force=true so Send Now fires a still-future row regardless of clock skew", async () => {
+    // Send Now must not depend on scheduled_for <= NOW(): the row is
+    // future-scheduled and the user asked to send it now. `force` short-
+    // circuits the schedule check in SQL (the OR branch) rather than the
+    // service rewriting scheduled_for to a JS `new Date()` and racing DB
+    // clock skew.
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured)
+
+    await ScheduledMessagesRepository.tryStartSend(db, {
+      workspaceId: "ws_1",
+      id: "sched_01",
+      ttlSeconds: 10,
+      force: true,
+    })
+
+    // The guard survives only as an OR branch behind the force flag.
+    expect(captured.text).toContain("OR scheduled_for <= NOW()")
+    // force=true is passed (bypassFence defaults false), so a `true` appears.
+    expect(captured.values).toContain(true)
+  })
 })
 
 describe("ScheduledMessagesRepository.releaseEditFence", () => {
