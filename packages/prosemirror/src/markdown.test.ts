@@ -31,6 +31,32 @@ describe("@threa/prosemirror markdown links", () => {
     ])
   })
 
+  it("keeps a #-leading link label as text — [#1358](https url) is a titled link, not a channel", () => {
+    const parsed = parseMarkdown("PR open: [#1358](https://github.com/threahq/threa/pull/1358).")
+
+    expect(parsed.content?.[0]?.content).toEqual([
+      { type: "text", text: "PR open: " },
+      {
+        type: "text",
+        text: "#1358",
+        marks: [{ type: "link", attrs: { href: "https://github.com/threahq/threa/pull/1358" } }],
+      },
+      { type: "text", text: "." },
+    ])
+  })
+
+  it("keeps an @-leading link label as text — [@handle](https url) is a titled link, not a mention", () => {
+    const parsed = parseMarkdown("[@octocat](https://github.com/octocat)")
+
+    expect(parsed.content?.[0]?.content).toEqual([
+      {
+        type: "text",
+        text: "@octocat",
+        marks: [{ type: "link", attrs: { href: "https://github.com/octocat" } }],
+      },
+    ])
+  })
+
   it("does not leak link tokens from malformed outer links", () => {
     const parsed = parseMarkdown("[bad](not-a-url and [good](https://example.com)")
 

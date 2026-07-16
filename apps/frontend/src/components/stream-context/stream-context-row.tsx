@@ -103,14 +103,14 @@ function LinkLeading({ item }: { item: LinkContextItem }) {
   )
 }
 
-function BadgePill({ label, tone }: { label: string; tone: "github" | "linear" }) {
+function BadgePill({ label, tone }: { label: string; tone: "github" | "linear" | "in-app" }) {
   return (
     <span
       className={cn(
         "shrink-0 rounded px-1 py-px text-[10px] font-semibold uppercase tracking-wide",
-        tone === "github"
-          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-          : "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400"
+        tone === "github" && "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+        tone === "linear" && "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
+        tone === "in-app" && "bg-primary/10 text-primary"
       )}
     >
       {label}
@@ -139,6 +139,7 @@ export function StreamContextRow({
   // Set when the row's primary action opens the in-stream gallery; the value is
   // the gallery key (`?smedia=`) — an attachment id or a `giphy:` sentinel.
   let galleryKey: string | null = null
+  let opensExternally = false
 
   switch (item.category) {
     case "link": {
@@ -146,13 +147,16 @@ export function StreamContextRow({
       primaryText = item.title ?? prettyHost(item.url)
       secondaryText = item.title ? prettyHost(item.url) : item.snippet || prettyHost(item.url)
       if (item.refCount > 1) secondaryText = `${secondaryText} · ${item.refCount}×`
-      if (item.badge)
-        badge = <BadgePill label={item.badge} tone={item.previewKind === "linear" ? "linear" : "github"} />
+      if (item.badge) {
+        const tones = { linear: "linear", "in-app": "in-app", github: "github", generic: "github" } as const
+        badge = <BadgePill label={item.badge} tone={tones[item.previewKind]} />
+      }
       // A link to our own origin routes in-app (react-router), matching how the
       // message body renders links (lib/markdown/components.tsx). Modifier- and
       // middle-clicks fall through to the native <a> so "open in new tab" still
       // works. External links keep opening in a new browsing context.
       const internalPath = resolveInternalAppPath(item.url)
+      opensExternally = internalPath == null
       primaryAction = internalPath ? (
         <a
           href={internalPath}
@@ -344,10 +348,11 @@ export function StreamContextRow({
             <div className="flex items-center gap-1.5">
               {badge}
               <span className="truncate text-sm font-medium leading-snug">{primaryText}</span>
-              {item.category === "link" && (
+              {item.category === "link" && opensExternally && (
                 // Persistent (not hover-gated) so a link row reads as "opens
                 // externally" at a glance, distinct from the rows that jump to
                 // the message — and visible on touch, where there is no hover.
+                // In-app links navigate inside Threa, so they don't get it.
                 <ExternalLink className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
               )}
             </div>

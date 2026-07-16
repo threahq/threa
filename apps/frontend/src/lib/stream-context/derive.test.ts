@@ -209,7 +209,7 @@ describe("deriveStreamContext", () => {
     expect(links[0].sourceMessageId).toBe("msg_2")
   })
 
-  it("excludes in-app message_link previews from the links list", () => {
+  it("surfaces in-app message_link previews as badged link items", () => {
     const events = [
       messageEvent("2026-06-23T10:00:00.000Z", {
         linkPreviews: [
@@ -227,7 +227,42 @@ describe("deriveStreamContext", () => {
         ],
       }),
     ]
-    expect(deriveStreamContext(events).counts.link).toBe(0)
+
+    const links = deriveStreamContext(events).items.filter((i): i is LinkContextItem => i.category === "link")
+    expect(links).toHaveLength(1)
+    expect(links[0]).toMatchObject({
+      url: "https://app.threa.io/w/ws_1/s/stream_2?m=msg_x",
+      title: "A shared message",
+      previewKind: "in-app",
+      badge: "Message",
+    })
+  })
+
+  it("surfaces a PR link stored as a channelLink node with a link mark (the [#1358](url) parse quirk)", () => {
+    const events = [
+      messageEvent("2026-06-23T10:00:00.000Z", {
+        contentJson: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "PR open: " },
+                {
+                  type: "channelLink",
+                  attrs: { id: "1358", slug: "1358" },
+                  marks: [{ type: "link", attrs: { href: "https://github.com/threahq/threa/pull/1358" } }],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ]
+
+    const links = deriveStreamContext(events).items.filter((i): i is LinkContextItem => i.category === "link")
+    expect(links).toHaveLength(1)
+    expect(links[0].url).toBe("https://github.com/threahq/threa/pull/1358")
   })
 
   it("buckets image/gif/video attachments as media and others as files", () => {
