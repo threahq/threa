@@ -68,12 +68,17 @@ const LINEAR_BADGES: Record<string, string> = {
   linear_project: "Project",
   linear_document: "Doc",
 }
+// Labels stay type-agnostic where the reference can point at several stream
+// kinds: a stream_link may be a channel, scratchpad, or DM, and the per-viewer
+// streamType needed to distinguish them (inAppData) is absent on broadcast
+// events — "Stream" is correct for all three. Memo/delegation wording matches
+// this panel's own filter chips ("Memories", "Delegations").
 const IN_APP_BADGES: Record<string, string> = {
   message_link: "Message",
-  stream_link: "Channel",
-  memo_link: "Memo",
+  stream_link: "Stream",
+  memo_link: "Memory",
   conversation_link: "Conversation",
-  delegation_link: "Task",
+  delegation_link: "Delegation",
 }
 
 function linkBadge(preview: LinkPreviewSummary | undefined): {
