@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Loader2 } from "lucide-react"
+import { Loader2, Send, Trash2 } from "lucide-react"
 import type { Editor } from "@tiptap/react"
 import { type JSONContent, type ScheduledMessageView } from "@threa/types"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -17,6 +17,7 @@ import {
   useLockScheduledForEdit,
   useReleaseScheduledEditLock,
   useSendScheduledNow,
+  useCancelScheduled,
   isLocalScheduledId,
 } from "@/hooks"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
@@ -59,6 +60,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
   const lockMutation = useLockScheduledForEdit(workspaceId)
   const releaseLockMutation = useReleaseScheduledEditLock(workspaceId)
   const sendNowMutation = useSendScheduledNow(workspaceId)
+  const cancelMutation = useCancelScheduled(workspaceId)
 
   const [contentJson, setContentJson] = useState<JSONContent>(EMPTY_DOC)
   const [sendDate, setSendDate] = useState<string>("")
@@ -160,26 +162,8 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
 
   const sendAtDate = useMemo(() => parseLocalDateTime(sendDate, sendTime), [sendDate, sendTime])
 
-  /**
-   * Cancel handler. When the wire has passed and we have a real (non-local)
-   * row, "cancel" means "send the original immediately" — atomically via
-   * sendNow rather than waiting on a worker tick. Without this, the user
-   * sees a "Send original" button that effectively does nothing visible:
-   * the row stays in the queue and the next worker retry could be many
-   * seconds away. For future-time or local rows, falls back to plain close.
-   */
-  const handleCancel = useCallback(async () => {
-    const isPastNow = sendAtDate ? sendAtDate.getTime() <= Date.now() : false
-    if (isPastNow && scheduled && !isLocalRow) {
-      try {
-        await sendNowMutation.mutateAsync(scheduled.id)
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Could not send"
-        toast.error(message)
-      }
-    }
-    handleClose()
-  }, [sendAtDate, scheduled, isLocalRow, sendNowMutation, handleClose])
+  const isPending = scheduled?.status === "pending"
+  const isFailed = scheduled?.status === "failed"
 
   // Re-evaluate `isPast` on a 1s tick — without this, `isPast` is locked to
   // whatever it was when sendAtDate last changed, so a user who opened the
@@ -205,6 +189,17 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     setToolbarEditor((cur) => (cur === next ? cur : next))
   }, [])
 
+  // Snapshot the live editor content + materialized attachments — shared by
+  // Save and Send now so both ship exactly what the user currently sees.
+  const collectEditorContent = useCallback(() => {
+    const liveJson = (editorRef.current?.getEditor()?.getJSON() as JSONContent | undefined) ?? contentJson
+    const materialized = materializePendingAttachmentReferences(
+      liveJson,
+      attachmentsHook.getPendingAttachmentsSnapshot()
+    )
+    return { contentJson: materialized, attachmentIds: collectAttachmentReferenceIds(materialized) }
+  }, [contentJson, attachmentsHook])
+
   const handleSave = useCallback(async () => {
     if (!scheduled || !sendAtDate || expectedVersion === null) return
     if (isLocalRow) {
@@ -215,12 +210,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       return
     }
     try {
-      const liveJson = (editorRef.current?.getEditor()?.getJSON() as JSONContent | undefined) ?? contentJson
-      const materialized = materializePendingAttachmentReferences(
-        liveJson,
-        attachmentsHook.getPendingAttachmentsSnapshot()
-      )
-      const attachmentIds = collectAttachmentReferenceIds(materialized)
+      const { contentJson: materialized, attachmentIds } = collectEditorContent()
       await updateMutation.mutateAsync({
         id: scheduled.id,
         input: {
@@ -242,18 +232,79 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       const message = err instanceof Error ? err.message : "Could not save"
       setError(message)
     }
-  }, [scheduled, contentJson, sendAtDate, expectedVersion, isLocalRow, updateMutation, handleClose, attachmentsHook])
+  }, [scheduled, sendAtDate, expectedVersion, isLocalRow, updateMutation, handleClose, collectEditorContent])
+
+  /**
+   * Send now. Persists the current editor content first (so unsaved edits
+   * ship), then force-sends via `sendNow` — which claims the row regardless
+   * of its scheduled time. Saving with a past `scheduled_for` already sends
+   * atomically, so skip the second call when the update itself transitioned
+   * the row to `sent`.
+   */
+  const handleSendNow = useCallback(async () => {
+    if (!scheduled || !sendAtDate || expectedVersion === null) return
+    if (isLocalRow) {
+      toast.info("Scheduling… try again in a moment")
+      return
+    }
+    try {
+      const { contentJson: materialized, attachmentIds } = collectEditorContent()
+      const saved = await updateMutation.mutateAsync({
+        id: scheduled.id,
+        input: { contentJson: materialized, scheduledFor: sendAtDate.toISOString(), attachmentIds, expectedVersion },
+      })
+      if (saved.status !== "sent") {
+        await sendNowMutation.mutateAsync(scheduled.id)
+      }
+      handleClose()
+    } catch (err: unknown) {
+      const isStaleVersion =
+        err && typeof err === "object" && "code" in err && err.code === "SCHEDULED_MESSAGE_STALE_VERSION"
+      if (isStaleVersion) {
+        toast.error("This message was edited elsewhere — refreshing…")
+        handleClose()
+        return
+      }
+      const message = err instanceof Error ? err.message : "Could not send"
+      setError(message)
+    }
+  }, [
+    scheduled,
+    sendAtDate,
+    expectedVersion,
+    isLocalRow,
+    updateMutation,
+    sendNowMutation,
+    handleClose,
+    collectEditorContent,
+  ])
+
+  const handleDelete = useCallback(async () => {
+    if (!scheduled) return
+    try {
+      await cancelMutation.mutateAsync(scheduled.id)
+    } catch (err: unknown) {
+      // Non-local rows enqueue a retry inside the mutation; surface anything
+      // that still bubbles so the user isn't left guessing.
+      const message = err instanceof Error ? err.message : "Could not delete"
+      toast.error(message)
+    }
+    handleClose()
+  }, [scheduled, cancelMutation, handleClose])
 
   const isSaving = updateMutation.isPending
+  const busy = updateMutation.isPending || sendNowMutation.isPending || cancelMutation.isPending
 
   const description = (() => {
     if (isLocalRow) return "Saving to the server… you can edit once the schedule lands."
-    if (isPast)
-      return "Send time has passed. Save sends now with your edits; Send original sends the unchanged version."
+    if (isPast) return "Send time has passed — Save sends immediately with your edits."
     return null
   })()
 
-  const cancelLabel = isPast ? "Send original" : "Cancel"
+  // Match the shared ScheduledActions verb ("Cancel"/"Remove") so the same
+  // useCancelScheduled mutation reads identically here and in the popover /
+  // drawer / /scheduled cluster.
+  const deleteLabel = isFailed ? "Remove" : "Cancel"
   const saveLabel = isPast ? "Send" : "Save"
   const title = isPast ? "Send scheduled message" : "Edit scheduled message"
 
@@ -304,33 +355,24 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
   // Mobile: Drawer with the editor filling its body. Padding lives INSIDE
   // .tiptap so a tap anywhere on the visible editor area focuses it — no
   // dead zone between the visual edge and the contenteditable.
-  if (isMobile) {
-    const mobileTrailingActions = (
-      <>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 px-2.5 text-xs shrink-0"
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={handleCancel}
-          disabled={isSaving || sendNowMutation.isPending}
-        >
-          {cancelLabel}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          className="h-8 px-3 text-xs shrink-0"
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={handleSave}
-          disabled={isSaving || isLocalRow}
-        >
-          {isSaving ? "Saving…" : saveLabel}
-        </Button>
-      </>
-    )
+  const canSubmit = !isLocalRow && sendAtDate !== null
+  const trailingActions = (
+    <ScheduledEditActions
+      isPending={isPending}
+      isPast={isPast}
+      compact={isMobile}
+      canSubmit={canSubmit}
+      busy={busy}
+      isSaving={isSaving}
+      saveLabel={saveLabel}
+      deleteLabel={deleteLabel}
+      onDelete={handleDelete}
+      onSendNow={handleSendNow}
+      onSave={handleSave}
+    />
+  )
 
+  if (isMobile) {
     return (
       <Drawer
         open={open}
@@ -385,7 +427,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
               showAttach
               onAttachClick={() => attachmentsHook.fileInputRef.current?.click()}
               showExpand={false}
-              trailingContent={mobileTrailingActions}
+              trailingContent={trailingActions}
             />
             {formatOpen && (
               <EditorToolbar
@@ -449,28 +491,115 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
                 showAttach
                 onAttachClick={() => attachmentsHook.fileInputRef.current?.click()}
                 showExpand={false}
-                trailingContent={
-                  <>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleCancel}
-                      disabled={isSaving || sendNowMutation.isPending}
-                    >
-                      {cancelLabel}
-                    </Button>
-                    <Button type="button" size="sm" onClick={handleSave} disabled={isSaving || isLocalRow}>
-                      {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                      {saveLabel}
-                    </Button>
-                  </>
-                }
+                trailingContent={trailingActions}
               />
             </div>
           </div>
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+interface ScheduledEditActionsProps {
+  /** Send now + Save show only for pending rows; failed rows get the destructive action alone. */
+  isPending: boolean
+  /** Send time already past — the primary button IS "Send", so the separate "Send now" is hidden as a duplicate. */
+  isPast: boolean
+  /** Mobile: render "Send now" icon-only so [Cancel][Send now][Save] never pushes Save off a narrow footer. */
+  compact: boolean
+  /** False for local placeholders or an empty send time — disables the writes. */
+  canSubmit: boolean
+  /** Any mutation in flight — disables the whole cluster. */
+  busy: boolean
+  isSaving: boolean
+  saveLabel: string
+  deleteLabel: string
+  onDelete: () => void
+  onSendNow: () => void
+  onSave: () => void
+}
+
+/**
+ * Footer action cluster for the scheduled-message edit dialog, shared by the
+ * mobile drawer and desktop dialog. Destructive action (icon-only), then
+ * "Send now", then the primary Save/Send. "Send now" is hidden when the row is
+ * already past-due (the primary is "Send" = the same thing) and collapses to an
+ * icon on mobile so the primary button always fits. `onPointerDown`
+ * preventDefault keeps focus on the editor so the mobile soft keyboard doesn't
+ * tear down mid-tap.
+ */
+export function ScheduledEditActions({
+  isPending,
+  isPast,
+  compact,
+  canSubmit,
+  busy,
+  isSaving,
+  saveLabel,
+  deleteLabel,
+  onDelete,
+  onSendNow,
+  onSave,
+}: ScheduledEditActionsProps) {
+  const showSendNow = isPending && !isPast
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+        onPointerDown={(e) => e.preventDefault()}
+        onClick={onDelete}
+        disabled={busy}
+        title={deleteLabel}
+        aria-label={deleteLabel}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+      {showSendNow &&
+        (compact ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={onSendNow}
+            disabled={busy || !canSubmit}
+            title="Send now"
+            aria-label="Send now"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-2.5 text-xs shrink-0"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={onSendNow}
+            disabled={busy || !canSubmit}
+          >
+            <Send className="h-3.5 w-3.5 mr-1.5" />
+            Send now
+          </Button>
+        ))}
+      {isPending && (
+        <Button
+          type="button"
+          size="sm"
+          className="h-8 px-3 text-xs shrink-0"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={onSave}
+          disabled={busy || !canSubmit}
+        >
+          {isSaving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          {isSaving ? "Saving…" : saveLabel}
+        </Button>
+      )}
+    </>
   )
 }

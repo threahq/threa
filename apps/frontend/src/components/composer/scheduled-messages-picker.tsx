@@ -634,8 +634,10 @@ interface ScheduledRowProps {
  * Row inside the composer popover. Mirrors the `/scheduled` list-row:
  *   - Body click opens the edit dialog.
  *   - The Send-now / Edit / Cancel triplet (shared `ScheduledActions` cluster)
- *     hover/focus-reveals for a mouse and stays persistent for a finger.
- *   - Touch additionally gets long-press → bottom-sheet drawer.
+ *     hover/focus-reveals for a mouse and is hidden for a finger
+ *     (`reveal-actions-hover-only`).
+ *   - Touch reaches the actions via long-press → bottom-sheet drawer, or via
+ *     the edit dialog opened by the body tap.
  */
 function ScheduledRow({ scheduled, now, timezone, onEdit, onSendNow, onCancel, onRequestActions }: ScheduledRowProps) {
   const touchCapable = useTouchCapable()
@@ -676,7 +678,11 @@ function ScheduledRow({ scheduled, now, timezone, onEdit, onSendNow, onCancel, o
             {attachmentCount > 0 && <span className="ml-1.5">· {attachmentCount} 📎</span>}
           </p>
         </button>
-        <div className="flex shrink-0 items-center gap-1 reveal-actions">
+        {/* Mouse: hover/focus-reveal the inline triplet. Touch: hidden — a
+            finger taps the body (→ edit dialog, which now carries Send now +
+            Delete) or long-presses for the action drawer, so the persistent
+            icons that used to clutter the popover row are gone on mobile. */}
+        <div className="flex shrink-0 items-center gap-1 reveal-actions-hover-only">
           <ScheduledActions
             scheduled={scheduled}
             variant="hover-cluster"

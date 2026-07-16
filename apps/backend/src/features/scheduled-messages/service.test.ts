@@ -443,6 +443,60 @@ describe("ScheduledMessagesService.update (optimistic CAS)", () => {
   })
 })
 
+describe("ScheduledMessagesService.sendNow", () => {
+  afterEach(() => mock.restore())
+
+  it("forces a still-future row to send now in one CAS, without rewriting scheduled_for", async () => {
+    // Regression: sendNow used to force a future row by rewriting
+    // scheduled_for = new Date() and re-running the worker CAS (which
+    // requires scheduled_for <= NOW()). An app clock a few hundred ms ahead
+    // of Postgres put the rewritten instant just past the DB's NOW(), the
+    // reclaim CAS matched nothing, and the send silently 409'd. The fix
+    // forces the guard off in a single CAS anchored on the DB clock — no
+    // scheduled_for rewrite, no second round-trip.
+    const service = setupService()
+    const row = fakeScheduled({ version: 2, scheduledFor: FUTURE, queueMessageId: "q_1" })
+
+    spyOn(ScheduledMessagesRepository, "findById").mockResolvedValue(row)
+    const update = spyOn(ScheduledMessagesRepository, "update").mockResolvedValue(row)
+    const tryStartSend = spyOn(ScheduledMessagesRepository, "tryStartSend").mockResolvedValue({
+      ...row,
+      status: ScheduledMessageStatuses.SENDING,
+    })
+    spyOn(ScheduledMessagesRepository, "markSent").mockResolvedValue({
+      ...row,
+      status: ScheduledMessageStatuses.SENT,
+      sentMessageId: "msg_42",
+    })
+    const cancelById = spyOn(QueueRepository, "cancelById").mockResolvedValue(undefined as any)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await service.sendNow({ workspaceId: WORKSPACE_ID, userId: USER_ID, id: SCHEDULED_ID })
+
+    expect(result.status).toBe(ScheduledMessageStatuses.SENT)
+    // One CAS, forced past both the schedule guard and the user's own fence.
+    expect(tryStartSend).toHaveBeenCalledTimes(1)
+    expect(tryStartSend).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ force: true, bypassFence: true })
+    )
+    // No scheduled_for rewrite — the clock-skew source is gone.
+    expect(update).not.toHaveBeenCalled()
+    // The pending queue job is cancelled so the worker can't double-fire.
+    expect(cancelById).toHaveBeenCalledWith(expect.anything(), "q_1")
+  })
+
+  it("throws NOT_PENDING when the row already left pending before the CAS", async () => {
+    const service = setupService()
+    spyOn(ScheduledMessagesRepository, "findById").mockResolvedValue(fakeScheduled())
+    spyOn(ScheduledMessagesRepository, "tryStartSend").mockResolvedValue(null)
+
+    await expect(service.sendNow({ workspaceId: WORKSPACE_ID, userId: USER_ID, id: SCHEDULED_ID })).rejects.toThrow(
+      /no longer pending/i
+    )
+  })
+})
+
 describe("ScheduledMessagesService.fire (worker entry)", () => {
   afterEach(() => mock.restore())
 

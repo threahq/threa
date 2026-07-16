@@ -347,48 +347,27 @@ export class ScheduledMessagesService {
     return withTransaction(this.pool, async (client) => {
       const existing = await this.assertPendingOrThrow(client, params)
 
-      // Take the worker-style CAS atomically (status flip → sending). Bypass
-      // the fence — the user explicitly asked to send right now; their own
-      // (or a sibling tab's) `lockForEdit` shouldn't block them.
+      // Claim the row atomically (status flip → sending). `force` drops the
+      // `scheduled_for <= NOW()` guard so a still-future row fires now, and
+      // `bypassFence` drops the user's own edit-dialog lock. Anchoring on the
+      // CAS (DB clock) rather than rewriting `scheduled_for = new Date()` and
+      // retrying the guard is the fix for the app↔DB clock-skew gap that made
+      // future-scheduled sends silently 409 (see tryStartSend).
       const claimed = await ScheduledMessagesRepository.tryStartSend(client, {
         workspaceId: params.workspaceId,
         id: params.id,
         ttlSeconds: WORKER_FENCE_TTL_SECONDS,
         bypassFence: true,
+        force: true,
       })
       if (!claimed) {
-        // `tryStartSend` requires `scheduled_for <= NOW()`. For a future-
-        // scheduled message, force the send by setting scheduled_for to now
-        // and retrying.
-        const forcedNow = await ScheduledMessagesRepository.update(client, {
-          workspaceId: params.workspaceId,
-          userId: params.userId,
-          id: params.id,
-          expectedVersion: existing.version,
-          scheduledFor: new Date(),
+        // Not future-gated anymore, so a miss means the row genuinely left
+        // pending (worker won, cancelled, already sent) between the pre-read
+        // and the CAS.
+        throw new HttpError("Scheduled message no longer pending", {
+          status: 409,
+          code: "SCHEDULED_MESSAGE_NOT_PENDING",
         })
-        if (!forcedNow) {
-          throw new HttpError("Scheduled message was edited elsewhere", {
-            status: 409,
-            code: "SCHEDULED_MESSAGE_STALE_VERSION",
-          })
-        }
-        const reclaimed = await ScheduledMessagesRepository.tryStartSend(client, {
-          workspaceId: params.workspaceId,
-          id: params.id,
-          ttlSeconds: WORKER_FENCE_TTL_SECONDS,
-          bypassFence: true,
-        })
-        if (!reclaimed) {
-          throw new HttpError("Scheduled message no longer pending", {
-            status: 409,
-            code: "SCHEDULED_MESSAGE_NOT_PENDING",
-          })
-        }
-        if (existing.queueMessageId) {
-          await QueueRepository.cancelById(client, existing.queueMessageId)
-        }
-        return await this.finalizeSendInTx(client, reclaimed)
       }
 
       if (existing.queueMessageId) {
