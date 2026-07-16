@@ -2,6 +2,7 @@ import { useCallback, useState } from "react"
 import type { Stream } from "@threa/types"
 import type { UrgencyLevel } from "@/components/layout/sidebar/types"
 import { getActivityTime } from "@/components/layout/sidebar/utils"
+import { scoreMatch } from "@/lib/match-score"
 import { streamLabel } from "@/lib/streams"
 
 /** Sort modes used by stream pickers (quick switcher, share modal, share picker). */
@@ -17,21 +18,24 @@ export type SortableStream = Pick<Stream, "id" | "type" | "createdAt"> & {
   lastMessagePreview?: { createdAt: string } | null
 }
 
+/** Sorts after every name tier in scoreMatch (substring 0..11, fuzzy 12..14). */
+const STREAM_ID_MATCH_SCORE = 100
+
 /**
  * Score a stream against a lowercased query. Lower = better match.
- * Returns Infinity for non-matches. Mirrors the quick-switcher heuristic so
- * search results land in the same order across every picker surface.
+ * Returns Infinity for non-matches. Delegates to the shared `scoreMatch`
+ * tiers (exact/prefix/contains, separator-normalized, fuzzy subsequence) so
+ * search results land in the same order across every picker surface; a raw
+ * stream-id substring is the last-resort tier below all name matches.
  */
 export function scoreStreamMatch(
   stream: Pick<Stream, "id" | "type" | "displayName" | "slug">,
   lowerQuery: string
 ): number {
   if (!lowerQuery) return 0
-  const name = streamLabel(stream).toLowerCase()
-  if (name === lowerQuery) return 0
-  if (name.startsWith(lowerQuery)) return 1
-  if (name.includes(lowerQuery)) return 2
-  if (stream.id.toLowerCase().includes(lowerQuery)) return 3
+  const score = scoreMatch(lowerQuery, [streamLabel(stream)])
+  if (score !== Infinity) return score
+  if (stream.id.toLowerCase().includes(lowerQuery)) return STREAM_ID_MATCH_SCORE
   return Infinity
 }
 

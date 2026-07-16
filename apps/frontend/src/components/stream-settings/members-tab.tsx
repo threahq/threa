@@ -24,6 +24,7 @@ import { useInviteActor } from "@/hooks/use-invite-actor"
 import { useStreamService } from "@/contexts"
 import { botsApi } from "@/api/bots"
 import { useWorkspaceUsers, useWorkspaceBots } from "@/stores/workspace-store"
+import { rankMatches } from "@/lib/match-score"
 import { hasPermission } from "@/lib/permissions"
 import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type Stream, type StreamMember } from "@threa/types"
 import { toast } from "sonner"
@@ -79,11 +80,10 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
     return enriched.sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug))
   }, [streamMembers, workspaceUsers])
 
-  const filteredMembers = useMemo(() => {
-    if (!search) return enrichedMembers
-    const q = search.toLowerCase()
-    return enrichedMembers.filter((m) => m.name.toLowerCase().includes(q) || m.slug.toLowerCase().includes(q))
-  }, [enrichedMembers, search])
+  const filteredMembers = useMemo(
+    () => rankMatches(enrichedMembers, search, (m) => ({ labels: [m.name, m.slug] })),
+    [enrichedMembers, search]
+  )
 
   const availableToAdd = useMemo(() => {
     return workspaceUsers

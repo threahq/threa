@@ -22,6 +22,7 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { STATUS_FILTER_OPTIONS } from "@/components/editor/triggers/status-filter-extension"
 import { formatISODate, getFutureDatePresets, getPastDatePresets } from "@/lib/dates"
+import { rankMatches } from "@/lib/match-score"
 import { addFilterToQuery, type FilterType } from "@/lib/search-query-parser"
 import { getStreamName, streamLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
@@ -255,12 +256,10 @@ function ChannelPicker({ workspaceId, onSelect }: { workspaceId: string; onSelec
 
   const channels = useMemo(() => {
     const withSlugs = streams.filter((s): s is typeof s & { slug: string } => Boolean(s.slug))
-    if (!search) return withSlugs
-    const lowerQuery = search.toLowerCase()
-    return withSlugs.filter(
-      (s) =>
-        s.slug.toLowerCase().includes(lowerQuery) || (getStreamName(s)?.toLowerCase().includes(lowerQuery) ?? false)
-    )
+    return rankMatches(withSlugs, search, (s) => {
+      const name = getStreamName(s)
+      return { labels: name ? [s.slug, name] : [s.slug] }
+    })
   }, [streams, search])
 
   return (

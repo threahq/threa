@@ -4,6 +4,7 @@ import { Calendar } from "@/components/ui/calendar"
 import { formatISODate } from "@/lib/dates"
 import { useFormattedDate } from "@/hooks"
 import type { StreamType, User, Stream } from "@threa/types"
+import { rankMatches } from "@/lib/match-score"
 import { getStreamName, streamLabel } from "@/lib/streams"
 
 interface StreamTypeOption {
@@ -82,13 +83,10 @@ interface UserSelectProps {
 function UserSelect({ users, onSelect }: UserSelectProps) {
   const [search, setSearch] = useState("")
 
-  const filtered = useMemo(() => {
-    const searchLower = search.toLowerCase()
-    return users.filter((u) => {
-      const name = u.name || u.slug
-      return name.toLowerCase().includes(searchLower) || u.slug.toLowerCase().includes(searchLower)
-    })
-  }, [users, search])
+  const filtered = useMemo(
+    () => rankMatches(users, search, (u) => ({ labels: [u.name || u.slug, u.slug] })),
+    [users, search]
+  )
 
   return (
     <div className="w-48">
@@ -170,10 +168,7 @@ interface StreamSelectProps {
 function StreamSelect({ streams, onSelect }: StreamSelectProps) {
   const [search, setSearch] = useState("")
 
-  const filtered = streams.filter((s) => {
-    const name = getStreamName(s) ?? ""
-    return name.toLowerCase().includes(search.toLowerCase())
-  })
+  const filtered = rankMatches(streams, search, (s) => ({ labels: [getStreamName(s) ?? ""] }))
 
   const resolvedName = (stream: Stream) => streamLabel(stream)
 

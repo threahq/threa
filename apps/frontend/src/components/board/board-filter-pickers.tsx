@@ -15,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks/use-labels"
+import { scoreMatch } from "@/lib/match-score"
 import { STREAM_ICONS } from "@/lib/streams"
 import { toggleExclude, toggleInclude } from "@/components/board/board-filter-params"
 import { BOARD_STREAM_TYPE_LABELS as TYPE_LABELS } from "@/lib/board/stream-type-labels"
@@ -185,7 +186,7 @@ export function BoardScopePicker({
       .filter((s) => SCOPE_STREAM_TYPES.has(s.type))
       .filter((s) => !s.archivedAt || isSelected(s.id))
       .map((stream) => ({ stream, label: labelFor(stream.id) }))
-      .filter(({ label }) => !lower || label.toLowerCase().includes(lower))
+      .filter(({ label }) => !lower || scoreMatch(lower, [label]) !== Infinity)
       .sort((a, b) => {
         const bySelected = Number(isSelected(b.stream.id)) - Number(isSelected(a.stream.id))
         return bySelected !== 0 ? bySelected : a.label.localeCompare(b.label)
@@ -407,7 +408,7 @@ export function BoardLabelPicker({
     const lower = search.trim().toLowerCase()
     const isSelected = (id: string) => included.has(id) || excluded.has(id)
     return myLabels
-      .filter((label) => !lower || label.name.toLowerCase().includes(lower))
+      .filter((label) => !lower || scoreMatch(lower, [label.name]) !== Infinity)
       .sort((a, b) => {
         const bySelected = Number(isSelected(b.id)) - Number(isSelected(a.id))
         return bySelected !== 0 ? bySelected : a.name.localeCompare(b.name)

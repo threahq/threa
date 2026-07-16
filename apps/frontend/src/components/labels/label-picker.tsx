@@ -10,6 +10,7 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { useIsOnline } from "@/components/layout/connection-status"
+import { rankMatches } from "@/lib/match-score"
 import { cn } from "@/lib/utils"
 import { LabelGlyph } from "./label-chip"
 import { useAssignLabel, useLabelsView, useResourceLabelAssignments, useUnassignLabel, type CachedLabel } from "@/hooks"
@@ -136,10 +137,10 @@ export function LabelPicker({ workspaceId, resourceType, resourceId, open, onOpe
     mutation.mutate({ labelId, resourceType, resourceId }, { onSettled })
   }
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return q ? myLabels.filter((label) => label.name.toLowerCase().includes(q)) : myLabels
-  }, [myLabels, query])
+  const filtered = useMemo(
+    () => rankMatches(myLabels, query.trim(), (label) => ({ labels: [label.name] })),
+    [myLabels, query]
+  )
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
