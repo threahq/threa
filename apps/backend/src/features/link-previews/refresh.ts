@@ -18,7 +18,15 @@ export interface RefreshLinkPreviewDeps {
 
 export type RefreshLinkPreviewResult =
   | { refreshed: true }
-  | { refreshed: false; reason: "not_found" | "debounced" | "fetch_empty" }
+  | { refreshed: false; reason: "not_found" | "fetch_empty" }
+  /**
+   * The row was fetched inside `debounceMs`, so this refresh was dropped.
+   * `retryAfterMs` is the time until the window clears; `fetchedAt` is the row's
+   * current fetch timestamp — a caller coalescing a webhook storm keys a single
+   * trailing refresh on it (all storm events share the same `fetchedAt` until a
+   * refresh actually lands, so they collapse to one job).
+   */
+  | { refreshed: false; reason: "debounced"; retryAfterMs: number; fetchedAt: Date }
 
 /**
  * Force-refresh one already-rendered GitHub link preview from an external
@@ -40,9 +48,20 @@ export async function refreshLinkPreview(
   const preview = await deps.linkPreviewService.getPreviewById(params.workspaceId, params.previewId)
   if (!preview) return { refreshed: false, reason: "not_found" }
 
-  if (preview.fetchedAt && Date.now() - preview.fetchedAt.getTime() < debounceMs) {
-    log.debug({ workspaceId: params.workspaceId, previewId: params.previewId }, "Skipping preview refresh — debounced")
-    return { refreshed: false, reason: "debounced" }
+  if (preview.fetchedAt) {
+    const elapsedMs = Date.now() - preview.fetchedAt.getTime()
+    if (elapsedMs < debounceMs) {
+      log.debug(
+        { workspaceId: params.workspaceId, previewId: params.previewId },
+        "Skipping preview refresh — debounced"
+      )
+      return {
+        refreshed: false,
+        reason: "debounced",
+        retryAfterMs: debounceMs - elapsedMs,
+        fetchedAt: preview.fetchedAt,
+      }
+    }
   }
 
   const metadata = await githubPreview.fetchGitHubPreview(

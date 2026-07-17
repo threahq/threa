@@ -69,6 +69,10 @@ function fakeWorkspaceIntegrationService(workspaceIds: string[]) {
   }
 }
 
+function fakeJobQueue() {
+  return { send: mock(async () => "queue_x") }
+}
+
 function prJob(overrides: Partial<GithubWebhookProcessJobData> = {}): Job<GithubWebhookProcessJobData> {
   return {
     id: "q_1",
@@ -113,6 +117,7 @@ describe("github webhook worker — refresh flow", () => {
       pool,
       linkPreviewService: makeService(pool),
       workspaceIntegrationService: fakeWorkspaceIntegrationService([WORKSPACE_ID]),
+      jobQueue: fakeJobQueue(),
     })
 
     await worker(prJob())
@@ -138,6 +143,7 @@ describe("github webhook worker — refresh flow", () => {
       pool,
       linkPreviewService: makeService(pool),
       workspaceIntegrationService: fakeWorkspaceIntegrationService([]),
+      jobQueue: fakeJobQueue(),
     })
 
     await worker(prJob())
@@ -156,6 +162,7 @@ describe("github webhook worker — refresh flow", () => {
       pool,
       linkPreviewService: makeService(pool),
       workspaceIntegrationService: fakeWorkspaceIntegrationService([WORKSPACE_ID]),
+      jobQueue: fakeJobQueue(),
     })
 
     await worker(prJob())
@@ -171,6 +178,7 @@ describe("github webhook worker — refresh flow", () => {
       pool,
       linkPreviewService: makeService(pool),
       workspaceIntegrationService: wis,
+      jobQueue: fakeJobQueue(),
     })
 
     await worker(prJob({ installationId: null }))
@@ -189,6 +197,7 @@ describe("github webhook worker — installation lifecycle", () => {
       pool,
       linkPreviewService: makeService(pool),
       workspaceIntegrationService: wis,
+      jobQueue: fakeJobQueue(),
     })
 
     await worker(
@@ -204,18 +213,19 @@ describe("github webhook worker — installation lifecycle", () => {
     expect(prefixSpy).not.toHaveBeenCalled()
   })
 
-  test("installation suspend → deactivates the installation", async () => {
+  test("installation suspend → no-op, does NOT deactivate (routes kept so unsuspend recovers)", async () => {
     const pool = fakePool()
     const wis = fakeWorkspaceIntegrationService([WORKSPACE_ID])
     const worker = createGithubWebhookWorker({
       pool,
       linkPreviewService: makeService(pool),
       workspaceIntegrationService: wis,
+      jobQueue: fakeJobQueue(),
     })
 
     await worker(prJob({ eventType: "installation", action: "suspend", repositoryFullName: null, payload: {} }))
 
-    expect(wis.deactivateInstallation).toHaveBeenCalledWith("42")
+    expect(wis.deactivateInstallation).not.toHaveBeenCalled()
   })
 
   test("installation unsuspend → no-op (v1)", async () => {
@@ -225,6 +235,7 @@ describe("github webhook worker — installation lifecycle", () => {
       pool,
       linkPreviewService: makeService(pool),
       workspaceIntegrationService: wis,
+      jobQueue: fakeJobQueue(),
     })
 
     await worker(prJob({ eventType: "installation", action: "unsuspend", repositoryFullName: null, payload: {} }))

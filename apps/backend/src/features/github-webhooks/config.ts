@@ -2,9 +2,9 @@ import { z } from "zod"
 
 /**
  * Event types that drive a preview refresh. `installation` is handled as a
- * lifecycle event (deactivate on delete/suspend); the PR/issue types derive
- * canonical URLs and refresh matching previews. CP already filters to the
- * app's subscribed set, so anything else that arrives is a clean no-op.
+ * lifecycle event (deactivate only on `deleted`; suspend/unsuspend are no-ops);
+ * the PR/issue types derive canonical URLs and refresh matching previews. CP
+ * already filters to the app's subscribed set, so anything else is a clean no-op.
  */
 export const GITHUB_REFRESH_EVENT_TYPES = ["pull_request", "pull_request_review", "issues"] as const
 

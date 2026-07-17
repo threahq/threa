@@ -43,6 +43,8 @@ export {
   type ContextBagPrecomputeJobData,
   type BackfillPlanJobData,
   type BackfillChunkJobData,
+  type GithubWebhookProcessJobData,
+  type GithubPreviewRefreshJobData,
 } from "./job-queue"
 export { ScheduleManager, type ScheduleManagerConfig } from "./schedule-manager"
 export { CleanupWorker, type CleanupWorkerConfig } from "./cleanup-worker"

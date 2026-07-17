@@ -1,5 +1,6 @@
 export { createGithubWebhookHandlers } from "./handlers"
 export { createGithubWebhookWorker } from "./worker"
+export { createGithubPreviewRefreshWorker, githubPreviewRefreshQueueId } from "./preview-refresh"
 export { deriveGithubTargetUrls } from "./derive"
 export { githubWebhookEventSchema, GITHUB_REFRESH_EVENT_TYPES, GITHUB_INSTALLATION_EVENT_TYPE } from "./config"
 export type { GithubWebhookEventInput } from "./config"

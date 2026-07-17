@@ -27,7 +27,7 @@ import {
   EnclaveDispatchHandler,
 } from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
-import { createGithubWebhookWorker } from "./features/github-webhooks"
+import { createGithubWebhookWorker, createGithubPreviewRefreshWorker } from "./features/github-webhooks"
 import { GiphyService } from "./features/giphy"
 import { WorkspaceIntegrationService, registerGithubInstallationBackfill } from "./features/workspace-integrations"
 import { WorkspaceAuthzService } from "./features/workspace-authz"
@@ -1235,8 +1235,25 @@ export async function startServer(): Promise<ServerInstance> {
 
   // GitHub webhook worker — resolves workspaces by installation, force-refreshes
   // matching link previews via GitHub fetch (fast HTTP, not LLM-bound)
-  const githubWebhookWorker = createGithubWebhookWorker({ pool, linkPreviewService, workspaceIntegrationService })
+  const githubWebhookWorker = createGithubWebhookWorker({
+    pool,
+    linkPreviewService,
+    workspaceIntegrationService,
+    jobQueue,
+  })
   jobQueue.registerHandler(JobQueues.GITHUB_WEBHOOK_PROCESS, githubWebhookWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
+  // Trailing GitHub preview refresh — coalesces a webhook storm's dropped
+  // (debounced) refresh into one refresh once the debounce window clears
+  const githubPreviewRefreshWorker = createGithubPreviewRefreshWorker({
+    linkPreviewService,
+    workspaceIntegrationService,
+    jobQueue,
+  })
+  jobQueue.registerHandler(JobQueues.GITHUB_PREVIEW_REFRESH, githubPreviewRefreshWorker, {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })

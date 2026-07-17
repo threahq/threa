@@ -1,22 +1,22 @@
 import type { Pool } from "pg"
 import { logger } from "@threa/backend-common"
-import type { Job, JobHandler } from "../../lib/queue"
+import type { Job, JobHandler, QueueManager } from "../../lib/queue"
 import type { GithubWebhookProcessJobData } from "../../lib/queue/job-queue"
-import { findGithubPreviewMatches, refreshLinkPreview, type LinkPreviewService } from "../link-previews"
+import { findGithubPreviewMatches, type LinkPreviewService } from "../link-previews"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import { GITHUB_INSTALLATION_EVENT_TYPE, GITHUB_REFRESH_EVENT_TYPES } from "./config"
 import { deriveGithubTargetUrls } from "./derive"
+import { refreshGithubPreviewWithTrailing } from "./preview-refresh"
 
 const log = logger.child({ module: "github-webhook-worker" })
 
 const REFRESH_EVENTS: ReadonlySet<string> = new Set(GITHUB_REFRESH_EVENT_TYPES)
-/** Installation actions that revoke this region's access to the install. */
-const DEACTIVATING_INSTALLATION_ACTIONS: ReadonlySet<string> = new Set(["deleted", "suspend"])
 
 interface GithubWebhookWorkerDeps {
   pool: Pool
   linkPreviewService: LinkPreviewService
   workspaceIntegrationService: WorkspaceIntegrationService
+  jobQueue: Pick<QueueManager, "send">
 }
 
 /**
@@ -61,10 +61,11 @@ export function createGithubWebhookWorker(deps: GithubWebhookWorkerDeps): JobHan
     for (const workspaceId of workspaceIds) {
       const matches = await findGithubPreviewMatches(deps.pool, workspaceId, targetUrls)
       for (const match of matches) {
-        await refreshLinkPreview(
+        await refreshGithubPreviewWithTrailing(
           {
             linkPreviewService: deps.linkPreviewService,
             workspaceIntegrationService: deps.workspaceIntegrationService,
+            jobQueue: deps.jobQueue,
           },
           { workspaceId, previewId: match.id }
         )
@@ -79,14 +80,20 @@ async function handleInstallationEvent(
   action: string | null,
   deliveryGuid: string
 ): Promise<void> {
-  if (action && DEACTIVATING_INSTALLATION_ACTIONS.has(action)) {
+  if (action === "deleted") {
     const { deactivatedWorkspaceIds } = await deps.workspaceIntegrationService.deactivateInstallation(installationId)
     log.info(
       { deliveryGuid, installationId, action, deactivatedWorkspaceIds },
-      "Deactivated GitHub integrations for removed/suspended installation"
+      "Deactivated GitHub integrations for deleted installation"
     )
     return
   }
 
-  log.debug({ deliveryGuid, installationId, action }, "Installation event with no deactivating action; no-op")
+  // 'suspend'/'unsuspend' are deliberate no-ops. `deactivateInstallation` deletes
+  // this region's CP routes, so treating 'suspend' like 'deleted' would strand the
+  // install permanently — a later 'unsuspend' could never route back to this
+  // region. GitHub already pauses deliveries and API access while an install is
+  // suspended (token mint fails → the refresh path skips gracefully), so keeping
+  // the routes lets 'unsuspend' recover automatically with zero action here.
+  log.debug({ deliveryGuid, installationId, action }, "Installation lifecycle event with no deactivating action; no-op")
 }

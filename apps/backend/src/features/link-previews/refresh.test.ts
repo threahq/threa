@@ -153,8 +153,9 @@ describe("refreshLinkPreview", () => {
     expect(service.applyRefreshedMetadata).not.toHaveBeenCalled()
   })
 
-  test("debounces a row fetched within the window", async () => {
-    const service = fakeService(makeRow({ fetchedAt: new Date(Date.now() - 2_000) }))
+  test("debounces a row fetched within the window, reporting remaining window + fetchedAt", async () => {
+    const fetchedAt = new Date(Date.now() - 2_000)
+    const service = fakeService(makeRow({ fetchedAt }))
     const fetchSpy = spyOn(githubPreview, "fetchGitHubPreview")
 
     const result = await refreshLinkPreview(
@@ -162,7 +163,14 @@ describe("refreshLinkPreview", () => {
       { workspaceId: WORKSPACE_ID, previewId: "lp_pr", debounceMs: 10_000 }
     )
 
-    expect(result).toEqual({ refreshed: false, reason: "debounced" })
+    expect(result.refreshed).toBe(false)
+    if (result.refreshed) throw new Error("expected debounced")
+    expect(result.reason).toBe("debounced")
+    if (result.reason !== "debounced") throw new Error("expected debounced")
+    expect(result.fetchedAt).toBe(fetchedAt)
+    // ~8s remaining (10s window minus the 2s already elapsed); allow scheduling jitter.
+    expect(result.retryAfterMs).toBeGreaterThan(7_000)
+    expect(result.retryAfterMs).toBeLessThanOrEqual(8_000)
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(service.applyRefreshedMetadata).not.toHaveBeenCalled()
   })
