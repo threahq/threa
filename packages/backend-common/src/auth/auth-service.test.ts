@@ -31,52 +31,6 @@ function makeService(session: FakeSession): { service: WorkosAuthService; refres
 
 const USER = { id: "user_1", email: "u@example.com", firstName: null, lastName: null }
 
-describe("WorkosAuthService.verifySession", () => {
-  test("verifies a valid token locally without ever calling refresh", async () => {
-    const { service, refreshCalls } = makeService({
-      authenticate: async () => ({ authenticated: true, user: USER, permissions: ["messages:read"] }),
-      refresh: async () => {
-        throw new Error("verify-only must never refresh")
-      },
-    })
-
-    const result = await service.verifySession("sealed")
-
-    expect(result).toMatchObject({ success: true, refreshed: false, user: { id: "user_1" } })
-    expect(refreshCalls()).toBe(0)
-  })
-
-  test("an expired token fails non-terminal (the client refreshes) — still no refresh call", async () => {
-    const { service, refreshCalls } = makeService({
-      authenticate: async () => ({ authenticated: false, reason: "invalid_jwt" }),
-      refresh: async () => {
-        throw new Error("verify-only must never refresh")
-      },
-    })
-
-    const result = await service.verifySession("sealed")
-
-    expect(result).toMatchObject({ success: false, reason: "invalid_jwt", terminal: false })
-    expect(refreshCalls()).toBe(0)
-  })
-
-  test("an unsealable cookie fails terminal", async () => {
-    const { service } = makeService({
-      authenticate: async () => ({ authenticated: false, reason: "invalid_session_cookie" }),
-      refresh: async () => ({ authenticated: false }),
-    })
-    expect(await service.verifySession("sealed")).toMatchObject({ success: false, terminal: true })
-  })
-
-  test("an empty cookie value fails terminal", async () => {
-    const { service } = makeService({
-      authenticate: async () => ({ authenticated: true, user: USER }),
-      refresh: async () => ({ authenticated: false }),
-    })
-    expect(await service.verifySession("")).toMatchObject({ success: false, terminal: true })
-  })
-})
-
 describe("WorkosAuthService.authenticateSession failure classification", () => {
   test("invalid_grant refresh rejection is NOT terminal (concurrent rotation race must not clear the cookie)", async () => {
     const { service } = makeService({

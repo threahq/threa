@@ -60,15 +60,6 @@ export function pickSealed(result: AuthResult, original: string): string {
 
 export interface AuthService {
   authenticateSession(sealedSession: string): Promise<AuthResult>
-  /**
-   * Verify-only: local JWT check against the cached JWKS, NEVER a WorkOS
-   * refresh. The client-refresh auth mode uses this on the data-plane hot
-   * path — an expired token fails fast with `reason: "invalid_jwt"`
-   * (non-terminal) and the CLIENT coordinates the single refresh via the
-   * refresh endpoint, which is what keeps rotating-refresh-token races out of
-   * the server entirely.
-   */
-  verifySession(sealedSession: string): Promise<AuthResult>
   authenticateWithCode(code: string): Promise<AuthResult>
   /**
    * Build the WorkOS authorization URL.
@@ -149,38 +140,6 @@ export class WorkosAuthService implements AuthService {
     this.cookiePassword = config.cookiePassword
     this.redirectUri = config.redirectUri
     this.workos = new WorkOS(config.apiKey, { clientId: this.clientId, timeout: WORKOS_REQUEST_TIMEOUT_MS })
-  }
-
-  async verifySession(sealedSession: string): Promise<AuthResult> {
-    if (!sealedSession) {
-      return { success: false, refreshed: false, reason: "no_session_cookie_provided", terminal: true }
-    }
-    const session = this.workos.userManagement.loadSealedSession({
-      sessionData: sealedSession,
-      cookiePassword: this.cookiePassword,
-    })
-    const authRes = await session.authenticate()
-    if (authRes.authenticated) {
-      return {
-        success: true,
-        user: {
-          id: authRes.user.id,
-          email: authRes.user.email,
-          firstName: authRes.user.firstName,
-          lastName: authRes.user.lastName,
-          permissions: authRes.permissions ?? null,
-        },
-        refreshed: false,
-      }
-    }
-    return {
-      success: false,
-      refreshed: false,
-      reason: authRes.reason,
-      // An expired-but-well-formed cookie (INVALID_JWT) heals via the client's
-      // refresh; anything else (unsealable, empty) never will.
-      terminal: authRes.reason !== AuthenticateWithSessionCookieFailureReason.INVALID_JWT,
-    }
   }
 
   async authenticateSession(sealedSession: string): Promise<AuthResult> {
