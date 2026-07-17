@@ -1,10 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { ThreaApiClient } from "../api-client"
-import type { ThreaMcpConfig } from "../config"
+import type { ThreaConfig } from "../config"
 import { whoami } from "../ops"
 import { runTool } from "./result"
 
-export function registerIdentityTools(server: McpServer, client: ThreaApiClient, config: ThreaMcpConfig): void {
+export function registerIdentityTools(server: McpServer, client: ThreaApiClient, config: ThreaConfig): void {
   server.registerTool(
     "whoami",
     {

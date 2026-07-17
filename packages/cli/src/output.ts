@@ -1,5 +1,5 @@
 import type { ParseArgsConfig } from "node:util"
-import type { ThreaMcpConfig } from "./config"
+import { OUTPUT_MODES, type OutputMode, type ThreaConfig } from "./config"
 import type { ThreaApiClient } from "./api-client"
 import type { RefResolver } from "./resolver"
 import type { TokenStore } from "./token-store"
@@ -15,7 +15,7 @@ export class UsageError extends Error {
 export interface CommandContext {
   client: ThreaApiClient
   resolver: RefResolver
-  config: ThreaMcpConfig
+  config: ThreaConfig
   tokenStore: TokenStore
   /** Reads piped stdin for a `-` content arg. Injectable so tests feed content without a real pipe. */
   readStdin: () => Promise<string>
@@ -62,9 +62,9 @@ export const errorObject = toErrorShape
 export function formatSuccess(
   spec: { render?(payload: unknown): string },
   payload: unknown,
-  opts: { json: boolean; isTTY: boolean }
+  opts: { mode: OutputMode }
 ): string {
-  if (opts.json || !opts.isTTY || !spec.render) return JSON.stringify(payload, null, 2)
+  if (opts.mode === "json" || !spec.render) return JSON.stringify(payload, null, 2)
   try {
     return spec.render(payload)
   } catch {
@@ -73,8 +73,44 @@ export function formatSuccess(
 }
 
 const GLOBAL_OPTIONS: ParseOptions = {
-  json: { type: "boolean" },
   help: { type: "boolean", short: "h" },
+}
+
+/**
+ * Pulls the position-independent output flags (`--json`, `-o/--output json|text`)
+ * out of argv before command routing, so `threa --json streams list` works the
+ * same as `threa streams list --json`. Everything after a literal `--` is left
+ * untouched. Later flags win when both forms appear.
+ */
+export function extractOutputMode(argv: string[]): { argv: string[]; mode?: OutputMode } {
+  const rest: string[] = []
+  let mode: OutputMode | undefined
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i]!
+    if (token === "--") {
+      rest.push(...argv.slice(i))
+      break
+    }
+    if (token === "--json") {
+      mode = "json"
+      continue
+    }
+    let value: string | undefined
+    if (token === "-o" || token === "--output") {
+      value = argv[++i]
+      if (value === undefined) throw new UsageError(`${token} requires a value: ${OUTPUT_MODES.join("|")}`)
+    } else if (token.startsWith("-o=") || token.startsWith("--output=")) {
+      value = token.slice(token.indexOf("=") + 1)
+    } else {
+      rest.push(token)
+      continue
+    }
+    if (!(OUTPUT_MODES as readonly string[]).includes(value)) {
+      throw new UsageError(`-o/--output must be one of ${OUTPUT_MODES.join("|")}, got "${value}"`)
+    }
+    mode = value as OutputMode
+  }
+  return { argv: rest, mode }
 }
 
 export function withGlobalOptions(options: ParseOptions): ParseOptions {

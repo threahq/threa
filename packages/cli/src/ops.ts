@@ -1,5 +1,5 @@
 import type { ThreaApiClient } from "./api-client"
-import type { ThreaMcpConfig } from "./config"
+import type { ThreaConfig } from "./config"
 import { enrichConversation, enrichMessages } from "./enrich"
 import type { RefResolver } from "./resolver"
 import type { TokenStore } from "./token-store"
@@ -18,7 +18,7 @@ interface Principal {
   [key: string]: unknown
 }
 
-export async function whoami(client: ThreaApiClient, config: ThreaMcpConfig): Promise<unknown> {
+export async function whoami(client: ThreaApiClient, config: ThreaConfig): Promise<unknown> {
   const { data } = await client.get<{ data: Principal }>("/me")
   return { principal: data, baseUrl: config.baseUrl, workspaceId: config.workspaceId }
 }

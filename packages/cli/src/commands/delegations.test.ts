@@ -42,10 +42,9 @@ test("claim persists the token to the state file and prints it in the result", a
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: { id: "dlg_1", brief: "do it", claimToken: "tok_secret" } }))
 
   const result = await run(
-    ["delegations", "claim", "dlg_1", "--label", "Kris's MacBook", "--idempotency-key", "idem-key-12345"],
+    ["delegations", "claim", "dlg_1", "--label", "Kris's MacBook", "--idempotency-key", "idem-key-12345", "--json"],
     {
       config: TEST_CONFIG,
-      isTTY: false,
     }
   )
 
@@ -60,12 +59,11 @@ test("claim persists the token to the state file and prints it in the result", a
 
 test("claim then update reuses the stored token across separate invocations, then finish clears it", async () => {
   fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { id: "dlg_1", claimToken: "tok_stored" } }))
-  await run(["delegations", "claim", "dlg_1", "--label", "runner"], { config: TEST_CONFIG, isTTY: false })
+  await run(["delegations", "claim", "dlg_1", "--label", "runner"], { config: TEST_CONFIG })
 
   fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { id: "dlg_1" } }))
   const updated = await run(["delegations", "update", "dlg_1", "--note", "halfway"], {
     config: TEST_CONFIG,
-    isTTY: false,
   })
   expect(updated.exitCode).toBe(0)
   expect(pathOf(1)).toBe("/api/v1/workspaces/ws_1/delegations/dlg_1/status")
@@ -75,7 +73,6 @@ test("claim then update reuses the stored token across separate invocations, the
   fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { id: "dlg_1", status: "completed" } }))
   const finished = await run(["delegations", "finish", "dlg_1", "--outcome", "complete", "--result", "shipped"], {
     config: TEST_CONFIG,
-    isTTY: false,
   })
   expect(finished.exitCode).toBe(0)
   expect(pathOf(2)).toBe("/api/v1/workspaces/ws_1/delegations/dlg_1/complete")
@@ -85,7 +82,7 @@ test("claim then update reuses the stored token across separate invocations, the
   const state = JSON.parse(readFileSync(statePath, "utf8")) as { claimTokens: Record<string, unknown> }
   expect(state.claimTokens.ws_1).toBeUndefined()
 
-  const again = await run(["delegations", "update", "dlg_1", "--note", "again"], { config: TEST_CONFIG, isTTY: false })
+  const again = await run(["delegations", "update", "dlg_1", "--note", "again"], { config: TEST_CONFIG })
   expect(again.exitCode).toBe(1)
   expect((JSON.parse(again.stderr) as { code: string }).code).toBe("MISSING_CLAIM_TOKEN")
   expect(fetchSpy.mock.calls.length).toBe(3)
@@ -93,10 +90,10 @@ test("claim then update reuses the stored token across separate invocations, the
 
 test("update without a note posts a pure heartbeat carrying the stored token", async () => {
   fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { id: "dlg_1", claimToken: "tok_hb" } }))
-  await run(["delegations", "claim", "dlg_1", "--label", "runner"], { config: TEST_CONFIG, isTTY: false })
+  await run(["delegations", "claim", "dlg_1", "--label", "runner"], { config: TEST_CONFIG })
 
   fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { claimExpiresAt: "2026-07-16T00:15:00.000Z" } }))
-  await run(["delegations", "update", "dlg_1"], { config: TEST_CONFIG, isTTY: false })
+  await run(["delegations", "update", "dlg_1"], { config: TEST_CONFIG })
 
   expect(pathOf(1)).toBe("/api/v1/workspaces/ws_1/delegations/dlg_1/heartbeat")
   expect(callbackHeader(1)).toBe("tok_hb")
@@ -105,7 +102,6 @@ test("update without a note posts a pure heartbeat carrying the stored token", a
 test("finish --outcome fail without --error is a usage error (exit 2) before any HTTP", async () => {
   const result = await run(["delegations", "finish", "dlg_1", "--outcome", "fail"], {
     config: TEST_CONFIG,
-    isTTY: false,
   })
 
   expect(result.exitCode).toBe(2)
@@ -116,7 +112,7 @@ test("finish --outcome fail without --error is a usage error (exit 2) before any
 test("finish --outcome fail rejects --result and --metadata, naming them, before any HTTP", async () => {
   const result = await run(
     ["delegations", "finish", "dlg_1", "--outcome", "fail", "--error", "broke", "--result", "x", "--metadata", "k=v"],
-    { config: TEST_CONFIG, isTTY: false }
+    { config: TEST_CONFIG }
   )
 
   expect(result.exitCode).toBe(2)
@@ -128,7 +124,7 @@ test("finish --outcome fail rejects --result and --metadata, naming them, before
 })
 
 test("update with no stored or explicit token errors before any HTTP", async () => {
-  const result = await run(["delegations", "update", "dlg_unknown"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["delegations", "update", "dlg_unknown"], { config: TEST_CONFIG })
 
   expect(result.exitCode).toBe(1)
   expect((JSON.parse(result.stderr) as { code: string }).code).toBe("MISSING_CLAIM_TOKEN")
@@ -137,12 +133,11 @@ test("update with no stored or explicit token errors before any HTTP", async () 
 
 test("an explicit --claim-token overrides the stored one", async () => {
   fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { id: "dlg_1", claimToken: "tok_stored" } }))
-  await run(["delegations", "claim", "dlg_1", "--label", "runner"], { config: TEST_CONFIG, isTTY: false })
+  await run(["delegations", "claim", "dlg_1", "--label", "runner"], { config: TEST_CONFIG })
 
   fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { id: "dlg_1" } }))
   await run(["delegations", "update", "dlg_1", "--note", "x", "--claim-token", "tok_explicit"], {
     config: TEST_CONFIG,
-    isTTY: false,
   })
 
   expect(callbackHeader(1)).toBe("tok_explicit")
@@ -153,7 +148,6 @@ test("delegations list returns the open queue with the since filter", async () =
 
   const result = await run(["delegations", "list", "--since", "2026-07-16T00:00:00.000Z"], {
     config: TEST_CONFIG,
-    isTTY: false,
   })
 
   expect(result.exitCode).toBe(0)
@@ -165,7 +159,7 @@ test("delegations list returns the open queue with the since filter", async () =
 test("request-access posts to the request-access route", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: { already_granted: false } }))
 
-  const result = await run(["delegations", "request-access", "dlg_1"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["delegations", "request-access", "dlg_1"], { config: TEST_CONFIG })
 
   expect(result.exitCode).toBe(0)
   expect(pathOf(0)).toBe("/api/v1/workspaces/ws_1/delegations/dlg_1/request-access")
@@ -173,12 +167,11 @@ test("request-access posts to the request-access route", async () => {
 
 test("finish --result `-` reads the result markdown from stdin", async () => {
   fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { id: "dlg_1", claimToken: "tok_x" } }))
-  await run(["delegations", "claim", "dlg_1", "--label", "runner"], { config: TEST_CONFIG, isTTY: false })
+  await run(["delegations", "claim", "dlg_1", "--label", "runner"], { config: TEST_CONFIG })
 
   fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { id: "dlg_1", status: "completed" } }))
   await run(["delegations", "finish", "dlg_1", "--outcome", "complete", "--result", "-"], {
     config: TEST_CONFIG,
-    isTTY: false,
     readStdin: () => Promise.resolve("# Report\nDone."),
   })
 
