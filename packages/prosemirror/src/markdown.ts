@@ -98,9 +98,11 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
 
     case "blockquote": {
       const quoted = node.content?.map((n) => serializeNode(n)).join("\n") ?? ""
+      // Bare `>` for empty lines: trailing whitespace is stripped by many
+      // markdown tools, which would break the empty-paragraph roundtrip.
       return quoted
         .split("\n")
-        .map((line) => "> " + line)
+        .map((line) => (line ? "> " + line : ">"))
         .join("\n")
     }
 
@@ -647,14 +649,12 @@ export function parseMarkdown(
         })
       } else {
         // One paragraph per quoted line — the inverse of the serializer, which
-        // emits each blockquote paragraph as its own `> ` line. Blank quoted
-        // lines are paragraph separators, not content.
-        const quoteParagraphs = quoteLines
-          .filter((quoteLine) => quoteLine.trim().length > 0)
-          .map((quoteLine) => ({
-            type: "paragraph",
-            content: parseInlineMarkdown(quoteLine, options),
-          }))
+        // emits each blockquote paragraph as its own `> ` line, including a
+        // bare `>` for an empty paragraph, so blank lines stay as paragraphs.
+        const quoteParagraphs = quoteLines.map((quoteLine): JSONContent => {
+          const inlineContent = parseInlineMarkdown(quoteLine, options)
+          return inlineContent.length > 0 ? { type: "paragraph", content: inlineContent } : { type: "paragraph" }
+        })
         content.push({
           type: "blockquote",
           content: quoteParagraphs.length > 0 ? quoteParagraphs : [{ type: "paragraph" }],
