@@ -74,11 +74,6 @@ export class StubAuthService implements AuthService {
     return true
   }
 
-  // Stub sessions never expire, so verify-only and full auth are the same path.
-  async verifySession(sealedSession: string): Promise<AuthResult> {
-    return this.authenticateSession(sealedSession)
-  }
-
   async authenticateSession(sealedSession: string): Promise<AuthResult> {
     if (!sealedSession) {
       return {

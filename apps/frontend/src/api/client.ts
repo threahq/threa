@@ -1,10 +1,3 @@
-import {
-  AUTH_SESSION_INVALID_CODE,
-  AUTH_TOKEN_EXPIRED_CODE,
-  THREA_AUTH_MODE_CLIENT_REFRESH,
-  THREA_AUTH_MODE_HEADER,
-} from "@threa/types"
-
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -67,28 +60,15 @@ export async function postMultipartFile<T>(
   fieldName: string,
   fallback: { code?: string; message?: string } = {}
 ): Promise<T> {
-  const post = async (): Promise<Response> => {
-    // Fresh FormData per attempt: a File re-reads fine, but a consumed
-    // FormData body is not guaranteed re-sendable everywhere.
-    const formData = new FormData()
-    formData.append(fieldName, file)
-    return fetch(`${API_BASE}${path}`, {
-      method: "POST",
-      credentials: "include",
-      headers: { [THREA_AUTH_MODE_HEADER]: THREA_AUTH_MODE_CLIENT_REFRESH },
-      body: formData,
-    })
-  }
-  let response = await post()
+  const formData = new FormData()
+  formData.append(fieldName, file)
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  })
   if (!response.ok) {
-    const error = await parseApiError(response, fallback)
-    if (error.status !== 401 || error.code !== AUTH_TOKEN_EXPIRED_CODE) throw error
-    // Same refresh-once-and-retry as apiFetch (see ensureFreshSession).
-    const outcome = await ensureFreshSession()
-    if (outcome === "session-dead") throw error
-    if (outcome === "unavailable") throw new Error("Session refresh unavailable; upload not retried")
-    response = await post()
-    if (!response.ok) throw await parseApiError(response, fallback)
+    throw await parseApiError(response, fallback)
   }
   return (await response.json()) as T
 }
@@ -107,90 +87,9 @@ export function postAvatarUpload<T>(path: string, file: File): Promise<T> {
 // override per-call via `options.timeoutMs`.
 const DEFAULT_TIMEOUT_MS = 20000
 
-// --- Client-coordinated session refresh -------------------------------------
-//
-// Every request opts into verify-only auth (THREA_AUTH_MODE_HEADER): the
-// server never refreshes the WorkOS session inline, so an expired access
-// token 401s fast with TOKEN_EXPIRED. This layer then runs EXACTLY ONE
-// refresh — deduped across concurrent queries by a shared promise and across
-// tabs by a Web Lock — and retries the failed request once. WorkOS rotates
-// refresh tokens on use, so two concurrent refreshes with the same cookie
-// invalidate each other (the random-logout generator this replaces); the
-// browser is the natural singleton for its session, which makes this correct
-// on any number of backend replicas, regions, or services.
-
-const REFRESH_LOCK_NAME = "threa-session-refresh"
-
-/** Outcome of a coordinated refresh attempt. */
-type RefreshOutcome = "refreshed" | "session-dead" | "unavailable"
-
-let refreshInflight: Promise<RefreshOutcome> | null = null
-
-async function requestRefresh(): Promise<RefreshOutcome> {
-  // Deliberately WITHOUT the auth-mode header: the refresh endpoint mounts the
-  // legacy implicit-refresh middleware, which rotates the cookie onto this
-  // response. A still-valid token (another tab refreshed first while we waited
-  // on the lock) is a no-op 200 — no redundant rotation.
-  let response: Response
-  try {
-    response = await fetch(`${API_BASE}/api/auth/refresh`, { method: "POST", credentials: "include" })
-  } catch {
-    return "unavailable"
-  }
-  if (response.ok) return "refreshed"
-  if (response.status !== 401) return "unavailable"
-  const body = (await response.json().catch(() => ({}))) as ErrorResponse
-  // AUTH_UNAVAILABLE (WorkOS outage / refresh race) is transient: the session
-  // may be fine — do not treat it as dead.
-  return body.code === AUTH_SESSION_INVALID_CODE ? "session-dead" : "unavailable"
-}
-
-/**
- * Run one coordinated session refresh. Callers that hit TOKEN_EXPIRED await
- * this and retry once; all concurrent callers (and other tabs, via the Web
- * Lock) share a single WorkOS refresh.
- */
-export function ensureFreshSession(): Promise<RefreshOutcome> {
-  if (refreshInflight) return refreshInflight
-  // Web Locks serialize refreshes across tabs; a tab that waited here very
-  // likely finds a fresh cookie and its refresh call no-ops server-side.
-  // Older browsers without the API fall back to in-tab dedupe only.
-  const run = async (): Promise<RefreshOutcome> =>
-    typeof navigator !== "undefined" && navigator.locks
-      ? ((await navigator.locks.request(REFRESH_LOCK_NAME, requestRefresh)) as RefreshOutcome)
-      : requestRefresh()
-  refreshInflight = run().finally(() => {
-    refreshInflight = null
-  })
-  return refreshInflight
-}
-
 export type ApiRequestInit = RequestInit & { timeoutMs?: number }
 
 async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<T> {
-  try {
-    return await apiFetchOnce<T>(path, options)
-  } catch (error) {
-    // Expired access token: refresh once (coordinated across queries + tabs)
-    // and retry once. Any other outcome — session dead, refresh unavailable,
-    // retry failing again — falls through to the normal error paths.
-    if (!(error instanceof ApiError) || error.status !== 401 || error.code !== AUTH_TOKEN_EXPIRED_CODE) {
-      throw error
-    }
-    if (options.signal?.aborted) throw error
-    const outcome = await ensureFreshSession()
-    if (outcome === "session-dead") throw error
-    if (outcome === "unavailable") {
-      // A plain Error (not ApiError) so handleGlobalError can't read it as a
-      // 401 and bounce to login while auth is merely unreachable — queries
-      // settle to cached/IDB state, same as the timeout path.
-      throw new Error("Session refresh unavailable; request not retried")
-    }
-    return await apiFetchOnce<T>(path, options)
-  }
-}
-
-async function apiFetchOnce<T>(path: string, options: ApiRequestInit = {}): Promise<T> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal: callerSignal, ...init } = options
 
   const controller = new AbortController()
@@ -214,7 +113,6 @@ async function apiFetchOnce<T>(path: string, options: ApiRequestInit = {}): Prom
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        [THREA_AUTH_MODE_HEADER]: THREA_AUTH_MODE_CLIENT_REFRESH,
         ...init.headers,
       },
     })

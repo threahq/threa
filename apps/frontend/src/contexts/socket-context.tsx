@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from "react"
 import { io, Socket } from "socket.io-client"
 import { HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threa/types"
-import { api, ensureFreshSession } from "@/api/client"
+import { api } from "@/api/client"
 import { getCachedWsConfig, setCachedWsConfig } from "@/lib/cached-ws-config"
 import { usePageActivity } from "@/hooks/use-page-activity"
 import { usePageInteraction } from "@/hooks/use-page-interaction"
@@ -116,19 +116,6 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
       s.on("error", (error: { message: string }) => {
         if (isStale()) return
         console.error("[Socket] Error:", error.message)
-      })
-
-      s.on("connect_error", (error) => {
-        if (isStale()) return
-        // Server-side socket auth is verify-only (it can't Set-Cookie on a WS
-        // handshake, so it never rotates the session). A rejected handshake
-        // with an auth message means the cookie's access token expired while
-        // only the socket was talking — run the coordinated refresh so the
-        // next automatic reconnect attempt presents a fresh cookie.
-        // ensureFreshSession self-dedupes, so per-attempt calls don't storm.
-        if (/authentication failed|no session cookie/i.test(error.message)) {
-          void ensureFreshSession()
-        }
       })
 
       // Socket.io manager events for reconnection tracking

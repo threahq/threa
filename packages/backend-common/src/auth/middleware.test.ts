@@ -4,14 +4,7 @@ import type { AuthResult, AuthService } from "./auth-service"
 
 class FakeAuthService implements AuthService {
   constructor(private result: AuthResult) {}
-  authenticateSessionCalls = 0
-  verifySessionCalls = 0
   async authenticateSession(): Promise<AuthResult> {
-    this.authenticateSessionCalls++
-    return this.result
-  }
-  async verifySession(): Promise<AuthResult> {
-    this.verifySessionCalls++
     return this.result
   }
   async authenticateWithCode(): Promise<AuthResult> {
@@ -158,70 +151,6 @@ describe("createAuthMiddleware", () => {
 
     expect(res.statusCode).toBe(401)
     expect(res.clearedCookies).toEqual([])
-  })
-
-  test("client-refresh mode: expired token 401s TOKEN_EXPIRED without clearing or refreshing server-side", async () => {
-    const service = new FakeAuthService({ success: false, refreshed: false, reason: "invalid_jwt", terminal: false })
-    const middleware = createAuthMiddleware({ authService: service })
-
-    const req = {
-      cookies: { [sessionCookieName]: "session" },
-      headers: { "x-threa-auth-mode": "client-refresh" },
-    } as unknown as Request
-    const res = makeRes()
-    await middleware(req, res, () => {})
-
-    expect({ status: res.statusCode, body: res.body, cleared: res.clearedCookies }).toEqual({
-      status: 401,
-      body: { error: "Session expired", code: "TOKEN_EXPIRED" },
-      cleared: [],
-    })
-    // Verify-only: the implicit-refresh path must never run in this mode.
-    expect(service.verifySessionCalls).toBe(1)
-    expect(service.authenticateSessionCalls).toBe(0)
-  })
-
-  test("client-refresh mode: terminal failure 401s SESSION_INVALID and clears the cookie", async () => {
-    const service = new FakeAuthService({
-      success: false,
-      refreshed: false,
-      reason: "invalid_session_cookie",
-      terminal: true,
-    })
-    const middleware = createAuthMiddleware({ authService: service })
-
-    const req = {
-      cookies: { [sessionCookieName]: "session" },
-      headers: { "x-threa-auth-mode": "client-refresh" },
-    } as unknown as Request
-    const res = makeRes()
-    await middleware(req, res, () => {})
-
-    expect(res.statusCode).toBe(401)
-    expect((res.body as { code?: string }).code).toBe("SESSION_INVALID")
-    expect(res.clearedCookies).toContain(sessionCookieName)
-  })
-
-  test("client-refresh mode: a valid token passes through on the verify-only path", async () => {
-    const service = new FakeAuthService({
-      success: true,
-      refreshed: false,
-      user: { id: "user_123", email: "u@example.com", firstName: null, lastName: null, permissions: null },
-    })
-    const middleware = createAuthMiddleware({ authService: service })
-
-    const req = {
-      cookies: { [sessionCookieName]: "session" },
-      headers: { "x-threa-auth-mode": "client-refresh" },
-    } as unknown as Request
-    let nextCalled = false
-    await middleware(req, makeRes(), () => {
-      nextCalled = true
-    })
-
-    expect(nextCalled).toBe(true)
-    expect(service.verifySessionCalls).toBe(1)
-    expect(service.authenticateSessionCalls).toBe(0)
   })
 
   test("terminal auth failure clears the session cookie", async () => {

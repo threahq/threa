@@ -44,18 +44,6 @@ describe("Auth", () => {
     expect(afterRes.status).toBe(401)
   })
 
-  test("POST /api/auth/refresh returns ok for a live session and 401 without one", async () => {
-    const anonymous = new TestClient()
-    const anonRes = await anonymous.post("/api/auth/refresh")
-    expect(anonRes.status).toBe(401)
-
-    const client = new TestClient()
-    await loginAs(client, "refresh-test@example.com", "Refresh Tester")
-    const res = await client.post<{ data: { ok: boolean } }>("/api/auth/refresh")
-    expect(res.status).toBe(200)
-    expect(res.data.data.ok).toBe(true)
-  })
-
   test("GET /readyz returns ok", async () => {
     const client = new TestClient()
     const res = await client.get<{ status: string }>("/readyz")

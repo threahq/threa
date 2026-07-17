@@ -253,12 +253,6 @@ export {
   THREA_CALLBACK_TOKEN_HEADER,
   // Public API version negotiation
   THREA_VERSION_HEADER,
-  // Client-coordinated session refresh (auth mode header + 401 codes)
-  THREA_AUTH_MODE_HEADER,
-  THREA_AUTH_MODE_CLIENT_REFRESH,
-  AUTH_TOKEN_EXPIRED_CODE,
-  AUTH_SESSION_INVALID_CODE,
-  AUTH_UNAVAILABLE_CODE,
   // Original client host forwarded through the CF routers (survives Railway)
   ORIGINAL_HOST_HEADER,
   // Socket heartbeat
