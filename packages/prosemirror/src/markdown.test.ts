@@ -1292,3 +1292,24 @@ describe("@threa/prosemirror blockquote paragraph round-trip", () => {
     expect(parsed.content?.[0]).toEqual({ type: "blockquote", content: [{ type: "paragraph" }] })
   })
 })
+
+describe("@threa/prosemirror blockquote empty-paragraph round-trip", () => {
+  it("preserves an empty paragraph between quoted paragraphs", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "one" }] },
+            { type: "paragraph" },
+            { type: "paragraph", content: [{ type: "text", text: "two" }] },
+          ],
+        },
+      ],
+    }
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toBe("> one\n>\n> two")
+    expect(parseMarkdown(markdown)).toEqual(doc)
+  })
+})
