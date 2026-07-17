@@ -932,26 +932,29 @@ describe("handleBeforeInputKeyboardPaste (Gboard suggestion-bar paste)", () => {
     editor.destroy()
   })
 
-  it("intercepts insertFromPaste without the size/styling heuristic", () => {
-    const editor = createTestEditor("")
-    editor.commands.setTextSelection(editor.state.doc.content.size)
+  it.each(["insertFromPaste", "insertReplacementText"])(
+    "intercepts %s without the size/styling heuristic",
+    (inputType) => {
+      const editor = createTestEditor("")
+      editor.commands.setTextSelection(editor.state.doc.content.size)
 
-    const event = {
-      inputType: "insertFromPaste",
-      data: null,
-      dataTransfer: { getData: (format: string) => (format === "text/plain" ? "hi" : "") },
-      prevented: false,
-      preventDefault() {
-        this.prevented = true
-      },
+      const event = {
+        inputType,
+        data: null,
+        dataTransfer: { getData: (format: string) => (format === "text/plain" ? "hi" : "") },
+        prevented: false,
+        preventDefault() {
+          this.prevented = true
+        },
+      }
+      const handled = handleBeforeInputKeyboardPaste(editor, event)
+
+      expect(handled).toBe(true)
+      expect(event.prevented).toBe(true)
+      expect(serializeToMarkdown(editor.getJSON())).toBe("hi")
+      editor.destroy()
     }
-    const handled = handleBeforeInputKeyboardPaste(editor, event)
-
-    expect(handled).toBe(true)
-    expect(event.prevented).toBe(true)
-    expect(serializeToMarkdown(editor.getJSON())).toBe("hi")
-    editor.destroy()
-  })
+  )
 
   it("falls back to a plain-text insert when markdown parsing throws (payload never lost)", () => {
     const editor = createTestEditor("")
