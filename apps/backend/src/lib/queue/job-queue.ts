@@ -379,6 +379,8 @@ export interface GithubPreviewRefreshJobData {
    * can't permanently drop the webhook invalidation.
    */
   attempt?: number
+  /** Stable across one bounded fetch retry chain; fresh for a later outage cycle. */
+  retryCycleId?: string
 }
 
 export interface JobDataMap {

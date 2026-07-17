@@ -214,9 +214,13 @@ describe("refreshGithubPreviewWithTrailing — transient fetch failure retries",
 
     expect(jobQueue.send).toHaveBeenCalledTimes(1)
     const [queueName, data, options] = jobQueue.send.mock.calls[0]!
+    const retryData = data as { workspaceId: string; previewId: string; attempt: number; retryCycleId: string }
     expect(queueName).toBe("github_preview.refresh")
-    expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, attempt: 1 })
-    expect(options!.messageId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, 1))
+    expect(retryData).toMatchObject({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, attempt: 1 })
+    expect(retryData.retryCycleId).toEqual(expect.any(String))
+    expect(options!.messageId).toBe(
+      githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, retryData.retryCycleId, 1)
+    )
     // ~30s backoff.
     expect(options!.processAfter!.getTime()).toBeGreaterThan(Date.now() + 20_000)
   })
@@ -226,38 +230,37 @@ describe("refreshGithubPreviewWithTrailing — transient fetch failure retries",
 
     await refreshGithubPreviewWithTrailing(
       { linkPreviewService: service, workspaceIntegrationService: {} as never, jobQueue },
-      { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, attempt: 1 }
+      { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, attempt: 1, retryCycleId: "cycle-1" }
     )
 
     const [, data, options] = jobQueue.send.mock.calls[0]!
-    expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, attempt: 2 })
-    expect(options!.messageId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, 2))
+    expect(data).toEqual({
+      workspaceId: WORKSPACE_ID,
+      previewId: PREVIEW_ID,
+      attempt: 2,
+      retryCycleId: "cycle-1",
+    })
+    expect(options!.messageId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, "cycle-1", 2))
   })
 
-  test("two outage cycles at different versions produce distinct retry ids", async () => {
-    const earlier = 3
-    const later = 4
-
-    const first = makeFetchEmptyDeps(earlier)
+  test("two outage cycles at the same version produce distinct retry ids", async () => {
+    const first = makeFetchEmptyDeps()
     await refreshGithubPreviewWithTrailing(
       { linkPreviewService: first.service, workspaceIntegrationService: {} as never, jobQueue: first.jobQueue },
-      { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID }
+      { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, retryCycleId: "cycle-old" }
     )
     const firstId = first.jobQueue.send.mock.calls[0]![2]!.messageId
 
-    const second = makeFetchEmptyDeps(later)
+    const second = makeFetchEmptyDeps()
     await refreshGithubPreviewWithTrailing(
       { linkPreviewService: second.service, workspaceIntegrationService: {} as never, jobQueue: second.jobQueue },
-      { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID }
+      { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, retryCycleId: "cycle-new" }
     )
     const secondId = second.jobQueue.send.mock.calls[0]![2]!.messageId
 
-    // Same previewId + same attempt (1) but a version advanced by a prior
-    // successful refresh — the ids must differ so the second cycle's retry is not
-    // dropped by a pkey collision with the never-purged completed first-cycle row.
     expect(firstId).not.toBe(secondId)
-    expect(firstId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, earlier, 1))
-    expect(secondId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, later, 1))
+    expect(firstId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, "cycle-old", 1))
+    expect(secondId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, "cycle-new", 1))
   })
 
   test("stops retrying after the third attempt, no further job", async () => {

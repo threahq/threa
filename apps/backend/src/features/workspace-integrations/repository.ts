@@ -68,6 +68,11 @@ function mapRow(row: Record<string, unknown>): WorkspaceIntegrationRecord {
 }
 
 export const WorkspaceIntegrationRepository = {
+  /** Serialize integration replacement even when no provider row exists yet. */
+  async lockWorkspace(querier: Querier, workspaceId: string): Promise<void> {
+    await querier.query(sql`SELECT id FROM workspaces WHERE id = $1 FOR UPDATE`, [workspaceId])
+  },
+
   async findByWorkspaceAndProvider(
     querier: Querier,
     workspaceId: string,

@@ -18,6 +18,8 @@ const TRAILING_REFRESH_BUFFER_MS = 500
  * first retry waits 30s, then 2m, then 10m. Its length is the retry cap.
  */
 const FETCH_EMPTY_RETRY_DELAYS_MS = [30_000, 120_000, 600_000] as const
+/** Coalesces a webhook storm, while a cycle exhausted after 12.5m always enters a later bucket. */
+const FETCH_EMPTY_RETRY_CYCLE_MS = 10 * 60_000
 
 export interface GithubPreviewRefreshDeps extends RefreshLinkPreviewDeps {
   jobQueue: Pick<QueueManager, "send">
@@ -36,17 +38,18 @@ export function githubPreviewRefreshQueueId(previewId: string, refreshVersion: n
 }
 
 /**
- * Deterministic queue-message id for a `fetch_empty` retry. Keyed on BOTH the
- * pre-fetch `refreshVersion` and the attempt number. A failed fetch lands no
- * write, so within one outage the version is constant and the attempt number
- * makes each retry's id unique (and dedupes a storm at the same attempt). Across
- * outages the version differs — a prior successful refresh advanced it — so the
- * ids differ too; without the version component a later outage's `_${attempt}` id
- * would collide with the never-purged completed row from an earlier cycle and
- * `send`'s pkey-dedupe would silently drop the retry.
+ * Deterministic queue-message id for one `fetch_empty` retry cycle. The cycle id
+ * stays stable across its bounded attempts, but a later webhook starts a fresh
+ * cycle even when no successful write advanced `refreshVersion`; otherwise its
+ * attempt ids would collide with completed rows from the exhausted prior cycle.
  */
-export function githubPreviewRefreshRetryQueueId(previewId: string, refreshVersion: number, attempt: number): string {
-  return `queue_ghprev_retry_${previewId}_v${refreshVersion}_${attempt}`
+export function githubPreviewRefreshRetryQueueId(
+  previewId: string,
+  refreshVersion: number,
+  retryCycleId: string,
+  attempt: number
+): string {
+  return `queue_ghprev_retry_${previewId}_v${refreshVersion}_${retryCycleId}_${attempt}`
 }
 
 /**
@@ -59,15 +62,15 @@ export function githubPreviewRefreshRetryQueueId(previewId: string, refreshVersi
  * - `fetch_empty`: the fetch failed transiently (GitHub 5xx / timeout / rate-limit
  *   breaker) and `fetched_at` did NOT advance, so with no TTL refresh for untouched
  *   messages the webhook signal would be dropped forever. Retry on a growing
- *   backoff up to a hard cap (keyed on the unchanged `fetchedAt` plus the attempt
- *   number so cycles stay distinct across outages), then give up with a warn.
+ *   backoff up to a hard cap (keyed on version + retry cycle + attempt), then
+ *   give up with a warn.
  *
  * Shared by the webhook worker and the trailing worker itself, so the coalescing
  * and retry logic live on a single path (INV-35).
  */
 export async function refreshGithubPreviewWithTrailing(
   deps: GithubPreviewRefreshDeps,
-  params: { workspaceId: string; previewId: string; attempt?: number }
+  params: { workspaceId: string; previewId: string; attempt?: number; retryCycleId?: string }
 ): Promise<void> {
   const { workspaceId, previewId } = params
   const result = await refreshLinkPreview(deps, { workspaceId, previewId, useOptimisticConcurrency: true })
@@ -102,12 +105,13 @@ export async function refreshGithubPreviewWithTrailing(
   }
 
   const nextAttempt = attempt + 1
+  const retryCycleId = params.retryCycleId ?? Math.floor(Date.now() / FETCH_EMPTY_RETRY_CYCLE_MS).toString(36)
   const processAfter = new Date(Date.now() + FETCH_EMPTY_RETRY_DELAYS_MS[attempt]!)
-  const messageId = githubPreviewRefreshRetryQueueId(previewId, result.refreshVersion, nextAttempt)
+  const messageId = githubPreviewRefreshRetryQueueId(previewId, result.refreshVersion, retryCycleId, nextAttempt)
 
   await deps.jobQueue.send(
     JobQueues.GITHUB_PREVIEW_REFRESH,
-    { workspaceId, previewId, attempt: nextAttempt },
+    { workspaceId, previewId, attempt: nextAttempt, retryCycleId },
     { processAfter, messageId }
   )
   log.debug(
@@ -130,6 +134,7 @@ export function createGithubPreviewRefreshWorker(
       workspaceId: job.data.workspaceId,
       previewId: job.data.previewId,
       attempt: job.data.attempt,
+      retryCycleId: job.data.retryCycleId,
     })
   }
 }

@@ -1,6 +1,11 @@
 import { describe, it, expect, afterEach, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import { WorkspaceIntegrationService } from "./service"
+import {
+  WorkspaceIntegrationRepository,
+  type UpsertWorkspaceIntegrationParams,
+  type WorkspaceIntegrationRecord,
+} from "./repository"
 import { encryptJson } from "./crypto"
 import { OutboxRepository } from "../../lib/outbox"
 import type { GitHubAppConfig, LinearOAuthConfig } from "../../lib/env"
@@ -158,6 +163,34 @@ describe("disconnectGithubIntegration route unregistration", () => {
     ])
   })
 
+  it("does not deactivate or unregister when the integration was replaced after the read", async () => {
+    let queryCount = 0
+    const calls: QueryCall[] = []
+    const pool = {
+      query: async (query: unknown, values: unknown[] = []) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        calls.push({ text, values })
+        queryCount += 1
+        if (text.includes("UPDATE workspace_integrations")) return { rows: [], rowCount: 0 }
+        return { rows: queryCount === 1 ? [githubRow({ installation_id: "42" })] : [], rowCount: 1 }
+      },
+      release: () => {},
+    } as unknown as Pool
+    const spy = outboxSpy()
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+
+    await service.disconnectGithubIntegration("ws_1")
+
+    const update = calls.find((call) => call.text.includes("UPDATE workspace_integrations"))
+    expect(update?.values).toContain("42")
+    expect(routeEvents(spy)).toEqual([])
+  })
+
   it("emits no route event when no region is configured (local dev)", async () => {
     const { pool } = recordingPool([githubRow()])
     const spy = outboxSpy()
@@ -171,6 +204,65 @@ describe("disconnectGithubIntegration route unregistration", () => {
     await service.disconnectGithubIntegration("ws_1")
 
     expect(spy).not.toHaveBeenCalled()
+  })
+})
+
+describe("GitHub installation replacement route lifecycle", () => {
+  it("serializes replacement and unregisters the previous route before registering the new one", async () => {
+    const { pool } = recordingPool([])
+    const previous: WorkspaceIntegrationRecord = {
+      id: "wsi_1",
+      workspaceId: "ws_1",
+      provider: "github",
+      status: "active",
+      credentials: {},
+      metadata: {},
+      installedBy: "user_1",
+      installationId: "42",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+    const replacement: UpsertWorkspaceIntegrationParams = {
+      id: "wsi_1",
+      workspaceId: "ws_1",
+      provider: "github",
+      status: "active",
+      credentials: {},
+      metadata: {},
+      installedBy: "user_1",
+      installationId: "77",
+    }
+    const lockSpy = spyOn(WorkspaceIntegrationRepository, "lockWorkspace").mockResolvedValue(undefined)
+    spyOn(WorkspaceIntegrationRepository, "findByWorkspaceAndProvider").mockResolvedValue(previous)
+    spyOn(WorkspaceIntegrationRepository, "upsert").mockResolvedValue({ ...previous, installationId: "77" })
+    const spy = outboxSpy()
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+
+    await (
+      service as unknown as {
+        persistGithubIntegration(
+          params: UpsertWorkspaceIntegrationParams,
+          routeInstallationId: string
+        ): Promise<WorkspaceIntegrationRecord>
+      }
+    ).persistGithubIntegration(replacement, "77")
+
+    expect(lockSpy).toHaveBeenCalledWith(pool, "ws_1")
+    expect(routeEvents(spy)).toEqual([
+      {
+        eventType: "github_route:unregister",
+        payload: { workspaceId: "ws_1", installationId: "42", region: "eu-north-1" },
+      },
+      {
+        eventType: "github_route:register",
+        payload: { workspaceId: "ws_1", installationId: "77", region: "eu-north-1" },
+      },
+    ])
   })
 })
 

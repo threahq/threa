@@ -28,7 +28,11 @@ import {
   verifyGithubInstallState,
   verifyLinearInstallState,
 } from "./crypto"
-import { WorkspaceIntegrationRepository, type WorkspaceIntegrationRecord } from "./repository"
+import {
+  WorkspaceIntegrationRepository,
+  type UpsertWorkspaceIntegrationParams,
+  type WorkspaceIntegrationRecord,
+} from "./repository"
 import {
   LinearClient,
   LinearGraphQLEndpoint,
@@ -257,13 +261,25 @@ export class WorkspaceIntegrationService {
     // makes the order the clear runs in irrelevant — the id is already captured.
     const installationId = record ? this.resolveInstallationId(workspaceId, record) : null
 
+    if (!record) return
+
     await withTransaction(this.deps.pool, async (client) => {
-      await WorkspaceIntegrationRepository.update(client, workspaceId, WorkspaceIntegrationProviders.GITHUB, {
-        status: WorkspaceIntegrationStatuses.INACTIVE,
-        credentials: {},
-        metadata: {},
-      })
-      if (installationId) {
+      const updated = await WorkspaceIntegrationRepository.update(
+        client,
+        workspaceId,
+        WorkspaceIntegrationProviders.GITHUB,
+        {
+          status: WorkspaceIntegrationStatuses.INACTIVE,
+          credentials: {},
+          metadata: {},
+        },
+        {
+          expectedInstallationId: installationId
+            ? { value: installationId, allowNull: record.installationId === null }
+            : { value: "", allowNull: true },
+        }
+      )
+      if (updated && installationId) {
         await this.emitRouteUnregister(client, workspaceId, installationId)
       }
     })
@@ -662,12 +678,7 @@ export class WorkspaceIntegrationService {
       },
       installedByUserId,
       true,
-      // Commit the durable route-register event in the SAME transaction as the
-      // credential upsert, so a crash can't leave the integration active locally
-      // with no control-plane route (or vice versa).
-      async (client) => {
-        await this.emitRouteRegister(client, workspaceId, String(installationId))
-      }
+      String(installationId)
     )
 
     if (!refreshed) {
@@ -709,12 +720,8 @@ export class WorkspaceIntegrationService {
     metadata: GitHubIntegrationMetadata,
     installedByOverride?: string,
     hydrateRepositories = false,
-    /**
-     * Runs in the SAME transaction as the credential upsert, after it. Used by
-     * the install flow to commit the route-register event atomically with
-     * activation. When omitted, the upsert runs directly on the pool (no txn).
-     */
-    onPersist?: (client: Querier) => Promise<void>
+    /** When set, atomically replace the integration and synchronize its CP route. */
+    routeInstallationId?: string
   ): Promise<RefreshResult | null> {
     try {
       const tokenResponse = await this.getAppOctokit().request(
@@ -755,16 +762,7 @@ export class WorkspaceIntegrationService {
         installationId: String(installationId),
       }
 
-      // The network round-trips above already completed, so the transaction that
-      // pairs the upsert with `onPersist`'s outbox write holds no connection
-      // during slow remote calls (INV-41).
-      const updated = onPersist
-        ? await withTransaction(this.deps.pool, async (client) => {
-            const row = await WorkspaceIntegrationRepository.upsert(client, upsertParams)
-            await onPersist(client)
-            return row
-          })
-        : await WorkspaceIntegrationRepository.upsert(this.deps.pool, upsertParams)
+      const updated = await this.persistGithubIntegration(upsertParams, routeInstallationId)
 
       return {
         record: updated,
@@ -779,6 +777,34 @@ export class WorkspaceIntegrationService {
       log.warn({ err: error, workspaceId, installationId }, "GitHub installation token refresh failed")
       return null
     }
+  }
+
+  /** Persist after all network work; replacement route events commit with the row. */
+  private async persistGithubIntegration(
+    params: UpsertWorkspaceIntegrationParams,
+    routeInstallationId?: string
+  ): Promise<WorkspaceIntegrationRecord> {
+    if (!routeInstallationId) {
+      return WorkspaceIntegrationRepository.upsert(this.deps.pool, params)
+    }
+
+    // Lock the workspace rather than the provider row: two first-time installs
+    // must serialize even when no workspace_integrations row exists yet.
+    return withTransaction(this.deps.pool, async (client) => {
+      await WorkspaceIntegrationRepository.lockWorkspace(client, params.workspaceId)
+      const previous = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
+        client,
+        params.workspaceId,
+        WorkspaceIntegrationProviders.GITHUB
+      )
+      const previousInstallationId = previous ? this.resolveInstallationId(params.workspaceId, previous) : null
+      const updated = await WorkspaceIntegrationRepository.upsert(client, params)
+      if (previousInstallationId && previousInstallationId !== routeInstallationId) {
+        await this.emitRouteUnregister(client, params.workspaceId, previousInstallationId)
+      }
+      await this.emitRouteRegister(client, params.workspaceId, routeInstallationId)
+      return updated
+    })
   }
 
   private parseCredentials(workspaceId: string, payload: Record<string, unknown>): GitHubIntegrationCredentials {
