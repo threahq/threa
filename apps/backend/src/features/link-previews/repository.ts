@@ -270,7 +270,7 @@ export const LinkPreviewRepository = {
   ): Promise<LinkPreview[]> {
     const result = await querier.query(
       sql`SELECT * FROM link_previews
-          WHERE workspace_id = $1 AND status = 'completed' AND normalized_url ILIKE $2 ESCAPE '\'`,
+          WHERE workspace_id = $1 AND status = 'completed' AND normalized_url ILIKE $2 ESCAPE '\\'`,
       [workspaceId, `${escapedPrefix}%`]
     )
     return result.rows.map(mapRow)
