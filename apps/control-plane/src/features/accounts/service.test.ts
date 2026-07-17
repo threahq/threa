@@ -51,6 +51,10 @@ class ProgrammableAuthService implements AuthService {
     this.replies.set(sealed, reply)
   }
 
+  async verifySession(sealed: string): Promise<AuthResult> {
+    return this.authenticateSession(sealed)
+  }
+
   async authenticateSession(sealed: string): Promise<AuthResult> {
     const reply = this.replies.get(sealed)
     if (!reply) return { success: false, refreshed: false, reason: "not_found" }

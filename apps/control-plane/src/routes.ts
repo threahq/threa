@@ -131,6 +131,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   }
 
   app.get("/api/auth/me", auth, authHandlers.me)
+  app.post("/api/auth/refresh", authLimit, auth, authHandlers.refresh)
   app.get("/api/integrations/github/callback", auth, integrations.githubCallback)
   app.get("/api/integrations/linear/callback", auth, integrations.linearCallback)
 

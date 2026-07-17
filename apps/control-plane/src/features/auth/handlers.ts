@@ -264,6 +264,22 @@ export function createControlPlaneAuthHandlers({
       res.redirect(sameAppOrigin)
     },
 
+    /**
+     * Explicit session refresh for client-coordinated auth. All the work
+     * happens in the auth middleware this route mounts in LEGACY mode (the
+     * coordinator's call deliberately omits the client-refresh header): an
+     * expired token is refreshed and the rotated cookie rides this response's
+     * Set-Cookie; a still-valid token (another tab refreshed first) is a
+     * no-op — no redundant rotation. The client serializes calls per session
+     * (shared promise + Web Lock), so rotating-refresh-token races never form.
+     */
+    async refresh(req: Request, res: Response) {
+      if (!req.authUser) {
+        throw new HttpError("Not authenticated", { status: 401, code: "NOT_AUTHENTICATED" })
+      }
+      res.json({ data: { ok: true } })
+    },
+
     async me(req: Request, res: Response) {
       const authUser = req.authUser
       if (!authUser) {
