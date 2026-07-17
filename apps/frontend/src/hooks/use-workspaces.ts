@@ -179,7 +179,11 @@ export function useCreateWorkspace() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (data: { name: string; slug: string; region?: string }) => workspaceService.create(data),
+    // The creator's zone seeds the workspace's billing timezone — the boundary
+    // its AI spend month is cut on. Sent at create because the owner never runs
+    // the setup flow that would otherwise report it.
+    mutationFn: (data: { name: string; slug: string; region?: string }) =>
+      workspaceService.create({ ...data, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
     onSuccess: (newWorkspace) => {
       queryClient.setQueryData<WorkspaceListResult>(workspaceKeys.list(), (old) => ({
         workspaces: old ? [...old.workspaces, newWorkspace] : [newWorkspace],

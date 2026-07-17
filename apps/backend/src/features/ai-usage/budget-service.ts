@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg"
 import { withClient } from "../../db"
 import { AIBudgetRepository } from "./budget-repository"
 import { AIUsageRepository } from "./usage-repository"
+import { resolveBudgetMonthRange } from "./billing-window"
 import { aiBudgetId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 
@@ -74,7 +75,7 @@ export class AIBudgetService implements AIBudgetServiceLike {
         budget = await this.createDefaultBudget(client, workspaceId)
       }
 
-      const { start, end } = getCurrentMonthRange()
+      const { start, end } = await resolveBudgetMonthRange(client, workspaceId)
       const usage = await AIUsageRepository.getWorkspaceUsage(client, workspaceId, start, end)
       const currentUsageUsd = Number(usage.totalCostUsd)
       const budgetUsd = Number(budget.monthlyBudgetUsd)
@@ -170,11 +171,4 @@ export class AIBudgetService implements AIBudgetServiceLike {
       hardLimitEnabled: false, // Don't block by default
     })
   }
-}
-
-function getCurrentMonthRange(): { start: Date; end: Date } {
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
-  return { start, end }
 }

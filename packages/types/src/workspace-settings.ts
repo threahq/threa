@@ -63,6 +63,18 @@ export interface WorkspaceSettings {
    * write-time validation rejects an id that isn't an active persona here.
    */
   defaultCompanionPersonaId: string | null
+  /**
+   * The workspace's own IANA timezone: the boundary its AI spend month is cut
+   * on. Anchors both halves of the budget — `budget-service.checkBudget` resolves
+   * the enforcement window against it (so degradation and the hard limit reset on
+   * the workspace's midnight, not the server's), and the AI usage dashboard
+   * offers it as a reporting zone alongside the viewer's device zone.
+   *
+   * Storage stays UTC timestamps (`ai_usage_records.created_at`); this only moves
+   * where the month is cut. Defaults to "UTC" rather than a member's zone — a
+   * shared money boundary has to be a deliberate choice, not one member's laptop.
+   */
+  billingTimezone: string
   createdAt: string
   updatedAt: string
 }
@@ -75,6 +87,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   voiceSteeringWords: [],
   maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
   defaultCompanionPersonaId: null,
+  billingTimezone: "UTC",
 }
 
 /** Partial update — only provided fields are changed. */
@@ -85,6 +98,7 @@ export interface UpdateWorkspaceSettingsInput {
   voiceSteeringWords?: string[]
   maxPendingFollowUps?: number
   defaultCompanionPersonaId?: string | null
+  billingTimezone?: string
 }
 
 /** Valid top-level settings keys that can be overridden. */

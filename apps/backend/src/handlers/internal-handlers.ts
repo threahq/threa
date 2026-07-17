@@ -1,6 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
 import { HttpError } from "../lib/errors"
+import { isValidIanaTimezone } from "../lib/temporal"
 import type { WorkspaceService } from "../features/workspaces"
 import type { InvitationService } from "../features/invitations"
 
@@ -11,6 +12,9 @@ const createWorkspaceSchema = z.object({
   ownerWorkosUserId: z.string().min(1),
   ownerEmail: z.string().email(),
   ownerName: z.string().min(1),
+  // Seeds the workspace's billing timezone. Optional: absent from provisioning
+  // events enqueued before workspaces carried one.
+  timezone: z.string().refine(isValidIanaTimezone, { message: "must be a valid IANA timezone identifier" }).optional(),
 })
 
 const acceptInvitationSchema = z.object({
@@ -38,12 +42,13 @@ export function createInternalHandlers(deps: InternalHandlersDeps) {
         throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
       }
 
-      const { id, name, slug, ownerWorkosUserId, ownerEmail, ownerName } = result.data
+      const { id, name, slug, ownerWorkosUserId, ownerEmail, ownerName, timezone } = result.data
 
       const workspace = await workspaceService.createWorkspaceFromControlPlane({
         id,
         name,
         slug,
+        timezone,
         ownerWorkosUserId,
         ownerEmail,
         ownerName,

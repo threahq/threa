@@ -50,11 +50,9 @@ function ChartLegendItem({
   )
 }
 
-export function TrajectoryChart({ metrics }: { metrics: BudgetMetrics }) {
+export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics; timezone: string }) {
   const styles = statusStyles[metrics.status]
   const [focused, setFocused] = useState<string | null>(null)
-  // Browser-local timezone — UI surfaces always render in device-local.
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 
   // Build the data series. Actual line runs [0, daysElapsed]; projected runs
   // [daysElapsed, daysTotal]. They share a transition point at today so the

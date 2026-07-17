@@ -24,16 +24,12 @@ export interface ParticipantTemporal {
  * Whether a string is a usable IANA timezone identifier (e.g. "Europe/Stockholm").
  * Client-reported timezones must pass this before being persisted — an invalid
  * zone would make every downstream Intl.DateTimeFormat call throw.
+ *
+ * Lives in `@threa/backend-common` because the control plane validates the same
+ * contract before handing a workspace's timezone to its region; re-exported here
+ * so callers import the name they always have (INV-33 — one implementation).
  */
-export function isValidIanaTimezone(timezone: string): boolean {
-  if (!timezone || timezone.length > 64) return false
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: timezone })
-    return true
-  } catch {
-    return false
-  }
-}
+export { isValidIanaTimezone } from "@threa/backend-common"
 
 /**
  * Get the UTC offset string for a timezone (e.g., "UTC+1", "UTC-5").

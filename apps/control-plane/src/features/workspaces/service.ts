@@ -93,6 +93,8 @@ export class ControlPlaneWorkspaceService {
   async create(params: {
     name: string
     region?: string
+    /** The creator's IANA zone; the region seeds the workspace's billing timezone from it. */
+    timezone?: string
     workosUserId: string
     authUser: { email: string; firstName?: string | null; lastName?: string | null }
   }) {
@@ -145,6 +147,7 @@ export class ControlPlaneWorkspaceService {
             ownerWorkosUserId: workosUserId,
             ownerEmail: email,
             ownerName: displayName,
+            timezone: params.timezone,
           })
           await OutboxRepository.insert(client, OUTBOX_KV_SYNC, { workspaceId: id, region })
 
@@ -226,6 +229,7 @@ export class ControlPlaneWorkspaceService {
       ownerWorkosUserId: payload.ownerWorkosUserId,
       ownerEmail: payload.ownerEmail,
       ownerName: payload.ownerName,
+      timezone: payload.timezone,
     })
     logger.info({ workspaceId: payload.workspaceId, region: payload.region }, "Workspace provisioned in region")
   }
@@ -250,4 +254,6 @@ export interface RegionalCreatePayload {
   ownerWorkosUserId: string
   ownerEmail: string
   ownerName: string
+  /** Absent on events enqueued before workspaces carried a timezone. */
+  timezone?: string
 }

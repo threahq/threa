@@ -5,10 +5,22 @@ import { formatCurrency, formatShortDate, statusStyles, type BudgetMetrics } fro
 import { Stat } from "./primitives"
 import { TrajectoryChart } from "./trajectory-chart"
 
-export function BudgetHealthHero({ metrics, isLoading }: { metrics: BudgetMetrics; isLoading: boolean }) {
+export function BudgetHealthHero({
+  metrics,
+  timezone,
+  isLoading,
+}: {
+  metrics: BudgetMetrics
+  /**
+   * The zone the cycle window was drawn in. These dates are the boundaries of
+   * that window, not wall-clock events, so they render in the zone the viewer
+   * chose to report in — device-local (INV-42) would label a workspace-timezone
+   * cycle with the neighbouring day.
+   */
+  timezone: string
+  isLoading: boolean
+}) {
   const styles = statusStyles[metrics.status]
-  // Browser-local timezone — UI surfaces always render in device-local.
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 
   if (isLoading) {
     return (
@@ -82,7 +94,7 @@ export function BudgetHealthHero({ metrics, isLoading }: { metrics: BudgetMetric
           />
         </div>
 
-        <TrajectoryChart metrics={metrics} />
+        <TrajectoryChart metrics={metrics} timezone={timezone} />
       </div>
     </Card>
   )

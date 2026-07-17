@@ -1,15 +1,17 @@
 import { api } from "./client"
 import type { AIUsageResponse, AIRecentUsageResponse, AIBudgetResponse, UpdateAIBudgetInput } from "@threa/types"
 
-// The usage dashboard's day buckets and month window follow the viewer's
-// device timezone (INV-42); the backend draws the date lines server-side.
-function tzQuery(): string {
-  return `?tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`
+// The dashboard's day buckets and month window are drawn server-side in the
+// timezone the caller names — the viewer's device zone or the workspace's
+// reporting zone, whichever they picked. Callers resolve the mode to an IANA
+// zone; this module just carries it.
+function tzQuery(timezone: string): string {
+  return `?tz=${encodeURIComponent(timezone)}`
 }
 
 export const aiUsageApi = {
-  async getUsage(workspaceId: string): Promise<AIUsageResponse> {
-    return api.get<AIUsageResponse>(`/api/workspaces/${workspaceId}/ai-usage${tzQuery()}`)
+  async getUsage(workspaceId: string, timezone: string): Promise<AIUsageResponse> {
+    return api.get<AIUsageResponse>(`/api/workspaces/${workspaceId}/ai-usage${tzQuery(timezone)}`)
   },
 
   async getRecentUsage(workspaceId: string, limit?: number): Promise<AIRecentUsageResponse> {
@@ -17,11 +19,11 @@ export const aiUsageApi = {
     return api.get<AIRecentUsageResponse>(`/api/workspaces/${workspaceId}/ai-usage/recent${query}`)
   },
 
-  async getBudget(workspaceId: string): Promise<AIBudgetResponse> {
-    return api.get<AIBudgetResponse>(`/api/workspaces/${workspaceId}/ai-budget${tzQuery()}`)
+  async getBudget(workspaceId: string, timezone: string): Promise<AIBudgetResponse> {
+    return api.get<AIBudgetResponse>(`/api/workspaces/${workspaceId}/ai-budget${tzQuery(timezone)}`)
   },
 
-  async updateBudget(workspaceId: string, input: UpdateAIBudgetInput): Promise<AIBudgetResponse> {
-    return api.put<AIBudgetResponse>(`/api/workspaces/${workspaceId}/ai-budget${tzQuery()}`, input)
+  async updateBudget(workspaceId: string, timezone: string, input: UpdateAIBudgetInput): Promise<AIBudgetResponse> {
+    return api.put<AIBudgetResponse>(`/api/workspaces/${workspaceId}/ai-budget${tzQuery(timezone)}`, input)
   },
 }

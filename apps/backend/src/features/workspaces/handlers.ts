@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
+import { isValidIanaTimezone } from "../../lib/temporal"
 import type { WorkspaceService } from "./service"
 import type { StreamService } from "../streams"
 import type { UserPreferencesService } from "../user-preferences"
@@ -34,6 +35,8 @@ import {
 
 const createWorkspaceSchema = z.object({
   name: z.string().min(1, "name is required"),
+  // Seeds the workspace's billing timezone from the creator's device.
+  timezone: z.string().refine(isValidIanaTimezone, { message: "must be a valid IANA timezone identifier" }).optional(),
 })
 
 const completeUserSetupSchema = z.object({
@@ -132,6 +135,7 @@ export function createWorkspaceHandlers({
         workosUserId,
         email: authUser.email,
         userName,
+        timezone: data.timezone,
       })
 
       res.status(201).json({ workspace })

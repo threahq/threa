@@ -1414,6 +1414,13 @@ export interface CreateWorkspaceInput {
   name: string
   slug?: string
   region?: string
+  /**
+   * The creator's IANA timezone, used to seed the workspace's `billingTimezone`
+   * — the boundary its AI spend month is cut on. Optional: a caller that cannot
+   * report one (control-plane provisioning) leaves the workspace on the "UTC"
+   * default until an admin sets it.
+   */
+  timezone?: string
 }
 
 export interface EmojiEntry {

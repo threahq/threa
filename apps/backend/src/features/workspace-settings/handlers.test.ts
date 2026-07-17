@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, mock } from "bun:test"
 import { VOICE_STEERING_WORDS_MAX, VOICE_STEERING_WORD_MAX_LENGTH } from "@threa/types"
 import { updateWorkspaceSettingsSchema } from "./handlers"
+import { WorkspaceSettingsRepository } from "./repository"
 
 describe("updateWorkspaceSettingsSchema voiceSteeringWords", () => {
   it("accepts a list and trims each entry", () => {
@@ -44,5 +45,42 @@ describe("updateWorkspaceSettingsSchema defaultCompanionPersonaId", () => {
 
   it("treats the field as optional", () => {
     expect(updateWorkspaceSettingsSchema.parse({}).defaultCompanionPersonaId).toBeUndefined()
+  })
+})
+
+describe("updateWorkspaceSettingsSchema billingTimezone", () => {
+  it("accepts an IANA zone", () => {
+    expect(updateWorkspaceSettingsSchema.parse({ billingTimezone: "Europe/Stockholm" }).billingTimezone).toBe(
+      "Europe/Stockholm"
+    )
+    expect(updateWorkspaceSettingsSchema.parse({ billingTimezone: "UTC" }).billingTimezone).toBe("UTC")
+  })
+
+  it("rejects a zone Intl cannot resolve", () => {
+    expect(updateWorkspaceSettingsSchema.safeParse({ billingTimezone: "Mars/Olympus" }).success).toBe(false)
+    expect(updateWorkspaceSettingsSchema.safeParse({ billingTimezone: "UTC+1" }).success).toBe(false)
+    expect(updateWorkspaceSettingsSchema.safeParse({ billingTimezone: "" }).success).toBe(false)
+  })
+
+  it("treats the field as optional", () => {
+    expect(updateWorkspaceSettingsSchema.parse({}).billingTimezone).toBeUndefined()
+  })
+})
+
+describe("WorkspaceSettingsRepository.insertOverrideIfAbsent", () => {
+  it("seeds without overwriting, so an admin's stored choice always wins", async () => {
+    let captured = ""
+    const db = {
+      query: mock(async (q: unknown) => {
+        captured = (q as { text: string }).text
+        return { rows: [], rowCount: 0 }
+      }),
+    } as never
+
+    await WorkspaceSettingsRepository.insertOverrideIfAbsent(db, "ws_1", "billingTimezone", "Asia/Tokyo")
+
+    // DO NOTHING, not DO UPDATE — and race-safe rather than check-then-insert (INV-20).
+    expect(captured).toContain("ON CONFLICT (workspace_id, key) DO NOTHING")
+    expect(captured).not.toContain("DO UPDATE")
   })
 })

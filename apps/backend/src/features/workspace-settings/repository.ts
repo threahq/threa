@@ -50,6 +50,20 @@ export const WorkspaceSettingsRepository = {
     `)
   },
 
+  /**
+   * Seed an override only when the workspace has none — used to give a setting a
+   * real starting value at setup without ever overwriting a deliberate choice.
+   * `DO NOTHING` rather than a check-then-insert so a concurrent admin's write
+   * wins outright instead of racing (INV-20).
+   */
+  async insertOverrideIfAbsent(db: Querier, workspaceId: string, key: string, value: unknown): Promise<void> {
+    await db.query(sql`
+      INSERT INTO workspace_setting_overrides (workspace_id, key, value)
+      VALUES (${workspaceId}, ${key}, ${JSON.stringify(value)}::jsonb)
+      ON CONFLICT (workspace_id, key) DO NOTHING
+    `)
+  },
+
   async deleteOverride(db: Querier, workspaceId: string, key: string): Promise<void> {
     await db.query(sql`
       DELETE FROM workspace_setting_overrides

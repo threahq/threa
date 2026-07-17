@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { toast } from "sonner"
 import {
   WORKSPACE_PERMISSION_SCOPES,
   DEFAULT_MAX_PENDING_FOLLOW_UPS,
   MAX_PENDING_FOLLOW_UPS_MIN,
   MAX_PENDING_FOLLOW_UPS_MAX,
-  type WorkspaceBootstrap,
-  type WorkspaceSettings,
 } from "@threa/types"
-import { workspaceSettingsApi } from "@/api"
-import { workspaceKeys, useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useWorkspaceSettingMutation } from "@/hooks/use-workspace-setting-mutation"
 import { hasPermission } from "@/lib/permissions"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -25,7 +21,6 @@ interface FollowUpLimitSectionProps {
  * self-reported limit reflects this the next time the assistant schedules.
  */
 export function FollowUpLimitSection({ workspaceId }: FollowUpLimitSectionProps) {
-  const queryClient = useQueryClient()
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
   const canManage = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   const settings = bootstrap?.workspaceSettings ?? null
@@ -46,35 +41,16 @@ export function FollowUpLimitSection({ workspaceId }: FollowUpLimitSectionProps)
     setDraft(String(savedValue))
   }, [savedValue])
 
-  const mutation = useMutation({
-    mutationFn: (maxPendingFollowUps: number) => workspaceSettingsApi.update(workspaceId, { maxPendingFollowUps }),
-    onMutate: async (maxPendingFollowUps) => {
-      await queryClient.cancelQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
-      let previousSettings: WorkspaceSettings | null = null
-      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-        previousSettings = old?.workspaceSettings ?? null
-        return old?.workspaceSettings
-          ? { ...old, workspaceSettings: { ...old.workspaceSettings, maxPendingFollowUps } }
-          : old
-      })
-      return { previousSettings }
-    },
-    onError: (_err, _next, context) => {
-      if (context?.previousSettings) {
-        const restored = context.previousSettings
-        queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
-          old ? { ...old, workspaceSettings: restored } : old
-        )
-      }
-      setDraft(String(savedValue))
-      toast.error("Failed to save the follow-up limit")
-    },
-    onSuccess: (saved) => {
-      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
-        old ? { ...old, workspaceSettings: saved } : old
-      )
-    },
-  })
+  const mutation = useWorkspaceSettingMutation(
+    workspaceId,
+    "maxPendingFollowUps",
+    "Failed to save the follow-up limit",
+    {
+      // The hook rolls the cache back; this input is local state, so it has to
+      // follow the cache back down to the stored value.
+      onError: () => setDraft(String(savedValue)),
+    }
+  )
 
   // Save on blur, but only a real edit. A focused-but-untouched field never saves
   // (else a concurrent broadcast that moved `savedValue` would be stomped by the

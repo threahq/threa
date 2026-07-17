@@ -26,6 +26,7 @@ export class RegionalClient {
       ownerWorkosUserId: string
       ownerEmail: string
       ownerName: string
+      timezone?: string
     }
   ): Promise<{ workspace: unknown }> {
     const url = `${this.getRegionUrl(region)}/internal/workspaces`

@@ -8,7 +8,9 @@ import { EmojiUsageRepository } from "../emoji"
 import { PersonaRepository, type Persona } from "../agents"
 import { workspaceId, userId as generateUserId, streamId, avatarUploadId } from "../../lib/id"
 import { generateSlug, generateUniqueSlug, serializeBigInt } from "@threa/backend-common"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { WORKSPACE_ROLE_SLUGS, type WorkspaceSettings } from "@threa/types"
+import { WorkspaceSettingsRepository } from "../workspace-settings"
+import { isValidIanaTimezone } from "../../lib/temporal"
 import { HttpError, isUniqueViolation } from "../../lib/errors"
 import { logger } from "../../lib/logger"
 import { JobQueues } from "../../lib/queue"
@@ -17,6 +19,9 @@ import type { WorkosOrgService } from "@threa/backend-common"
 import { UserApiKeyRepository } from "../user-api-keys"
 import { AvatarUploadRepository } from "./avatar-upload-repository"
 import type { AvatarService } from "./avatar-service"
+
+/** Type-checked against the interface so renaming the setting breaks the build (INV-33). */
+const BILLING_TIMEZONE_KEY = "billingTimezone" satisfies keyof WorkspaceSettings
 
 function deriveSlugFromEmail(email: string): string {
   const prefix = email.split("@")[0]
@@ -29,6 +34,8 @@ export interface CreateWorkspaceParams {
   email: string
   userName: string
   setupCompleted?: boolean
+  /** The creator's IANA timezone; seeds the workspace's billing boundary. */
+  timezone?: string
 }
 
 interface WorkspaceServiceOptions {
@@ -83,6 +90,8 @@ export class WorkspaceService {
     ownerWorkosUserId: string
     ownerEmail: string
     ownerName: string
+    /** The creator's IANA zone; seeds the workspace's billing boundary. */
+    timezone?: string
   }): Promise<Workspace> {
     try {
       return await withTransaction(this.pool, async (client) => {
@@ -103,6 +112,15 @@ export class WorkspaceService {
           name: params.ownerName,
           role: "owner",
         })
+
+        if (params.timezone && isValidIanaTimezone(params.timezone)) {
+          await WorkspaceSettingsRepository.insertOverrideIfAbsent(
+            client,
+            params.id,
+            BILLING_TIMEZONE_KEY,
+            params.timezone
+          )
+        }
 
         return ws
       })
@@ -143,6 +161,14 @@ export class WorkspaceService {
         role: "owner",
         setupCompleted: params.setupCompleted,
       })
+
+      // The owner's zone is the workspace's money boundary until an admin says
+      // otherwise. Seeded here because `users.setup_completed` defaults to true —
+      // a workspace creator never runs `completeUserSetup`, so this is the only
+      // point in the create flow where their timezone is known.
+      if (params.timezone && isValidIanaTimezone(params.timezone)) {
+        await WorkspaceSettingsRepository.insertOverrideIfAbsent(client, id, BILLING_TIMEZONE_KEY, params.timezone)
+      }
 
       return ws
     })
