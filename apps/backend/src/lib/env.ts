@@ -287,6 +287,18 @@ export function loadConfig(): Config {
     )
   }
 
+  // Close the NEITHER-set hole: with GitHub enabled but neither REGION nor
+  // CONTROL_PLANE_URL, a production backend boots webhook-less — route-sync events
+  // are never emitted and installations silently receive no live previews, with no
+  // boot signal. Require the pair in production (INV-11). Scoped to the neither-set
+  // case so the CP-set/region-missing case keeps its precise message below.
+  // Non-production keeps working with both or neither set (dev/test).
+  if (isProduction && config.github.enabled && !config.region && !config.controlPlaneUrl) {
+    throw new Error(
+      "REGION and CONTROL_PLANE_URL are required for a production backend with GitHub enabled — GitHub webhook routes register per region, so without them the backend boots silently webhook-less"
+    )
+  }
+
   // Validate co-presence: REGION and INTERNAL_API_KEY are required when CONTROL_PLANE_URL is set (INV-11)
   if (config.controlPlaneUrl && !config.region) {
     throw new Error(

@@ -9,8 +9,11 @@
  */
 
 import type { LinearRateLimit } from "@threa/types"
+import { logger } from "../../lib/logger"
 import type { WorkspaceIntegrationService } from "./service"
 import type { WorkspaceIntegrationRecord } from "./repository"
+
+const log = logger.child({ module: "linear-client" })
 
 const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql"
 
@@ -129,7 +132,17 @@ export class LinearClient {
     return body.data
   }
 
+  // Best-effort telemetry: a persistence failure here must never propagate, or it
+  // would replace the real request error and (on a 401) skip the refresh retry.
   private async captureRateLimit(headers: Headers): Promise<void> {
+    try {
+      await this.captureRateLimitInternal(headers)
+    } catch (error) {
+      log.warn({ err: error, workspaceId: this.workspaceId }, "Linear rate-limit capture failed; continuing")
+    }
+  }
+
+  private async captureRateLimitInternal(headers: Headers): Promise<void> {
     const requestsRemaining = parseIntegerHeader(headers.get("x-ratelimit-requests-remaining"))
     const requestsResetSeconds = parseIntegerHeader(headers.get("x-ratelimit-requests-reset"))
     const complexityRemaining = parseIntegerHeader(headers.get("x-ratelimit-complexity-remaining"))
