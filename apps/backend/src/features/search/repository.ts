@@ -424,6 +424,25 @@ export const SearchRepository = {
   },
 
   /**
+   * Expand stream IDs to include their thread descendants, scoped to the
+   * workspace. Used by the `in:` filter so "in this stream" covers replies
+   * living in thread streams under it.
+   */
+  async expandStreamIdsWithThreads(db: Querier, workspaceId: string, streamIds: string[]): Promise<string[]> {
+    if (streamIds.length === 0) {
+      return []
+    }
+
+    const result = await db.query<{ id: string }>(sql`
+      SELECT id FROM streams
+      WHERE workspace_id = ${workspaceId}
+        AND (id = ANY(${streamIds}) OR root_stream_id = ANY(${streamIds}))
+    `)
+
+    return result.rows.map((r) => r.id)
+  },
+
+  /**
    * Get accessible streams for an agent based on its access spec.
    *
    * Unlike getAccessibleStreamsWithMembers (which determines what a USER can access),
