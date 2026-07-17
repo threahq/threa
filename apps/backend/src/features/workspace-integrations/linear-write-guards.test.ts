@@ -190,6 +190,16 @@ describe("updateLinearRateLimitMetadata guards", () => {
     expect(update?.values).toContain("org_123")
   })
 
+  it("pins missing legacy org identity to NULL/empty instead of falling back to status-only", async () => {
+    const { pool, calls } = recordingPool([{ ...linearRecordRow(), installation_id: null }])
+    const service = makeService(pool)
+
+    await service.updateLinearRateLimitMetadata("ws_1", linearMetadata(null), rateLimit)
+
+    const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
+    expect(update?.values).toContain("")
+  })
+
   it("keeps the prior metadata when the write lands on a cleared row (guard no-op)", async () => {
     const { pool } = guardMissPool([])
     const service = makeService(pool)

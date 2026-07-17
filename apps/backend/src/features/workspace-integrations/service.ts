@@ -1080,7 +1080,7 @@ export class WorkspaceIntegrationService {
       { metadata: nextMetadata },
       {
         expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
-        expectedInstallationId: organizationId ? { value: organizationId, allowNull: true } : undefined,
+        expectedInstallationId: { value: organizationId ?? "", allowNull: true },
       }
     )
 
@@ -1137,7 +1137,7 @@ export class WorkspaceIntegrationService {
       { status: WorkspaceIntegrationStatuses.ERROR },
       {
         expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
-        expectedInstallationId: organizationId ? { value: organizationId, allowNull: true } : undefined,
+        expectedInstallationId: { value: organizationId ?? "", allowNull: true },
       }
     )
   }
@@ -1264,9 +1264,9 @@ export class WorkspaceIntegrationService {
       return { record: updated, credentials, metadata }
     }
 
-    // Refresh path. When the org id is unknown (defensive — a properly installed
-    // row always carries one) the guard falls back to status-only, leaving a
-    // residual A→B clobber window; with the org id the identity guard closes it.
+    // Refresh path. A missing org id is pinned to a NULL/empty installation id
+    // rather than falling back to status-only, so even a malformed legacy client
+    // cannot overwrite a concurrently reconnected row with a populated org id.
     const updated = await WorkspaceIntegrationRepository.update(
       this.deps.pool,
       workspaceId,
@@ -1280,7 +1280,7 @@ export class WorkspaceIntegrationService {
       },
       {
         expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
-        expectedInstallationId: organizationId ? { value: organizationId, allowNull: true } : undefined,
+        expectedInstallationId: { value: organizationId ?? "", allowNull: true },
       }
     )
     if (!updated) return null
