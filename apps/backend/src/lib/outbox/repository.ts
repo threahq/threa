@@ -121,6 +121,8 @@ export type OutboxEventType =
   | "label:unassigned"
   | "enclave:rewrap_needed"
   | "enclave:rewrap_nudge"
+  | "github_route:register"
+  | "github_route:unregister"
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
@@ -869,6 +871,25 @@ export interface EnclaveRewrapNudgeOutboxPayload extends WorkspaceScopedPayload 
   rootStreamId: string
 }
 
+/**
+ * Internal-only (never broadcast to clients — resolveDeliveryGroups returns
+ * null): a durable side effect committed in the same transaction as a GitHub
+ * integration write so route (un)registration in the control plane can't be lost
+ * to a crash between the local write and the CP HTTP call. `GithubRouteSyncHandler`
+ * consumes it and calls `ControlPlaneClient.registerIntegrationRoute` /
+ * `unregisterIntegrationRoute`. `installationId` is the plaintext GitHub
+ * installation id (not a secret); `region` is this region's routing key.
+ */
+export interface GithubRouteRegisterOutboxPayload extends WorkspaceScopedPayload {
+  installationId: string
+  region: string
+}
+
+export interface GithubRouteUnregisterOutboxPayload extends WorkspaceScopedPayload {
+  installationId: string
+  region: string
+}
+
 // Bot event payloads
 export interface BotCreatedOutboxPayload extends WorkspaceScopedPayload {
   bot: WireBot
@@ -1090,6 +1111,8 @@ export interface OutboxEventPayloadMap {
   "label:unassigned": LabelUnassignedOutboxPayload
   "enclave:rewrap_needed": EnclaveRewrapNeededOutboxPayload
   "enclave:rewrap_nudge": EnclaveRewrapNudgeOutboxPayload
+  "github_route:register": GithubRouteRegisterOutboxPayload
+  "github_route:unregister": GithubRouteUnregisterOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]

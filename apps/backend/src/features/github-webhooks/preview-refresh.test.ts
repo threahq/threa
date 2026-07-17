@@ -34,6 +34,7 @@ function makeRow(overrides: Partial<LinkPreview> = {}): LinkPreview {
     targetConversationId: null,
     targetDelegationId: null,
     fetchedAt: null,
+    refreshVersion: 0,
     expiresAt: null,
     createdAt: new Date(),
     ...overrides,
@@ -43,7 +44,9 @@ function makeRow(overrides: Partial<LinkPreview> = {}): LinkPreview {
 /** Fake service exposing only what `refreshLinkPreview` touches. */
 function fakeLinkPreviewService(
   row: LinkPreview | null,
-  applyResult: { applied: true } | { applied: false; fetchedAt: Date | null } = { applied: true }
+  applyResult: { applied: true } | { applied: false; fetchedAt: Date | null; refreshVersion: number } = {
+    applied: true,
+  }
 ) {
   return {
     getPreviewById: mock(async () => row),
@@ -67,9 +70,9 @@ afterEach(() => {
 })
 
 describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
-  test("a debounced refresh schedules exactly one trailing job keyed on (previewId, fetchedAt)", async () => {
+  test("a debounced refresh schedules exactly one trailing job keyed on (previewId, version)", async () => {
     const fetchedAt = new Date(Date.now() - 2_000) // 2s ago → inside the 10s window
-    const service = fakeLinkPreviewService(makeRow({ fetchedAt }))
+    const service = fakeLinkPreviewService(makeRow({ fetchedAt, refreshVersion: 2 }))
     const jobQueue = fakeJobQueue()
     const fetchSpy = spyOn(githubPreview, "fetchGitHubPreview")
 
@@ -86,14 +89,14 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
     const [queueName, data, options] = jobQueue.send.mock.calls[0]!
     expect(queueName).toBe("github_preview.refresh")
     expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID })
-    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, fetchedAt))
+    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 2))
     // processAfter is past the remaining debounce window.
     expect(options!.processAfter!.getTime()).toBeGreaterThan(fetchedAt.getTime() + 10_000)
   })
 
   test("a storm of N debounced deliveries collapses to a single dedupe id", async () => {
     const fetchedAt = new Date(Date.now() - 1_000)
-    const service = fakeLinkPreviewService(makeRow({ fetchedAt }))
+    const service = fakeLinkPreviewService(makeRow({ fetchedAt, refreshVersion: 9 }))
     const jobQueue = fakeJobQueue()
     spyOn(githubPreview, "fetchGitHubPreview")
 
@@ -105,7 +108,7 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
     }
 
     const messageIds = new Set(jobQueue.send.mock.calls.map((call) => call[2]!.messageId))
-    expect(messageIds).toEqual(new Set([githubPreviewRefreshQueueId(PREVIEW_ID, fetchedAt)]))
+    expect(messageIds).toEqual(new Set([githubPreviewRefreshQueueId(PREVIEW_ID, 9)]))
   })
 
   test("trailing worker that lands after the window refreshes the row, no reschedule", async () => {
@@ -134,9 +137,9 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
-  test("trailing worker still inside the window reschedules once on the fresh fetchedAt", async () => {
+  test("trailing worker still inside the window reschedules once on the fresh version", async () => {
     const fetchedAt = new Date(Date.now() - 3_000)
-    const service = fakeLinkPreviewService(makeRow({ fetchedAt }))
+    const service = fakeLinkPreviewService(makeRow({ fetchedAt, refreshVersion: 11 }))
     const jobQueue = fakeJobQueue()
     spyOn(githubPreview, "fetchGitHubPreview")
 
@@ -153,16 +156,17 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
     })
 
     expect(jobQueue.send).toHaveBeenCalledTimes(1)
-    expect(jobQueue.send.mock.calls[0]![2]!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, fetchedAt))
+    expect(jobQueue.send.mock.calls[0]![2]!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 11))
   })
 })
 
 describe("refreshGithubPreviewWithTrailing — compare-and-set conflict", () => {
-  test("a CAS loss does not overwrite and schedules one trailing refresh keyed on the winner's fetchedAt", async () => {
+  test("a CAS loss does not overwrite and schedules one trailing refresh keyed on the winner's version", async () => {
     const winnerFetchedAt = new Date()
-    const service = fakeLinkPreviewService(makeRow({ fetchedAt: new Date(Date.now() - 30_000) }), {
+    const service = fakeLinkPreviewService(makeRow({ fetchedAt: new Date(Date.now() - 30_000), refreshVersion: 4 }), {
       applied: false,
       fetchedAt: winnerFetchedAt,
+      refreshVersion: 5,
     })
     const jobQueue = fakeJobQueue()
     spyOn(githubPreview, "fetchGitHubPreview").mockResolvedValue({
@@ -183,17 +187,18 @@ describe("refreshGithubPreviewWithTrailing — compare-and-set conflict", () => 
     const [queueName, data, options] = jobQueue.send.mock.calls[0]!
     expect(queueName).toBe("github_preview.refresh")
     expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID })
-    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, winnerFetchedAt))
+    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 5))
   })
 })
 
 describe("refreshGithubPreviewWithTrailing — transient fetch failure retries", () => {
   const OUTAGE_FETCHED_AT = new Date(Date.now() - 60_000)
+  const OUTAGE_VERSION = 8
 
-  function makeFetchEmptyDeps(fetchedAt: Date | null = OUTAGE_FETCHED_AT) {
+  function makeFetchEmptyDeps(refreshVersion: number = OUTAGE_VERSION) {
     // fetched_at long past the window so the refresh proceeds to a fetch, which
     // returns null (GitHub 5xx / rate-limit breaker) → reason 'fetch_empty'.
-    const service = fakeLinkPreviewService(makeRow({ fetchedAt }))
+    const service = fakeLinkPreviewService(makeRow({ fetchedAt: OUTAGE_FETCHED_AT, refreshVersion }))
     const jobQueue = fakeJobQueue()
     spyOn(githubPreview, "fetchGitHubPreview").mockResolvedValue(null)
     return { service, jobQueue }
@@ -211,7 +216,7 @@ describe("refreshGithubPreviewWithTrailing — transient fetch failure retries",
     const [queueName, data, options] = jobQueue.send.mock.calls[0]!
     expect(queueName).toBe("github_preview.refresh")
     expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, attempt: 1 })
-    expect(options!.messageId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_FETCHED_AT, 1))
+    expect(options!.messageId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, 1))
     // ~30s backoff.
     expect(options!.processAfter!.getTime()).toBeGreaterThan(Date.now() + 20_000)
   })
@@ -226,12 +231,12 @@ describe("refreshGithubPreviewWithTrailing — transient fetch failure retries",
 
     const [, data, options] = jobQueue.send.mock.calls[0]!
     expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, attempt: 2 })
-    expect(options!.messageId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_FETCHED_AT, 2))
+    expect(options!.messageId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, 2))
   })
 
-  test("two outage cycles at different fetched_at values produce distinct retry ids", async () => {
-    const earlier = new Date(Date.now() - 3_600_000)
-    const later = new Date(Date.now() - 60_000)
+  test("two outage cycles at different versions produce distinct retry ids", async () => {
+    const earlier = 3
+    const later = 4
 
     const first = makeFetchEmptyDeps(earlier)
     await refreshGithubPreviewWithTrailing(
@@ -247,7 +252,7 @@ describe("refreshGithubPreviewWithTrailing — transient fetch failure retries",
     )
     const secondId = second.jobQueue.send.mock.calls[0]![2]!.messageId
 
-    // Same previewId + same attempt (1) but a fetched_at advanced by a prior
+    // Same previewId + same attempt (1) but a version advanced by a prior
     // successful refresh — the ids must differ so the second cycle's retry is not
     // dropped by a pkey collision with the never-purged completed first-cycle row.
     expect(firstId).not.toBe(secondId)

@@ -20,28 +20,29 @@ export type RefreshLinkPreviewResult =
   | { refreshed: true }
   | { refreshed: false; reason: "not_found" }
   /**
-   * The fetch came back empty (GitHub 5xx / timeout / rate-limit breaker), so
-   * `fetched_at` did NOT advance. `fetchedAt` is that unchanged row value — a
-   * caller keys a bounded retry on it so distinct outage cycles (which each key on
-   * the `fetched_at` a prior successful refresh advanced to) get distinct ids and
-   * don't collide with a persisted completed retry row.
+   * The fetch came back empty (GitHub 5xx / timeout / rate-limit breaker), so no
+   * write landed and `refresh_version` did NOT advance. `refreshVersion` is that
+   * unchanged value — a caller keys a bounded retry on it so distinct outage
+   * cycles (each keyed on the version a prior successful refresh advanced to) get
+   * distinct ids and don't collide with a persisted completed retry row.
    */
-  | { refreshed: false; reason: "fetch_empty"; fetchedAt: Date | null }
+  | { refreshed: false; reason: "fetch_empty"; refreshVersion: number }
   /**
    * The row was fetched inside `debounceMs`, so this refresh was dropped.
-   * `retryAfterMs` is the time until the window clears; `fetchedAt` is the row's
-   * current fetch timestamp — a caller coalescing a webhook storm keys a single
-   * trailing refresh on it (all storm events share the same `fetchedAt` until a
+   * `retryAfterMs` is the time until the window clears; `refreshVersion` is the
+   * row's current version — a caller coalescing a webhook storm keys a single
+   * trailing refresh on it (all storm events share the same version until a
    * refresh actually lands, so they collapse to one job).
    */
-  | { refreshed: false; reason: "debounced"; retryAfterMs: number; fetchedAt: Date }
+  | { refreshed: false; reason: "debounced"; retryAfterMs: number; refreshVersion: number }
   /**
-   * Compare-and-set loss: between reading `fetched_at` and writing, a concurrent
-   * refresh advanced the row, so this (possibly stale) fetch was NOT written.
-   * `fetchedAt` is the winner's current value — the caller re-keys a single
-   * trailing refresh on it so the row converges on a fresh fetch.
+   * Compare-and-set loss: between reading `refresh_version` and writing, a
+   * concurrent write advanced the row, so this (possibly stale) fetch was NOT
+   * written. `refreshVersion` is the winner's current version — the caller re-keys
+   * a single trailing refresh on it; `fetchedAt` is the winner's fetch time for
+   * the debounce-timing math.
    */
-  | { refreshed: false; reason: "conflict"; fetchedAt: Date | null }
+  | { refreshed: false; reason: "conflict"; refreshVersion: number; fetchedAt: Date | null }
 
 /**
  * Force-refresh one already-rendered GitHub link preview from an external
@@ -64,9 +65,11 @@ export async function refreshLinkPreview(
   if (!preview) return { refreshed: false, reason: "not_found" }
 
   // Captured BEFORE the network fetch so the write can compare-and-set against it:
-  // a slower concurrent refresh that started earlier must not overwrite a newer
-  // write completed while this one was in flight (webhook path only).
-  const expectedFetchedAt = preview.fetchedAt
+  // a slower concurrent refresh that started earlier (or a message-path write)
+  // must not overwrite a newer write completed while this one was in flight
+  // (webhook path only). Debounce timing still reads `fetched_at` (display/time
+  // only, no equality compare).
+  const expectedRefreshVersion = preview.refreshVersion
 
   if (preview.fetchedAt) {
     const elapsedMs = Date.now() - preview.fetchedAt.getTime()
@@ -79,7 +82,7 @@ export async function refreshLinkPreview(
         refreshed: false,
         reason: "debounced",
         retryAfterMs: debounceMs - elapsedMs,
-        fetchedAt: preview.fetchedAt,
+        refreshVersion: preview.refreshVersion,
       }
     }
   }
@@ -94,7 +97,7 @@ export async function refreshLinkPreview(
       { workspaceId: params.workspaceId, previewId: params.previewId },
       "Skipping preview refresh — GitHub fetch returned no metadata"
     )
-    return { refreshed: false, reason: "fetch_empty", fetchedAt: expectedFetchedAt }
+    return { refreshed: false, reason: "fetch_empty", refreshVersion: expectedRefreshVersion }
   }
 
   if (params.useOptimisticConcurrency) {
@@ -102,14 +105,19 @@ export async function refreshLinkPreview(
       params.workspaceId,
       params.previewId,
       metadata,
-      { expectedFetchedAt }
+      { expectedRefreshVersion }
     )
     if (!outcome.applied) {
       log.debug(
         { workspaceId: params.workspaceId, previewId: params.previewId },
         "Skipping preview refresh — compare-and-set lost to a concurrent refresh"
       )
-      return { refreshed: false, reason: "conflict", fetchedAt: outcome.fetchedAt }
+      return {
+        refreshed: false,
+        reason: "conflict",
+        refreshVersion: outcome.refreshVersion,
+        fetchedAt: outcome.fetchedAt,
+      }
     }
     return { refreshed: true }
   }

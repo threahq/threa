@@ -44,6 +44,7 @@ function makeRow(overrides: Partial<LinkPreview> = {}): LinkPreview {
     targetConversationId: null,
     targetDelegationId: null,
     fetchedAt: null,
+    refreshVersion: 0,
     expiresAt: null,
     createdAt: new Date(),
     ...overrides,
@@ -111,7 +112,7 @@ describe("github webhook worker — refresh flow", () => {
     spyOn(LinkPreviewRepository, "findMessageIdsByPreviewId").mockResolvedValue(["msg_1"])
     spyOn(MessageRepository, "findStreamIdsByIds").mockResolvedValue(new Map([["msg_1", "stream_1"]]))
     spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(new Map([["msg_1", [refreshedRow]]]))
-    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const outboxSpy = spyOn(OutboxRepository, "insertMany").mockResolvedValue(undefined as never)
 
     const worker = createGithubWebhookWorker({
       pool,
@@ -122,9 +123,11 @@ describe("github webhook worker — refresh flow", () => {
 
     await worker(prJob())
 
-    const readyCall = outboxSpy.mock.calls.find((call) => call[1] === "link_preview:ready")
-    expect(readyCall).toBeDefined()
-    const payload = readyCall![2] as {
+    // The per-message ready events land as one batched insertMany (INV-56).
+    const entries = outboxSpy.mock.calls.flatMap((call) => call[1] as Array<{ eventType: string; payload: unknown }>)
+    const readyEntry = entries.find((entry) => entry.eventType === "link_preview:ready")
+    expect(readyEntry).toBeDefined()
+    const payload = readyEntry!.payload as {
       workspaceId: string
       streamId: string
       messageId: string

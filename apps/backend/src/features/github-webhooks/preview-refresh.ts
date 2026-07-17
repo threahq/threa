@@ -25,29 +25,28 @@ export interface GithubPreviewRefreshDeps extends RefreshLinkPreviewDeps {
 
 /**
  * Deterministic queue-message id for a trailing refresh. Keyed on the preview's
- * current `fetchedAt` so every debounced delivery in one storm produces the SAME
- * id (they all observe the same `fetchedAt` until a refresh actually lands) and
- * collapses into one job via `send`'s messageId dedupe. Once the trailing job
- * refreshes the row, `fetchedAt` advances, so the next reschedule (and any later
- * storm) gets a fresh id — a completed/in-flight row from the previous window
- * never blocks it.
+ * current `refreshVersion` so every debounced delivery in one storm produces the
+ * SAME id (they all observe the same version until a refresh actually lands) and
+ * collapses into one job via `send`'s messageId dedupe. Once any write advances
+ * the version, the next reschedule (and any later storm) gets a fresh id — a
+ * completed/in-flight row from the previous window never blocks it.
  */
-export function githubPreviewRefreshQueueId(previewId: string, fetchedAt: Date | null): string {
-  return `queue_ghprev_${previewId}_${fetchedAt ? fetchedAt.getTime() : 0}`
+export function githubPreviewRefreshQueueId(previewId: string, refreshVersion: number): string {
+  return `queue_ghprev_${previewId}_v${refreshVersion}`
 }
 
 /**
  * Deterministic queue-message id for a `fetch_empty` retry. Keyed on BOTH the
- * pre-fetch `fetchedAt` and the attempt number. A failed fetch does not advance
- * `fetched_at`, so within one outage `fetchedAt` is constant and the attempt
- * number makes each retry's id unique (and dedupes a storm at the same attempt).
- * Across outages `fetchedAt` differs — a prior successful refresh advanced it — so
- * the ids differ too; without the `fetchedAt` component a later outage's
- * `_${attempt}` id would collide with the never-purged completed row from an
- * earlier cycle and `send`'s pkey-dedupe would silently drop the retry.
+ * pre-fetch `refreshVersion` and the attempt number. A failed fetch lands no
+ * write, so within one outage the version is constant and the attempt number
+ * makes each retry's id unique (and dedupes a storm at the same attempt). Across
+ * outages the version differs — a prior successful refresh advanced it — so the
+ * ids differ too; without the version component a later outage's `_${attempt}` id
+ * would collide with the never-purged completed row from an earlier cycle and
+ * `send`'s pkey-dedupe would silently drop the retry.
  */
-export function githubPreviewRefreshRetryQueueId(previewId: string, fetchedAt: Date | null, attempt: number): string {
-  return `queue_ghprev_retry_${previewId}_${fetchedAt ? fetchedAt.getTime() : 0}_${attempt}`
+export function githubPreviewRefreshRetryQueueId(previewId: string, refreshVersion: number, attempt: number): string {
+  return `queue_ghprev_retry_${previewId}_v${refreshVersion}_${attempt}`
 }
 
 /**
@@ -85,7 +84,7 @@ export async function refreshGithubPreviewWithTrailing(
         : new Date(
             (result.fetchedAt?.getTime() ?? Date.now()) + DEFAULT_REFRESH_DEBOUNCE_MS + TRAILING_REFRESH_BUFFER_MS
           )
-    const messageId = githubPreviewRefreshQueueId(previewId, result.fetchedAt)
+    const messageId = githubPreviewRefreshQueueId(previewId, result.refreshVersion)
 
     await deps.jobQueue.send(JobQueues.GITHUB_PREVIEW_REFRESH, { workspaceId, previewId }, { processAfter, messageId })
     log.debug(
@@ -104,7 +103,7 @@ export async function refreshGithubPreviewWithTrailing(
 
   const nextAttempt = attempt + 1
   const processAfter = new Date(Date.now() + FETCH_EMPTY_RETRY_DELAYS_MS[attempt]!)
-  const messageId = githubPreviewRefreshRetryQueueId(previewId, result.fetchedAt, nextAttempt)
+  const messageId = githubPreviewRefreshRetryQueueId(previewId, result.refreshVersion, nextAttempt)
 
   await deps.jobQueue.send(
     JobQueues.GITHUB_PREVIEW_REFRESH,

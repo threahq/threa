@@ -160,6 +160,13 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return null
   }
 
+  // Internal-only: CP route (un)registration is consumed by GithubRouteSyncHandler
+  // and calls the control plane; no client ever receives it, so it stays off the
+  // wire and the sync log.
+  if (isOneOfOutboxEventType(event, ["github_route:register", "github_route:unregister"])) {
+    return null
+  }
+
   // User-scoped events: deliver to the target user only
   if (isUserScopedEvent(event)) {
     const { targetUserId } = event.payload as ActivityCreatedOutboxPayload

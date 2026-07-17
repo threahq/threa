@@ -29,7 +29,11 @@ import {
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
 import { createGithubWebhookWorker, createGithubPreviewRefreshWorker } from "./features/github-webhooks"
 import { GiphyService } from "./features/giphy"
-import { WorkspaceIntegrationService, registerGithubInstallationBackfill } from "./features/workspace-integrations"
+import {
+  WorkspaceIntegrationService,
+  GithubRouteSyncHandler,
+  registerGithubInstallationBackfill,
+} from "./features/workspace-integrations"
 import { WorkspaceAuthzService } from "./features/workspace-authz"
 import {
   WorkspaceService,
@@ -642,7 +646,6 @@ export async function startServer(): Promise<ServerInstance> {
     pool,
     github: config.github,
     linear: config.linear,
-    controlPlaneClient,
     region: config.region,
   })
   const linkPreviewService = new LinkPreviewService({ pool, streamService, memoExplorerService, delegationService })
@@ -1379,6 +1382,10 @@ export async function startServer(): Promise<ServerInstance> {
     controlPlaneClient && config.region
       ? new InvitationShadowSyncHandler(pool, controlPlaneClient, config.region)
       : null
+  // Registered whenever a region is set (matching the service's event-emit gate),
+  // so every `github_route:*` event has a consumer. A null control-plane client
+  // makes the handler no-op — the events aren't emitted in that case anyway.
+  const githubRouteSyncHandler = config.region ? new GithubRouteSyncHandler(pool, controlPlaneClient) : null
   const outboxHandlers: (OutboxHandler & { ensureListener(): Promise<void> })[] = [
     broadcastHandler,
     companionHandler,
@@ -1400,6 +1407,7 @@ export async function startServer(): Promise<ServerInstance> {
     ...(enclaveDispatchHandler ? [enclaveDispatchHandler] : []),
     ...(pushNotificationHandler ? [pushNotificationHandler] : []),
     ...(shadowSyncHandler ? [shadowSyncHandler] : []),
+    ...(githubRouteSyncHandler ? [githubRouteSyncHandler] : []),
   ]
 
   for (const handler of outboxHandlers) {

@@ -41,6 +41,15 @@ export interface UpdateWorkspaceIntegrationParams {
 
 export interface UpdateWorkspaceIntegrationOptions {
   expectedStatus?: WorkspaceIntegrationStatus
+  /**
+   * Optimistic guard on the current `installation_id`, so a write can't clobber a
+   * row that disconnected + reconnected to a DIFFERENT installation in between.
+   * `allowNull: true` also matches a pre-backfill NULL column (the backfill path
+   * fills the column, so its own value or NULL is the legitimate "before"); the
+   * deactivation path passes `allowNull: false` to require an EXACT match on the
+   * installation it listed.
+   */
+  expectedInstallationId?: { value: string; allowNull: boolean }
 }
 
 function mapRow(row: Record<string, unknown>): WorkspaceIntegrationRecord {
@@ -125,6 +134,7 @@ export const WorkspaceIntegrationRepository = {
     params: UpdateWorkspaceIntegrationParams,
     options?: UpdateWorkspaceIntegrationOptions
   ): Promise<WorkspaceIntegrationRecord | null> {
+    const installationGuard = options?.expectedInstallationId
     const result = await querier.query(
       sql`UPDATE workspace_integrations
           SET
@@ -136,6 +146,11 @@ export const WorkspaceIntegrationRepository = {
             updated_at = NOW()
           WHERE workspace_id = $1 AND provider = $2
             AND ($7::text IS NULL OR status = $7)
+            AND (
+              $9::boolean
+              OR ($11::boolean AND (installation_id IS NULL OR installation_id = $10))
+              OR ((NOT $11::boolean) AND installation_id IS NOT DISTINCT FROM $10)
+            )
           RETURNING *`,
       [
         workspaceId,
@@ -146,6 +161,9 @@ export const WorkspaceIntegrationRepository = {
         params.installedBy ?? null,
         options?.expectedStatus ?? null,
         params.installationId ?? null,
+        installationGuard ? false : true,
+        installationGuard?.value ?? null,
+        installationGuard?.allowNull ?? false,
       ]
     )
 

@@ -4,7 +4,9 @@ import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
 import { workspaceIntegrationId } from "../../lib/id"
 import type { GitHubAppConfig, LinearOAuthConfig } from "../../lib/env"
-import type { ControlPlaneClient } from "../../lib/control-plane-client"
+import { withTransaction } from "../../db"
+import type { Querier } from "../../db"
+import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import {
   permissionsForRole,
@@ -165,13 +167,11 @@ interface WorkspaceIntegrationServiceDeps {
   pool: Pool
   github: GitHubAppConfig
   linear: LinearOAuthConfig
-  // Route-registration collaborators. Null in local single-region dev (no
-  // control plane); route (un)registration then degrades to a debug log.
-  controlPlaneClient?: ControlPlaneClient | null
+  // This region's routing key, stamped into the durable `github_route:*` outbox
+  // events that `GithubRouteSyncHandler` drains into the control plane. Null in
+  // local single-region dev (no control plane) — the events are then not emitted.
   region?: string | null
 }
-
-const GITHUB_ROUTE_PROVIDER = WorkspaceIntegrationProviders.GITHUB
 
 export class WorkspaceIntegrationService {
   private app: App | null
@@ -251,21 +251,21 @@ export class WorkspaceIntegrationService {
       workspaceId,
       WorkspaceIntegrationProviders.GITHUB
     )
+    // Resolve the installation id from the pre-clear row so the unregister event
+    // carries it even for a pre-backfill row whose only copy lives in the
+    // credentials this update wipes. Committing the event in the same transaction
+    // makes the order the clear runs in irrelevant — the id is already captured.
     const installationId = record ? this.resolveInstallationId(workspaceId, record) : null
 
-    // Drop the CP routing entry BEFORE clearing the row, mirroring
-    // deactivateInstallation: if unregister throws (CP down), the integration is
-    // still intact — credentials included — so a retry can re-resolve the id and
-    // re-attempt the DELETE. Clear first and a pre-backfill row (null plaintext
-    // column) would lose its only copy of the id, stranding the CP route forever.
-    if (installationId) {
-      await this.unregisterGithubRoute(workspaceId, installationId)
-    }
-
-    await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.GITHUB, {
-      status: WorkspaceIntegrationStatuses.INACTIVE,
-      credentials: {},
-      metadata: {},
+    await withTransaction(this.deps.pool, async (client) => {
+      await WorkspaceIntegrationRepository.update(client, workspaceId, WorkspaceIntegrationProviders.GITHUB, {
+        status: WorkspaceIntegrationStatuses.INACTIVE,
+        credentials: {},
+        metadata: {},
+      })
+      if (installationId) {
+        await this.emitRouteUnregister(client, workspaceId, installationId)
+      }
     })
   }
 
@@ -286,16 +286,16 @@ export class WorkspaceIntegrationService {
 
   /**
    * Tear down every workspace's GitHub integration for a deleted/suspended
-   * installation (webhook `installation` event). Drops each control-plane route
-   * so no further webhooks fan to this region, then marks the row inactive.
+   * installation (webhook `installation` event). Per row, one transaction flips
+   * the status inactive and commits the durable `github_route:unregister` event
+   * so no further webhooks fan to this region.
    *
-   * Order matters: the route DELETE runs BEFORE the status flip because the flip
-   * is what makes a row invisible to the next `listActiveByInstallationId`. If
-   * unregister throws (CP down), the job fails and QueueManager retries; the row
-   * is still active, so the retry re-lists it and re-attempts the DELETE. Flip
-   * first and a failed DELETE would strand the CP route forever (retry finds
-   * nothing active). Both the route DELETE and the status flip are idempotent, so
-   * re-running after a partial failure is safe.
+   * The status flip is guarded on the EXACT installation id (plus status='active')
+   * so a row that disconnected and reconnected to a DIFFERENT installation between
+   * the list and the write is left untouched — deleting installation A must never
+   * deactivate a row now on B. A guarded no-op emits no unregister event and is
+   * not counted as deactivated. The flip and the event are idempotent, so a retry
+   * after a partial failure is safe.
    */
   async deactivateInstallation(installationId: string): Promise<{ deactivatedWorkspaceIds: string[] }> {
     const records = await WorkspaceIntegrationRepository.listActiveByInstallationId(
@@ -305,15 +305,25 @@ export class WorkspaceIntegrationService {
     )
     const deactivatedWorkspaceIds: string[] = []
     for (const record of records) {
-      await this.unregisterGithubRoute(record.workspaceId, installationId)
-      await WorkspaceIntegrationRepository.update(
-        this.deps.pool,
-        record.workspaceId,
-        WorkspaceIntegrationProviders.GITHUB,
-        { status: WorkspaceIntegrationStatuses.INACTIVE },
-        { expectedStatus: WorkspaceIntegrationStatuses.ACTIVE }
-      )
-      deactivatedWorkspaceIds.push(record.workspaceId)
+      const updated = await withTransaction(this.deps.pool, async (client) => {
+        const result = await WorkspaceIntegrationRepository.update(
+          client,
+          record.workspaceId,
+          WorkspaceIntegrationProviders.GITHUB,
+          { status: WorkspaceIntegrationStatuses.INACTIVE },
+          {
+            expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+            expectedInstallationId: { value: installationId, allowNull: false },
+          }
+        )
+        if (result) {
+          await this.emitRouteUnregister(client, record.workspaceId, installationId)
+        }
+        return result
+      })
+      if (updated) {
+        deactivatedWorkspaceIds.push(record.workspaceId)
+      }
     }
     return { deactivatedWorkspaceIds }
   }
@@ -342,40 +352,31 @@ export class WorkspaceIntegrationService {
       return { processed: 0 }
     }
 
-    // Persist the plaintext id under an optimistic status='active' guard so a
-    // concurrent disconnect (which flips status to 'inactive' and unregisters
-    // the CP route) can't be resurrected by a stale re-register here. The write
-    // is idempotent, so running it unconditionally also serves as the guard
-    // when the id already matches (INV-20).
-    const updated = await WorkspaceIntegrationRepository.update(
-      this.deps.pool,
-      workspaceId,
-      WorkspaceIntegrationProviders.GITHUB,
-      { installationId },
-      { expectedStatus: WorkspaceIntegrationStatuses.ACTIVE }
-    )
-    if (!updated) {
-      return { processed: 0 }
-    }
+    // One transaction persists the plaintext id and commits the register event.
+    // The update is guarded on status='active' (a concurrent disconnect flips it
+    // inactive) AND on the installation id being NULL-or-this-value (a reconnect
+    // to a DIFFERENT installation B leaves installation_id = B, which must not be
+    // clobbered back to A). Because the register event is ordered in the outbox,
+    // a disconnect that lands after this commit emits its unregister event after
+    // ours — the control plane converges without a post-register re-check.
+    const updated = await withTransaction(this.deps.pool, async (client) => {
+      const result = await WorkspaceIntegrationRepository.update(
+        client,
+        workspaceId,
+        WorkspaceIntegrationProviders.GITHUB,
+        { installationId },
+        {
+          expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+          expectedInstallationId: { value: installationId, allowNull: true },
+        }
+      )
+      if (result) {
+        await this.emitRouteRegister(client, workspaceId, installationId)
+      }
+      return result
+    })
 
-    await this.registerGithubRoute(workspaceId, installationId)
-
-    // `registerGithubRoute` runs after the status-guarded column write, so a
-    // disconnect that interleaves between them (flips status to 'inactive' and
-    // deletes the CP route) would be silently resurrected by the register above.
-    // Re-read after registering: if the integration is no longer active, undo the
-    // route we just re-created so the disconnect wins.
-    const after = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
-      this.deps.pool,
-      workspaceId,
-      WorkspaceIntegrationProviders.GITHUB
-    )
-    if (!after || after.status !== WorkspaceIntegrationStatuses.ACTIVE) {
-      await this.unregisterGithubRoute(workspaceId, installationId)
-      return { processed: 0 }
-    }
-
-    return { processed: 1 }
+    return { processed: updated ? 1 : 0 }
   }
 
   /**
@@ -660,7 +661,13 @@ export class WorkspaceIntegrationService {
         rateLimitResetAt: null,
       },
       installedByUserId,
-      true
+      true,
+      // Commit the durable route-register event in the SAME transaction as the
+      // credential upsert, so a crash can't leave the integration active locally
+      // with no control-plane route (or vice versa).
+      async (client) => {
+        await this.emitRouteRegister(client, workspaceId, String(installationId))
+      }
     )
 
     if (!refreshed) {
@@ -669,42 +676,30 @@ export class WorkspaceIntegrationService {
         code: "GITHUB_INTEGRATION_ACTIVATION_FAILED",
       })
     }
-
-    await this.registerGithubRoute(workspaceId, String(installationId))
   }
 
   /**
-   * Register this workspace's GitHub installation in the control-plane routing
-   * table so webhooks for the installation fan out to this region. The install
-   * callback already transits CP, so CP being reachable is a precondition —
-   * failure here fails loudly (INV-11). Null client = local single-region dev.
+   * Commit a durable `github_route:register` event so `GithubRouteSyncHandler`
+   * registers this workspace's installation in the control-plane routing table.
+   * Emitted only when a region is configured (production); local single-region
+   * dev has no control plane and nothing to route, so it degrades to a debug log.
    */
-  private async registerGithubRoute(workspaceId: string, installationId: string): Promise<void> {
-    const client = this.deps.controlPlaneClient
+  private async emitRouteRegister(client: Querier, workspaceId: string, installationId: string): Promise<void> {
     const region = this.deps.region
-    if (!client || !region) {
-      log.debug({ workspaceId, installationId }, "Skipping GitHub route registration — no control plane configured")
+    if (!region) {
+      log.debug({ workspaceId, installationId }, "Skipping GitHub route register event — no region configured")
       return
     }
-    await client.registerIntegrationRoute({
-      provider: GITHUB_ROUTE_PROVIDER,
-      externalId: installationId,
-      region,
-      workspaceId,
-    })
+    await OutboxRepository.insert(client, "github_route:register", { workspaceId, installationId, region })
   }
 
-  private async unregisterGithubRoute(workspaceId: string, installationId: string): Promise<void> {
-    const client = this.deps.controlPlaneClient
-    if (!client) {
-      log.debug({ workspaceId, installationId }, "Skipping GitHub route unregistration — no control plane configured")
+  private async emitRouteUnregister(client: Querier, workspaceId: string, installationId: string): Promise<void> {
+    const region = this.deps.region
+    if (!region) {
+      log.debug({ workspaceId, installationId }, "Skipping GitHub route unregister event — no region configured")
       return
     }
-    await client.unregisterIntegrationRoute({
-      provider: GITHUB_ROUTE_PROVIDER,
-      externalId: installationId,
-      workspaceId,
-    })
+    await OutboxRepository.insert(client, "github_route:unregister", { workspaceId, installationId, region })
   }
 
   private async refreshGithubCredentials(
@@ -713,7 +708,13 @@ export class WorkspaceIntegrationService {
     installationId: number,
     metadata: GitHubIntegrationMetadata,
     installedByOverride?: string,
-    hydrateRepositories = false
+    hydrateRepositories = false,
+    /**
+     * Runs in the SAME transaction as the credential upsert, after it. Used by
+     * the install flow to commit the route-register event atomically with
+     * activation. When omitted, the upsert runs directly on the pool (no txn).
+     */
+    onPersist?: (client: Querier) => Promise<void>
   ): Promise<RefreshResult | null> {
     try {
       const tokenResponse = await this.getAppOctokit().request(
@@ -735,7 +736,7 @@ export class WorkspaceIntegrationService {
         nextMetadata.repositories = await listInstallationRepositories(installationOctokit)
       }
 
-      const updated = await WorkspaceIntegrationRepository.upsert(this.deps.pool, {
+      const upsertParams = {
         id: record.id,
         workspaceId,
         provider: WorkspaceIntegrationProviders.GITHUB,
@@ -752,7 +753,18 @@ export class WorkspaceIntegrationService {
         metadata: nextMetadata,
         installedBy: installedByOverride ?? record.installedBy,
         installationId: String(installationId),
-      })
+      }
+
+      // The network round-trips above already completed, so the transaction that
+      // pairs the upsert with `onPersist`'s outbox write holds no connection
+      // during slow remote calls (INV-41).
+      const updated = onPersist
+        ? await withTransaction(this.deps.pool, async (client) => {
+            const row = await WorkspaceIntegrationRepository.upsert(client, upsertParams)
+            await onPersist(client)
+            return row
+          })
+        : await WorkspaceIntegrationRepository.upsert(this.deps.pool, upsertParams)
 
       return {
         record: updated,
