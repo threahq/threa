@@ -27,7 +27,13 @@ import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { createEditorExtensions } from "./editor-extensions"
 import { EditorBehaviors, handleLinkToolbarAction, isSuggestionActive } from "./editor-behaviors"
-import { serializeToMarkdown, parseMarkdown, type MentionTypeLookup } from "./editor-markdown"
+import {
+  serializeToMarkdown,
+  parseMarkdown,
+  serializeClipboardSlice,
+  isProseMirrorClipboardEvent,
+  type MentionTypeLookup,
+} from "./editor-markdown"
 import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "./triggers"
 import { useMentionables } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -148,7 +154,12 @@ export function DocumentEditorModal({
           "focus:outline-none"
         ),
       },
+      clipboardTextSerializer: serializeClipboardSlice,
       handlePaste: (_view, event) => {
+        if (isProseMirrorClipboardEvent(event)) {
+          return false
+        }
+
         const text = event.clipboardData?.getData("text/plain")
         if (!text || !editorRef.current) {
           return false

@@ -9,7 +9,13 @@ import { applyExternalEditorContent } from "./apply-external-content"
 import { getDictationChunkPositions } from "./dictation-chunk-extension"
 import { EditorBehaviors, isSuggestionActive } from "./editor-behaviors"
 import { EditorToolbar } from "./editor-toolbar"
-import { serializeToMarkdown, parseMarkdown, type MentionTypeLookup } from "./editor-markdown"
+import {
+  serializeToMarkdown,
+  parseMarkdown,
+  serializeClipboardSlice,
+  isProseMirrorClipboardEvent,
+  type MentionTypeLookup,
+} from "./editor-markdown"
 import {
   useMentionSuggestion,
   useChannelSuggestion,
@@ -625,7 +631,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           "focus:outline-none"
         ),
       },
+      clipboardTextSerializer: serializeClipboardSlice,
       handlePaste: (_view, event) => {
+        if (isProseMirrorClipboardEvent(event)) {
+          return false
+        }
+
         const files = event.clipboardData?.files
         if (files && files.length > 0 && onFileUploadRef.current && editorRef.current) {
           event.preventDefault()
