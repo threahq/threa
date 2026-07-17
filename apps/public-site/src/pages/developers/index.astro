@@ -24,11 +24,11 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
 
   <div class="note">
-    <strong>No MCP server yet</strong>
-    There's no Model Context Protocol server today, so an agent host like Claude
-    Desktop can't auto-discover Threa through MCP. You connect over the REST API
-    and the bot runtime instead (see <a class="link" href="/developers/recipes">Recipes</a>).
-    An MCP server is planned.
+    <strong>CLI and MCP server</strong>
+    Alongside raw REST there is a <code>threa</code> command-line tool and an
+    MCP server (<code>threa mcp serve</code>) for agent hosts, both installed
+    from the open-source repo. See
+    <a class="link" href="/developers/cli">CLI &amp; MCP server</a>.
   </div>
 
   <h2>Base URL</h2>

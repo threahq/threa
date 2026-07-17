@@ -1,0 +1,179 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import CodeBlock from "../../components/CodeBlock.astro"
+---
+
+<DocsLayout
+  title="CLI & MCP server · Threa Developers"
+  description="The threa command-line tool and its MCP server: install from the repo, bind one workspace with one API key, and give any local agent the full workspace surface."
+  current="cli"
+  sections={[
+    { id: "install", label: "Install" },
+    { id: "configure", label: "Configure" },
+    { id: "commands", label: "Commands" },
+    { id: "refs", label: "Referring to things" },
+    { id: "output", label: "Output and exit codes" },
+    { id: "mcp", label: "The MCP server" },
+    { id: "agents", label: "Using it from agents" },
+  ]}
+>
+  <p class="eyebrow">CLI &amp; MCP</p>
+  <h1>The <span class="accent">threa</span> command line.</h1>
+  <p class="lead">
+    <code>threa</code> wraps the public API as a command-line tool: search
+    messages and memos, read streams, post, and run the delegation lifecycle
+    from a shell. The same binary serves those operations over the Model
+    Context Protocol with <code>threa mcp serve</code>, so agent hosts like
+    Claude Desktop can connect too.
+  </p>
+
+  <h2 id="install">Install</h2>
+  <p>
+    The CLI lives in the open-source repo at
+    <a class="link" href="https://github.com/threahq/threa">github.com/threahq/threa</a>
+    under <code>packages/cli</code>. It runs on
+    <a class="link" href="https://bun.sh">Bun</a> and is not yet published to a
+    package registry, so you install it from a checkout:
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="install from a checkout"
+    code={`git clone https://github.com/threahq/threa.git
+cd threa && bun install
+cd packages/cli && bun link   # puts a global \`threa\` on your PATH`}
+  />
+  <p>
+    Without <code>bun link</code> you can run it in place with
+    <code>bun packages/cli/src/cli.ts</code>. After pulling a newer checkout
+    the linked binary picks up the changes automatically.
+  </p>
+
+  <h2 id="configure">Configure</h2>
+  <p>
+    The tool binds one workspace with one API key. Create the key in
+    <strong>Settings → API keys</strong> (see
+    <a class="link" href="/developers/authentication">Authentication</a>), then
+    set environment variables or write a config file. Environment variables win
+    when both exist.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="environment variables"
+    code={`export THREA_API_KEY=threa_uk_...
+export THREA_WORKSPACE_ID={{workspaceId}}
+threa whoami`}
+  />
+  <CodeBlock
+    lang="json"
+    label="~/.threa/config.json"
+    code={`{
+  "apiKey": "threa_uk_...",
+  "workspaceId": "{{workspaceId}}",
+  "output": "text"
+}`}
+  />
+  <p>
+    A user key acts as you and shows a via-API badge on what it posts; a
+    workspace key acts as its bot. The key's scopes decide which commands work.
+    Start with <code>threa whoami</code> to confirm the binding.
+  </p>
+
+  <h2 id="commands">Commands</h2>
+  <p>
+    Commands group by resource, verb second. <code>threa --help</code> lists
+    everything; each command documents its own flags with <code>--help</code>.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="the surface"
+    code={`threa whoami
+threa search "release plan" --what messages|memos|attachments
+threa streams list --type channel
+threa streams read "#general" --members
+threa conversations list --stream "#general"
+threa conversations read conv_...
+threa messages send "#general" "Hello from the CLI"
+threa messages edit msg_... "Edited"
+threa messages delete msg_...
+threa messages find-by-metadata source=ci
+threa memos get memo_...
+threa attachments get att_... --url
+threa labels list
+threa labels add triage "#general"
+threa users list
+threa delegations list
+threa delegations claim dlg_... --label "My machine"
+threa delegations update dlg_... --note "tests passing"
+threa delegations finish dlg_... --outcome complete --result - < report.md
+threa mcp serve`}
+  />
+  <p>
+    Two commands worth calling out. <code>search</code> is the one retrieval
+    entry point: <code>--what memos</code> searches the memory Threa builds
+    from your conversations, and an empty memo query browses the most recent.
+    <code>messages send</code> can open a conversation with
+    <code>--new-conversation</code> and continue one with
+    <code>--conversation conv_...</code>, which is how an external agent keeps
+    a thread of work going across runs.
+  </p>
+
+  <h2 id="refs">Referring to things</h2>
+  <p>
+    Anywhere a command takes a stream you can pass the raw
+    <code>stream_...</code> id or a <code>#channel-slug</code>. User slugs work
+    as <code>@user-slug</code>. Lookups are exact and cached; a miss or an
+    ambiguous match fails with an error that names the candidates and how to
+    find the id.
+  </p>
+
+  <h2 id="output">Output and exit codes</h2>
+  <p>
+    The CLI prints short human-readable tables by default, piped or not.
+    <code>-o json</code> (or <code>--json</code>) switches to JSON and works
+    anywhere in the command line, so <code>threa --json streams list | jq</code>
+    and <code>threa streams list -o json</code> both behave the way you expect.
+    An <code>"output": "json"</code> entry in the config file sets the default;
+    an explicit flag wins. Errors go to stderr as a single JSON object with a
+    <code>code</code>, a <code>message</code>, and often a <code>hint</code>.
+    Exit codes: 0 for success, 1 for an API or reference error, 2 for a usage
+    mistake.
+  </p>
+
+  <h2 id="mcp">The MCP server</h2>
+  <p>
+    <code>threa mcp serve</code> exposes the same operations as 22 typed MCP
+    tools over stdio, for hosts that speak MCP rather than a shell. Register it
+    with Claude Code:
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="register with Claude Code"
+    code={`claude mcp add threa \\
+  --env THREA_API_KEY=threa_uk_... \\
+  --env THREA_WORKSPACE_ID={{workspaceId}} \\
+  -- bun /path/to/threa/packages/cli/src/cli.ts mcp serve`}
+  />
+  <p>
+    Other MCP hosts use their own registration format with the same command
+    and environment. The tool names mirror the CLI surface:
+    <code>search</code>, <code>read_stream</code>, <code>send_message</code>,
+    <code>claim_delegation</code>, and so on.
+  </p>
+
+  <h2 id="agents">Using it from agents</h2>
+  <p>
+    For a coding agent with shell access the CLI is usually the better
+    integration: no per-session registration, output that pipes into other
+    tools, and no tool schemas taking up context. The repo ships an agent
+    skill teaching effective use; <code>threa skill install</code> copies it to
+    <code>~/.claude/skills/threa-cli/</code> for Claude Code.
+  </p>
+  <p>
+    The delegation commands close the loop described in
+    <a class="link" href="/developers/recipes">Recipes</a>: a Threa persona
+    hands work to your machine, your agent claims it, posts progress, and the
+    finished result lands back in the stream where Threa's memory keeps it.
+    Claim tokens persist in <code>~/.threa/state.json</code>, so a crashed run
+    can pick its claim back up.
+  </p>
+</DocsLayout>
