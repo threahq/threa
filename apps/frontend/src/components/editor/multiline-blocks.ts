@@ -961,15 +961,11 @@ export function handleBeforeInputKeyboardPaste(
   }
   if (editor.isActive("codeBlock")) return false
 
-  event.preventDefault()
-  try {
-    if (!insertPastedText(editor, data, getMentionType, getEmoji, parseOptions)) {
-      editor.commands.insertContent(data)
-    }
-  } catch {
-    // The event is already prevented, so a parse/insert failure must never
-    // eat the payload — fall back to a plain-text insert, which cannot
-    // reject any content shape.
+  // The event is prevented before inserting, so a parse/insert failure must
+  // never eat the payload — both fallbacks insert the raw text via
+  // `tr.insertText`, which cannot reject or reinterpret any content shape
+  // (`insertContent` would parse strings as HTML).
+  const insertRawText = () =>
     editor
       .chain()
       .focus()
@@ -978,6 +974,14 @@ export function handleBeforeInputKeyboardPaste(
         return true
       })
       .run()
+
+  event.preventDefault()
+  try {
+    if (!insertPastedText(editor, data, getMentionType, getEmoji, parseOptions)) {
+      insertRawText()
+    }
+  } catch {
+    insertRawText()
   }
   return true
 }
