@@ -65,10 +65,11 @@ threa whoami`}
   />
   <CodeBlock
     lang="json"
-    label="~/.threa/mcp.json"
+    label="~/.threa/config.json"
     code={`{
   "apiKey": "threa_uk_...",
-  "workspaceId": "{{workspaceId}}"
+  "workspaceId": "{{workspaceId}}",
+  "output": "text"
 }`}
   />
   <p>
@@ -127,12 +128,15 @@ threa mcp serve`}
 
   <h2 id="output">Output and exit codes</h2>
   <p>
-    On a terminal the CLI prints short human-readable tables. When piped it
-    prints JSON, and <code>--json</code> forces JSON anywhere, so
-    <code>threa streams list | jq</code> behaves the way you expect. Errors go
-    to stderr as a single JSON object with a <code>code</code>, a
-    <code>message</code>, and often a <code>hint</code>. Exit codes: 0 for
-    success, 1 for an API or reference error, 2 for a usage mistake.
+    The CLI prints short human-readable tables by default, piped or not.
+    <code>-o json</code> (or <code>--json</code>) switches to JSON and works
+    anywhere in the command line, so <code>threa --json streams list | jq</code>
+    and <code>threa streams list -o json</code> both behave the way you expect.
+    An <code>"output": "json"</code> entry in the config file sets the default;
+    an explicit flag wins. Errors go to stderr as a single JSON object with a
+    <code>code</code>, a <code>message</code>, and often a <code>hint</code>.
+    Exit codes: 0 for success, 1 for an API or reference error, 2 for a usage
+    mistake.
   </p>
 
   <h2 id="mcp">The MCP server</h2>
