@@ -1,19 +1,22 @@
 import { describe, test, expect, beforeAll, afterAll, mock } from "bun:test"
 import { Pool, type PoolClient } from "pg"
 import type { Server } from "socket.io"
-import { setupTestDatabase } from "./setup"
+import { setupIsolatedTestDatabase } from "./setup"
 import { SyncLogRepository, SyncLogReconciliationWorker } from "../../src/features/sync"
 
 describe("SyncLogReconciliationWorker", () => {
   let pool: Pool
+  let cleanupDatabase: () => Promise<void>
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    const isolated = await setupIsolatedTestDatabase("sync_reconciliation")
+    pool = isolated.pool
+    cleanupDatabase = isolated.cleanup
     await SyncLogRepository.ensureSweepState(pool)
   })
 
   afterAll(async () => {
-    await pool.end()
+    await cleanupDatabase()
   })
 
   function uniqueId(prefix: string): string {

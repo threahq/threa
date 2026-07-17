@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { spyOnExport } from "@/test/spy"
-import { render, screen, fireEvent, act } from "@testing-library/react"
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react"
 import { MessageComposer } from "./message-composer"
@@ -10,8 +10,10 @@ import type { PendingAttachment } from "@/hooks/use-attachments"
 import type { JSONContent } from "@threa/types"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as editorModule from "@/components/editor"
+import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 let isMobileMockValue = false
+const mockRichEditorFocus = vi.fn()
 
 type MockEditorInstance = {
   id: string
@@ -61,7 +63,7 @@ const MockRichEditor = forwardRef<
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => undefined,
+      focus: mockRichEditorFocus,
       insertMention: () => undefined,
       insertSlash: () => undefined,
       insertEmoji: () => undefined,
@@ -138,6 +140,7 @@ const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 describe("MessageComposer", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    mockRichEditorFocus.mockClear()
     isMobileMockValue = false
     vi.useRealTimers()
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileMockValue)
@@ -170,6 +173,40 @@ describe("MessageComposer", () => {
       render(<MessageComposer {...defaultProps} />)
 
       expect(screen.getByTestId("rich-editor")).toBeInTheDocument()
+    })
+
+    it("prepends a queued runtime command without dropping the existing draft", async () => {
+      const onContentChange = vi.fn()
+      const content: JSONContent = {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "focus on tests" }] }],
+      }
+      render(
+        <MessageComposer
+          {...defaultProps}
+          streamId="stream_steer"
+          content={content}
+          onContentChange={onContentChange}
+        />
+      )
+
+      act(() => queueComposerCommandRequest("stream_steer", "/steer "))
+
+      await waitFor(() =>
+        expect(onContentChange).toHaveBeenCalledWith({
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "/steer " },
+                { type: "text", text: "focus on tests" },
+              ],
+            },
+          ],
+        })
+      )
+      await waitFor(() => expect(mockRichEditorFocus).toHaveBeenCalledTimes(1))
     })
 
     it("should render the upload button", () => {

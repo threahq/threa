@@ -52,6 +52,30 @@ export async function setupTestDatabase(): Promise<Pool> {
   return pool
 }
 
+export async function setupIsolatedTestDatabase(label: string): Promise<{ pool: Pool; cleanup: () => Promise<void> }> {
+  const safeLabel = label
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]/g, "_")
+    .slice(0, 24)
+  const databaseName = `threa_test_${safeLabel}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`
+  const adminPool = new Pool({ connectionString: ADMIN_DATABASE_URL })
+  await adminPool.query(`CREATE DATABASE "${databaseName}"`)
+
+  const connectionUrl = new URL(process.env.TEST_DATABASE_URL ?? TEST_DATABASE_URL)
+  connectionUrl.pathname = `/${databaseName}`
+  const pool = createDatabasePool(connectionUrl.toString())
+  await createMigrator(pool).up()
+
+  return {
+    pool,
+    cleanup: async () => {
+      await pool.end()
+      await adminPool.query(`DROP DATABASE "${databaseName}" WITH (FORCE)`)
+      await adminPool.end()
+    },
+  }
+}
+
 /**
  * Test transaction wrapper that ALWAYS rolls back.
  * Use this instead of withTransaction in tests to ensure data isolation.

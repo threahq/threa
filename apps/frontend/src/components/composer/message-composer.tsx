@@ -36,6 +36,31 @@ import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
 import type { MessageSendMode, JSONContent } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import type { Editor } from "@tiptap/react"
+import { consumeComposerCommandRequest, subscribeComposerCommandRequest } from "@/stores/composer-command-request-store"
+
+function prependComposerCommand(content: JSONContent, command: string): JSONContent {
+  const first = content.content?.[0]
+  if (first?.type === "paragraph") {
+    const firstInline = first.content?.[0]
+    const commandName = command.trim()
+    const alreadyPrefixed =
+      (typeof firstInline?.text === "string" &&
+        (firstInline.text === commandName || firstInline.text.startsWith(`${commandName} `))) ||
+      (firstInline?.type === "slashCommand" && firstInline.attrs?.name === commandName.slice(1))
+    if (alreadyPrefixed) return content
+    return {
+      ...content,
+      content: [
+        { ...first, content: [{ type: "text", text: command }, ...(first.content ?? [])] },
+        ...(content.content ?? []).slice(1),
+      ],
+    }
+  }
+  return {
+    ...content,
+    content: [{ type: "paragraph", content: [{ type: "text", text: command }] }, ...(content.content ?? [])],
+  }
+}
 
 /** Check whether the document has content beyond a single line. */
 function isMultiLine(doc: JSONContent): boolean {
@@ -319,6 +344,18 @@ export function MessageComposer({
   const controlsDisabled = disabled || isSubmitting
 
   const richEditorRef = useRef<RichEditorHandle>(null)
+
+  useEffect(() => {
+    if (!streamId) return
+    const consumeRequest = () => {
+      const command = consumeComposerCommandRequest(streamId)
+      if (!command) return
+      onContentChange(prependComposerCommand(content, command))
+      requestAnimationFrame(() => richEditorRef.current?.focus())
+    }
+    consumeRequest()
+    return subscribeComposerCommandRequest(streamId, consumeRequest)
+  }, [content, onContentChange, streamId])
   const mobileRootRef = useRef<HTMLDivElement>(null)
   const expandedShellRef = useRef<HTMLDivElement>(null)
   const actionBarWrapperRef = useRef<HTMLDivElement>(null)

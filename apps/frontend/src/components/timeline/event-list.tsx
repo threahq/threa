@@ -13,7 +13,7 @@ import {
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import type { MessageAgentActivity } from "@/hooks"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
-import { useAbortSession } from "@/hooks"
+import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { Loader2 } from "lucide-react"
 import { EventItem } from "./event-item"
 import { AgentSessionEvent } from "./agent-session-event"
@@ -729,6 +729,8 @@ export interface TimelineItemRenderContext {
   sessionLiveSubsteps: Map<string, string | null>
   /** Click handler for the session card's Stop button. */
   onStopSession?: (sessionId: string) => void
+  /** Prepare the composer to dispatch its next message through /steer when supported. */
+  onSteerSession?: () => Promise<void>
   /**
    * followUpIds that have a matching `agent:follow_up_cancelled` row in the
    * loaded window. Lets a scheduled follow-up card show its cancelled state
@@ -859,6 +861,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
             liveCounts={ctx.sessionLiveCounts.get(item.sessionId)}
             liveSubstep={ctx.sessionLiveSubsteps.get(item.sessionId)}
             onStopSession={ctx.onStopSession}
+            onSteerSession={ctx.onSteerSession}
           />
         </div>
       )}
@@ -1096,7 +1099,8 @@ export function EventList({
 }: EventListProps) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
-  const abortSession = useAbortSession(socket)
+  const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
+  const steerAgentSession = useSteerAgentSession(workspaceId, streamId)
 
   const { sessionLiveCounts, sessionLiveSubsteps } = useMemo(() => {
     const counts = new Map<string, { stepCount: number; messageCount: number }>()
@@ -1113,10 +1117,7 @@ export function EventList({
     return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps }
   }, [agentActivity])
 
-  const handleStopSession = useMemo(
-    () => (sessionId: string) => abortSession({ sessionId, workspaceId }),
-    [abortSession, workspaceId]
-  )
+  const handleStopSession = useMemo(() => (sessionId: string) => stopAgentSession(sessionId), [stopAgentSession])
 
   // Day boundaries between rows from different local days (INV-42). Threads
   // render all events with no zero-height filtering, so dividers go straight
@@ -1179,6 +1180,7 @@ export function EventList({
     sessionLiveCounts,
     sessionLiveSubsteps,
     onStopSession: handleStopSession,
+    onSteerSession: steerAgentSession,
     cancelledFollowUpIds,
     delegationStatusPatches,
     botAccessStatusPatches,

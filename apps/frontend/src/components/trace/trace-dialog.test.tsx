@@ -11,6 +11,7 @@ import * as relativeTimeModule from "@/components/relative-time"
 import * as hooksModule from "@/hooks"
 import { commandsApi } from "@/api"
 import { toast } from "sonner"
+import { consumeComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 let mockSessionId = "session_1"
 let mockSessionIndex = 0
@@ -230,7 +231,7 @@ describe("TraceDialog", () => {
     expect(commandsApi.dispatch).not.toHaveBeenCalled()
   })
 
-  it("dispatches advertised runtime stop and steer commands from the running trace", async () => {
+  it("dispatches runtime stop and prepares the composer with advertised /steer", async () => {
     mockSessionId = "session_run"
     mockSession = {
       id: "session_run",
@@ -263,9 +264,7 @@ describe("TraceDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
     fireEvent.click(screen.getByRole("button", { name: "Stop" }))
 
-    await waitFor(() =>
-      expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/steer" })
-    )
+    await waitFor(() => expect(consumeComposerCommandRequest("stream_1")).toBe("/steer "))
     await waitFor(() =>
       expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/stop" })
     )

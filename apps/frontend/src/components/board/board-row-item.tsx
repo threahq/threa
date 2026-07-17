@@ -1,5 +1,5 @@
 import type { StreamEvent } from "@threa/types"
-import { useAbortSession } from "@/hooks"
+import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { AgentSessionEvent } from "@/components/timeline/agent-session-event"
 import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
@@ -385,7 +385,9 @@ function BoardRunningSessionRow({
   onRedirectSession?: () => void
 }) {
   const socket = useSocket()
-  const abortSession = useAbortSession(socket)
+  const streamId = events[0]!.streamId
+  const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
+  const steerAgentSession = useSteerAgentSession(workspaceId, streamId)
   const userId = useWorkspaceUserId(workspaceId)
   const activity = useAgentActivity(events, socket, workspaceId, userId)
   const sessionId = events.reduce<string | null>((found, event) => found ?? getSessionId(event), null)
@@ -406,8 +408,9 @@ function BoardRunningSessionRow({
       events={events}
       liveCounts={live ? { stepCount: live.stepCount, messageCount: live.messageCount } : undefined}
       liveSubstep={live?.substep ?? null}
-      onStopSession={(sessionId) => abortSession({ sessionId, workspaceId })}
+      onStopSession={stopAgentSession}
       onRedirect={onRedirectSession}
+      onSteerSession={steerAgentSession}
     />
   )
 }
