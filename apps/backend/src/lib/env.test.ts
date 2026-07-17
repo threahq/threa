@@ -137,6 +137,26 @@ describe("loadConfig github app configuration", () => {
     )
   })
 
+  test("requires a control-plane destination for regional GitHub in production", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "production"
+    process.env.USE_STUB_AUTH = "false"
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
+    process.env.WORKOS_API_KEY = "key"
+    process.env.WORKOS_CLIENT_ID = "client"
+    process.env.WORKOS_REDIRECT_URI = "https://app.example.com/callback"
+    process.env.WORKOS_COOKIE_PASSWORD = "password"
+    process.env.GITHUB_APP_ID = "12345"
+    process.env.GITHUB_APP_SLUG = "threa-prod"
+    process.env.GITHUB_APP_PRIVATE_KEY = "private-key"
+    process.env.WORKSPACE_INTEGRATIONS_SECRET = "test-secret"
+    process.env.REGION = "eu-north-1"
+
+    expect(() => loadConfig()).toThrow(
+      "CONTROL_PLANE_URL is required for a regional production backend with GitHub enabled"
+    )
+  })
+
   test("normalizes escaped newlines in the GitHub App private key", () => {
     setBaseEnv()
     process.env.NODE_ENV = "development"

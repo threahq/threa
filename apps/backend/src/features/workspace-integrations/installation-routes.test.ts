@@ -490,6 +490,46 @@ describe("deactivateInstallation", () => {
   })
 })
 
+describe("GitHub metadata write guards", () => {
+  const metadata = {
+    organizationName: "acme",
+    repositorySelection: "all" as const,
+    permissions: {},
+    repositories: [],
+    rateLimitRemaining: null,
+    rateLimitResetAt: null,
+  }
+
+  it("guards rate-limit metadata on the client's observed installation", async () => {
+    const { pool, calls } = recordingPool([githubRow({ installation_id: "42" })])
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+
+    const result = await service.updateGithubRateLimitMetadata("ws_1", metadata, "42", 100, null)
+
+    expect(result.rateLimitRemaining).toBe(100)
+    const update = calls.find((call) => call.text.includes("UPDATE workspace_integrations"))
+    expect(update?.values).toContain("active")
+    expect(update?.values).toContain("42")
+  })
+
+  it("keeps the client's prior metadata when a replacement wins the guard", async () => {
+    const { pool } = recordingPool([])
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+
+    expect(await service.updateGithubRateLimitMetadata("ws_1", metadata, "42", 100, null)).toBe(metadata)
+  })
+})
+
 describe("persistGithubIntegration token-refresh path (non-route)", () => {
   const refreshParams: UpsertWorkspaceIntegrationParams = {
     id: "wsi_1",

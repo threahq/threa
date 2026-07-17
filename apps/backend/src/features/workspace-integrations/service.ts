@@ -143,7 +143,7 @@ export class GitHubClient {
   private async captureRateLimit(headers: GitHubApiHeaders | undefined): Promise<void> {
     // Anonymous clients have no integration record to persist against, and their
     // rate-limit headers are per-IP rather than workspace state.
-    if (!headers || !this.metadata) return
+    if (!headers || !this.metadata || !this.credentials) return
     const remaining = parseIntegerHeader(headers["x-ratelimit-remaining"])
     const resetSeconds = parseIntegerHeader(headers["x-ratelimit-reset"])
     const resetAt = resetSeconds ? new Date(resetSeconds * 1000).toISOString() : null
@@ -155,6 +155,7 @@ export class GitHubClient {
     this.metadata = await this.service.updateGithubRateLimitMetadata(
       this.workspaceId,
       this.metadata,
+      String(this.credentials.installationId),
       remaining,
       resetAt
     )
@@ -473,10 +474,9 @@ export class WorkspaceIntegrationService {
       repositories,
     }
 
-    // Optimistic predicate on status='active' so a concurrent disconnect
-    // (which flips status to 'inactive' and clears credentials/metadata)
-    // causes sync to fail cleanly instead of resurrecting the integration
-    // with the freshly-minted token (INV-20).
+    // Pin both active status and the installation observed before the network
+    // calls. A concurrent disconnect or reconnect-to-B must make this stale A
+    // sync lose rather than overwrite the replacement (INV-20).
     const updated = await WorkspaceIntegrationRepository.update(
       this.deps.pool,
       workspaceId,
@@ -489,7 +489,10 @@ export class WorkspaceIntegrationService {
         ),
         metadata: nextMetadata,
       },
-      { expectedStatus: WorkspaceIntegrationStatuses.ACTIVE }
+      {
+        expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+        expectedInstallationId: { value: String(credentials.installationId), allowNull: true },
+      }
     )
     if (!updated) {
       throw new HttpError("GitHub integration was disconnected during sync", {
@@ -600,6 +603,7 @@ export class WorkspaceIntegrationService {
   async updateGithubRateLimitMetadata(
     workspaceId: string,
     metadata: GitHubIntegrationMetadata,
+    installationId: string,
     remaining: number | null,
     resetAt: string | null
   ): Promise<GitHubIntegrationMetadata> {
@@ -609,11 +613,18 @@ export class WorkspaceIntegrationService {
       rateLimitResetAt: resetAt,
     }
 
-    await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.GITHUB, {
-      metadata: nextMetadata,
-    })
+    const updated = await WorkspaceIntegrationRepository.update(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.GITHUB,
+      { metadata: nextMetadata },
+      {
+        expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+        expectedInstallationId: { value: installationId, allowNull: true },
+      }
+    )
 
-    return nextMetadata
+    return updated ? nextMetadata : metadata
   }
 
   async refreshGithubCredentialsForClient(
