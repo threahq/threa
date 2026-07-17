@@ -71,7 +71,17 @@ const CONTENT_RULES: readonly ContentRule[] = [
   },
 ]
 
-/** INV-1 / INV-3: scan executable DDL for banned constructs. */
+/**
+ * INV-67: a migration that enqueues `backfill.plan` jobs must delay them
+ * (`process_after = NOW() + interval ...`). The definition it names ships in the
+ * same release, so an old-code replica that claims the job during a rolling
+ * deploy throws `Unknown backfill` and burns its retries into the DLQ within
+ * seconds — long before new code boots. Grandfathered: the mention backfill
+ * predates the rule (its jobs have long since drained).
+ */
+const INV67_GRANDFATHERED = new Set(["20260621120000_backfill_mention_actor_refs.sql"])
+
+/** INV-1 / INV-3 / INV-67: scan executable SQL for banned constructs. */
 async function checkContent(migrations: string[]): Promise<string[]> {
   const violations: string[] = []
   for (const path of migrations) {
@@ -80,6 +90,12 @@ async function checkContent(migrations: string[]): Promise<string[]> {
       if (rule.pattern.test(sql)) {
         violations.push(`  ❌ ${path} — ${rule.inv}: ${rule.message}`)
       }
+    }
+    const filename = path.split("/").pop() ?? path
+    if (/'backfill\.plan'/.test(sql) && !INV67_GRANDFATHERED.has(filename) && !/NOW\(\)\s*\+\s*INTERVAL/i.test(sql)) {
+      violations.push(
+        `  ❌ ${path} — INV-67: backfill.plan enqueues must be delayed (process_after = NOW() + interval '10 minutes') to survive a rolling deploy.`
+      )
     }
   }
   return violations
