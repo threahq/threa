@@ -204,6 +204,40 @@ jobs:
           bun run --cwd extensions/claude-code-remote test
           bun run --cwd extensions/harness-daemon test
 
+  public-site-build:
+    name: Public Site Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for public-site changes
+        if: github.event_name == 'pull_request'
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            site:
+              - 'apps/public-site/**'
+              - '.github/workflows/ci.yml'
+
+      - name: Setup Bun
+        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
+        run: bun install
+
+      # The full build, not just astro check: build-llms.ts runs post-build and
+      # fails on any docs page missing its PAGES entry — a guard that otherwise
+      # only fires in the deploy workflow, after merge (see #1383).
+      - name: Build public site
+        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
+        run: bun run --cwd apps/public-site build
+
   workos-permissions:
     name: WorkOS Permissions
     runs-on: ubuntu-latest
