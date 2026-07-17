@@ -510,6 +510,60 @@ interface ParseOptions extends ParseMarkdownOptions {
   balancedLinkHrefs?: Map<string, string>
 }
 
+const LIST_LINE_PATTERN = /^(\s*)([-*]|\d+\.)\s(.*)$/
+
+interface ListLine {
+  indent: number
+  ordered: boolean
+  text: string
+}
+
+/**
+ * Build one list node starting at `startIndex`, consuming every line indented
+ * at least `baseIndent`. A line indented deeper than the current level becomes
+ * a nested list inside the preceding item; a marker-type switch at the same
+ * level ends the list so bullet and ordered runs stay separate nodes.
+ */
+function buildListNode(
+  listLines: ListLine[],
+  startIndex: number,
+  baseIndent: number,
+  options: ParseOptions
+): { node: JSONContent; nextIndex: number } {
+  const ordered = listLines[startIndex].ordered
+  const items: JSONContent[] = []
+  let i = startIndex
+
+  while (i < listLines.length && listLines[i].indent >= baseIndent) {
+    const listLine = listLines[i]
+
+    if (listLine.indent > baseIndent) {
+      const nested = buildListNode(listLines, i, listLine.indent, options)
+      const lastItem = items[items.length - 1]
+      if (lastItem) {
+        lastItem.content = [...(lastItem.content ?? []), nested.node]
+      } else {
+        items.push({ type: "listItem", content: [{ type: "paragraph" }, nested.node] })
+      }
+      i = nested.nextIndex
+      continue
+    }
+
+    if (listLine.ordered !== ordered) break
+
+    items.push({
+      type: "listItem",
+      content: [{ type: "paragraph", content: parseInlineMarkdown(listLine.text, options) }],
+    })
+    i++
+  }
+
+  return {
+    node: { type: ordered ? "orderedList" : "bulletList", content: items },
+    nextIndex: i,
+  }
+}
+
 export function parseMarkdown(
   markdown: string,
   getMentionType?: MentionTypeLookup,
@@ -592,54 +646,44 @@ export function parseMarkdown(
           attrs: { messageId, streamId, authorName, authorId, actorType, snippet },
         })
       } else {
+        // One paragraph per quoted line — the inverse of the serializer, which
+        // emits each blockquote paragraph as its own `> ` line. Blank quoted
+        // lines are paragraph separators, not content.
+        const quoteParagraphs = quoteLines
+          .filter((quoteLine) => quoteLine.trim().length > 0)
+          .map((quoteLine) => ({
+            type: "paragraph",
+            content: parseInlineMarkdown(quoteLine, options),
+          }))
         content.push({
           type: "blockquote",
-          content: [
-            {
-              type: "paragraph",
-              content: parseInlineMarkdown(quoteLines.join("\n"), options),
-            },
-          ],
+          content: quoteParagraphs.length > 0 ? quoteParagraphs : [{ type: "paragraph" }],
         })
       }
       continue
     }
 
-    // Unordered list
-    if (line.match(/^[-*]\s/)) {
-      const listItems: JSONContent[] = []
-      while (i < lines.length && lines[i].match(/^[-*]\s/)) {
-        listItems.push({
-          type: "listItem",
-          content: [
-            {
-              type: "paragraph",
-              content: parseInlineMarkdown(lines[i].replace(/^[-*]\s/, ""), options),
-            },
-          ],
+    // Bullet / ordered list, including nested items indented under a parent
+    // item (the serializer emits two spaces per nesting level).
+    if (LIST_LINE_PATTERN.test(line)) {
+      const listLines: ListLine[] = []
+      while (i < lines.length) {
+        const match = lines[i].match(LIST_LINE_PATTERN)
+        if (!match) break
+        listLines.push({
+          indent: match[1].length,
+          ordered: match[2] !== "-" && match[2] !== "*",
+          text: match[3],
         })
         i++
       }
-      content.push({ type: "bulletList", content: listItems })
-      continue
-    }
 
-    // Ordered list
-    if (line.match(/^\d+\.\s/)) {
-      const listItems: JSONContent[] = []
-      while (i < lines.length && lines[i].match(/^\d+\.\s/)) {
-        listItems.push({
-          type: "listItem",
-          content: [
-            {
-              type: "paragraph",
-              content: parseInlineMarkdown(lines[i].replace(/^\d+\.\s/, ""), options),
-            },
-          ],
-        })
-        i++
+      let itemIndex = 0
+      while (itemIndex < listLines.length) {
+        const built = buildListNode(listLines, itemIndex, listLines[itemIndex].indent, options)
+        content.push(built.node)
+        itemIndex = built.nextIndex
       }
-      content.push({ type: "orderedList", content: listItems })
       continue
     }
 
