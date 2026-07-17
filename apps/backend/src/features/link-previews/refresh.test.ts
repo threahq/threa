@@ -131,10 +131,13 @@ describe("findGithubPreviewMatches", () => {
 })
 
 describe("refreshLinkPreview", () => {
-  function fakeService(preview: LinkPreview | null) {
+  function fakeService(
+    preview: LinkPreview | null,
+    applyResult: { applied: true } | { applied: false; fetchedAt: Date | null } = { applied: true }
+  ) {
     return {
       getPreviewById: mock(async () => preview),
-      applyRefreshedMetadata: mock(async () => {}),
+      applyRefreshedMetadata: mock(async () => applyResult),
     } as unknown as LinkPreviewService & {
       getPreviewById: ReturnType<typeof mock>
       applyRefreshedMetadata: ReturnType<typeof mock>
@@ -197,7 +200,53 @@ describe("refreshLinkPreview", () => {
       { workspaceId: WORKSPACE_ID, previewId: "lp_pr" }
     )
 
-    expect(result).toEqual({ refreshed: false, reason: "fetch_empty" })
+    expect(result).toEqual({ refreshed: false, reason: "fetch_empty", fetchedAt: null })
     expect(service.applyRefreshedMetadata).not.toHaveBeenCalled()
+  })
+
+  test("under optimistic concurrency, the winner writes and captures the pre-fetch fetched_at", async () => {
+    const fetchedAt = new Date(Date.now() - 60_000)
+    const service = fakeService(makeRow({ fetchedAt }), { applied: true })
+    spyOn(githubPreview, "fetchGitHubPreview").mockResolvedValue(REFRESHED_METADATA)
+
+    const result = await refreshLinkPreview(
+      { linkPreviewService: service, workspaceIntegrationService: wis },
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", useOptimisticConcurrency: true }
+    )
+
+    expect(result).toEqual({ refreshed: true })
+    expect(service.applyRefreshedMetadata).toHaveBeenCalledWith(WORKSPACE_ID, "lp_pr", REFRESHED_METADATA, {
+      expectedFetchedAt: fetchedAt,
+    })
+  })
+
+  test("under optimistic concurrency, a CAS loss reports conflict and does not overwrite", async () => {
+    const winnerFetchedAt = new Date()
+    const service = fakeService(makeRow({ fetchedAt: new Date(Date.now() - 60_000) }), {
+      applied: false,
+      fetchedAt: winnerFetchedAt,
+    })
+    spyOn(githubPreview, "fetchGitHubPreview").mockResolvedValue(REFRESHED_METADATA)
+
+    const result = await refreshLinkPreview(
+      { linkPreviewService: service, workspaceIntegrationService: wis },
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", useOptimisticConcurrency: true }
+    )
+
+    expect(result).toEqual({ refreshed: false, reason: "conflict", fetchedAt: winnerFetchedAt })
+  })
+
+  test("under optimistic concurrency, a NULL fetched_at row passes expectedFetchedAt null", async () => {
+    const service = fakeService(makeRow({ fetchedAt: null }), { applied: true })
+    spyOn(githubPreview, "fetchGitHubPreview").mockResolvedValue(REFRESHED_METADATA)
+
+    await refreshLinkPreview(
+      { linkPreviewService: service, workspaceIntegrationService: wis },
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", useOptimisticConcurrency: true }
+    )
+
+    expect(service.applyRefreshedMetadata).toHaveBeenCalledWith(WORKSPACE_ID, "lp_pr", REFRESHED_METADATA, {
+      expectedFetchedAt: null,
+    })
   })
 })

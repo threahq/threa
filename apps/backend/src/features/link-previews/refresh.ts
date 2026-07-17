@@ -18,7 +18,15 @@ export interface RefreshLinkPreviewDeps {
 
 export type RefreshLinkPreviewResult =
   | { refreshed: true }
-  | { refreshed: false; reason: "not_found" | "fetch_empty" }
+  | { refreshed: false; reason: "not_found" }
+  /**
+   * The fetch came back empty (GitHub 5xx / timeout / rate-limit breaker), so
+   * `fetched_at` did NOT advance. `fetchedAt` is that unchanged row value — a
+   * caller keys a bounded retry on it so distinct outage cycles (which each key on
+   * the `fetched_at` a prior successful refresh advanced to) get distinct ids and
+   * don't collide with a persisted completed retry row.
+   */
+  | { refreshed: false; reason: "fetch_empty"; fetchedAt: Date | null }
   /**
    * The row was fetched inside `debounceMs`, so this refresh was dropped.
    * `retryAfterMs` is the time until the window clears; `fetchedAt` is the row's
@@ -27,6 +35,13 @@ export type RefreshLinkPreviewResult =
    * refresh actually lands, so they collapse to one job).
    */
   | { refreshed: false; reason: "debounced"; retryAfterMs: number; fetchedAt: Date }
+  /**
+   * Compare-and-set loss: between reading `fetched_at` and writing, a concurrent
+   * refresh advanced the row, so this (possibly stale) fetch was NOT written.
+   * `fetchedAt` is the winner's current value — the caller re-keys a single
+   * trailing refresh on it so the row converges on a fresh fetch.
+   */
+  | { refreshed: false; reason: "conflict"; fetchedAt: Date | null }
 
 /**
  * Force-refresh one already-rendered GitHub link preview from an external
@@ -42,11 +57,16 @@ export type RefreshLinkPreviewResult =
  */
 export async function refreshLinkPreview(
   deps: RefreshLinkPreviewDeps,
-  params: { workspaceId: string; previewId: string; debounceMs?: number }
+  params: { workspaceId: string; previewId: string; debounceMs?: number; useOptimisticConcurrency?: boolean }
 ): Promise<RefreshLinkPreviewResult> {
   const debounceMs = params.debounceMs ?? DEFAULT_REFRESH_DEBOUNCE_MS
   const preview = await deps.linkPreviewService.getPreviewById(params.workspaceId, params.previewId)
   if (!preview) return { refreshed: false, reason: "not_found" }
+
+  // Captured BEFORE the network fetch so the write can compare-and-set against it:
+  // a slower concurrent refresh that started earlier must not overwrite a newer
+  // write completed while this one was in flight (webhook path only).
+  const expectedFetchedAt = preview.fetchedAt
 
   if (preview.fetchedAt) {
     const elapsedMs = Date.now() - preview.fetchedAt.getTime()
@@ -74,7 +94,24 @@ export async function refreshLinkPreview(
       { workspaceId: params.workspaceId, previewId: params.previewId },
       "Skipping preview refresh — GitHub fetch returned no metadata"
     )
-    return { refreshed: false, reason: "fetch_empty" }
+    return { refreshed: false, reason: "fetch_empty", fetchedAt: expectedFetchedAt }
+  }
+
+  if (params.useOptimisticConcurrency) {
+    const outcome = await deps.linkPreviewService.applyRefreshedMetadata(
+      params.workspaceId,
+      params.previewId,
+      metadata,
+      { expectedFetchedAt }
+    )
+    if (!outcome.applied) {
+      log.debug(
+        { workspaceId: params.workspaceId, previewId: params.previewId },
+        "Skipping preview refresh — compare-and-set lost to a concurrent refresh"
+      )
+      return { refreshed: false, reason: "conflict", fetchedAt: outcome.fetchedAt }
+    }
+    return { refreshed: true }
   }
 
   await deps.linkPreviewService.applyRefreshedMetadata(params.workspaceId, params.previewId, metadata)

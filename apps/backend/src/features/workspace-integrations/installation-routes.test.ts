@@ -222,6 +222,52 @@ describe("backfillGithubRoute", () => {
     expect(client.registerIntegrationRoute).not.toHaveBeenCalled()
   })
 
+  it("undoes the route when a disconnect interleaves between the guarded update and register", async () => {
+    // The guarded UPDATE matches (status still active at that instant), the route
+    // is registered, but a disconnect then flips status to 'inactive' and deletes
+    // the CP route. The post-register re-read must catch the loss and unregister the
+    // route this backfill just resurrected — the disconnect wins.
+    let selectCount = 0
+    const calls: QueryCall[] = []
+    const pool = {
+      query: async (query: unknown, values: unknown[] = []) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        calls.push({ text, values })
+        if (text.includes("UPDATE workspace_integrations")) {
+          return { rows: [githubRow({ installation_id: "42" })], rowCount: 1 }
+        }
+        // First SELECT: active (drives the update). Second SELECT (post-register
+        // re-check): the disconnect has landed → inactive.
+        selectCount += 1
+        const status = selectCount === 1 ? "active" : "inactive"
+        return { rows: [githubRow({ installation_id: "42", status })], rowCount: 1 }
+      },
+    } as unknown as Pool
+    const client = fakeControlPlaneClient()
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      controlPlaneClient: client,
+      region: "eu-north-1",
+    })
+
+    const result = await service.backfillGithubRoute("ws_1")
+
+    expect(result).toEqual({ processed: 0 })
+    expect(client.registerIntegrationRoute).toHaveBeenCalledWith({
+      provider: "github",
+      externalId: "42",
+      region: "eu-north-1",
+      workspaceId: "ws_1",
+    })
+    expect(client.unregisterIntegrationRoute).toHaveBeenCalledWith({
+      provider: "github",
+      externalId: "42",
+      workspaceId: "ws_1",
+    })
+  })
+
   it("writes the column from decrypted credentials then registers the route", async () => {
     const credentials = encryptJson(
       SECRET,
@@ -306,8 +352,8 @@ describe("listActiveWorkspaceIdsForInstallation", () => {
     expect(workspaceIds).toEqual(["ws_1", "ws_2"])
     const select = calls.find((c) => c.text.includes("SELECT * FROM workspace_integrations"))
     expect(select?.text).toContain("installation_id")
-    expect(select?.text).toContain("status = 'active'")
-    expect(select?.values).toEqual(["github", "42"])
+    expect(select?.text).toContain("status = $3")
+    expect(select?.values).toEqual(["github", "42", "active"])
   })
 })
 

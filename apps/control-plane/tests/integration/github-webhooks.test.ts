@@ -381,7 +381,9 @@ describe("github webhook HTTP route (raw body)", () => {
  * delivers from a small pool of source IPs and a delivery storm can exceed the
  * cap; a 429 makes GitHub auto-disable the App's single webhook URL. This mounts
  * globalLimit before the webhook route with the same skip predicate registerRoutes
- * uses, proving a flood on the webhook path stays 2xx while an ordinary path 429s.
+ * uses, plus the dedicated generous `cp-github-webhook` limiter registerRoutes mounts
+ * in front of the route, proving a flood on the webhook path stays 2xx (exempt from
+ * the global cap, under the dedicated one) while an ordinary path 429s.
  */
 describe("github webhook is exempt from the global rate limit", () => {
   let pool: Pool
@@ -401,11 +403,22 @@ describe("github webhook is exempt from the global rate limit", () => {
         return path === GITHUB_WEBHOOK_PATH
       },
     })
+    const webhookLimit = createRateLimit({
+      name: "cp-github-webhook",
+      windowMs: 60_000,
+      max: 5000,
+      key: (req) => getClientIp(req, "unknown"),
+    })
     app.use(globalLimit)
     app.get("/api/_ratelimit_probe", (_req, res) => res.json({ ok: true }))
     const service = new GithubWebhookService({ pool, webhookSecret: SECRET })
     const handlers = createGithubWebhookHandlers({ service })
-    app.post(GITHUB_WEBHOOK_PATH, express.raw({ type: "application/json", limit: "5mb" }), handlers.receive)
+    app.post(
+      GITHUB_WEBHOOK_PATH,
+      webhookLimit,
+      express.raw({ type: "application/json", limit: "5mb" }),
+      handlers.receive
+    )
 
     server = createServer(app)
     await new Promise<void>((resolve) => server.listen(0, resolve))

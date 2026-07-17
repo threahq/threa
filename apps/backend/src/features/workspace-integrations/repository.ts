@@ -1,5 +1,9 @@
 import { sql, type Querier } from "../../db"
-import type { WorkspaceIntegrationProvider, WorkspaceIntegrationStatus } from "@threa/types"
+import {
+  WorkspaceIntegrationStatuses,
+  type WorkspaceIntegrationProvider,
+  type WorkspaceIntegrationStatus,
+} from "@threa/types"
 
 export interface WorkspaceIntegrationRecord {
   id: string
@@ -79,8 +83,8 @@ export const WorkspaceIntegrationRepository = {
   ): Promise<WorkspaceIntegrationRecord[]> {
     const result = await querier.query(
       sql`SELECT * FROM workspace_integrations
-          WHERE provider = $1 AND installation_id = $2 AND status = 'active'`,
-      [provider, installationId]
+          WHERE provider = $1 AND installation_id = $2 AND status = $3`,
+      [provider, installationId, WorkspaceIntegrationStatuses.ACTIVE]
     )
     return result.rows.map(mapRow)
   },

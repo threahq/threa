@@ -78,13 +78,26 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     // GitHub webhooks arrive from a small pool of source IPs and a delivery storm
     // (force-push / review flurry) can exceed the global per-IP cap. A 429 reads
     // as a broken endpoint and GitHub auto-disables the App's single webhook URL,
-    // so this path must never rate-limit — authenticity is the HMAC signature.
+    // so the global limiter must never apply here — authenticity is the HMAC
+    // signature. The path gets its own generous limiter (`webhookLimit`) instead of
+    // running unbounded, closing the unauthenticated byte-sink.
     // Trailing-slash tolerance mirrors app.ts's JSON-parser skip and the router
     // regex so `/webhook/` is exempt too.
     skip: (req: Request) => {
       const path = req.path.length > 1 ? req.path.replace(/\/$/, "") : req.path
       return path === GITHUB_WEBHOOK_PATH
     },
+  })
+  // Dedicated limiter for the webhook path: exempt from the global cap (above) but
+  // still bounded so an attacker can't stream unbounded bytes at an unauthenticated
+  // route. 5000/min per IP is far above GitHub's real delivery rate (a storm from
+  // one org's few source IPs never approaches it), so it can only ever throttle
+  // abuse, never a legitimate delivery.
+  const webhookLimit = createRateLimit({
+    name: "cp-github-webhook",
+    windowMs: 60_000,
+    max: 5000,
+    key: ipKey,
   })
   const authLimit = createRateLimit({ name: "cp-auth", windowMs: 60_000, max: deps.rateLimits.authMax, key: ipKey })
   const waitlistLimit = createRateLimit({
@@ -155,7 +168,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   if (deps.githubWebhookSecret) {
     const githubWebhookService = new GithubWebhookService({ pool, webhookSecret: deps.githubWebhookSecret })
     const githubWebhook = createGithubWebhookHandlers({ service: githubWebhookService })
-    app.post(GITHUB_WEBHOOK_PATH, express.raw({ type: "application/json", limit: "5mb" }), githubWebhook.receive)
+    app.post(
+      GITHUB_WEBHOOK_PATH,
+      webhookLimit,
+      express.raw({ type: "application/json", limit: "5mb" }),
+      githubWebhook.receive
+    )
   }
 
   // Multi-account: list/resolve/switch/remove run *after* the existing `auth`

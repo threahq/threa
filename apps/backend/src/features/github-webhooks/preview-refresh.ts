@@ -2,7 +2,7 @@ import { logger } from "@threa/backend-common"
 import type { Job, JobHandler, QueueManager } from "../../lib/queue"
 import { JobQueues } from "../../lib/queue"
 import type { GithubPreviewRefreshJobData } from "../../lib/queue/job-queue"
-import { refreshLinkPreview, type RefreshLinkPreviewDeps } from "../link-previews"
+import { DEFAULT_REFRESH_DEBOUNCE_MS, refreshLinkPreview, type RefreshLinkPreviewDeps } from "../link-previews"
 
 const log = logger.child({ module: "github-preview-refresh" })
 
@@ -11,6 +11,13 @@ const log = logger.child({ module: "github-preview-refresh" })
  * after the window clears rather than racing its boundary.
  */
 const TRAILING_REFRESH_BUFFER_MS = 500
+
+/**
+ * Growing backoff for retrying a `fetch_empty` refresh (GitHub 5xx / timeout, or
+ * the rate-limit breaker window). Indexed by the CURRENT attempt count, so the
+ * first retry waits 30s, then 2m, then 10m. Its length is the retry cap.
+ */
+const FETCH_EMPTY_RETRY_DELAYS_MS = [30_000, 120_000, 600_000] as const
 
 export interface GithubPreviewRefreshDeps extends RefreshLinkPreviewDeps {
   jobQueue: Pick<QueueManager, "send">
@@ -25,39 +32,96 @@ export interface GithubPreviewRefreshDeps extends RefreshLinkPreviewDeps {
  * storm) gets a fresh id — a completed/in-flight row from the previous window
  * never blocks it.
  */
-export function githubPreviewRefreshQueueId(previewId: string, fetchedAt: Date): string {
-  return `queue_ghprev_${previewId}_${fetchedAt.getTime()}`
+export function githubPreviewRefreshQueueId(previewId: string, fetchedAt: Date | null): string {
+  return `queue_ghprev_${previewId}_${fetchedAt ? fetchedAt.getTime() : 0}`
 }
 
 /**
- * Force-refresh a GitHub link preview and, if the refresh is dropped as debounced
- * (a webhook storm already refreshed it inside the window), schedule ONE trailing
- * refresh so the newest state isn't lost. Shared by the webhook worker (which sees
- * the first debounced result) and the trailing worker itself (which reschedules if
- * it debounces again), so the coalescing lives on a single path (INV-35).
+ * Deterministic queue-message id for a `fetch_empty` retry. Keyed on BOTH the
+ * pre-fetch `fetchedAt` and the attempt number. A failed fetch does not advance
+ * `fetched_at`, so within one outage `fetchedAt` is constant and the attempt
+ * number makes each retry's id unique (and dedupes a storm at the same attempt).
+ * Across outages `fetchedAt` differs — a prior successful refresh advanced it — so
+ * the ids differ too; without the `fetchedAt` component a later outage's
+ * `_${attempt}` id would collide with the never-purged completed row from an
+ * earlier cycle and `send`'s pkey-dedupe would silently drop the retry.
+ */
+export function githubPreviewRefreshRetryQueueId(previewId: string, fetchedAt: Date | null, attempt: number): string {
+  return `queue_ghprev_retry_${previewId}_${fetchedAt ? fetchedAt.getTime() : 0}_${attempt}`
+}
+
+/**
+ * Force-refresh a GitHub link preview (compare-and-set against the pre-fetch
+ * `fetched_at`) and reschedule ONE trailing refresh when the newest state would
+ * otherwise be lost:
+ * - `debounced` / `conflict`: a concurrent refresh already touched the row, so
+ *   coalesce on its `fetchedAt` — every storm delivery observing the same value
+ *   collapses to one job that converges once the storm ends.
+ * - `fetch_empty`: the fetch failed transiently (GitHub 5xx / timeout / rate-limit
+ *   breaker) and `fetched_at` did NOT advance, so with no TTL refresh for untouched
+ *   messages the webhook signal would be dropped forever. Retry on a growing
+ *   backoff up to a hard cap (keyed on the unchanged `fetchedAt` plus the attempt
+ *   number so cycles stay distinct across outages), then give up with a warn.
+ *
+ * Shared by the webhook worker and the trailing worker itself, so the coalescing
+ * and retry logic live on a single path (INV-35).
  */
 export async function refreshGithubPreviewWithTrailing(
   deps: GithubPreviewRefreshDeps,
-  params: { workspaceId: string; previewId: string }
+  params: { workspaceId: string; previewId: string; attempt?: number }
 ): Promise<void> {
-  const result = await refreshLinkPreview(deps, params)
-  if (result.refreshed || result.reason !== "debounced") return
+  const { workspaceId, previewId } = params
+  const result = await refreshLinkPreview(deps, { workspaceId, previewId, useOptimisticConcurrency: true })
+  if (result.refreshed || result.reason === "not_found") return
 
-  const processAfter = new Date(Date.now() + result.retryAfterMs + TRAILING_REFRESH_BUFFER_MS)
-  const messageId = githubPreviewRefreshQueueId(params.previewId, result.fetchedAt)
+  if (result.reason === "debounced" || result.reason === "conflict") {
+    // Coalesce on the row's current fetch time. A debounced result carries the
+    // remaining window directly; a conflict has none, so derive the trailing time
+    // from the winner's `fetchedAt` plus a full debounce window (a refresh right
+    // now would just debounce again against that write).
+    const processAfter =
+      result.reason === "debounced"
+        ? new Date(Date.now() + result.retryAfterMs + TRAILING_REFRESH_BUFFER_MS)
+        : new Date(
+            (result.fetchedAt?.getTime() ?? Date.now()) + DEFAULT_REFRESH_DEBOUNCE_MS + TRAILING_REFRESH_BUFFER_MS
+          )
+    const messageId = githubPreviewRefreshQueueId(previewId, result.fetchedAt)
+
+    await deps.jobQueue.send(JobQueues.GITHUB_PREVIEW_REFRESH, { workspaceId, previewId }, { processAfter, messageId })
+    log.debug(
+      { workspaceId, previewId, messageId, processAfter, reason: result.reason },
+      "Scheduled trailing GitHub preview refresh"
+    )
+    return
+  }
+
+  // fetch_empty: transient failure. Retry with backoff until the cap.
+  const attempt = params.attempt ?? 0
+  if (attempt >= FETCH_EMPTY_RETRY_DELAYS_MS.length) {
+    log.warn({ workspaceId, previewId, attempt }, "Giving up GitHub preview refresh after repeated empty fetches")
+    return
+  }
+
+  const nextAttempt = attempt + 1
+  const processAfter = new Date(Date.now() + FETCH_EMPTY_RETRY_DELAYS_MS[attempt]!)
+  const messageId = githubPreviewRefreshRetryQueueId(previewId, result.fetchedAt, nextAttempt)
 
   await deps.jobQueue.send(
     JobQueues.GITHUB_PREVIEW_REFRESH,
-    { workspaceId: params.workspaceId, previewId: params.previewId },
+    { workspaceId, previewId, attempt: nextAttempt },
     { processAfter, messageId }
   )
-  log.debug({ ...params, messageId, processAfter }, "Scheduled trailing GitHub preview refresh (debounced)")
+  log.debug(
+    { workspaceId, previewId, messageId, processAfter, attempt: nextAttempt },
+    "Scheduled trailing GitHub preview refresh (fetch failed)"
+  )
 }
 
 /**
  * Worker for the trailing refresh job. Re-runs the coalescing refresh: on a
- * successful refresh it completes; if it debounces again it reschedules once more
- * on the fresh `fetchedAt`, converging once the storm ends.
+ * successful refresh it completes; if it debounces/conflicts again it reschedules
+ * on the fresh `fetchedAt`, and on a repeated empty fetch it retries with backoff —
+ * converging or giving up once the storm/outage ends.
  */
 export function createGithubPreviewRefreshWorker(
   deps: GithubPreviewRefreshDeps
@@ -66,6 +130,7 @@ export function createGithubPreviewRefreshWorker(
     await refreshGithubPreviewWithTrailing(deps, {
       workspaceId: job.data.workspaceId,
       previewId: job.data.previewId,
+      attempt: job.data.attempt,
     })
   }
 }

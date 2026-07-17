@@ -194,18 +194,35 @@ export const LinkPreviewRepository = {
     return result.rows.length > 0 ? mapRow(result.rows[0]) : null
   },
 
+  /**
+   * Unconditional overwrite of an already-fetched row. When `options` carries an
+   * `expectedFetchedAt` key, the write becomes a compare-and-set on `fetched_at`
+   * (`IS NOT DISTINCT FROM` so a NULL expected value matches a NULL row): the
+   * webhook-refresh path reads `fetched_at` before its out-of-transaction network
+   * fetch and passes it here so a slower concurrent refresh can't blind-overwrite a
+   * newer write. A CAS miss returns null (0 rows) without writing — the caller
+   * re-reads to distinguish a conflict from a vanished row. Callers that omit the
+   * key (message-driven extract path) keep the unconditional semantics.
+   */
   async overwriteMetadata(
     querier: Querier,
     workspaceId: string,
     id: string,
-    params: UpdateLinkPreviewParams
+    params: UpdateLinkPreviewParams,
+    options?: { expectedFetchedAt?: Date | null }
   ): Promise<LinkPreview | null> {
+    // A single predicate handles both modes so the SET clause isn't duplicated:
+    // when CAS is off, `$13` is true and the guard is a no-op; when CAS is on,
+    // `$13` is false and the write requires `fetched_at` to match `$14`
+    // (`IS NOT DISTINCT FROM` so a NULL expected value matches a NULL row).
+    const cas = options !== undefined && "expectedFetchedAt" in options
     const result = await querier.query(
       sql`UPDATE link_previews
           SET title = $3, description = $4, image_url = $5, favicon_url = $6,
               site_name = $7, content_type = $8, preview_type = $9, preview_data = $10::jsonb,
               status = $11, fetched_at = NOW(), expires_at = $12
           WHERE workspace_id = $1 AND id = $2
+            AND ($13::boolean OR fetched_at IS NOT DISTINCT FROM $14)
           RETURNING *`,
       [
         workspaceId,
@@ -220,6 +237,8 @@ export const LinkPreviewRepository = {
         params.previewData ? JSON.stringify(params.previewData) : null,
         params.status,
         params.expiresAt ?? null,
+        !cas,
+        cas ? (options!.expectedFetchedAt ?? null) : null,
       ]
     )
     return result.rows.length > 0 ? mapRow(result.rows[0]) : null

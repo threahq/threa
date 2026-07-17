@@ -50,6 +50,14 @@ export interface LinkPreviewServiceDeps {
 }
 
 /**
+ * Outcome of `applyRefreshedMetadata`. `applied: false` is only ever returned
+ * under compare-and-set (webhook-refresh path): the write matched 0 rows because a
+ * concurrent refresh advanced `fetched_at` or the row vanished. `fetchedAt` carries
+ * the row's current value (or null) so the caller can re-key a coalesced retry.
+ */
+export type ApplyRefreshedMetadataResult = { applied: true } | { applied: false; fetchedAt: Date | null }
+
+/**
  * The target columns shared by both resolve entry points: a stored `LinkPreview`
  * row (fields are `string | null`) and a freshly parsed URL (fields optional /
  * `undefined`). The resolvers gate on truthiness, so either shape is safe.
@@ -288,14 +296,24 @@ export class LinkPreviewService {
   async applyRefreshedMetadata(
     workspaceId: string,
     previewId: string,
-    metadata: UpdateLinkPreviewParams
-  ): Promise<void> {
-    await withTransaction(this.deps.pool, async (client) => {
-      const updated = await LinkPreviewRepository.overwriteMetadata(client, workspaceId, previewId, metadata)
-      if (!updated) return
+    metadata: UpdateLinkPreviewParams,
+    options?: { expectedFetchedAt?: Date | null }
+  ): Promise<ApplyRefreshedMetadataResult> {
+    const cas = options !== undefined && "expectedFetchedAt" in options
+    return withTransaction(this.deps.pool, async (client) => {
+      const updated = await LinkPreviewRepository.overwriteMetadata(client, workspaceId, previewId, metadata, options)
+      if (!updated) {
+        // Under CAS, 0 rows means either a concurrent refresh advanced `fetched_at`
+        // (conflict — re-read to report its current value) or the row is gone.
+        if (cas) {
+          const current = await LinkPreviewRepository.findById(client, workspaceId, previewId)
+          return { applied: false, fetchedAt: current?.fetchedAt ?? null }
+        }
+        return { applied: false, fetchedAt: null }
+      }
 
       const messageIds = await LinkPreviewRepository.findMessageIdsByPreviewId(client, workspaceId, previewId)
-      if (messageIds.length === 0) return
+      if (messageIds.length === 0) return { applied: true }
 
       const streamIds = await MessageRepository.findStreamIdsByIds(client, messageIds)
       const previewsByMessage = await LinkPreviewRepository.findByMessageIds(client, workspaceId, messageIds)
@@ -315,6 +333,7 @@ export class LinkPreviewService {
           previews,
         })
       }
+      return { applied: true }
     })
   }
 

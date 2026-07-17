@@ -359,6 +359,22 @@ export class WorkspaceIntegrationService {
     }
 
     await this.registerGithubRoute(workspaceId, installationId)
+
+    // `registerGithubRoute` runs after the status-guarded column write, so a
+    // disconnect that interleaves between them (flips status to 'inactive' and
+    // deletes the CP route) would be silently resurrected by the register above.
+    // Re-read after registering: if the integration is no longer active, undo the
+    // route we just re-created so the disconnect wins.
+    const after = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.GITHUB
+    )
+    if (!after || after.status !== WorkspaceIntegrationStatuses.ACTIVE) {
+      await this.unregisterGithubRoute(workspaceId, installationId)
+      return { processed: 0 }
+    }
+
     return { processed: 1 }
   }
 

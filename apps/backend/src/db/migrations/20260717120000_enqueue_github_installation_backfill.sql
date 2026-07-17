@@ -15,6 +15,14 @@
 -- ID shape `queue_<uuid hex>` follows the established migration-backfill
 -- convention (see `20260621120000_backfill_mention_actor_refs.sql`); production
 -- enqueues use ULIDs via `queueId()` in code.
+--
+-- `process_after` is delayed 10 minutes rather than NOW() to survive a rolling
+-- deploy: the `github-installation-routes` backfill definition ships in this same
+-- release, so old-code replicas still draining the queue throw
+-- 'Unknown backfill: github-installation-routes' and burn ~5 retries into the DLQ
+-- before new code boots. A 10-minute head start lets every replica cut over first,
+-- and the backfill is not latency-sensitive (it hydrates a reverse index for
+-- pre-existing installs).
 
 INSERT INTO queue_messages (
     id,
@@ -32,7 +40,7 @@ SELECT
         'workspaceId', wi.workspace_id,
         'backfillName', 'github-installation-routes'
     ),
-    NOW(),
+    NOW() + interval '10 minutes',
     NOW()
 FROM (
     SELECT DISTINCT workspace_id

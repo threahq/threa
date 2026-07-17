@@ -372,6 +372,13 @@ export interface GithubWebhookProcessJobData {
 export interface GithubPreviewRefreshJobData {
   workspaceId: string
   previewId: string
+  /**
+   * Number of `fetch_empty` retries already made for this preview (GitHub 5xx /
+   * timeout / rate-limit breaker). 0/undefined on the first attempt; bounded
+   * trailing retries increment it up to a hard cap so a transient fetch failure
+   * can't permanently drop the webhook invalidation.
+   */
+  attempt?: number
 }
 
 export interface JobDataMap {

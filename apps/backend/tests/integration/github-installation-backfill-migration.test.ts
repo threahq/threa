@@ -56,6 +56,27 @@ describe("enqueue github installation backfill migration", () => {
     })
   })
 
+  test("delays process_after ~10 minutes so a rolling deploy cuts over before the job runs", async () => {
+    await withTestTransaction(pool, async (client) => {
+      await client.query(
+        `INSERT INTO workspace_integrations (id, workspace_id, provider, status, installed_by)
+         VALUES ('wsi_gh_delay', 'ws_test_gh_delay', 'github', 'active', 'usr_test')`
+      )
+
+      await client.query(migrationSql)
+
+      const enqueued = await client.query(
+        `SELECT (process_after - now()) > interval '9 minutes' AS delayed
+         FROM queue_messages
+         WHERE queue_name = 'backfill.plan'
+           AND payload->>'backfillName' = 'github-installation-routes'
+           AND workspace_id = 'ws_test_gh_delay'`
+      )
+
+      expect(enqueued.rows[0].delayed).toBe(true)
+    })
+  })
+
   test("enqueues at most one job per workspace even with multiple github rows across statuses", async () => {
     await withTestTransaction(pool, async (client) => {
       await client.query(
