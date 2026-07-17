@@ -17,6 +17,7 @@ import { usersNoun } from "./commands/users"
 import { loadConfig } from "./config"
 import {
   errorObject,
+  extractOutputMode,
   formatSuccess,
   stderrJson,
   UsageError,
@@ -69,8 +70,8 @@ function topHelp(): string {
     "Commands:",
     ...lines,
     "",
-    "Global flags: --json (force JSON output), --help (per-command help).",
-    "Config: THREA_API_KEY and THREA_WORKSPACE_ID (env, or ~/.threa/mcp.json); THREA_BASE_URL optional.",
+    "Global flags: -o json|text / --json (output mode, any position), --help (per-command help).",
+    'Config: THREA_API_KEY and THREA_WORKSPACE_ID (env, or ~/.threa/config.json); optional THREA_BASE_URL and "output": "json"|"text".',
     "Run `threa <command> --help` for a command's subcommands or flags.",
   ].join("\n")
 }
@@ -99,8 +100,7 @@ export interface RunResult {
 }
 
 export interface RunDeps {
-  config?: import("./config").ThreaMcpConfig
-  isTTY?: boolean
+  config?: import("./config").ThreaConfig
   readStdin?: () => Promise<string>
   tokenStore?: TokenStore
 }
@@ -114,7 +114,12 @@ function leafFlags(leaf: Leaf): { serve: boolean; noConfig: boolean } {
   }
 }
 
-async function executeLeaf(leaf: Leaf, args: string[], deps: RunDeps, isTTY: boolean): Promise<RunResult> {
+async function executeLeaf(
+  leaf: Leaf,
+  args: string[],
+  deps: RunDeps,
+  flagMode: import("./config").OutputMode | undefined
+): Promise<RunResult> {
   let parsed
   try {
     parsed = parseArgs({
@@ -145,7 +150,7 @@ async function executeLeaf(leaf: Leaf, args: string[], deps: RunDeps, isTTY: boo
       const payload = await leaf.run(SERVE_STUB, positionals, values)
       return {
         exitCode: 0,
-        stdout: `${formatSuccess(leaf, payload, { json: values.json === true, isTTY })}\n`,
+        stdout: `${formatSuccess(leaf, payload, { mode: flagMode ?? "text" })}\n`,
         stderr: "",
       }
     }
@@ -161,7 +166,7 @@ async function executeLeaf(leaf: Leaf, args: string[], deps: RunDeps, isTTY: boo
     const payload = await leaf.run({ client, resolver, config, tokenStore, readStdin }, positionals, values)
     return {
       exitCode: 0,
-      stdout: `${formatSuccess(leaf, payload, { json: values.json === true, isTTY })}\n`,
+      stdout: `${formatSuccess(leaf, payload, { mode: flagMode ?? config.output })}\n`,
       stderr: "",
     }
   } catch (error) {
@@ -176,7 +181,12 @@ async function executeLeaf(leaf: Leaf, args: string[], deps: RunDeps, isTTY: boo
   }
 }
 
-async function runNoun(noun: NounSpec, args: string[], deps: RunDeps, isTTY: boolean): Promise<RunResult> {
+async function runNoun(
+  noun: NounSpec,
+  args: string[],
+  deps: RunDeps,
+  flagMode: import("./config").OutputMode | undefined
+): Promise<RunResult> {
   const verbName = args[0]
 
   if (verbName === undefined) {
@@ -210,11 +220,18 @@ async function runNoun(noun: NounSpec, args: string[], deps: RunDeps, isTTY: boo
     }
   }
 
-  return executeLeaf(verb, args.slice(1), deps, isTTY)
+  return executeLeaf(verb, args.slice(1), deps, flagMode)
 }
 
-export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult> {
-  const isTTY = deps.isTTY ?? Boolean(process.stdout.isTTY)
+export async function run(rawArgv: string[], deps: RunDeps = {}): Promise<RunResult> {
+  let argv: string[]
+  let flagMode: import("./config").OutputMode | undefined
+  try {
+    ;({ argv, mode: flagMode } = extractOutputMode(rawArgv))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { exitCode: 2, stdout: "", stderr: stderrJson({ code: "USAGE", message }) }
+  }
 
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
     return { exitCode: 0, stdout: `${topHelp()}\n`, stderr: "" }
@@ -223,10 +240,10 @@ export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult
   const name = argv[0]!
 
   const flat = FLAT_REGISTRY.get(name)
-  if (flat) return executeLeaf(flat, argv.slice(1), deps, isTTY)
+  if (flat) return executeLeaf(flat, argv.slice(1), deps, flagMode)
 
   const noun = NOUN_REGISTRY.get(name)
-  if (noun) return runNoun(noun, argv.slice(1), deps, isTTY)
+  if (noun) return runNoun(noun, argv.slice(1), deps, flagMode)
 
   return {
     exitCode: 2,

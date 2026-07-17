@@ -14,7 +14,7 @@ One workspace and one API key, both fixed by configuration. Configuration resolv
 | Workspace id | `THREA_WORKSPACE_ID` | `workspaceId` | yes                                    |
 | Base URL     | `THREA_BASE_URL`     | `baseUrl`     | no, defaults to `https://app.threa.io` |
 
-The file is read from the path in `THREA_MCP_CONFIG`, or from `~/.threa/mcp.json` when that variable is unset. Its shape is `{ "apiKey": …, "workspaceId": …, "baseUrl": … }`. If the two required values cannot be resolved from either source, the CLI exits with a message naming what is missing. The key is never written to logs.
+The file is read from the path in `THREA_CONFIG`, or from `~/.threa/config.json` when that variable is unset (a legacy `~/.threa/mcp.json` is still read, with a hint to rename it). Its shape is `{ "apiKey": …, "workspaceId": …, "baseUrl": …, "output": … }`, where the optional `output` (`"text"` or `"json"`) sets the default output mode. If the two required values cannot be resolved from either source, the CLI exits with a message naming what is missing. The key is never written to logs.
 
 ## Running the CLI
 
@@ -26,7 +26,7 @@ Link the bin onto your PATH from `packages/cli` with `bun link`, or invoke the e
 bun /abs/path/to/threa/packages/cli/src/cli.ts whoami
 ```
 
-On a terminal the CLI prints concise human-readable text. When output is piped it prints JSON, which is what an agent or a script reads. The `--json` flag forces JSON on a terminal. Errors go to stderr as one JSON object with `code`, `message`, and an optional `hint`. The exit code is `0` on success, `1` on an API or tool error, and `2` on a usage error such as an unknown command or a missing argument. Run `threa --help` for the command list and `threa <command> --help` for a command's flags.
+The CLI prints concise human-readable text by default, piped or not. `-o json` (or `--json`) switches to JSON, works anywhere in the argv, and overrides the config default. Errors go to stderr as one JSON object with `code`, `message`, and an optional `hint`. The exit code is `0` on success, `1` on an API or tool error, and `2` on a usage error such as an unknown command or a missing argument. Run `threa --help` for the command list and `threa <command> --help` for a command's flags.
 
 ## Running the MCP server
 
@@ -90,7 +90,7 @@ The API allows 60 requests per minute per key and 600 per minute per workspace, 
 
 ## Results
 
-Command output is JSON when piped, or human-readable text on a terminal. MCP tool output is JSON text in the API envelope. A single resource comes back under `data`, a list as `{ data, hasMore, cursor? }`, and a search as `{ data: [...] }`. A failure returns an error object with `code`, `message`, and an optional `hint` that spells out the 404 scope case and the rate-limit case. Message content is passed through in full and is never truncated.
+Command output is human-readable text unless `-o json`/`--json` or the config default asks for JSON. MCP tool output is JSON text in the API envelope. A single resource comes back under `data`, a list as `{ data, hasMore, cursor? }`, and a search as `{ data: [...] }`. A failure returns an error object with `code`, `message`, and an optional `hint` that spells out the 404 scope case and the rate-limit case. Message content is passed through in full and is never truncated.
 
 ## Referencing streams and users
 
@@ -108,7 +108,7 @@ Commands are grouped by noun, each with a verb subcommand (`threa messages send`
 
 Identity: `whoami` returns the principal, the resolved API version, and the base URL and workspace the client is bound to. Run it first to confirm the key.
 
-Streams: `streams list` filters by type and name and pages with `--after`. `streams read <ref>` returns one stream together with a page of its messages in a single call, paging the messages by numeric `--before` and `--after` sequence, and returns the stream's members too when `--members` is set.
+Streams: `streams list` filters by type and name and pages with `--after`; archived streams (and live threads under an archived root) are omitted unless `--archived` is passed. `streams read <ref>` returns one stream together with a page of its messages in a single call, paging the messages by numeric `--before` and `--after` sequence, and returns the stream's members too when `--members` is set.
 
 Users: `users list` filters by name or email, and pages with `--after`.
 

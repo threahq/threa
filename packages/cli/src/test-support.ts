@@ -4,13 +4,14 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createThreaMcpServer } from "./server"
-import type { ThreaMcpConfig } from "./config"
+import type { ThreaConfig } from "./config"
 import { TokenStore } from "./token-store"
 
-export const TEST_CONFIG: ThreaMcpConfig = {
+export const TEST_CONFIG: ThreaConfig = {
   apiKey: "threa_uk_secret",
   workspaceId: "ws_1",
   baseUrl: "https://app.threa.io",
+  output: "text",
 }
 
 export function jsonResponse(status: number, body: unknown): Response {
@@ -21,7 +22,7 @@ export function fetchByPath(handler: (path: string) => Response): typeof fetch {
   return (async (input: RequestInfo | URL) => handler(new URL(String(input)).pathname)) as unknown as typeof fetch
 }
 
-export async function connectClient(config: ThreaMcpConfig = TEST_CONFIG): Promise<Client> {
+export async function connectClient(config: ThreaConfig = TEST_CONFIG): Promise<Client> {
   const tokenStore = new TokenStore(join(tmpdir(), `threa-cli-test-${crypto.randomUUID()}.json`))
   const server = createThreaMcpServer(config, { tokenStore })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()

@@ -189,7 +189,8 @@ describe("Stream Naming", () => {
         const result = getEffectiveDisplayName(stream, {
           parentStream: { slug: null, displayName: "My Scratchpad" },
         })
-        expect(result.displayName).toBe("Thread in #My Scratchpad")
+        // No # sigil — the parent has no slug, so it is not a channel.
+        expect(result.displayName).toBe("Thread in My Scratchpad")
         expect(result.source).toBe("placeholder")
       })
 

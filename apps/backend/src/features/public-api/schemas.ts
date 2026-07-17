@@ -70,6 +70,9 @@ export const listStreamsSchema = z.object({
   query: z.string().optional(),
   after: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+  // Query-string boolean: only the literal "true" opts in (no transform — the
+  // OpenAPI generator cannot derive a schema through effects).
+  includeArchived: z.enum(["true", "false"]).optional(),
 })
 
 const LABEL_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/

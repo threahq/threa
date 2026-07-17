@@ -33,7 +33,7 @@ Config resolves from environment variables first, then from an optional JSON fil
 | Workspace id | `THREA_WORKSPACE_ID` | `workspaceId` | yes      | none                   |
 | Base URL     | `THREA_BASE_URL`     | `baseUrl`     | no       | `https://app.threa.io` |
 
-The JSON file is read from `THREA_MCP_CONFIG` if set, otherwise from `~/.threa/mcp.json` if it exists. Shape:
+The JSON file is read from `THREA_CONFIG` if set, otherwise from `~/.threa/config.json` if it exists (a legacy `~/.threa/mcp.json` is still read, with a hint to rename it). Shape:
 
 ```json
 {
@@ -47,7 +47,7 @@ If `THREA_API_KEY` or `THREA_WORKSPACE_ID` cannot be resolved from either source
 
 ## Output and exit codes
 
-On a terminal the CLI prints concise human-readable text. When output is piped (an agent or a script), it prints pretty JSON. `--json` forces JSON on a terminal too. Errors always go to stderr as one JSON object `{ code, message, hint? }`.
+The CLI prints concise human-readable text by default, piped or not. `-o json` (or `--json`) switches to pretty JSON, and the flag works anywhere in the argv (`threa --json streams list` == `threa streams list --json`). A config-file `"output": "json"` sets the default; an explicit flag wins. Errors always go to stderr as one JSON object `{ code, message, hint? }`.
 
 Exit codes:
 
@@ -109,7 +109,7 @@ Claim tokens are persisted to `~/.threa/state.json` (mode 0600), keyed by worksp
 
 ### Agent skill
 
-`threa skill install` copies the `threa-cli` skill into `~/.claude/skills/threa-cli/`, so Claude Code sessions in any project on this machine load it on demand. The skill teaches ref forms, the piped-JSON and exit-code contract, search selection, and the delegation loop. Re-run after pulling a newer checkout. The in-repo copy at `.agents/skills/threa-cli/SKILL.md` is the source of truth.
+`threa skill install` copies the `threa-cli` skill into `~/.claude/skills/threa-cli/`, so Claude Code sessions in any project on this machine load it on demand. The skill teaches ref forms, the JSON output and exit-code contract, search selection, and the delegation loop. Re-run after pulling a newer checkout. The in-repo copy at `.agents/skills/threa-cli/SKILL.md` is the source of truth.
 
 ### The two Threa MCP servers (do not confuse the sends)
 

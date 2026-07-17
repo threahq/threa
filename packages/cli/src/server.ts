@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { ThreaApiClient } from "./api-client"
-import type { ThreaMcpConfig } from "./config"
+import type { ThreaConfig } from "./config"
 import { RefResolver } from "./resolver"
 import { TokenStore } from "./token-store"
 import { registerAttachmentTools } from "./tools/attachments"
@@ -51,7 +51,7 @@ export interface ThreaMcpServerDeps {
   tokenStore?: TokenStore
 }
 
-export function createThreaMcpServer(config: ThreaMcpConfig, deps: ThreaMcpServerDeps = {}): McpServer {
+export function createThreaMcpServer(config: ThreaConfig, deps: ThreaMcpServerDeps = {}): McpServer {
   const server = new McpServer({ name: "threa", version: "0.1.0" }, { instructions: INSTRUCTIONS })
   const client = new ThreaApiClient({
     baseUrl: config.baseUrl,

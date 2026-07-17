@@ -13,7 +13,6 @@ test("label posts a stream assignment by name with appearance flags", async () =
 
   const result = await run(["labels", "add", "urgent", "stream_1", "--color", "#ff0000", "--emoji", "🔥"], {
     config: TEST_CONFIG,
-    isTTY: false,
   })
 
   expect(result.exitCode).toBe(0)
@@ -32,7 +31,7 @@ test("label posts a stream assignment by name with appearance flags", async () =
 test("unlabel deletes the assignment via query params and reports the removal", async () => {
   fetchSpy.mockResolvedValue(new Response(null, { status: 204 }))
 
-  const result = await run(["labels", "remove", "urgent", "stream_1", "--json"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["labels", "remove", "urgent", "stream_1", "--json"], { config: TEST_CONFIG })
 
   expect(result.exitCode).toBe(0)
   const url = new URL(String(fetchSpy.mock.calls[0]![0]))
@@ -45,7 +44,7 @@ test("unlabel deletes the assignment via query params and reports the removal", 
 })
 
 test("label without a stream ref is a usage error (exit 2) before any HTTP", async () => {
-  const result = await run(["labels", "add", "urgent"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["labels", "add", "urgent"], { config: TEST_CONFIG })
 
   expect(result.exitCode).toBe(2)
   expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
@@ -55,7 +54,7 @@ test("label without a stream ref is a usage error (exit 2) before any HTTP", asy
 test("labels lists the actor's label catalog", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: { labels: [{ id: "lbl_1", name: "urgent" }] } }))
 
-  const result = await run(["labels", "list", "--json"], { config: TEST_CONFIG, isTTY: false })
+  const result = await run(["labels", "list", "--json"], { config: TEST_CONFIG })
 
   expect(result.exitCode).toBe(0)
   expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("GET")

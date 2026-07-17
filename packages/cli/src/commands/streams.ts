@@ -27,7 +27,7 @@ function streamLabel(s: StreamRow): string {
 const listVerb: VerbSpec = {
   name: "list",
   summary: "List streams this key can access",
-  usage: "threa streams list [--type t]... [--query q] [--after cursor] [--limit n]",
+  usage: "threa streams list [--type t]... [--query q] [--after cursor] [--limit n] [--archived]",
   help:
     "threa streams list [flags]\n\n" +
     "List streams this key can access. Page by passing the previous response's cursor back as --after.\n\n" +
@@ -38,6 +38,7 @@ const listVerb: VerbSpec = {
     "  --query q    text match on stream name\n" +
     "  --after c    pagination cursor from a previous response\n" +
     "  --limit n    max results, <= 200 (default 50)\n" +
+    "  --archived   include archived streams and threads under archived roots\n" +
     "  --json       force JSON output\n" +
     "  --help       show this help",
   options: {
@@ -45,6 +46,7 @@ const listVerb: VerbSpec = {
     query: { type: "string" },
     after: { type: "string" },
     limit: { type: "string" },
+    archived: { type: "boolean" },
   },
   run: (ctx, _positionals, values) =>
     listStreams(ctx.client, {
@@ -52,6 +54,7 @@ const listVerb: VerbSpec = {
       query: stringFlag(values, "query"),
       after: stringFlag(values, "after"),
       limit: intFlag(values, "limit"),
+      includeArchived: boolFlag(values, "archived"),
     }),
   render: (payload) =>
     renderList<StreamRow>(payload, (s) => `${s.id ?? "?"}  ${s.type ?? "?"}  ${streamLabel(s)}`, {

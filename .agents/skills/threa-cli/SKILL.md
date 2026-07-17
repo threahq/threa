@@ -7,7 +7,7 @@ description: >-
   claim_delegation). Use when working inside or against a Threa workspace:
   answering "what did we decide / how do we do X" from workspace memory, posting
   or resuming a conversation, running a delegated task to completion, searching
-  messages or attachments, or paging large lists. Covers the CLI's piped-JSON and
+  messages or attachments, or paging large lists. Covers the CLI's JSON output and
   exit-code contract, ref forms, identity-first ordering, memory-before-humans,
   the conversation resume pattern, the delegation claim/update/finish loop with
   persistent tokens, the one `search` command's what selection, cursor paging,
@@ -22,7 +22,7 @@ Prefer the CLI when you have a shell. Check for it first: `threa whoami` if it i
 
 ## The CLI contract
 
-- When output is piped (which is how you run it), the CLI prints JSON. On a terminal it prints short human text; pass `--json` to force JSON. Parse the JSON.
+- The CLI prints short human text by default, even when piped. Pass `-o json` (or `--json`, any position in the argv) when you want to parse the output as JSON.
 - Exit code `0` is success, `1` is an API or tool error, `2` is a usage error (unknown command or flag, missing argument). On `1` and `2` the error is one JSON object on stderr: `{ code, message, hint? }`.
 - Results follow the API envelope: a single resource under `data`, a list as `{ data, hasMore, cursor? }`, a search as `{ data: [...] }`.
 - The MCP tools return the same JSON; a failure is an `isError` result carrying `{ code, message, hint? }`.

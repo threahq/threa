@@ -1,9 +1,9 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
-import type { ThreaMcpConfig } from "../config"
+import type { ThreaConfig } from "../config"
 import { UsageError, type CommandSpec } from "../output"
 import { createThreaMcpServer } from "../server"
 
-export async function serveMcp(config: ThreaMcpConfig): Promise<void> {
+export async function serveMcp(config: ThreaConfig): Promise<void> {
   const server = createThreaMcpServer(config)
   const transport = new StdioServerTransport()
   await server.connect(transport)
