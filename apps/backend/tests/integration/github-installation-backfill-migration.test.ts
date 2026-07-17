@@ -10,10 +10,11 @@ const MIGRATION_PATH = resolve(
 )
 
 /**
- * Regression: the `20260716120000` migration only added the `installation_id`
- * column; nothing enqueued the `github-installation-routes` backfill, so
- * pre-existing GitHub integrations never got their column/CP route filled. This
- * migration enqueues one `backfill.plan` job per workspace holding a github row.
+ * A registered backfill definition is inert until a migration enqueues its
+ * `backfill.plan` jobs (INV-67) — without this migration, pre-existing GitHub
+ * integrations would never enter the reverse index or the CP routing table.
+ * Runs the real SQL against Postgres: the enqueue's WHERE filter and delay
+ * semantics can't be proven from a mock.
  */
 describe("enqueue github installation backfill migration", () => {
   let pool: Pool
@@ -67,7 +68,7 @@ describe("enqueue github installation backfill migration", () => {
       await client.query(migrationSql)
 
       const enqueued = await client.query(
-        `SELECT (process_after - now()) > interval '9 minutes' AS delayed
+        `SELECT (process_after - now()) >= interval '10 minutes' AS delayed
          FROM queue_messages
          WHERE queue_name = 'backfill.plan'
            AND payload->>'backfillName' = 'github-installation-routes'
@@ -103,10 +104,11 @@ describe("enqueue github installation backfill migration", () => {
 })
 
 /**
- * Regression (Sol review round 3 on #1374, finding #2): a status-only guard let a
- * stale backfill/deactivation clobber a row that disconnected + reconnected to a
- * DIFFERENT installation B. `update` gains `expectedInstallationId: {value, allowNull}`.
- * Exercises the real Postgres predicate — a mock can't prove the WHERE actually gates.
+ * A stale lifecycle write must pin the installation it observed at read (INV-20):
+ * a status-only guard would let a backfill/deactivation holding installation A
+ * clobber a row that has since reconnected to installation B.
+ * `expectedInstallationId: {value, allowNull}` encodes that pin; exercised
+ * against real Postgres because a mock can't prove the WHERE actually gates.
  */
 describe("workspace_integrations installation_id guard", () => {
   let pool: Pool

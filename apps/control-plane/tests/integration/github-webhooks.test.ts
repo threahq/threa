@@ -214,12 +214,12 @@ describe("GithubWebhookService.receive", () => {
     const second = await service.receive(input)
     expect(second).toEqual({ kind: "duplicate" })
 
-    const count = await pool.query(
-      "SELECT COUNT(*)::int AS n FROM github_webhook_deliveries WHERE delivery_guid = 'guid-dupe'"
+    const row = await pool.query<{ id: string }>(
+      "SELECT id FROM github_webhook_deliveries WHERE delivery_guid = 'guid-dupe'"
     )
-    expect(count.rows[0].n).toBe(1)
-    // Exactly one dispatch event survives the retry.
-    expect(await dispatchRows(pool)).toHaveLength(1)
+    expect(row.rows).toHaveLength(1)
+    // The retry neither adds a dispatch nor mutates the original one.
+    expect(await dispatchRows(pool)).toEqual([{ deliveryId: row.rows[0].id, region: "us-east-1" }])
   })
 
   test("a redelivery of a no_routes delivery dispatches once routes exist", async () => {
@@ -252,10 +252,11 @@ describe("GithubWebhookService.receive", () => {
     expect(row.rows[0].matched_regions).toEqual(["us-east-1"])
     expect(await dispatchRows(pool)).toEqual([{ deliveryId: row.rows[0].id, region: "us-east-1" }])
 
-    // A second redelivery is now a plain duplicate — no double dispatch.
+    // A second redelivery is now a plain duplicate — the original dispatch
+    // survives unchanged and nothing new fans out.
     const third = await service.receive(input)
     expect(third).toEqual({ kind: "duplicate" })
-    expect(await dispatchRows(pool)).toHaveLength(1)
+    expect(await dispatchRows(pool)).toEqual([{ deliveryId: row.rows[0].id, region: "us-east-1" }])
   })
 })
 
