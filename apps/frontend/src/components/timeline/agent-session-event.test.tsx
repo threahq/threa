@@ -263,16 +263,18 @@ describe("AgentSessionEvent", () => {
       expect(screen.getByText("Ariadne will fold your message into the current work")).toBeInTheDocument()
     })
 
-    it("Redirect prepares steering before opening the board composer", async () => {
+    it("keeps Redirect single-flight while preparing steering and allows a later redirect", async () => {
       const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
       const onRedirect = vi.fn()
       let finishSteer!: () => void
-      const onSteerSession = vi.fn(
-        () =>
-          new Promise<void>((resolve) => {
-            finishSteer = resolve
-          })
-      )
+      let steerCall = 0
+      const onSteerSession = vi.fn(() => {
+        steerCall += 1
+        if (steerCall > 1) return Promise.resolve()
+        return new Promise<void>((resolve) => {
+          finishSteer = resolve
+        })
+      })
 
       // No [data-editor-zone] in the tree — the board card has none; the surface
       // owns opening + focusing its own composer via onRedirect.
@@ -285,12 +287,18 @@ describe("AgentSessionEvent", () => {
         />
       )
 
-      fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
+      const redirect = screen.getByRole("button", { name: "Redirect" })
+      fireEvent.click(redirect)
+      fireEvent.click(redirect)
 
       expect(onSteerSession).toHaveBeenCalledTimes(1)
       expect(onRedirect).not.toHaveBeenCalled()
       finishSteer()
       await waitFor(() => expect(onRedirect).toHaveBeenCalledTimes(1))
+
+      fireEvent.click(redirect)
+      await waitFor(() => expect(onSteerSession).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(onRedirect).toHaveBeenCalledTimes(2))
       expect(focusAtEnd).not.toHaveBeenCalled()
       expect(screen.getByText("Ariadne will fold your message into the current work")).toBeInTheDocument()
     })

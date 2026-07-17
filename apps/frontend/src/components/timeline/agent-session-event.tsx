@@ -315,6 +315,7 @@ export function AgentSessionEvent({
 
   const [redirectHintVisible, setRedirectHintVisible] = useState(false)
   const redirectHintTimer = useRef<number | null>(null)
+  const redirectInFlight = useRef(false)
   useEffect(
     () => () => {
       if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
@@ -327,22 +328,22 @@ export function AgentSessionEvent({
   // Redirect focuses the composer. External runtimes prepend /steer to the
   // next message; hosted agents keep their existing mid-run fold-in path.
   const handleRedirect = async (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (onRedirect) {
-      // The surface owns opening + focusing its composer (board card).
+    const editor = onRedirect ? null : findVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
+    if (!onRedirect && !editor) return
+    if (redirectInFlight.current) return
+
+    redirectInFlight.current = true
+    try {
       await onSteerSession?.()
-      onRedirect()
-    } else {
-      // No composer on this surface (non-member public channel, archived or
-      // locked stream) — bail before the hint, or it promises a fold-in that
-      // can't happen.
-      const editor = findVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
-      if (!editor) return
-      await onSteerSession?.()
-      focusAtEnd(editor)
+      if (onRedirect) onRedirect()
+      else if (editor) focusAtEnd(editor)
+
+      if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
+      setRedirectHintVisible(true)
+      redirectHintTimer.current = window.setTimeout(() => setRedirectHintVisible(false), REDIRECT_HINT_MS)
+    } finally {
+      redirectInFlight.current = false
     }
-    if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
-    setRedirectHintVisible(true)
-    redirectHintTimer.current = window.setTimeout(() => setRedirectHintVisible(false), REDIRECT_HINT_MS)
   }
 
   // Stop and Redirect are gated on "session running", not on which tool is

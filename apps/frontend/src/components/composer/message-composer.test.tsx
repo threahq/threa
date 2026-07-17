@@ -13,6 +13,7 @@ import * as editorModule from "@/components/editor"
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 let isMobileMockValue = false
+const mockRichEditorFocus = vi.fn()
 
 type MockEditorInstance = {
   id: string
@@ -62,7 +63,7 @@ const MockRichEditor = forwardRef<
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => undefined,
+      focus: mockRichEditorFocus,
       insertMention: () => undefined,
       insertSlash: () => undefined,
       insertEmoji: () => undefined,
@@ -139,6 +140,7 @@ const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 describe("MessageComposer", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    mockRichEditorFocus.mockClear()
     isMobileMockValue = false
     vi.useRealTimers()
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileMockValue)
@@ -204,6 +206,7 @@ describe("MessageComposer", () => {
           ],
         })
       )
+      await waitFor(() => expect(mockRichEditorFocus).toHaveBeenCalledTimes(1))
     })
 
     it("should render the upload button", () => {
