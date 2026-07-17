@@ -411,12 +411,24 @@ export const StreamRepository = {
       limit?: number
       cursorCreatedAt?: Date
       cursorId?: string
+      includeArchived?: boolean
     }
   ): Promise<Stream[]> {
     if (ids.length === 0) return []
 
     const limit = filters?.limit ?? 50
-    const conditions = [`id = ANY($1)`, `workspace_id = $2`, `archived_at IS NULL`, purposeIsNull()]
+    const conditions = [`id = ANY($1)`, `workspace_id = $2`, purposeIsNull()]
+    if (!filters?.includeArchived) {
+      // A live thread under an archived root is invisible in the app's stream
+      // lists, so hide it here too — the row's own archived_at is not enough.
+      conditions.push(
+        `archived_at IS NULL`,
+        `NOT EXISTS (
+          SELECT 1 FROM streams root
+          WHERE root.id = streams.root_stream_id AND root.archived_at IS NOT NULL
+        )`
+      )
+    }
     const values: unknown[] = [ids, workspaceId]
     let paramIndex = 3
 

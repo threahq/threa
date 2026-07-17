@@ -14,15 +14,18 @@ export function registerStreamTools(server: McpServer, client: ThreaApiClient, r
       description:
         "List streams this key can access, newest-ish first. Filter with `type` (one or more of scratchpad, " +
         "channel, dm, thread, system) and `query` (text match on name). Page by passing the previous " +
-        "response's `cursor` value back as `after`; `hasMore` tells you when to stop. limit ≤ 200 (default 50).",
+        "response's `cursor` value back as `after`; `hasMore` tells you when to stop. limit ≤ 200 (default 50). " +
+        "Archived streams (and live threads under an archived root) are omitted unless `include_archived` is true.",
       inputSchema: {
         type: z.array(z.enum(STREAM_TYPES)).optional(),
         query: z.string().optional(),
         after: z.string().optional(),
         limit: z.number().int().min(1).max(200).optional(),
+        include_archived: z.boolean().optional(),
       },
     },
-    async ({ type, query, after, limit }) => runTool(() => listStreams(client, { type, query, after, limit }))
+    async ({ type, query, after, limit, include_archived }) =>
+      runTool(() => listStreams(client, { type, query, after, limit, includeArchived: include_archived }))
   )
 
   server.registerTool(

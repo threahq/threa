@@ -108,7 +108,7 @@ Commands are grouped by noun, each with a verb subcommand (`threa messages send`
 
 Identity: `whoami` returns the principal, the resolved API version, and the base URL and workspace the client is bound to. Run it first to confirm the key.
 
-Streams: `streams list` filters by type and name and pages with `--after`. `streams read <ref>` returns one stream together with a page of its messages in a single call, paging the messages by numeric `--before` and `--after` sequence, and returns the stream's members too when `--members` is set.
+Streams: `streams list` filters by type and name and pages with `--after`; archived streams (and live threads under an archived root) are omitted unless `--archived` is passed. `streams read <ref>` returns one stream together with a page of its messages in a single call, paging the messages by numeric `--before` and `--after` sequence, and returns the stream's members too when `--members` is set.
 
 Users: `users list` filters by name or email, and pages with `--after`.
 

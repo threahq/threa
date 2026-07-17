@@ -1976,7 +1976,7 @@ export function createPublicApiHandlers({
     },
 
     async listStreams(req: Request, res: Response) {
-      const { type, query, after: afterCursor, limit } = validateRequest(listStreamsSchema, req.query)
+      const { type, query, after: afterCursor, limit, includeArchived } = validateRequest(listStreamsSchema, req.query)
       const accessibleStreamIds = await getAccessibleStreamIds(req)
 
       if (accessibleStreamIds.length === 0) {
@@ -1992,6 +1992,7 @@ export function createPublicApiHandlers({
         limit: limit + 1,
         cursorCreatedAt: cursor?.sortKey,
         cursorId: cursor?.id,
+        includeArchived: includeArchived === "true",
       })
 
       const hasMore = streams.length > limit
@@ -2015,8 +2016,10 @@ export function createPublicApiHandlers({
 
       await assertStreamAccessible(req, streamId)
 
+      // Archived streams stay retrievable by id (the app opens them read-only);
+      // the payload's archivedAt tells the caller. Only list hides them.
       const stream = await StreamRepository.findById(pool, streamId)
-      if (!stream || stream.archivedAt) {
+      if (!stream) {
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }
 

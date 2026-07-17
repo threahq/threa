@@ -42,11 +42,15 @@ export function getEffectiveDisplayName(stream: Stream, context?: DisplayNameCon
         }
       }
       if (context?.parentStream) {
-        const parentName = context.parentStream.slug ?? context.parentStream.displayName ?? "channel"
-        return {
-          displayName: `Thread in #${parentName}`,
-          source: "placeholder",
+        // The # sigil is a channel affordance — a slugless parent (scratchpad,
+        // DM) must not render as a phantom "#channel".
+        if (context.parentStream.slug) {
+          return { displayName: `Thread in #${context.parentStream.slug}`, source: "placeholder" }
         }
+        if (context.parentStream.displayName) {
+          return { displayName: `Thread in ${context.parentStream.displayName}`, source: "placeholder" }
+        }
+        return { displayName: "Thread", source: "placeholder" }
       }
       return {
         displayName: "New thread",

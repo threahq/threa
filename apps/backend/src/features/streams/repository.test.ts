@@ -114,6 +114,22 @@ describe("purpose marker (sidebar exclusion)", () => {
     expect(db._query.mock.calls[0]![0] as string).toContain("purpose IS NULL")
   })
 
+  test("listByIds hides archived streams AND live threads under an archived root by default", async () => {
+    const db = makeDb([])
+    await StreamRepository.listByIds(db, "ws_1", ["stream_a"])
+    const text = db._query.mock.calls[0]![0] as string
+    expect(text).toContain("archived_at IS NULL")
+    expect(text).toContain("root.archived_at IS NOT NULL")
+  })
+
+  test("listByIds with includeArchived drops both archived filters", async () => {
+    const db = makeDb([])
+    await StreamRepository.listByIds(db, "ws_1", ["stream_a"], { includeArchived: true })
+    const text = db._query.mock.calls[0]![0] as string
+    expect(text).not.toContain("archived_at IS NULL")
+    expect(text).not.toContain("root.archived_at IS NOT NULL")
+  })
+
   test("insert persists the purpose marker and maps it back", async () => {
     const db = makeDb([streamRow({ purpose: StreamPurposes.PERSONA_TEST })])
     const stream = await StreamRepository.insert(db, {

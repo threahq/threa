@@ -28,10 +28,19 @@ export interface ListStreamsParams {
   query?: string
   after?: string
   limit?: number
+  includeArchived?: boolean
 }
 
 export function listStreams(client: ThreaApiClient, p: ListStreamsParams): Promise<unknown> {
-  return client.get(`/streams${buildQuery({ type: p.type, query: p.query, after: p.after, limit: p.limit })}`)
+  return client.get(
+    `/streams${buildQuery({
+      type: p.type,
+      query: p.query,
+      after: p.after,
+      limit: p.limit,
+      includeArchived: p.includeArchived ? "true" : undefined,
+    })}`
+  )
 }
 
 export interface ReadStreamParams {
