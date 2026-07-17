@@ -40,7 +40,10 @@ export {
 export function serializeClipboardSlice(slice: Slice): string {
   const content = slice.content.toJSON() as JSONContent[] | null
   if (!content) return ""
-  return serializeToMarkdown({ type: "doc", content })
+  // A NodeSelection of an inline atom (a chip) yields a slice whose top level
+  // is inline content; the serializer expects blocks, so wrap it.
+  const blocks = slice.content.firstChild?.isInline ? [{ type: "paragraph", content }] : content
+  return serializeToMarkdown({ type: "doc", content: blocks })
 }
 
 /**

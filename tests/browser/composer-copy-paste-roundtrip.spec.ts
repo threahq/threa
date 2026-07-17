@@ -85,6 +85,29 @@ async function captureEditorClipboard(page: Page, kind: "copy" | "cut"): Promise
   }, kind)
 }
 
+/** Select an exact text run inside the composer via a DOM range (ProseMirror syncs from selectionchange). */
+async function selectEditorText(page: Page, text: string): Promise<void> {
+  await page.evaluate((needle) => {
+    const editor = document.querySelector("main [contenteditable='true']")
+    if (!editor) throw new Error("Editor not found")
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+    let current: Node | null
+    while ((current = walker.nextNode())) {
+      const index = (current.textContent ?? "").indexOf(needle)
+      if (index === -1) continue
+      const range = document.createRange()
+      range.setStart(current, index)
+      range.setEnd(current, index + needle.length)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      ;(editor as HTMLElement).focus()
+      return
+    }
+    throw new Error(`Text not found in editor: ${needle}`)
+  }, text)
+}
+
 /** Every style from {@link buildCanonicalMarkdown}, asserted against the live editor DOM. */
 async function expectEditorHasAllStyles(page: Page): Promise<void> {
   const editor = composerEditor(page)
@@ -193,6 +216,17 @@ test.describe("Composer copy/paste roundtrip", () => {
   test("copy and cut from the composer serialize the selection to markdown", async ({ page }) => {
     await pastePlainText(page, canonicalMarkdown)
     await expectEditorHasAllStyles(page)
+
+    // Partial (single-block) selection: the slice arrives inline-wrapped in
+    // its parent block, and the marks must survive — this was the everyday
+    // copy shape the old container copy handler serialized to "".
+    let partial = ""
+    await expect(async () => {
+      await selectEditorText(page, "bold")
+      partial = await captureEditorClipboard(page, "copy")
+      expect(partial).not.toBe("")
+    }).toPass({ timeout: 10000 })
+    expect(partial).toBe("**bold**")
 
     // Click a text block (not the editor's center, which can land on an
     // atom chip and swallow focus), then select-all through the editor.

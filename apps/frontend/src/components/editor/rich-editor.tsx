@@ -633,6 +633,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       },
       clipboardTextSerializer: serializeClipboardSlice,
       handlePaste: (_view, event) => {
+        // Deliberately skips everything below, including snippet conversion:
+        // an internal paste restores the exact document (chips included), and
+        // converting a user's own composed content into a snippet would lose it.
         if (isProseMirrorClipboardEvent(event)) {
           return false
         }
@@ -948,41 +951,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // No additional focus-on-mount effect needed — the redundant focus()
   // dispatch caused a view update that raced with toolbar rendering,
   // briefly dropping focus in autoFocus editors (e.g. inline edit).
-
-  // Copy/cut handler: serialize selection to markdown
-  useEffect(() => {
-    if (!editor || !containerRef.current) return
-
-    const serializeSelection = (event: ClipboardEvent) => {
-      const { from, to } = editor.state.selection
-      if (from === to) return // No selection, use default behavior
-
-      const slice = editor.state.doc.slice(from, to)
-      const json = { type: "doc", content: slice.content.toJSON() }
-      const markdown = serializeToMarkdown(json)
-
-      event.clipboardData?.setData("text/plain", markdown)
-      event.preventDefault()
-    }
-
-    const handleCopy = (event: ClipboardEvent) => {
-      serializeSelection(event)
-    }
-
-    const handleCut = (event: ClipboardEvent) => {
-      serializeSelection(event)
-      // Delete the selected content after serializing to clipboard
-      editor.commands.deleteSelection()
-    }
-
-    const container = containerRef.current
-    container.addEventListener("copy", handleCopy)
-    container.addEventListener("cut", handleCut)
-    return () => {
-      container.removeEventListener("copy", handleCopy)
-      container.removeEventListener("cut", handleCut)
-    }
-  }, [editor])
 
   const focus = useCallback(() => {
     if (editor && !editor.isDestroyed) {
