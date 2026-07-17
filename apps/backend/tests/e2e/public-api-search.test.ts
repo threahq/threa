@@ -5,7 +5,7 @@
  */
 
 import { describe, test, expect, beforeAll } from "bun:test"
-import { TestClient, loginAs, createWorkspace, createChannel, sendMessage } from "../client"
+import { TestClient, loginAs, createWorkspace, createChannel, createThread, sendMessage } from "../client"
 
 const testRunId = Math.random().toString(36).substring(7)
 const testEmail = (name: string) => `${name}-pubapi-${testRunId}@test.com`
@@ -194,6 +194,52 @@ describe("Public API v1 — Message Search", () => {
       for (const result of data.data) {
         expect(result.streamId).toBe(ctx.publicChannelId)
       }
+    })
+
+    test("should include thread replies in granted private channels and streams-filtered searches", async () => {
+      const client = new TestClient()
+      await loginAs(client, testEmail("threads"), "Thread Setup User")
+      const workspace = await createWorkspace(client, `PubAPI Threads WS ${testRunId}`)
+      const privateChannel = await createChannel(client, workspace.id, `priv-threads-${testRunId}`, "private")
+
+      const botRes = await client.post(`/api/workspaces/${workspace.id}/bots`, {
+        type: "shared",
+        name: `Thread Bot ${testRunId}`,
+        slug: `thread-bot-${testRunId}`,
+      })
+      const bot = (botRes.data as { data: { id: string } }).data
+      const keyRes = await client.post(`/api/workspaces/${workspace.id}/bots/${bot.id}/keys`, {
+        name: "thread-key",
+        scopes: ["messages:search"],
+      })
+      const botApiKey = (keyRes.data as { value: string }).value
+
+      const grantRes = await client.post(
+        `/api/workspaces/${workspace.id}/bots/${bot.id}/streams/${privateChannel.id}/grant`,
+        {}
+      )
+      expect([200, 201, 204]).toContain(grantRes.status)
+
+      const keyword = `cockatrice${testRunId}`
+      const rootMessage = await sendMessage(client, workspace.id, privateChannel.id, `Root ${keyword}`)
+      const thread = await createThread(client, workspace.id, privateChannel.id, rootMessage.id)
+      await sendMessage(client, workspace.id, thread.id, `Thread reply ${keyword}`)
+
+      // Bot scope: the grant on the private channel must cover its threads
+      const scopeRes = await publicApiRequest(workspace.id, { query: keyword }, botApiKey)
+      expect(scopeRes.status).toBe(200)
+      const scopeData = (await scopeRes.json()) as { data: Array<{ streamId: string }> }
+      expect(scopeData.data.map((r) => r.streamId).sort()).toEqual([privateChannel.id, thread.id].sort())
+
+      // streams filter: filtering by the channel id must include its thread replies
+      const filterRes = await publicApiRequest(
+        workspace.id,
+        { query: keyword, streams: [privateChannel.id] },
+        botApiKey
+      )
+      expect(filterRes.status).toBe(200)
+      const filterData = (await filterRes.json()) as { data: Array<{ streamId: string }> }
+      expect(filterData.data.map((r) => r.streamId).sort()).toEqual([privateChannel.id, thread.id].sort())
     })
 
     test("should filter by date range", async () => {

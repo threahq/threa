@@ -2,6 +2,7 @@ import { z } from "zod"
 import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, STREAM_TYPES, StreamTypes } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { searchDmStreamsByParticipant, StreamRepository } from "../../streams"
+import { SearchRepository } from "../../search"
 import { UserRepository } from "../../workspaces"
 import { MessageRepository } from "../../messaging"
 import { PersonaRepository } from "../persona-repository"
@@ -123,7 +124,9 @@ Optionally filter by stream using ID (stream_xxx), slug (general), or prefixed s
                 message: "No matching messages found",
               }),
             }
-          filterStreamIds = [resolved.id]
+          // Replies live in thread streams under the resolved stream (INV-62);
+          // filtering by the bare id would silently exclude them.
+          filterStreamIds = await SearchRepository.expandStreamIdsWithThreads(db, workspaceId, [resolved.id])
         }
 
         const { results: searchResults } = await searchService.search({

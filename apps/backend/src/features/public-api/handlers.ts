@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import type { SearchFilters, SearchService } from "../search"
-import { serializeSearchResult, resolveUserAccessibleStreamIds } from "../search"
+import { serializeSearchResult, resolveUserAccessibleStreamIds, SearchRepository } from "../search"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import { MessageRepository, type EventService, type Message } from "../messaging"
 import {
@@ -1845,12 +1845,23 @@ export function createPublicApiHandlers({
         return res.json({ data: [] })
       }
 
+      // Replies live in thread streams under the requested streams (INV-62); an
+      // unexpanded filter would silently exclude them. A filter that resolves to
+      // nothing must return empty, not fall back to an unfiltered search.
+      let filterStreamIds: string[] | undefined
+      if (streams && streams.length > 0) {
+        filterStreamIds = await SearchRepository.expandStreamIdsWithThreads(pool, workspaceId, streams)
+        if (filterStreamIds.length === 0) {
+          return res.json({ data: [] })
+        }
+      }
+
       const { results } = await searchService.search({
         workspaceId,
         permissions: { accessibleStreamIds },
         query,
         filters: {
-          streamIds: streams,
+          streamIds: filterStreamIds,
           authorId: from,
           streamTypes: type,
           before: before ? new Date(before) : undefined,
@@ -1889,6 +1900,16 @@ export function createPublicApiHandlers({
         return res.json({ data: [] })
       }
 
+      // Same expansion as searchMessages: memos captured from thread
+      // conversations carry the thread's stream id (INV-62).
+      let memoFilterStreamIds: string[] | undefined
+      if (streams && streams.length > 0) {
+        memoFilterStreamIds = await SearchRepository.expandStreamIdsWithThreads(pool, workspaceId, streams)
+        if (memoFilterStreamIds.length === 0) {
+          return res.json({ data: [] })
+        }
+      }
+
       const results = await memoExplorerService.search({
         workspaceId,
         // A user API key's principal owns its user-scoped memos; a bot key has no
@@ -1897,7 +1918,7 @@ export function createPublicApiHandlers({
         query: normalized.query,
         exact: normalized.exact,
         filters: {
-          streamIds: streams,
+          streamIds: memoFilterStreamIds,
           memoTypes: memoType,
           knowledgeTypes: knowledgeType,
           tags,
@@ -1938,8 +1959,12 @@ export function createPublicApiHandlers({
         return res.json({ data: [] })
       }
 
-      const filterStreamIds = streams?.length
-        ? streams.filter((streamId) => accessibleStreamIds.includes(streamId))
+      // Expand to thread descendants (INV-62) before intersecting with access.
+      const requestedStreamIds = streams?.length
+        ? await SearchRepository.expandStreamIdsWithThreads(pool, workspaceId, streams)
+        : null
+      const filterStreamIds = requestedStreamIds
+        ? requestedStreamIds.filter((streamId) => accessibleStreamIds.includes(streamId))
         : accessibleStreamIds
 
       if (filterStreamIds.length === 0) {

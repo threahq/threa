@@ -21,7 +21,16 @@ export class BotChannelService {
       BotChannelAccessRepository.getGrantedStreamIds(this.pool, workspaceId, botId),
     ])
 
-    return [...new Set([...publicStreamIds, ...grantedStreamIds])]
+    // A grant on a private channel must cover its threads (INV-62): they
+    // inherit the root's private visibility, so getPublicStreams never
+    // includes them. isStreamAccessibleForBot already maps thread -> root;
+    // this keeps the list-shaped scope consistent with that point check.
+    const grantedWithThreads =
+      grantedStreamIds.length > 0
+        ? await SearchRepository.expandStreamIdsWithThreads(this.pool, workspaceId, grantedStreamIds)
+        : []
+
+    return [...new Set([...publicStreamIds, ...grantedWithThreads])]
   }
 
   async isStreamAccessibleForBot(workspaceId: string, botId: string, streamId: string): Promise<boolean> {

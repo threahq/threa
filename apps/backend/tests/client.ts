@@ -293,6 +293,22 @@ export async function sendMessage(
   return data.message
 }
 
+export async function sendDmMessage(
+  client: TestClient,
+  workspaceId: string,
+  dmUserId: string,
+  content: string
+): Promise<Message> {
+  const { status, data } = await client.post<{ message: Message }>(`/api/workspaces/${workspaceId}/messages`, {
+    dmUserId,
+    content,
+  })
+  if (status !== 201) {
+    throw new Error(`Send DM message failed: ${JSON.stringify(data)}`)
+  }
+  return data.message
+}
+
 export async function listEvents(
   client: TestClient,
   workspaceId: string,

@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { SearchService } from "./service"
 import type { SearchResult } from "./repository"
-import { resolveUserAccessibleStreamIds } from "./access"
+import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
 import { validateRequest } from "../../lib/validation"
 import { STREAM_TYPES } from "@threa/types"
 
@@ -54,10 +54,23 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
 
       const { query, from, with: withParticipants, in: inStreams, type, status, before, after, exact, limit } = data
 
+      // `in` mixes stream ids and user ids (in:@user = the DM with that user).
+      // An unresolvable filter (e.g. no DM exists) must yield zero results, not
+      // fall through to an unfiltered search — the service treats an empty
+      // streamIds array as "no filter".
+      let resolvedInStreamIds: string[] | undefined
+      if (inStreams && inStreams.length > 0) {
+        resolvedInStreamIds = await resolveInFilterStreamIds(pool, workspaceId, userId, inStreams)
+        if (resolvedInStreamIds.length === 0) {
+          res.json({ results: [], excludedE2eStreamCount: 0 })
+          return
+        }
+      }
+
       const filters = {
         authorId: from,
         userIds: withParticipants,
-        streamIds: inStreams,
+        streamIds: resolvedInStreamIds,
         streamTypes: type,
         archiveStatus: status,
         before: before ? new Date(before) : undefined,

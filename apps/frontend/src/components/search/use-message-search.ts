@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useRef } from "react"
 import { useSearch } from "@/hooks"
 import { localStartOfDayISO } from "@/lib/dates"
-import { useWorkspaceStreams, useWorkspaceUsers } from "@/stores/workspace-store"
+import {
+  useWorkspaceBots,
+  useWorkspacePersonas,
+  useWorkspaceStreams,
+  useWorkspaceUsers,
+} from "@/stores/workspace-store"
 import { parseSearchQuery, type ParsedFilter } from "@/lib/search-query-parser"
 import type { SearchFilters, SearchResultItem } from "@/api"
 import type { ArchiveStatus } from "@/api"
-import type { StreamType } from "@threa/types"
+import { STREAM_TYPES, type StreamType } from "@threa/types"
 
 export const SEARCH_DEBOUNCE_MS = 300
 const SEARCH_RESULT_LIMIT = 50
@@ -30,6 +35,8 @@ export interface MessageSearchState {
  */
 export function useMessageSearch(workspaceId: string, query: string): MessageSearchState {
   const users = useWorkspaceUsers(workspaceId)
+  const personas = useWorkspacePersonas(workspaceId)
+  const bots = useWorkspaceBots(workspaceId)
   const streams = useWorkspaceStreams(workspaceId)
   const { results, isLoading, error, search, clear } = useSearch({ workspaceId, limit: SEARCH_RESULT_LIMIT })
 
@@ -40,25 +47,38 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     const filters: SearchFilters = {}
 
     const resolveUserSlug = (slug: string) => users.find((u) => u.slug === slug)?.id ?? null
+    // The from:/with: pickers suggest personas and bots too; authors and stream
+    // participants can be any actor. Collision precedence user > persona > bot (INV-64).
+    const resolveActorSlug = (slug: string) =>
+      resolveUserSlug(slug) ??
+      personas.find((p) => p.slug === slug)?.id ??
+      bots.find((b) => b.slug === slug)?.id ??
+      null
     const resolveStreamSlug = (slug: string) => streams.find((s) => s.slug === slug)?.id ?? null
 
     for (const filter of parsedFilters) {
       switch (filter.type) {
         case "from": {
-          const userId = resolveUserSlug(filter.value)
-          if (userId) filters.from = userId
+          const actorId = resolveActorSlug(filter.value)
+          if (actorId) filters.from = actorId
           break
         }
         case "with": {
-          const userId = resolveUserSlug(filter.value)
-          if (userId) filters.with = [...(filters.with ?? []), userId]
+          const actorId = resolveActorSlug(filter.value)
+          if (actorId) filters.with = [...(filters.with ?? []), actorId]
           break
         }
+        // Invalid type/status values degrade like unresolved slugs (silent skip)
+        // instead of failing the whole request on backend validation.
         case "type":
-          filters.type = [...(filters.type ?? []), filter.value as StreamType]
+          if ((STREAM_TYPES as readonly string[]).includes(filter.value)) {
+            filters.type = [...(filters.type ?? []), filter.value as StreamType]
+          }
           break
         case "status":
-          filters.status = [...(filters.status ?? []), filter.value as ArchiveStatus]
+          if (filter.value === "active" || filter.value === "archived") {
+            filters.status = [...(filters.status ?? []), filter.value as ArchiveStatus]
+          }
           break
         case "in": {
           // in:#channel resolves a stream slug; in:@user resolves the user id
@@ -85,7 +105,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     }
 
     return filters
-  }, [parsedFilters, users, streams])
+  }, [parsedFilters, users, personas, bots, streams])
 
   const hasQuery = searchText.trim().length > 0 || parsedFilters.length > 0
 
