@@ -6,6 +6,7 @@ import { parseMarkdown, type EmojiLookup, type MentionTypeLookup, type ParseMark
 export interface BeforeInputEventLike {
   inputType: string
   data?: string | null
+  dataTransfer?: { getData(format: string): string } | null
   preventDefault(): void
 }
 
@@ -943,16 +944,40 @@ export function handleBeforeInputKeyboardPaste(
   getEmoji?: EmojiLookup,
   parseOptions?: ParseMarkdownOptions
 ): boolean {
-  if (event.inputType !== "insertText") return false
+  // `insertFromPaste` / `insertReplacementText` reaching this handler means no
+  // `paste` event was intercepted upstream (Android IMEs commit clipboard
+  // suggestions this way); they are definitively pastes, so the size/styling
+  // heuristic below is skipped for them.
+  const isPasteLike = event.inputType === "insertFromPaste" || event.inputType === "insertReplacementText"
+  if (event.inputType !== "insertText" && !isPasteLike) return false
   if (editor.view.composing) return false
-  const data = event.data
-  if (!data || data.length < 3) return false
-  if (!data.includes("\n") && !PASTE_STYLING_CHARS.test(data)) return false
+  // Chromium on Android delivers large IME clipboard payloads with `data`
+  // null and the text on `dataTransfer` instead.
+  const data = event.data ?? event.dataTransfer?.getData("text/plain")
+  if (!data) return false
+  if (!isPasteLike) {
+    if (data.length < 3) return false
+    if (!data.includes("\n") && !PASTE_STYLING_CHARS.test(data)) return false
+  }
   if (editor.isActive("codeBlock")) return false
 
   event.preventDefault()
-  if (!insertPastedText(editor, data, getMentionType, getEmoji, parseOptions)) {
-    editor.commands.insertContent(data)
+  try {
+    if (!insertPastedText(editor, data, getMentionType, getEmoji, parseOptions)) {
+      editor.commands.insertContent(data)
+    }
+  } catch {
+    // The event is already prevented, so a parse/insert failure must never
+    // eat the payload — fall back to a plain-text insert, which cannot
+    // reject any content shape.
+    editor
+      .chain()
+      .focus()
+      .command(({ tr }) => {
+        tr.insertText(data)
+        return true
+      })
+      .run()
   }
   return true
 }
