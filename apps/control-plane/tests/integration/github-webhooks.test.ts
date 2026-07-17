@@ -221,6 +221,42 @@ describe("GithubWebhookService.receive", () => {
     // Exactly one dispatch event survives the retry.
     expect(await dispatchRows(pool)).toHaveLength(1)
   })
+
+  test("a redelivery of a no_routes delivery dispatches once routes exist", async () => {
+    const body = prPayload(42, 18)
+    const input = {
+      rawBody: Buffer.from(body, "utf8"),
+      signature: sign(body),
+      eventType: "pull_request",
+      deliveryGuid: "guid-late-route",
+    }
+
+    // First delivery lands during the rollout window: no routes yet.
+    const first = await service.receive(input)
+    expect(first).toEqual({ kind: "accepted", matchedRegions: [] })
+    const preStatus = await pool.query(
+      "SELECT status FROM github_webhook_deliveries WHERE delivery_guid = 'guid-late-route'"
+    )
+    expect(preStatus.rows[0].status).toBe("no_routes")
+    expect(await dispatchRows(pool)).toEqual([])
+
+    // Route registers, then GitHub's manual Redeliver replays the same GUID.
+    await addRoute(pool, 42, "us-east-1", "ws_late")
+    const redelivery = await service.receive(input)
+    expect(redelivery).toEqual({ kind: "accepted", matchedRegions: ["us-east-1"] })
+
+    const row = await pool.query<{ id: string; status: string; matched_regions: string[] }>(
+      "SELECT id, status, matched_regions FROM github_webhook_deliveries WHERE delivery_guid = 'guid-late-route'"
+    )
+    expect(row.rows[0].status).toBe("dispatched")
+    expect(row.rows[0].matched_regions).toEqual(["us-east-1"])
+    expect(await dispatchRows(pool)).toEqual([{ deliveryId: row.rows[0].id, region: "us-east-1" }])
+
+    // A second redelivery is now a plain duplicate — no double dispatch.
+    const third = await service.receive(input)
+    expect(third).toEqual({ kind: "duplicate" })
+    expect(await dispatchRows(pool)).toHaveLength(1)
+  })
 })
 
 interface RecordedDispatch {

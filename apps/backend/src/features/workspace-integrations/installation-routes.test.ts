@@ -489,3 +489,108 @@ describe("deactivateInstallation", () => {
     expect(spy).not.toHaveBeenCalled()
   })
 })
+
+describe("persistGithubIntegration token-refresh path (non-route)", () => {
+  const refreshParams: UpsertWorkspaceIntegrationParams = {
+    id: "wsi_1",
+    workspaceId: "ws_1",
+    provider: "github",
+    status: "active",
+    credentials: { blob: "enc" },
+    metadata: { organizationName: "acme" },
+    installedBy: "user_1",
+    installationId: "42",
+  }
+
+  function persist(
+    service: WorkspaceIntegrationService,
+    params: UpsertWorkspaceIntegrationParams,
+    routeInstallationId?: string
+  ): Promise<WorkspaceIntegrationRecord | null> {
+    return (
+      service as unknown as {
+        persistGithubIntegration(
+          p: UpsertWorkspaceIntegrationParams,
+          r?: string
+        ): Promise<WorkspaceIntegrationRecord | null>
+      }
+    ).persistGithubIntegration(params, routeInstallationId)
+  }
+
+  it("uses the guarded UPDATE (not a blind upsert) and persists a normal refresh", async () => {
+    const { pool, calls } = recordingPool([githubRow({ installation_id: "42" })])
+    const spy = outboxSpy()
+    const lockSpy = spyOn(WorkspaceIntegrationRepository, "lockWorkspace").mockResolvedValue(undefined)
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+
+    const result = await persist(service, refreshParams)
+
+    expect(result).not.toBeNull()
+    const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
+    expect(update).toBeDefined()
+    // Guard values: expectedStatus 'active' and expectedInstallationId '42'.
+    expect(update?.values).toContain("active")
+    expect(update?.values).toContain("42")
+    // The non-route path never locks the workspace, upserts, or emits a route event.
+    expect(lockSpy).not.toHaveBeenCalled()
+    expect(calls.find((c) => c.text.includes("INSERT INTO workspace_integrations"))).toBeUndefined()
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it("returns null (does not resurrect) when a concurrent disconnect wins the guarded update", async () => {
+    // The row is mid-disconnect: the guarded UPDATE (status='active') matches 0 rows,
+    // so the refresh must NOT re-INSERT an ACTIVE row with no CP route.
+    const calls: QueryCall[] = []
+    const pool = {
+      query: async (query: unknown, values: unknown[] = []) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        calls.push({ text, values })
+        return { rows: [], rowCount: 0 }
+      },
+      release: () => {},
+    } as unknown as Pool
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+
+    const result = await persist(service, refreshParams)
+
+    expect(result).toBeNull()
+    // A blind upsert would have INSERTed; the guarded path only ran an UPDATE.
+    expect(calls.find((c) => c.text.includes("INSERT INTO workspace_integrations"))).toBeUndefined()
+  })
+
+  it("returns null (does not clobber B) when the row reconnected to a different installation", async () => {
+    // A refresh for installation A lands after the row reconnected to B: the guard
+    // carries A's id, the DB row is on B, so the UPDATE matches nothing → null.
+    const calls: QueryCall[] = []
+    const pool = {
+      query: async (query: unknown, values: unknown[] = []) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        calls.push({ text, values })
+        return { rows: [], rowCount: 0 }
+      },
+      release: () => {},
+    } as unknown as Pool
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+
+    const result = await persist(service, { ...refreshParams, installationId: "42" })
+
+    expect(result).toBeNull()
+    const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
+    expect(update?.values).toContain("42")
+  })
+})

@@ -1,4 +1,5 @@
 import type { Querier } from "@threa/backend-common"
+import { GITHUB_WEBHOOK_DELIVERY_STATUS } from "./constants"
 
 export interface GithubWebhookDeliveryRow {
   id: string
@@ -61,6 +62,38 @@ export const GithubWebhookDeliveryRepository = {
        FROM github_webhook_deliveries
        WHERE id = $1`,
       [id]
+    )
+    return result.rows[0] ?? null
+  },
+
+  async getByGuid(db: Querier, deliveryGuid: string): Promise<GithubWebhookDeliveryRow | null> {
+    const result = await db.query<GithubWebhookDeliveryRow>(
+      `SELECT id, delivery_guid, event_type, action, installation_id, repository_full_name,
+              payload, matched_regions, status, created_at
+       FROM github_webhook_deliveries
+       WHERE delivery_guid = $1`,
+      [deliveryGuid]
+    )
+    return result.rows[0] ?? null
+  },
+
+  /**
+   * Promote a `no_routes` delivery to `dispatched` once routes exist (a redelivery
+   * after the rollout window). CAS on `status = 'no_routes'` (INV-20) so two
+   * concurrent redeliveries can't both fan out — the loser matches 0 rows.
+   */
+  async promoteFromNoRoutes(
+    db: Querier,
+    id: string,
+    matchedRegions: string[]
+  ): Promise<GithubWebhookDeliveryRow | null> {
+    const result = await db.query<GithubWebhookDeliveryRow>(
+      `UPDATE github_webhook_deliveries
+         SET status = $3, matched_regions = $2
+       WHERE id = $1 AND status = $4
+       RETURNING id, delivery_guid, event_type, action, installation_id, repository_full_name,
+                 payload, matched_regions, status, created_at`,
+      [id, matchedRegions, GITHUB_WEBHOOK_DELIVERY_STATUS.DISPATCHED, GITHUB_WEBHOOK_DELIVERY_STATUS.NO_ROUTES]
     )
     return result.rows[0] ?? null
   },

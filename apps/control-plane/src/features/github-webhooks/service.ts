@@ -1,7 +1,13 @@
 import type { Pool } from "pg"
+import type { Querier } from "@threa/backend-common"
 import { OutboxRepository, githubWebhookDeliveryId, logger, withTransaction } from "@threa/backend-common"
 import { IntegrationRouteRepository } from "../integration-routes"
-import { FORWARDED_GITHUB_EVENT_TYPES, GITHUB_PROVIDER, OUTBOX_GITHUB_WEBHOOK_DISPATCH } from "./constants"
+import {
+  FORWARDED_GITHUB_EVENT_TYPES,
+  GITHUB_PROVIDER,
+  GITHUB_WEBHOOK_DELIVERY_STATUS,
+  OUTBOX_GITHUB_WEBHOOK_DISPATCH,
+} from "./constants"
 import { GithubWebhookDeliveryRepository } from "./repository"
 import { verifyGithubSignature } from "./signature"
 
@@ -82,7 +88,8 @@ export class GithubWebhookService {
       ? await IntegrationRouteRepository.listRegions(this.pool, GITHUB_PROVIDER, installationId)
       : []
 
-    const status = regions.length > 0 ? "dispatched" : "no_routes"
+    const status =
+      regions.length > 0 ? GITHUB_WEBHOOK_DELIVERY_STATUS.DISPATCHED : GITHUB_WEBHOOK_DELIVERY_STATUS.NO_ROUTES
 
     const inserted = await withTransaction(this.pool, async (client) => {
       const row = await GithubWebhookDeliveryRepository.insertIfNew(client, {
@@ -99,18 +106,12 @@ export class GithubWebhookService {
       if (!row) {
         return null
       }
-      await OutboxRepository.insertMany(
-        client,
-        regions.map((region) => ({
-          eventType: OUTBOX_GITHUB_WEBHOOK_DISPATCH,
-          payload: { deliveryId: row.id, region },
-        }))
-      )
+      await this.fanOutDispatchEvents(client, row.id, regions)
       return row
     })
 
     if (!inserted) {
-      return { kind: "duplicate" }
+      return this.reconcileDuplicate(input.deliveryGuid!, installationId)
     }
 
     if (regions.length === 0) {
@@ -121,5 +122,59 @@ export class GithubWebhookService {
     }
 
     return { kind: "accepted", matchedRegions: regions }
+  }
+
+  /**
+   * A duplicate GUID normally short-circuits, but a delivery first recorded as
+   * `no_routes` (the rollout window before the backfill registered routes) would
+   * make GitHub's manual Redeliver a permanent no-op. So when the stored row is
+   * still `no_routes`, re-resolve regions; if routes now exist, promote the row to
+   * `dispatched` and fan out the outbox events in one transaction (the CAS in
+   * `promoteFromNoRoutes` keeps concurrent redeliveries from double-dispatching).
+   * Anything already dispatched, or still routeless, stays a plain duplicate.
+   */
+  private async reconcileDuplicate(deliveryGuid: string, installationId: string | null): Promise<ReceiveWebhookResult> {
+    const existing = await GithubWebhookDeliveryRepository.getByGuid(this.pool, deliveryGuid)
+    if (!existing || existing.status !== GITHUB_WEBHOOK_DELIVERY_STATUS.NO_ROUTES || !installationId) {
+      return { kind: "duplicate" }
+    }
+
+    const regions = await IntegrationRouteRepository.listRegions(this.pool, GITHUB_PROVIDER, installationId)
+    if (regions.length === 0) {
+      return { kind: "duplicate" }
+    }
+
+    const promoted = await withTransaction(this.pool, async (client) => {
+      const row = await GithubWebhookDeliveryRepository.promoteFromNoRoutes(client, existing.id, regions)
+      if (!row) {
+        return false
+      }
+      await this.fanOutDispatchEvents(client, row.id, regions)
+      return true
+    })
+
+    if (!promoted) {
+      return { kind: "duplicate" }
+    }
+
+    logger.info(
+      { installationId, deliveryGuid, matchedRegions: regions },
+      "Redelivered GitHub webhook promoted from no_routes to dispatched"
+    )
+    return { kind: "accepted", matchedRegions: regions }
+  }
+
+  /**
+   * One dispatch outbox event per distinct target region; the delivery payload is
+   * read from the row at dispatch time, so the event carries only `{deliveryId, region}`.
+   */
+  private fanOutDispatchEvents(client: Querier, deliveryId: string, regions: string[]): Promise<unknown> {
+    return OutboxRepository.insertMany(
+      client,
+      regions.map((region) => ({
+        eventType: OUTBOX_GITHUB_WEBHOOK_DISPATCH,
+        payload: { deliveryId, region },
+      }))
+    )
   }
 }

@@ -50,10 +50,10 @@ export interface LinkPreviewServiceDeps {
 }
 
 /**
- * Outcome of `applyRefreshedMetadata`. `applied: false` is only ever returned
- * under compare-and-set (webhook-refresh path): the write matched 0 rows because a
- * concurrent refresh advanced `refresh_version` or the row vanished. `refreshVersion`
- * carries the row's current version (0 when gone) so the caller can re-key a coalesced
+ * Outcome of `applyRefreshedMetadata` (always compare-and-set — webhook-refresh
+ * path). `applied: false` means the write matched 0 rows because a concurrent
+ * refresh advanced `refresh_version` or the row vanished. `refreshVersion` carries
+ * the row's current version (0 when gone) so the caller can re-key a coalesced
  * retry on the winner's version; `fetchedAt` carries the winner's fetch time for the
  * debounce-timing math.
  */
@@ -301,19 +301,15 @@ export class LinkPreviewService {
     workspaceId: string,
     previewId: string,
     metadata: UpdateLinkPreviewParams,
-    options?: { expectedRefreshVersion?: number }
+    options: { expectedRefreshVersion: number }
   ): Promise<ApplyRefreshedMetadataResult> {
-    const cas = options !== undefined && "expectedRefreshVersion" in options
     return withTransaction(this.deps.pool, async (client) => {
       const updated = await LinkPreviewRepository.overwriteMetadata(client, workspaceId, previewId, metadata, options)
       if (!updated) {
-        // Under CAS, 0 rows means either a concurrent write advanced `refresh_version`
+        // CAS matched 0 rows: either a concurrent write advanced `refresh_version`
         // (conflict — re-read to report its current version) or the row is gone.
-        if (cas) {
-          const current = await LinkPreviewRepository.findById(client, workspaceId, previewId)
-          return { applied: false, fetchedAt: current?.fetchedAt ?? null, refreshVersion: current?.refreshVersion ?? 0 }
-        }
-        return { applied: false, fetchedAt: null, refreshVersion: 0 }
+        const current = await LinkPreviewRepository.findById(client, workspaceId, previewId)
+        return { applied: false, fetchedAt: current?.fetchedAt ?? null, refreshVersion: current?.refreshVersion ?? 0 }
       }
 
       const messageIds = await LinkPreviewRepository.findMessageIdsByPreviewId(client, workspaceId, previewId)

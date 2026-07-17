@@ -191,7 +191,9 @@ describe("refreshLinkPreview", () => {
     )
 
     expect(result).toEqual({ refreshed: true })
-    expect(service.applyRefreshedMetadata).toHaveBeenCalledWith(WORKSPACE_ID, "lp_pr", REFRESHED_METADATA)
+    expect(service.applyRefreshedMetadata).toHaveBeenCalledWith(WORKSPACE_ID, "lp_pr", REFRESHED_METADATA, {
+      expectedRefreshVersion: 0,
+    })
   })
 
   test("does not downgrade when the GitHub fetch returns nothing", async () => {
@@ -207,7 +209,7 @@ describe("refreshLinkPreview", () => {
     expect(service.applyRefreshedMetadata).not.toHaveBeenCalled()
   })
 
-  test("under optimistic concurrency, the winner writes and captures the pre-fetch version", async () => {
+  test("the winner writes and captures the pre-fetch version (compare-and-set)", async () => {
     const service = fakeService(makeRow({ fetchedAt: new Date(Date.now() - 60_000), refreshVersion: 5 }), {
       applied: true,
     })
@@ -215,7 +217,7 @@ describe("refreshLinkPreview", () => {
 
     const result = await refreshLinkPreview(
       { linkPreviewService: service, workspaceIntegrationService: wis },
-      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", useOptimisticConcurrency: true }
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr" }
     )
 
     expect(result).toEqual({ refreshed: true })
@@ -224,7 +226,7 @@ describe("refreshLinkPreview", () => {
     })
   })
 
-  test("under optimistic concurrency, a CAS loss reports conflict with the winner's version", async () => {
+  test("a compare-and-set loss reports conflict with the winner's version", async () => {
     const winnerFetchedAt = new Date()
     const service = fakeService(makeRow({ fetchedAt: new Date(Date.now() - 60_000), refreshVersion: 5 }), {
       applied: false,
@@ -235,19 +237,19 @@ describe("refreshLinkPreview", () => {
 
     const result = await refreshLinkPreview(
       { linkPreviewService: service, workspaceIntegrationService: wis },
-      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", useOptimisticConcurrency: true }
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr" }
     )
 
     expect(result).toEqual({ refreshed: false, reason: "conflict", refreshVersion: 6, fetchedAt: winnerFetchedAt })
   })
 
-  test("under optimistic concurrency, a version-0 row passes expectedRefreshVersion 0", async () => {
+  test("a version-0 row passes expectedRefreshVersion 0", async () => {
     const service = fakeService(makeRow({ fetchedAt: null, refreshVersion: 0 }), { applied: true })
     spyOn(githubPreview, "fetchGitHubPreview").mockResolvedValue(REFRESHED_METADATA)
 
     await refreshLinkPreview(
       { linkPreviewService: service, workspaceIntegrationService: wis },
-      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", useOptimisticConcurrency: true }
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr" }
     )
 
     expect(service.applyRefreshedMetadata).toHaveBeenCalledWith(WORKSPACE_ID, "lp_pr", REFRESHED_METADATA, {

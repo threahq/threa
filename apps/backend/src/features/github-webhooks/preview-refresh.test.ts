@@ -88,7 +88,8 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
 
     const [queueName, data, options] = jobQueue.send.mock.calls[0]!
     expect(queueName).toBe("github_preview.refresh")
-    expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID })
+    // Webhook-side sender → bare hop-0 id so a storm coalesces.
+    expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 0 })
     expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 2))
     // processAfter is past the remaining debounce window.
     expect(options!.processAfter!.getTime()).toBeGreaterThan(fetchedAt.getTime() + 10_000)
@@ -137,7 +138,36 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
-  test("trailing worker still inside the window reschedules once on the fresh version", async () => {
+  test("trailing worker still inside the window reschedules with a hop-bumped id (no self-collision)", async () => {
+    const fetchedAt = new Date(Date.now() - 3_000)
+    const service = fakeLinkPreviewService(makeRow({ fetchedAt, refreshVersion: 11 }))
+    const jobQueue = fakeJobQueue()
+    spyOn(githubPreview, "fetchGitHubPreview")
+
+    const worker = createGithubPreviewRefreshWorker({
+      linkPreviewService: service,
+      workspaceIntegrationService: {} as never,
+      jobQueue,
+    })
+
+    // Trailing worker running the bare hop-0 job. A replica behind the scheduler's
+    // clock would re-debounce at the SAME version; it must NOT re-send the bare id
+    // (which pkey-dedupes against the row it just claimed) — it schedules hop 1.
+    await worker({
+      id: "q_1",
+      name: "github_preview.refresh",
+      data: { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID },
+    })
+
+    expect(jobQueue.send).toHaveBeenCalledTimes(1)
+    const [, data, options] = jobQueue.send.mock.calls[0]!
+    expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 1 })
+    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 11, 1))
+    // The rescheduled id differs from the bare id this job itself would have claimed.
+    expect(options!.messageId).not.toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 11))
+  })
+
+  test("a trailing job at hop N reschedules at hop N+1 at the same version", async () => {
     const fetchedAt = new Date(Date.now() - 3_000)
     const service = fakeLinkPreviewService(makeRow({ fetchedAt, refreshVersion: 11 }))
     const jobQueue = fakeJobQueue()
@@ -152,11 +182,34 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
     await worker({
       id: "q_1",
       name: "github_preview.refresh",
-      data: { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID },
+      data: { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 2 },
     })
 
-    expect(jobQueue.send).toHaveBeenCalledTimes(1)
-    expect(jobQueue.send.mock.calls[0]![2]!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 11))
+    const [, data, options] = jobQueue.send.mock.calls[0]!
+    expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 3 })
+    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 11, 3))
+  })
+
+  test("the hop chain stops once it passes the cap", async () => {
+    const fetchedAt = new Date(Date.now() - 3_000)
+    const service = fakeLinkPreviewService(makeRow({ fetchedAt, refreshVersion: 11 }))
+    const jobQueue = fakeJobQueue()
+    spyOn(githubPreview, "fetchGitHubPreview")
+
+    const worker = createGithubPreviewRefreshWorker({
+      linkPreviewService: service,
+      workspaceIntegrationService: {} as never,
+      jobQueue,
+    })
+
+    // hop 5 → nextHop 6 > cap (5): no further job scheduled.
+    await worker({
+      id: "q_1",
+      name: "github_preview.refresh",
+      data: { workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 5 },
+    })
+
+    expect(jobQueue.send).not.toHaveBeenCalled()
   })
 })
 
@@ -186,7 +239,7 @@ describe("refreshGithubPreviewWithTrailing — compare-and-set conflict", () => 
     expect(jobQueue.send).toHaveBeenCalledTimes(1)
     const [queueName, data, options] = jobQueue.send.mock.calls[0]!
     expect(queueName).toBe("github_preview.refresh")
-    expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID })
+    expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 0 })
     expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 5))
   })
 })

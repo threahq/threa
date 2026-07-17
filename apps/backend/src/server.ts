@@ -1383,8 +1383,14 @@ export async function startServer(): Promise<ServerInstance> {
       ? new InvitationShadowSyncHandler(pool, controlPlaneClient, config.region)
       : null
   // Registered whenever a region is set (matching the service's event-emit gate),
-  // so every `github_route:*` event has a consumer. A null control-plane client
-  // makes the handler no-op — the events aren't emitted in that case anyway.
+  // so every `github_route:*` event has a consumer. The service emits those events
+  // on region alone, so a null control-plane client leaves the handler a no-op that
+  // silently swallows emitted events — warn so the misconfiguration is visible.
+  if (config.region && !controlPlaneClient) {
+    logger.warn(
+      "Region is set but no control-plane client is configured (missing controlPlaneUrl/internalApiKey) — GitHub route-sync events will be swallowed and installations won't register webhook routes"
+    )
+  }
   const githubRouteSyncHandler = config.region ? new GithubRouteSyncHandler(pool, controlPlaneClient) : null
   const outboxHandlers: (OutboxHandler & { ensureListener(): Promise<void> })[] = [
     broadcastHandler,

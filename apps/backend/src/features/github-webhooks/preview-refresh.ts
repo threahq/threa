@@ -32,10 +32,25 @@ export interface GithubPreviewRefreshDeps extends RefreshLinkPreviewDeps {
  * collapses into one job via `send`'s messageId dedupe. Once any write advances
  * the version, the next reschedule (and any later storm) gets a fresh id — a
  * completed/in-flight row from the previous window never blocks it.
+ *
+ * `hop` is 0 for the bare `_vN` id webhook-side senders use to coalesce; a trailing
+ * worker that re-debounces at an unchanged version reschedules with hop+1 so the
+ * suffixed id (`_vN_h1`, …) can't pkey-dedupe against the row the trailing job
+ * itself already claimed when it runs on a replica behind the scheduler's clock.
  */
-export function githubPreviewRefreshQueueId(previewId: string, refreshVersion: number): string {
-  return `queue_ghprev_${previewId}_v${refreshVersion}`
+export function githubPreviewRefreshQueueId(previewId: string, refreshVersion: number, hop = 0): string {
+  const base = `queue_ghprev_${previewId}_v${refreshVersion}`
+  return hop > 0 ? `${base}_h${hop}` : base
 }
+
+/**
+ * Hard cap on trailing debounce hops. Each hop reschedules ~one debounce window
+ * later, so a chain this long means a real refresh landed within the window that
+ * many times running (the card is fresh) — and any new webhook delivery restarts a
+ * fresh bare-id chain regardless — so stopping here can't permanently drop an
+ * update; it only bounds a clock-skew self-reschedule loop.
+ */
+const MAX_TRAILING_HOPS = 5
 
 /**
  * Deterministic queue-message id for one `fetch_empty` retry cycle. The cycle id
@@ -70,10 +85,19 @@ export function githubPreviewRefreshRetryQueueId(
  */
 export async function refreshGithubPreviewWithTrailing(
   deps: GithubPreviewRefreshDeps,
-  params: { workspaceId: string; previewId: string; attempt?: number; retryCycleId?: string }
+  params: {
+    workspaceId: string
+    previewId: string
+    attempt?: number
+    retryCycleId?: string
+    /** Hop count of the CURRENTLY-running job; only the trailing worker sets it. */
+    hop?: number
+    /** True when invoked from the trailing worker, so a re-debounce bumps the hop. */
+    isTrailing?: boolean
+  }
 ): Promise<void> {
   const { workspaceId, previewId } = params
-  const result = await refreshLinkPreview(deps, { workspaceId, previewId, useOptimisticConcurrency: true })
+  const result = await refreshLinkPreview(deps, { workspaceId, previewId })
   if (result.refreshed || result.reason === "not_found") return
 
   if (result.reason === "debounced" || result.reason === "conflict") {
@@ -87,9 +111,26 @@ export async function refreshGithubPreviewWithTrailing(
         : new Date(
             (result.fetchedAt?.getTime() ?? Date.now()) + DEFAULT_REFRESH_DEBOUNCE_MS + TRAILING_REFRESH_BUFFER_MS
           )
-    const messageId = githubPreviewRefreshQueueId(previewId, result.refreshVersion)
+    // Webhook-side senders (isTrailing false) always schedule the bare hop-0 id so
+    // a storm coalesces. A trailing worker re-scheduling itself bumps the hop so the
+    // new id differs from the one it already claimed — otherwise a replica behind the
+    // scheduler's clock re-debounces at the same version, re-sends its own id, and the
+    // pkey dedupe drops it forever (PR #1358 clock skew).
+    const nextHop = params.isTrailing ? (params.hop ?? 0) + 1 : 0
+    if (nextHop > MAX_TRAILING_HOPS) {
+      log.warn(
+        { workspaceId, previewId, hop: nextHop },
+        "Giving up trailing GitHub preview refresh after too many debounce hops (clock skew?)"
+      )
+      return
+    }
+    const messageId = githubPreviewRefreshQueueId(previewId, result.refreshVersion, nextHop)
 
-    await deps.jobQueue.send(JobQueues.GITHUB_PREVIEW_REFRESH, { workspaceId, previewId }, { processAfter, messageId })
+    await deps.jobQueue.send(
+      JobQueues.GITHUB_PREVIEW_REFRESH,
+      { workspaceId, previewId, hop: nextHop },
+      { processAfter, messageId }
+    )
     log.debug(
       { workspaceId, previewId, messageId, processAfter, reason: result.reason },
       "Scheduled trailing GitHub preview refresh"
@@ -135,6 +176,8 @@ export function createGithubPreviewRefreshWorker(
       previewId: job.data.previewId,
       attempt: job.data.attempt,
       retryCycleId: job.data.retryCycleId,
+      hop: job.data.hop,
+      isTrailing: true,
     })
   }
 }

@@ -58,7 +58,7 @@ export type RefreshLinkPreviewResult =
  */
 export async function refreshLinkPreview(
   deps: RefreshLinkPreviewDeps,
-  params: { workspaceId: string; previewId: string; debounceMs?: number; useOptimisticConcurrency?: boolean }
+  params: { workspaceId: string; previewId: string; debounceMs?: number }
 ): Promise<RefreshLinkPreviewResult> {
   const debounceMs = params.debounceMs ?? DEFAULT_REFRESH_DEBOUNCE_MS
   const preview = await deps.linkPreviewService.getPreviewById(params.workspaceId, params.previewId)
@@ -100,29 +100,21 @@ export async function refreshLinkPreview(
     return { refreshed: false, reason: "fetch_empty", refreshVersion: expectedRefreshVersion }
   }
 
-  if (params.useOptimisticConcurrency) {
-    const outcome = await deps.linkPreviewService.applyRefreshedMetadata(
-      params.workspaceId,
-      params.previewId,
-      metadata,
-      { expectedRefreshVersion }
+  const outcome = await deps.linkPreviewService.applyRefreshedMetadata(params.workspaceId, params.previewId, metadata, {
+    expectedRefreshVersion,
+  })
+  if (!outcome.applied) {
+    log.debug(
+      { workspaceId: params.workspaceId, previewId: params.previewId },
+      "Skipping preview refresh — compare-and-set lost to a concurrent refresh"
     )
-    if (!outcome.applied) {
-      log.debug(
-        { workspaceId: params.workspaceId, previewId: params.previewId },
-        "Skipping preview refresh — compare-and-set lost to a concurrent refresh"
-      )
-      return {
-        refreshed: false,
-        reason: "conflict",
-        refreshVersion: outcome.refreshVersion,
-        fetchedAt: outcome.fetchedAt,
-      }
+    return {
+      refreshed: false,
+      reason: "conflict",
+      refreshVersion: outcome.refreshVersion,
+      fetchedAt: outcome.fetchedAt,
     }
-    return { refreshed: true }
   }
-
-  await deps.linkPreviewService.applyRefreshedMetadata(params.workspaceId, params.previewId, metadata)
   return { refreshed: true }
 }
 

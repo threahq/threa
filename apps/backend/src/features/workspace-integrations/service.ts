@@ -279,7 +279,14 @@ export class WorkspaceIntegrationService {
             : { value: "", allowNull: true },
         }
       )
-      if (updated && installationId) {
+      if (!updated) {
+        log.warn(
+          { workspaceId, installationId },
+          "GitHub disconnect matched 0 rows — a concurrent reinstall likely won the guarded update"
+        )
+        return
+      }
+      if (installationId) {
         await this.emitRouteUnregister(client, workspaceId, installationId)
       }
     })
@@ -763,6 +770,9 @@ export class WorkspaceIntegrationService {
       }
 
       const updated = await this.persistGithubIntegration(upsertParams, routeInstallationId)
+      if (!updated) {
+        return null
+      }
 
       return {
         record: updated,
@@ -783,9 +793,31 @@ export class WorkspaceIntegrationService {
   private async persistGithubIntegration(
     params: UpsertWorkspaceIntegrationParams,
     routeInstallationId?: string
-  ): Promise<WorkspaceIntegrationRecord> {
+  ): Promise<WorkspaceIntegrationRecord | null> {
     if (!routeInstallationId) {
-      return WorkspaceIntegrationRepository.upsert(this.deps.pool, params)
+      // Token-refresh path (no route change). A blind upsert here would resurrect
+      // a row a concurrent disconnect just cleared, or clobber a row that
+      // reconnected to a DIFFERENT installation B back to A. Guard on status
+      // ACTIVE and installation_id == this install (or NULL for a pre-backfill
+      // row) so a lost race matches 0 rows and surfaces as a refresh failure the
+      // callers (401 retry, proactive refresh) already handle by returning null.
+      return WorkspaceIntegrationRepository.update(
+        this.deps.pool,
+        params.workspaceId,
+        WorkspaceIntegrationProviders.GITHUB,
+        {
+          credentials: params.credentials,
+          metadata: params.metadata,
+          installedBy: params.installedBy,
+          installationId: params.installationId,
+        },
+        {
+          expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+          expectedInstallationId: params.installationId
+            ? { value: params.installationId, allowNull: true }
+            : { value: "", allowNull: true },
+        }
+      )
     }
 
     // Lock the workspace rather than the provider row: two first-time installs

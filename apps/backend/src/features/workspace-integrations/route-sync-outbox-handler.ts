@@ -21,7 +21,16 @@ export class GithubRouteSyncHandler extends DebouncedOutboxHandler {
   private readonly controlPlaneClient: ControlPlaneClient | null
 
   constructor(db: Pool, controlPlaneClient: ControlPlaneClient | null) {
-    super(db, { listenerId: "github-route-sync" })
+    // Raise the retry ceiling well above the default (~5 tries / ~30s) so a
+    // multi-minute control-plane outage does NOT dead-letter a route event. Once a
+    // route event dead-letters, the documented DLQ re-queue replays it AFTER any
+    // newer route event for the same workspace — that out-of-order replay can
+    // resurrect a deleted route or delete a live one, contradicting current state.
+    // With baseBackoffMs 2000 and maxRetries 12 (backoff caps at 5m/attempt) the
+    // handler retries for ~28m before giving up. If an event still dead-letters, do
+    // NOT re-queue it — re-run the workspace's route backfill instead, which
+    // reconciles to current state regardless of ordering.
+    super(db, { listenerId: "github-route-sync", maxRetries: 12, baseBackoffMs: 2_000 })
     this.controlPlaneClient = controlPlaneClient
   }
 

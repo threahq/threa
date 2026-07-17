@@ -381,6 +381,15 @@ export interface GithubPreviewRefreshJobData {
   attempt?: number
   /** Stable across one bounded fetch retry chain; fresh for a later outage cycle. */
   retryCycleId?: string
+  /**
+   * Debounce-hop counter for a trailing refresh chain. 0/undefined on the bare
+   * `_vN` job scheduled by webhook-side senders (they coalesce on that id). When a
+   * trailing worker re-debounces at the SAME `refreshVersion` it reschedules with an
+   * incremented hop so the new message id (`_vN_h1`, `_vN_h2`, …) can't pkey-dedupe
+   * against the very row it just claimed under replica clock skew (PR #1358). Capped
+   * to stop an infinite skew loop.
+   */
+  hop?: number
 }
 
 export interface JobDataMap {
