@@ -84,6 +84,14 @@ const PAGES: Page[] = [
     blurb: "Error shapes, cursor pagination, idempotent sends, rate limits, and CORS.",
   },
   {
+    route: "/developers/cli",
+    html: "developers/cli/index.html",
+    md: "developers/cli.md",
+    title: "CLI & MCP server",
+    blurb:
+      "The threa command-line tool and its MCP server: install from the repo, configure one workspace binding, the noun-verb command surface, and agent integration.",
+  },
+  {
     route: "/developers/recipes",
     html: "developers/recipes/index.html",
     md: "developers/recipes.md",
