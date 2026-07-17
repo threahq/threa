@@ -301,6 +301,28 @@ describe("Search E2E Tests", () => {
       expect(results).toEqual([])
     })
 
+    test("should include thread replies in with-filtered shared streams", async () => {
+      const clientA = new TestClient()
+      await loginAs(clientA, testEmail("withThreadA"), "WithThread User A")
+      const workspace = await createWorkspace(clientA, `WithThread WS ${testRunId}`)
+      const channel = await createChannel(clientA, workspace.id, `withthread-${testRunId}`, "private")
+
+      const clientB = new TestClient()
+      await loginAs(clientB, testEmail("withThreadB"), "WithThread User B")
+      const memberB = await joinWorkspace(clientB, workspace.id)
+      await joinStream(clientB, workspace.id, channel.id)
+
+      const keyword = `chimera${testRunId}`
+      const rootMessage = await sendMessage(clientA, workspace.id, channel.id, `Root ${keyword}`)
+      const thread = await createThread(clientA, workspace.id, channel.id, rootMessage.id)
+      await sendMessage(clientA, workspace.id, thread.id, `Thread reply ${keyword}`)
+
+      const results = await search(clientA, workspace.id, { query: keyword, with: [memberB.id] })
+
+      const streamIds = results.map((r) => r.streamId).sort()
+      expect(streamIds).toEqual([channel.id, thread.id].sort())
+    })
+
     test("should combine multiple filters", async () => {
       const client = new TestClient()
       await loginAs(client, testEmail("combo"), "Combo Test")

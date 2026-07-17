@@ -110,6 +110,8 @@ export const SearchRepository = {
    * Participant filtering (AND logic):
    * - If userIds provided, stream must have ALL specified participants
    * - Participants can be users (stream_members) or personas (stream_persona_participants)
+   * - Threads carry no member rows (INV-62), so a thread qualifies when its
+   *   root stream has all specified participants
    *
    * Archive status:
    * - ["active"] (default) → only non-archived streams
@@ -159,9 +161,10 @@ export const SearchRepository = {
         GROUP BY stream_id
         HAVING COUNT(DISTINCT member_id) = ${userIds.length}
       )
-      SELECT a.id
+      SELECT DISTINCT a.id
       FROM accessible a
-      JOIN member_streams m ON a.id = m.stream_id
+      JOIN streams st ON st.id = a.id
+      JOIN member_streams m ON m.stream_id = a.id OR m.stream_id = st.root_stream_id
     `)
 
     return result.rows.map((r) => r.id)
