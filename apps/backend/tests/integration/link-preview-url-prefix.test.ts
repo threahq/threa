@@ -5,11 +5,10 @@ import { LinkPreviewRepository } from "../../src/features/link-previews/reposito
 import { escapeLikePattern } from "../../src/features/link-previews/refresh"
 
 /**
- * Regression (Fable adversarial review on #1374): the query's `ESCAPE '\'` in a
- * TS template literal cooked to `ESCAPE ''`, disabling escape processing — so
- * `escapeLikePattern`'s backslashes became literal pattern characters and any
- * repo name containing `_` never matched. This exercises the real Postgres
- * query; every unit-level caller mocks the repo method and can't catch it.
+ * Exercise the real Postgres query because a SQL `ESCAPE` clause can be changed
+ * by TypeScript template-literal cooking. If escape processing is disabled,
+ * `escapeLikePattern`'s backslashes become literal pattern characters and repo
+ * names containing `_` never match; mocked repository tests cannot catch this.
  */
 describe("findByNormalizedUrlPrefix escaping", () => {
   let pool: Pool
@@ -45,14 +44,10 @@ describe("findByNormalizedUrlPrefix escaping", () => {
 })
 
 /**
- * Regression (Sol review round 3 on #1374): the webhook-refresh path must not let
- * a slow pre-merge GET blind-overwrite a newer write. The compare-and-set was on
- * `fetched_at`, but Postgres stores TIMESTAMPTZ microseconds while pg maps the
- * column to a millisecond JS `Date` — so a value read back through the repository
- * never equalled the stored one and every uncontended refresh spuriously lost the
- * CAS. `overwriteMetadata` now compares-and-sets on an integer `refresh_version`
- * that every write increments. Exercises the real Postgres predicate — a mock
- * can't prove the WHERE clause actually gates the write.
+ * Exercise the real Postgres predicate because a mock cannot prove the CAS guard.
+ * The webhook-refresh path must prevent a slow pre-merge GET from overwriting a
+ * newer write. An integer `refresh_version` round-trips losslessly, unlike a
+ * TIMESTAMPTZ value crossing Postgres microseconds and JS Date milliseconds.
  */
 describe("overwriteMetadata compare-and-set on refresh_version", () => {
   let pool: Pool

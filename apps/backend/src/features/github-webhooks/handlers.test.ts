@@ -2,7 +2,6 @@ import { describe, expect, mock, test } from "bun:test"
 import type { Request, Response } from "express"
 import { createGithubWebhookHandlers } from "./handlers"
 import { JobQueues, type QueueManager } from "../../lib/queue"
-import { HttpError } from "../../lib/errors"
 
 function fakeRes() {
   const res = {
@@ -54,9 +53,10 @@ describe("github webhook ingest handler", () => {
     const jobQueue = fakeJobQueue()
     const handlers = createGithubWebhookHandlers({ jobQueue })
 
-    await expect(handlers.ingest({ body: { eventType: "pull_request" } } as Request, fakeRes())).rejects.toBeInstanceOf(
-      HttpError
-    )
+    await expect(handlers.ingest({ body: { eventType: "pull_request" } } as Request, fakeRes())).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+    })
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 

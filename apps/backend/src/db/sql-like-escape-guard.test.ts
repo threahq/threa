@@ -14,9 +14,8 @@ const SCANNED_GLOBS = [
  * spelled `ESCAPE '\\'` in source. The obvious spelling `ESCAPE '\'` cooks to
  * `ESCAPE ''` (JS eats the backslash), which Postgres accepts as "no escape
  * character" — silently disabling LIKE-pattern escaping, so escaped `_`/`%`
- * become live wildcards or dead literals. Caught live on #1374: underscore repo
- * names never matched webhook refreshes. Invisible to unit tests that mock the
- * repository, hence a source-level guard.
+ * become live wildcards or dead literals. This is invisible to unit tests that
+ * mock the repository, hence a source-level guard.
  */
 describe("SQL LIKE ESCAPE clauses survive template-literal cooking", () => {
   test("every ESCAPE clause is spelled with a double backslash in source", async () => {
