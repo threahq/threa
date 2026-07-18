@@ -217,6 +217,27 @@ describe("parseHtmlMeta", () => {
     expect(result.title).toBe('Tom & Jerry\'s "Show"')
   })
 
+  test("decodes named entities in <title> fallback including em dash and apostrophe", async () => {
+    const html = `
+      <html><head>
+        <title>Voice &amp; Video &mdash; Plan</title>
+      </head></html>
+    `
+    const result = await parseHtmlMeta(html, baseUrl)
+    expect(result.title).toBe("Voice & Video — Plan")
+  })
+
+  test("og:title takes priority over <title> when both exist", async () => {
+    const html = `
+      <html><head>
+        <meta property="og:title" content="OG Wins">
+        <title>Page Title - Should Not Appear</title>
+      </head></html>
+    `
+    const result = await parseHtmlMeta(html, baseUrl)
+    expect(result.title).toBe("OG Wins")
+  })
+
   test("truncates long titles", async () => {
     const longTitle = "A".repeat(500)
     const html = `
