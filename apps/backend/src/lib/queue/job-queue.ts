@@ -48,6 +48,8 @@ export const JobQueues = {
   CONTEXT_BAG_PRECOMPUTE: "context_bag.precompute",
   BACKFILL_PLAN: "backfill.plan",
   BACKFILL_CHUNK: "backfill.chunk",
+  GITHUB_WEBHOOK_PROCESS: "github_webhook.process",
+  GITHUB_PREVIEW_REFRESH: "github_preview.refresh",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -337,6 +339,59 @@ export interface BackfillChunkJobData {
   chunk: unknown
 }
 
+/**
+ * GitHub webhook process job. One per verified delivery forwarded from the
+ * control-plane (`POST /internal/github/webhook-events`). Not workspace-scoped —
+ * a single GitHub installation can back many workspaces (installs are per org),
+ * so `workspaceId` is the sentinel `"system"` and the worker resolves the real
+ * workspaces via `workspace_integrations.installation_id`. Carries the wire
+ * shape CP sends; the worker derives canonical PR/issue URLs from `payload` and
+ * force-refreshes matching link previews. Idempotent: the enqueue keys on
+ * `deliveryGuid` (queue-message PK) and the refresh itself is an overwrite, so a
+ * redelivered webhook re-runs harmlessly.
+ */
+export interface GithubWebhookProcessJobData {
+  workspaceId: string
+  deliveryGuid: string
+  eventType: string
+  action: string | null
+  installationId: string | null
+  repositoryFullName: string | null
+  payload: Record<string, unknown>
+}
+
+/**
+ * Trailing GitHub preview refresh job (webhook-storm coalescing). Scheduled when
+ * a webhook-driven `refreshLinkPreview` is dropped as debounced: the newest state
+ * would otherwise be lost until the next message edit. `processAfter` is set past
+ * the debounce window and the queue-message id is keyed on `(previewId, fetchedAt)`
+ * so a burst of deliveries collapses into ONE trailing refresh. The job re-runs
+ * `refreshLinkPreview`; if it debounces again (another refresh landed meanwhile),
+ * it reschedules once more on the fresh `fetchedAt`, converging when the storm ends.
+ */
+export interface GithubPreviewRefreshJobData {
+  workspaceId: string
+  previewId: string
+  /**
+   * Number of `fetch_empty` retries already made for this preview (GitHub 5xx /
+   * timeout / rate-limit breaker). 0/undefined on the first attempt; bounded
+   * trailing retries increment it up to a hard cap so a transient fetch failure
+   * can't permanently drop the webhook invalidation.
+   */
+  attempt?: number
+  /** Stable across one bounded fetch retry chain; fresh for a later outage cycle. */
+  retryCycleId?: string
+  /**
+   * Debounce-hop counter for a trailing refresh chain. 0/undefined on the bare
+   * `_vN` job scheduled by webhook-side senders (they coalesce on that id). When a
+   * trailing worker re-debounces at the SAME `refreshVersion` it reschedules with an
+   * incremented hop so the new message id (`_vN_h1`, `_vN_h2`, …) can't pkey-dedupe
+   * against the very row it just claimed under replica clock skew (PR #1358). Capped
+   * to stop an infinite skew loop.
+   */
+  hop?: number
+}
+
 export interface JobDataMap {
   [JobQueues.PERSONA_AGENT]: PersonaAgentJobData
   [JobQueues.NAMING_GENERATE]: NamingJobData
@@ -368,6 +423,8 @@ export interface JobDataMap {
   [JobQueues.CONTEXT_BAG_PRECOMPUTE]: ContextBagPrecomputeJobData
   [JobQueues.BACKFILL_PLAN]: BackfillPlanJobData
   [JobQueues.BACKFILL_CHUNK]: BackfillChunkJobData
+  [JobQueues.GITHUB_WEBHOOK_PROCESS]: GithubWebhookProcessJobData
+  [JobQueues.GITHUB_PREVIEW_REFRESH]: GithubPreviewRefreshJobData
 }
 
 /** Returns void on success, throws on error. */

@@ -137,6 +137,102 @@ describe("loadConfig github app configuration", () => {
     )
   })
 
+  test("requires a control-plane destination for regional GitHub in production", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "production"
+    process.env.USE_STUB_AUTH = "false"
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
+    process.env.WORKOS_API_KEY = "key"
+    process.env.WORKOS_CLIENT_ID = "client"
+    process.env.WORKOS_REDIRECT_URI = "https://app.example.com/callback"
+    process.env.WORKOS_COOKIE_PASSWORD = "password"
+    process.env.GITHUB_APP_ID = "12345"
+    process.env.GITHUB_APP_SLUG = "threa-prod"
+    process.env.GITHUB_APP_PRIVATE_KEY = "private-key"
+    process.env.WORKSPACE_INTEGRATIONS_SECRET = "test-secret"
+    process.env.REGION = "eu-north-1"
+
+    expect(() => loadConfig()).toThrow(
+      "CONTROL_PLANE_URL is required for a regional production backend with GitHub enabled"
+    )
+  })
+
+  test("throws when GitHub is enabled in production with neither control plane nor region", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "production"
+    process.env.USE_STUB_AUTH = "false"
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
+    process.env.WORKOS_API_KEY = "key"
+    process.env.WORKOS_CLIENT_ID = "client"
+    process.env.WORKOS_REDIRECT_URI = "https://app.example.com/callback"
+    process.env.WORKOS_COOKIE_PASSWORD = "password"
+    process.env.GITHUB_APP_ID = "12345"
+    process.env.GITHUB_APP_SLUG = "threa-prod"
+    process.env.GITHUB_APP_PRIVATE_KEY = "private-key"
+    process.env.WORKSPACE_INTEGRATIONS_SECRET = "test-secret"
+
+    expect(() => loadConfig()).toThrow(
+      "REGION and CONTROL_PLANE_URL are required for a production backend with GitHub enabled"
+    )
+  })
+
+  test("keeps the precise REGION-missing message when only CONTROL_PLANE_URL is set", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "production"
+    process.env.USE_STUB_AUTH = "false"
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
+    process.env.WORKOS_API_KEY = "key"
+    process.env.WORKOS_CLIENT_ID = "client"
+    process.env.WORKOS_REDIRECT_URI = "https://app.example.com/callback"
+    process.env.WORKOS_COOKIE_PASSWORD = "password"
+    process.env.GITHUB_APP_ID = "12345"
+    process.env.GITHUB_APP_SLUG = "threa-prod"
+    process.env.GITHUB_APP_PRIVATE_KEY = "private-key"
+    process.env.WORKSPACE_INTEGRATIONS_SECRET = "test-secret"
+    process.env.CONTROL_PLANE_URL = "https://cp.example.com"
+
+    expect(() => loadConfig()).toThrow("REGION is required when CONTROL_PLANE_URL is set")
+  })
+
+  test("boots when GitHub is enabled in production with both control plane and region", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "production"
+    process.env.USE_STUB_AUTH = "false"
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
+    process.env.WORKOS_API_KEY = "key"
+    process.env.WORKOS_CLIENT_ID = "client"
+    process.env.WORKOS_REDIRECT_URI = "https://app.example.com/callback"
+    process.env.WORKOS_COOKIE_PASSWORD = "password"
+    process.env.GITHUB_APP_ID = "12345"
+    process.env.GITHUB_APP_SLUG = "threa-prod"
+    process.env.GITHUB_APP_PRIVATE_KEY = "private-key"
+    process.env.WORKSPACE_INTEGRATIONS_SECRET = "test-secret"
+    process.env.REGION = "eu-north-1"
+    process.env.CONTROL_PLANE_URL = "https://cp.example.com"
+    process.env.INTERNAL_API_KEY = "internal-key"
+    process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
+
+    const config = loadConfig()
+    expect(config.github.enabled).toBe(true)
+    expect(config.region).toBe("eu-north-1")
+    expect(config.controlPlaneUrl).toBe("https://cp.example.com")
+  })
+
+  test("boots when GitHub is enabled outside production with neither control plane nor region", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.GITHUB_APP_ID = "12345"
+    process.env.GITHUB_APP_SLUG = "threa-dev"
+    process.env.GITHUB_APP_PRIVATE_KEY = "private-key"
+    process.env.WORKSPACE_INTEGRATIONS_SECRET = "test-secret"
+
+    const config = loadConfig()
+    expect(config.github.enabled).toBe(true)
+    expect(config.region).toBeNull()
+    expect(config.controlPlaneUrl).toBeNull()
+  })
+
   test("normalizes escaped newlines in the GitHub App private key", () => {
     setBaseEnv()
     process.env.NODE_ENV = "development"

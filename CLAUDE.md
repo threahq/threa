@@ -164,6 +164,11 @@ Write paths must be race-safe:
 - Avoid `withClient` for single-query paths; pass `pool` directly (INV-30)
 - Do not keep DB connections open during slow AI/network work (INV-41)
 - Do not store transient workflow state on core domain entities; use tracking tables (INV-57)
+- A check-then-act guard must pin the identity/generation observed at read (the row's id, version, or external key), not just a status flag — status-only guards let stale work clobber a row that was replaced in between (INV-20)
+
+Optimistic concurrency uses integer version columns, never timestamp equality (INV-66). PostgreSQL timestamps carry microseconds; a JS `Date` round-trips at millisecond precision, so a CAS like `WHERE fetched_at = $expected` (or `IS NOT DISTINCT FROM`) is false on virtually every uncontended write once the value has crossed the driver boundary — the write path looks tested and works never. Add an `INTEGER` version column, increment it on every write, and CAS on the version (`scheduled_messages.version` and `link_previews.refresh_version` are the references). Tests for any timestamp- or version-gated predicate must produce the compared value through the repository's own `NOW()`-writing code path and read it back through the repository — hand-crafted `.000Z` fixture timestamps mask exactly this bug.
+
+Backfills activate via migration, deploy-safely (INV-67). A backfill definition registered in code is inert until something enqueues its `backfill.plan` jobs — shipping the definition without the enqueue migration means existing rows never flow through the new path while every new-code test passes. Each new backfill ships an enqueue migration (precedent: `20260621120000_backfill_mention_actor_refs.sql`), and that migration sets `process_after = NOW() + interval` (≥10 minutes): the migration runs before old-code replicas cut over, and an old replica that claims the job throws `Unknown backfill` and burns its retries into the DLQ. `check:migrations` enforces the delay.
 
 Example: race-safe upsert instead of check-then-act.
 
@@ -324,7 +329,7 @@ When handling variants, colocate variant config and keep shared behavior on one 
 
 ## Quick Invariant Lookup
 
-- **Persistence and data integrity:** INV-1, INV-2, INV-3, INV-8, INV-17, INV-20, INV-30, INV-41, INV-50, INV-56, INV-57, INV-62
+- **Persistence and data integrity:** INV-1, INV-2, INV-3, INV-8, INV-17, INV-20, INV-30, INV-41, INV-50, INV-56, INV-57, INV-62, INV-66, INV-67
 - **Architecture and dependencies:** INV-4, INV-5, INV-6, INV-7, INV-9, INV-10, INV-11, INV-12, INV-13, INV-27, INV-34, INV-35, INV-37, INV-51, INV-52
 - **API and backend contracts:** INV-31, INV-32, INV-33, INV-46, INV-55, INV-58, INV-64
 - **AI and eval discipline:** INV-16, INV-19, INV-28, INV-44, INV-45, INV-54, INV-65

@@ -1,6 +1,9 @@
 import { describe, it, expect, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import { GitHubClient, WorkspaceIntegrationService } from "./service"
+import { LinearApiError, LinearClient } from "./linear-client"
+import type { LinearIntegrationCredentials, LinearIntegrationMetadata } from "./linear-client"
+import type { WorkspaceIntegrationRecord } from "./repository"
 import type { GitHubAppConfig, LinearOAuthConfig } from "../../lib/env"
 
 const githubDisabled: GitHubAppConfig = {
@@ -89,6 +92,132 @@ describe("getGithubClient unauthenticated fallback", () => {
     })
     const client = await service.getGithubClient("ws_1", { allowUnauthenticatedFallback: true })
     expect(client).toBeNull()
+  })
+})
+
+describe("GitHubClient captureRateLimit is best-effort", () => {
+  const credentials = {
+    installationId: 42,
+    accessToken: "at",
+    tokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  }
+  const metadata = {
+    organizationName: "acme",
+    repositorySelection: "all" as const,
+    permissions: {},
+    repositories: [],
+    rateLimitRemaining: null,
+    rateLimitResetAt: null,
+  }
+  const record = {
+    id: "wsi_1",
+    workspaceId: "ws_1",
+    provider: "github" as const,
+    status: "active" as const,
+    credentials: {},
+    metadata: {},
+    installedBy: "user_1",
+    installationId: "42",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }
+
+  it("a rate-limit DB failure during a 401 does not replace the GitHub error nor skip the refresh", async () => {
+    const service = new WorkspaceIntegrationService({
+      pool: explodingPool,
+      github: githubEnabled,
+      linear: linearDisabled,
+    })
+
+    // The rate-limit persist blows up (DB down). Without the best-effort wrapper
+    // this would propagate from the catch path and pre-empt the 401 branch.
+    const updateSpy = spyOn(service, "updateGithubRateLimitMetadata").mockRejectedValue(new Error("DB down"))
+    // Refresh fails, so the flow rethrows the ORIGINAL GitHub 401 (proving the
+    // 401 branch was reached — the retry path executed — and the DB error was
+    // swallowed rather than surfaced).
+    const refreshSpy = spyOn(service, "refreshGithubCredentialsForClient").mockResolvedValue(null)
+
+    const client = new GitHubClient(service, "ws_1", record, credentials, metadata)
+    const githubError = Object.assign(new Error("Unauthorized"), {
+      status: 401,
+      response: { headers: { "x-ratelimit-remaining": "50", "x-ratelimit-reset": "1234567890" } },
+    })
+    ;(client as unknown as { octokit: { request: () => Promise<unknown> } }).octokit = {
+      request: async () => {
+        throw githubError
+      },
+    }
+
+    await expect(client.request("GET /x")).rejects.toBe(githubError)
+    expect(updateSpy).toHaveBeenCalled()
+    expect(refreshSpy).toHaveBeenCalled()
+  })
+})
+
+describe("LinearClient captureRateLimit is best-effort", () => {
+  const credentials: LinearIntegrationCredentials = {
+    accessToken: "at",
+    refreshToken: "rt",
+    tokenType: "Bearer",
+    tokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    scope: "read",
+    actor: "app",
+  }
+  const metadata: LinearIntegrationMetadata = {
+    organizationId: "org_1",
+    organizationName: "acme",
+    organizationUrlKey: "acme",
+    authorizedUser: null,
+    rateLimit: {
+      requestsRemaining: null,
+      requestsResetAt: null,
+      complexityRemaining: null,
+      complexityResetAt: null,
+    },
+  }
+  const record: WorkspaceIntegrationRecord = {
+    id: "wsi_1",
+    workspaceId: "ws_1",
+    provider: "linear",
+    status: "active",
+    credentials: {},
+    metadata: {},
+    installedBy: "user_1",
+    installationId: "org_1",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }
+
+  it("a rate-limit DB failure during a 401 does not replace the Linear error nor skip the refresh", async () => {
+    const service = new WorkspaceIntegrationService({
+      pool: explodingPool,
+      github: githubDisabled,
+      linear: linearDisabled,
+    })
+
+    // The rate-limit persist blows up (DB down). Without the best-effort wrapper
+    // this would propagate from captureRateLimit and pre-empt the 401 branch.
+    const updateSpy = spyOn(service, "updateLinearRateLimitMetadata").mockRejectedValue(new Error("DB down"))
+    // Refresh fails, so the flow throws the AUTHENTICATION_ERROR — proving the 401
+    // branch was reached (the retry path executed) and the DB error was swallowed.
+    const refreshSpy = spyOn(service, "refreshLinearCredentialsForPreview").mockResolvedValue(null)
+
+    // 401 with rate-limit headers that differ from the all-null metadata, so the
+    // persist branch fires before the 401 refresh branch runs.
+    const fetchImpl = (async () =>
+      new Response(null, {
+        status: 401,
+        headers: {
+          "x-ratelimit-requests-remaining": "10",
+          "x-ratelimit-requests-reset": "1234567890",
+        },
+      })) as unknown as typeof fetch
+
+    const client = new LinearClient(service, "ws_1", record, credentials, metadata, fetchImpl)
+
+    await expect(client.request("query { viewer { id } }")).rejects.toBeInstanceOf(LinearApiError)
+    expect(updateSpy).toHaveBeenCalled()
+    expect(refreshSpy).toHaveBeenCalled()
   })
 })
 

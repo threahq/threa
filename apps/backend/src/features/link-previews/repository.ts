@@ -37,6 +37,14 @@ export interface LinkPreview {
   targetConversationId: string | null
   targetDelegationId: string | null
   fetchedAt: Date | null
+  /**
+   * Optimistic-concurrency counter for the webhook force-refresh path. Every
+   * metadata write increments it; a refresh captures it pre-fetch and passes it
+   * back as the compare-and-set expectation (`overwriteMetadata` under
+   * `expectedRefreshVersion`). Replaces the old `fetched_at` CAS, which the
+   * TIMESTAMPTZ-vs-Date precision mismatch broke.
+   */
+  refreshVersion: number
   expiresAt: Date | null
   createdAt: Date
 }
@@ -96,6 +104,7 @@ function mapRow(row: Record<string, unknown>): LinkPreview {
     targetConversationId: (row.target_conversation_id as string | null) ?? null,
     targetDelegationId: (row.target_delegation_id as string | null) ?? null,
     fetchedAt: row.fetched_at ? new Date(row.fetched_at as string) : null,
+    refreshVersion: (row.refresh_version as number | null) ?? 0,
     expiresAt: row.expires_at ? new Date(row.expires_at as string) : null,
     createdAt: new Date(row.created_at as string),
   }
@@ -173,7 +182,7 @@ export const LinkPreviewRepository = {
       sql`UPDATE link_previews
           SET title = $3, description = $4, image_url = $5, favicon_url = $6,
               site_name = $7, content_type = $8, preview_type = $9, preview_data = $10::jsonb,
-              status = $11, fetched_at = NOW(), expires_at = $12
+              status = $11, fetched_at = NOW(), refresh_version = refresh_version + 1, expires_at = $12
           WHERE workspace_id = $1 AND id = $2 AND status = 'pending'
           RETURNING *`,
       [
@@ -194,18 +203,40 @@ export const LinkPreviewRepository = {
     return result.rows.length > 0 ? mapRow(result.rows[0]) : null
   },
 
+  /**
+   * Unconditional overwrite of an already-fetched row, always bumping
+   * `refresh_version`. When `options` carries an `expectedRefreshVersion` key the
+   * write becomes a compare-and-set on that version: the webhook-refresh path
+   * reads `refresh_version` before its out-of-transaction network fetch and passes
+   * it here so a slower concurrent refresh (or a message-path write that already
+   * advanced the version) can't blind-overwrite a newer write. A CAS miss returns
+   * null (0 rows) without writing — the caller re-reads to distinguish a conflict
+   * from a vanished row. Callers that omit the key (message-driven extract path)
+   * keep the unconditional semantics.
+   *
+   * An integer version replaces the former `fetched_at` CAS: TIMESTAMPTZ stores
+   * microseconds but pg maps `fetched_at` to a millisecond JS `Date`, so a
+   * read-back value never equalled the stored one and every uncontended refresh
+   * spuriously conflicted.
+   */
   async overwriteMetadata(
     querier: Querier,
     workspaceId: string,
     id: string,
-    params: UpdateLinkPreviewParams
+    params: UpdateLinkPreviewParams,
+    options?: { expectedRefreshVersion?: number }
   ): Promise<LinkPreview | null> {
+    // A single predicate handles both modes so the SET clause isn't duplicated:
+    // when CAS is off, `$13` is true and the guard is a no-op; when CAS is on,
+    // `$13` is false and the write requires `refresh_version` to equal `$14`.
+    const cas = options !== undefined && "expectedRefreshVersion" in options
     const result = await querier.query(
       sql`UPDATE link_previews
           SET title = $3, description = $4, image_url = $5, favicon_url = $6,
               site_name = $7, content_type = $8, preview_type = $9, preview_data = $10::jsonb,
-              status = $11, fetched_at = NOW(), expires_at = $12
+              status = $11, fetched_at = NOW(), refresh_version = refresh_version + 1, expires_at = $12
           WHERE workspace_id = $1 AND id = $2
+            AND ($13::boolean OR refresh_version = $14)
           RETURNING *`,
       [
         workspaceId,
@@ -220,6 +251,8 @@ export const LinkPreviewRepository = {
         params.previewData ? JSON.stringify(params.previewData) : null,
         params.status,
         params.expiresAt ?? null,
+        !cas,
+        cas ? (options!.expectedRefreshVersion ?? 0) : null,
       ]
     )
     return result.rows.length > 0 ? mapRow(result.rows[0]) : null
@@ -245,6 +278,44 @@ export const LinkPreviewRepository = {
           ON CONFLICT (workspace_id, message_id, link_preview_id) DO NOTHING`,
       [workspaceId, messageId, linkPreviewId, position]
     )
+  },
+
+  /**
+   * Every completed preview row whose normalized URL starts with `prefix`, for
+   * webhook-driven refresh matching. `prefix` MUST already be LIKE-escaped by the
+   * caller (see `escapeLikePattern`); the trailing `%` and `ESCAPE` are applied
+   * here so a repo name containing `_`/`%` can't widen the match. The caller
+   * re-validates each row (parse the URL, compare owner/repo/number) — the prefix
+   * is only a coarse DB-side narrowing.
+   *
+   * `ILIKE` (not `LIKE`): the caller's identity re-check lowercases owner/repo
+   * (GitHub treats them case-insensitively), but `normalizeUrl` preserves path
+   * casing, so a preview stored from a pasted non-canonical URL (`.../React/...`)
+   * keeps that casing in `normalized_url` while a webhook derives the canonical
+   * lowercase base (`.../react/...`). A case-sensitive prefix would drop the row
+   * here before the case-insensitive re-check could confirm it, so this step must
+   * be case-insensitive to agree with the re-check.
+   */
+  async findByNormalizedUrlPrefix(
+    querier: Querier,
+    workspaceId: string,
+    escapedPrefix: string
+  ): Promise<LinkPreview[]> {
+    const result = await querier.query(
+      sql`SELECT * FROM link_previews
+          WHERE workspace_id = $1 AND status = 'completed' AND normalized_url ILIKE $2 ESCAPE '\\'`,
+      [workspaceId, `${escapedPrefix}%`]
+    )
+    return result.rows.map(mapRow)
+  },
+
+  /** Message ids currently linked to a preview row (reverse of `findByMessageId`). */
+  async findMessageIdsByPreviewId(querier: Querier, workspaceId: string, linkPreviewId: string): Promise<string[]> {
+    const result = await querier.query(
+      sql`SELECT message_id FROM message_link_previews WHERE workspace_id = $1 AND link_preview_id = $2`,
+      [workspaceId, linkPreviewId]
+    )
+    return result.rows.map((row) => row.message_id as string)
   },
 
   async findByMessageId(querier: Querier, workspaceId: string, messageId: string): Promise<LinkPreview[]> {

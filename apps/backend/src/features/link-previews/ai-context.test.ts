@@ -24,6 +24,7 @@ function preview(overrides: Partial<LinkPreview> = {}): LinkPreview {
     targetConversationId: null,
     targetDelegationId: null,
     fetchedAt: new Date(),
+    refreshVersion: 0,
     expiresAt: null,
     createdAt: new Date(),
     ...overrides,

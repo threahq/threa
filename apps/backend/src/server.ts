@@ -27,8 +27,13 @@ import {
   EnclaveDispatchHandler,
 } from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
+import { createGithubWebhookWorker, createGithubPreviewRefreshWorker } from "./features/github-webhooks"
 import { GiphyService } from "./features/giphy"
-import { WorkspaceIntegrationService } from "./features/workspace-integrations"
+import {
+  WorkspaceIntegrationService,
+  GithubRouteSyncHandler,
+  registerGithubInstallationBackfill,
+} from "./features/workspace-integrations"
 import { WorkspaceAuthzService } from "./features/workspace-authz"
 import {
   WorkspaceService,
@@ -641,6 +646,7 @@ export async function startServer(): Promise<ServerInstance> {
     pool,
     github: config.github,
     linear: config.linear,
+    region: config.region,
   })
   const linkPreviewService = new LinkPreviewService({ pool, streamService, memoExplorerService, delegationService })
   const giphyService = new GiphyService({ config: config.giphy })
@@ -714,6 +720,7 @@ export async function startServer(): Promise<ServerInstance> {
     apiKeyService,
     botChannelService,
     linkPreviewService,
+    jobQueue,
     giphyService,
     workspaceIntegrationService,
     workspaceAuthzService,
@@ -1229,6 +1236,31 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
+  // GitHub webhook worker — resolves workspaces by installation, force-refreshes
+  // matching link previews via GitHub fetch (fast HTTP, not LLM-bound)
+  const githubWebhookWorker = createGithubWebhookWorker({
+    pool,
+    linkPreviewService,
+    workspaceIntegrationService,
+    jobQueue,
+  })
+  jobQueue.registerHandler(JobQueues.GITHUB_WEBHOOK_PROCESS, githubWebhookWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
+  // Trailing GitHub preview refresh — coalesces a webhook storm's dropped
+  // (debounced) refresh into one refresh once the debounce window clears
+  const githubPreviewRefreshWorker = createGithubPreviewRefreshWorker({
+    linkPreviewService,
+    workspaceIntegrationService,
+    jobQueue,
+  })
+  jobQueue.registerHandler(JobQueues.GITHUB_PREVIEW_REFRESH, githubPreviewRefreshWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
   // Saved message reminder worker — delegates to service, no long I/O
   const savedReminderWorker = createSavedReminderWorker({ savedMessagesService })
   jobQueue.registerHandler(JobQueues.SAVED_REMINDER_FIRE, savedReminderWorker, {
@@ -1246,6 +1278,7 @@ export async function startServer(): Promise<ServerInstance> {
   // Generic backfill framework. Register definitions BEFORE the workers can run
   // so a redelivered plan/chunk job can always resolve its definition by name.
   registerMentionBackfill()
+  registerGithubInstallationBackfill({ workspaceIntegrationService })
   jobQueue.registerHandler(JobQueues.BACKFILL_PLAN, createBackfillPlanWorker({ pool }), {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
@@ -1349,6 +1382,16 @@ export async function startServer(): Promise<ServerInstance> {
     controlPlaneClient && config.region
       ? new InvitationShadowSyncHandler(pool, controlPlaneClient, config.region)
       : null
+  // Registered whenever a region is set (matching the service's event-emit gate),
+  // so every `github_route:*` event has a consumer. The service emits those events
+  // on region alone, so a null control-plane client leaves the handler a no-op that
+  // silently swallows emitted events — warn so the misconfiguration is visible.
+  if (config.region && !controlPlaneClient) {
+    logger.warn(
+      "Region is set but no control-plane client is configured (missing controlPlaneUrl/internalApiKey) — GitHub route-sync events will be swallowed and installations won't register webhook routes"
+    )
+  }
+  const githubRouteSyncHandler = config.region ? new GithubRouteSyncHandler(pool, controlPlaneClient) : null
   const outboxHandlers: (OutboxHandler & { ensureListener(): Promise<void> })[] = [
     broadcastHandler,
     companionHandler,
@@ -1370,6 +1413,7 @@ export async function startServer(): Promise<ServerInstance> {
     ...(enclaveDispatchHandler ? [enclaveDispatchHandler] : []),
     ...(pushNotificationHandler ? [pushNotificationHandler] : []),
     ...(shadowSyncHandler ? [shadowSyncHandler] : []),
+    ...(githubRouteSyncHandler ? [githubRouteSyncHandler] : []),
   ]
 
   for (const handler of outboxHandlers) {

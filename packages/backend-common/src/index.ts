@@ -122,6 +122,8 @@ export {
   agentConfigOverrideId,
   personaConfigDraftId,
   personaConfigRevisionId,
+  integrationRouteId,
+  githubWebhookDeliveryId,
 } from "./id"
 export {
   parseCookies,

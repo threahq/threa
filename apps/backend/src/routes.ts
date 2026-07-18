@@ -50,6 +50,7 @@ import {
   createPersonaConfigHandlers,
 } from "./features/agents"
 import { createLinkPreviewHandlers } from "./features/link-previews"
+import { createGithubWebhookHandlers } from "./features/github-webhooks"
 import { createGiphyHandlers } from "./features/giphy"
 import { createWorkspaceIntegrationHandlers } from "./features/workspace-integrations"
 import {
@@ -110,6 +111,7 @@ import type { UserE2eKeysService } from "./features/user-e2e-keys"
 import type { AvatarService } from "./features/workspaces"
 import type { BotChannelService } from "./features/api-keys"
 import type { LinkPreviewService } from "./features/link-previews"
+import type { QueueManager } from "./lib/queue"
 import type { GiphyService } from "./features/giphy"
 import type { WorkspaceIntegrationService } from "./features/workspace-integrations"
 import type { WorkosOrgService } from "@threa/backend-common"
@@ -162,6 +164,7 @@ interface Dependencies {
   apiKeyService: ApiKeyService
   botChannelService: BotChannelService
   linkPreviewService: LinkPreviewService
+  jobQueue: QueueManager
   giphyService: GiphyService
   workspaceIntegrationService: WorkspaceIntegrationService
   workspaceAuthzService: WorkspaceAuthzService
@@ -224,6 +227,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     apiKeyService,
     botChannelService,
     linkPreviewService,
+    jobQueue,
     giphyService,
     workspaceIntegrationService,
     workspaceAuthzService,
@@ -352,6 +356,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   if (internalApiKey) {
     const internalAuth = createInternalAuthMiddleware(internalApiKey)
     const internal = createInternalHandlers({ workspaceService, invitationService })
+    const githubWebhook = createGithubWebhookHandlers({ jobQueue })
 
     app.post("/internal/workspaces", internalAuth, internal.createWorkspace)
     app.post("/internal/invitations/:id/accept", internalAuth, internal.acceptInvitation)
@@ -359,6 +364,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)
     app.post("/internal/feature-flags", internalAuth, featureFlags.sync)
     app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
+    app.post("/internal/github/webhook-events", internalAuth, githubWebhook.ingest)
   }
 
   // Enclave runtime registry — gated by the dedicated enclave credential

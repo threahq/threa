@@ -28,6 +28,8 @@ type RegionsMap = Record<string, RegionConfig>
 /** Routes that should go to the control-plane (auth, workspace collection, regions) */
 const AUTH_ROUTE_RE = /^\/api\/auth\//
 const INTEGRATION_CALLBACK_RE = /^\/api\/integrations\/[^/]+\/callback\/?$/
+/** GitHub App webhook ingress (one URL for all installations) — control-plane only, POST */
+const GITHUB_WEBHOOK_RE = /^\/api\/integrations\/github\/webhook\/?$/
 const WORKSPACES_COLLECTION_RE = /^\/api\/workspaces\/?$/
 const REGIONS_ROUTE_RE = /^\/api\/regions\/?$/
 /** Multi-account switcher API (list/resolve/switch/remove) — control-plane only */
@@ -135,6 +137,7 @@ export default {
           AUTH_ROUTE_RE.test(path) ||
           ACCOUNTS_ROUTE_RE.test(path) ||
           INTEGRATION_CALLBACK_RE.test(path) ||
+          (GITHUB_WEBHOOK_RE.test(path) && method === "POST") ||
           (WORKSPACES_COLLECTION_RE.test(path) && (method === "GET" || method === "POST")) ||
           REGIONS_ROUTE_RE.test(path) ||
           DEV_AUTH_ROUTE_RE.test(path) ||
@@ -182,6 +185,7 @@ export default {
         AUTH_ROUTE_RE.test(path) ||
         ACCOUNTS_ROUTE_RE.test(path) ||
         INTEGRATION_CALLBACK_RE.test(path) ||
+        (GITHUB_WEBHOOK_RE.test(path) && method === "POST") ||
         (WORKSPACES_COLLECTION_RE.test(path) && (method === "GET" || method === "POST")) ||
         REGIONS_ROUTE_RE.test(path) ||
         DEV_AUTH_ROUTE_RE.test(path) ||

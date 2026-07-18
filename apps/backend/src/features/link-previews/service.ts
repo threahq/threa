@@ -22,7 +22,7 @@ import { ConversationRepository } from "../conversations"
 import type { DelegationService } from "../delegations"
 import type { MemoExplorerService } from "../memos"
 import { resolveUserAccessibleStreamIds } from "../search"
-import { OutboxRepository } from "../../lib/outbox"
+import { OutboxRepository, type LinkPreviewReadyOutboxPayload } from "../../lib/outbox"
 import { extractUrls, normalizeUrl, detectContentType, parseInAppLink, type InAppLinkRef } from "./url-utils"
 import { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"
 
@@ -48,6 +48,18 @@ export interface LinkPreviewServiceDeps {
   memoExplorerService: MemoExplorerService
   delegationService: DelegationService
 }
+
+/**
+ * Outcome of `applyRefreshedMetadata` (always compare-and-set — webhook-refresh
+ * path). `applied: false` means the write matched 0 rows because a concurrent
+ * refresh advanced `refresh_version` or the row vanished. `refreshVersion` carries
+ * the row's current version (0 when gone) so the caller can re-key a coalesced
+ * retry on the winner's version; `fetchedAt` carries the winner's fetch time for the
+ * debounce-timing math.
+ */
+export type ApplyRefreshedMetadataResult =
+  | { applied: true }
+  | { applied: false; fetchedAt: Date | null; refreshVersion: number }
 
 /**
  * The target columns shared by both resolve entry points: a stored `LinkPreview`
@@ -273,6 +285,59 @@ export class LinkPreviewService {
           previews: [],
         })
       }
+    })
+  }
+
+  /**
+   * Overwrite one already-fetched preview row with freshly-fetched metadata and
+   * broadcast the change to every message that renders it (INV-6: service owns
+   * the transaction). Used by the webhook refresh path — the row is re-fetched
+   * outside any transaction first (INV-41), then this commits the overwrite and
+   * the `link_preview:ready` events together. Each affected message gets its FULL
+   * current completed-preview set (the frontend replaces `linkPreviews` wholesale
+   * on `link_preview:ready`), grouped one event per stream/message.
+   */
+  async applyRefreshedMetadata(
+    workspaceId: string,
+    previewId: string,
+    metadata: UpdateLinkPreviewParams,
+    options: { expectedRefreshVersion: number }
+  ): Promise<ApplyRefreshedMetadataResult> {
+    return withTransaction(this.deps.pool, async (client) => {
+      const updated = await LinkPreviewRepository.overwriteMetadata(client, workspaceId, previewId, metadata, options)
+      if (!updated) {
+        // CAS matched 0 rows: either a concurrent write advanced `refresh_version`
+        // (conflict — re-read to report its current version) or the row is gone.
+        const current = await LinkPreviewRepository.findById(client, workspaceId, previewId)
+        return { applied: false, fetchedAt: current?.fetchedAt ?? null, refreshVersion: current?.refreshVersion ?? 0 }
+      }
+
+      const messageIds = await LinkPreviewRepository.findMessageIdsByPreviewId(client, workspaceId, previewId)
+      if (messageIds.length === 0) return { applied: true }
+
+      const streamIds = await MessageRepository.findStreamIdsByIds(client, messageIds)
+      const previewsByMessage = await LinkPreviewRepository.findByMessageIds(client, workspaceId, messageIds)
+
+      // Build every message's full completed-preview set first, then a single
+      // batch insert (INV-56) rather than one outbox INSERT per linked message.
+      const readyEvents: Array<{ eventType: "link_preview:ready"; payload: LinkPreviewReadyOutboxPayload }> = []
+      for (const messageId of messageIds) {
+        const streamId = streamIds.get(messageId)
+        if (!streamId) continue
+
+        const previews = (previewsByMessage.get(messageId) ?? [])
+          .filter((preview) => preview.status === "completed")
+          .map((preview, index) => toLinkPreviewSummary(preview, index))
+
+        readyEvents.push({
+          eventType: "link_preview:ready",
+          payload: { workspaceId, streamId, messageId, previews },
+        })
+      }
+      if (readyEvents.length > 0) {
+        await OutboxRepository.insertMany(client, readyEvents)
+      }
+      return { applied: true }
     })
   }
 

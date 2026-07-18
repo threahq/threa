@@ -71,7 +71,72 @@ const CONTENT_RULES: readonly ContentRule[] = [
   },
 ]
 
-/** INV-1 / INV-3: scan executable DDL for banned constructs. */
+/**
+ * INV-67: a migration that enqueues `backfill.plan` jobs must delay them
+ * (`process_after = NOW() + interval ...`). The definition it names ships in the
+ * same release, so an old-code replica that claims the job during a rolling
+ * deploy throws `Unknown backfill` and burns its retries into the DLQ within
+ * seconds — long before new code boots. Grandfathered: the mention backfill
+ * predates the rule (its jobs have long since drained).
+ */
+const INV67_GRANDFATHERED = new Set(["20260621120000_backfill_mention_actor_refs.sql"])
+
+/** Minutes represented by a SQL `INTERVAL '<n> <unit>'` literal, or 0 if unparseable. */
+function intervalMinutes(literal: string): number {
+  const match = literal.match(/^\s*(\d+(?:\.\d+)?)\s*(minute|minutes|hour|hours|day|days)\s*$/i)
+  if (!match) return 0
+  const value = Number(match[1])
+  const unit = match[2].toLowerCase()
+  if (unit.startsWith("minute")) return value
+  if (unit.startsWith("hour")) return value * 60
+  return value * 60 * 24
+}
+
+/**
+ * True when the `queue_messages` INSERT's OWN `process_after` expression is
+ * `NOW() + INTERVAL '<n>'` with n >= 10 minutes. An interval elsewhere in the
+ * migration must not satisfy the rule, so this locates `process_after` in the
+ * INSERT's column list and inspects the value expression at the same position
+ * (splitting SELECT/VALUES expressions at paren-depth 0).
+ */
+function hasDelayedProcessAfter(sql: string): boolean {
+  const insertMatch = sql.match(/INSERT\s+INTO\s+queue_messages\s*\(([\s\S]*?)\)\s*(VALUES|SELECT)\s([\s\S]*?)(?:;|$)/i)
+  if (!insertMatch) return false
+  const columns = insertMatch[1].split(",").map((c) => c.trim().toLowerCase())
+  const processAfterIndex = columns.indexOf("process_after")
+  if (processAfterIndex === -1) return false
+
+  let body = insertMatch[3]
+  if (insertMatch[2].toUpperCase() === "VALUES") {
+    const paren = body.match(/\(([\s\S]*?)\)\s*(?:,|$)/)
+    if (!paren) return false
+    body = paren[1]
+  } else {
+    // SELECT list ends at the FROM clause (if any).
+    body = body.split(/\bFROM\b/i)[0]
+  }
+
+  const expressions: string[] = []
+  let depth = 0
+  let current = ""
+  for (const char of body) {
+    if (char === "(") depth++
+    if (char === ")") depth--
+    if (char === "," && depth === 0) {
+      expressions.push(current)
+      current = ""
+      continue
+    }
+    current += char
+  }
+  expressions.push(current)
+
+  const expr = expressions[processAfterIndex]?.trim() ?? ""
+  const delay = expr.match(/^NOW\(\)\s*\+\s*INTERVAL\s*'([^']+)'$/i)
+  return delay !== null && intervalMinutes(delay[1]) >= 10
+}
+
+/** INV-1 / INV-3 / INV-67: scan executable SQL for banned constructs. */
 async function checkContent(migrations: string[]): Promise<string[]> {
   const violations: string[] = []
   for (const path of migrations) {
@@ -80,6 +145,12 @@ async function checkContent(migrations: string[]): Promise<string[]> {
       if (rule.pattern.test(sql)) {
         violations.push(`  ❌ ${path} — ${rule.inv}: ${rule.message}`)
       }
+    }
+    const filename = path.split("/").pop() ?? path
+    if (/'backfill\.plan'/.test(sql) && !INV67_GRANDFATHERED.has(filename) && !hasDelayedProcessAfter(sql)) {
+      violations.push(
+        `  ❌ ${path} — INV-67: backfill.plan enqueues must delay process_after by >= 10 minutes (NOW() + interval '10 minutes') to survive a rolling deploy.`
+      )
     }
   }
   return violations

@@ -4,6 +4,9 @@ import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
 import { workspaceIntegrationId } from "../../lib/id"
 import type { GitHubAppConfig, LinearOAuthConfig } from "../../lib/env"
+import { withTransaction } from "../../db"
+import type { Querier } from "../../db"
+import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import {
   permissionsForRole,
@@ -25,7 +28,11 @@ import {
   verifyGithubInstallState,
   verifyLinearInstallState,
 } from "./crypto"
-import { WorkspaceIntegrationRepository, type WorkspaceIntegrationRecord } from "./repository"
+import {
+  WorkspaceIntegrationRepository,
+  type UpsertWorkspaceIntegrationParams,
+  type WorkspaceIntegrationRecord,
+} from "./repository"
 import {
   LinearClient,
   LinearGraphQLEndpoint,
@@ -133,24 +140,32 @@ export class GitHubClient {
     }
   }
 
+  // Best-effort telemetry: a persistence failure here must never propagate.
+  // `requestInternal` calls this on the error path BEFORE the 401-refresh branch,
+  // so a throw would replace the original GitHub error and skip the refresh retry.
   private async captureRateLimit(headers: GitHubApiHeaders | undefined): Promise<void> {
-    // Anonymous clients have no integration record to persist against, and their
-    // rate-limit headers are per-IP rather than workspace state.
-    if (!headers || !this.metadata) return
-    const remaining = parseIntegerHeader(headers["x-ratelimit-remaining"])
-    const resetSeconds = parseIntegerHeader(headers["x-ratelimit-reset"])
-    const resetAt = resetSeconds ? new Date(resetSeconds * 1000).toISOString() : null
+    try {
+      // Anonymous clients have no integration record to persist against, and their
+      // rate-limit headers are per-IP rather than workspace state.
+      if (!headers || !this.metadata || !this.credentials) return
+      const remaining = parseIntegerHeader(headers["x-ratelimit-remaining"])
+      const resetSeconds = parseIntegerHeader(headers["x-ratelimit-reset"])
+      const resetAt = resetSeconds ? new Date(resetSeconds * 1000).toISOString() : null
 
-    if (remaining === this.metadata.rateLimitRemaining && resetAt === this.metadata.rateLimitResetAt) {
-      return
+      if (remaining === this.metadata.rateLimitRemaining && resetAt === this.metadata.rateLimitResetAt) {
+        return
+      }
+
+      this.metadata = await this.service.updateGithubRateLimitMetadata(
+        this.workspaceId,
+        this.metadata,
+        String(this.credentials.installationId),
+        remaining,
+        resetAt
+      )
+    } catch (error) {
+      log.warn({ err: error, workspaceId: this.workspaceId }, "GitHub rate-limit capture failed; continuing")
     }
-
-    this.metadata = await this.service.updateGithubRateLimitMetadata(
-      this.workspaceId,
-      this.metadata,
-      remaining,
-      resetAt
-    )
   }
 }
 
@@ -164,6 +179,10 @@ interface WorkspaceIntegrationServiceDeps {
   pool: Pool
   github: GitHubAppConfig
   linear: LinearOAuthConfig
+  // This region's routing key, stamped into the durable `github_route:*` outbox
+  // events that `GithubRouteSyncHandler` drains into the control plane. Null in
+  // local single-region dev (no control plane) — the events are then not emitted.
+  region?: string | null
 }
 
 export class WorkspaceIntegrationService {
@@ -239,11 +258,170 @@ export class WorkspaceIntegrationService {
   }
 
   async disconnectGithubIntegration(workspaceId: string): Promise<void> {
-    await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.GITHUB, {
-      status: WorkspaceIntegrationStatuses.INACTIVE,
-      credentials: {},
-      metadata: {},
+    const record = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.GITHUB
+    )
+    // Resolve the installation id from the pre-clear row so the unregister event
+    // carries it even for a pre-backfill row whose only copy lives in the
+    // credentials this update wipes. Committing the event in the same transaction
+    // makes the order the clear runs in irrelevant — the id is already captured.
+    const installationId = record ? this.resolveInstallationId(workspaceId, record) : null
+
+    if (!record) return
+
+    await withTransaction(this.deps.pool, async (client) => {
+      const updated = await WorkspaceIntegrationRepository.update(
+        client,
+        workspaceId,
+        WorkspaceIntegrationProviders.GITHUB,
+        {
+          status: WorkspaceIntegrationStatuses.INACTIVE,
+          credentials: {},
+          metadata: {},
+        },
+        {
+          expectedInstallationId: installationId
+            ? { value: installationId, allowNull: record.installationId === null }
+            : { value: "", allowNull: true },
+        }
+      )
+      if (!updated) {
+        log.warn(
+          { workspaceId, installationId },
+          "GitHub disconnect matched 0 rows — a concurrent reinstall likely won the guarded update"
+        )
+        return
+      }
+      if (installationId) {
+        await this.emitRouteUnregister(client, workspaceId, installationId)
+      }
     })
+  }
+
+  /**
+   * All workspaces whose active GitHub integration belongs to `installationId`.
+   * The webhook worker uses this to fan a delivery out to every subscribed
+   * workspace (installs are per org, so this is normally >1 — INV-8 keeps
+   * workspace resolution regional).
+   */
+  async listActiveWorkspaceIdsForInstallation(installationId: string): Promise<string[]> {
+    const records = await WorkspaceIntegrationRepository.listActiveByInstallationId(
+      this.deps.pool,
+      WorkspaceIntegrationProviders.GITHUB,
+      installationId
+    )
+    return records.map((record) => record.workspaceId)
+  }
+
+  /**
+   * Tear down every workspace's GitHub integration for a deleted/suspended
+   * installation (webhook `installation` event). Per row, one transaction flips
+   * the status inactive and commits the durable `github_route:unregister` event
+   * so no further webhooks fan to this region.
+   *
+   * The status flip is guarded on the EXACT installation id (plus status='active')
+   * so a row that disconnected and reconnected to a DIFFERENT installation between
+   * the list and the write is left untouched — deleting installation A must never
+   * deactivate a row now on B. A guarded no-op emits no unregister event and is
+   * not counted as deactivated. The flip and the event are idempotent, so a retry
+   * after a partial failure is safe.
+   */
+  async deactivateInstallation(installationId: string): Promise<{ deactivatedWorkspaceIds: string[] }> {
+    const records = await WorkspaceIntegrationRepository.listActiveByInstallationId(
+      this.deps.pool,
+      WorkspaceIntegrationProviders.GITHUB,
+      installationId
+    )
+    const deactivatedWorkspaceIds: string[] = []
+    for (const record of records) {
+      const updated = await withTransaction(this.deps.pool, async (client) => {
+        const result = await WorkspaceIntegrationRepository.update(
+          client,
+          record.workspaceId,
+          WorkspaceIntegrationProviders.GITHUB,
+          { status: WorkspaceIntegrationStatuses.INACTIVE },
+          {
+            expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+            expectedInstallationId: { value: installationId, allowNull: false },
+          }
+        )
+        if (result) {
+          await this.emitRouteUnregister(client, record.workspaceId, installationId)
+        }
+        return result
+      })
+      if (updated) {
+        deactivatedWorkspaceIds.push(record.workspaceId)
+      }
+    }
+    return { deactivatedWorkspaceIds }
+  }
+
+  /**
+   * Backfill one workspace's GitHub reverse index: derive the installation id
+   * (plaintext column, else decrypt), persist it to the plaintext column, and
+   * register the CP route. Idempotent — safe to re-run. Returns the number of
+   * integrations processed (0 or 1). A row whose credentials can't be decrypted
+   * is skipped (processed 0) rather than retried forever; a route-registration
+   * failure throws so the backfill framework retries the chunk.
+   */
+  async backfillGithubRoute(workspaceId: string): Promise<{ processed: number }> {
+    const record = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.GITHUB
+    )
+    if (!record || record.status !== WorkspaceIntegrationStatuses.ACTIVE) {
+      return { processed: 0 }
+    }
+
+    const installationId = this.resolveInstallationId(workspaceId, record)
+    if (!installationId) {
+      log.warn({ workspaceId }, "GitHub installation id could not be resolved during backfill; skipping")
+      return { processed: 0 }
+    }
+
+    // One transaction persists the plaintext id and commits the register event.
+    // The update is guarded on status='active' (a concurrent disconnect flips it
+    // inactive) AND on the installation id being NULL-or-this-value (a reconnect
+    // to a DIFFERENT installation B leaves installation_id = B, which must not be
+    // clobbered back to A). Because the register event is ordered in the outbox,
+    // a disconnect that lands after this commit emits its unregister event after
+    // ours — the control plane converges without a post-register re-check.
+    const updated = await withTransaction(this.deps.pool, async (client) => {
+      const result = await WorkspaceIntegrationRepository.update(
+        client,
+        workspaceId,
+        WorkspaceIntegrationProviders.GITHUB,
+        { installationId },
+        {
+          expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+          expectedInstallationId: { value: installationId, allowNull: true },
+        }
+      )
+      if (result) {
+        await this.emitRouteRegister(client, workspaceId, installationId)
+      }
+      return result
+    })
+
+    return { processed: updated ? 1 : 0 }
+  }
+
+  /**
+   * The plaintext `installation_id` column is the source of truth for the
+   * reverse index; fall back to decrypting credentials for pre-backfill rows
+   * that predate the column.
+   */
+  private resolveInstallationId(workspaceId: string, record: WorkspaceIntegrationRecord): string | null {
+    if (record.installationId) return record.installationId
+    try {
+      return String(this.parseCredentials(workspaceId, record.credentials).installationId)
+    } catch {
+      return null
+    }
   }
 
   async syncGithubRepositories(workspaceId: string): Promise<GitHubWorkspaceIntegration> {
@@ -303,10 +481,9 @@ export class WorkspaceIntegrationService {
       repositories,
     }
 
-    // Optimistic predicate on status='active' so a concurrent disconnect
-    // (which flips status to 'inactive' and clears credentials/metadata)
-    // causes sync to fail cleanly instead of resurrecting the integration
-    // with the freshly-minted token (INV-20).
+    // Pin both active status and the installation observed before the network
+    // calls. A concurrent disconnect or reconnect-to-B must make this stale A
+    // sync lose rather than overwrite the replacement (INV-20).
     const updated = await WorkspaceIntegrationRepository.update(
       this.deps.pool,
       workspaceId,
@@ -319,7 +496,10 @@ export class WorkspaceIntegrationService {
         ),
         metadata: nextMetadata,
       },
-      { expectedStatus: WorkspaceIntegrationStatuses.ACTIVE }
+      {
+        expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+        expectedInstallationId: { value: String(credentials.installationId), allowNull: true },
+      }
     )
     if (!updated) {
       throw new HttpError("GitHub integration was disconnected during sync", {
@@ -430,6 +610,7 @@ export class WorkspaceIntegrationService {
   async updateGithubRateLimitMetadata(
     workspaceId: string,
     metadata: GitHubIntegrationMetadata,
+    installationId: string,
     remaining: number | null,
     resetAt: string | null
   ): Promise<GitHubIntegrationMetadata> {
@@ -439,11 +620,18 @@ export class WorkspaceIntegrationService {
       rateLimitResetAt: resetAt,
     }
 
-    await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.GITHUB, {
-      metadata: nextMetadata,
-    })
+    const updated = await WorkspaceIntegrationRepository.update(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.GITHUB,
+      { metadata: nextMetadata },
+      {
+        expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+        expectedInstallationId: { value: installationId, allowNull: true },
+      }
+    )
 
-    return nextMetadata
+    return updated ? nextMetadata : metadata
   }
 
   async refreshGithubCredentialsForClient(
@@ -500,6 +688,7 @@ export class WorkspaceIntegrationService {
         credentials: {},
         metadata: {},
         installedBy: installedByUserId,
+        installationId: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -513,7 +702,8 @@ export class WorkspaceIntegrationService {
         rateLimitResetAt: null,
       },
       installedByUserId,
-      true
+      true,
+      String(installationId)
     )
 
     if (!refreshed) {
@@ -524,13 +714,39 @@ export class WorkspaceIntegrationService {
     }
   }
 
+  /**
+   * Commit a durable `github_route:register` event so `GithubRouteSyncHandler`
+   * registers this workspace's installation in the control-plane routing table.
+   * Emitted only when a region is configured (production); local single-region
+   * dev has no control plane and nothing to route, so it degrades to a debug log.
+   */
+  private async emitRouteRegister(client: Querier, workspaceId: string, installationId: string): Promise<void> {
+    const region = this.deps.region
+    if (!region) {
+      log.debug({ workspaceId, installationId }, "Skipping GitHub route register event — no region configured")
+      return
+    }
+    await OutboxRepository.insert(client, "github_route:register", { workspaceId, installationId, region })
+  }
+
+  private async emitRouteUnregister(client: Querier, workspaceId: string, installationId: string): Promise<void> {
+    const region = this.deps.region
+    if (!region) {
+      log.debug({ workspaceId, installationId }, "Skipping GitHub route unregister event — no region configured")
+      return
+    }
+    await OutboxRepository.insert(client, "github_route:unregister", { workspaceId, installationId, region })
+  }
+
   private async refreshGithubCredentials(
     workspaceId: string,
     record: WorkspaceIntegrationRecord,
     installationId: number,
     metadata: GitHubIntegrationMetadata,
     installedByOverride?: string,
-    hydrateRepositories = false
+    hydrateRepositories = false,
+    /** When set, atomically replace the integration and synchronize its CP route. */
+    routeInstallationId?: string
   ): Promise<RefreshResult | null> {
     try {
       const tokenResponse = await this.getAppOctokit().request(
@@ -552,7 +768,7 @@ export class WorkspaceIntegrationService {
         nextMetadata.repositories = await listInstallationRepositories(installationOctokit)
       }
 
-      const updated = await WorkspaceIntegrationRepository.upsert(this.deps.pool, {
+      const upsertParams = {
         id: record.id,
         workspaceId,
         provider: WorkspaceIntegrationProviders.GITHUB,
@@ -568,7 +784,13 @@ export class WorkspaceIntegrationService {
         ),
         metadata: nextMetadata,
         installedBy: installedByOverride ?? record.installedBy,
-      })
+        installationId: String(installationId),
+      }
+
+      const updated = await this.persistGithubIntegration(upsertParams, routeInstallationId)
+      if (!updated) {
+        return null
+      }
 
       return {
         record: updated,
@@ -583,6 +805,56 @@ export class WorkspaceIntegrationService {
       log.warn({ err: error, workspaceId, installationId }, "GitHub installation token refresh failed")
       return null
     }
+  }
+
+  /** Persist after all network work; replacement route events commit with the row. */
+  private async persistGithubIntegration(
+    params: UpsertWorkspaceIntegrationParams,
+    routeInstallationId?: string
+  ): Promise<WorkspaceIntegrationRecord | null> {
+    if (!routeInstallationId) {
+      // Token-refresh path (no route change). A blind upsert here would resurrect
+      // a row a concurrent disconnect just cleared, or clobber a row that
+      // reconnected to a DIFFERENT installation B back to A. Guard on status
+      // ACTIVE and installation_id == this install (or NULL for a pre-backfill
+      // row) so a lost race matches 0 rows and surfaces as a refresh failure the
+      // callers (401 retry, proactive refresh) already handle by returning null.
+      return WorkspaceIntegrationRepository.update(
+        this.deps.pool,
+        params.workspaceId,
+        WorkspaceIntegrationProviders.GITHUB,
+        {
+          credentials: params.credentials,
+          metadata: params.metadata,
+          installedBy: params.installedBy,
+          installationId: params.installationId,
+        },
+        {
+          expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+          expectedInstallationId: params.installationId
+            ? { value: params.installationId, allowNull: true }
+            : { value: "", allowNull: true },
+        }
+      )
+    }
+
+    // Lock the workspace rather than the provider row: two first-time installs
+    // must serialize even when no workspace_integrations row exists yet.
+    return withTransaction(this.deps.pool, async (client) => {
+      await WorkspaceIntegrationRepository.lockWorkspace(client, params.workspaceId)
+      const previous = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
+        client,
+        params.workspaceId,
+        WorkspaceIntegrationProviders.GITHUB
+      )
+      const previousInstallationId = previous ? this.resolveInstallationId(params.workspaceId, previous) : null
+      const updated = await WorkspaceIntegrationRepository.upsert(client, params)
+      if (previousInstallationId && previousInstallationId !== routeInstallationId) {
+        await this.emitRouteUnregister(client, params.workspaceId, previousInstallationId)
+      }
+      await this.emitRouteRegister(client, params.workspaceId, routeInstallationId)
+      return updated
+    })
   }
 
   private parseCredentials(workspaceId: string, payload: Record<string, unknown>): GitHubIntegrationCredentials {
@@ -692,6 +964,8 @@ export class WorkspaceIntegrationService {
       workspaceId,
       WorkspaceIntegrationProviders.LINEAR
     )
+    // Resolve the org id from the pre-clear row so the guard survives the wipe.
+    const organizationId = record ? this.resolveLinearOrganizationId(record) : null
 
     if (record) {
       try {
@@ -702,11 +976,26 @@ export class WorkspaceIntegrationService {
       }
     }
 
-    await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.LINEAR, {
-      status: WorkspaceIntegrationStatuses.INACTIVE,
-      credentials: {},
-      metadata: {},
-    })
+    // Pin the Linear organization observed before the network call so a disconnect
+    // for org A can't clobber a row that reconnected to a DIFFERENT org B in
+    // between (INV-20). Not guarded on status — a disconnect must clear a row in
+    // any status (active/error). `{value:"", allowNull:true}` covers a pre-column
+    // row whose org id can't be resolved (its installation_id is still NULL).
+    await WorkspaceIntegrationRepository.update(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.LINEAR,
+      {
+        status: WorkspaceIntegrationStatuses.INACTIVE,
+        credentials: {},
+        metadata: {},
+      },
+      {
+        expectedInstallationId: organizationId
+          ? { value: organizationId, allowNull: record?.installationId == null }
+          : { value: "", allowNull: true },
+      }
+    )
   }
 
   async handleLinearCallback(params: {
@@ -779,11 +1068,23 @@ export class WorkspaceIntegrationService {
   ): Promise<LinearIntegrationMetadata> {
     const nextMetadata: LinearIntegrationMetadata = { ...metadata, rateLimit }
 
-    await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.LINEAR, {
-      metadata: nextMetadata,
-    })
+    // Guard on active status and the client's observed org so a stale rate-limit
+    // write can't land on a row a concurrent disconnect just cleared, or on a row
+    // reconnected to a different org (INV-20). A lost race matches 0 rows; keep the
+    // client's prior metadata rather than pretending the write stuck.
+    const organizationId = metadata.organizationId
+    const updated = await WorkspaceIntegrationRepository.update(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.LINEAR,
+      { metadata: nextMetadata },
+      {
+        expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+        expectedInstallationId: { value: organizationId ?? "", allowNull: true },
+      }
+    )
 
-    return nextMetadata
+    return updated ? nextMetadata : metadata
   }
 
   async refreshLinearCredentialsForPreview(
@@ -800,9 +1101,7 @@ export class WorkspaceIntegrationService {
 
     if (!credentials.refreshToken) {
       log.warn({ workspaceId }, "Linear credentials have no refresh token; marking integration as error state")
-      await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.LINEAR, {
-        status: WorkspaceIntegrationStatuses.ERROR,
-      })
+      await this.markLinearIntegrationError(workspaceId, record)
       return null
     }
 
@@ -817,13 +1116,39 @@ export class WorkspaceIntegrationService {
       })
     } catch (error) {
       log.warn({ err: error, workspaceId }, "Linear token refresh failed")
-      await WorkspaceIntegrationRepository.update(this.deps.pool, workspaceId, WorkspaceIntegrationProviders.LINEAR, {
-        status: WorkspaceIntegrationStatuses.ERROR,
-      })
+      await this.markLinearIntegrationError(workspaceId, record)
       return null
     }
 
-    return this.persistLinearCredentials(workspaceId, record, tokens, metadata)
+    return this.persistLinearCredentials(workspaceId, record, tokens, metadata, { isInstall: false })
+  }
+
+  /**
+   * Flip a broken Linear integration to ERROR. Guarded on active status and the
+   * observed org so it can't resurrect a row a concurrent disconnect already
+   * cleared, nor stamp ERROR onto a row reconnected to a different org (INV-20).
+   */
+  private async markLinearIntegrationError(workspaceId: string, record: WorkspaceIntegrationRecord): Promise<void> {
+    const organizationId = this.resolveLinearOrganizationId(record)
+    await WorkspaceIntegrationRepository.update(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.LINEAR,
+      { status: WorkspaceIntegrationStatuses.ERROR },
+      {
+        expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+        expectedInstallationId: { value: organizationId ?? "", allowNull: true },
+      }
+    )
+  }
+
+  /**
+   * The plaintext `installation_id` column carries the Linear organization id for
+   * newer rows; fall back to the id embedded in metadata for pre-population rows.
+   */
+  private resolveLinearOrganizationId(record: WorkspaceIntegrationRecord): string | null {
+    if (record.installationId) return record.installationId
+    return this.parseLinearMetadata(record.metadata).organizationId
   }
 
   private async completeLinearInstallation(
@@ -881,20 +1206,36 @@ export class WorkspaceIntegrationService {
       credentials: {},
       metadata: {},
       installedBy: installedByUserId,
+      installationId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     }
 
-    await this.persistLinearCredentials(workspaceId, baseRecord, tokens, metadata, installedByUserId)
+    await this.persistLinearCredentials(workspaceId, baseRecord, tokens, metadata, {
+      installedByOverride: installedByUserId,
+      isInstall: true,
+    })
   }
 
+  /**
+   * Persist Linear credentials after the OAuth round-trip.
+   *
+   * `isInstall` (first-time authorize / re-authorize) creates or replaces the row
+   * via upsert. The refresh path instead runs a guarded UPDATE: a blind upsert
+   * there would resurrect a row a concurrent disconnect just cleared, or clobber a
+   * row reconnected to a different Linear org back to this one (INV-20). A lost
+   * race matches 0 rows and returns null, which callers (401 retry, proactive
+   * refresh) already handle as a refresh failure. The Linear organization id is
+   * the stable external identity — persisted lazily into `installation_id` on
+   * every write; the guard's `allowNull` covers pre-population rows.
+   */
   private async persistLinearCredentials(
     workspaceId: string,
     record: WorkspaceIntegrationRecord,
     tokens: LinearOAuthTokenResponse,
     metadata: LinearIntegrationMetadata,
-    installedByOverride?: string
-  ): Promise<LinearRefreshResult> {
+    options: { installedByOverride?: string; isInstall: boolean }
+  ): Promise<LinearRefreshResult | null> {
     const credentials: LinearIntegrationCredentials = {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -903,20 +1244,46 @@ export class WorkspaceIntegrationService {
       scope: tokens.scope,
       actor: "app",
     }
-
-    const updated = await WorkspaceIntegrationRepository.upsert(this.deps.pool, {
-      id: record.id,
+    const encryptedCredentials = encryptJson(this.deps.linear.integrationSecret, credentials, {
       workspaceId,
       provider: WorkspaceIntegrationProviders.LINEAR,
-      status: WorkspaceIntegrationStatuses.ACTIVE,
-      credentials: encryptJson(this.deps.linear.integrationSecret, credentials, {
+    })
+    const organizationId = metadata.organizationId
+
+    if (options.isInstall) {
+      const updated = await WorkspaceIntegrationRepository.upsert(this.deps.pool, {
+        id: record.id,
         workspaceId,
         provider: WorkspaceIntegrationProviders.LINEAR,
-      }),
-      metadata,
-      installedBy: installedByOverride ?? record.installedBy,
-    })
+        status: WorkspaceIntegrationStatuses.ACTIVE,
+        credentials: encryptedCredentials,
+        metadata,
+        installedBy: options.installedByOverride ?? record.installedBy,
+        installationId: organizationId,
+      })
+      return { record: updated, credentials, metadata }
+    }
 
+    // Refresh path. A missing org id is pinned to a NULL/empty installation id
+    // rather than falling back to status-only, so even a malformed legacy client
+    // cannot overwrite a concurrently reconnected row with a populated org id.
+    const updated = await WorkspaceIntegrationRepository.update(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.LINEAR,
+      {
+        status: WorkspaceIntegrationStatuses.ACTIVE,
+        credentials: encryptedCredentials,
+        metadata,
+        installedBy: options.installedByOverride ?? record.installedBy,
+        installationId: organizationId,
+      },
+      {
+        expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+        expectedInstallationId: { value: organizationId ?? "", allowNull: true },
+      }
+    )
+    if (!updated) return null
     return { record: updated, credentials, metadata }
   }
 

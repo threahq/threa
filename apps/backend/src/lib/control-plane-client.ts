@@ -182,6 +182,65 @@ export class ControlPlaneClient {
     }
   }
 
+  /**
+   * Register (upsert) a webhook routing entry so CP can fan a provider webhook
+   * for `externalId` (e.g. a GitHub installation id) to this region. Idempotent
+   * on (provider, externalId, workspaceId). Throws on any non-2xx / transport
+   * failure so the caller fails loudly (INV-11).
+   */
+  async registerIntegrationRoute(params: {
+    provider: string
+    externalId: string
+    region: string
+    workspaceId: string
+  }): Promise<void> {
+    const url = `${this.baseUrl}/internal/integration-routes`
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+      },
+      body: JSON.stringify(params),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      logger.error(
+        { provider: params.provider, externalId: params.externalId, status: res.status, body },
+        "Failed to register integration route"
+      )
+      throw new Error(`Control-plane returned ${res.status}: ${body}`)
+    }
+  }
+
+  async unregisterIntegrationRoute(params: {
+    provider: string
+    externalId: string
+    workspaceId: string
+  }): Promise<void> {
+    const url = `${this.baseUrl}/internal/integration-routes`
+    const res = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+      },
+      body: JSON.stringify(params),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      logger.error(
+        { provider: params.provider, externalId: params.externalId, status: res.status, body },
+        "Failed to unregister integration route"
+      )
+      throw new Error(`Control-plane returned ${res.status}: ${body}`)
+    }
+  }
+
   async revokeInvitationShadow(id: string): Promise<void> {
     const url = `${this.baseUrl}/internal/invitation-shadows/${id}`
     const res = await fetch(url, {

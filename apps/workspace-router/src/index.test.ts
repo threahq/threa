@@ -19,6 +19,7 @@ function makeEnv(
     REGIONS: string
     CONTROL_PLANE_URL: string
     INTERNAL_API_KEY: string
+    STAGING_DOMAIN: string
   }> = {}
 ) {
   return {
@@ -329,6 +330,58 @@ describe("workspace-router", () => {
         expect(getProxiedUrl(fn)).toBe(
           "http://localhost:3003/api/integrations/github/callback?installation_id=1&state=ws_123.1.sig"
         )
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test("proxies POST /api/integrations/github/webhook to control-plane", async () => {
+      const originalFetch = globalThis.fetch
+      const fn = mockFetchFn()
+      try {
+        await worker.fetch(
+          makeRequest("/api/integrations/github/webhook", "POST"),
+          makeEnv({ CONTROL_PLANE_URL: CP_URL })
+        )
+        expect(getProxiedUrl(fn)).toBe("http://localhost:3003/api/integrations/github/webhook")
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test("proxies POST webhook on a pinned staging host to control-plane, not the regional backend", async () => {
+      const originalFetch = globalThis.fetch
+      const fn = mockFetchFn()
+      try {
+        // Staging pins the region from the hostname. The webhook must still reach
+        // the shared control-plane; before the pinned-block allowlist included it,
+        // it fell through to the regional backend (staging.threa.io region) → 404.
+        const stagingRegions = JSON.stringify({
+          staging: { apiUrl: "http://staging.backend:3002", wsUrl: "ws://staging.backend:3002" },
+        })
+        const req = new Request("https://staging.threa.io/api/integrations/github/webhook", { method: "POST" })
+        await worker.fetch(
+          req,
+          makeEnv({ CONTROL_PLANE_URL: CP_URL, STAGING_DOMAIN: "staging.threa.io", REGIONS: stagingRegions })
+        )
+        expect(getProxiedUrl(fn)).toBe("http://localhost:3003/api/integrations/github/webhook")
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test("does not proxy a GET to /api/integrations/github/webhook (webhook is POST-only)", async () => {
+      const originalFetch = globalThis.fetch
+      const fn = mockFetchFn()
+      try {
+        const res = await worker.fetch(
+          makeRequest("/api/integrations/github/webhook", "GET"),
+          makeEnv({ CONTROL_PLANE_URL: CP_URL })
+        )
+        // Falls through to workspace routing, which can't resolve it → 404, and
+        // never reaches the control-plane proxy.
+        expect(res.status).toBe(404)
+        expect(fn).not.toHaveBeenCalled()
       } finally {
         globalThis.fetch = originalFetch
       }

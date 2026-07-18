@@ -69,6 +69,12 @@ export interface ControlPlaneConfig {
     /** From address for the confirmation (a verified Resend sender/domain). */
     fromEmail: string
   }
+  /**
+   * Shared secret for verifying inbound GitHub App webhooks
+   * (`X-Hub-Signature-256`). Null disables the webhook endpoint entirely (404) —
+   * there is never a silent fallback secret (INV-11).
+   */
+  githubWebhookSecret: string | null
 }
 
 export function loadControlPlaneConfig(): ControlPlaneConfig {
@@ -168,10 +174,15 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
       resendApiKey: process.env.RESEND_API_KEY?.trim() || null,
       fromEmail: process.env.WAITLIST_FROM_EMAIL?.trim() || "Threa <hello@threa.io>",
     },
+    githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || null,
   }
 
   if (useStubAuth) {
     logger.warn("Control plane: Using stub auth service - NOT FOR PRODUCTION")
+  }
+
+  if (!config.githubWebhookSecret) {
+    logger.warn("Control plane: GITHUB_WEBHOOK_SECRET unset — GitHub webhook endpoint disabled (404)")
   }
 
   if (isProduction && !config.waitlist.resendApiKey) {

@@ -54,6 +54,11 @@ import {
   OUTBOX_PLATFORM_ADMIN_SYNC,
   type PlatformAdminSyncPayload,
 } from "./features/platform-admin"
+import {
+  GithubWebhookDispatchService,
+  OUTBOX_GITHUB_WEBHOOK_DISPATCH,
+  type GithubWebhookDispatchPayload,
+} from "./features/github-webhooks"
 import { WorkosEventPollerLock } from "./lib/workos-event-poller-lock"
 import { CONTROL_PLANE_LISTENER_ID } from "./lib/outbox-listeners"
 
@@ -118,6 +123,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
 
   const authzFanOut = new RegionalAuthzFanOut({ pool, regionalClient })
   const featureFlagService = new ControlPlaneFeatureFlagService({ pool, regionalClient })
+  const githubWebhookDispatch = new GithubWebhookDispatchService({ pool, regionalClient })
 
   const processEvents = async () => {
     await cursorLock.run(async (cursor, processedIds) => {
@@ -128,7 +134,13 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       let lastError: Error | undefined
       for (const event of events) {
         try {
-          await dispatchEvent(event, { workspaceService, authzFanOut, featureFlagService, platformAdminSync })
+          await dispatchEvent(event, {
+            workspaceService,
+            authzFanOut,
+            featureFlagService,
+            platformAdminSync,
+            githubWebhookDispatch,
+          })
           seen.push(event.id)
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
@@ -231,6 +243,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       regions: config.regions,
       workosDedicatedRedirectHosts: config.workosDedicatedRedirectHosts,
       rateLimits: config.rateLimits,
+      githubWebhookSecret: config.githubWebhookSecret,
     })
 
     server = createServer(app)
@@ -292,6 +305,7 @@ async function dispatchEvent(
     authzFanOut: RegionalAuthzFanOut
     featureFlagService: ControlPlaneFeatureFlagService
     platformAdminSync: PlatformAdminSyncService
+    githubWebhookDispatch: GithubWebhookDispatchService
   }
 ): Promise<void> {
   const payload = event.payload as unknown
@@ -313,6 +327,9 @@ async function dispatchEvent(
       break
     case OUTBOX_PLATFORM_ADMIN_SYNC:
       await deps.platformAdminSync.syncToRegions(payload as PlatformAdminSyncPayload)
+      break
+    case OUTBOX_GITHUB_WEBHOOK_DISPATCH:
+      await deps.githubWebhookDispatch.dispatch(payload as GithubWebhookDispatchPayload)
       break
     default:
       logger.warn({ eventType: event.eventType }, "Unknown outbox event type")

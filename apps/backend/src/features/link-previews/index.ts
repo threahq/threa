@@ -10,8 +10,11 @@ export { createLinkPreviewWorker } from "./worker"
 
 export { LinkPreviewOutboxHandler } from "./outbox-handler"
 
-export { extractUrls, normalizeUrl, detectContentType, isBlockedUrl, parseInAppLink } from "./url-utils"
-export type { InAppLinkRef } from "./url-utils"
+export { extractUrls, normalizeUrl, detectContentType, isBlockedUrl, parseInAppLink, parseGitHubUrl } from "./url-utils"
+export type { InAppLinkRef, GitHubUrlMatch } from "./url-utils"
+
+export { refreshLinkPreview, findGithubPreviewMatches, DEFAULT_REFRESH_DEBOUNCE_MS } from "./refresh"
+export type { RefreshLinkPreviewDeps, RefreshLinkPreviewResult } from "./refresh"
 
 export { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"
 
