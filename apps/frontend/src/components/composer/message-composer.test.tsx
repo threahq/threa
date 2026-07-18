@@ -411,6 +411,35 @@ describe("MessageComposer", () => {
       expect(screen.queryByRole("button", { name: "Formatting" })).not.toBeInTheDocument()
     })
 
+    it("reveals the mobile chrome when typing reaches the collapsed (hidden) editor", () => {
+      isMobileMockValue = true
+
+      render(<MessageComposer {...defaultProps} />)
+
+      // Collapsed resting state — no action bar.
+      expect(screen.queryByRole("button", { name: "Formatting" })).not.toBeInTheDocument()
+
+      // The editor stays mounted at zero height while collapsed, and a race
+      // (stream switch without blur) can leave it focused. Typing evidence
+      // must open the chrome, not feed a hidden editor with a broken caret.
+      fireEvent(screen.getByTestId("rich-editor"), new InputEvent("beforeinput", { bubbles: true }))
+
+      expect(screen.getByRole("button", { name: "Formatting" })).toBeInTheDocument()
+      // The caret is left where it was — no focus("end") jump.
+      expect(mockRichEditorFocus).not.toHaveBeenCalled()
+    })
+
+    it("reveals the mobile chrome when IME composition starts in the collapsed editor", () => {
+      isMobileMockValue = true
+
+      render(<MessageComposer {...defaultProps} />)
+
+      fireEvent.compositionStart(screen.getByTestId("rich-editor"))
+
+      expect(screen.getByRole("button", { name: "Formatting" })).toBeInTheDocument()
+      expect(mockRichEditorFocus).not.toHaveBeenCalled()
+    })
+
     it("closes mobile formatting toolbar on blur", () => {
       isMobileMockValue = true
       vi.useFakeTimers()

@@ -497,6 +497,31 @@ export function MessageComposer({
     }
   }, [isMobile, cancelPendingChromeOpen])
 
+  // The collapsed mobile bar still hosts the live editor at zero height, and a
+  // race can leave DOM focus inside it — e.g. a stream switch collapses the
+  // chrome without blurring (link taps don't blur contentEditable on iOS), and
+  // the draft-swap setContent then re-asserts focus (apply-external-content).
+  // Keystrokes into that hidden editor land with the caret clamped to the doc
+  // start, so text comes out reversed. Typing is proof the user has focus:
+  // reveal the chrome instead of swallowing input. flushSync so the editor is
+  // visible before the browser applies this very input event; the selection is
+  // untouched (the editor never unmounts and nothing calls focus()).
+  useEffect(() => {
+    if (!isMobile || mobileChromeOpen || expanded) return
+    const root = mobileRootRef.current
+    if (!root) return
+    const reveal = () => {
+      cancelPendingChromeOpen()
+      flushSync(() => setMobileFocused(true))
+    }
+    root.addEventListener("beforeinput", reveal, true)
+    root.addEventListener("compositionstart", reveal, true)
+    return () => {
+      root.removeEventListener("beforeinput", reveal, true)
+      root.removeEventListener("compositionstart", reveal, true)
+    }
+  }, [isMobile, mobileChromeOpen, expanded, cancelPendingChromeOpen])
+
   // Track focus state for mobile progressive disclosure.
   // Uses a small delay on blur to avoid flicker when focus moves between editor and action bar buttons.
   const handleFocusCapture = useCallback(
