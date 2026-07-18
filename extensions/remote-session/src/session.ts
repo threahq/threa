@@ -137,9 +137,13 @@ export interface RemoteSessionDelegate {
   /** Push a turn into the runtime. Resolve when handed off (not when answered). */
   deliverTurn(turn: DeliveredTurn): Promise<void>
   /**
-   * Inspect a claimed invocation before it becomes a turn (e.g. a relayed
-   * tool-approval verdict). Return true when consumed; the SDK then closes it
-   * silently and moves on.
+   * Inspect a claimed invocation before it is routed (e.g. a relayed
+   * tool-approval verdict). Runs for EVERY claim — ordinary messages,
+   * session-control commands, and messages swept into a /steer — because a
+   * verdict can arrive as /steer text (the busy-session composer routes replies
+   * through /steer) and treating it as steering would inject it into the
+   * runtime instead of answering the pending prompt. Return true when
+   * consumed; the SDK then closes it silently and moves on.
    */
   interceptClaimed?(invocation: ClaimedInvocation): Promise<boolean>
   /** Present iff the connector can drive the runtime. Gates advertising session control (fail-safe). */
@@ -615,6 +619,10 @@ export class RemoteSession {
         const invocation = await this.claimNext(busy)
         if (!invocation) break
         claimedAny = true
+        // Intercept before command routing: a relayed verdict can ride in as
+        // /steer text, and the steer path would inject it into the runtime
+        // instead of answering the prompt it belongs to.
+        if (await this.interceptInvocation(invocation)) continue
         if (isSessionControlInvocation(invocation)) {
           const isStop = parseSessionControlCommand(invocation)?.name === "stop"
           await this.handleSessionControl(invocation)
@@ -694,14 +702,17 @@ export class RemoteSession {
     }
   }
 
-  private async handleClaimed(invocation: ClaimedInvocation): Promise<void> {
-    if (this.delegate.interceptClaimed && (await this.delegate.interceptClaimed(invocation))) {
-      await this.completeTurn(invocation, { noResponse: true }).catch((error) =>
-        this.log(`intercepted-claim ack failed: ${this.summarize(error)}`)
-      )
-      return
-    }
+  /** Consult the connector's intercept. True = the delegate consumed the invocation and it was closed silently. */
+  private async interceptInvocation(invocation: ClaimedInvocation): Promise<boolean> {
+    if (!this.delegate.interceptClaimed) return false
+    if (!(await this.delegate.interceptClaimed(invocation))) return false
+    await this.completeTurn(invocation, { noResponse: true }).catch((error) =>
+      this.log(`intercepted-claim ack failed: ${this.summarize(error)}`)
+    )
+    return true
+  }
 
+  private async handleClaimed(invocation: ClaimedInvocation): Promise<void> {
     const content = await this.buildTurnContent(invocation)
     await this.deliverTurn(invocation, content)
   }
@@ -860,12 +871,20 @@ export class RemoteSession {
     steer: (text: string) => Promise<boolean> | boolean,
     text: string
   ): Promise<void> {
-    const { parts, swept } = await this.sweepQueuedForSteer(text)
+    const { parts, swept, interceptedCount } = await this.sweepQueuedForSteer(text)
     if (parts.length === 0) {
       // The sweep can still have claimed foldless invocations (a queued control
       // command in the double-command race) — close them or they hang to TTL.
       await Promise.all(swept.map((item) => this.completeNoResponse(item)))
-      await this.completeAck(invocation, "Nothing to steer with (no text, no queued messages); the turn continues.")
+      // A sweep that only consumed intercepted replies did real work (a verdict
+      // reached its pending prompt) — "nothing to steer with" would misread as
+      // the reply having been lost.
+      await this.completeAck(
+        invocation,
+        interceptedCount > 0
+          ? "Routed your reply to the session's pending request; the turn continues."
+          : "Nothing to steer with (no text, no queued messages); the turn continues."
+      )
       return
     }
     const combined = buildSteerContent(parts)
@@ -922,14 +941,19 @@ export class RemoteSession {
       { alwaysNote: true }
     )
 
-    const { parts, swept } = await this.sweepQueuedForSteer(text)
+    const { parts, swept, interceptedCount } = await this.sweepQueuedForSteer(text)
 
     // Close every swept message with no response — its content is folded into the
     // single combined turn the primary (this steer invocation) will answer.
     await Promise.all(swept.map((item) => this.completeNoResponse(item)))
 
     if (parts.length === 0) {
-      await this.completeAck(invocation, "Interrupted the session; nothing pending to steer with.")
+      await this.completeAck(
+        invocation,
+        interceptedCount > 0
+          ? "Interrupted the session; your reply was routed to its pending request."
+          : "Interrupted the session; nothing pending to steer with."
+      )
       await this.syncPresence()
       return
     }
@@ -938,12 +962,22 @@ export class RemoteSession {
   }
 
   /** Claim messages queued while the runtime was busy and fold their text in (steer text last). */
-  private async sweepQueuedForSteer(text: string): Promise<{ parts: string[]; swept: ClaimedInvocation[] }> {
+  private async sweepQueuedForSteer(
+    text: string
+  ): Promise<{ parts: string[]; swept: ClaimedInvocation[]; interceptedCount: number }> {
     const parts: string[] = []
     const swept: ClaimedInvocation[] = []
+    let interceptedCount = 0
     for (let i = 0; i < STEER_DRAIN_LIMIT; i++) {
       const extra = await this.claimNext(false).catch(() => null)
       if (!extra) break
+      // A swept message the connector intercepts (e.g. a permission verdict) is
+      // consumed and closed here, never folded into the steer text — and never
+      // failed by the caller's could-not-steer path, since it was delivered.
+      if (await this.interceptInvocation(extra)) {
+        interceptedCount++
+        continue
+      }
       swept.push(extra)
       if (isSessionControlInvocation(extra)) {
         // Fold a queued /steer's text in; other control commands in the sweep are
@@ -955,7 +989,7 @@ export class RemoteSession {
       }
     }
     if (text) parts.push(text)
-    return { parts, swept }
+    return { parts, swept, interceptedCount }
   }
 
   /**
