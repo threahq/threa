@@ -55,6 +55,28 @@ export const GithubWebhookDeliveryRepository = {
     return result.rows[0] ?? null
   },
 
+  /**
+   * Delete up to `limit` delivery rows older than `cutoff`, oldest first, and
+   * return how many were removed. Bounded so a large backlog drains across many
+   * short-locking statements instead of one long-locking sweep (see
+   * GITHUB_WEBHOOK_SWEEP_BATCH_SIZE); the caller loops until a batch comes back
+   * short of `limit`. Deleting the oldest rows first (ORDER BY created_at)
+   * shrinks the range the next batch scans and keeps progress monotonic.
+   */
+  async deleteOlderThanBatch(db: Querier, cutoff: Date, limit: number): Promise<number> {
+    const result = await db.query(
+      `DELETE FROM github_webhook_deliveries
+       WHERE id IN (
+         SELECT id FROM github_webhook_deliveries
+         WHERE created_at < $1
+         ORDER BY created_at
+         LIMIT $2
+       )`,
+      [cutoff, limit]
+    )
+    return result.rowCount ?? 0
+  },
+
   async getById(db: Querier, id: string): Promise<GithubWebhookDeliveryRow | null> {
     const result = await db.query<GithubWebhookDeliveryRow>(
       `SELECT id, delivery_guid, event_type, action, installation_id, repository_full_name,

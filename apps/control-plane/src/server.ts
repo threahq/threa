@@ -56,6 +56,7 @@ import {
 } from "./features/platform-admin"
 import {
   GithubWebhookDispatchService,
+  GithubWebhookRetentionSweeper,
   OUTBOX_GITHUB_WEBHOOK_DISPATCH,
   type GithubWebhookDispatchPayload,
 } from "./features/github-webhooks"
@@ -124,6 +125,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   const authzFanOut = new RegionalAuthzFanOut({ pool, regionalClient })
   const featureFlagService = new ControlPlaneFeatureFlagService({ pool, regionalClient })
   const githubWebhookDispatch = new GithubWebhookDispatchService({ pool, regionalClient })
+  const githubWebhookRetention = new GithubWebhookRetentionSweeper({ pool })
 
   const processEvents = async () => {
     await cursorLock.run(async (cursor, processedIds) => {
@@ -180,6 +182,8 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     await ensureListenerFromLatest(pool, LISTENER_ID)
     outboxDispatcher.register(outboxHandler)
     await outboxDispatcher.start()
+
+    githubWebhookRetention.start()
 
     const workosEventLock = new WorkosEventPollerLock({
       pool,
@@ -259,6 +263,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     })
   } catch (err) {
     await authzPoller?.stop().catch(() => {})
+    await githubWebhookRetention.stop().catch(() => {})
     await outboxDispatcher.stop().catch(() => {})
     await listenPool.end().catch(() => {})
     await pool.end().catch(() => {})
@@ -275,6 +280,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       logger.info("Fast shutdown - skipping graceful shutdown")
       startedServer.close()
       await startedPoller.stop()
+      await githubWebhookRetention.stop()
       await outboxDispatcher.stop()
       await listenPool.end()
       await pool.end()
@@ -288,6 +294,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       })
     }
     await startedPoller.stop()
+    await githubWebhookRetention.stop()
     await outboxDispatcher.stop()
     await listenPool.end()
     await pool.end()
