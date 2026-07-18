@@ -30,3 +30,23 @@ export interface GithubWebhookDispatchPayload {
   deliveryId: string
   region: string
 }
+
+/**
+ * Retention window for delivery rows. A row is an idempotency guard (the GUID
+ * unique index dedupes GitHub retries) plus an operator forensic trail — not an
+ * archive; GitHub's own Recent Deliveries UI covers ~30 days, so nothing older
+ * is worth keeping. Sweeping a >30-day-old row technically reopens dedupe for
+ * its GUID, but a GitHub redelivery that old is effectively nonexistent and the
+ * regional queue's `ghwh_<guid>` PK dedupes independently, so the reopen is inert.
+ */
+export const GITHUB_WEBHOOK_RETENTION_DAYS = 30
+
+/** How often the retention sweep runs. */
+export const GITHUB_WEBHOOK_SWEEP_INTERVAL_MS = 60 * 60 * 1000
+
+/**
+ * Rows deleted per DELETE statement. Bounding the batch keeps each delete's lock
+ * footprint small so a large backlog can't hold row/index locks long enough to
+ * stall concurrent inserts; the sweeper loops until a batch comes back short.
+ */
+export const GITHUB_WEBHOOK_SWEEP_BATCH_SIZE = 500
