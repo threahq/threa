@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join } from "node:path"
@@ -17,6 +17,10 @@ export function configuredThreaBaseUrl(config: ThreaChannelConfig): string {
   return (process.env.THREA_BASE_URL || config.baseUrl || "https://app.threa.io").replace(/\/$/, "")
 }
 
+export function piLaunchArgs(piBin: string, runtimeSessionId: string): string[] {
+  return [piBin, "--session-id", runtimeSessionId]
+}
+
 export function claudeLaunchArgs(params: {
   claudeBin: string
   name: string
@@ -32,32 +36,66 @@ export function claudeLaunchArgs(params: {
   return args
 }
 
-function mcpChannel(path: string): string {
-  try {
-    const mcpServers = JSON.parse(readFileSync(path, "utf8")).mcpServers
-    const channels = mcpServers && typeof mcpServers === "object" ? Object.keys(mcpServers) : []
-    if (channels.length === 1 && channels[0]) return channels[0]
-  } catch {
-    // The caller reports the same actionable MCP-config error for malformed JSON.
-  }
-  die(`MCP config must contain exactly one channel server: ${path}`)
-}
-
-/**
- * Configs written before the channel gate required a registration-carried key
- * lack THREA_CHANNEL_SERVER_KEY; without it the channel serves plain and the
- * scratchpad never links. Inject it on resume so old agents keep working.
- */
-export function ensureChannelServerKeyEnv(path: string, channel: string): void {
+export function normalizeChannelMcpConfig(path: string, channel = "threa-channel"): void {
   const parsed = JSON.parse(readFileSync(path, "utf8"))
-  const server = parsed.mcpServers?.[channel]
-  if (!server || server.env?.THREA_CHANNEL_SERVER_KEY === channel) return
-  server.env = { ...server.env, THREA_CHANNEL_SERVER_KEY: channel }
+  const servers = parsed.mcpServers
+  const entries = servers && typeof servers === "object" ? Object.entries(servers) : []
+  if (entries.length !== 1 || !entries[0]) die(`MCP config must contain exactly one channel server: ${path}`)
+  const [, server] = entries[0] as [string, Record<string, unknown>]
+  parsed.mcpServers = {
+    [channel]: {
+      ...server,
+      env: { ...((server.env as Record<string, unknown> | undefined) ?? {}), THREA_CHANNEL_SERVER_KEY: channel },
+    },
+  }
   writeFileSync(path, JSON.stringify(parsed, null, 2))
 }
 
 function firstScratchpadUrl(text: string): string | undefined {
   return text.match(/https:\/\/app\.threa\.io\/[^\s)]+/)?.[0]
+}
+
+export interface PiRemoteSession {
+  instanceId: string
+  rootStreamId: string
+  scratchpadUrl: string
+}
+
+interface PiRemoteConfig extends ThreaChannelConfig {
+  defaultDisplayName?: string
+  linkedSessions?: Record<
+    string,
+    { instanceId?: string; rootStreamId?: string; activeStreamId?: string; enabled?: boolean }
+  >
+}
+
+export function readPiRemoteConfig(): PiRemoteConfig {
+  const path = join(homedir(), ".pi", "agent", "threa-remote.json")
+  if (!existsSync(path)) return {}
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as PiRemoteConfig
+  } catch {
+    return {}
+  }
+}
+
+export function readPiRemoteSession(runtimeSessionId: string): PiRemoteSession | undefined {
+  try {
+    const config = readPiRemoteConfig()
+    const link = config.linkedSessions?.[runtimeSessionId]
+    const streamId = link?.activeStreamId ?? link?.rootStreamId
+    if (!link?.instanceId || !link.rootStreamId || !streamId || link.enabled === false || !config.workspaceId) {
+      return undefined
+    }
+    const baseUrl = (config.baseUrl || "https://app.threa.io").replace(/\/$/, "")
+    return {
+      instanceId: link.instanceId,
+      rootStreamId: link.rootStreamId,
+      scratchpadUrl: `${baseUrl}/w/${config.workspaceId}/s/${streamId}`,
+    }
+  } catch {
+    return undefined
+  }
 }
 
 abstract class RuntimeSpawner {
@@ -80,8 +118,14 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     ensureTmuxSession(session)
     ensurePiDefaultLabel()
     const { worktree, branch } = this.createWorktree(options)
+    const runtimeSessionId = randomUUID()
     const window = pickTmuxWindow(session, options.name)
-    const windowId = createWindow(session, window, worktree, piBin)
+    const windowId = createWindow(
+      session,
+      window,
+      worktree,
+      piLaunchArgs(piBin, runtimeSessionId).map(shellQuote).join(" ")
+    )
     console.log(`harnessd: launched Pi in tmux ${session}:${window} (${windowId})`)
 
     if (!options.noRemote) {
@@ -91,14 +135,48 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     }
 
     const outputText = capturePane(windowId)
+    const link = readPiRemoteSession(runtimeSessionId)
     return {
       worktree,
       branch,
       tmuxSession: session,
       tmuxWindow: window,
       tmuxWindowId: windowId,
-      scratchpadUrl: firstScratchpadUrl(outputText),
+      scratchpadUrl: link?.scratchpadUrl ?? firstScratchpadUrl(outputText),
+      instanceId: link?.instanceId,
+      runtimeSessionId,
       output: outputText,
+    }
+  }
+
+  async resume(agent: ManagedAgent, options: ResumeOptions): Promise<SpawnResult> {
+    if (!agent.worktree || !existsSync(agent.worktree)) die(`worktree dir missing: ${agent.worktree ?? "<none>"}`)
+    if (!agent.runtimeSessionId) die("original Pi session id is not recorded")
+    if (!commandExists("tmux")) die("tmux not found")
+    const piBin = process.env.THREA_HARNESSD_PI_BIN || commandPath("pi")
+    if (!piBin) die("pi binary not found; set THREA_HARNESSD_PI_BIN or put pi on PATH")
+
+    const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "pi", name: agent.name })
+    ensureTmuxSession(session, true)
+    const window = pickTmuxWindow(session, agent.name)
+    const windowId = createWindow(
+      session,
+      window,
+      agent.worktree,
+      piLaunchArgs(piBin, agent.runtimeSessionId).map(shellQuote).join(" ")
+    )
+    await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
+    const output = capturePane(windowId)
+    return {
+      worktree: agent.worktree,
+      branch: agent.branch ?? agent.name,
+      tmuxSession: session,
+      tmuxWindow: window,
+      tmuxWindowId: windowId,
+      scratchpadUrl: agent.scratchpadUrl,
+      instanceId: agent.instanceId,
+      runtimeSessionId: agent.runtimeSessionId,
+      output,
     }
   }
 }
@@ -137,7 +215,9 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       run(["bun", "install"], { cwd: sdkDir })
     }
 
-    const scratchpadUrl = await this.prelinkScratchpad(worktree)
+    const config = readThreaChannelConfig()
+    const identity = claudeRuntimeIdentity(worktree, config)
+    const scratchpadUrl = await this.prelinkScratchpad(worktree, identity, config)
     if (scratchpadUrl) console.log(`harnessd: scratchpad: ${scratchpadUrl}`)
 
     const args = claudeLaunchArgs({
@@ -149,7 +229,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     })
 
     const window = pickTmuxWindow(session, options.name)
-    const windowId = createWindow(session, window, worktree, args.map(shellQuote).join(" "))
+    const windowId = createWindow(session, window, worktree, claudeLaunchCommand(args, identity, config))
     console.log(`harnessd: launched Claude Code in tmux ${session}:${window} (${windowId})`)
 
     if (!options.noAutoAccept) await this.acceptBootPrompts(windowId)
@@ -162,6 +242,8 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       tmuxWindow: window,
       tmuxWindowId: windowId,
       scratchpadUrl: scratchpadUrl ?? firstScratchpadUrl(outputText),
+      instanceId: identity.instanceId,
+      runtimeSessionId: identity.runtimeSessionId,
       output: outputText,
     }
   }
@@ -172,10 +254,18 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const claudeBin = process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")
     if (!claudeBin) die("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
 
+    const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
+    const channelEntry = join(agent.worktree, "extensions", "claude-code-remote", "src", "index.ts")
+    if (!existsSync(channelEntry)) die(`Claude channel entry not found: ${channelEntry}`)
     const mcpConfig = mcpConfigPath(agent.name)
-    if (!existsSync(mcpConfig)) die(`MCP config missing: ${mcpConfig}`)
-    const channel = mcpChannel(mcpConfig)
-    ensureChannelServerKeyEnv(mcpConfig, channel)
+    if (!existsSync(mcpConfig)) this.writeMcpConfig(agent.name, channel, channelEntry)
+    normalizeChannelMcpConfig(mcpConfig, channel)
+    const config = readThreaChannelConfig()
+    const derived = claudeRuntimeIdentity(agent.worktree, config)
+    const identity = {
+      instanceId: agent.instanceId ?? derived.instanceId,
+      runtimeSessionId: agent.runtimeSessionId ?? derived.runtimeSessionId,
+    }
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "claude", name: agent.name })
     ensureTmuxSession(session, true)
     const noYolo = recordedNoYolo(agent)
@@ -184,7 +274,11 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       session,
       window,
       agent.worktree,
-      claudeLaunchArgs({ claudeBin, name: agent.name, channel, mcpConfig, noYolo }).map(shellQuote).join(" ")
+      claudeLaunchCommand(
+        claudeLaunchArgs({ claudeBin, name: agent.name, channel, mcpConfig, noYolo }),
+        identity,
+        config
+      )
     )
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
     try {
@@ -201,6 +295,8 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
         tmuxWindow: window,
         tmuxWindowId: windowId,
         scratchpadUrl: agent.scratchpadUrl,
+        instanceId: identity.instanceId,
+        runtimeSessionId: identity.runtimeSessionId,
         output,
       }
     } catch (error) {
@@ -263,8 +359,11 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     console.warn("harnessd: Claude Code boot did not settle before the wait deadline; continuing")
   }
 
-  private async prelinkScratchpad(worktree: string): Promise<string | undefined> {
-    const config = readThreaChannelConfig()
+  private async prelinkScratchpad(
+    worktree: string,
+    identity: { instanceId: string; runtimeSessionId: string },
+    config: ThreaChannelConfig
+  ): Promise<string | undefined> {
     const baseUrl = configuredThreaBaseUrl(config)
     const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
     const apiKey = process.env.THREA_API_KEY || config.apiKey
@@ -273,14 +372,6 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       return undefined
     }
 
-    const seed = `${hostname()}:${worktree}`
-    const instanceId = sanitizeId(process.env.THREA_INSTANCE_ID || config.instanceId || stableId("cc", seed)).slice(
-      0,
-      64
-    )
-    const runtimeSessionId = sanitizeId(
-      process.env.THREA_RUNTIME_SESSION_ID || config.runtimeSessionId || stableId("ccs", seed)
-    ).slice(0, 64)
     const displayName = defaultDisplayName(worktree, process.env.THREA_DISPLAY_NAME || config.displayName)
     const labelName = process.env.THREA_DEFAULT_LABEL || config.defaultLabel
 
@@ -289,11 +380,12 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         runtimeKind: "claude-code-channel",
-        instanceId,
-        runtimeSessionId,
+        instanceId: identity.instanceId,
+        runtimeSessionId: identity.runtimeSessionId,
         displayName,
         localCwd: worktree,
         ...(labelName ? { labelName } : {}),
+        ifArchived: "wait",
       }),
     })
     if (!response.ok) {
@@ -327,6 +419,36 @@ export function readThreaChannelConfig(): ThreaChannelConfig {
   } catch {
     return {}
   }
+}
+
+export function claudeRuntimeIdentity(
+  worktree: string,
+  config: ThreaChannelConfig = {},
+  host = hostname()
+): { instanceId: string; runtimeSessionId: string } {
+  const seed = `${host}:${worktree}`
+  return {
+    instanceId: sanitizeId(process.env.THREA_INSTANCE_ID || config.instanceId || stableId("cc", seed)).slice(0, 64),
+    runtimeSessionId: sanitizeId(
+      process.env.THREA_RUNTIME_SESSION_ID || config.runtimeSessionId || stableId("ccs", seed)
+    ).slice(0, 64),
+  }
+}
+
+export function claudeLaunchCommand(
+  args: string[],
+  identity: { instanceId: string; runtimeSessionId: string },
+  config: ThreaChannelConfig = {}
+): string {
+  const environment = {
+    THREA_INSTANCE_ID: identity.instanceId,
+    THREA_RUNTIME_SESSION_ID: identity.runtimeSessionId,
+    THREA_DISPLAY_NAME: process.env.THREA_DISPLAY_NAME || config.displayName || "Claude Code",
+    THREA_DEFAULT_LABEL: process.env.THREA_DEFAULT_LABEL || config.defaultLabel || "coding",
+  }
+  return ["env", ...Object.entries(environment).map(([key, value]) => `${key}=${value}`), ...args]
+    .map(shellQuote)
+    .join(" ")
 }
 
 function sanitizeId(value: string): string {

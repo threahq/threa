@@ -13,6 +13,8 @@ export interface ManagedAgent {
   /** Stable tmux window id (`@n`) — the durable target for steer/keys/stop; names can collide or be renamed. */
   tmuxWindowId?: string
   scratchpadUrl?: string
+  instanceId?: string
+  runtimeSessionId?: string
   command: string[]
   createdAt: string
   updatedAt: string
@@ -36,7 +38,6 @@ export interface SpawnOptions {
 export interface ResumeOptions {
   tmux?: string
   dryRun?: boolean
-  force?: boolean
 }
 
 export interface SpawnResult {
@@ -46,6 +47,8 @@ export interface SpawnResult {
   tmuxWindow: string
   tmuxWindowId: string
   scratchpadUrl?: string
+  instanceId?: string
+  runtimeSessionId?: string
   output: string
 }
 

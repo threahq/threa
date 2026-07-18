@@ -16,6 +16,7 @@ bun extensions/harness-daemon/src/index.ts spawn pi --name explore-foo --branch 
 bun extensions/harness-daemon/src/index.ts spawn claude --name fix-bar --branch fix/bar
 bun extensions/harness-daemon/src/index.ts do "spawn a pi agent for long chat performance"
 bun extensions/harness-daemon/src/index.ts list
+bun extensions/harness-daemon/src/index.ts revive-unarchived [--dry-run]
 bun extensions/harness-daemon/src/index.ts attach <agent-id-or-name>
 bun extensions/harness-daemon/src/index.ts stop <agent-id-or-name>
 ```
@@ -47,7 +48,10 @@ Tracked fields:
 - tmux session/window
 - scratchpad URL when available from Pi pane capture or Claude pre-link
 - command used to spawn
+- runtime instance/session IDs needed to reattach the same scratchpad
 - last output tail for debugging
+
+`revive-unarchived` checks each offline inventory entry's scratchpad through the public API and skips archived, inaccessible, or missing streams. For an active stream it restores the original worktree when possible, preflights the stored runtime identity with `ifArchived: "wait"`, verifies the returned root stream, then relaunches Claude with `server:threa-channel` or Pi with its original `--session-id`. Every skip is logged with its reason.
 
 The first version briefly used JSON, but SQLite is the intended default because lifecycle reconciliation needs atomic updates and queryable state.
 
@@ -66,6 +70,6 @@ This is command smoothing, not planning.
 ## Next steps
 
 1. Add a manager/control scratchpad that runs Pi + OpenCode Go and calls this CLI.
-2. Add reconciliation: inspect tmux windows, mark dead agents offline, preserve inventory across crashes.
+2. Add reconciliation: inspect tmux windows and mark dead agents offline.
 3. Add stream/archive cleanup once we have a reliable event source or command path.
 4. Add handoff/switching: stop old runtime, start new runtime, reuse/rebind scratchpad where backend support is sufficient.

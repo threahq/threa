@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
+import { basename } from "node:path"
 import { installBootResume } from "./boot"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
 import { die } from "./errors"
@@ -8,13 +9,22 @@ import { commandExists, commandPath, output } from "./shell"
 import {
   ClaudeRuntimeSpawner,
   PiRuntimeSpawner,
+  claudeRuntimeIdentity,
   configuredThreaBaseUrl,
-  mcpConfigPath,
+  readPiRemoteConfig,
+  readPiRemoteSession,
   readThreaChannelConfig,
 } from "./spawners"
-import { latestAgents, parseScratchpadUrl, recordedNoYolo } from "./resume"
+import {
+  fetchScratchpadStatus,
+  latestAgents,
+  parseScratchpadUrl,
+  preflightRuntimeSession,
+  recordedNoYolo,
+} from "./resume"
 import { agentWindowExists, attachedTmuxSession, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions } from "./types"
+import { restoreManagedWorktree } from "./worktree"
 
 function spawnCommand(options: SpawnOptions): string[] {
   const command = ["threa-harnessd", "spawn", options.runtime, "--name", options.name]
@@ -58,6 +68,8 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
       tmuxWindow: result.tmuxWindow,
       tmuxWindowId: result.tmuxWindowId,
       scratchpadUrl: result.scratchpadUrl,
+      instanceId: result.instanceId,
+      runtimeSessionId: result.runtimeSessionId,
       status: "online",
       updatedAt: now(),
       lastOutput: result.output.slice(-4000),
@@ -98,9 +110,8 @@ export async function resumeActive(options: ResumeOptions): Promise<boolean> {
 }
 
 async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
-  const config = readThreaChannelConfig()
-  const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
-  const apiKey = process.env.THREA_API_KEY || config.apiKey
+  const claudeConfig = readThreaChannelConfig()
+  const piConfig = readPiRemoteConfig()
   const agents = latestAgents(readInventory())
   if (agents.length === 0) {
     console.log("No managed agents.")
@@ -118,21 +129,8 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       skip("stopped")
       continue
     }
-    if (agent.runtime === "pi") {
-      skip("Pi session reattachment is not supported")
-      continue
-    }
     if (!agent.scratchpadUrl) {
       skip("no scratchpad URL")
-      continue
-    }
-    if (!agent.worktree || !existsSync(agent.worktree)) {
-      skip("missing worktree dir")
-      continue
-    }
-    const mcpConfig = mcpConfigPath(agent.name)
-    if (!existsSync(mcpConfig)) {
-      skip("missing MCP config")
       continue
     }
     const scratchpad = parseScratchpadUrl(agent.scratchpadUrl)
@@ -140,8 +138,11 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       skip("invalid scratchpad URL")
       continue
     }
-    const configuredBaseUrl = configuredThreaBaseUrl(config)
-    if (scratchpad.baseUrl !== configuredBaseUrl) {
+    const runtimeConfig = agent.runtime === "pi" ? piConfig : claudeConfig
+    const workspaceId = process.env.THREA_WORKSPACE_ID || runtimeConfig.workspaceId
+    const apiKey = process.env.THREA_API_KEY || runtimeConfig.apiKey
+    const baseUrl = configuredThreaBaseUrl(runtimeConfig)
+    if (scratchpad.baseUrl !== baseUrl) {
       skip("scratchpad URL origin does not match configured Threa base URL")
       continue
     }
@@ -149,35 +150,99 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       skip("scratchpad workspace does not match configured workspace")
       continue
     }
-    const scratchpadWorkspaceId = scratchpad.workspaceId || workspaceId
-    if (!scratchpadWorkspaceId || !apiKey) {
-      if (!options.force) {
-        skip("missing Threa credentials")
-        continue
-      }
-    } else {
-      const result = await scratchpadStatus({
-        baseUrl: configuredBaseUrl,
-        workspaceId: scratchpadWorkspaceId,
-        apiKey,
-        streamId: scratchpad.streamId,
-      })
-      if (result === "unavailable") retryable = true
-      if (result !== "active" && !options.force) {
-        skip(result)
-        continue
-      }
-      if (result !== "active") console.log(`force\t${agent.name}\t${result}`)
+    const targetWorkspaceId = scratchpad.workspaceId || workspaceId
+    if (!targetWorkspaceId || !apiKey) {
+      skip("missing Threa credentials")
+      continue
+    }
+
+    const status = await fetchScratchpadStatus({
+      baseUrl,
+      workspaceId: targetWorkspaceId,
+      apiKey,
+      streamId: scratchpad.streamId,
+    })
+    if (status === "unavailable") retryable = true
+    if (status !== "active") {
+      skip(status)
+      continue
+    }
+    if (agent.runtime === "pi" && !agent.runtimeSessionId) {
+      skip("original Pi --session-id is not recorded")
+      continue
+    }
+    const piLink = agent.runtimeSessionId ? readPiRemoteSession(agent.runtimeSessionId) : undefined
+    if (agent.runtime === "pi" && !piLink) {
+      skip("Pi remote link is missing or disabled")
+      continue
+    }
+    if (agent.runtime === "pi" && piLink?.rootStreamId !== scratchpad.streamId) {
+      skip(`Pi remote link root mismatch: expected ${scratchpad.streamId}, got ${piLink?.rootStreamId}`)
+      continue
+    }
+    if (agent.runtime === "pi" && agent.instanceId && agent.instanceId !== piLink?.instanceId) {
+      skip(`Pi remote instance mismatch: expected ${agent.instanceId}, got ${piLink?.instanceId}`)
+      continue
     }
     if (options.dryRun) {
-      console.log(`restore\t${agent.name}\t${agent.scratchpadUrl}`)
+      console.log(`revive\t${agent.name}\t${agent.scratchpadUrl}`)
+      continue
+    }
+
+    const worktree = restoreManagedWorktree(agent)
+    if (worktree.reason) {
+      skip(`missing worktree dir: ${worktree.reason}`)
+      continue
+    }
+    if (worktree.restored) console.log(`restore-worktree\t${agent.name}\t${agent.worktree}`)
+    if (!agent.worktree || !existsSync(agent.worktree)) {
+      skip("missing worktree dir")
+      continue
+    }
+
+    let instanceId: string
+    let runtimeSessionId: string
+    if (agent.runtime === "pi") {
+      instanceId = piLink!.instanceId
+      runtimeSessionId = agent.runtimeSessionId!
+    } else {
+      const derived = claudeRuntimeIdentity(agent.worktree, claudeConfig)
+      instanceId = agent.instanceId ?? derived.instanceId
+      runtimeSessionId = agent.runtimeSessionId ?? derived.runtimeSessionId
+    }
+
+    const configuredDisplayName = agent.runtime === "pi" ? piConfig.defaultDisplayName : claudeConfig.displayName
+    const displayPrefix =
+      process.env.THREA_DISPLAY_NAME || configuredDisplayName || (agent.runtime === "pi" ? "Pi" : "Claude Code")
+    const displayName = `${displayPrefix} - ${basename(agent.worktree)}`.slice(0, 100)
+    const preflight = await preflightRuntimeSession({
+      baseUrl,
+      workspaceId: targetWorkspaceId,
+      apiKey,
+      runtimeKind: agent.runtime === "pi" ? "pi-local" : "claude-code-channel",
+      instanceId,
+      runtimeSessionId,
+      displayName,
+      localCwd: agent.worktree,
+      expectedRootStreamId: scratchpad.streamId,
+      labelName: process.env.THREA_DEFAULT_LABEL || runtimeConfig.defaultLabel || "coding",
+    })
+    if (preflight.status === "unavailable") retryable = true
+    if (preflight.status !== "linked") {
+      const reason =
+        preflight.status === "mismatch"
+          ? `session link root mismatch: expected ${preflight.expectedRootStreamId}, got ${preflight.rootStreamId}`
+          : preflight.reason
+      skip(reason)
       continue
     }
 
     try {
-      const result = await new ClaudeRuntimeSpawner().resume(agent, options)
+      const resumableAgent = { ...agent, instanceId, runtimeSessionId }
+      const spawner = agent.runtime === "pi" ? new PiRuntimeSpawner() : new ClaudeRuntimeSpawner()
+      const result = await spawner.resume(resumableAgent, options)
       upsertAgent({
-        ...agent,
+        ...resumableAgent,
         tmuxSession: result.tmuxSession,
         tmuxWindow: result.tmuxWindow,
         tmuxWindowId: result.tmuxWindowId,
@@ -185,35 +250,15 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
         updatedAt: now(),
         lastOutput: result.output.slice(-4000),
       })
-      const bypass = recordedNoYolo(agent) ? "disabled" : "enabled"
-      console.log(`restored\t${agent.name}\tbypass ${bypass}`)
+      const detail =
+        agent.runtime === "claude" ? `bypass ${recordedNoYolo(agent) ? "disabled" : "enabled"}` : "Pi session reused"
+      console.log(`revived\t${agent.name}\t${detail}`)
     } catch (error) {
       upsertAgent({ ...agent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
       skip(`launch failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
   return retryable
-}
-
-async function scratchpadStatus(params: {
-  baseUrl: string
-  workspaceId: string
-  apiKey: string
-  streamId: string
-}): Promise<"active" | "archived" | "inaccessible" | "unavailable"> {
-  try {
-    const response = await fetch(
-      `${params.baseUrl.replace(/\/$/, "")}/api/v1/workspaces/${params.workspaceId}/streams/${params.streamId}`,
-      { headers: { authorization: `Bearer ${params.apiKey}` }, signal: AbortSignal.timeout(10_000) }
-    )
-    if (response.status === 403 || response.status === 404) return "inaccessible"
-    if (!response.ok) return response.status === 429 || response.status >= 500 ? "unavailable" : "inaccessible"
-    const json = (await response.json()) as { data?: { archivedAt?: string | null } }
-    if (!json.data || !("archivedAt" in json.data)) return "inaccessible"
-    return json.data.archivedAt ? "archived" : "active"
-  } catch {
-    return "unavailable"
-  }
 }
 
 export function listAgents(): void {

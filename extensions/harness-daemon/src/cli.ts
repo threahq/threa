@@ -9,8 +9,9 @@ Usage:
   threa-harnessd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
   threa-harnessd do <natural language command>
   threa-harnessd list
-  threa-harnessd resume-active [--tmux <session>] [--dry-run] [--force]
-  threa-harnessd boot-resume [--tmux <session>] [--dry-run] [--force]
+  threa-harnessd revive-unarchived [--tmux <session>] [--dry-run]
+  threa-harnessd resume-active [--tmux <session>] [--dry-run]
+  threa-harnessd boot-resume [--tmux <session>] [--dry-run]
   threa-harnessd install-boot-resume [--tmux <session>]
   threa-harnessd stop <agent-id-or-name>
   threa-harnessd interrupt <agent-id-or-name>
@@ -93,7 +94,6 @@ export function parseResume(args: string[]): ResumeOptions {
   return {
     tmux: stringFlag(flags, "tmux"),
     dryRun: boolFlag(flags, "dry-run"),
-    force: boolFlag(flags, "force"),
   }
 }
 
