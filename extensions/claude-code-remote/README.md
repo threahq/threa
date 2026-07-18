@@ -84,10 +84,10 @@ export THREA_PERMISSION_RELAY=1                    # 1 (default) to relay approv
 Register the server at **local** scope so it stays private to your machine and never touches a tracked file:
 
 ```bash
-claude mcp add threa-channel --scope local -- bun /ABSOLUTE/PATH/TO/threa/extensions/claude-code-remote/src/index.ts
+claude mcp add threa-channel --scope local -e THREA_CHANNEL_SERVER_KEY=threa-channel -- bun /ABSOLUTE/PATH/TO/threa/extensions/claude-code-remote/src/index.ts
 ```
 
-This writes to `~/.claude.json` under the current project, not to `.mcp.json`. Credentials come from step 3 (the home-dir config file or your shell), so no `env` block is needed. The path to `src/index.ts` must be **absolute**.
+This writes to `~/.claude.json` under the current project, not to `.mcp.json`. Credentials come from step 3 (the home-dir config file or your shell). `THREA_CHANNEL_SERVER_KEY` must repeat the name you registered the server under — it is how the process proves it is the registration named in the launch flag (see step 5). The path to `src/index.ts` must be **absolute**.
 
 > ⚠️ **Do not put your bot key in the Threa repo's `.mcp.json`.** That file is committed and open source — a key pasted there leaks on push. `.mcp.json.example` is intentionally secret-free for this reason. If you'd rather hand-edit a config file than run `claude mcp add`, use the **user-level** `~/.claude.json` (untracked) and not the repo's `.mcp.json`.
 
@@ -103,7 +103,7 @@ claude --dangerously-load-development-channels server:threa-channel
 
 A dim line under the banner confirms the channel registered. The channel logs the scratchpad URL to stderr on startup (see `~/.claude/debug/<session-id>.txt`); the scratchpad also appears in the Threa sidebar as `Claude Code - <project>`.
 
-The flag is required for the scratchpad to link at all: the server checks its parent Claude process's command line for `--dangerously-load-development-channels server:threa-channel` and, when absent, serves as a plain (idle) MCP server without creating anything. This makes a global (user-scope) registration safe — a bare `claude` session loads the server but links no scratchpad. Two consequences: the launch command must reference the server by the name `threa-channel`, and the registration must run `bun` directly (a shell wrapper that doesn't `exec` would hide the Claude process's command line from the gate).
+The flag is required for the scratchpad to link at all: the server checks its parent Claude process's command line for `--dangerously-load-development-channels server:<key>`, where `<key>` is the `THREA_CHANNEL_SERVER_KEY` its own registration carries, and serves as a plain (idle) MCP server when either is absent. Matching the registration's own key (not a hardcoded name) is what keeps duplicate registrations of this script harmless: only the instance the flag actually names may link, so a stale second entry can never shadow-claim the scratchpad. This makes a global (user-scope) registration safe — a bare `claude` session loads the server but links no scratchpad. Three consequences: the launch flag must name the same key as the registration's `THREA_CHANNEL_SERVER_KEY`, that key must be the registered server name, and the registration must run `bun` directly (a shell wrapper that doesn't `exec` would hide the Claude process's command line from the gate).
 
 ### 6. Drive it from Threa
 

@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test"
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { latestAgents, parseScratchpadUrl, recordedNoYolo } from "./resume"
 import { launchAgentPlist } from "./boot"
-import { claudeLaunchArgs } from "./spawners"
+import { claudeLaunchArgs, ensureChannelServerKeyEnv } from "./spawners"
 import type { ManagedAgent } from "./types"
 
 function agent(overrides: Partial<ManagedAgent> = {}): ManagedAgent {
@@ -50,6 +53,30 @@ test("writes a login LaunchAgent that runs boot-resume in a dedicated tmux sessi
   expect(plist).toContain("resume-active.error.log")
   expect(plist).toContain("<key>PATH</key><string>/Users/me/.bun/bin:/usr/bin:/bin</string>")
   expect(plist).toContain("<key>THREA_API_KEY</key><string>secret</string>")
+})
+
+test("injects the registration-carried server key into a legacy MCP config", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "harnessd-mcp-")), "agent.json")
+  writeFileSync(
+    path,
+    JSON.stringify({ mcpServers: { "threa-channel": { type: "stdio", command: "bun", args: ["/x/index.ts"] } } })
+  )
+  ensureChannelServerKeyEnv(path, "threa-channel")
+  expect(JSON.parse(readFileSync(path, "utf8")).mcpServers["threa-channel"].env).toEqual({
+    THREA_CHANNEL_SERVER_KEY: "threa-channel",
+  })
+})
+
+test("leaves an already-keyed MCP config untouched", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "harnessd-mcp-")), "agent.json")
+  const config = {
+    mcpServers: {
+      threa: { type: "stdio", command: "bun", args: ["/x/index.ts"], env: { THREA_CHANNEL_SERVER_KEY: "threa" } },
+    },
+  }
+  writeFileSync(path, JSON.stringify(config))
+  ensureChannelServerKeyEnv(path, "threa")
+  expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(config)
 })
 
 test("reconstructs the Claude channel launch with the recorded permission mode", () => {

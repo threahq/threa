@@ -43,6 +43,19 @@ function mcpChannel(path: string): string {
   die(`MCP config must contain exactly one channel server: ${path}`)
 }
 
+/**
+ * Configs written before the channel gate required a registration-carried key
+ * lack THREA_CHANNEL_SERVER_KEY; without it the channel serves plain and the
+ * scratchpad never links. Inject it on resume so old agents keep working.
+ */
+export function ensureChannelServerKeyEnv(path: string, channel: string): void {
+  const parsed = JSON.parse(readFileSync(path, "utf8"))
+  const server = parsed.mcpServers?.[channel]
+  if (!server || server.env?.THREA_CHANNEL_SERVER_KEY === channel) return
+  server.env = { ...server.env, THREA_CHANNEL_SERVER_KEY: channel }
+  writeFileSync(path, JSON.stringify(parsed, null, 2))
+}
+
 function firstScratchpadUrl(text: string): string | undefined {
   return text.match(/https:\/\/app\.threa\.io\/[^\s)]+/)?.[0]
 }
@@ -162,6 +175,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const mcpConfig = mcpConfigPath(agent.name)
     if (!existsSync(mcpConfig)) die(`MCP config missing: ${mcpConfig}`)
     const channel = mcpChannel(mcpConfig)
+    ensureChannelServerKeyEnv(mcpConfig, channel)
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "claude", name: agent.name })
     ensureTmuxSession(session, true)
     const noYolo = recordedNoYolo(agent)
@@ -209,7 +223,20 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(
       path,
-      JSON.stringify({ mcpServers: { [channel]: { type: "stdio", command: "bun", args: [channelEntry] } } }, null, 2)
+      JSON.stringify(
+        {
+          mcpServers: {
+            [channel]: {
+              type: "stdio",
+              command: "bun",
+              args: [channelEntry],
+              env: { THREA_CHANNEL_SERVER_KEY: channel },
+            },
+          },
+        },
+        null,
+        2
+      )
     )
     return path
   }
