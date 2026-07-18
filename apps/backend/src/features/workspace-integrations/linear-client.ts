@@ -173,12 +173,21 @@ export class LinearClient {
       return
     }
 
-    this.metadata = await this.service.updateLinearRateLimitMetadata(this.workspaceId, this.metadata, {
-      requestsRemaining,
-      requestsResetAt,
-      complexityRemaining,
-      complexityResetAt,
-    })
+    const result = await this.service.updateLinearRateLimitMetadata(
+      this.workspaceId,
+      this.metadata,
+      {
+        requestsRemaining,
+        requestsResetAt,
+        complexityRemaining,
+        complexityResetAt,
+      },
+      this.record.version
+    )
+    this.metadata = result.metadata
+    // Advance the cached version on a win so this reused client's next capture
+    // CASes on the fresh generation instead of colliding with its own prior write.
+    if (result.version !== null) this.record = { ...this.record, version: result.version }
   }
 }
 

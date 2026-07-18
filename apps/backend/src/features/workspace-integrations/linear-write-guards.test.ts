@@ -73,6 +73,7 @@ function linearRecord(overrides: Partial<WorkspaceIntegrationRecord> = {}): Work
     metadata: {},
     installedBy: "user_1",
     installationId: null,
+    version: 1,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -137,6 +138,9 @@ describe("persistLinearCredentials refresh path (isInstall:false)", () => {
     expect(update).toBeDefined()
     expect(update?.values).toContain("active")
     expect(update?.values).toContain("org_123")
+    // Credential write → version-CAS on the record's observed generation (1).
+    expect(update?.text).toContain("version = $12")
+    expect(update?.values[11]).toBe(1)
     expect(calls.find((c) => c.text.includes("INSERT INTO workspace_integrations"))).toBeUndefined()
   })
 
@@ -184,7 +188,10 @@ describe("updateLinearRateLimitMetadata guards", () => {
 
     const result = await service.updateLinearRateLimitMetadata("ws_1", metadata, rateLimit)
 
-    expect(result.rateLimit.requestsRemaining).toBe(42)
+    expect(result.metadata.rateLimit.requestsRemaining).toBe(42)
+    // A win returns the row's new version so a reused client advances its cached
+    // generation instead of self-colliding on the frozen one.
+    expect(result.version).not.toBeNull()
     const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
     expect(update?.values).toContain("active")
     expect(update?.values).toContain("org_123")
@@ -205,7 +212,25 @@ describe("updateLinearRateLimitMetadata guards", () => {
     const service = makeService(pool)
     const metadata = linearMetadata("org_123")
 
-    expect(await service.updateLinearRateLimitMetadata("ws_1", metadata, rateLimit)).toBe(metadata)
+    const result = await service.updateLinearRateLimitMetadata("ws_1", metadata, rateLimit)
+    expect(result.metadata).toBe(metadata)
+    expect(result.version).toBeNull()
+  })
+
+  it("passes the observed version as the CAS guard and loses (returns prior) when it is stale", async () => {
+    const { pool, calls } = guardMissPool([])
+    const service = makeService(pool)
+    const metadata = linearMetadata("org_123")
+
+    const result = await service.updateLinearRateLimitMetadata("ws_1", metadata, rateLimit, 12)
+
+    expect(result.metadata).toBe(metadata)
+    expect(result.version).toBeNull()
+    const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
+    expect(update?.text).toContain("version = version + 1")
+    expect(update?.text).toContain("version = $12")
+    // $12 (expectedVersion) is the last positional param.
+    expect(update?.values[11]).toBe(12)
   })
 })
 

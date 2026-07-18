@@ -16,6 +16,9 @@ export interface WorkspaceIntegrationRecord {
   // Plaintext reverse index for webhook fan-out (GitHub installation id as
   // text). Null on pre-backfill rows and for providers without one.
   installationId: string | null
+  // Optimistic-concurrency generation. Incremented by every update/upsert; the
+  // cache/credential write paths CAS on it (INV-66).
+  version: number
   createdAt: Date
   updatedAt: Date
 }
@@ -50,6 +53,16 @@ export interface UpdateWorkspaceIntegrationOptions {
    * installation it listed.
    */
   expectedInstallationId?: { value: string; allowNull: boolean }
+  /**
+   * Optimistic generation guard (INV-66). When set, the write only lands if the
+   * row's `version` still equals the value read before the out-of-transaction
+   * network work — so a stale full-object write (rate-limit/credential/metadata)
+   * can't clobber a newer concurrent write to the SAME installation. A miss
+   * matches 0 rows and returns null. Lifecycle writes (disconnect, deactivate,
+   * install/replace) deliberately OMIT this: they express absolute user/webhook
+   * intent and must not be no-op'd by a background refresh's version bump.
+   */
+  expectedVersion?: number
 }
 
 function mapRow(row: Record<string, unknown>): WorkspaceIntegrationRecord {
@@ -62,6 +75,7 @@ function mapRow(row: Record<string, unknown>): WorkspaceIntegrationRecord {
     metadata: (row.metadata as Record<string, unknown> | null) ?? {},
     installedBy: row.installed_by as string,
     installationId: (row.installation_id as string | null) ?? null,
+    version: (row.version as number | null) ?? 1,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   }
@@ -115,6 +129,7 @@ export const WorkspaceIntegrationRepository = {
               metadata = EXCLUDED.metadata,
               installed_by = EXCLUDED.installed_by,
               installation_id = COALESCE(EXCLUDED.installation_id, workspace_integrations.installation_id),
+              version = workspace_integrations.version + 1,
               updated_at = NOW()
           RETURNING *`,
       [
@@ -148,6 +163,7 @@ export const WorkspaceIntegrationRepository = {
             metadata = COALESCE($5::jsonb, metadata),
             installed_by = COALESCE($6, installed_by),
             installation_id = COALESCE($8, installation_id),
+            version = version + 1,
             updated_at = NOW()
           WHERE workspace_id = $1 AND provider = $2
             AND ($7::text IS NULL OR status = $7)
@@ -156,6 +172,7 @@ export const WorkspaceIntegrationRepository = {
               OR ($11::boolean AND (installation_id IS NULL OR installation_id = $10))
               OR ((NOT $11::boolean) AND installation_id IS NOT DISTINCT FROM $10)
             )
+            AND ($12::int IS NULL OR version = $12)
           RETURNING *`,
       [
         workspaceId,
@@ -169,6 +186,7 @@ export const WorkspaceIntegrationRepository = {
         installationGuard ? false : true,
         installationGuard?.value ?? null,
         installationGuard?.allowNull ?? false,
+        options?.expectedVersion ?? null,
       ]
     )
 

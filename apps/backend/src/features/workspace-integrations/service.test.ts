@@ -118,6 +118,7 @@ describe("GitHubClient captureRateLimit is best-effort", () => {
     metadata: {},
     installedBy: "user_1",
     installationId: "42",
+    version: 1,
     createdAt: new Date(),
     updatedAt: new Date(),
   }
@@ -152,6 +153,39 @@ describe("GitHubClient captureRateLimit is best-effort", () => {
     expect(updateSpy).toHaveBeenCalled()
     expect(refreshSpy).toHaveBeenCalled()
   })
+
+  it("advances the cached version after a winning capture so a reused client's next capture CASes on the fresh generation", async () => {
+    // Regression: a memoized agent-turn client / multi-call preview reuses one
+    // GitHubClient across many requests. If a winning capture did not advance the
+    // cached version, request 2 would CAS on the stale frozen version, match 0
+    // rows, and drop every reading after the first — starving isNearGithubRateLimit.
+    const service = new WorkspaceIntegrationService({
+      pool: explodingPool,
+      github: githubEnabled,
+      linear: linearDisabled,
+    })
+    const captureSpy = spyOn(service, "updateGithubRateLimitMetadata")
+      .mockResolvedValueOnce({ metadata: { ...metadata, rateLimitRemaining: 90 }, version: 2 })
+      .mockResolvedValueOnce({ metadata: { ...metadata, rateLimitRemaining: 40 }, version: 3 })
+
+    const client = new GitHubClient(service, "ws_1", { ...record, version: 1 }, credentials, metadata)
+    let remaining = 90
+    ;(client as unknown as { octokit: { request: () => Promise<unknown> } }).octokit = {
+      request: async () => ({
+        data: {},
+        headers: { "x-ratelimit-remaining": String(remaining), "x-ratelimit-reset": "1234567890" },
+      }),
+    }
+
+    await client.request("GET /a")
+    remaining = 40
+    await client.request("GET /b")
+
+    // expectedVersion is the 6th positional arg. First capture CASes on the
+    // initial version; second CASes on the version the first win returned.
+    expect(captureSpy.mock.calls[0][5]).toBe(1)
+    expect(captureSpy.mock.calls[1][5]).toBe(2)
+  })
 })
 
 describe("LinearClient captureRateLimit is best-effort", () => {
@@ -184,6 +218,7 @@ describe("LinearClient captureRateLimit is best-effort", () => {
     metadata: {},
     installedBy: "user_1",
     installationId: "org_1",
+    version: 1,
     createdAt: new Date(),
     updatedAt: new Date(),
   }
@@ -218,6 +253,38 @@ describe("LinearClient captureRateLimit is best-effort", () => {
     await expect(client.request("query { viewer { id } }")).rejects.toBeInstanceOf(LinearApiError)
     expect(updateSpy).toHaveBeenCalled()
     expect(refreshSpy).toHaveBeenCalled()
+  })
+
+  it("advances the cached version after a winning capture so a reused client's next capture CASes on the fresh generation", async () => {
+    const service = new WorkspaceIntegrationService({
+      pool: explodingPool,
+      github: githubDisabled,
+      linear: linearEnabled,
+    })
+    const captureSpy = spyOn(service, "updateLinearRateLimitMetadata")
+      .mockResolvedValueOnce({ metadata, version: 2 })
+      .mockResolvedValueOnce({ metadata, version: 3 })
+
+    let remaining = 900
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ data: { ok: true } }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-ratelimit-requests-remaining": String(remaining),
+          "x-ratelimit-requests-reset": "1234567890",
+        },
+      })) as unknown as typeof fetch
+
+    const client = new LinearClient(service, "ws_1", { ...record, version: 1 }, credentials, metadata, fetchImpl)
+
+    await client.request("query { a }")
+    remaining = 100
+    await client.request("query { b }")
+
+    // expectedVersion is the 4th positional arg (index 3).
+    expect(captureSpy.mock.calls[0][3]).toBe(1)
+    expect(captureSpy.mock.calls[1][3]).toBe(2)
   })
 })
 

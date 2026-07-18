@@ -147,7 +147,8 @@ export class GitHubClient {
     try {
       // Anonymous clients have no integration record to persist against, and their
       // rate-limit headers are per-IP rather than workspace state.
-      if (!headers || !this.metadata || !this.credentials) return
+      if (!headers || !this.metadata || !this.credentials || !this.record) return
+      const record = this.record
       const remaining = parseIntegerHeader(headers["x-ratelimit-remaining"])
       const resetSeconds = parseIntegerHeader(headers["x-ratelimit-reset"])
       const resetAt = resetSeconds ? new Date(resetSeconds * 1000).toISOString() : null
@@ -156,13 +157,18 @@ export class GitHubClient {
         return
       }
 
-      this.metadata = await this.service.updateGithubRateLimitMetadata(
+      const result = await this.service.updateGithubRateLimitMetadata(
         this.workspaceId,
         this.metadata,
         String(this.credentials.installationId),
         remaining,
-        resetAt
+        resetAt,
+        record.version
       )
+      this.metadata = result.metadata
+      // Advance the cached version on a win so this reused client's next capture
+      // CASes on the fresh generation instead of colliding with its own prior write.
+      if (result.version !== null) this.record = { ...record, version: result.version }
     } catch (error) {
       log.warn({ err: error, workspaceId: this.workspaceId }, "GitHub rate-limit capture failed; continuing")
     }
@@ -474,33 +480,49 @@ export class WorkspaceIntegrationService {
       })
     }
 
-    const metadata = this.parseMetadata(record.metadata)
-    const nextMetadata: GitHubIntegrationMetadata = {
-      ...metadata,
-      permissions: nextPermissions || metadata.permissions,
-      repositories,
+    const encryptedCredentials = encryptJson(
+      this.deps.github.integrationSecret,
+      { installationId: credentials.installationId, accessToken, tokenExpiresAt },
+      { workspaceId, provider: WorkspaceIntegrationProviders.GITHUB }
+    )
+
+    // CACHE WRITE — version-CAS. This replaces the whole metadata object (its
+    // `repositories` list especially), so a concurrent write must not be lost.
+    // Pin active status + the installation observed before the network calls
+    // (INV-20) AND the version read at the same point (INV-66). Because this is
+    // a user-facing sync (not a background telemetry write), a CAS miss re-reads
+    // and retries ONCE against the current version before surfacing the conflict.
+    const persistSync = async (base: WorkspaceIntegrationRecord): Promise<WorkspaceIntegrationRecord | null> => {
+      const baseMetadata = this.parseMetadata(base.metadata)
+      const nextMetadata: GitHubIntegrationMetadata = {
+        ...baseMetadata,
+        permissions: nextPermissions || baseMetadata.permissions,
+        repositories,
+      }
+      return WorkspaceIntegrationRepository.update(
+        this.deps.pool,
+        workspaceId,
+        WorkspaceIntegrationProviders.GITHUB,
+        { credentials: encryptedCredentials, metadata: nextMetadata },
+        {
+          expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
+          expectedInstallationId: { value: String(credentials.installationId), allowNull: true },
+          expectedVersion: base.version,
+        }
+      )
     }
 
-    // Pin both active status and the installation observed before the network
-    // calls. A concurrent disconnect or reconnect-to-B must make this stale A
-    // sync lose rather than overwrite the replacement (INV-20).
-    const updated = await WorkspaceIntegrationRepository.update(
-      this.deps.pool,
-      workspaceId,
-      WorkspaceIntegrationProviders.GITHUB,
-      {
-        credentials: encryptJson(
-          this.deps.github.integrationSecret,
-          { installationId: credentials.installationId, accessToken, tokenExpiresAt },
-          { workspaceId, provider: WorkspaceIntegrationProviders.GITHUB }
-        ),
-        metadata: nextMetadata,
-      },
-      {
-        expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
-        expectedInstallationId: { value: String(credentials.installationId), allowNull: true },
+    let updated = await persistSync(record)
+    if (!updated) {
+      const reread = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
+        this.deps.pool,
+        workspaceId,
+        WorkspaceIntegrationProviders.GITHUB
+      )
+      if (reread && reread.status === WorkspaceIntegrationStatuses.ACTIVE) {
+        updated = await persistSync(reread)
       }
-    )
+    }
     if (!updated) {
       throw new HttpError("GitHub integration was disconnected during sync", {
         status: 409,
@@ -612,14 +634,19 @@ export class WorkspaceIntegrationService {
     metadata: GitHubIntegrationMetadata,
     installationId: string,
     remaining: number | null,
-    resetAt: string | null
-  ): Promise<GitHubIntegrationMetadata> {
+    resetAt: string | null,
+    expectedVersion?: number
+  ): Promise<{ metadata: GitHubIntegrationMetadata; version: number | null }> {
     const nextMetadata: GitHubIntegrationMetadata = {
       ...metadata,
       rateLimitRemaining: remaining,
       rateLimitResetAt: resetAt,
     }
 
+    // CACHE WRITE — version-CAS. This replaces the WHOLE metadata object, so a
+    // stale rate-limit write must not erase a newer concurrent write (e.g. a
+    // repo-sync that just refreshed `repositories`). A lost race matches 0 rows;
+    // keep the client's prior metadata rather than pretending the write stuck.
     const updated = await WorkspaceIntegrationRepository.update(
       this.deps.pool,
       workspaceId,
@@ -628,10 +655,17 @@ export class WorkspaceIntegrationService {
       {
         expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
         expectedInstallationId: { value: installationId, allowNull: true },
+        expectedVersion,
       }
     )
 
-    return updated ? nextMetadata : metadata
+    // Return the new version on a win so a reused client (memoized agent turn,
+    // multi-call preview) advances its cached version and its NEXT capture CASes
+    // on the fresh generation instead of self-colliding on the frozen one and
+    // dropping every reading after the first (which would starve the near-limit
+    // breaker). `null` on a loss — the client keeps its version and defers to the
+    // concurrent writer that actually advanced the row.
+    return updated ? { metadata: nextMetadata, version: updated.version } : { metadata, version: null }
   }
 
   async refreshGithubCredentialsForClient(
@@ -689,6 +723,7 @@ export class WorkspaceIntegrationService {
         metadata: {},
         installedBy: installedByUserId,
         installationId: null,
+        version: 1,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -787,7 +822,7 @@ export class WorkspaceIntegrationService {
         installationId: String(installationId),
       }
 
-      const updated = await this.persistGithubIntegration(upsertParams, routeInstallationId)
+      const updated = await this.persistGithubIntegration(upsertParams, routeInstallationId, record.version)
       if (!updated) {
         return null
       }
@@ -810,15 +845,18 @@ export class WorkspaceIntegrationService {
   /** Persist after all network work; replacement route events commit with the row. */
   private async persistGithubIntegration(
     params: UpsertWorkspaceIntegrationParams,
-    routeInstallationId?: string
+    routeInstallationId?: string,
+    expectedVersion?: number
   ): Promise<WorkspaceIntegrationRecord | null> {
     if (!routeInstallationId) {
-      // Token-refresh path (no route change). A blind upsert here would resurrect
-      // a row a concurrent disconnect just cleared, or clobber a row that
-      // reconnected to a DIFFERENT installation B back to A. Guard on status
-      // ACTIVE and installation_id == this install (or NULL for a pre-backfill
-      // row) so a lost race matches 0 rows and surfaces as a refresh failure the
-      // callers (401 retry, proactive refresh) already handle by returning null.
+      // CREDENTIAL WRITE (token refresh, no route change) — version-CAS. A blind
+      // upsert here would resurrect a row a concurrent disconnect just cleared,
+      // or clobber a row that reconnected to a DIFFERENT installation B back to A.
+      // Guard on status ACTIVE, installation_id == this install (or NULL for a
+      // pre-backfill row), AND the version read before the token round-trip so a
+      // stale refresh can't overwrite a newer same-installation write (INV-66).
+      // A lost race matches 0 rows and surfaces as a refresh failure the callers
+      // (401 retry, proactive refresh) already handle by returning null.
       return WorkspaceIntegrationRepository.update(
         this.deps.pool,
         params.workspaceId,
@@ -834,9 +872,14 @@ export class WorkspaceIntegrationService {
           expectedInstallationId: params.installationId
             ? { value: params.installationId, allowNull: true }
             : { value: "", allowNull: true },
+          expectedVersion,
         }
       )
     }
+
+    // LIFECYCLE WRITE (install / replace) — NO version-CAS. This upsert expresses
+    // an absolute install intent and serializes on the workspace lock; a
+    // concurrent background refresh's version bump must not make it lose.
 
     // Lock the workspace rather than the provider row: two first-time installs
     // must serialize even when no workspace_integrations row exists yet.
@@ -1064,14 +1107,17 @@ export class WorkspaceIntegrationService {
   async updateLinearRateLimitMetadata(
     workspaceId: string,
     metadata: LinearIntegrationMetadata,
-    rateLimit: LinearRateLimit
-  ): Promise<LinearIntegrationMetadata> {
+    rateLimit: LinearRateLimit,
+    expectedVersion?: number
+  ): Promise<{ metadata: LinearIntegrationMetadata; version: number | null }> {
     const nextMetadata: LinearIntegrationMetadata = { ...metadata, rateLimit }
 
-    // Guard on active status and the client's observed org so a stale rate-limit
-    // write can't land on a row a concurrent disconnect just cleared, or on a row
-    // reconnected to a different org (INV-20). A lost race matches 0 rows; keep the
-    // client's prior metadata rather than pretending the write stuck.
+    // CACHE WRITE — version-CAS. This replaces the whole metadata object, so
+    // guard on active status + the client's observed org (INV-20) AND the version
+    // read at the client's read (INV-66): a stale rate-limit write can't land on a
+    // row a concurrent disconnect cleared, a row reconnected to a different org, or
+    // a row a newer same-org write already advanced. A lost race matches 0 rows;
+    // keep the client's prior metadata rather than pretending the write stuck.
     const organizationId = metadata.organizationId
     const updated = await WorkspaceIntegrationRepository.update(
       this.deps.pool,
@@ -1081,10 +1127,14 @@ export class WorkspaceIntegrationService {
       {
         expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
         expectedInstallationId: { value: organizationId ?? "", allowNull: true },
+        expectedVersion,
       }
     )
 
-    return updated ? nextMetadata : metadata
+    // Return the new version on a win so a reused client advances its cached
+    // version and its next capture CASes on the fresh generation rather than
+    // self-colliding on the frozen one (see updateGithubRateLimitMetadata).
+    return updated ? { metadata: nextMetadata, version: updated.version } : { metadata, version: null }
   }
 
   async refreshLinearCredentialsForPreview(
@@ -1124,9 +1174,12 @@ export class WorkspaceIntegrationService {
   }
 
   /**
-   * Flip a broken Linear integration to ERROR. Guarded on active status and the
-   * observed org so it can't resurrect a row a concurrent disconnect already
-   * cleared, nor stamp ERROR onto a row reconnected to a different org (INV-20).
+   * Flip a broken Linear integration to ERROR. CREDENTIAL WRITE — version-CAS.
+   * Guarded on active status + the observed org (INV-20) AND the version read
+   * with the record (INV-66) so it can't resurrect a row a concurrent disconnect
+   * already cleared, stamp ERROR onto a row reconnected to a different org, or
+   * clobber a newer same-org write. A background error flip; a 0-row miss is a
+   * no-op (nothing to surface).
    */
   private async markLinearIntegrationError(workspaceId: string, record: WorkspaceIntegrationRecord): Promise<void> {
     const organizationId = this.resolveLinearOrganizationId(record)
@@ -1138,6 +1191,7 @@ export class WorkspaceIntegrationService {
       {
         expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
         expectedInstallationId: { value: organizationId ?? "", allowNull: true },
+        expectedVersion: record.version,
       }
     )
   }
@@ -1207,6 +1261,7 @@ export class WorkspaceIntegrationService {
       metadata: {},
       installedBy: installedByUserId,
       installationId: null,
+      version: 1,
       createdAt: new Date(),
       updatedAt: new Date(),
     }
@@ -1264,9 +1319,12 @@ export class WorkspaceIntegrationService {
       return { record: updated, credentials, metadata }
     }
 
-    // Refresh path. A missing org id is pinned to a NULL/empty installation id
-    // rather than falling back to status-only, so even a malformed legacy client
-    // cannot overwrite a concurrently reconnected row with a populated org id.
+    // Refresh path — CREDENTIAL WRITE, version-CAS. A missing org id is pinned to
+    // a NULL/empty installation id rather than falling back to status-only, so even
+    // a malformed legacy client cannot overwrite a concurrently reconnected row
+    // with a populated org id. The version read with the record (INV-66) additionally
+    // stops a stale refresh clobbering a newer same-org write. A 0-row miss returns
+    // null, which callers (401 retry, proactive refresh) handle as a refresh failure.
     const updated = await WorkspaceIntegrationRepository.update(
       this.deps.pool,
       workspaceId,
@@ -1281,6 +1339,7 @@ export class WorkspaceIntegrationService {
       {
         expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,
         expectedInstallationId: { value: organizationId ?? "", allowNull: true },
+        expectedVersion: record.version,
       }
     )
     if (!updated) return null
