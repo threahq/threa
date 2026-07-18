@@ -905,6 +905,73 @@ describe("handleBeforeInputKeyboardPaste (Gboard suggestion-bar paste)", () => {
     expect(event.prevented).toBe(false)
     editor.destroy()
   })
+
+  it("reads the payload from dataTransfer when data is null (Android large IME payloads)", () => {
+    const editor = createTestEditor("")
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+
+    const event = {
+      inputType: "insertText",
+      data: null,
+      dataTransfer: { getData: (format: string) => (format === "text/plain" ? "line 1\nline 2" : "") },
+      prevented: false,
+      preventDefault() {
+        this.prevented = true
+      },
+    }
+    const handled = handleBeforeInputKeyboardPaste(
+      editor,
+      event,
+      () => "user",
+      () => null
+    )
+
+    expect(handled).toBe(true)
+    expect(event.prevented).toBe(true)
+    expect(serializeToMarkdown(editor.getJSON())).toBe("line 1\n\nline 2")
+    editor.destroy()
+  })
+
+  it.each(["insertFromPaste", "insertReplacementText"])(
+    "intercepts %s without the size/styling heuristic",
+    (inputType) => {
+      const editor = createTestEditor("")
+      editor.commands.setTextSelection(editor.state.doc.content.size)
+
+      const event = {
+        inputType,
+        data: null,
+        dataTransfer: { getData: (format: string) => (format === "text/plain" ? "hi" : "") },
+        prevented: false,
+        preventDefault() {
+          this.prevented = true
+        },
+      }
+      const handled = handleBeforeInputKeyboardPaste(editor, event)
+
+      expect(handled).toBe(true)
+      expect(event.prevented).toBe(true)
+      expect(serializeToMarkdown(editor.getJSON())).toBe("hi")
+      editor.destroy()
+    }
+  )
+
+  it("falls back to a plain-text insert when markdown parsing throws (payload never lost)", () => {
+    const editor = createTestEditor("")
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+
+    const event = makeBeforeInput("insertText", "hello @user\nworld")
+    const handled = handleBeforeInputKeyboardPaste(editor, event, () => {
+      throw new Error("lookup exploded")
+    })
+
+    expect(handled).toBe(true)
+    expect(event.prevented).toBe(true)
+    // The raw payload survives as text — never an empty composer.
+    expect(editor.state.doc.textContent).toContain("hello @user")
+    expect(editor.state.doc.textContent).toContain("world")
+    editor.destroy()
+  })
 })
 
 describe("handleBeforeInputAtomDelete (Android atom deletion)", () => {
