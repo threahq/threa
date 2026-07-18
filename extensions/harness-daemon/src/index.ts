@@ -14,6 +14,7 @@ import {
   spawnAgent,
   steerAgent,
   stopAgent,
+  watchUnarchived,
 } from "./commands"
 import { die } from "./errors"
 
@@ -26,8 +27,11 @@ async function main(): Promise<void> {
     await resumeActive(parseResume(args))
     return
   }
+  if (command === "watch-unarchived") return watchUnarchived(parseResume(args))
   if (command === "boot-resume") return bootResume(parseResume(args))
-  if (command === "install-boot-resume") return installBootResumeAgent(parseResume(args))
+  if (command === "install-watch" || command === "install-boot-resume") {
+    return installBootResumeAgent(parseResume(args))
+  }
   if (command === "stop") return stopAgent(args[0] ?? die("stop requires an agent id or name"))
   if (command === "interrupt") return interruptAgent(args[0] ?? die("interrupt requires an agent id or name"))
   if (command === "steer")

@@ -26,6 +26,7 @@ import {
 import { agentWindowExists, attachedTmuxSession, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions } from "./types"
 import { restoreManagedWorktree } from "./worktree"
+import { runWatchLoop, unavailableBackoffMs, watchIntervalMs } from "./watch"
 
 function spawnCommand(options: SpawnOptions): string[] {
   const command = ["threa-harnessd", "spawn", options.runtime, "--name", options.name]
@@ -90,18 +91,34 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
   }
 }
 
-export async function bootResume(options: ResumeOptions): Promise<void> {
+export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   const session = options.tmux ?? "threa-agents"
-  ensureTmuxSession(session, true)
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const retryable = await resumeActive({ ...options, tmux: session })
-    if (!retryable || options.dryRun) return
-    if (attempt < 3) {
-      console.warn(`harnessd: Threa API unavailable; retrying boot resume (${attempt}/3) in 10 seconds`)
-      await Bun.sleep(10_000)
-    }
-  }
-  console.error("harnessd: gave up resuming agents after 3 attempts; Threa API is still unavailable")
+  const intervalMs = watchIntervalMs()
+  let unavailablePasses = 0
+  console.log(`harnessd: watching for unarchived sessions every ${intervalMs}ms in tmux '${session}'`)
+  await runWatchLoop({
+    runPass: async () => {
+      ensureTmuxSession(session, true)
+      const unavailable = await resumeActive({ ...options, tmux: session })
+      if (!unavailable) {
+        unavailablePasses = 0
+        return intervalMs
+      }
+      unavailablePasses += 1
+      const delayMs = unavailableBackoffMs(intervalMs, unavailablePasses)
+      console.warn(`harnessd: Threa API unavailable; next reconciliation in ${delayMs}ms`)
+      return delayMs
+    },
+    sleep: Bun.sleep,
+    intervalMs,
+    onError: (error) => {
+      console.error(`harnessd: reconciliation pass failed: ${error instanceof Error ? error.message : String(error)}`)
+    },
+  })
+}
+
+export async function bootResume(options: ResumeOptions): Promise<void> {
+  await watchUnarchived(options)
 }
 
 export function installBootResumeAgent(options: ResumeOptions): void {
@@ -125,7 +142,7 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
     console.log("No managed agents.")
     return false
   }
-  let retryable = false
+  let unavailable = false
 
   for (const storedAgent of agents) {
     let agent = storedAgent
@@ -179,9 +196,12 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       apiKey,
       streamId: scratchpad.streamId,
     })
-    if (status === "unavailable") retryable = true
     if (status !== "active") {
       skip(status)
+      if (status === "unavailable") {
+        unavailable = true
+        break
+      }
       continue
     }
     if (agent.runtime === "pi" && !agent.runtimeSessionId) {
@@ -248,13 +268,16 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       expectedRootStreamId: scratchpad.streamId,
       labelName: process.env.THREA_DEFAULT_LABEL || runtimeConfig.defaultLabel || "coding",
     })
-    if (preflight.status === "unavailable") retryable = true
     if (preflight.status !== "linked") {
       const reason =
         preflight.status === "mismatch"
           ? `session link root mismatch: expected ${preflight.expectedRootStreamId}, got ${preflight.rootStreamId}`
           : preflight.reason
       skip(reason)
+      if (preflight.status === "unavailable") {
+        unavailable = true
+        break
+      }
       continue
     }
 
@@ -279,7 +302,7 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       skip(`launch failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  return retryable
+  return unavailable
 }
 
 export function listAgents(): void {

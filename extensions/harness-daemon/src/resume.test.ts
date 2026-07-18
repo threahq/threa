@@ -15,6 +15,7 @@ import { parseResume, parseSpawn } from "./cli"
 import { readInventory, upsertAgent } from "./inventory"
 import { claudeLaunchArgs, claudeLaunchCommand, normalizeChannelMcpConfig, piLaunchArgs } from "./spawners"
 import type { ManagedAgent } from "./types"
+import { runWatchLoop, unavailableBackoffMs, watchIntervalMs } from "./watch"
 
 afterEach(() => mock.restore())
 
@@ -84,7 +85,7 @@ test("preserves an explicitly non-yolo launch", () => {
   expect(recordedNoYolo(agent({ command: ["threa-harnessd", "spawn", "claude", "--no-yolo"] }))).toBeTrue()
 })
 
-test("writes a login LaunchAgent that runs boot-resume in a dedicated tmux session", () => {
+test("writes a persistent login watcher in a dedicated tmux session", () => {
   const plist = launchAgentPlist({
     bun: "/Users/me/.bun/bin/bun",
     entrypoint: "/repo/extensions/harness-daemon/src/index.ts",
@@ -94,10 +95,44 @@ test("writes a login LaunchAgent that runs boot-resume in a dedicated tmux sessi
     environment: { THREA_API_KEY: "secret" },
   })
   expect(plist).toContain("<key>RunAtLoad</key><true/>")
-  expect(plist).toContain("boot-resume --tmux 'threa-agents'")
+  expect(plist).toContain("<key>KeepAlive</key><true/>")
+  expect(plist).toContain("watch-unarchived --tmux 'threa-agents'")
   expect(plist).toContain("resume-active.error.log")
   expect(plist).toContain("<key>PATH</key><string>/Users/me/.bun/bin:/usr/bin:/bin</string>")
   expect(plist).toContain("<key>THREA_API_KEY</key><string>secret</string>")
+})
+
+test("watch loop keeps reconciling after a failed pass", async () => {
+  let passes = 0
+  const sleeps: number[] = []
+  const errors: unknown[] = []
+  await runWatchLoop({
+    runPass: async () => {
+      passes += 1
+      if (passes === 1) throw new Error("offline")
+      if (passes === 2) return 24_000
+    },
+    sleep: async (ms) => {
+      sleeps.push(ms)
+    },
+    intervalMs: 12_000,
+    onError: (error) => errors.push(error),
+    maxPasses: 3,
+  })
+  expect({ passes, sleeps, error: String(errors[0]) }).toEqual({
+    passes: 3,
+    sleeps: [12_000, 24_000],
+    error: "Error: offline",
+  })
+})
+
+test("watch interval is bounded and unavailable passes back off with jitter", () => {
+  expect(watchIntervalMs("")).toBe(60_000)
+  expect(watchIntervalMs("15000")).toBe(15_000)
+  expect(() => watchIntervalMs("9999")).toThrow("must be at least 10000")
+  expect(unavailableBackoffMs(60_000, 1, () => 0)).toBe(120_000)
+  expect(unavailableBackoffMs(60_000, 2, () => 0.5)).toBe(252_000)
+  expect(unavailableBackoffMs(60_000, 10, () => 1)).toBe(900_000)
 })
 
 test("migrates a legacy MCP registration to the current channel name and gate", () => {

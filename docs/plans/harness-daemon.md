@@ -17,6 +17,8 @@ bun extensions/harness-daemon/src/index.ts spawn claude --name fix-bar --branch 
 bun extensions/harness-daemon/src/index.ts do "spawn a pi agent for long chat performance"
 bun extensions/harness-daemon/src/index.ts list
 bun extensions/harness-daemon/src/index.ts revive-unarchived [--dry-run]
+bun extensions/harness-daemon/src/index.ts watch-unarchived --tmux threa-agents
+bun extensions/harness-daemon/src/index.ts install-watch --tmux threa-agents
 bun extensions/harness-daemon/src/index.ts attach <agent-id-or-name>
 bun extensions/harness-daemon/src/index.ts stop <agent-id-or-name>
 ```
@@ -51,7 +53,9 @@ Tracked fields:
 - runtime instance/session IDs needed to reattach the same scratchpad
 - last output tail for debugging
 
-`revive-unarchived` checks each offline inventory entry's scratchpad through the public API and skips archived, inaccessible, or missing streams. For an active stream it restores the original worktree when possible, preflights the stored runtime identity with `ifArchived: "wait"`, verifies the returned root stream, then relaunches Claude with `server:threa-channel` or Pi with its original `--session-id`. Every skip is logged with its reason.
+`revive-unarchived` runs one reconciliation pass. `watch-unarchived` repeats that pass every 60 seconds (configurable with `THREA_HARNESSD_WATCH_INTERVAL_MS`, minimum 10 seconds), so unarchiving an inventoried dormant scratchpad wakes its local runtime without another command. API outages and rate limits stop the current pass and apply jittered exponential backoff, capped at 15 minutes. `install-watch` installs and immediately starts the watcher as a persistent macOS LaunchAgent; the legacy `install-boot-resume` and `boot-resume` commands use the same watcher.
+
+Each pass checks offline inventory entries through the public API and skips archived, inaccessible, or missing streams. For an active stream it restores the original worktree when possible, preflights the stored runtime identity with no-create/`ifArchived: "wait"` policy, verifies the returned root stream, then relaunches Claude with `server:threa-channel` or Pi with its original `--session-id`. Every skip and revival is logged with its reason.
 
 The first version briefly used JSON, but SQLite is the intended default because lifecycle reconciliation needs atomic updates and queryable state.
 

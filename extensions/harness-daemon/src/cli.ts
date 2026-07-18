@@ -11,7 +11,9 @@ Usage:
   threa-harnessd list
   threa-harnessd revive-unarchived [--tmux <session>] [--dry-run]
   threa-harnessd resume-active [--tmux <session>] [--dry-run]
+  threa-harnessd watch-unarchived [--tmux <session>] [--dry-run]
   threa-harnessd boot-resume [--tmux <session>] [--dry-run]
+  threa-harnessd install-watch [--tmux <session>]
   threa-harnessd install-boot-resume [--tmux <session>]
   threa-harnessd stop <agent-id-or-name>
   threa-harnessd interrupt <agent-id-or-name>
@@ -24,7 +26,8 @@ Examples:
   threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
   threa-harnessd spawn claude --name fix-sidebar --branch fix/sidebar
   threa-harnessd resume-active --dry-run
-  threa-harnessd install-boot-resume
+  threa-harnessd watch-unarchived --tmux threa-agents
+  threa-harnessd install-watch
   threa-harnessd do spawn a pi agent for long chat performance
   threa-harnessd interrupt fix-sidebar
   threa-harnessd steer fix-sidebar "also update the tests"
