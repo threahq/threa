@@ -99,6 +99,9 @@ export async function refreshGithubPreviewWithTrailing(
   const { workspaceId, previewId } = params
   const result = await refreshLinkPreview(deps, { workspaceId, previewId })
   if (result.refreshed || result.reason === "not_found") return
+  // Conditional-mode-only outcome; this path never passes `conditional`, the
+  // check just narrows the union for the branches below.
+  if (result.reason === "not_modified") return
 
   if (result.reason === "debounced" || result.reason === "conflict") {
     // Coalesce on the row's current fetch time. A debounced result carries the

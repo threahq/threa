@@ -43,6 +43,12 @@ export type RefreshLinkPreviewResult =
    * the debounce-timing math.
    */
   | { refreshed: false; reason: "conflict"; refreshVersion: number; fetchedAt: Date | null }
+  /**
+   * Conditional mode only: the gate request answered 304, so the provider
+   * content is unchanged. `fetched_at` was touched to re-arm the debounce; no
+   * metadata was written and nothing was broadcast.
+   */
+  | { refreshed: false; reason: "not_modified" }
 
 /**
  * Force-refresh one already-rendered GitHub link preview from an external
@@ -55,10 +61,17 @@ export type RefreshLinkPreviewResult =
  * Skips (never downgrades) when: the row is gone, it was fetched within
  * `debounceMs`, or the fetch comes back empty (rate-limited/null client) — an
  * empty fetch must not blank a rich card.
+ *
+ * `conditional` mode (the viewport-nudge path, where nothing is KNOWN to have
+ * changed) prepends a one-request ETag gate against the preview's primary
+ * resource: a 304 answer costs no rate limit and short-circuits to a
+ * `fetched_at` touch; a 200 harvests the fresh validator, runs the full fetch,
+ * and stores the validator with the write. Webhook callers stay unconditional —
+ * their signal already proves something changed.
  */
 export async function refreshLinkPreview(
   deps: RefreshLinkPreviewDeps,
-  params: { workspaceId: string; previewId: string; debounceMs?: number }
+  params: { workspaceId: string; previewId: string; debounceMs?: number; conditional?: boolean }
 ): Promise<RefreshLinkPreviewResult> {
   const debounceMs = params.debounceMs ?? DEFAULT_REFRESH_DEBOUNCE_MS
   const preview = await deps.linkPreviewService.getPreviewById(params.workspaceId, params.previewId)
@@ -87,6 +100,28 @@ export async function refreshLinkPreview(
     }
   }
 
+  // In conditional mode the write must carry a `refreshEtag` key even when the
+  // gate returned no validator (storing null), so the field tracks exactly what
+  // the gate last observed; unconditional (webhook) writes omit the key and
+  // preserve whatever validator is stored.
+  let etagOverride: { refreshEtag: string | null } | null = null
+  if (params.conditional) {
+    const gate = await githubPreview.checkGitHubRefreshGate(
+      params.workspaceId,
+      preview.url,
+      preview.refreshEtag,
+      deps.workspaceIntegrationService
+    )
+    if (gate.outcome === "not_modified") {
+      await deps.linkPreviewService.recordRefreshCheck(params.workspaceId, params.previewId, expectedRefreshVersion)
+      return { refreshed: false, reason: "not_modified" }
+    }
+    if (gate.outcome === "unavailable") {
+      return { refreshed: false, reason: "fetch_empty", refreshVersion: expectedRefreshVersion }
+    }
+    etagOverride = { refreshEtag: gate.etag }
+  }
+
   const metadata = await githubPreview.fetchGitHubPreview(
     params.workspaceId,
     preview.url,
@@ -100,9 +135,14 @@ export async function refreshLinkPreview(
     return { refreshed: false, reason: "fetch_empty", refreshVersion: expectedRefreshVersion }
   }
 
-  const outcome = await deps.linkPreviewService.applyRefreshedMetadata(params.workspaceId, params.previewId, metadata, {
-    expectedRefreshVersion,
-  })
+  const outcome = await deps.linkPreviewService.applyRefreshedMetadata(
+    params.workspaceId,
+    params.previewId,
+    etagOverride ? { ...metadata, ...etagOverride } : metadata,
+    {
+      expectedRefreshVersion,
+    }
+  )
   if (!outcome.applied) {
     log.debug(
       { workspaceId: params.workspaceId, previewId: params.previewId },

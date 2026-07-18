@@ -27,6 +27,7 @@ import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { linkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
 import { isVideoPreview, videoPlaybackSrc } from "@/components/gallery/video-embed"
 import { LinkPreviewBody } from "./link-preview-body"
+import { useReportPreviewVisible } from "@/hooks/use-report-preview-visible"
 import { AccentGlow, colorWithAlpha, Field, FieldGrid, LabelChip, MonoTag, StatePill } from "./link-preview-primitives"
 import type {
   GitHubFilePreviewData,
@@ -130,6 +131,14 @@ export function LinkPreviewCard({
     providerPreview && !isLinearPreview(providerPreview) && !isVideoPreview(providerPreview) ? providerPreview : null
   const linearPreview = isLinearPreview(providerPreview) ? providerPreview : null
 
+  // GitHub cards only: feeds the viewport-nudge conditional refresh, which is
+  // how previews from repos without webhook coverage stay fresh while watched.
+  const visibilityRef = useReportPreviewVisible({
+    workspaceId,
+    previewId: preview.id,
+    enabled: githubPreview !== null,
+  })
+
   const handleDismiss = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
@@ -206,6 +215,7 @@ export function LinkPreviewCard({
   // menu (via the inner <a>) instead of the message drawer.
   return (
     <div
+      ref={visibilityRef}
       data-native-context="true"
       className={cn(
         "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
