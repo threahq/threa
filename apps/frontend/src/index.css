@@ -1,4 +1,5 @@
-/* OpenDyslexic font loaded via <link> in index.html to avoid render-blocking @import */
+/* All fonts self-hosted (no third-party font CDNs — visitor IPs stay first-party).
+   OpenDyslexic downloads only when [data-font-family="dyslexic"] applies it. */
 
 /* Self-hosted type system (shared with apps/public-site): Switzer body/UI,
    Commit Mono for data/code. Files in public/fonts. Switzer is a variable
@@ -30,6 +31,34 @@
   font-weight: 700;
   font-display: swap;
   font-style: normal;
+}
+@font-face {
+  font-family: "OpenDyslexic";
+  src: url("/fonts/opendyslexic-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "OpenDyslexic";
+  src: url("/fonts/opendyslexic-400-italic.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+  font-style: italic;
+}
+@font-face {
+  font-family: "OpenDyslexic";
+  src: url("/fonts/opendyslexic-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "OpenDyslexic";
+  src: url("/fonts/opendyslexic-700-italic.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+  font-style: italic;
 }
 
 @tailwind base;

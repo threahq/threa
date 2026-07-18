@@ -132,6 +132,12 @@ export function loadConfig(): Config {
     throw new Error("CORS_ALLOWED_ORIGINS is required in production")
   }
 
+  // INV-11: the us-east-1 dev fallback must never reach production — a missing
+  // S3_REGION would silently re-home attachments outside the workspace's region.
+  if (isProduction && !process.env.S3_REGION) {
+    throw new Error("S3_REGION is required in production")
+  }
+
   if (!useStubAuth) {
     const required = ["WORKOS_API_KEY", "WORKOS_CLIENT_ID", "WORKOS_REDIRECT_URI", "WORKOS_COOKIE_PASSWORD"]
     const missing = required.filter((key) => !process.env[key])
