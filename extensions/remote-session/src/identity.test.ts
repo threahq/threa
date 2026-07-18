@@ -78,6 +78,7 @@ describe("loadConfig", () => {
       expect(result.config.instanceId).toMatch(ID_CHARSET)
       expect(result.config.runtimeSessionId).toMatch(ID_CHARSET)
       expect(result.config.permissionRelay).toBe(true)
+      expect(result.config.coldStartIfArchived).toBe("replace")
       expect(result.config.delegations).toBe(false)
       // Same host+cwd resolves to the same scratchpad on the next launch.
       const again = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } }, IDENTITY)
@@ -136,6 +137,21 @@ describe("loadConfig", () => {
       IDENTITY
     )
     if ("config" in envWins) expect(envWins.config.defaultLabel).toBe("review")
+  })
+
+  test("allows a supervisor to force wait-only cold starts", () => {
+    const result = loadConfig(
+      {
+        ...base,
+        env: {
+          THREA_WORKSPACE_ID: "ws_1",
+          THREA_API_KEY: "threa_bk_x",
+          THREA_COLD_START_IF_ARCHIVED: "wait",
+        },
+      },
+      IDENTITY
+    )
+    if ("config" in result) expect(result.config.coldStartIfArchived).toBe("wait")
   })
 
   test("parses permissionRelay off and clamps pollMs", () => {

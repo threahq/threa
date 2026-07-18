@@ -11,6 +11,7 @@ import {
   recordedNoYolo,
 } from "./resume"
 import { launchAgentPlist } from "./boot"
+import { parseSpawn } from "./cli"
 import { readInventory, upsertAgent } from "./inventory"
 import { claudeLaunchArgs, claudeLaunchCommand, normalizeChannelMcpConfig, piLaunchArgs } from "./spawners"
 import type { ManagedAgent } from "./types"
@@ -68,6 +69,10 @@ test("migrates legacy inventory and persists runtime identity", () => {
   }
 })
 
+test("records an absolute source repo for worktree restoration", () => {
+  expect(parseSpawn(["claude", "--name", "repair", "--repo", "."]).repo).toBe(process.cwd())
+})
+
 test("preserves an explicitly non-yolo launch", () => {
   expect(recordedNoYolo(agent())).toBeFalse()
   expect(recordedNoYolo(agent({ command: ["threa-harnessd", "spawn", "claude", "--no-yolo"] }))).toBeTrue()
@@ -95,13 +100,13 @@ test("migrates a legacy MCP registration to the current channel name and gate", 
     path,
     JSON.stringify({ mcpServers: { threa: { type: "stdio", command: "bun", args: ["/x/index.ts"] } } })
   )
-  normalizeChannelMcpConfig(path)
+  normalizeChannelMcpConfig(path, "threa-channel", "/current/index.ts")
   expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
     mcpServers: {
       "threa-channel": {
         type: "stdio",
         command: "bun",
-        args: ["/x/index.ts"],
+        args: ["/current/index.ts"],
         env: { THREA_CHANNEL_SERVER_KEY: "threa-channel" },
       },
     },
@@ -125,10 +130,11 @@ test("reconstructs the current Claude channel launch with stable runtime identit
     "server:threa-channel",
     "--dangerously-skip-permissions",
   ])
-  const command = claudeLaunchCommand(args, { instanceId: "cc-one", runtimeSessionId: "ccs-one" })
+  const command = claudeLaunchCommand(args, { instanceId: "cc-one", runtimeSessionId: "ccs-one" }, {}, "wait")
   expect(command).toContain("'THREA_INSTANCE_ID=cc-one'")
   expect(command).toContain("'THREA_RUNTIME_SESSION_ID=ccs-one'")
   expect(command).toContain("'THREA_DEFAULT_LABEL=coding'")
+  expect(command).toContain("'THREA_COLD_START_IF_ARCHIVED=wait'")
   expect(
     claudeLaunchArgs({ claudeBin: "claude", name: "repair", channel: "threa-channel", noYolo: true })
   ).not.toContain("--dangerously-skip-permissions")

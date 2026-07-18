@@ -8,6 +8,8 @@ export interface RemoteSessionConfig {
   displayName: string
   /** Sent as `labelName` on session create; the backend applies it only to a newly created scratchpad. Unset = no label. */
   defaultLabel?: string
+  /** Cold-start behavior when this identity still points at an archived scratchpad. Default: replace. */
+  coldStartIfArchived?: "wait" | "replace"
   /** `^[A-Za-z0-9_-]+$`, ≤64 — must satisfy the `/bot` hello schema. */
   instanceId: string
   runtimeSessionId: string
@@ -101,6 +103,7 @@ export interface RawConfig {
   apiKey?: unknown
   displayName?: unknown
   defaultLabel?: unknown
+  coldStartIfArchived?: unknown
   permissionRelay?: unknown
   pollMs?: unknown
   idleTimeoutMs?: unknown
@@ -122,6 +125,10 @@ export function parseConfigFile(text: string): RawConfig {
 
 function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+}
+
+function parseColdStartIfArchived(value: unknown): "wait" | "replace" {
+  return str(value)?.toLowerCase() === "wait" ? "wait" : "replace"
 }
 
 function parseBool(value: unknown, fallback: boolean): boolean {
@@ -189,6 +196,7 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       apiKey: apiKey!,
       displayName,
       defaultLabel,
+      coldStartIfArchived: parseColdStartIfArchived(env.THREA_COLD_START_IF_ARCHIVED ?? file.coldStartIfArchived),
       instanceId,
       runtimeSessionId,
       permissionRelay: parseBool(env.THREA_PERMISSION_RELAY ?? file.permissionRelay, true),

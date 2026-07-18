@@ -171,6 +171,10 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       skip("original Pi --session-id is not recorded")
       continue
     }
+    if (agent.runtime === "claude" && Boolean(agent.instanceId) !== Boolean(agent.runtimeSessionId)) {
+      skip("incomplete Claude runtime identity")
+      continue
+    }
     const piLink = agent.runtimeSessionId ? readPiRemoteSession(agent.runtimeSessionId) : undefined
     if (agent.runtime === "pi" && !piLink) {
       skip("Pi remote link is missing or disabled")

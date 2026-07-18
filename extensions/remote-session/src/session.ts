@@ -509,12 +509,11 @@ export class RemoteSession {
       runtimeSessionId: this.config.runtimeSessionId,
       displayName: this.config.displayName,
       localCwd: process.cwd(),
-      // Detached-pending-restore probes must WAIT on the archived scratchpad so
-      // an unarchive inside the grace window reattaches the same one. A cold
-      // start must not: the deterministic identity pointing at a scratchpad the
-      // user archived would otherwise wedge linking forever — replace it with a
-      // fresh scratchpad instead.
-      ifArchived: this.archivePending ? "wait" : "replace",
+      // Detached-pending-restore probes always wait. Cold starts replace by
+      // default, but supervisors reviving a known stream can force wait so an
+      // archive between their preflight and process launch cannot mint another
+      // scratchpad.
+      ifArchived: this.archivePending ? "wait" : (this.config.coldStartIfArchived ?? "replace"),
       ...(this.config.defaultLabel && { labelName: this.config.defaultLabel }),
       ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
     })

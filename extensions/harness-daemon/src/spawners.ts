@@ -36,7 +36,7 @@ export function claudeLaunchArgs(params: {
   return args
 }
 
-export function normalizeChannelMcpConfig(path: string, channel = "threa-channel"): void {
+export function normalizeChannelMcpConfig(path: string, channel: string, channelEntry: string): void {
   const parsed = JSON.parse(readFileSync(path, "utf8"))
   const servers = parsed.mcpServers
   const entries = servers && typeof servers === "object" ? Object.entries(servers) : []
@@ -45,6 +45,9 @@ export function normalizeChannelMcpConfig(path: string, channel = "threa-channel
   parsed.mcpServers = {
     [channel]: {
       ...server,
+      type: "stdio",
+      command: "bun",
+      args: [channelEntry],
       env: { ...((server.env as Record<string, unknown> | undefined) ?? {}), THREA_CHANNEL_SERVER_KEY: channel },
     },
   }
@@ -188,6 +191,23 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
 const BOOT_DIALOG_RE = /Enter to confirm|Enter to continue/
 const IDLE_PROMPT_RE = /^❯\s*$/m
 
+function prepareClaudeChannel(): string {
+  const channelDir = join(import.meta.dir, "..", "..", "claude-code-remote")
+  const channelEntry = join(channelDir, "src", "index.ts")
+  if (!existsSync(channelEntry)) die(`Claude channel entry not found: ${channelEntry}`)
+  if (!existsSync(join(channelDir, "node_modules"))) {
+    console.log("harnessd: installing Claude channel dependencies")
+    run(["bun", "install"], { cwd: channelDir })
+  }
+  // Bun resolves the file dependency from the SDK's real directory, so that
+  // package needs its own installed dependencies too.
+  const sdkDir = join(channelDir, "..", "remote-session")
+  if (existsSync(join(sdkDir, "package.json")) && !existsSync(join(sdkDir, "node_modules"))) {
+    run(["bun", "install"], { cwd: sdkDir })
+  }
+  return channelEntry
+}
+
 export class ClaudeRuntimeSpawner extends RuntimeSpawner {
   async spawn(options: SpawnOptions): Promise<SpawnResult> {
     if (!commandExists("git")) die("git not found")
@@ -200,20 +220,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     ensureTmuxSession(session)
     const { worktree, branch } = this.createWorktree(options)
     const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
-    const channelDir = join(worktree, "extensions", "claude-code-remote")
-    const channelEntry = join(channelDir, "src", "index.ts")
-    if (!existsSync(channelEntry)) die(`Claude channel entry not found: ${channelEntry}`)
-
-    console.log("harnessd: installing Claude channel dependencies")
-    run(["bun", "install"], { cwd: channelDir })
-    // The channel's `file:` dep on the remote-session SDK links the folder but
-    // does NOT install the SDK's own deps — bun resolves the SDK's imports from
-    // its real path, so it needs its own node_modules. Guarded for worktrees
-    // predating the SDK split.
-    const sdkDir = join(worktree, "extensions", "remote-session")
-    if (existsSync(join(sdkDir, "package.json"))) {
-      run(["bun", "install"], { cwd: sdkDir })
-    }
+    const channelEntry = prepareClaudeChannel()
 
     const config = readThreaChannelConfig()
     const identity = claudeRuntimeIdentity(worktree, config)
@@ -255,11 +262,10 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     if (!claudeBin) die("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
 
     const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
-    const channelEntry = join(agent.worktree, "extensions", "claude-code-remote", "src", "index.ts")
-    if (!existsSync(channelEntry)) die(`Claude channel entry not found: ${channelEntry}`)
+    const channelEntry = prepareClaudeChannel()
     const mcpConfig = mcpConfigPath(agent.name)
     if (!existsSync(mcpConfig)) this.writeMcpConfig(agent.name, channel, channelEntry)
-    normalizeChannelMcpConfig(mcpConfig, channel)
+    normalizeChannelMcpConfig(mcpConfig, channel, channelEntry)
     const config = readThreaChannelConfig()
     const derived = claudeRuntimeIdentity(agent.worktree, config)
     const identity = {
@@ -277,7 +283,8 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       claudeLaunchCommand(
         claudeLaunchArgs({ claudeBin, name: agent.name, channel, mcpConfig, noYolo }),
         identity,
-        config
+        config,
+        "wait"
       )
     )
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
@@ -311,8 +318,9 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
    * project entry, so a persisted local-scope registration from worktree A
    * silently repoints worktree B's channel at A's code the next time B starts
    * (and stacks a duplicate channel on top of a user-scope registration). A
-   * config file passed at launch binds this session to this worktree's channel
-   * and leaves global config untouched.
+   * config file passed at launch binds this session to the supervisor's current
+   * channel implementation and leaves global config untouched. This also keeps
+   * revived feature branches from loading an obsolete connector.
    */
   private writeMcpConfig(name: string, channel: string, channelEntry: string): string {
     const path = mcpConfigPath(name)
@@ -438,13 +446,15 @@ export function claudeRuntimeIdentity(
 export function claudeLaunchCommand(
   args: string[],
   identity: { instanceId: string; runtimeSessionId: string },
-  config: ThreaChannelConfig = {}
+  config: ThreaChannelConfig = {},
+  coldStartIfArchived: "wait" | "replace" = "replace"
 ): string {
   const environment = {
     THREA_INSTANCE_ID: identity.instanceId,
     THREA_RUNTIME_SESSION_ID: identity.runtimeSessionId,
     THREA_DISPLAY_NAME: process.env.THREA_DISPLAY_NAME || config.displayName || "Claude Code",
     THREA_DEFAULT_LABEL: process.env.THREA_DEFAULT_LABEL || config.defaultLabel || "coding",
+    THREA_COLD_START_IF_ARCHIVED: coldStartIfArchived,
   }
   return ["env", ...Object.entries(environment).map(([key, value]) => `${key}=${value}`), ...args]
     .map(shellQuote)

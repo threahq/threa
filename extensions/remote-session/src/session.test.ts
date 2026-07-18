@@ -486,6 +486,36 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await session.shutdown()
   })
 
+  test("a supervised cold start can wait instead of replacing an archived scratchpad", async () => {
+    const created: unknown[] = []
+    const client = {
+      createSession: async (body: unknown) => {
+        created.push(body)
+        return {
+          linkId: "brsl_1",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_root",
+          runtimeSessionId: "rts-test",
+          streamUrlPath: "/w/ws_1/s/stream_root",
+        }
+      },
+    } as unknown as ThreaClient
+    const { transport } = makeFakeTransport()
+    const session = new RemoteSession({
+      config: makeConfig({ coldStartIfArchived: "wait" }),
+      client,
+      delegate: { deliverTurn: async () => {} },
+      runtime: RUNTIME,
+      transport,
+    })
+
+    await (session as unknown as { ensureLink: () => Promise<void> }).ensureLink()
+
+    expect(created).toHaveLength(1)
+    expect((created[0] as Record<string, unknown>).ifArchived).toBe("wait")
+    await session.shutdown()
+  })
+
   test("a link response that raced the archive push is dropped — it must not cancel the wind-down", async () => {
     let resolveCreate: ((link: unknown) => void) | undefined
     const client = {

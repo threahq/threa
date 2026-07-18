@@ -108,7 +108,7 @@ export function parseSpawn(args: string[]): SpawnOptions {
     name: normalizeName(name),
     branch: stringFlag(flags, "branch"),
     base: stringFlag(flags, "base"),
-    repo: stringFlag(flags, "repo") ?? defaultRepo(),
+    repo: resolve(stringFlag(flags, "repo") ?? defaultRepo()),
     tmux: stringFlag(flags, "tmux"),
     skipSetup: boolFlag(flags, "skip-setup"),
     noRemote: boolFlag(flags, "no-remote"),

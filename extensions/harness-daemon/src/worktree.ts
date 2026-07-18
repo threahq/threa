@@ -46,6 +46,7 @@ export function restoreManagedWorktree(agent: ManagedAgent): { restored: boolean
   if (result.exitCode !== 0) {
     return { restored: false, reason: result.stderr.trim() || `could not restore ${agent.branch}` }
   }
+  maybeSetupWorktree(agent.worktree, agent.command.includes("--skip-setup"))
   return { restored: true }
 }
 
