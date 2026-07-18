@@ -89,11 +89,17 @@ export async function preflightRuntimeSession(params: {
           localCwd: params.localCwd,
           ...(params.labelName ? { labelName: params.labelName } : {}),
           ifArchived: "wait",
+          ifMissing: "error",
         }),
         signal: AbortSignal.timeout(10_000),
       }
     )
-    if (response.status === 409) return { status: "archived", reason: "linked scratchpad is archived" }
+    if (response.status === 409) {
+      const json = (await response.json().catch(() => ({}))) as { code?: string }
+      return json.code === "SCRATCHPAD_ARCHIVED"
+        ? { status: "archived", reason: "linked scratchpad is archived" }
+        : { status: "inaccessible", reason: json.code ?? "session preflight returned 409" }
+    }
     if (response.status === 403 || response.status === 404) {
       return { status: "inaccessible", reason: `session preflight returned ${response.status}` }
     }

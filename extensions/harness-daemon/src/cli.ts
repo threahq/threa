@@ -91,6 +91,9 @@ export function inferBranch(name: string, text?: string): string {
 
 export function parseResume(args: string[]): ResumeOptions {
   const flags = parseFlags(args)
+  if (Object.keys(flags).some((key) => key === "force" || key.startsWith("force="))) {
+    die("--force was removed; revival never launches archived or inaccessible scratchpads")
+  }
   return {
     tmux: stringFlag(flags, "tmux"),
     dryRun: boolFlag(flags, "dry-run"),

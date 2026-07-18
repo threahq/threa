@@ -9,6 +9,7 @@ import { commandExists, commandPath, output } from "./shell"
 import {
   ClaudeRuntimeSpawner,
   PiRuntimeSpawner,
+  RuntimeSpawnError,
   claudeRuntimeIdentity,
   configuredThreaBaseUrl,
   readPiRemoteConfig,
@@ -77,7 +78,14 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
     if (result.output) process.stdout.write(result.output)
     console.log(`harnessd: recorded ${id}`)
   } catch (error) {
-    upsertAgent({ ...agent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
+    const { output: _output, ...partial } = error instanceof RuntimeSpawnError ? error.partial : {}
+    upsertAgent({
+      ...agent,
+      ...partial,
+      status: "error",
+      updatedAt: now(),
+      lastOutput: String(error).slice(-4000),
+    })
     throw error
   }
 }
@@ -119,7 +127,16 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
   }
   let retryable = false
 
-  for (const agent of agents) {
+  for (const storedAgent of agents) {
+    let agent = storedAgent
+    if (agent.runtime === "pi" && !agent.scratchpadUrl && agent.runtimeSessionId) {
+      const link = readPiRemoteSession(agent.runtimeSessionId)
+      if (link) {
+        agent = { ...agent, scratchpadUrl: link.scratchpadUrl, instanceId: link.instanceId, updatedAt: now() }
+        if (!options.dryRun) upsertAgent(agent)
+        console.log(`repair-inventory\t${agent.name}\tPi remote link recovered`)
+      }
+    }
     const skip = (reason: string) => console.log(`skip\t${agent.name}\t${reason}`)
     if (agentWindowExists(agent)) {
       skip("already running")

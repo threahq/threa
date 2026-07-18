@@ -79,6 +79,7 @@ describe("loadConfig", () => {
       expect(result.config.runtimeSessionId).toMatch(ID_CHARSET)
       expect(result.config.permissionRelay).toBe(true)
       expect(result.config.coldStartIfArchived).toBe("replace")
+      expect(result.config.coldStartIfMissing).toBe("create")
       expect(result.config.delegations).toBe(false)
       // Same host+cwd resolves to the same scratchpad on the next launch.
       const again = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } }, IDENTITY)
@@ -147,11 +148,17 @@ describe("loadConfig", () => {
           THREA_WORKSPACE_ID: "ws_1",
           THREA_API_KEY: "threa_bk_x",
           THREA_COLD_START_IF_ARCHIVED: "wait",
+          THREA_COLD_START_IF_MISSING: "error",
+          THREA_EXPECTED_ROOT_STREAM_ID: "stream_expected",
         },
       },
       IDENTITY
     )
-    if ("config" in result) expect(result.config.coldStartIfArchived).toBe("wait")
+    if ("config" in result) {
+      expect(result.config.coldStartIfArchived).toBe("wait")
+      expect(result.config.coldStartIfMissing).toBe("error")
+      expect(result.config.expectedRootStreamId).toBe("stream_expected")
+    }
   })
 
   test("parses permissionRelay off and clamps pollMs", () => {

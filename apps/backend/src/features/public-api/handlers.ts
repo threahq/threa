@@ -1028,6 +1028,13 @@ export function createPublicApiHandlers({
         })
       }
 
+      if (data.ifMissing === "error") {
+        throw new HttpError("No runtime session link exists for this identity", {
+          status: 409,
+          code: "RUNTIME_SESSION_NOT_FOUND",
+        })
+      }
+
       let created: Awaited<ReturnType<typeof botRuntimeService.createLinkedScratchpadSession>>
       try {
         created = await botRuntimeService.createLinkedScratchpadSession({

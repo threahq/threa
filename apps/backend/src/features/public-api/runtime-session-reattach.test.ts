@@ -158,6 +158,24 @@ describe("createBotRuntimeSession reattach after unarchive", () => {
     expect(cap.body()).toMatchObject({ data: { linkId: "brsl_new", rootStreamId: "stream_new" } })
   })
 
+  it("ifMissing=error refuses to create a scratchpad when no session link exists", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    const createLinkedScratchpadSession = mock(() => Promise.reject(new Error("must not create a new scratchpad")))
+    const handlers = createHandlers({
+      findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+      reattachArchivedRuntimeSession: mock(() => Promise.resolve({ status: "none" })),
+      createLinkedScratchpadSession,
+    })
+    const req = botRequest()
+    ;(req.body as Record<string, unknown>).ifMissing = "error"
+
+    await expect(handlers.createBotRuntimeSession(req, createResponse().res)).rejects.toMatchObject({
+      status: 409,
+      code: "RUNTIME_SESSION_NOT_FOUND",
+    })
+    expect(createLinkedScratchpadSession).not.toHaveBeenCalled()
+  })
+
   it("ifArchived=replace retires the archived link and creates a fresh scratchpad instead of 409ing", async () => {
     spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
     const retireArchivedRuntimeSession = mock(() => Promise.resolve(true))

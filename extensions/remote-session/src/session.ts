@@ -514,9 +514,15 @@ export class RemoteSession {
       // archive between their preflight and process launch cannot mint another
       // scratchpad.
       ifArchived: this.archivePending ? "wait" : (this.config.coldStartIfArchived ?? "replace"),
+      ifMissing: this.config.coldStartIfMissing ?? "create",
       ...(this.config.defaultLabel && { labelName: this.config.defaultLabel }),
       ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
     })
+    if (this.config.expectedRootStreamId && link.rootStreamId !== this.config.expectedRootStreamId) {
+      throw new Error(
+        `Session link root mismatch: expected ${this.config.expectedRootStreamId}, got ${link.rootStreamId}`
+      )
+    }
     if (this.config.e2e && link.e2eEnabled !== true) {
       // A resume of a pre-existing PLAINTEXT scratchpad — nothing to provision,
       // but the user asked for encryption, so say why they aren't getting it.

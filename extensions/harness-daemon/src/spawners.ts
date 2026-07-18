@@ -58,6 +58,15 @@ function firstScratchpadUrl(text: string): string | undefined {
   return text.match(/https:\/\/app\.threa\.io\/[^\s)]+/)?.[0]
 }
 
+function scratchpadStreamId(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  try {
+    return new URL(value).pathname.match(/\/s\/(stream_[A-Za-z0-9]+)(?:\/|$)/)?.[1]
+  } catch {
+    return undefined
+  }
+}
+
 export interface PiRemoteSession {
   instanceId: string
   rootStreamId: string
@@ -98,6 +107,16 @@ export function readPiRemoteSession(runtimeSessionId: string): PiRemoteSession |
   }
 }
 
+export class RuntimeSpawnError extends Error {
+  constructor(
+    cause: unknown,
+    readonly partial: Partial<SpawnResult>
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = "RuntimeSpawnError"
+  }
+}
+
 abstract class RuntimeSpawner {
   abstract spawn(options: SpawnOptions): Promise<SpawnResult>
 
@@ -119,33 +138,39 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     ensurePiDefaultLabel()
     const { worktree, branch } = this.createWorktree(options)
     const runtimeSessionId = randomUUID()
-    const window = pickTmuxWindow(session, options.name)
-    const windowId = createWindow(
-      session,
-      window,
-      worktree,
-      piLaunchArgs(piBin, runtimeSessionId).map(shellQuote).join(" ")
-    )
-    console.log(`harnessd: launched Pi in tmux ${session}:${window} (${windowId})`)
+    const partial: Partial<SpawnResult> = { worktree, branch, tmuxSession: session, runtimeSessionId }
+    try {
+      const window = pickTmuxWindow(session, options.name)
+      const windowId = createWindow(
+        session,
+        window,
+        worktree,
+        piLaunchArgs(piBin, runtimeSessionId).map(shellQuote).join(" ")
+      )
+      Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId })
+      console.log(`harnessd: launched Pi in tmux ${session}:${window} (${windowId})`)
 
-    if (!options.noRemote) {
-      await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
-      sendKeys(windowId, ["/remote-control", "Enter"])
-      await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_REMOTE_WAIT_MS ?? 6000))
-    }
+      if (!options.noRemote) {
+        await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
+        sendKeys(windowId, ["/remote-control", "Enter"])
+        await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_REMOTE_WAIT_MS ?? 6000))
+      }
 
-    const outputText = capturePane(windowId)
-    const link = readPiRemoteSession(runtimeSessionId)
-    return {
-      worktree,
-      branch,
-      tmuxSession: session,
-      tmuxWindow: window,
-      tmuxWindowId: windowId,
-      scratchpadUrl: link?.scratchpadUrl ?? firstScratchpadUrl(outputText),
-      instanceId: link?.instanceId,
-      runtimeSessionId,
-      output: outputText,
+      const outputText = capturePane(windowId)
+      const link = readPiRemoteSession(runtimeSessionId)
+      return {
+        worktree,
+        branch,
+        tmuxSession: session,
+        tmuxWindow: window,
+        tmuxWindowId: windowId,
+        scratchpadUrl: link?.scratchpadUrl ?? firstScratchpadUrl(outputText),
+        instanceId: link?.instanceId,
+        runtimeSessionId,
+        output: outputText,
+      }
+    } catch (error) {
+      throw new RuntimeSpawnError(error, partial)
     }
   }
 
@@ -216,39 +241,53 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const session = tmuxSession(options)
     ensureTmuxSession(session)
     const { worktree, branch } = this.createWorktree(options)
-    const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
-    const channelEntry = prepareClaudeChannel()
-
     const config = readThreaChannelConfig()
     const identity = claudeRuntimeIdentity(worktree, config)
-    const scratchpadUrl = await this.prelinkScratchpad(worktree, identity, config)
-    if (scratchpadUrl) console.log(`harnessd: scratchpad: ${scratchpadUrl}`)
-
-    const args = claudeLaunchArgs({
-      claudeBin,
-      name: options.name,
-      channel,
-      mcpConfig: options.noRegister ? undefined : this.writeMcpConfig(options.name, channel, channelEntry),
-      noYolo: options.noYolo,
-    })
-
-    const window = pickTmuxWindow(session, options.name)
-    const windowId = createWindow(session, window, worktree, claudeLaunchCommand(args, identity, config))
-    console.log(`harnessd: launched Claude Code in tmux ${session}:${window} (${windowId})`)
-
-    if (!options.noAutoAccept) await this.acceptBootPrompts(windowId)
-
-    const outputText = capturePane(windowId)
-    return {
+    const partial: Partial<SpawnResult> = {
       worktree,
       branch,
       tmuxSession: session,
-      tmuxWindow: window,
-      tmuxWindowId: windowId,
-      scratchpadUrl: scratchpadUrl ?? firstScratchpadUrl(outputText),
       instanceId: identity.instanceId,
       runtimeSessionId: identity.runtimeSessionId,
-      output: outputText,
+    }
+    try {
+      const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
+      const channelEntry = prepareClaudeChannel()
+      const scratchpadUrl = await this.prelinkScratchpad(worktree, identity, config)
+      if (scratchpadUrl) {
+        partial.scratchpadUrl = scratchpadUrl
+        console.log(`harnessd: scratchpad: ${scratchpadUrl}`)
+      }
+
+      const args = claudeLaunchArgs({
+        claudeBin,
+        name: options.name,
+        channel,
+        mcpConfig: options.noRegister ? undefined : this.writeMcpConfig(options.name, channel, channelEntry),
+        noYolo: options.noYolo,
+      })
+
+      const window = pickTmuxWindow(session, options.name)
+      const windowId = createWindow(session, window, worktree, claudeLaunchCommand(args, identity, config))
+      Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId })
+      console.log(`harnessd: launched Claude Code in tmux ${session}:${window} (${windowId})`)
+
+      if (!options.noAutoAccept) await this.acceptBootPrompts(windowId)
+
+      const outputText = capturePane(windowId)
+      return {
+        worktree,
+        branch,
+        tmuxSession: session,
+        tmuxWindow: window,
+        tmuxWindowId: windowId,
+        scratchpadUrl: scratchpadUrl ?? firstScratchpadUrl(outputText),
+        instanceId: identity.instanceId,
+        runtimeSessionId: identity.runtimeSessionId,
+        output: outputText,
+      }
+    } catch (error) {
+      throw new RuntimeSpawnError(error, partial)
     }
   }
 
@@ -281,7 +320,9 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
         claudeLaunchArgs({ claudeBin, name: agent.name, channel, mcpConfig, noYolo }),
         identity,
         config,
-        "wait"
+        "wait",
+        "error",
+        scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`)
       )
     )
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
@@ -444,7 +485,9 @@ export function claudeLaunchCommand(
   args: string[],
   identity: { instanceId: string; runtimeSessionId: string },
   config: ThreaChannelConfig = {},
-  coldStartIfArchived: "wait" | "replace" = "replace"
+  coldStartIfArchived: "wait" | "replace" = "replace",
+  coldStartIfMissing: "create" | "error" = "create",
+  expectedRootStreamId?: string
 ): string {
   const environment = {
     THREA_INSTANCE_ID: identity.instanceId,
@@ -452,6 +495,8 @@ export function claudeLaunchCommand(
     THREA_DISPLAY_NAME: process.env.THREA_DISPLAY_NAME || config.displayName || "Claude Code",
     THREA_DEFAULT_LABEL: process.env.THREA_DEFAULT_LABEL || config.defaultLabel || "coding",
     THREA_COLD_START_IF_ARCHIVED: coldStartIfArchived,
+    THREA_COLD_START_IF_MISSING: coldStartIfMissing,
+    ...(expectedRootStreamId ? { THREA_EXPECTED_ROOT_STREAM_ID: expectedRootStreamId } : {}),
   }
   return ["env", ...Object.entries(environment).map(([key, value]) => `${key}=${value}`), ...args]
     .map(shellQuote)

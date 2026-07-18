@@ -10,6 +10,10 @@ export interface RemoteSessionConfig {
   defaultLabel?: string
   /** Cold-start behavior when this identity still points at an archived scratchpad. Default: replace. */
   coldStartIfArchived?: "wait" | "replace"
+  /** Cold-start behavior when this identity has no session link. Default: create. */
+  coldStartIfMissing?: "create" | "error"
+  /** When set by a supervisor, refuse a session link to any other scratchpad root. */
+  expectedRootStreamId?: string
   /** `^[A-Za-z0-9_-]+$`, ≤64 — must satisfy the `/bot` hello schema. */
   instanceId: string
   runtimeSessionId: string
@@ -104,6 +108,8 @@ export interface RawConfig {
   displayName?: unknown
   defaultLabel?: unknown
   coldStartIfArchived?: unknown
+  coldStartIfMissing?: unknown
+  expectedRootStreamId?: unknown
   permissionRelay?: unknown
   pollMs?: unknown
   idleTimeoutMs?: unknown
@@ -129,6 +135,10 @@ function str(value: unknown): string | undefined {
 
 function parseColdStartIfArchived(value: unknown): "wait" | "replace" {
   return str(value)?.toLowerCase() === "wait" ? "wait" : "replace"
+}
+
+function parseColdStartIfMissing(value: unknown): "create" | "error" {
+  return str(value)?.toLowerCase() === "error" ? "error" : "create"
 }
 
 function parseBool(value: unknown, fallback: boolean): boolean {
@@ -197,6 +207,8 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       displayName,
       defaultLabel,
       coldStartIfArchived: parseColdStartIfArchived(env.THREA_COLD_START_IF_ARCHIVED ?? file.coldStartIfArchived),
+      coldStartIfMissing: parseColdStartIfMissing(env.THREA_COLD_START_IF_MISSING ?? file.coldStartIfMissing),
+      expectedRootStreamId: str(env.THREA_EXPECTED_ROOT_STREAM_ID) ?? str(file.expectedRootStreamId),
       instanceId,
       runtimeSessionId,
       permissionRelay: parseBool(env.THREA_PERMISSION_RELAY ?? file.permissionRelay, true),

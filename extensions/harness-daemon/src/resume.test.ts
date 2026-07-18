@@ -11,7 +11,7 @@ import {
   recordedNoYolo,
 } from "./resume"
 import { launchAgentPlist } from "./boot"
-import { parseSpawn } from "./cli"
+import { parseResume, parseSpawn } from "./cli"
 import { readInventory, upsertAgent } from "./inventory"
 import { claudeLaunchArgs, claudeLaunchCommand, normalizeChannelMcpConfig, piLaunchArgs } from "./spawners"
 import type { ManagedAgent } from "./types"
@@ -73,6 +73,12 @@ test("records an absolute source repo for worktree restoration", () => {
   expect(parseSpawn(["claude", "--name", "repair", "--repo", "."]).repo).toBe(process.cwd())
 })
 
+test("rejects the removed unsafe force option", () => {
+  for (const args of [["--force"], ["--force", "true"], ["--force=true"]]) {
+    expect(() => parseResume(args)).toThrow("revival never launches archived or inaccessible scratchpads")
+  }
+})
+
 test("preserves an explicitly non-yolo launch", () => {
   expect(recordedNoYolo(agent())).toBeFalse()
   expect(recordedNoYolo(agent({ command: ["threa-harnessd", "spawn", "claude", "--no-yolo"] }))).toBeTrue()
@@ -130,11 +136,20 @@ test("reconstructs the current Claude channel launch with stable runtime identit
     "server:threa-channel",
     "--dangerously-skip-permissions",
   ])
-  const command = claudeLaunchCommand(args, { instanceId: "cc-one", runtimeSessionId: "ccs-one" }, {}, "wait")
+  const command = claudeLaunchCommand(
+    args,
+    { instanceId: "cc-one", runtimeSessionId: "ccs-one" },
+    {},
+    "wait",
+    "error",
+    "stream_expected"
+  )
   expect(command).toContain("'THREA_INSTANCE_ID=cc-one'")
   expect(command).toContain("'THREA_RUNTIME_SESSION_ID=ccs-one'")
   expect(command).toContain("'THREA_DEFAULT_LABEL=coding'")
   expect(command).toContain("'THREA_COLD_START_IF_ARCHIVED=wait'")
+  expect(command).toContain("'THREA_COLD_START_IF_MISSING=error'")
+  expect(command).toContain("'THREA_EXPECTED_ROOT_STREAM_ID=stream_expected'")
   expect(
     claudeLaunchArgs({ claudeBin: "claude", name: "repair", channel: "threa-channel", noYolo: true })
   ).not.toContain("--dangerously-skip-permissions")
@@ -187,6 +202,28 @@ test("preflights revival with ifArchived=wait and refuses a root mismatch", asyn
     instanceId: "cc-one",
     runtimeSessionId: "ccs-one",
     ifArchived: "wait",
+    ifMissing: "error",
   })
   expect(String(request.body)).not.toContain("replace")
+})
+
+test("preflight refuses to create a scratchpad for a missing runtime link", async () => {
+  spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ code: "RUNTIME_SESSION_NOT_FOUND" }), {
+      status: 409,
+      headers: { "content-type": "application/json" },
+    })
+  )
+  const result = await preflightRuntimeSession({
+    baseUrl: "https://app.threa.io",
+    workspaceId: "ws_1",
+    apiKey: "key",
+    runtimeKind: "claude-code-channel",
+    instanceId: "cc-one",
+    runtimeSessionId: "ccs-one",
+    displayName: "Claude Code - repair",
+    localCwd: "/repo/repair",
+    expectedRootStreamId: "stream_expected",
+  })
+  expect(result).toEqual({ status: "inaccessible", reason: "RUNTIME_SESSION_NOT_FOUND" })
 })

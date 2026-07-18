@@ -502,7 +502,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     } as unknown as ThreaClient
     const { transport } = makeFakeTransport()
     const session = new RemoteSession({
-      config: makeConfig({ coldStartIfArchived: "wait" }),
+      config: makeConfig({ coldStartIfArchived: "wait", coldStartIfMissing: "error" }),
       client,
       delegate: { deliverTurn: async () => {} },
       runtime: RUNTIME,
@@ -512,7 +512,31 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await (session as unknown as { ensureLink: () => Promise<void> }).ensureLink()
 
     expect(created).toHaveLength(1)
-    expect((created[0] as Record<string, unknown>).ifArchived).toBe("wait")
+    expect(created[0]).toMatchObject({ ifArchived: "wait", ifMissing: "error" })
+    await session.shutdown()
+  })
+
+  test("a supervised cold start rejects a link to another root stream", async () => {
+    const client = {
+      createSession: async () => ({
+        linkId: "brsl_other",
+        rootStreamId: "stream_other",
+        activeStreamId: "stream_other",
+        runtimeSessionId: "rts-test",
+        streamUrlPath: "/w/ws_1/s/stream_other",
+      }),
+    } as unknown as ThreaClient
+    const { transport } = makeFakeTransport()
+    const session = new RemoteSession({
+      config: makeConfig({ expectedRootStreamId: "stream_expected" }),
+      client,
+      delegate: { deliverTurn: async () => {} },
+      runtime: RUNTIME,
+      transport,
+    })
+
+    await expect((session as unknown as { ensureLink: () => Promise<void> }).ensureLink()).resolves.toBeUndefined()
+    expect((session as unknown as { link?: unknown }).link).toBeUndefined()
     await session.shutdown()
   })
 
