@@ -44,10 +44,9 @@ export function visibleRefreshQueueId(previewId: string, nowMs: number): string 
 }
 
 /**
- * Fan a client's visible-preview report into per-preview refresh jobs. Fire and
- * forget from the socket path: dedupe collisions are the normal case during a
- * scroll storm and enqueue failures are only logged — the next viewport pass
- * re-nudges.
+ * Fan a client's visible-preview report into per-preview refresh jobs.
+ * Same-window duplicates collapse inside `send` (idempotent message-id insert);
+ * any other enqueue failure is only logged — the next viewport pass re-nudges.
  */
 export async function enqueueVisiblePreviewRefreshes(
   jobQueue: Pick<QueueManager, "send">,
