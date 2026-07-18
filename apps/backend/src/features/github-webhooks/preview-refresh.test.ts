@@ -35,6 +35,7 @@ function makeRow(overrides: Partial<LinkPreview> = {}): LinkPreview {
     targetDelegationId: null,
     fetchedAt: null,
     refreshVersion: 0,
+    refreshEtag: null,
     expiresAt: null,
     createdAt: new Date(),
     ...overrides,

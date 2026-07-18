@@ -68,6 +68,78 @@ export async function fetchGitHubPreview(
   }
 }
 
+export type GitHubRefreshGateResult =
+  | { outcome: "not_modified" }
+  | { outcome: "modified"; etag: string | null }
+  | { outcome: "unavailable" }
+
+/**
+ * Cheap change detector for the conditional (viewport-nudge) refresh path: ONE
+ * conditional GET against the preview's primary resource. `not_modified` means
+ * the rendered card cannot have changed; `modified` hands back the fresh
+ * validator to store alongside the follow-up full fetch. An authorized 304 does
+ * not count against the installation's primary rate limit, so a nudge that
+ * finds nothing new is free. `unavailable` (no client, unparseable URL, request
+ * error) tells the caller to skip quietly — the nudge is best-effort and the
+ * next viewport pass retries.
+ */
+export async function checkGitHubRefreshGate(
+  workspaceId: string,
+  url: string,
+  ifNoneMatch: string | null,
+  workspaceIntegrationService: WorkspaceIntegrationService
+): Promise<GitHubRefreshGateResult> {
+  const parsed = parseGitHubUrl(url)
+  if (!parsed) return { outcome: "unavailable" }
+
+  const client = await workspaceIntegrationService.getGithubClient(workspaceId)
+  if (!client) return { outcome: "unavailable" }
+
+  const gate = gateRequestFor(parsed)
+  try {
+    const response = await client.requestConditional(gate.route, gate.parameters, ifNoneMatch)
+    if (response.status === 304) return { outcome: "not_modified" }
+    return { outcome: "modified", etag: response.etag }
+  } catch (error) {
+    log.debug({ err: error, workspaceId, url }, "GitHub refresh gate errored; skipping conditional refresh")
+    return { outcome: "unavailable" }
+  }
+}
+
+/**
+ * The single endpoint whose ETag moves whenever the rendered card could have:
+ * PR and diff cards render from the pull object (reviews and new pushes bump
+ * its `updated_at`), issue/comment/commit cards from their own resource, and
+ * file cards only change after a push, which bumps the repository object's
+ * `pushed_at`. Commits are immutable, so their gate correctly answers 304
+ * forever.
+ */
+function gateRequestFor(parsed: GitHubUrlMatch): { route: string; parameters: Record<string, unknown> } {
+  const { owner, repo } = parsed
+  switch (parsed.type) {
+    case "github_pr":
+    case "github_diff":
+      return {
+        route: "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+        parameters: { owner, repo, pull_number: parsed.number },
+      }
+    case "github_issue":
+      return {
+        route: "GET /repos/{owner}/{repo}/issues/{issue_number}",
+        parameters: { owner, repo, issue_number: parsed.number },
+      }
+    case "github_commit":
+      return { route: "GET /repos/{owner}/{repo}/commits/{ref}", parameters: { owner, repo, ref: parsed.sha } }
+    case "github_file":
+      return { route: "GET /repos/{owner}/{repo}", parameters: { owner, repo } }
+    case "github_comment":
+      return {
+        route: "GET /repos/{owner}/{repo}/issues/comments/{comment_id}",
+        parameters: { owner, repo, comment_id: parsed.commentId },
+      }
+  }
+}
+
 async function fetchPullRequestPreview(
   client: { request<T>(route: string, parameters?: Record<string, unknown>): Promise<T> },
   url: string,

@@ -341,6 +341,16 @@ export class LinkPreviewService {
     })
   }
 
+  /**
+   * Record a conditional refresh that confirmed the provider content unchanged
+   * (a 304 gate answer): re-arm the debounce gate without rewriting metadata or
+   * broadcasting. Compare-and-set — losing to a concurrent real refresh is fine,
+   * the winner's write already advanced `fetched_at`.
+   */
+  async recordRefreshCheck(workspaceId: string, previewId: string, expectedRefreshVersion: number): Promise<boolean> {
+    return LinkPreviewRepository.touchRefreshCheck(this.deps.pool, workspaceId, previewId, expectedRefreshVersion)
+  }
+
   /** Filters out failed/pending previews. */
   async getPreviewsForMessage(workspaceId: string, messageId: string): Promise<LinkPreviewSummary[]> {
     const previews = await LinkPreviewRepository.findByMessageId(this.deps.pool, workspaceId, messageId)

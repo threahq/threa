@@ -109,14 +109,46 @@ export class GitHubClient {
   }
 
   async request<T>(route: string, parameters: Record<string, unknown> = {}): Promise<T> {
-    return this.requestInternal<T>(route, parameters, false)
+    return (await this.requestInternal(route, parameters, false)).data as T
   }
 
-  private async requestInternal<T>(route: string, parameters: Record<string, unknown>, retried: boolean): Promise<T> {
+  /**
+   * GET with `If-None-Match` support for cache-validator refreshes. A matching
+   * validator surfaces as `{ status: 304 }` instead of the RequestError octokit
+   * throws for it; an authorized 304 does not count against the primary rate
+   * limit, which is the whole point of the conditional refresh path.
+   */
+  async requestConditional<T>(
+    route: string,
+    parameters: Record<string, unknown>,
+    ifNoneMatch: string | null
+  ): Promise<{ status: 200; data: T; etag: string | null } | { status: 304 }> {
+    const withValidator = ifNoneMatch
+      ? {
+          ...parameters,
+          headers: { ...(parameters.headers as Record<string, unknown> | undefined), "if-none-match": ifNoneMatch },
+        }
+      : parameters
+    try {
+      const response = await this.requestInternal(route, withValidator, false)
+      const etag = response.headers["etag"]
+      return { status: 200, data: response.data as T, etag: typeof etag === "string" ? etag : null }
+    } catch (error) {
+      if (getErrorStatus(error) === 304) return { status: 304 }
+      throw error
+    }
+  }
+
+  private async requestInternal(
+    route: string,
+    parameters: Record<string, unknown>,
+    retried: boolean
+  ): Promise<{ data: unknown; headers: GitHubApiHeaders }> {
     try {
       const response = await this.octokit.request(route, parameters)
-      await this.captureRateLimit(response.headers as GitHubApiHeaders)
-      return response.data as T
+      const headers = response.headers as GitHubApiHeaders
+      await this.captureRateLimit(headers)
+      return { data: response.data, headers }
     } catch (error) {
       const status = getErrorStatus(error)
       const headers = getErrorHeaders(error)
@@ -133,7 +165,7 @@ export class GitHubClient {
         this.credentials = refreshed.credentials
         this.metadata = refreshed.metadata
         this.octokit = new Octokit({ auth: refreshed.credentials.accessToken })
-        return this.requestInternal<T>(route, parameters, true)
+        return this.requestInternal(route, parameters, true)
       }
 
       throw error

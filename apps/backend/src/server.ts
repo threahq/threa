@@ -26,7 +26,12 @@ import {
   EnclaveClaimNudge,
   EnclaveDispatchHandler,
 } from "./features/enclave-runtimes"
-import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
+import {
+  LinkPreviewService,
+  LinkPreviewOutboxHandler,
+  createLinkPreviewWorker,
+  createLinkPreviewVisibleRefreshWorker,
+} from "./features/link-previews"
 import { createGithubWebhookWorker, createGithubPreviewRefreshWorker } from "./features/github-webhooks"
 import { GiphyService } from "./features/giphy"
 import {
@@ -771,6 +776,7 @@ export async function startServer(): Promise<ServerInstance> {
     workspaceService,
     userSocketRegistry,
     sessionAbortRegistry,
+    jobQueue,
   })
 
   // Dedicated voice relay on its own namespace so audio frames don't share the
@@ -1257,6 +1263,17 @@ export async function startServer(): Promise<ServerInstance> {
     jobQueue,
   })
   jobQueue.registerHandler(JobQueues.GITHUB_PREVIEW_REFRESH, githubPreviewRefreshWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
+  // Viewport-nudged preview refresh — conditional (ETag-gated) GitHub fetch,
+  // best-effort with no retry chain (the visible card re-nudges)
+  const linkPreviewVisibleRefreshWorker = createLinkPreviewVisibleRefreshWorker({
+    linkPreviewService,
+    workspaceIntegrationService,
+  })
+  jobQueue.registerHandler(JobQueues.LINK_PREVIEW_VISIBLE_REFRESH, linkPreviewVisibleRefreshWorker, {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })

@@ -188,6 +188,67 @@ describe("GitHubClient captureRateLimit is best-effort", () => {
   })
 })
 
+describe("GitHubClient requestConditional", () => {
+  function makeClient(requestImpl: (route: string, parameters?: Record<string, unknown>) => Promise<unknown>) {
+    const service = new WorkspaceIntegrationService({
+      pool: explodingPool,
+      github: githubEnabled,
+      linear: linearDisabled,
+    })
+    // Anonymous client: no record/credentials, so captureRateLimit no-ops and
+    // the exploding pool proves nothing touches the DB.
+    const client = GitHubClient.anonymous(service, "ws_1")
+    ;(client as unknown as { octokit: { request: typeof requestImpl } }).octokit = { request: requestImpl }
+    return client
+  }
+
+  it("passes If-None-Match and maps octokit's 304 throw to { status: 304 }", async () => {
+    let seenHeaders: Record<string, unknown> | undefined
+    const client = makeClient(async (_route, parameters) => {
+      seenHeaders = parameters?.headers as Record<string, unknown>
+      throw Object.assign(new Error("Not modified"), { status: 304, response: { headers: {} } })
+    })
+
+    const result = await client.requestConditional("GET /repos/{owner}/{repo}/pulls/{pull_number}", {}, '"v1"')
+
+    expect(result).toEqual({ status: 304 })
+    expect(seenHeaders?.["if-none-match"]).toBe('"v1"')
+  })
+
+  it("returns data plus the fresh validator on 200", async () => {
+    const client = makeClient(async () => ({
+      data: { title: "PR" },
+      headers: { etag: 'W/"fresh"' },
+    }))
+
+    const result = await client.requestConditional("GET /x", {}, '"stale"')
+
+    expect(result).toEqual({ status: 200, data: { title: "PR" }, etag: 'W/"fresh"' })
+  })
+
+  it("sends no validator header when none is stored (harvest call)", async () => {
+    let seenParameters: Record<string, unknown> | undefined
+    const client = makeClient(async (_route, parameters) => {
+      seenParameters = parameters
+      return { data: {}, headers: {} }
+    })
+
+    const result = await client.requestConditional("GET /x", {}, null)
+
+    expect(seenParameters?.headers).toBeUndefined()
+    expect(result).toEqual({ status: 200, data: {}, etag: null })
+  })
+
+  it("rethrows non-304 errors", async () => {
+    const failure = Object.assign(new Error("Server error"), { status: 502, response: { headers: {} } })
+    const client = makeClient(async () => {
+      throw failure
+    })
+
+    await expect(client.requestConditional("GET /x", {}, '"v1"')).rejects.toBe(failure)
+  })
+})
+
 describe("LinearClient captureRateLimit is best-effort", () => {
   const credentials: LinearIntegrationCredentials = {
     accessToken: "at",

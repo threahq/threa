@@ -3,6 +3,7 @@ import { io, Socket } from "socket.io-client"
 import { HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threa/types"
 import { api } from "@/api/client"
 import { getCachedWsConfig, setCachedWsConfig } from "@/lib/cached-ws-config"
+import { setPreviewVisibilityEmitter } from "@/lib/preview-visibility"
 import { usePageActivity } from "@/hooks/use-page-activity"
 import { usePageInteraction } from "@/hooks/use-page-interaction"
 import { useSwPresence } from "@/hooks/use-sw-presence"
@@ -215,6 +216,16 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
   const previousPageActivityRef = useRef(pageActivity)
   const pageFocusedRef = useRef(pageActivity.isFocused)
   pageFocusedRef.current = pageActivity.isFocused
+
+  // Viewport-nudge transport: while connected, the preview-visibility batcher
+  // can flush `previews:visible` frames; while disconnected it just accumulates.
+  useEffect(() => {
+    if (!socket || status !== "connected") return
+    setPreviewVisibilityEmitter((wsId, previewIds) => {
+      socket.emit("previews:visible", { workspaceId: wsId, previewIds })
+    })
+    return () => setPreviewVisibilityEmitter(null)
+  }, [socket, status])
 
   useEffect(() => {
     if (!socket || status !== "connected") return

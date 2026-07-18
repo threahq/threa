@@ -34,6 +34,7 @@ function makeRow(overrides: Partial<LinkPreview> = {}): LinkPreview {
     targetDelegationId: null,
     fetchedAt: null,
     refreshVersion: 0,
+    refreshEtag: null,
     expiresAt: null,
     createdAt: new Date(),
     ...overrides,
@@ -141,9 +142,11 @@ describe("refreshLinkPreview", () => {
     return {
       getPreviewById: mock(async () => preview),
       applyRefreshedMetadata: mock(async () => applyResult),
+      recordRefreshCheck: mock(async () => true),
     } as unknown as LinkPreviewService & {
       getPreviewById: ReturnType<typeof mock>
       applyRefreshedMetadata: ReturnType<typeof mock>
+      recordRefreshCheck: ReturnType<typeof mock>
     }
   }
 
@@ -255,5 +258,128 @@ describe("refreshLinkPreview", () => {
     expect(service.applyRefreshedMetadata).toHaveBeenCalledWith(WORKSPACE_ID, "lp_pr", REFRESHED_METADATA, {
       expectedRefreshVersion: 0,
     })
+  })
+
+  test("unconditional (webhook) callers never run the ETag gate and preserve the stored validator", async () => {
+    const service = fakeService(makeRow({ fetchedAt: new Date(Date.now() - 60_000), refreshEtag: '"stored"' }))
+    const gateSpy = spyOn(githubPreview, "checkGitHubRefreshGate")
+    spyOn(githubPreview, "fetchGitHubPreview").mockResolvedValue(REFRESHED_METADATA)
+
+    const result = await refreshLinkPreview(
+      { linkPreviewService: service, workspaceIntegrationService: wis },
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr" }
+    )
+
+    expect(result).toEqual({ refreshed: true })
+    expect(gateSpy).not.toHaveBeenCalled()
+    // No `refreshEtag` key: the repository preserves the stored validator.
+    expect(service.applyRefreshedMetadata).toHaveBeenCalledWith(WORKSPACE_ID, "lp_pr", REFRESHED_METADATA, {
+      expectedRefreshVersion: 0,
+    })
+  })
+})
+
+describe("refreshLinkPreview conditional (viewport nudge)", () => {
+  function fakeService(preview: LinkPreview | null) {
+    return {
+      getPreviewById: mock(async () => preview),
+      applyRefreshedMetadata: mock(async () => ({ applied: true })),
+      recordRefreshCheck: mock(async () => true),
+    } as unknown as LinkPreviewService & {
+      getPreviewById: ReturnType<typeof mock>
+      applyRefreshedMetadata: ReturnType<typeof mock>
+      recordRefreshCheck: ReturnType<typeof mock>
+    }
+  }
+
+  const wis = {} as unknown as WorkspaceIntegrationService
+  const stale = () => new Date(Date.now() - 60_000)
+
+  test("a 304 gate answer touches fetched_at and skips the full fetch", async () => {
+    const service = fakeService(makeRow({ fetchedAt: stale(), refreshVersion: 7, refreshEtag: '"v7"' }))
+    const gateSpy = spyOn(githubPreview, "checkGitHubRefreshGate").mockResolvedValue({ outcome: "not_modified" })
+    const fetchSpy = spyOn(githubPreview, "fetchGitHubPreview")
+
+    const result = await refreshLinkPreview(
+      { linkPreviewService: service, workspaceIntegrationService: wis },
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", conditional: true }
+    )
+
+    expect(result).toEqual({ refreshed: false, reason: "not_modified" })
+    expect(gateSpy).toHaveBeenCalledWith(WORKSPACE_ID, "https://github.com/acme/widgets/pull/42", '"v7"', wis)
+    expect(service.recordRefreshCheck).toHaveBeenCalledWith(WORKSPACE_ID, "lp_pr", 7)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(service.applyRefreshedMetadata).not.toHaveBeenCalled()
+  })
+
+  test("a modified gate answer runs the full fetch and stores the fresh validator", async () => {
+    const service = fakeService(makeRow({ fetchedAt: stale(), refreshVersion: 2, refreshEtag: '"old"' }))
+    spyOn(githubPreview, "checkGitHubRefreshGate").mockResolvedValue({ outcome: "modified", etag: '"fresh"' })
+    spyOn(githubPreview, "fetchGitHubPreview").mockResolvedValue(REFRESHED_METADATA)
+
+    const result = await refreshLinkPreview(
+      { linkPreviewService: service, workspaceIntegrationService: wis },
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", conditional: true }
+    )
+
+    expect(result).toEqual({ refreshed: true })
+    expect(service.applyRefreshedMetadata).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      "lp_pr",
+      { ...REFRESHED_METADATA, refreshEtag: '"fresh"' },
+      { expectedRefreshVersion: 2 }
+    )
+  })
+
+  test("a row with no stored validator gates with null and harvests one", async () => {
+    const service = fakeService(makeRow({ fetchedAt: stale(), refreshEtag: null }))
+    const gateSpy = spyOn(githubPreview, "checkGitHubRefreshGate").mockResolvedValue({
+      outcome: "modified",
+      etag: '"harvested"',
+    })
+    spyOn(githubPreview, "fetchGitHubPreview").mockResolvedValue(REFRESHED_METADATA)
+
+    await refreshLinkPreview(
+      { linkPreviewService: service, workspaceIntegrationService: wis },
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", conditional: true }
+    )
+
+    expect(gateSpy).toHaveBeenCalledWith(WORKSPACE_ID, "https://github.com/acme/widgets/pull/42", null, wis)
+    expect(service.applyRefreshedMetadata).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      "lp_pr",
+      { ...REFRESHED_METADATA, refreshEtag: '"harvested"' },
+      { expectedRefreshVersion: 0 }
+    )
+  })
+
+  test("an unavailable gate skips everything without downgrading", async () => {
+    const service = fakeService(makeRow({ fetchedAt: stale(), refreshVersion: 3 }))
+    spyOn(githubPreview, "checkGitHubRefreshGate").mockResolvedValue({ outcome: "unavailable" })
+    const fetchSpy = spyOn(githubPreview, "fetchGitHubPreview")
+
+    const result = await refreshLinkPreview(
+      { linkPreviewService: service, workspaceIntegrationService: wis },
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", conditional: true }
+    )
+
+    expect(result).toEqual({ refreshed: false, reason: "fetch_empty", refreshVersion: 3 })
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(service.applyRefreshedMetadata).not.toHaveBeenCalled()
+    expect(service.recordRefreshCheck).not.toHaveBeenCalled()
+  })
+
+  test("the debounce gate still runs before the ETag gate", async () => {
+    const service = fakeService(makeRow({ fetchedAt: new Date(Date.now() - 2_000) }))
+    const gateSpy = spyOn(githubPreview, "checkGitHubRefreshGate")
+
+    const result = await refreshLinkPreview(
+      { linkPreviewService: service, workspaceIntegrationService: wis },
+      { workspaceId: WORKSPACE_ID, previewId: "lp_pr", debounceMs: 15_000, conditional: true }
+    )
+
+    expect(result.refreshed).toBe(false)
+    if (result.refreshed || result.reason !== "debounced") throw new Error("expected debounced")
+    expect(gateSpy).not.toHaveBeenCalled()
   })
 })

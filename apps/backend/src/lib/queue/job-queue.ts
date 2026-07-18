@@ -50,6 +50,7 @@ export const JobQueues = {
   BACKFILL_CHUNK: "backfill.chunk",
   GITHUB_WEBHOOK_PROCESS: "github_webhook.process",
   GITHUB_PREVIEW_REFRESH: "github_preview.refresh",
+  LINK_PREVIEW_VISIBLE_REFRESH: "link_preview.visible-refresh",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -392,6 +393,17 @@ export interface GithubPreviewRefreshJobData {
   hop?: number
 }
 
+/**
+ * Best-effort conditional refresh of one link preview because a client reported
+ * its card in the viewport. No retries or trailing chains — the next viewport
+ * pass re-nudges. Senders key the queue-message id on a debounce-window time
+ * bucket so a scroll-storm across replicas collapses into one job per window.
+ */
+export interface LinkPreviewVisibleRefreshJobData {
+  workspaceId: string
+  previewId: string
+}
+
 export interface JobDataMap {
   [JobQueues.PERSONA_AGENT]: PersonaAgentJobData
   [JobQueues.NAMING_GENERATE]: NamingJobData
@@ -425,6 +437,7 @@ export interface JobDataMap {
   [JobQueues.BACKFILL_CHUNK]: BackfillChunkJobData
   [JobQueues.GITHUB_WEBHOOK_PROCESS]: GithubWebhookProcessJobData
   [JobQueues.GITHUB_PREVIEW_REFRESH]: GithubPreviewRefreshJobData
+  [JobQueues.LINK_PREVIEW_VISIBLE_REFRESH]: LinkPreviewVisibleRefreshJobData
 }
 
 /** Returns void on success, throws on error. */

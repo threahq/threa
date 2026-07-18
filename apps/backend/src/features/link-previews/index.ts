@@ -16,6 +16,15 @@ export type { InAppLinkRef, GitHubUrlMatch } from "./url-utils"
 export { refreshLinkPreview, findGithubPreviewMatches, DEFAULT_REFRESH_DEBOUNCE_MS } from "./refresh"
 export type { RefreshLinkPreviewDeps, RefreshLinkPreviewResult } from "./refresh"
 
+export {
+  createLinkPreviewVisibleRefreshWorker,
+  enqueueVisiblePreviewRefreshes,
+  visibleRefreshQueueId,
+  VISIBLE_REFRESH_DEBOUNCE_MS,
+  VISIBLE_REFRESH_MAX_IDS,
+  VISIBLE_REPORT_MIN_INTERVAL_MS,
+} from "./visible-refresh"
+
 export { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"
 
 export {

@@ -45,6 +45,13 @@ export interface LinkPreview {
    * TIMESTAMPTZ-vs-Date precision mismatch broke.
    */
   refreshVersion: number
+  /**
+   * ETag of the preview's primary provider resource, sent as `If-None-Match` by
+   * the conditional (viewport-nudge) refresh path. Null until the first
+   * conditional refresh harvests one; a stale value only costs one counted 200
+   * that re-harvests, so unconditional writers may leave it untouched.
+   */
+  refreshEtag: string | null
   expiresAt: Date | null
   createdAt: Date
 }
@@ -74,6 +81,8 @@ export interface UpdateLinkPreviewParams {
   previewData?: RichPreview | null
   status: LinkPreviewStatus
   expiresAt?: Date | null
+  /** When present, overwrites `refresh_etag`; when absent, the stored value is preserved. */
+  refreshEtag?: string | null
 }
 
 export interface MessageLinkPreview {
@@ -105,6 +114,7 @@ function mapRow(row: Record<string, unknown>): LinkPreview {
     targetDelegationId: (row.target_delegation_id as string | null) ?? null,
     fetchedAt: row.fetched_at ? new Date(row.fetched_at as string) : null,
     refreshVersion: (row.refresh_version as number | null) ?? 0,
+    refreshEtag: (row.refresh_etag as string | null) ?? null,
     expiresAt: row.expires_at ? new Date(row.expires_at as string) : null,
     createdAt: new Date(row.created_at as string),
   }
@@ -230,11 +240,13 @@ export const LinkPreviewRepository = {
     // when CAS is off, `$13` is true and the guard is a no-op; when CAS is on,
     // `$13` is false and the write requires `refresh_version` to equal `$14`.
     const cas = options !== undefined && "expectedRefreshVersion" in options
+    const hasEtag = "refreshEtag" in params
     const result = await querier.query(
       sql`UPDATE link_previews
           SET title = $3, description = $4, image_url = $5, favicon_url = $6,
               site_name = $7, content_type = $8, preview_type = $9, preview_data = $10::jsonb,
-              status = $11, fetched_at = NOW(), refresh_version = refresh_version + 1, expires_at = $12
+              status = $11, fetched_at = NOW(), refresh_version = refresh_version + 1, expires_at = $12,
+              refresh_etag = CASE WHEN $15::boolean THEN $16 ELSE refresh_etag END
           WHERE workspace_id = $1 AND id = $2
             AND ($13::boolean OR refresh_version = $14)
           RETURNING *`,
@@ -253,9 +265,33 @@ export const LinkPreviewRepository = {
         params.expiresAt ?? null,
         !cas,
         cas ? (options!.expectedRefreshVersion ?? 0) : null,
+        hasEtag,
+        hasEtag ? (params.refreshEtag ?? null) : null,
       ]
     )
     return result.rows.length > 0 ? mapRow(result.rows[0]) : null
+  },
+
+  /**
+   * Record that a conditional refresh confirmed the provider content unchanged
+   * (a 304 answer): advance `fetched_at` so the debounce gate re-arms, without
+   * touching the rendered metadata or broadcasting anything. Compare-and-set on
+   * `refresh_version` — losing the CAS to a concurrent real refresh is fine, the
+   * winner's write already advanced `fetched_at`.
+   */
+  async touchRefreshCheck(
+    querier: Querier,
+    workspaceId: string,
+    id: string,
+    expectedRefreshVersion: number
+  ): Promise<boolean> {
+    const result = await querier.query(
+      sql`UPDATE link_previews
+          SET fetched_at = NOW(), refresh_version = refresh_version + 1
+          WHERE workspace_id = $1 AND id = $2 AND refresh_version = $3`,
+      [workspaceId, id, expectedRefreshVersion]
+    )
+    return (result.rowCount ?? 0) > 0
   },
 
   async unlinkAllFromMessage(querier: Querier, workspaceId: string, messageId: string): Promise<void> {

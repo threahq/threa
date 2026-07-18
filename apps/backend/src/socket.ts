@@ -9,6 +9,12 @@ import type { UserSocketRegistry } from "./lib/user-socket-registry"
 import { AgentSessionRepository, PersonaRepository } from "./features/agents"
 import type { SessionAbortRegistry } from "./features/agents"
 import { UserRepository, type WorkspaceService } from "./features/workspaces"
+import {
+  enqueueVisiblePreviewRefreshes,
+  VISIBLE_REFRESH_MAX_IDS,
+  VISIBLE_REPORT_MIN_INTERVAL_MS,
+} from "./features/link-previews"
+import type { QueueManager } from "./lib/queue"
 import { groupToRoom, permissionGroupsForRole } from "./lib/outbox"
 import { isValidIanaTimezone } from "./lib/temporal"
 import { HttpError } from "./lib/errors"
@@ -54,6 +60,8 @@ interface Dependencies {
   userSocketRegistry: UserSocketRegistry
   /** Registry for graceful tool cancellation (e.g. workspace_research) — in-process sessions. */
   sessionAbortRegistry: SessionAbortRegistry
+  /** For fanning viewport-nudge frames into visible-refresh jobs. */
+  jobQueue: Pick<QueueManager, "send">
 }
 
 /**
@@ -67,8 +75,16 @@ function deriveDeviceKey(userAgent: string | undefined): string {
 }
 
 export function registerSocketHandlers(io: Server, deps: Dependencies) {
-  const { pool, authService, streamService, pushService, workspaceService, userSocketRegistry, sessionAbortRegistry } =
-    deps
+  const {
+    pool,
+    authService,
+    streamService,
+    pushService,
+    workspaceService,
+    userSocketRegistry,
+    sessionAbortRegistry,
+    jobQueue,
+  } = deps
 
   // Auth middleware is shared with the voice namespace — see lib/socket-auth
   io.use(createSocketAuthMiddleware(authService))
@@ -406,6 +422,32 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       if (entries.length === 0) return
       pushService.upsertSessionsBatch(entries, { focused, interacted }).catch((err) => {
         logger.warn({ err }, "Failed to upsert sessions on heartbeat")
+      })
+    })
+
+    // Viewport nudge: the client reports which provider preview cards are on
+    // screen so the worker can run a conditional (ETag-gated) refresh for repos
+    // no webhook covers. Best-effort by design — invalid or throttled frames
+    // are dropped silently, the client re-reports on its next flush. Membership
+    // check is the userRooms entry: it only exists after a successful
+    // permission-checked workspace room join.
+    let lastVisibleReportAt = 0
+    socket.on("previews:visible", (payload?: { workspaceId?: string; previewIds?: string[] }) => {
+      const workspaceId = payload?.workspaceId
+      if (typeof workspaceId !== "string" || !userRooms.has(workspaceId)) return
+      if (!Array.isArray(payload?.previewIds) || payload.previewIds.length === 0) return
+
+      const now = Date.now()
+      if (now - lastVisibleReportAt < VISIBLE_REPORT_MIN_INTERVAL_MS) return
+      lastVisibleReportAt = now
+
+      const previewIds = payload.previewIds
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+        .slice(0, VISIBLE_REFRESH_MAX_IDS)
+      if (previewIds.length === 0) return
+
+      enqueueVisiblePreviewRefreshes(jobQueue, workspaceId, previewIds).catch((err) => {
+        logger.warn({ err, workspaceId }, "Failed to enqueue visible preview refreshes")
       })
     })
 
