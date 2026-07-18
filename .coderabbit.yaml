@@ -79,6 +79,11 @@ reviews:
         No DB enums. Use TEXT columns and validate in application code. (INV-3)
         Migrations are append-only. Never edit or delete existing migration files. Only
         add new ones. (INV-17)
+        A migration that enqueues backfill.plan jobs must delay them: process_after must be
+        NOW() + an interval of at least 10 minutes, so old-code replicas in a rolling
+        deploy cannot claim the job before the new code (with the backfill definition)
+        boots. A backfill definition registered in code is inert without its enqueue
+        migration. (INV-67)
     - path: "apps/backend/src/**"
       instructions: |
         Real-time event delivery must go through the outbox pattern. Do not publish events
@@ -89,6 +94,15 @@ reviews:
         connection first, then do the slow work. (INV-41)
         Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
         advisory locks, or transactions with row locks for write paths. (INV-20)
+        Check-then-act guards must pin the identity or generation observed at read (row id,
+        integer version, or external key), not just a status flag — status-only guards let
+        stale work clobber a row that was replaced in between. (INV-20)
+        Optimistic concurrency must CAS on an integer version column, never on timestamp
+        equality: PostgreSQL stores microseconds while a JS Date round-trips at millisecond
+        precision, so a timestamp CAS fails on virtually every uncontended write. Tests for
+        version- or timestamp-gated predicates must produce the compared value through the
+        repository's own NOW()-writing code path, never hand-crafted fixture timestamps.
+        (INV-66)
         Avoid withClient for single-query paths. Pass pool directly instead of acquiring a
         dedicated client. (INV-30)
         Validate API inputs (body, query, params) with Zod schemas, not manual typeof
@@ -119,6 +133,15 @@ reviews:
       instructions: |
         Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
         advisory locks, or transactions with row locks for write paths. (INV-20)
+        Check-then-act guards must pin the identity or generation observed at read (row id,
+        integer version, or external key), not just a status flag — status-only guards let
+        stale work clobber a row that was replaced in between. (INV-20)
+        Optimistic concurrency must CAS on an integer version column, never on timestamp
+        equality: PostgreSQL stores microseconds while a JS Date round-trips at millisecond
+        precision, so a timestamp CAS fails on virtually every uncontended write. Tests for
+        version- or timestamp-gated predicates must produce the compared value through the
+        repository's own NOW()-writing code path, never hand-crafted fixture timestamps.
+        (INV-66)
         Avoid withClient for single-query paths. Pass pool directly instead of acquiring a
         dedicated client. (INV-30)
         Validate API inputs (body, query, params) with Zod schemas, not manual typeof
@@ -127,6 +150,15 @@ reviews:
       instructions: |
         Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
         advisory locks, or transactions with row locks for write paths. (INV-20)
+        Check-then-act guards must pin the identity or generation observed at read (row id,
+        integer version, or external key), not just a status flag — status-only guards let
+        stale work clobber a row that was replaced in between. (INV-20)
+        Optimistic concurrency must CAS on an integer version column, never on timestamp
+        equality: PostgreSQL stores microseconds while a JS Date round-trips at millisecond
+        precision, so a timestamp CAS fails on virtually every uncontended write. Tests for
+        version- or timestamp-gated predicates must produce the compared value through the
+        repository's own NOW()-writing code path, never hand-crafted fixture timestamps.
+        (INV-66)
         Avoid withClient for single-query paths. Pass pool directly instead of acquiring a
         dedicated client. (INV-30)
 
