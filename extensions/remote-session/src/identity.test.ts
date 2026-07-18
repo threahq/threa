@@ -154,10 +154,32 @@ describe("loadConfig", () => {
       },
       IDENTITY
     )
+    expect("config" in result).toBe(true)
     if ("config" in result) {
       expect(result.config.coldStartIfArchived).toBe("wait")
       expect(result.config.coldStartIfMissing).toBe("error")
       expect(result.config.expectedRootStreamId).toBe("stream_expected")
+    }
+  })
+
+  test("empty supervisor env values retain file policies", () => {
+    const result = loadConfig(
+      {
+        ...base,
+        env: {
+          THREA_WORKSPACE_ID: "ws_1",
+          THREA_API_KEY: "threa_bk_x",
+          THREA_COLD_START_IF_ARCHIVED: " ",
+          THREA_COLD_START_IF_MISSING: "",
+        },
+        file: { coldStartIfArchived: "wait", coldStartIfMissing: "error" },
+      },
+      IDENTITY
+    )
+    expect("config" in result).toBe(true)
+    if ("config" in result) {
+      expect(result.config.coldStartIfArchived).toBe("wait")
+      expect(result.config.coldStartIfMissing).toBe("error")
     }
   })
 

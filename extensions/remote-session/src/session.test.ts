@@ -516,15 +516,19 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await session.shutdown()
   })
 
-  test("a supervised cold start rejects a link to another root stream", async () => {
+  test("a supervised cold start rejects a link to another root stream without allowing creation", async () => {
+    let request: Record<string, unknown> | undefined
     const client = {
-      createSession: async () => ({
-        linkId: "brsl_other",
-        rootStreamId: "stream_other",
-        activeStreamId: "stream_other",
-        runtimeSessionId: "rts-test",
-        streamUrlPath: "/w/ws_1/s/stream_other",
-      }),
+      createSession: async (body: Record<string, unknown>) => {
+        request = body
+        return {
+          linkId: "brsl_other",
+          rootStreamId: "stream_other",
+          activeStreamId: "stream_other",
+          runtimeSessionId: "rts-test",
+          streamUrlPath: "/w/ws_1/s/stream_other",
+        }
+      },
     } as unknown as ThreaClient
     const { transport } = makeFakeTransport()
     const session = new RemoteSession({
@@ -536,6 +540,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     })
 
     await expect((session as unknown as { ensureLink: () => Promise<void> }).ensureLink()).resolves.toBeUndefined()
+    expect(request).toMatchObject({ ifMissing: "error" })
     expect((session as unknown as { link?: unknown }).link).toBeUndefined()
     await session.shutdown()
   })

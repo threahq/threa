@@ -514,7 +514,7 @@ export class RemoteSession {
       // archive between their preflight and process launch cannot mint another
       // scratchpad.
       ifArchived: this.archivePending ? "wait" : (this.config.coldStartIfArchived ?? "replace"),
-      ifMissing: this.config.coldStartIfMissing ?? "create",
+      ifMissing: this.config.expectedRootStreamId ? "error" : (this.config.coldStartIfMissing ?? "create"),
       ...(this.config.defaultLabel && { labelName: this.config.defaultLabel }),
       ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
     })
