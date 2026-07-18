@@ -7,6 +7,7 @@ import {
   DelegationRunner,
   RemoteSession,
   ThreaClient,
+  parseSessionControlCommand,
   type ClaimedDelegation,
   type ClaimedInvocation,
   type DelegationExecutorContext,
@@ -87,6 +88,18 @@ export function parsePermissionVerdict(text: string): PermissionVerdict | null {
     behavior: match[1]!.toLowerCase().startsWith("y") ? "allow" : "deny",
     requestId: match[2]!.toLowerCase(),
   }
+}
+
+/**
+ * The text of a claimed invocation that could carry a permission verdict: an
+ * ordinary message's prompt, or a /steer's folded text — the busy-session
+ * composer routes replies through /steer, so "yes abcde" often arrives as
+ * steer args. Other session-control commands never carry a verdict.
+ */
+export function verdictCandidateText(invocation: ClaimedInvocation): string | null {
+  const command = parseSessionControlCommand(invocation)
+  if (!command) return invocation.promptMarkdown
+  return command.name === "steer" ? command.args : null
 }
 
 export function buildInstructions(permissionRelay: boolean, channelActive = true): string {
@@ -529,12 +542,15 @@ export class ChannelServer {
   // --- Permission relay -----------------------------------------------------
 
   /**
-   * A relayed permission verdict ("yes abcde") arrives as an ordinary message,
-   * hence as a claimed invocation. Recognize it and route it to Claude Code as
-   * a verdict instead of pushing it into the session as a fresh prompt.
+   * A relayed permission verdict ("yes abcde") arrives as a claimed invocation
+   * — an ordinary message, or /steer args when the session was busy. Recognize
+   * it and route it to Claude Code as a verdict instead of pushing it into the
+   * session as a fresh prompt or steering text.
    */
   private async interceptVerdict(invocation: ClaimedInvocation): Promise<boolean> {
-    const verdict = parsePermissionVerdict(invocation.promptMarkdown)
+    const text = verdictCandidateText(invocation)
+    if (text === null) return false
+    const verdict = parsePermissionVerdict(text)
     if (!verdict) return false
     const open = this.openPermissions.get(verdict.requestId)
     if (!open) return false

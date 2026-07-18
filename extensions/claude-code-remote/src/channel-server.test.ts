@@ -3,10 +3,17 @@ import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
 import {
   ThreaClient,
   type ClaimedDelegation,
+  type ClaimedInvocation,
   type DelegationClient,
   type RemoteSessionConfig,
 } from "@threa/remote-session"
-import { ChannelServer, buildInstructions, formatDelegationContent, parsePermissionVerdict } from "./channel-server"
+import {
+  ChannelServer,
+  buildInstructions,
+  formatDelegationContent,
+  parsePermissionVerdict,
+  verdictCandidateText,
+} from "./channel-server"
 
 describe("parsePermissionVerdict", () => {
   test("parses allow/deny in long and short forms", () => {
@@ -193,6 +200,151 @@ describe("ChannelServer delegations", () => {
     const result = await server.handleToolCall("reply", "dlg_1", "Done.")
     expect(result.ok).toBe(false)
     expect(sessionReply).toHaveBeenCalled()
+  })
+})
+
+function makeInvocation(partial: Partial<ClaimedInvocation>): ClaimedInvocation {
+  return {
+    id: "binv_1",
+    workspaceId: "ws_1",
+    rootStreamId: "stream_root",
+    activeStreamId: "stream_root",
+    sourceMessageId: "src",
+    responseStreamId: "stream_root",
+    actor: { type: "bot", id: "bot_1", slug: "claude" },
+    trigger: "active-scratchpad",
+    requiredCapability: "active-scratchpad",
+    promptMarkdown: "Do the thing",
+    authorUserId: "user_1",
+    mentionedActorSlugs: [],
+    claimToken: "tok",
+    claimExpiresAt: "2026-07-18T00:00:00.000Z",
+    runtimeSessionId: "rts_1",
+    metadata: {},
+    ...partial,
+  }
+}
+
+function makeSteerInvocation(args: string): ClaimedInvocation {
+  return makeInvocation({
+    id: "binv_steer",
+    trigger: "session-control",
+    promptMarkdown: args ? `/steer ${args}` : "/steer",
+    metadata: { command: { executionKind: "bot-runtime", id: "cmd_1", name: "steer", args } },
+  })
+}
+
+describe("verdictCandidateText", () => {
+  test("an ordinary message's prompt is the candidate", () => {
+    expect(verdictCandidateText(makeInvocation({ promptMarkdown: "yes abcde" }))).toBe("yes abcde")
+  })
+
+  test("a /steer's folded text is the candidate (busy-session replies arrive as steer args)", () => {
+    expect(verdictCandidateText(makeSteerInvocation("no abcde"))).toBe("no abcde")
+  })
+
+  test("other session-control commands never carry a verdict", () => {
+    const model = makeInvocation({
+      trigger: "session-control",
+      promptMarkdown: "/model opus",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_2", name: "model", args: "opus" } },
+    })
+    expect(verdictCandidateText(model)).toBeNull()
+  })
+})
+
+/** A relay-enabled server with the MCP wire and Threa session stubbed for direct permission-path calls. */
+function permissionServer() {
+  const config = { ...makeConfig(), permissionRelay: true }
+  const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+  const internals = server as unknown as {
+    mcp: { notification: (msg: { method: string; params: Record<string, unknown> }) => Promise<void> }
+    handlePermissionRequest: (params: {
+      request_id: string
+      tool_name: string
+      description: string
+      input_preview: string
+    }) => Promise<void>
+    interceptVerdict: (invocation: ClaimedInvocation) => Promise<boolean>
+  }
+  const notifications: Array<{ method: string; params: Record<string, unknown> }> = []
+  spyOn(internals.mcp, "notification").mockImplementation(async (msg) => void notifications.push(msg))
+  const posts: Array<{ streamId: string; body: { content: string; metadata?: Record<string, unknown> } }> = []
+  spyOn(server.session, "postToStream").mockImplementation(
+    async (streamId: string, body: { content: string; metadata?: Record<string, unknown> }) =>
+      void posts.push({ streamId, body })
+  )
+  spyOn(server.session, "keepAlive").mockImplementation(() => {})
+  ;(server.session as unknown as { activeTurnStream?: string }).activeTurnStream = "stream_turn"
+  return { server, internals, notifications, posts }
+}
+
+describe("ChannelServer permission verdict routing", () => {
+  test("posts the approval prompt, then a plain 'yes <id>' reply routes to it and releases the claim hold", async () => {
+    const { server, internals, notifications, posts } = permissionServer()
+    await internals.handlePermissionRequest({
+      request_id: "krjtt",
+      tool_name: "Bash",
+      description: "Run a command",
+      input_preview: "bun run test",
+    })
+    expect(posts[0]?.streamId).toBe("stream_turn")
+    expect(posts[0]?.body.content).toContain("yes krjtt")
+    expect(posts[0]?.body.metadata?.["cc.channel.permissionRequest"]).toBe("krjtt")
+    expect(server.session.interceptHoldsClaims).toBe(true)
+
+    expect(await internals.interceptVerdict(makeInvocation({ promptMarkdown: "yes krjtt" }))).toBe(true)
+    expect(notifications).toEqual([
+      { method: "notifications/claude/channel/permission", params: { request_id: "krjtt", behavior: "allow" } },
+    ])
+    expect(server.session.interceptHoldsClaims).toBe(false)
+    await server.shutdown()
+  })
+
+  test("a verdict folded into /steer args still reaches the prompt instead of steering the session", async () => {
+    const { server, internals, notifications } = permissionServer()
+    await internals.handlePermissionRequest({
+      request_id: "krjtt",
+      tool_name: "Bash",
+      description: "Run a command",
+      input_preview: "",
+    })
+    expect(await internals.interceptVerdict(makeSteerInvocation("no krjtt"))).toBe(true)
+    expect(notifications).toEqual([
+      { method: "notifications/claude/channel/permission", params: { request_id: "krjtt", behavior: "deny" } },
+    ])
+    await server.shutdown()
+  })
+
+  test("non-verdict steers and other control commands pass through untouched", async () => {
+    const { server, internals, notifications } = permissionServer()
+    await internals.handlePermissionRequest({
+      request_id: "krjtt",
+      tool_name: "Bash",
+      description: "Run a command",
+      input_preview: "",
+    })
+    expect(await internals.interceptVerdict(makeSteerInvocation("focus on the failing test"))).toBe(false)
+    expect(
+      await internals.interceptVerdict(
+        makeInvocation({
+          trigger: "session-control",
+          promptMarkdown: "/model opus",
+          metadata: { command: { executionKind: "bot-runtime", id: "cmd_2", name: "model", args: "opus" } },
+        })
+      )
+    ).toBe(false)
+    expect(notifications).toEqual([])
+    // The request is still pending, so the claim hold stays up.
+    expect(server.session.interceptHoldsClaims).toBe(true)
+    await server.shutdown()
+  })
+
+  test("a verdict with no matching open request falls through to the normal turn path", async () => {
+    const { server, internals, notifications } = permissionServer()
+    expect(await internals.interceptVerdict(makeInvocation({ promptMarkdown: "yes krjtt" }))).toBe(false)
+    expect(notifications).toEqual([])
+    await server.shutdown()
   })
 })
 

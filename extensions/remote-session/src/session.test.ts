@@ -869,6 +869,83 @@ describe("steer into the running turn (native steer support)", () => {
     ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
   })
 
+  test("a swept message the intercept consumes is routed, not folded into the steer text", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    const intercepted: string[] = []
+    const queued = [
+      makeInvocation({ id: "binv_verdict", promptMarkdown: "yes abcde" }),
+      makeInvocation({ id: "binv_q1", promptMarkdown: "also bump the deps" }),
+    ]
+    const session = makeSession(client, transport, {
+      interceptClaimed: async (invocation) => {
+        if (invocation.promptMarkdown !== "yes abcde") return false
+        intercepted.push(invocation.id)
+        return true
+      },
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
+      queued.shift() ?? null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation("the steer text"))
+
+    expect(intercepted).toEqual(["binv_verdict"])
+    expect(steered).toHaveLength(1)
+    expect(steered[0]).toContain("also bump the deps")
+    expect(steered[0]).toContain("the steer text")
+    expect(steered[0]).not.toContain("yes abcde")
+    const verdictClose = calls.complete.find((entry) => entry.id === "binv_verdict")
+    expect(verdictClose?.body.noResponse).toBe(true)
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+  })
+
+  test("an empty steer whose sweep only intercepts a reply acks the routing, not 'nothing to steer'", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    const queued = [makeInvocation({ id: "binv_verdict", promptMarkdown: "yes abcde" })]
+    const session = makeSession(client, transport, {
+      interceptClaimed: async (invocation) => invocation.promptMarkdown === "yes abcde",
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
+      queued.shift() ?? null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation(""))
+
+    expect(steered).toEqual([])
+    const verdictClose = calls.complete.find((entry) => entry.id === "binv_verdict")
+    expect(verdictClose?.body.noResponse).toBe(true)
+    const ack = calls.complete.find((entry) => entry.id === "binv_steer")
+    expect(ack?.body.finalMessageMarkdown).toContain("Routed your reply")
+    expect(ack?.body.finalMessageMarkdown).not.toContain("Nothing to steer with")
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+  })
+
   test("failed actuation leaves the running turn alone and reports the failure", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
@@ -936,6 +1013,70 @@ describe("steer into the running turn (native steer support)", () => {
     expect(interrupted).toBe(true)
     expect(delivered).toEqual(["start with the readme"])
     ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_steer")
+  })
+})
+
+describe("claimDrain intercept routing", () => {
+  test("an intercepted steer invocation closes silently — never actuated as steering text", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    const intercepted: string[] = []
+    const queue = [
+      makeInvocation({
+        id: "binv_verdict",
+        trigger: "session-control",
+        promptMarkdown: "/steer yes abcde",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd_v", name: "steer", args: "yes abcde" } },
+      }),
+    ]
+    const session = makeSession(client, transport, {
+      interceptClaimed: async (invocation) => {
+        intercepted.push(invocation.id)
+        return true
+      },
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () => queue.shift() ?? null
+
+    await (session as unknown as { claimDrain: () => Promise<boolean> }).claimDrain()
+
+    expect(intercepted).toEqual(["binv_verdict"])
+    expect(steered).toEqual([])
+    const close = calls.complete.find((entry) => entry.id === "binv_verdict")
+    expect(close?.body.noResponse).toBe(true)
+  })
+
+  test("an intercepted ordinary message closes silently instead of becoming a turn", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const delivered: string[] = []
+    const queue = [
+      makeInvocation({ id: "binv_verdict", promptMarkdown: "yes abcde" }),
+      makeInvocation({ id: "binv_normal", promptMarkdown: "hello there" }),
+    ]
+    const session = makeSession(client, transport, {
+      deliverTurn: async (turn) => {
+        delivered.push(turn.invocationId)
+      },
+      interceptClaimed: async (invocation) => invocation.promptMarkdown === "yes abcde",
+    })
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () => queue.shift() ?? null
+
+    await (session as unknown as { claimDrain: () => Promise<boolean> }).claimDrain()
+
+    expect(delivered).toEqual(["binv_normal"])
+    const verdictClose = calls.complete.find((entry) => entry.id === "binv_verdict")
+    expect(verdictClose?.body.noResponse).toBe(true)
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_normal")
   })
 })
 
