@@ -229,3 +229,128 @@ describe("workspace_integrations installation_id guard", () => {
     })
   })
 })
+
+/**
+ * INV-66 discipline: the compared version is produced by the repository's own
+ * NOW()-writing update path and read back through the repository — never a
+ * hand-crafted fixture — so the CAS is exercised against a value that actually
+ * round-tripped the driver. A stale-version write must lose without touching the
+ * row; the winner's write advances the version. Real Postgres because a mock
+ * can't prove the `version = $expected` predicate actually gates.
+ */
+describe("workspace_integrations version CAS (INV-66)", () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  async function seed(client: Pool | import("pg").PoolClient): Promise<void> {
+    await client.query(
+      `INSERT INTO workspace_integrations (id, workspace_id, provider, status, installed_by, installation_id)
+       VALUES ('wsi_ver', 'ws_ver', 'github', 'active', 'usr_test', 'A')`
+    )
+  }
+
+  test("a write carrying the version read back from the repository lands and advances it", async () => {
+    await withTestTransaction(pool, async (client) => {
+      await seed(client)
+      const before = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(client, "ws_ver", "github")
+      expect(before?.version).toBe(1)
+
+      const updated = await WorkspaceIntegrationRepository.update(
+        client,
+        "ws_ver",
+        "github",
+        { metadata: { repositories: [{ fullName: "org/repo", private: false }] } },
+        { expectedVersion: before!.version }
+      )
+
+      expect(updated?.version).toBe(2)
+    })
+  })
+
+  test("a stale-version write matches 0 rows and leaves the row untouched", async () => {
+    await withTestTransaction(pool, async (client) => {
+      await seed(client)
+      const before = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(client, "ws_ver", "github")
+
+      // A concurrent write advances the version first (through the same path).
+      const winner = await WorkspaceIntegrationRepository.update(
+        client,
+        "ws_ver",
+        "github",
+        { metadata: { winner: true } },
+        { expectedVersion: before!.version }
+      )
+      expect(winner?.version).toBe(2)
+
+      // The loser still holds the pre-advance version — CAS miss, no write.
+      const loser = await WorkspaceIntegrationRepository.update(
+        client,
+        "ws_ver",
+        "github",
+        { metadata: { loser: true } },
+        { expectedVersion: before!.version }
+      )
+      expect(loser).toBeNull()
+
+      const current = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(client, "ws_ver", "github")
+      expect(current?.version).toBe(2)
+      expect(current?.metadata).toEqual({ winner: true })
+    })
+  })
+
+  test("re-reading after a loss yields the advanced version, which then wins", async () => {
+    await withTestTransaction(pool, async (client) => {
+      await seed(client)
+      const before = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(client, "ws_ver", "github")
+      await WorkspaceIntegrationRepository.update(
+        client,
+        "ws_ver",
+        "github",
+        { metadata: { a: 1 } },
+        {
+          expectedVersion: before!.version,
+        }
+      )
+
+      const stale = await WorkspaceIntegrationRepository.update(
+        client,
+        "ws_ver",
+        "github",
+        { metadata: { b: 2 } },
+        {
+          expectedVersion: before!.version,
+        }
+      )
+      expect(stale).toBeNull()
+
+      const reread = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(client, "ws_ver", "github")
+      const retried = await WorkspaceIntegrationRepository.update(
+        client,
+        "ws_ver",
+        "github",
+        { metadata: { b: 2 } },
+        {
+          expectedVersion: reread!.version,
+        }
+      )
+      expect(retried?.version).toBe(3)
+    })
+  })
+
+  test("an update without expectedVersion still bumps the version (every update increments)", async () => {
+    await withTestTransaction(pool, async (client) => {
+      await seed(client)
+      const updated = await WorkspaceIntegrationRepository.update(client, "ws_ver", "github", {
+        metadata: { touched: true },
+      })
+      expect(updated?.version).toBe(2)
+    })
+  })
+})
