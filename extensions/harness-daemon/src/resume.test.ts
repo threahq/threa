@@ -144,7 +144,7 @@ test("Pi revival reuses an exact recorded session id", () => {
   expect(piLaunchArgs("pi", "019f-session")).toEqual(["pi", "--session-id", "019f-session"])
 })
 
-test("classifies active, archived, and inaccessible scratchpads", async () => {
+test("classifies active, archived, inaccessible, and unavailable scratchpads", async () => {
   const fetchMock = spyOn(globalThis, "fetch")
   fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: "stream_1" } }), { status: 200 }))
   fetchMock.mockResolvedValueOnce(
@@ -153,10 +153,12 @@ test("classifies active, archived, and inaccessible scratchpads", async () => {
     })
   )
   fetchMock.mockResolvedValueOnce(new Response("not found", { status: 404 }))
+  fetchMock.mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
   const params = { baseUrl: "https://app.threa.io", workspaceId: "ws_1", apiKey: "key", streamId: "stream_1" }
   expect(await fetchScratchpadStatus(params)).toBe("active")
   expect(await fetchScratchpadStatus(params)).toBe("archived")
   expect(await fetchScratchpadStatus(params)).toBe("inaccessible")
+  expect(await fetchScratchpadStatus(params)).toBe("unavailable")
 })
 
 test("preflights revival with ifArchived=wait and refuses a root mismatch", async () => {

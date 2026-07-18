@@ -86,15 +86,12 @@ export function readPiRemoteSession(runtimeSessionId: string): PiRemoteSession |
   try {
     const config = readPiRemoteConfig()
     const link = config.linkedSessions?.[runtimeSessionId]
-    const streamId = link?.activeStreamId ?? link?.rootStreamId
-    if (!link?.instanceId || !link.rootStreamId || !streamId || link.enabled === false || !config.workspaceId) {
-      return undefined
-    }
+    if (!link?.instanceId || !link.rootStreamId || link.enabled === false || !config.workspaceId) return undefined
     const baseUrl = (config.baseUrl || "https://app.threa.io").replace(/\/$/, "")
     return {
       instanceId: link.instanceId,
       rootStreamId: link.rootStreamId,
-      scratchpadUrl: `${baseUrl}/w/${config.workspaceId}/s/${streamId}`,
+      scratchpadUrl: `${baseUrl}/w/${config.workspaceId}/s/${link.rootStreamId}`,
     }
   } catch {
     return undefined

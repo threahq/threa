@@ -241,8 +241,8 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       continue
     }
 
+    const resumableAgent = { ...agent, instanceId, runtimeSessionId }
     try {
-      const resumableAgent = { ...agent, instanceId, runtimeSessionId }
       const spawner = agent.runtime === "pi" ? new PiRuntimeSpawner() : new ClaudeRuntimeSpawner()
       const result = await spawner.resume(resumableAgent, options)
       upsertAgent({
@@ -258,7 +258,7 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
         agent.runtime === "claude" ? `bypass ${recordedNoYolo(agent) ? "disabled" : "enabled"}` : "Pi session reused"
       console.log(`revived\t${agent.name}\t${detail}`)
     } catch (error) {
-      upsertAgent({ ...agent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
+      upsertAgent({ ...resumableAgent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
       skip(`launch failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
