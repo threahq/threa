@@ -9,8 +9,9 @@
  * dispatching a slash command). The parsers stay unified so the two sides
  * can't drift.
  */
-import { parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown, serializeToMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
+import type { Slice } from "@tiptap/pm/model"
 
 export {
   serializeToMarkdown,
@@ -28,6 +29,34 @@ export {
  * carry no reference and must not resolve to slugs, so every interactive parse
  * flag is off. Shared by every prompt-authoring editor so they can't drift.
  */
+/**
+ * Clipboard `text/plain` serializer for editor copy/cut. The default
+ * ProseMirror text serialization is bare `textContent` — code fences, quote
+ * markers, list bullets, and chip references (mentions, quote replies, shared
+ * messages) all vanish, so pasting back can never restore them. Markdown is
+ * the editor's canonical text form and the paste path parses it, closing the
+ * copy → paste roundtrip.
+ */
+export function serializeClipboardSlice(slice: Slice): string {
+  const content = slice.content.toJSON() as JSONContent[] | null
+  if (!content) return ""
+  // A NodeSelection of an inline atom (a chip) yields a slice whose top level
+  // is inline content; the serializer expects blocks, so wrap it.
+  const blocks = slice.content.firstChild?.isInline ? [{ type: "paragraph", content }] : content
+  return serializeToMarkdown({ type: "doc", content: blocks })
+}
+
+/**
+ * Content copied from a ProseMirror editor carries a `data-pm-slice` HTML
+ * payload that restores the exact document, chips included. Paste handlers
+ * bail on such events so ProseMirror's native paste applies it losslessly
+ * instead of re-parsing the markdown `text/plain` fallback.
+ */
+export function isProseMirrorClipboardEvent(event: ClipboardEvent): boolean {
+  const html = event.clipboardData?.getData("text/html")
+  return !!html && html.includes("data-pm-slice")
+}
+
 export function parsePromptMarkdown(markdown: string): JSONContent {
   return parseMarkdown(markdown, undefined, undefined, {
     enableMentions: false,

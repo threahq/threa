@@ -1193,3 +1193,123 @@ describe("@threa/prosemirror normalizeMarkdownTables", () => {
     expect(parsed.content?.[0]?.content).toHaveLength(3)
   })
 })
+
+describe("@threa/prosemirror nested list round-trip", () => {
+  const nestedBulletDoc: JSONContent = {
+    type: "doc",
+    content: [
+      {
+        type: "bulletList",
+        content: [
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "one" }] }] },
+          {
+            type: "listItem",
+            content: [
+              { type: "paragraph", content: [{ type: "text", text: "two" }] },
+              {
+                type: "bulletList",
+                content: [
+                  {
+                    type: "listItem",
+                    content: [{ type: "paragraph", content: [{ type: "text", text: "nested" }] }],
+                  },
+                  {
+                    type: "listItem",
+                    content: [
+                      { type: "paragraph", content: [{ type: "text", text: "deep parent" }] },
+                      {
+                        type: "orderedList",
+                        content: [
+                          {
+                            type: "listItem",
+                            content: [{ type: "paragraph", content: [{ type: "text", text: "deepest" }] }],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "three" }] }] },
+        ],
+      },
+    ],
+  }
+
+  it("round-trips nested bullet and ordered lists through markdown", () => {
+    const markdown = serializeToMarkdown(nestedBulletDoc)
+    const parsed = parseMarkdown(markdown)
+    expect(parsed).toEqual(nestedBulletDoc)
+  })
+
+  it("parses indented list items into nested lists", () => {
+    const parsed = parseMarkdown("- one\n- two\n  - nested\n- three")
+    const list = parsed.content?.[0]
+    expect(list?.type).toBe("bulletList")
+    expect(list?.content).toHaveLength(3)
+    expect(list?.content?.[1]?.content?.[1]).toEqual({
+      type: "bulletList",
+      content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "nested" }] }] }],
+    })
+  })
+
+  it("keeps bullet and ordered runs at the same level as separate lists", () => {
+    const parsed = parseMarkdown("- one\n1. first")
+    expect(parsed.content?.map((n) => n.type)).toEqual(["bulletList", "orderedList"])
+  })
+
+  it("parses a list that starts indented without dropping items", () => {
+    const parsed = parseMarkdown("  - indented start\n  - second")
+    const list = parsed.content?.[0]
+    expect(list?.type).toBe("bulletList")
+    expect(list?.content).toHaveLength(2)
+  })
+})
+
+describe("@threa/prosemirror blockquote paragraph round-trip", () => {
+  it("round-trips a multi-paragraph blockquote", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "quoted line one" }] },
+            { type: "paragraph", content: [{ type: "text", text: "quoted line two" }] },
+          ],
+        },
+      ],
+    }
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toBe("> quoted line one\n> quoted line two")
+    expect(parseMarkdown(markdown)).toEqual(doc)
+  })
+
+  it("parses an empty blockquote into a single empty paragraph", () => {
+    const parsed = parseMarkdown(">")
+    expect(parsed.content?.[0]).toEqual({ type: "blockquote", content: [{ type: "paragraph" }] })
+  })
+})
+
+describe("@threa/prosemirror blockquote empty-paragraph round-trip", () => {
+  it("preserves an empty paragraph between quoted paragraphs", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "one" }] },
+            { type: "paragraph" },
+            { type: "paragraph", content: [{ type: "text", text: "two" }] },
+          ],
+        },
+      ],
+    }
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toBe("> one\n>\n> two")
+    expect(parseMarkdown(markdown)).toEqual(doc)
+  })
+})
