@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { isChannelLaunch, readParentCommand } from "./channel-detect"
+import { channelActivation, isChannelLaunch, readParentCommand } from "./channel-detect"
 
 // Real launch shapes captured from running sessions (spawn.sh and harnessd).
 const SPAWN_SH_CMD =
@@ -31,6 +31,33 @@ describe("isChannelLaunch", () => {
     expect(isChannelLaunch("claude --dangerously-load-development-channels server:other,server:threa", "threa")).toBe(
       true
     )
+  })
+})
+
+describe("channelActivation", () => {
+  const CHANNEL_CMD =
+    "claude --dangerously-load-development-channels server:threa-channel --dangerously-skip-permissions"
+
+  test("activates when the registration key is named in the launch flag", () => {
+    expect(channelActivation(CHANNEL_CMD, "threa-channel")).toEqual({ active: true })
+  })
+
+  test("stays plain without a registration-carried key, even under the channel flag", () => {
+    // The Jul 2026 twin regression: a stale duplicate registration of this same
+    // script passes any constant-based check because its argv is identical.
+    // Without its own key it must never link.
+    expect(channelActivation(CHANNEL_CMD, undefined)).toEqual({ active: false, reason: "no-server-key" })
+  })
+
+  test("stays plain when the flag names a different registration", () => {
+    expect(channelActivation(CHANNEL_CMD, "threa")).toEqual({ active: false, reason: "flag-missing" })
+  })
+
+  test("stays plain on an unflagged launch", () => {
+    expect(channelActivation("claude --dangerously-skip-permissions", "threa-channel")).toEqual({
+      active: false,
+      reason: "flag-missing",
+    })
   })
 })
 

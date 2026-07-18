@@ -1,8 +1,9 @@
 {
   "mcpServers": {
-    "threa": {
+    "threa-channel": {
       "command": "bun",
-      "args": ["/ABSOLUTE/PATH/TO/threa/extensions/claude-code-remote/src/index.ts"]
+      "args": ["/ABSOLUTE/PATH/TO/threa/extensions/claude-code-remote/src/index.ts"],
+      "env": { "THREA_CHANNEL_SERVER_KEY": "threa-channel" }
     }
   }
 }

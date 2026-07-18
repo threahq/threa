@@ -2,8 +2,8 @@
 import { existsSync, readFileSync } from "node:fs"
 import { hostname } from "node:os"
 import { ThreaClient, parseConfigFile, wireLifecycle, type RawConfig } from "@threa/remote-session"
-import { isChannelLaunch, readParentCommand } from "./channel-detect"
-import { CHANNEL_SOURCE, ChannelServer } from "./channel-server"
+import { channelActivation, readParentCommand } from "./channel-detect"
+import { ChannelServer } from "./channel-server"
 import { CONFIG_PATH, loadChannelConfig } from "./config"
 
 function readFileConfig(): RawConfig | undefined {
@@ -30,15 +30,18 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // The user-scope `threa` registration loads this server in EVERY Claude
-  // session, channel or not. Only a session Claude Code actually treats as a
-  // channel may link a scratchpad — see channel-detect.ts for why the parent
-  // process's launch flag is the only observable (and authoritative) signal.
+  // A user-scope registration loads this server in EVERY Claude session,
+  // channel or not — and one session can load several registrations of this
+  // same script. Only the instance whose OWN registration key is named in the
+  // launch flag may link the scratchpad; the key reaches us via
+  // THREA_CHANNEL_SERVER_KEY on the registration (see channel-detect.ts for
+  // why no other signal can tell the instances apart).
+  const serverKey = process.env.THREA_CHANNEL_SERVER_KEY
   const parentCommand = readParentCommand(process.ppid)
-  const channelActive = isChannelLaunch(parentCommand, CHANNEL_SOURCE)
+  const activation = channelActivation(parentCommand, serverKey)
 
   const client = new ThreaClient(result.config)
-  const server = new ChannelServer(result.config, client, undefined, channelActive)
+  const server = new ChannelServer(result.config, client, undefined, activation.active)
 
   // Connect stdio first so Claude Code registers the channel and discovers the
   // reply tool even while the Threa bridge is still spinning up. This also puts
@@ -51,10 +54,13 @@ async function main(): Promise<void> {
   // "busy" with nobody to answer until a human restarts.
   wireLifecycle(server, process, { logPrefix: "[threa-channel]" })
 
-  if (!channelActive) {
+  if (!activation.active) {
+    const detail =
+      activation.reason === "no-server-key"
+        ? `registration carries no THREA_CHANNEL_SERVER_KEY — add "env": {"THREA_CHANNEL_SERVER_KEY": "<registered server name>"} to this server's MCP registration to enable channel mode`
+        : `--dangerously-load-development-channels server:${serverKey} absent from: ${parentCommand || "<unreadable>"}`
     process.stderr.write(
-      `[threa-channel] parent Claude session did not load this server as a channel ` +
-        `(--dangerously-load-development-channels server:${CHANNEL_SOURCE} absent from: ${parentCommand || "<unreadable>"}) — ` +
+      `[threa-channel] parent Claude session did not load this server as a channel (${detail}) — ` +
         `serving as a plain MCP server; no scratchpad linked\n`
     )
     return
