@@ -415,7 +415,7 @@ export async function parseHtmlMeta(html: string, url: string): Promise<UpdateLi
   // HTMLRewriter requires consuming the transformed response to trigger handlers
   await rewriter.transform(new Response(html)).text()
 
-  const title = decode(meta["og:title"]) ?? decode(meta["twitter:title"]) ?? (titleText.trim() || null)
+  const title = decode(meta["og:title"]) ?? decode(meta["twitter:title"]) ?? decode(titleText.trim() || undefined)
   const description =
     decode(meta["og:description"]) ?? decode(meta["twitter:description"]) ?? decode(meta["description"]) ?? null
   const imageUrl = decode(meta["og:image"]) ?? decode(meta["twitter:image"]) ?? null
@@ -479,6 +479,13 @@ function decode(value: string | undefined): string | null {
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&nbsp;/g, "\u00A0")
+    .replace(/&mdash;/g, "—")
+    .replace(/&ndash;/g, "–")
+    .replace(/&rsquo;/g, "’")
+    .replace(/&lsquo;/g, "‘")
+    .replace(/&hellip;/g, "…")
+    .replace(/&ldquo;/g, "“")
+    .replace(/&rdquo;/g, "”")
 }
 
 /**
