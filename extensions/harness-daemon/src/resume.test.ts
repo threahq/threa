@@ -13,7 +13,13 @@ import {
 import { launchAgentPlist } from "./boot"
 import { parseResume, parseSpawn } from "./cli"
 import { readInventory, upsertAgent } from "./inventory"
-import { claudeLaunchArgs, claudeLaunchCommand, normalizeChannelMcpConfig, piLaunchArgs } from "./spawners"
+import {
+  claudeLaunchArgs,
+  claudeLaunchCommand,
+  normalizeChannelMcpConfig,
+  piLaunchArgs,
+  piResumeCommand,
+} from "./spawners"
 import type { ManagedAgent } from "./types"
 import { runWatchLoop, unavailableBackoffMs, watchIntervalMs } from "./watch"
 
@@ -190,8 +196,11 @@ test("reconstructs the current Claude channel launch with stable runtime identit
   ).not.toContain("--dangerously-skip-permissions")
 })
 
-test("Pi revival reuses an exact recorded session id", () => {
+test("Pi revival reuses an exact recorded session id bound to the expected root", () => {
   expect(piLaunchArgs("pi", "019f-session")).toEqual(["pi", "--session-id", "019f-session"])
+  expect(piResumeCommand("pi", "019f-session", "stream_expected")).toContain(
+    "'THREA_EXPECTED_ROOT_STREAM_ID=stream_expected'"
+  )
 })
 
 test("classifies active, archived, inaccessible, and unavailable scratchpads", async () => {

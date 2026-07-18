@@ -21,6 +21,12 @@ export function piLaunchArgs(piBin: string, runtimeSessionId: string): string[] 
   return [piBin, "--session-id", runtimeSessionId]
 }
 
+export function piResumeCommand(piBin: string, runtimeSessionId: string, expectedRootStreamId: string): string {
+  return ["env", `THREA_EXPECTED_ROOT_STREAM_ID=${expectedRootStreamId}`, ...piLaunchArgs(piBin, runtimeSessionId)]
+    .map(shellQuote)
+    .join(" ")
+}
+
 export function claudeLaunchArgs(params: {
   claudeBin: string
   name: string
@@ -188,7 +194,11 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
       session,
       window,
       agent.worktree,
-      piLaunchArgs(piBin, agent.runtimeSessionId).map(shellQuote).join(" ")
+      piResumeCommand(
+        piBin,
+        agent.runtimeSessionId,
+        scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`)
+      )
     )
     await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
     const output = capturePane(windowId)
