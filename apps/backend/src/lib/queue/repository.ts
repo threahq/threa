@@ -381,9 +381,12 @@ export const QueueRepository = {
   /**
    * Delete one batch (up to `limit`) of terminal messages in `category` whose
    * retention timestamp is older than `cutoff`. Returns rows deleted; callers
-   * loop until it returns < limit. The `IS NOT NULL AND < cutoff` predicate on
-   * the category column matches its partial cleanup index
-   * (idx_queue_messages_cleanup_completed / _cleanup_cancelled / _dlq).
+   * loop until it returns < limit. For completed/cancelled the `IS NOT NULL AND
+   * < cutoff` predicate matches a single-column partial cleanup index, so the
+   * ORDER BY + LIMIT is an ordered index descent. DLQ only has the composite
+   * idx_queue_messages_dlq (queue_name, workspace_id, dlq_at), so its batch
+   * sorts the whole partial index first — acceptable because the DLQ set stays
+   * small by nature (exhausted-retry failures awaiting an operator).
    */
   async deleteExpiredMessagesBatch(db: Querier, params: DeleteExpiredMessagesBatchParams): Promise<number> {
     if (params.limit <= 0) {
