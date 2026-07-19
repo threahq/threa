@@ -65,16 +65,11 @@
     />
     <meta name="twitter:image" content="https://app.threa.io/threa-logo-512.png" />
 
-    <!-- Fonts — self-hosted (Switzer body/UI, Commit Mono data); @font-face in src/index.css.
-         Preload the variable body face so first paint has it without a CDN round-trip. -->
+    <!-- Fonts — all self-hosted (Switzer body/UI, Commit Mono data, OpenDyslexic accessibility);
+         @font-face in src/index.css. Preload the variable body face so first paint has it
+         without a round-trip. OpenDyslexic is fetched by the browser only when the
+         accessibility font preference applies it. -->
     <link rel="preload" href="/fonts/switzer.woff2" as="font" type="font/woff2" crossorigin />
-    <!-- OpenDyslexic loaded as <link> instead of CSS @import to avoid render-blocking the main stylesheet -->
-    <link
-      href="https://fonts.cdnfonts.com/css/opendyslexic"
-      rel="stylesheet"
-      media="print"
-      onload="this.media = 'all'"
-    />
     <script>
       ;(function () {
         var root = document.documentElement

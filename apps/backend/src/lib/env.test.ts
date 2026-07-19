@@ -59,6 +59,32 @@ describe("loadConfig stub auth safety", () => {
   })
 })
 
+describe("loadConfig S3 residency (INV-11)", () => {
+  test("requires S3_REGION in production", () => {
+    setBaseEnv()
+    delete process.env.S3_REGION
+    process.env.NODE_ENV = "production"
+    process.env.USE_STUB_AUTH = "false"
+    process.env.WORKOS_API_KEY = "key"
+    process.env.WORKOS_CLIENT_ID = "client"
+    process.env.WORKOS_REDIRECT_URI = "https://app.example.com/callback"
+    process.env.WORKOS_COOKIE_PASSWORD = "password"
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
+
+    expect(() => loadConfig()).toThrow("S3_REGION is required in production")
+  })
+
+  test("falls back to us-east-1 outside production", () => {
+    setBaseEnv()
+    delete process.env.S3_REGION
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+
+    const config = loadConfig()
+    expect(config.s3.region).toBe("us-east-1")
+  })
+})
+
 describe("loadConfig attachment safety policy", () => {
   test("enables malware scan by default", () => {
     setBaseEnv()
