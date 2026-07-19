@@ -432,6 +432,24 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
     ).toBe("evt_new")
   })
 
+  it("never promotes an archived local row into the active streams list, even when locally fresher", () => {
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeReconnectWorkspaceBootstrap({
+      workspaceBootstrap: makeBootstrap({ streams: [] }),
+      successfulStreamBootstraps: new Map(),
+      staleStreamIds: new Set(),
+      terminalStreamIds: new Set(),
+      localStreams: [
+        { ...makeStream("stream_archived_fresh", { archivedAt: new Date().toISOString() }), _cachedAt: Date.now() },
+        { ...makeStream("stream_active_fresh"), _cachedAt: Date.now() },
+      ],
+      localMemberships: [],
+      fetchStartedAt,
+    })
+
+    expect(merged.streams.map((s) => s.id)).toEqual(["stream_active_fresh"])
+  })
+
   it("preserves prior local state for visible streams that fail reconnect bootstrap", () => {
     const workspaceBootstrap = makeBootstrap({
       streams: [],

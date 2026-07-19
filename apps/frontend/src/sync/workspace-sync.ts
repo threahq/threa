@@ -392,6 +392,10 @@ export function mergeReconnectWorkspaceBootstrap({
     for (const stream of localStreams) {
       if (stream._cachedAt < fetchStartedAt) continue
       if (successfulStreamIds.has(stream.id)) continue
+      // Archived rows persist in db.streams (they ride bootstrap.archivedStreams),
+      // so a fresh _cachedAt no longer implies active — promoting one here would
+      // leak it into the active-only streams cache the sidebar seeds from.
+      if (stream.archivedAt) continue
       streamsById.set(stream.id, toWorkspaceBootstrapStream(stream))
     }
 
