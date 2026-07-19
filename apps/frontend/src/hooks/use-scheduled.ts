@@ -1,4 +1,5 @@
 import { useMemo } from "react"
+import { toast } from "sonner"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { serializeToMarkdown } from "@threa/prosemirror"
@@ -472,5 +473,11 @@ export function useSendScheduledNow(workspaceId: string) {
         queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
       }
     },
+    // Hook-level so every surface gets failure feedback (INV-63) — the
+    // composer picker calls mutate() bare, and the permanent-4xx path above
+    // makes the row vanish, which would otherwise read as success. `||` not
+    // `??`: Error.message is typed string, so an empty message must also
+    // fall through to the human label.
+    onError: (err: Error) => toast.error(err.message || "Could not send"),
   })
 }
