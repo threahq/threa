@@ -3249,8 +3249,6 @@ export const __testing = {
   setConfigForTesting: (value: unknown) => {
     config = value as Config | undefined
   },
-  shouldHandleSessionEvents: (sessionId: string) =>
-    shouldHandleSessionEvents({ sessionManager: { getSessionId: () => sessionId } } as ExtensionContext),
   buildClaimInvocationPayload,
   buildPersistedConfig,
   buildRuntimeCapabilities,
