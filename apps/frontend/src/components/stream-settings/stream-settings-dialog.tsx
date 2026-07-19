@@ -22,6 +22,7 @@ import {
 } from "@/stores/workspace-store"
 import { StreamTypes, type Stream, type StreamBootstrap, type NotificationLevel } from "@threa/types"
 import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
+import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 
 const TAB_CONFIG: Record<StreamSettingsTab, { label: string; description: string }> = {
   general: { label: "General", description: "Notifications and stream details" },
@@ -58,7 +59,11 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
     return idbStreamMemberships.find((m) => m.streamId === streamId) ?? null
   }, [idbStreamMemberships, streamId])
 
-  const currentUserId = currentMembership?.memberId ?? null
+  // The viewer's identity must not come from the membership row: memberships
+  // aren't bootstrapped for archived streams, so gating the dialog on one left
+  // an archived stream (its only unarchive affordance) stuck on the loading
+  // state after a reload. Membership is only the notification-level source.
+  const currentUserId = useCurrentWorkspaceUserId(workspaceId)
   const currentNotificationLevel: NotificationLevel | null = currentMembership?.notificationLevel ?? null
 
   const workspaceUsers = useWorkspaceUsers(workspaceId)
