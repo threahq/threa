@@ -268,18 +268,21 @@ export const AccessLogRepository = {
    * metadata columns — never `payload`. Set-based (correlated `MIN` for the
    * closing row + one join), not a per-row app loop (INV-56).
    *
-   * The pairing is scoped to the stream ROOM, not merely rows containing the
-   * stream subject: an agent-session-room subscription carries both an
-   * `agent_session` and the `stream` subject (`socket.ts` join site), so its
-   * unsubscribe would satisfy plain `@> [{stream}]` containment and close the
-   * stream-room interval early — dropping events the user actually received
-   * (the under-approximation §3 forbids). `jsonb_array_length(subjects) = 1`
-   * isolates the single-subject stream-room rows from the two-subject
-   * agent-session rows while keeping the GIN-indexed `@>` prefilter. The final
-   * `DISTINCT ON (auth_ref, event)` dedupes re-subscribes of the SAME
-   * connection but keeps one row per connection — "from where" matters: a
-   * user's phone and a hijacked browser session both receiving an event are
-   * two deliveries, not one.
+   * The pairing is scoped to stream/workspace-room rows, not merely rows
+   * containing the stream subject: an agent-session-room subscription carries
+   * both an `agent_session` and the `stream` subject (`socket.ts` join site),
+   * so its unsubscribe would satisfy plain `@> [{stream}]` containment and
+   * close the stream-room interval early — dropping events the user actually
+   * received (the under-approximation §3 forbids). Excluding rows containing
+   * any `agent_session` ref isolates them while keeping the GIN-indexed `@>`
+   * prefilter, and — unlike the original single-subject check — also accepts
+   * the coalesced batch rows (one subscribe row carrying the whole bulk-joined
+   * sidebar, one disconnect row closing it), whose subjects arrays are
+   * multi-element by design. v1 per-room rows still match: they never carry an
+   * agent_session ref. The final `DISTINCT ON (auth_ref, event)` dedupes
+   * re-subscribes of the SAME connection but keeps one row per connection —
+   * "from where" matters: a user's phone and a hijacked browser session both
+   * receiving an event are two deliveries, not one.
    */
   async reconstructDeliveredEvents(querier: Querier, params: ReconstructDeliveredParams): Promise<DeliveredEvent[]> {
     const subject = JSON.stringify([{ type: "stream", id: params.streamId }])
@@ -298,7 +301,7 @@ export const AccessLogRepository = {
                AND u.access_kind = 'unsubscribe'
                AND u.auth_ref = s.auth_ref
                AND u.subjects @> $2::jsonb
-               AND jsonb_array_length(u.subjects) = 1
+               AND NOT (u.subjects @> '[{"type":"agent_session"}]'::jsonb)
                AND u.occurred_at > s.occurred_at
            ) AS ended_at
          FROM access_log s
@@ -306,7 +309,7 @@ export const AccessLogRepository = {
            AND s.access_kind = 'subscribe'
            AND s.outcome = 'success'
            AND s.subjects @> $2::jsonb
-           AND jsonb_array_length(s.subjects) = 1
+           AND NOT (s.subjects @> '[{"type":"agent_session"}]'::jsonb)
            -- An interval starting after the window end (plus skew pad) cannot
            -- contribute; the bound also lets the planner prune future partitions.
            AND s.occurred_at <= $5::timestamptz + make_interval(secs => $6::numeric / 1000.0)

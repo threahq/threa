@@ -159,7 +159,6 @@ export const ACCESS_LOG_OPERATIONS = [
   // Commands
   "commands.dispatch",
   "commands.list",
-  "commands.list_for_stream",
   // Members / invitations
   "members.change_role",
   "members.remove",

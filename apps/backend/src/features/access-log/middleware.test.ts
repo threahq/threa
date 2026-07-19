@@ -83,6 +83,41 @@ describe("audit() denied-row forensics", () => {
   })
 })
 
+describe("audit() handler-declared no-op skip", () => {
+  it("skips the row when a 2xx handler sets auditSkip (empty poll)", async () => {
+    const { service, rows } = recordingService()
+    const audit = createAuditMiddleware(service)
+    const app = express()
+    app.post("/api/workspaces/:workspaceId/claim", audit("public_api.claimBotInvocation", "read"), (_req, res) => {
+      res.locals.auditSkip = true
+      res.status(200).json({ data: null })
+    })
+    const server = app.listen(0)
+    try {
+      const port = (server.address() as AddressInfo).port
+      await fetch(`http://127.0.0.1:${port}/api/workspaces/ws_1/claim`, { method: "POST" })
+      await new Promise((r) => setTimeout(r, 100))
+    } finally {
+      server.close()
+    }
+    expect(rows).toHaveLength(0)
+  })
+
+  it("ignores auditSkip on a denial — a handler cannot opt a denied request out", async () => {
+    const { service, rows } = recordingService()
+    const audit = createAuditMiddleware(service)
+    const app = express()
+    app.post("/api/workspaces/:workspaceId/claim", audit("public_api.claimBotInvocation", "read"), (_req, res) => {
+      res.locals.auditSkip = true
+      res.status(403).json({ error: "bad key" })
+    })
+
+    await requestAndAwaitRow(app, "/api/workspaces/ws_1/claim", rows)
+
+    expect(rows[0]).toMatchObject({ outcome: "denied", detail: { status: 403 } })
+  })
+})
+
 describe("assertAuditCoverage", () => {
   it("passes when every /api route carries an audit annotation", () => {
     const audit = createAuditMiddleware(noopService)

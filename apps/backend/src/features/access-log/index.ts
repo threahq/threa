@@ -27,6 +27,8 @@ export type {
   PublicApiOperation,
   AiOperation,
 } from "./operations"
+export { SubscribeCoalescer, unionSubjectChunks, DEFAULT_SUBSCRIBE_COALESCE_MS } from "./coalescer"
+export type { CoalescedBatch } from "./coalescer"
 export { createAuditMiddleware, assertAuditCoverage } from "./middleware"
 export type { AuditFactory, AuditAnnotation } from "./middleware"
 export { createAiAccessLogSink } from "./ai-sink"

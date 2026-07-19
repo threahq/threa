@@ -1270,7 +1270,15 @@ export function createPublicApiHandlers({
         claimTtlSeconds: data.claimTtlSeconds,
         claimToken: randomUUID(),
       })
-      if (!invocation) return res.json({ data: null })
+      // An empty claim poll read nothing — runtimes poll every few seconds
+      // forever, and logging each empty poll buries the log in heartbeat
+      // cadence (2026-07-19 volume reckoning). A claim that hands over an
+      // invocation is a real read and records with the invocation subject.
+      if (!invocation) {
+        res.locals.auditSkip = true
+        return res.json({ data: null })
+      }
+      setAuditSubjects(res, [{ type: "bot_invocation", id: invocation.id }])
       await botRuntimeWriteOps.touchPresence({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,

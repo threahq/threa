@@ -98,7 +98,9 @@ describe("access-log socket capture", () => {
     params: unknown[],
     predicate: (rows: AccessLogDbRow[]) => boolean = (rows) => rows.length > 0
   ): Promise<AccessLogDbRow[]> {
-    for (let attempt = 0; attempt < 60; attempt++) {
+    // Generous window: successful joins coalesce for DEFAULT_SUBSCRIBE_COALESCE_MS
+    // (2s) before their batch row lands, on top of fire-and-forget insert lag.
+    for (let attempt = 0; attempt < 120; attempt++) {
       const { rows } = await pool.query<AccessLogDbRow>(
         `SELECT workspace_id, actor_type, actor_id, auth_ref, operation, access_kind, outcome, subjects
          FROM access_log WHERE ${where} ORDER BY occurred_at DESC`,
@@ -197,14 +199,74 @@ describe("access-log socket capture", () => {
 
     socket.disconnect()
 
-    // One unsubscribe per joined room (workspace + stream) for this connection.
-    const unsubRows = await pollRows(
-      "operation = 'socket.unsubscribe' AND auth_ref = $1",
-      [sconn],
-      (rs) => rs.length >= 2
+    // ONE coalesced unsubscribe closes every room this connection held —
+    // workspace + stream subjects union into a single batch row.
+    const unsubRows = await pollRows("operation = 'socket.unsubscribe' AND auth_ref = $1", [sconn])
+    expect(unsubRows).toHaveLength(1)
+    expect(hasStreamSubject(unsubRows[0], stream.id)).toBe(true)
+    expect((unsubRows[0].subjects ?? []).some((s) => s.type === "workspace" && s.id === ws.id)).toBe(true)
+  })
+
+  test("bulk join coalesces into one subjects-array subscribe row per connection", async () => {
+    const client = new TestClient()
+    const user = await loginAs(client, email("bulk"), "Bulk Joiner")
+    const ws = await createWorkspace(client, "Bulk WS")
+    const streamA = await createChannel(client, ws.id, `bulk-a-${testRunId}`, "private")
+    const streamB = await createChannel(client, ws.id, `bulk-b-${testRunId}`, "private")
+    const userId = await getUserId(client, ws.id, user.id)
+
+    const socket = createSocket(client)
+    await connectSocket(socket)
+    // The connect-time pattern: workspace room + the sidebar's stream rooms,
+    // all inside one coalescing window.
+    await joinRoom(socket, `ws:${ws.id}`)
+    await joinRoom(socket, `ws:${ws.id}:stream:${streamA.id}`)
+    await joinRoom(socket, `ws:${ws.id}:stream:${streamB.id}`)
+    socket.disconnect()
+
+    const subRows = await pollRows(
+      "workspace_id = $1 AND operation = 'socket.subscribe' AND actor_id = $2 AND outcome = 'success'",
+      [ws.id, userId],
+      (rs) => rs.some((r) => hasStreamSubject(r, streamA.id))
     )
-    expect(unsubRows.some((r) => hasStreamSubject(r, stream.id))).toBe(true)
-    expect(unsubRows.some((r) => (r.subjects ?? []).some((s) => s.type === "workspace" && s.id === ws.id))).toBe(true)
+    // One batch row carries all three subjects — not three rows.
+    expect(subRows).toHaveLength(1)
+    const subjects = subRows[0].subjects ?? []
+    expect(subjects).toHaveLength(3)
+    expect(subjects.some((s) => s.type === "workspace" && s.id === ws.id)).toBe(true)
+    expect(hasStreamSubject(subRows[0], streamA.id)).toBe(true)
+    expect(hasStreamSubject(subRows[0], streamB.id)).toBe(true)
+  })
+
+  test("reconstructDeliveredEvents pairs v1 per-room rows (pre-coalescing backward compat)", async () => {
+    const client = new TestClient()
+    const user = await loginAs(client, email("v1compat"), "V1 Compat")
+    const ws = await createWorkspace(client, "V1 WS")
+    const stream = await createChannel(client, ws.id, `v1-${testRunId}`, "private")
+    const userId = await getUserId(client, ws.id, user.id)
+    await sendMessage(client, ws.id, stream.id, "inside v1 interval")
+
+    // Hand-inserted rows in the pre-coalescing shape: single-subject subscribe
+    // and unsubscribe bracketing now. The CTE must keep pairing these — 13
+    // months of production rows have this shape.
+    const authRef = `sconn_v1compat${testRunId}`
+    const subject = JSON.stringify([{ type: "stream", id: stream.id }])
+    await pool.query(
+      `INSERT INTO access_log (id, workspace_id, occurred_at, actor_type, actor_id, auth_ref, operation, access_kind, outcome, subjects)
+       VALUES ('alog_v1s${testRunId}', $1, now() - interval '1 hour', 'user', $2, $3, 'socket.subscribe', 'subscribe', 'success', $4::jsonb),
+              ('alog_v1u${testRunId}', $1, now() + interval '1 minute', 'user', $2, $3, 'socket.unsubscribe', 'unsubscribe', 'success', $4::jsonb)`,
+      [ws.id, userId, authRef, subject]
+    )
+
+    const delivered = await AccessLogRepository.reconstructDeliveredEvents(pool, {
+      workspaceId: ws.id,
+      streamId: stream.id,
+      from: new Date(Date.now() - 60 * 60 * 1000),
+      to: new Date(),
+    })
+    const forV1Conn = delivered.filter((d) => d.authRef === authRef)
+    expect(forV1Conn.length).toBeGreaterThanOrEqual(1)
+    expect(forV1Conn.some((d) => d.eventType === "message_created")).toBe(true)
   })
 
   test("denied join (stream in another workspace) records a denied subscribe row", async () => {

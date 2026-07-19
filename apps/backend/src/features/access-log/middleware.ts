@@ -110,6 +110,10 @@ export function createAuditMiddleware(accessLogService: AccessLogService): Audit
         .filter(([name]) => name !== "workspaceId")
         .map(([, value]) => ({ type: "param", id: value }))
       onResponseDone(res, (aborted) => {
+        // Handler-declared no-op: a poll that found no work read nothing, and
+        // recording it forever is machine noise, not audit signal. Only a
+        // 2xx handler path may set this — denials and errors always record.
+        if (res.locals.auditSkip === true && outcomeFromStatus(res.statusCode) === "success" && !aborted) return
         const identity = resolveIdentity(req)
         const outcome = aborted && !res.headersSent ? "error" : outcomeFromStatus(res.statusCode)
 
