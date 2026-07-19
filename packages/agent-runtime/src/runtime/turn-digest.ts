@@ -1,6 +1,6 @@
 import type { LanguageModel } from "ai"
 import type { TraceSource, TurnDigestStepContent } from "@threa/types"
-import type { CostContext } from "../ai/ai"
+import type { CostContext, TelemetryMetadataValue } from "../ai/ai"
 import type { AgentEvent } from "./agent-events"
 import type { AgentObserver } from "./agent-observer"
 import type { AgentRuntimeAI } from "./agent-runtime"
@@ -86,7 +86,7 @@ export interface GenerateTurnDigestParams {
   records: ToolWorkRecord[]
   /** The turn's final reply text, for grounding which findings mattered. */
   replyText?: string
-  telemetry?: { functionId: string; metadata?: Record<string, string | number | boolean> }
+  telemetry?: { functionId: string; metadata?: Record<string, TelemetryMetadataValue> }
   /** Cost attribution for the backend's AI wrapper; the enclave ignores it (usage accumulates in its transport). */
   context?: CostContext
 }
