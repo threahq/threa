@@ -145,6 +145,48 @@ describe("parseSearchQuery", () => {
     expect(result.filters).toHaveLength(0)
     expect(result.text).toBe("from:@ hello")
   })
+
+  it("separates quoted phrases from semantic text while preserving text", () => {
+    expect(parseSearchQuery('created pr "1429"')).toMatchObject({
+      text: 'created pr "1429"',
+      semanticText: "created pr",
+      phrases: ["1429"],
+      filters: [],
+    })
+  })
+
+  it("recognizes smart punctuation quotes", () => {
+    expect(parseSearchQuery("created pr “1429”")).toMatchObject({
+      text: "created pr “1429”",
+      semanticText: "created pr",
+      phrases: ["1429"],
+    })
+  })
+
+  it("preserves semantic token boundaries around adjacent phrases", () => {
+    expect(parseSearchQuery('foo"bar"baz')).toMatchObject({
+      text: 'foo"bar"baz',
+      semanticText: "foo baz",
+      phrases: ["bar"],
+    })
+  })
+
+  it("keeps filters inside quoted phrases literal", () => {
+    expect(parseSearchQuery('"from:@martin" from:@sara')).toMatchObject({
+      text: '"from:@martin"',
+      semanticText: "",
+      phrases: ["from:@martin"],
+      filters: [{ type: "from", value: "sara", raw: "from:@sara" }],
+    })
+  })
+
+  it("keeps unbalanced quotes in semantic text", () => {
+    expect(parseSearchQuery('created "pr 1429')).toMatchObject({
+      text: 'created "pr 1429',
+      semanticText: 'created "pr 1429',
+      phrases: [],
+    })
+  })
 })
 
 describe("serializeSearchQuery", () => {

@@ -46,6 +46,9 @@ import type { SidebarConfig } from "./sidebar"
 import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "./tool-privacy"
 import type { WorkspacePermissionSlug } from "./workspace-permissions"
 
+/** Maximum quoted phrase filters accepted by message search. */
+export const MAX_SEARCH_PHRASES = 5
+
 interface CreateStreamInputBase {
   type: StreamType
   displayName?: string

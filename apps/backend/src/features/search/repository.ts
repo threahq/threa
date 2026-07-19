@@ -79,6 +79,7 @@ export interface ResolvedFilters {
 
 export interface FullTextSearchParams {
   query: string
+  phrases?: string[]
   streamIds: string[]
   filters: ResolvedFilters
   limit: number
@@ -86,6 +87,7 @@ export interface FullTextSearchParams {
 
 export interface HybridSearchParams {
   query: string
+  phrases?: string[]
   embedding: number[]
   streamIds: string[]
   filters: ResolvedFilters
@@ -95,6 +97,18 @@ export interface HybridSearchParams {
   k?: number
   /** Max L2 distance for semantic results; only messages with distance < this are included. */
   semanticDistanceThreshold: number
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[%_\\]/g, "\\$&")
+}
+
+function phrasePredicatesSql(phrases: string[]) {
+  let predicates = composeSql``
+  for (const phrase of phrases) {
+    predicates = composeSql`${predicates} AND m.content_markdown ILIKE '%' || ${escapeLike(phrase)} || '%'`
+  }
+  return predicates
 }
 
 export const SearchRepository = {
@@ -177,14 +191,14 @@ export const SearchRepository = {
    * If query is empty, returns recent messages matching filters.
    */
   async fullTextSearch(db: Querier, params: FullTextSearchParams): Promise<SearchResult[]> {
-    const { query, streamIds, filters, limit } = params
+    const { query, phrases = [], streamIds, filters, limit } = params
 
     if (streamIds.length === 0) {
       return []
     }
 
     if (!query.trim()) {
-      const result = await db.query<SearchResultRow>(sql`
+      const result = await db.query<SearchResultRow>(composeSql`
         SELECT
           m.id,
           m.stream_id,
@@ -201,6 +215,7 @@ export const SearchRepository = {
         JOIN streams s ON m.stream_id = s.id
         WHERE m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
+          ${phrasePredicatesSql(phrases)}
           AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
           AND (${filters.before === undefined} OR m.created_at < ${filters.before ?? new Date()})
@@ -211,7 +226,7 @@ export const SearchRepository = {
       return result.rows.map(mapRowToSearchResult)
     }
 
-    const result = await db.query<SearchResultRow>(sql`
+    const result = await db.query<SearchResultRow>(composeSql`
       SELECT
         m.id,
         m.stream_id,
@@ -229,6 +244,7 @@ export const SearchRepository = {
       WHERE m.stream_id = ANY(${streamIds})
         AND m.deleted_at IS NULL
         AND m.search_vector @@ websearch_to_tsquery('english', ${query})
+        ${phrasePredicatesSql(phrases)}
         AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
         AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
         AND (${filters.before === undefined} OR m.created_at < ${filters.before ?? new Date()})
@@ -250,6 +266,7 @@ export const SearchRepository = {
   async hybridSearch(db: Querier, params: HybridSearchParams): Promise<SearchResult[]> {
     const {
       query,
+      phrases = [],
       embedding,
       streamIds,
       filters,
@@ -269,7 +286,7 @@ export const SearchRepository = {
     // Internal limit for each search type before RRF combination
     const internalLimit = 50
 
-    const result = await db.query<SearchResultRow>(sql`
+    const result = await db.query<SearchResultRow>(composeSql`
       WITH keyword_ranked AS (
         SELECT
           m.id,
@@ -288,6 +305,7 @@ export const SearchRepository = {
         WHERE m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
           AND m.search_vector @@ websearch_to_tsquery('english', ${query})
+          ${phrasePredicatesSql(phrases)}
           AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
           AND (${filters.before === undefined} OR m.created_at < ${filters.before ?? new Date()})
@@ -313,6 +331,7 @@ export const SearchRepository = {
           AND m.deleted_at IS NULL
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${semanticDistanceThreshold}
+          ${phrasePredicatesSql(phrases)}
           AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
           AND (${filters.before === undefined} OR m.created_at < ${filters.before ?? new Date()})
@@ -352,16 +371,18 @@ export const SearchRepository = {
    * Use this for error messages, IDs, or other literal text matching.
    */
   async exactSearch(db: Querier, params: FullTextSearchParams): Promise<SearchResult[]> {
-    const { query, streamIds, filters, limit } = params
+    const { query, phrases = [], streamIds, filters, limit } = params
+    const hasQuery = query.trim().length > 0
 
-    if (streamIds.length === 0 || !query.trim()) {
+    if (streamIds.length === 0 || (!hasQuery && phrases.length === 0)) {
       return []
     }
 
-    // Escape special LIKE characters (%, _, \) in the query
-    const escapedQuery = query.replace(/[%_\\]/g, "\\$&")
+    const exactQueryPredicate = hasQuery
+      ? composeSql`AND m.content_markdown ILIKE '%' || ${escapeLike(query)} || '%'`
+      : sql``
 
-    const result = await db.query<SearchResultRow>(sql`
+    const result = await db.query<SearchResultRow>(composeSql`
       SELECT
         m.id,
         m.stream_id,
@@ -378,7 +399,8 @@ export const SearchRepository = {
       JOIN streams s ON m.stream_id = s.id
       WHERE m.stream_id = ANY(${streamIds})
         AND m.deleted_at IS NULL
-        AND m.content_markdown ILIKE '%' || ${escapedQuery} || '%'
+        ${exactQueryPredicate}
+        ${phrasePredicatesSql(phrases)}
         AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
         AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
         AND (${filters.before === undefined} OR m.created_at < ${filters.before ?? new Date()})

@@ -35,6 +35,7 @@ export interface SearchParams {
   workspaceId: string
   permissions: SearchPermissions
   query: string
+  phrases?: string[]
   filters?: SearchFilters
   limit?: number
   /** If true, use exact substring matching (ILIKE) instead of full-text search */
@@ -86,13 +87,14 @@ export class SearchService {
       workspaceId,
       permissions,
       query,
+      phrases = [],
       filters = {},
       limit = DEFAULT_LIMIT,
       exact = false,
       skipEmbedding = false,
     } = params
 
-    logger.debug({ query, filters, workspaceId, exact }, "Search request")
+    logger.debug({ query, phrases, filters, workspaceId, exact }, "Search request")
 
     const candidateStreamIds = this.resolveStreamIds(permissions.accessibleStreamIds, filters)
 
@@ -125,6 +127,7 @@ export class SearchService {
     if (exact) {
       const results = await SearchRepository.exactSearch(this.pool, {
         query,
+        phrases,
         streamIds,
         filters: repoFilters,
         limit,
@@ -150,6 +153,7 @@ export class SearchService {
     if (!hasQuery || !hasEmbedding) {
       const results = await SearchRepository.fullTextSearch(this.pool, {
         query: normalizedQuery,
+        phrases,
         streamIds,
         filters: repoFilters,
         limit,
@@ -159,6 +163,7 @@ export class SearchService {
 
     const results = await SearchRepository.hybridSearch(this.pool, {
       query: normalizedQuery,
+      phrases,
       embedding,
       streamIds,
       filters: repoFilters,

@@ -650,7 +650,7 @@ export { CommandKinds, CommandScopes } from "./api"
 
 // Draft scope builders (single source of truth for the scope string format)
 // and the shared bootstrap cap (the client must know when a snapshot is truncated)
-export { draftStreamScope, draftThreadScope, MAX_DRAFTS_PER_USER } from "./api"
+export { draftStreamScope, draftThreadScope, MAX_DRAFTS_PER_USER, MAX_SEARCH_PHRASES } from "./api"
 
 // Discuss-with-Ariadne client-action id (single source of truth)
 export const DISCUSS_WITH_ARIADNE_COMMAND = "discuss-with-ariadne" as const

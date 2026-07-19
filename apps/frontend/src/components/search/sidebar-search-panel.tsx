@@ -25,7 +25,11 @@ import { SearchResults } from "./search-results"
 export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate()
   const { query, setQuery, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } = useSearchPanel()
-  const { results, isLoading, error, parsedFilters, searchText, hasQuery } = useMessageSearch(workspaceId, query)
+  const { results, isLoading, error, validationError, parsedFilters, searchText, hasQuery } = useMessageSearch(
+    workspaceId,
+    query
+  )
+  const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const { preferences } = usePreferences()
 
   const inputRef = useRef<RichInputRef>(null)
@@ -156,7 +160,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             <SearchFilterMenu workspaceId={workspaceId} query={query} onQueryChange={setQuery} />
           </div>
 
-          {hasQuery && !isLoading && !error && (
+          {hasQuery && !isLoading && !displayError && (
             <p className="px-3 pb-2 text-[11px] tabular-nums text-muted-foreground/70">
               {results.length === 0
                 ? "No results"
@@ -186,9 +190,9 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             </div>
           )}
 
-          {error && <p className="px-2 py-4 text-center text-xs text-destructive">Search failed. Try again.</p>}
+          {displayError && <p className="px-2 py-4 text-center text-xs text-destructive">{displayError}</p>}
 
-          {hasQuery && !error && results.length > 0 && (
+          {hasQuery && !displayError && results.length > 0 && (
             <SearchResults
               workspaceId={workspaceId}
               results={results}
@@ -198,7 +202,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             />
           )}
 
-          {hasQuery && !isLoading && !error && results.length === 0 && (
+          {hasQuery && !isLoading && !displayError && results.length === 0 && (
             <div className="px-2 py-6 text-center">
               <p className="text-xs font-medium text-muted-foreground/80">No messages found</p>
               <p className="mt-1 text-[11px] text-muted-foreground/60">Try different words or remove a filter</p>
