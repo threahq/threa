@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { act } from "@testing-library/react"
 import { render, screen, userEvent } from "@/test"
 import * as authModule from "@/auth"
+import * as useMobileModule from "@/hooks/use-mobile"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
 
 type CachedWorkspaceUser = Parameters<typeof seedWorkspaceCache>[1]["users"][number]
@@ -251,5 +252,69 @@ describe("CallDock — pre-join permission taxonomy", () => {
     renderDock(manager)
     await userEvent.click(screen.getByText("launch"))
     expect(manager.startCall).toHaveBeenCalledWith({ workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" })
+  })
+
+  it("ignores a launch while already in a call (no stale join_error)", async () => {
+    const manager = makeManager()
+    renderDock(manager)
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    await userEvent.click(screen.getByText("launch"))
+    expect(manager.startCall).not.toHaveBeenCalled()
+  })
+
+  it("re-expands the pre-join gate on a fresh launch after a collapse", async () => {
+    const startCall = vi.fn(() => new Promise<void>(() => {}))
+    renderDock(makeManager({ startCall }))
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    await userEvent.click(screen.getByLabelText("Collapse call"))
+    expect(screen.getByLabelText("Expand call")).toBeInTheDocument()
+    act(() => setCallPhase("idle"))
+    await userEvent.click(screen.getByText("launch"))
+    // Without resetting `collapsed` on the launch, the gate stays hidden behind
+    // the pill and this spinner never appears.
+    expect(await screen.findByText("Joining…")).toBeInTheDocument()
+  })
+})
+
+describe("CallDock — collapsed + mobile", () => {
+  function forceMobile() {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+  }
+
+  it("auto-collapses to a pill on mobile and offers mute, camera, and leave", async () => {
+    forceMobile()
+    const manager = makeManager()
+    renderDock(manager)
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+
+    // Collapsed: the expanded body (CallControls' diagnostics) is not mounted.
+    expect(screen.getByLabelText("Expand call")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Connection diagnostics")).toBeNull()
+
+    await userEvent.click(screen.getByLabelText("Turn camera on"))
+    expect(manager.setCameraOn).toHaveBeenCalledWith(true)
+
+    await userEvent.click(screen.getByLabelText("Mute"))
+    expect(manager.setMuted).toHaveBeenCalledWith(true)
+
+    await userEvent.click(screen.getByLabelText("Leave call"))
+    expect(manager.leaveCall).toHaveBeenCalled()
+  })
+
+  it("reflects camera-live state in the collapsed pill", () => {
+    forceMobile()
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    expect(screen.getByLabelText("Turn camera on")).toBeInTheDocument()
+    act(() => patchCallLocal({ cameraOn: true }))
+    expect(screen.getByLabelText("Turn camera off")).toBeInTheDocument()
+  })
+
+  it("surfaces a capture error indicator while collapsed", () => {
+    forceMobile()
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    act(() => setCallCaptureError({ code: "capture_rollback_failed", message: "boom" }))
+    expect(screen.getByTestId("call-capture-error")).toBeInTheDocument()
   })
 })

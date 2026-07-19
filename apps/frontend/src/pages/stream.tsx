@@ -226,7 +226,7 @@ export function StreamPage() {
 
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
   const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? false
-  const { launch: launchCall } = useCallLaunch()
+  const { launch: launchCall, callActive } = useCallLaunch()
 
   const isThread = stream?.type === StreamTypes.THREAD
   const isChannel = stream?.type === StreamTypes.CHANNEL
@@ -724,8 +724,9 @@ export function StreamPage() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                title="Start a call"
-                aria-label="Start a call"
+                title={callActive ? "You're already in a call" : "Start a call"}
+                aria-label={callActive ? "You're already in a call" : "Start a call"}
+                disabled={callActive}
                 onClick={() => launchCall({ workspaceId: workspaceId!, streamId: streamId!, mode: "video" })}
               >
                 <Phone className="h-4 w-4" />

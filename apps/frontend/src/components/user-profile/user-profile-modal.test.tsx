@@ -6,6 +6,7 @@ import { render, screen, userEvent, waitFor } from "@/test"
 import * as authModule from "@/auth"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
+import { clearCallState, setCallPhase } from "@/stores/call-store"
 
 type SeedData = Parameters<typeof seedWorkspaceCache>[1]
 type CachedWorkspaceUser = SeedData["users"][number]
@@ -116,6 +117,7 @@ const withDm: CachedDmPeer[] = [
 
 beforeEach(() => {
   resetWorkspaceStoreCache()
+  clearCallState()
   vi.spyOn(authModule, "useAuth").mockReturnValue({ user: { id: "workos_self" } } as ReturnType<
     typeof authModule.useAuth
   >)
@@ -149,5 +151,25 @@ describe("UserProfileModal — Call entry point", () => {
         mode: "video",
       })
     )
+  })
+
+  it("disables Call while the viewer is already in a call", () => {
+    seed(withDm)
+    setCallPhase("connected")
+    renderModal(makeManager(), true)
+    expect(screen.getByRole("button", { name: /^Call$/i })).toBeDisabled()
+  })
+
+  it("exposes the disabled reason through a focusable tooltip trigger, not a bare title", () => {
+    seed([])
+    renderModal(makeManager(), true)
+    const callBtn = screen.getByRole("button", { name: /^Call$/i })
+    expect(callBtn).toBeDisabled()
+    // A disabled button isn't focusable and screen readers ignore an ancestor's
+    // `title`, so the reason lives on a focusable Radix tooltip trigger instead.
+    const wrapper = callBtn.parentElement as HTMLElement
+    expect(wrapper).toHaveAttribute("tabindex", "0")
+    expect(wrapper).toHaveAttribute("data-state")
+    expect(wrapper).not.toHaveAttribute("title")
   })
 })

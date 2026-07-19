@@ -4,6 +4,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -21,6 +22,57 @@ import { useAuth } from "@/auth"
 import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
 import { getInitials } from "@/lib/initials"
 import { formatStatusClearLabel } from "@/lib/status"
+
+/**
+ * The profile Call button. A call needs a real DM stream (v1 has no message-less
+ * DM materialization — `createDm` posts on first send), and can't start while the
+ * viewer is already in a call. When disabled, the reason is exposed through a
+ * focusable Tooltip wrapper rather than a native `title` on the disabled button —
+ * a disabled button isn't focusable and screen readers don't announce an
+ * ancestor's `title`, so `title` alone reaches neither keyboard, SR, nor touch.
+ */
+function ProfileCallButton({
+  workspaceId,
+  dmStreamId,
+  callActive,
+  onLaunch,
+}: {
+  workspaceId: string | undefined
+  dmStreamId: string | undefined
+  callActive: boolean
+  onLaunch: (streamId: string) => void
+}) {
+  let disabledReason: string | null = null
+  if (!dmStreamId) disabledReason = "Send a message first to start a call"
+  else if (callActive) disabledReason = "You're already in a call"
+
+  const button = (
+    <Button
+      variant="outline"
+      disabled={disabledReason !== null}
+      onClick={() => {
+        if (disabledReason !== null || !workspaceId || !dmStreamId) return
+        onLaunch(dmStreamId)
+      }}
+    >
+      <Phone className="h-4 w-4 mr-2" />
+      Call
+    </Button>
+  )
+
+  if (disabledReason === null) return button
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} className="inline-flex rounded-md">
+          {button}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{disabledReason}</TooltipContent>
+    </Tooltip>
+  )
+}
 
 function getRoleBadge(role: User["role"]) {
   switch (role) {
@@ -64,7 +116,7 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
 
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
   const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? false
-  const { launch: launchCall } = useCallLaunch()
+  const { launch: launchCall, callActive } = useCallLaunch()
 
   if (!user) return null
 
@@ -149,24 +201,15 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
                   Message
                 </Link>
                 {callsEnabled && (
-                  // A call needs a real DM stream; v1 has no message-less DM
-                  // materialization path (createDm posts on first send), so Call
-                  // is disabled until a DM exists — wrapped in a titled span so
-                  // the reason shows on a disabled button.
-                  <span title={existingDmStreamId ? undefined : "Send a message first to start a call"}>
-                    <Button
-                      variant="outline"
-                      disabled={!existingDmStreamId}
-                      onClick={() => {
-                        if (!existingDmStreamId || !workspaceId) return
-                        onOpenChange(false)
-                        launchCall({ workspaceId, streamId: existingDmStreamId, mode: "video" })
-                      }}
-                    >
-                      <Phone className="h-4 w-4 mr-2" />
-                      Call
-                    </Button>
-                  </span>
+                  <ProfileCallButton
+                    workspaceId={workspaceId}
+                    dmStreamId={existingDmStreamId}
+                    callActive={callActive}
+                    onLaunch={(streamId) => {
+                      onOpenChange(false)
+                      launchCall({ workspaceId: workspaceId!, streamId, mode: "video" })
+                    }}
+                  />
                 )}
               </div>
             </>

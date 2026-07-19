@@ -39,9 +39,11 @@ const PERMISSION_COPY: Record<MediaPermissionErrorKind, { title: string; body: s
 }
 
 /**
- * The joining phase of the dock: a spinner while the permission probe + join run,
- * or the taxonomy-specific permission error with retry/cancel. Rendered by the
- * dock whenever a launch is in flight or has failed pre-connection.
+ * The joining phase of the dock: a spinner while the join runs, or the
+ * taxonomy-specific permission error with retry/cancel. There is no separate
+ * permission probe — the taxonomy derives from the start path's own typed
+ * capture failure. Rendered by the dock whenever a launch is in flight or has
+ * failed pre-connection.
  */
 export function PreJoinGate() {
   const { state, retry, cancel } = useCallLaunch()

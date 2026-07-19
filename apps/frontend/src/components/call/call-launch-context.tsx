@@ -1,8 +1,10 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import type { CallMode } from "@/calls/config"
 import { CallCaptureError, CallStartCancelledError } from "@/calls/call-manager"
+import { getCallState } from "@/stores/call-store"
 import { useCallManager } from "./call-manager-context"
+import { useCallPhase } from "./call-store-hooks"
 import { classifyMediaError, type MediaPermissionError } from "./media-permissions"
 
 export interface CallLaunchRequest {
@@ -25,6 +27,8 @@ export type CallLaunchState =
 
 interface CallLaunchContextValue {
   state: CallLaunchState
+  /** True while a call is active/connecting or a launch is in flight — entry points gate on it. */
+  callActive: boolean
   launch: (request: CallLaunchRequest) => void
   retry: () => void
   cancel: () => void
@@ -34,12 +38,18 @@ const CallLaunchContext = createContext<CallLaunchContextValue | null>(null)
 
 export function CallLaunchProvider({ children }: { children: ReactNode }) {
   const manager = useCallManager()
+  const phase = useCallPhase()
   const [state, setState] = useState<CallLaunchState>({ status: "idle" })
   // Guards against a stale async settling over a newer launch/cancel.
   const runIdRef = useRef(0)
 
   const run = useCallback(
     async (request: CallLaunchRequest) => {
+      // Already in (or joining) a call: startCall would synchronously reject with
+      // a plain Error, which the catch below would surface as a stale join_error
+      // carrying the wrong request (and a "Try again" that starts an unintended
+      // call). Ignore the launch — entry points also gate their affordance.
+      if (getCallState().phase !== "idle") return
       const runId = ++runIdRef.current
       setState({ status: "requesting", request })
       // startCall is the single media acquisition and must run synchronously in the
@@ -84,9 +94,20 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
     void manager.leaveCall()
   }, [manager])
 
+  // A launch error only makes sense while idle. Once a call is actually active
+  // (or connecting), any residual join_error/permission_error is stale — clear it
+  // so no unprompted "Try again" survives to a normal call exit.
+  useEffect(() => {
+    if (phase !== "idle" && (state.status === "join_error" || state.status === "permission_error")) {
+      setState({ status: "idle" })
+    }
+  }, [phase, state.status])
+
+  const callActive = phase !== "idle" || state.status === "requesting"
+
   const value = useMemo<CallLaunchContextValue>(
-    () => ({ state, launch, retry, cancel }),
-    [state, launch, retry, cancel]
+    () => ({ state, callActive, launch, retry, cancel }),
+    [state, callActive, launch, retry, cancel]
   )
 
   return <CallLaunchContext.Provider value={value}>{children}</CallLaunchContext.Provider>

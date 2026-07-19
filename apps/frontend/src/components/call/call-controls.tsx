@@ -15,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils"
 import type { CallDeviceState, CallDiagnostics } from "@/stores/call-store"
 import { useCallManager } from "./call-manager-context"
-import { useCallCameraOn, useCallDevices, useCallDiagnostics, useCallMuted } from "./call-store-hooks"
+import { useCallCameraOn, useCallDevices, useCallDiagnostics, useCallMode, useCallMuted } from "./call-store-hooks"
 
 // setSinkId (output device selection) is unsupported on Safari/Firefox; hide the
 // speaker picker where the API is absent rather than showing a dead control.
@@ -135,6 +135,7 @@ export function CallControls() {
   const manager = useCallManager()
   const muted = useCallMuted()
   const cameraOn = useCallCameraOn()
+  const mode = useCallMode()
   const devices = useCallDevices()
   const diagnostics = useCallDiagnostics()
   const [leaving, setLeaving] = useState(false)
@@ -163,16 +164,18 @@ export function CallControls() {
       >
         {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
       </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-9 w-9"
-        aria-label={cameraOn ? "Turn camera off" : "Turn camera on"}
-        aria-pressed={cameraOn}
-        onClick={toggleCamera}
-      >
-        {cameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-      </Button>
+      {mode !== "audio_only" && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9"
+          aria-label={cameraOn ? "Turn camera off" : "Turn camera on"}
+          aria-pressed={cameraOn}
+          onClick={toggleCamera}
+        >
+          {cameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+        </Button>
+      )}
       <DevicePickerMenu devices={devices} />
       <ConnectionDiagnostics diagnostics={diagnostics} />
       <Button

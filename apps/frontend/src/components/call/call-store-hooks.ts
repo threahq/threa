@@ -9,6 +9,7 @@ import {
   type CallDiagnostics,
   type CallCaptureErrorInfo,
 } from "@/stores/call-store"
+import type { CallMode } from "@/calls/config"
 
 /**
  * Slice-scoped reads over the call store. {@link useCallState} re-renders every
@@ -41,6 +42,10 @@ export function useCallPhase(): CallPhase {
 
 export function useCallStreamId(): string | null {
   return useCallSelector((s) => s.streamId)
+}
+
+export function useCallMode(): CallMode | null {
+  return useCallSelector((s) => s.mode)
 }
 
 export function useCallWorkspaceId(): string | null {
