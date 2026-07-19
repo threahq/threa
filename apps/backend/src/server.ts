@@ -215,6 +215,7 @@ import {
   QueueFairness,
   ScheduleManager,
   CleanupWorker,
+  QueueRetentionWorker,
   QueueRepository,
   TokenPoolRepository,
 } from "./lib/queue"
@@ -1460,6 +1461,15 @@ export async function startServer(): Promise<ServerInstance> {
     maxBatchesPerRun: Number(process.env.OUTBOX_RETENTION_MAX_BATCHES_PER_RUN) || 10,
   })
 
+  const queueRetentionWorker = new QueueRetentionWorker(pool, {
+    intervalMs: Number(process.env.QUEUE_RETENTION_INTERVAL_MS) || 3600000,
+    completedRetentionMs: Number(process.env.QUEUE_RETENTION_COMPLETED_MS) || 7 * 24 * 60 * 60 * 1000,
+    cancelledRetentionMs: Number(process.env.QUEUE_RETENTION_CANCELLED_MS) || 30 * 24 * 60 * 60 * 1000,
+    dlqRetentionMs: Number(process.env.QUEUE_RETENTION_DLQ_MS) || 90 * 24 * 60 * 60 * 1000,
+    batchSize: Number(process.env.QUEUE_RETENTION_BATCH_SIZE) || 5000,
+    maxBatchesPerRun: Number(process.env.QUEUE_RETENTION_MAX_BATCHES_PER_RUN) || 20,
+  })
+
   // Keeps access_log's monthly partitions provisioned ahead and drops expired
   // ones (13-month retention). Idempotent, so it runs on every pod.
   const accessLogPartitionWorker = new PartitionMaintenanceWorker(pool, {
@@ -1472,6 +1482,7 @@ export async function startServer(): Promise<ServerInstance> {
   // Start single LISTEN connection that notifies all handlers
   await outboxDispatcher.start()
   outboxRetentionWorker.start()
+  queueRetentionWorker.start()
   accessLogPartitionWorker.start()
 
   // Wake-up nudge LISTEN for the enclave claim long-poll (§2.7).
@@ -1550,6 +1561,7 @@ export async function startServer(): Promise<ServerInstance> {
     await scheduleManager.stop()
     await cleanupWorker.stop()
     await outboxRetentionWorker.stop()
+    await queueRetentionWorker.stop()
     await accessLogPartitionWorker.stop()
     await syncLogReconciliationWorker.stop()
     await syncHeartbeatWorker.stop()
