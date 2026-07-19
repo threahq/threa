@@ -1,5 +1,6 @@
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Github, ExternalLink, RefreshCw } from "lucide-react"
+import { Github, ExternalLink, RefreshCw, Plus } from "lucide-react"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { integrationsApi } from "@/api/integrations"
 import { Button } from "@/components/ui/button"
@@ -39,17 +40,36 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
     enabled: canManage,
   })
 
+  // Sync/disconnect failures render inside the row that was acted on — with N
+  // installation rows, a section-level error can sit off-screen and a failed
+  // disconnect would read as a silent no-op.
+  const [actionError, setActionError] = useState<{ integrationId: string; message: string } | null>(null)
+
   const disconnectMutation = useMutation({
     mutationFn: (integrationId: string) => integrationsApi.disconnectGithub(workspaceId, integrationId),
+    onMutate: () => setActionError(null),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["workspace-integrations", workspaceId, "github"] })
+    },
+    onError: (error, integrationId) => {
+      setActionError({
+        integrationId,
+        message: error instanceof Error ? error.message : "Failed to disconnect GitHub.",
+      })
     },
   })
 
   const syncMutation = useMutation({
     mutationFn: (integrationId: string) => integrationsApi.syncGithub(workspaceId, integrationId),
+    onMutate: () => setActionError(null),
     onSuccess: (data) => {
       queryClient.setQueryData(["workspace-integrations", workspaceId, "github"], data)
+    },
+    onError: (error, integrationId) => {
+      setActionError({
+        integrationId,
+        message: error instanceof Error ? error.message : "Failed to sync GitHub repositories.",
+      })
     },
   })
 
@@ -79,9 +99,7 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
   }
 
   const configured = query.data?.configured ?? false
-  const integration = query.data?.integrations?.[0] ?? null
-  const repositories = integration?.repositories ?? []
-  const isActive = integration?.status === "active"
+  const installations = query.data?.integrations ?? []
 
   const linearConfigured = linearQuery.data?.configured ?? false
   const linearIntegration = linearQuery.data?.integration ?? null
@@ -93,16 +111,6 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
         <div className="flex items-center gap-2 mb-1">
           <Github className="h-4 w-4 text-foreground" />
           <h3 className="text-sm font-medium">GitHub</h3>
-          {isActive && (
-            <Badge variant="default" className="hover:bg-primary">
-              Connected
-            </Badge>
-          )}
-          {configured && !isActive && integration?.status === "error" && (
-            <Badge variant="destructive" className="hover:bg-destructive">
-              Error
-            </Badge>
-          )}
         </div>
         <p className="text-xs text-muted-foreground">
           Rich previews for pull requests, issues, commits, files, and comments.
@@ -114,97 +122,130 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
           </p>
         )}
 
-        {configured && isActive && (
-          <div className="mt-3 space-y-3">
-            {integration.accountLogin && (
-              <div>
-                <h4 className="text-xs font-medium text-muted-foreground">
-                  {integration.accountType === "User" ? "Account" : "Organization"}
-                </h4>
-                <p className="text-sm">{integration.accountLogin}</p>
-              </div>
-            )}
-
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground">Repository access</h4>
-              <p className="text-sm">
-                {integration.repositorySelection === "all" ? "All repositories" : "Selected repositories"}
-              </p>
+        {configured && installations.length === 0 && (
+          <>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Connect the Threa GitHub App to enable authenticated workspace previews.
+            </p>
+            <div className="mt-4">
+              <Button size="sm" asChild>
+                <a href={`/api/workspaces/${workspaceId}/integrations/github/connect`}>
+                  <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                  Connect GitHub
+                </a>
+              </Button>
             </div>
+          </>
+        )}
 
-            {repositories.length > 0 && (
-              <div>
-                <h4 className="text-xs font-medium text-muted-foreground">Repositories</h4>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {repositories.slice(0, 12).map((repository) => (
-                    <Badge key={repository.fullName} variant="outline" className="text-xs font-normal">
-                      {repository.fullName}
+        {configured && installations.length > 0 && (
+          <div className="mt-3 space-y-3">
+            {installations.map((installation) => {
+              const isActive = installation.status === "active"
+              const repositories = installation.repositories ?? []
+              const syncPending = syncMutation.isPending && syncMutation.variables === installation.id
+              const disconnectPending = disconnectMutation.isPending && disconnectMutation.variables === installation.id
+              const rateLimit = installation.rateLimit
+
+              return (
+                <div key={installation.id} className="rounded-md border border-border p-3 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 max-w-full truncate text-sm font-medium">
+                      {installation.accountLogin ?? "GitHub installation"}
+                    </span>
+                    <Badge variant="secondary">
+                      {installation.accountType === "User" ? "Personal" : "Organization"}
                     </Badge>
-                  ))}
-                  {repositories.length > 12 && (
-                    <span className="text-xs text-muted-foreground self-center">+{repositories.length - 12} more</span>
+                    {isActive && (
+                      <Badge variant="default" className="hover:bg-primary">
+                        Connected
+                      </Badge>
+                    )}
+                    {installation.status === "error" && (
+                      <Badge variant="destructive" className="hover:bg-destructive">
+                        Error
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div>
+                    <h4 className="text-xs font-medium text-muted-foreground">Repository access</h4>
+                    <p className="text-sm">
+                      {installation.repositorySelection === "all" ? "All repositories" : "Selected repositories"}
+                    </p>
+                  </div>
+
+                  {repositories.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-medium text-muted-foreground">Repositories</h4>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {repositories.slice(0, 12).map((repository) => (
+                          <Badge key={repository.fullName} variant="outline" className="text-xs font-normal">
+                            {repository.fullName}
+                          </Badge>
+                        ))}
+                        {repositories.length > 12 && (
+                          <span className="text-xs text-muted-foreground self-center">
+                            +{repositories.length - 12} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {rateLimit.remaining !== null && (
+                    <p className="text-xs text-muted-foreground">{rateLimit.remaining} API requests remaining</p>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    {isActive && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => syncMutation.mutate(installation.id)}
+                        disabled={syncPending}
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${syncPending ? "animate-spin" : ""}`} />
+                        {syncPending ? "Syncing\u2026" : "Sync repos"}
+                      </Button>
+                    )}
+                    {installation.status === "error" && (
+                      <Button variant="outline" size="sm" asChild>
+                        <a href={`/api/workspaces/${workspaceId}/integrations/github/connect`}>
+                          <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                          Reconnect
+                        </a>
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => disconnectMutation.mutate(installation.id)}
+                      disabled={disconnectPending}
+                    >
+                      {disconnectPending ? "Disconnecting\u2026" : "Disconnect"}
+                    </Button>
+                  </div>
+
+                  {actionError?.integrationId === installation.id && (
+                    <p className="text-sm text-destructive">{actionError.message}</p>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )
+            })}
 
-        {configured && !isActive && (
-          <p className="mt-3 text-sm text-muted-foreground">
-            Connect the Threa GitHub App to enable authenticated workspace previews.
-          </p>
-        )}
-
-        {configured && (
-          <div className="mt-4 flex items-center gap-2">
-            <Button size="sm" asChild>
+            <Button size="sm" variant="outline" asChild>
               <a href={`/api/workspaces/${workspaceId}/integrations/github/connect`}>
-                <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-                {isActive ? "Reconnect" : "Connect GitHub"}
+                <Plus className="h-3.5 w-3.5 mr-1.5" />
+                Add organization or account
               </a>
             </Button>
-            {isActive && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => integration && syncMutation.mutate(integration.id)}
-                disabled={syncMutation.isPending}
-              >
-                <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-                {syncMutation.isPending ? "Syncing\u2026" : "Sync repos"}
-              </Button>
-            )}
-            {isActive && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => integration && disconnectMutation.mutate(integration.id)}
-                disabled={disconnectMutation.isPending}
-              >
-                {disconnectMutation.isPending ? "Disconnecting\u2026" : "Disconnect"}
-              </Button>
-            )}
           </div>
-        )}
-
-        {syncMutation.error && (
-          <p className="mt-2 text-sm text-destructive">
-            {syncMutation.error instanceof Error ? syncMutation.error.message : "Failed to sync GitHub repositories."}
-          </p>
         )}
 
         {query.error && (
           <p className="mt-2 text-sm text-destructive">
             {query.error instanceof Error ? query.error.message : "Failed to load integration status."}
-          </p>
-        )}
-
-        {disconnectMutation.error && (
-          <p className="mt-2 text-sm text-destructive">
-            {disconnectMutation.error instanceof Error
-              ? disconnectMutation.error.message
-              : "Failed to disconnect GitHub."}
           </p>
         )}
       </section>
