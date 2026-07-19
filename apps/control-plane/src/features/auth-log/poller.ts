@@ -1,4 +1,4 @@
-import { logger, type WorkosOrgService } from "@threa/backend-common"
+import { logger, type WorkosEventName, type WorkosOrgService } from "@threa/backend-common"
 import type { WorkosEventPollerLock } from "../../lib/workos-event-poller-lock"
 import { AUTH_LOG_EVENT_TYPES } from "./constants"
 import type { AuthLogService } from "./service"
@@ -72,7 +72,9 @@ export class AuthLogPoller {
       let drained = false
       while (!drained) {
         const page = await this.workosOrgService.listEvents({
-          events: [...AUTH_LOG_EVENT_TYPES],
+          // Cast: `api_key.revoked` is valid on the live Events API but absent
+          // from the SDK 7.82.0 EventName union (see constants.ts).
+          events: [...AUTH_LOG_EVENT_TYPES] as WorkosEventName[],
           ...(cursor ? { after: cursor } : {}),
           limit: this.batchSize,
         })
