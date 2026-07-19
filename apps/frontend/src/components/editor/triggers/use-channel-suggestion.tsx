@@ -20,7 +20,10 @@ export function useChannelSuggestion() {
 
   const channels = useMemo<ChannelItem[]>(() => {
     return streams
-      .filter((stream) => stream.type === "channel" && stream.slug)
+      // Archived rows persist in the stream cache (archived-stream index);
+      // offering a workspace's whole archival history as #-link targets is
+      // noise, so suggest active channels only.
+      .filter((stream) => stream.type === "channel" && stream.slug && !stream.archivedAt)
       .map((stream) => ({
         id: stream.id,
         slug: stream.slug!,

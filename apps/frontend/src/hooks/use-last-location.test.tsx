@@ -50,6 +50,29 @@ describe("useLastLocation — stream arm", () => {
     const { result } = renderHook(() => useLastLocation(WS))
     expect(result.current).toMatchObject({ redirectStreamId: null, shouldOpenSidebar: true, boardHref: null })
   })
+
+  it("never falls back into an archived stream, even when it is the most recent", () => {
+    // Archiving bumps updated_at, so an unfiltered fallback would pick it.
+    const archived = { ...stream("stream_archived", "2026-03-01T00:00:00.000Z"), archivedAt: "2026-03-01T00:00:00.000Z" } as CachedStream
+    setup({ streams: [archived, stream("stream_active", "2026-01-01T00:00:00.000Z")] })
+    const { result } = renderHook(() => useLastLocation(WS))
+    expect(result.current.redirectStreamId).toBe("stream_active")
+  })
+
+  it("lands on the fresh-start state when every stream is archived", () => {
+    const archived = { ...stream("stream_archived"), archivedAt: "2026-03-01T00:00:00.000Z" } as CachedStream
+    setup({ streams: [archived] })
+    const { result } = renderHook(() => useLastLocation(WS))
+    expect(result.current).toMatchObject({ redirectStreamId: null, shouldOpenSidebar: true })
+  })
+
+  it("still honors a stored pointer to a stream archived since the last visit", () => {
+    const archived = { ...stream("stream_archived"), archivedAt: "2026-03-01T00:00:00.000Z" } as CachedStream
+    setup({ streams: [archived] })
+    setLastLocation(USER, WS, { surface: "stream", streamId: "stream_archived", board: null })
+    const { result } = renderHook(() => useLastLocation(WS))
+    expect(result.current.redirectStreamId).toBe("stream_archived")
+  })
 })
 
 describe("useLastLocation — board arm", () => {

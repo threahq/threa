@@ -21,7 +21,11 @@ export function useInChannelFilterSuggestion() {
 
   const channels = useMemo<ChannelItem[]>(() => {
     return streams
-      .filter((stream) => stream.slug) // Only streams with slugs (channels)
+      // Slugged streams only (channels/scratchpads). Archived ones are kept on
+      // purpose: search is the one surface where scoping INTO archived content
+      // is legitimate, and their rows persist in the cache (archived-stream
+      // index) precisely so references like this stay resolvable.
+      .filter((stream) => stream.slug)
       .map((stream) => ({
         id: stream.id,
         slug: stream.slug!,
