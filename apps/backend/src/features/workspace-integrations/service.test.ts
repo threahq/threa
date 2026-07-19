@@ -344,9 +344,9 @@ describe("LinearClient captureRateLimit is best-effort", () => {
     remaining = 100
     await client.request("query { b }")
 
-    // expectedVersion is the 4th positional arg (index 3).
-    expect(captureSpy.mock.calls[0][3]).toBe(1)
-    expect(captureSpy.mock.calls[1][3]).toBe(2)
+    // expectedVersion is the 5th positional arg (index 4).
+    expect(captureSpy.mock.calls[0][4]).toBe(1)
+    expect(captureSpy.mock.calls[1][4]).toBe(2)
   })
 })
 

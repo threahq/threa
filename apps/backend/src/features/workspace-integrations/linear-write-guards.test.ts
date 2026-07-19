@@ -186,7 +186,7 @@ describe("updateLinearRateLimitMetadata guards", () => {
     const service = makeService(pool)
     const metadata = linearMetadata("org_123")
 
-    const result = await service.updateLinearRateLimitMetadata("ws_1", metadata, rateLimit)
+    const result = await service.updateLinearRateLimitMetadata("ws_1", metadata, "org_123", rateLimit)
 
     expect(result.metadata.rateLimit.requestsRemaining).toBe(42)
     // A win returns the row's new version so a reused client advances its cached
@@ -201,7 +201,7 @@ describe("updateLinearRateLimitMetadata guards", () => {
     const { pool, calls } = recordingPool([{ ...linearRecordRow(), installation_id: null }])
     const service = makeService(pool)
 
-    await service.updateLinearRateLimitMetadata("ws_1", linearMetadata(null), rateLimit)
+    await service.updateLinearRateLimitMetadata("ws_1", linearMetadata(null), null, rateLimit)
 
     const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
     // installationScope ($3) is NULL — matches only the NULL-column row, never a
@@ -214,7 +214,7 @@ describe("updateLinearRateLimitMetadata guards", () => {
     const service = makeService(pool)
     const metadata = linearMetadata("org_123")
 
-    const result = await service.updateLinearRateLimitMetadata("ws_1", metadata, rateLimit)
+    const result = await service.updateLinearRateLimitMetadata("ws_1", metadata, "org_123", rateLimit)
     expect(result.metadata).toBe(metadata)
     expect(result.version).toBeNull()
   })
@@ -224,7 +224,7 @@ describe("updateLinearRateLimitMetadata guards", () => {
     const service = makeService(pool)
     const metadata = linearMetadata("org_123")
 
-    const result = await service.updateLinearRateLimitMetadata("ws_1", metadata, rateLimit, 12)
+    const result = await service.updateLinearRateLimitMetadata("ws_1", metadata, "org_123", rateLimit, 12)
 
     expect(result.metadata).toBe(metadata)
     expect(result.version).toBeNull()

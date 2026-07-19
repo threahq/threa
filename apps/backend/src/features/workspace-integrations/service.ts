@@ -1164,22 +1164,25 @@ export class WorkspaceIntegrationService {
   async updateLinearRateLimitMetadata(
     workspaceId: string,
     metadata: LinearIntegrationMetadata,
+    installationScope: string | null,
     rateLimit: LinearRateLimit,
     expectedVersion?: number
   ): Promise<{ metadata: LinearIntegrationMetadata; version: number | null }> {
     const nextMetadata: LinearIntegrationMetadata = { ...metadata, rateLimit }
 
     // CACHE WRITE — version-CAS. This replaces the whole metadata object, so
-    // guard on active status + the client's observed org (INV-20) AND the version
-    // read at the client's read (INV-66): a stale rate-limit write can't land on a
-    // row a concurrent disconnect cleared, a row reconnected to a different org, or
-    // a row a newer same-org write already advanced. A lost race matches 0 rows;
-    // keep the client's prior metadata rather than pretending the write stuck.
+    // guard on active status + the installation_id COLUMN value the client read
+    // with its record (INV-20 — NULL for a legacy pre-population row, which
+    // metadata.organizationId would miss) AND the version read at the same point
+    // (INV-66): a stale rate-limit write can't land on a row a concurrent
+    // disconnect cleared, a row reconnected to a different org, or a row a newer
+    // same-org write already advanced. A lost race matches 0 rows; keep the
+    // client's prior metadata rather than pretending the write stuck.
     const updated = await WorkspaceIntegrationRepository.update(
       this.deps.pool,
       workspaceId,
       WorkspaceIntegrationProviders.LINEAR,
-      metadata.organizationId,
+      installationScope,
       { metadata: nextMetadata },
       {
         expectedStatus: WorkspaceIntegrationStatuses.ACTIVE,

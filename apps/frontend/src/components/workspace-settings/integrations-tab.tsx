@@ -118,7 +118,9 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
           <div className="mt-3 space-y-3">
             {integration.accountLogin && (
               <div>
-                <h4 className="text-xs font-medium text-muted-foreground">Organization</h4>
+                <h4 className="text-xs font-medium text-muted-foreground">
+                  {integration.accountType === "User" ? "Account" : "Organization"}
+                </h4>
                 <p className="text-sm">{integration.accountLogin}</p>
               </div>
             )}
