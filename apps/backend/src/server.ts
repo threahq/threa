@@ -1374,7 +1374,10 @@ export async function startServer(): Promise<ServerInstance> {
   await jobQueue.schedule(JobQueues.ATTACHMENT_UPLOAD_SWEEP, 900, { workspaceId: "system" }, null)
 
   // Outbox dispatcher - single LISTEN connection fans out to all handlers
-  const outboxDispatcher = new OutboxDispatcher({ listenPool: pools.listen })
+  const outboxDispatcher = new OutboxDispatcher({
+    listenPool: pools.listen,
+    fallbackPollMs: Number(process.env.OUTBOX_FALLBACK_POLL_MS) || 2000,
+  })
 
   // Real-time delivery handlers (broadcast, push) use a dedicated `pools.realtime`
   // so a saturated main pool (AI workers, file processing, embeddings) can never
