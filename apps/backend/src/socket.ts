@@ -1,7 +1,10 @@
-import type { Server, Socket } from "socket.io"
+import type { Server, Socket, DefaultEventsMap } from "socket.io"
 import crypto from "crypto"
 import type { AuthService } from "@threa/backend-common"
 import { createSocketAuthMiddleware } from "./lib/socket-auth"
+import { socketConnectionId } from "./lib/id"
+import { socketHandshakeIp } from "./lib/socket-ip"
+import type { AccessLogService, AuditSubjectRef } from "./features/access-log"
 import { DEVICE_KEY_LENGTH, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threa/types"
 import type { StreamService } from "./features/streams"
 import type { PushService } from "./features/push"
@@ -46,9 +49,33 @@ function isJoinAccessError(error: unknown): boolean {
   return error instanceof HttpError && (error.status === 403 || error.status === 404)
 }
 
+/**
+ * Typed `socket.data` for the main namespace. `workosUserId` is stamped by the
+ * shared auth middleware (`lib/socket-auth`); `sconnId` is minted at connect and
+ * is the access-log `auth_ref` correlating a connection's subscribe/unsubscribe
+ * rows; `userId` (`usr_`) is stamped at the first room join that resolves the
+ * workspace user.
+ */
+export interface MainSocketData {
+  workosUserId: string
+  userId?: string
+  sconnId: string
+}
+
+type MainSocket = Socket<DefaultEventsMap, DefaultEventsMap, DefaultEventsMap, MainSocketData>
+
+interface JoinedRoomAudit {
+  workspaceId: string
+  roomPattern: string
+  /** Actor for the paired unsubscribe row — the workspace user resolved at join. */
+  actorUserId: string
+  /** Subject refs recorded on subscribe; the unsubscribe row reuses them so the interval pairs. */
+  subjects: AuditSubjectRef[]
+}
+
 interface SocketMetricsState {
   connectTime: bigint
-  joinedRooms: Map<string, { workspaceId: string; roomPattern: string }>
+  joinedRooms: Map<string, JoinedRoomAudit>
 }
 
 interface Dependencies {
@@ -62,6 +89,7 @@ interface Dependencies {
   sessionAbortRegistry: SessionAbortRegistry
   /** For fanning viewport-nudge frames into visible-refresh jobs. */
   jobQueue: Pick<QueueManager, "send">
+  accessLogService: AccessLogService
 }
 
 /**
@@ -84,15 +112,76 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     userSocketRegistry,
     sessionAbortRegistry,
     jobQueue,
+    accessLogService,
   } = deps
 
   // Auth middleware is shared with the voice namespace — see lib/socket-auth
   io.use(createSocketAuthMiddleware(authService))
 
-  io.on("connection", (socket) => {
+  io.on("connection", (socket: MainSocket) => {
     const workosUserId = socket.data.workosUserId
+    const sconnId = socketConnectionId()
+    socket.data.sconnId = sconnId
+    const ip = socketHandshakeIp(socket.handshake)
+    const userAgent = socket.handshake.headers["user-agent"] ?? null
     userSocketRegistry.register(workosUserId, socket)
     logger.debug({ workosUserId, socketId: socket.id }, "Socket connected")
+
+    const recordSubscribe = (params: {
+      workspaceId: string
+      actorUserId: string
+      subjects: AuditSubjectRef[]
+      outcome: "success" | "denied" | "error"
+    }): void => {
+      accessLogService.record({
+        workspaceId: params.workspaceId,
+        actorType: "user",
+        actorId: params.actorUserId,
+        authRef: sconnId,
+        operation: "socket.subscribe",
+        accessKind: "subscribe",
+        outcome: params.outcome,
+        subjects: params.subjects,
+        // Stamped at the join instant, not at insert time — the fire-and-forget
+        // insert lag would otherwise shrink the interval and exclude events
+        // delivered while the row was in flight (under-approximation is the
+        // wrong direction for breach scoping).
+        occurredAt: new Date(),
+        ip,
+        userAgent,
+      })
+    }
+
+    const recordUnsubscribe = (entry: JoinedRoomAudit): void => {
+      accessLogService.record({
+        workspaceId: entry.workspaceId,
+        actorType: "user",
+        actorId: entry.actorUserId,
+        authRef: sconnId,
+        operation: "socket.unsubscribe",
+        accessKind: "unsubscribe",
+        outcome: "success",
+        subjects: entry.subjects,
+        occurredAt: new Date(),
+        ip,
+        userAgent,
+      })
+    }
+
+    // Re-joining an already-open room (permission heal, redundant client join)
+    // must not open a second interval — the original subscribe row still pairs
+    // with the eventual unsubscribe.
+    const trackJoin = (room: string, entry: JoinedRoomAudit): void => {
+      const rejoin = metricsState.joinedRooms.has(room)
+      metricsState.joinedRooms.set(room, entry)
+      if (rejoin) return
+      recordSubscribe({
+        workspaceId: entry.workspaceId,
+        actorUserId: entry.actorUserId,
+        subjects: entry.subjects,
+        outcome: "success",
+      })
+    }
 
     const metricsState: SocketMetricsState = {
       connectTime: process.hrtime.bigint(),
@@ -123,6 +212,14 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     }
 
     socket.on("join", async (room: string, callback?: (result: { ok: boolean; error?: string }) => void) => {
+      // Room names must be id-shaped: their segments land in audit subjects,
+      // the workspace_id column, and metrics labels. An attacker-controlled
+      // free-text segment must never reach the content-free access log
+      // (design §5), so garbage rooms are rejected before anything records.
+      if (typeof room !== "string" || !/^[A-Za-z0-9:_-]{1,256}$/.test(room)) {
+        callback?.({ ok: false, error: "Invalid room" })
+        return
+      }
       const workspaceId = extractWorkspaceId(room)
       const roomPattern = normalizeRoomPattern(room)
       wsMessagesTotal.inc({
@@ -138,6 +235,16 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         const wsId = workspaceMatch[1]
         const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
         if (!workspaceUser) {
+          // Authenticated non-member: a cross-workspace probe. Log the denial
+          // (attempted access is a first-class event, design §2) with the WorkOS
+          // user id as actor — no workspace user resolves here, mirroring the HTTP
+          // boundary's authUser fallback.
+          recordSubscribe({
+            workspaceId: wsId,
+            actorUserId: workosUserId,
+            subjects: [{ type: "workspace", id: wsId }],
+            outcome: "denied",
+          })
           socket.emit("error", { message: "Not authorized to join this workspace" })
           wsMessagesTotal.inc({ workspace_id: wsId, direction: "sent", event_type: "error", room_pattern: roomPattern })
           callback?.({ ok: false, error: "Not authorized to join this workspace" })
@@ -165,6 +272,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         for (const permissionRoom of permissionRooms) {
           socket.join(permissionRoom)
         }
+        socket.data.userId ??= workspaceUser.id
         const roomEntry = { userId: workspaceUser.id, userRoom, permissionRooms, appliedTimezone: null }
         userRooms.set(wsId, roomEntry)
         syncDeviceTimezone(wsId, roomEntry)
@@ -180,7 +288,13 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         }
 
         wsConnectionsActive.inc({ workspace_id: wsId, room_pattern: roomPattern })
-        metricsState.joinedRooms.set(room, { workspaceId: wsId, roomPattern })
+        const wsSubjects: AuditSubjectRef[] = [{ type: "workspace", id: wsId }]
+        trackJoin(room, {
+          workspaceId: wsId,
+          roomPattern,
+          actorUserId: workspaceUser.id,
+          subjects: wsSubjects,
+        })
 
         logger.debug({ workosUserId, room, userRoom }, "Joined workspace room")
         callback?.({ ok: true })
@@ -193,17 +307,34 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         const [, wsId, streamId] = streamMatch
         const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
         if (!workspaceUser) {
+          recordSubscribe({
+            workspaceId: wsId,
+            actorUserId: workosUserId,
+            subjects: [{ type: "stream", id: streamId }],
+            outcome: "denied",
+          })
           socket.emit("error", { message: "Not authorized to join this stream" })
           wsMessagesTotal.inc({ workspace_id: wsId, direction: "sent", event_type: "error", room_pattern: roomPattern })
           callback?.({ ok: false, error: "Not authorized to join this stream" })
           return
         }
+        socket.data.userId ??= workspaceUser.id
+        const streamSubjects: AuditSubjectRef[] = [{ type: "stream", id: streamId }]
         try {
           await streamService.validateStreamAccess(streamId, wsId, workspaceUser.id)
         } catch (error) {
-          if (!isJoinAccessError(error)) {
+          // An access denial (403/404) is `denied`; any other throw is an
+          // unexpected service failure — record it as `error`, not a false denial.
+          const accessDenied = isJoinAccessError(error)
+          if (!accessDenied) {
             logger.error({ error, workosUserId, room, wsId, streamId }, "Unexpected error during stream room join")
           }
+          recordSubscribe({
+            workspaceId: wsId,
+            actorUserId: workspaceUser.id,
+            subjects: streamSubjects,
+            outcome: accessDenied ? "denied" : "error",
+          })
           socket.emit("error", { message: "Not authorized to join this stream" })
           wsMessagesTotal.inc({ workspace_id: wsId, direction: "sent", event_type: "error", room_pattern: roomPattern })
           callback?.({ ok: false, error: "Not authorized to join this stream" })
@@ -212,7 +343,12 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         socket.join(room)
 
         wsConnectionsActive.inc({ workspace_id: wsId, room_pattern: roomPattern })
-        metricsState.joinedRooms.set(room, { workspaceId: wsId, roomPattern })
+        trackJoin(room, {
+          workspaceId: wsId,
+          roomPattern,
+          actorUserId: workspaceUser.id,
+          subjects: streamSubjects,
+        })
 
         logger.debug({ workosUserId, room }, "Joined stream room")
         callback?.({ ok: true })
@@ -240,6 +376,12 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         const [, wsId, agentSessionId] = sessionMatch
         const session = await AgentSessionRepository.findById(pool, agentSessionId)
         if (!session) {
+          recordSubscribe({
+            workspaceId: wsId,
+            actorUserId: workosUserId,
+            subjects: [{ type: "agent_session", id: agentSessionId }],
+            outcome: "denied",
+          })
           socket.emit("error", { message: "Session not found" })
           wsMessagesTotal.inc({ workspace_id: wsId, direction: "sent", event_type: "error", room_pattern: roomPattern })
           callback?.({ ok: false, error: "Session not found" })
@@ -247,20 +389,40 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         }
         const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
         if (!workspaceUser) {
+          // The session was fetched globally by id and its workspace is
+          // unproven here — recording its streamId would leak a foreign
+          // workspace's identifier into the probed workspace's audit rows.
+          // Denied rows carry only the session id the prober supplied.
+          recordSubscribe({
+            workspaceId: wsId,
+            actorUserId: workosUserId,
+            subjects: [{ type: "agent_session", id: agentSessionId }],
+            outcome: "denied",
+          })
           socket.emit("error", { message: "Not authorized to join this session" })
           wsMessagesTotal.inc({ workspace_id: wsId, direction: "sent", event_type: "error", room_pattern: roomPattern })
           callback?.({ ok: false, error: "Not authorized to join this session" })
           return
         }
+        socket.data.userId ??= workspaceUser.id
         try {
           await streamService.validateStreamAccess(session.streamId, wsId, workspaceUser.id)
         } catch (error) {
-          if (!isJoinAccessError(error)) {
+          const accessDenied = isJoinAccessError(error)
+          if (!accessDenied) {
             logger.error(
               { error, workosUserId, room, wsId, streamId: session.streamId },
               "Unexpected error during agent session room join"
             )
           }
+          // Same rule as above: validation failed, so the session's stream is
+          // not proven to belong to wsId — no stream ref on the denial row.
+          recordSubscribe({
+            workspaceId: wsId,
+            actorUserId: workspaceUser.id,
+            subjects: [{ type: "agent_session", id: agentSessionId }],
+            outcome: accessDenied ? "denied" : "error",
+          })
           socket.emit("error", { message: "Not authorized to join this session" })
           wsMessagesTotal.inc({ workspace_id: wsId, direction: "sent", event_type: "error", room_pattern: roomPattern })
           callback?.({ ok: false, error: "Not authorized to join this session" })
@@ -268,7 +430,17 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         }
         socket.join(room)
         wsConnectionsActive.inc({ workspace_id: wsId, room_pattern: roomPattern })
-        metricsState.joinedRooms.set(room, { workspaceId: wsId, roomPattern })
+        // Validation proved the session's stream belongs to wsId — the stream
+        // ref is safe to record from here on.
+        trackJoin(room, {
+          workspaceId: wsId,
+          roomPattern,
+          actorUserId: workspaceUser.id,
+          subjects: [
+            { type: "agent_session", id: agentSessionId },
+            { type: "stream", id: session.streamId },
+          ],
+        })
         logger.debug({ workosUserId, room }, "Joined agent session room")
         callback?.({ ok: true })
         return
@@ -314,6 +486,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       const roomInfo = metricsState.joinedRooms.get(room)
       if (roomInfo) {
         wsConnectionsActive.dec({ workspace_id: roomInfo.workspaceId, room_pattern: roomInfo.roomPattern })
+        recordUnsubscribe(roomInfo)
         metricsState.joinedRooms.delete(room)
       }
 
@@ -466,6 +639,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
 
       for (const [, roomInfo] of metricsState.joinedRooms) {
         wsConnectionsActive.dec({ workspace_id: roomInfo.workspaceId, room_pattern: roomInfo.roomPattern })
+        recordUnsubscribe(roomInfo)
         workspaceIds.add(roomInfo.workspaceId)
       }
 

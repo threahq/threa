@@ -12,6 +12,7 @@ import {
 } from "./socket-handler"
 import type { BotRuntimeWriteOps } from "./runtime-write-ops"
 import { BotSocketRegistry } from "./bot-socket-registry"
+import type { AccessLogService } from "../access-log"
 
 // Minimal fakes that exercise the public surface of the namespace handler
 // without spinning up Socket.IO: a `namespace` that captures the connection
@@ -113,6 +114,8 @@ function setup(overrides?: {
 
   const botSocketRegistry = new BotSocketRegistry()
 
+  const accessLogService = { record: mock(() => {}) } as unknown as AccessLogService
+
   let connectionHandler: ((socket: FakeSocket) => void) | undefined
   const namespace = {
     use: mock(() => {}),
@@ -128,6 +131,7 @@ function setup(overrides?: {
     botRuntimeWriteOps,
     botApiKeyService,
     botSocketRegistry,
+    accessLogService,
     // Disable revalidation timer in tests — the periodic ticker is covered
     // elsewhere and would otherwise leak between tests.
     keyRevalidationIntervalMs: 60_000_000,
@@ -136,7 +140,7 @@ function setup(overrides?: {
   const socket = makeFakeSocket()
   connectionHandler!(socket)
 
-  return { socket, botRuntimeService, botRuntimeWriteOps, botApiKeyService, botSocketRegistry }
+  return { socket, botRuntimeService, botRuntimeWriteOps, botApiKeyService, botSocketRegistry, accessLogService }
 }
 
 const VALID_HELLO = {
@@ -235,6 +239,65 @@ describe("attachBotNamespace bot:hello", () => {
     await socket.trigger("bot:hello", { ...VALID_HELLO, runtimeSessionId: "sess_1" }, ack)
 
     expect(socket.rooms.has("bot:ws_1:bot:bot_alice:session:sess_1")).toBe(true)
+  })
+
+  it("records audit subscribe rows for the workspace room at connect and the bot rooms at hello", async () => {
+    const { socket, accessLogService } = setup()
+    const record = (accessLogService as unknown as { record: ReturnType<typeof mock> }).record
+
+    // Connect-time subscribe for the workspace-wide bot room. The per-connection
+    // sconn id is the auth_ref that pairs this subscribe with its unsubscribe.
+    const connectRow = record.mock.calls[0]?.[0] as { authRef: string }
+    expect(connectRow).toMatchObject({
+      workspaceId: "ws_1",
+      actorType: "bot",
+      actorId: "bot_alice",
+      operation: "socket.subscribe",
+      accessKind: "subscribe",
+      outcome: "success",
+      subjects: [{ type: "workspace", id: "ws_1" }],
+    })
+    const sconn = connectRow.authRef
+    expect(sconn).toMatch(/^sconn_/)
+
+    await socket.trigger(
+      "bot:hello",
+      VALID_HELLO,
+      mock((_r: BotHelloResponse) => {})
+    )
+
+    const helloRow = record.mock.calls[1]?.[0]
+    expect(helloRow).toMatchObject({
+      actorType: "bot",
+      actorId: "bot_alice",
+      operation: "socket.subscribe",
+      accessKind: "subscribe",
+      authRef: sconn,
+      subjects: [{ type: "bot", id: "bot_alice" }],
+    })
+
+    await socket.trigger("disconnect")
+    // Both intervals close on disconnect: the workspace-room row and the bot-room
+    // row, each reusing this connection's sconn so subscribe/unsubscribe pair.
+    const unsubscribeRows = record.mock.calls.slice(2).map((c: unknown[]) => c[0])
+    expect(unsubscribeRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: "socket.unsubscribe",
+          accessKind: "unsubscribe",
+          actorId: "bot_alice",
+          authRef: sconn,
+          subjects: [{ type: "workspace", id: "ws_1" }],
+        }),
+        expect.objectContaining({
+          operation: "socket.unsubscribe",
+          accessKind: "unsubscribe",
+          actorId: "bot_alice",
+          authRef: sconn,
+          subjects: [{ type: "bot", id: "bot_alice" }],
+        }),
+      ])
+    )
   })
 
   it("rejects a second bot:hello on the same connection", async () => {
