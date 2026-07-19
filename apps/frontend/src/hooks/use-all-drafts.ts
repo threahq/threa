@@ -311,6 +311,63 @@ export function streamIdsWithLoadedDraft(drafts: UnifiedDraft[]): Set<string> {
 }
 
 /**
+ * Map of a thread draft's parent message id → its host stream, built from cached
+ * `message_created` events. Shared by the explorer ({@link useAllDrafts}) and the
+ * sidebar badge ({@link useDraftSummary}) so both resolve a
+ * `thread:{parentMessageId}` draft's host stream — and therefore its archival —
+ * the same way. The events read is gated on a thread-scoped draft existing: with
+ * none it returns an empty map without subscribing to `db.events`, so the
+ * always-mounted sidebar pays nothing in the common case. A parent not yet in
+ * cache resolves to no entry (the draft counts, degrading to visible rather than
+ * being hidden on missing data).
+ */
+function useDraftThreadStreamMap(
+  allDrafts: CachedDraft[],
+  cachedStreams: CachedStream[] | undefined
+): Map<string, { streamId: string; parentMessageId: string }> {
+  // Prefix-checking each `|`-split scope avoids false positives on a scope that
+  // merely contains the substring `thread:` in a non-prefix spot.
+  const hasThreadDrafts = useMemo(() => allDrafts.some((draft) => draft.scope.startsWith("thread:")), [allDrafts])
+
+  // Stable stream ID key — only changes when the set of IDs changes, not on
+  // every useLiveQuery re-fire of cachedStreams (which returns a new array ref
+  // even when the same streams are present).
+  const streamIdKey = useMemo(
+    () =>
+      (cachedStreams ?? [])
+        .map((s) => s.id)
+        .sort()
+        .join(","),
+    [cachedStreams]
+  )
+
+  // Only query events when there are thread drafts, to avoid the expensive scan
+  // in the common case.
+  const cachedEvents = useLiveQuery(
+    () => {
+      if (!hasThreadDrafts || !streamIdKey) return []
+      return db.events.where("streamId").anyOf(streamIdKey.split(",")).toArray()
+    },
+    [streamIdKey, hasThreadDrafts],
+    []
+  )
+
+  // Thread drafts use payload.messageId as key, not event.id.
+  return useMemo(() => {
+    const map = new Map<string, { streamId: string; parentMessageId: string }>()
+    for (const event of cachedEvents ?? []) {
+      if (event.eventType === "message_created") {
+        const payload = event.payload as { messageId?: string }
+        if (payload.messageId) {
+          map.set(payload.messageId, { streamId: event.streamId, parentMessageId: payload.messageId })
+        }
+      }
+    }
+    return map
+  }, [cachedEvents])
+}
+
+/**
  * Hook to get all drafts (scratchpads + messages + stashed snapshots) for a
  * workspace. Returns a unified list sorted by recency; rows carry a
  * `groupLabel` so the drafts page can cluster them per stream/thread.
@@ -334,47 +391,15 @@ export function useAllDrafts(workspaceId: string) {
     return map
   }, [composerLoaded])
 
-  // Stable signature over the set of draft scopes so the events query below
-  // (which is gated on whether any thread-scoped drafts exist) doesn't re-fire
-  // on every unrelated draft write — `useDraftsFromStore` hands back a fresh
-  // array reference each time.
+  // Stable signature over the set of draft scopes so the board-context queries
+  // below (gated on the board-scoped ids they reference) don't re-fire on every
+  // unrelated draft write — `useDraftsFromStore` hands back a fresh array
+  // reference each time.
   const scopesSignature = useMemo(() => {
     const scopes = new Set<string>()
     for (const draft of allDrafts) scopes.add(draft.scope)
     return [...scopes].sort().join("|")
   }, [allDrafts])
-
-  // Check if we have any thread drafts that need parent message resolution, so
-  // we only run the (expensive) events query when there are thread-scoped
-  // drafts. Prefix-checking each `|`-split segment avoids false positives on a
-  // scope that merely contains the substring `thread:` in a non-prefix spot.
-  const hasThreadDrafts = useMemo(
-    () => scopesSignature.split("|").some((scope) => scope.startsWith("thread:")),
-    [scopesSignature]
-  )
-
-  // Stable stream ID key — only changes when the set of IDs changes, not on
-  // every useLiveQuery re-fire of cachedStreams (which returns a new array ref
-  // even when the same streams are present).
-  const streamIdKey = useMemo(
-    () =>
-      (cachedStreams ?? [])
-        .map((s) => s.id)
-        .sort()
-        .join(","),
-    [cachedStreams]
-  )
-
-  // Get cached events for looking up parent messages (for thread drafts)
-  // Only query events if we have thread drafts to avoid expensive query for common case
-  const cachedEvents = useLiveQuery(
-    () => {
-      if (!hasThreadDrafts || !streamIdKey) return []
-      return db.events.where("streamId").anyOf(streamIdKey.split(",")).toArray()
-    },
-    [streamIdKey, hasThreadDrafts],
-    []
-  )
 
   // Build a map of stream ID -> stream for quick lookup
   const streamMap = useMemo(() => {
@@ -492,20 +517,9 @@ export function useAllDrafts(workspaceId: string) {
     return map
   }, [cachedBoardPosts])
 
-  // Build a map of messageId -> streamId for looking up parent messages
-  // Thread drafts use payload.messageId as key, not event.id
-  const messageToStreamMap = useMemo(() => {
-    const map = new Map<string, { streamId: string; parentMessageId: string }>()
-    for (const event of cachedEvents ?? []) {
-      if (event.eventType === "message_created") {
-        const payload = event.payload as { messageId?: string }
-        if (payload.messageId) {
-          map.set(payload.messageId, { streamId: event.streamId, parentMessageId: payload.messageId })
-        }
-      }
-    }
-    return map
-  }, [cachedEvents])
+  // Parent-message → host-stream map for thread drafts (shared with the sidebar
+  // badge so both resolve thread-draft location/archival identically).
+  const messageToStreamMap = useDraftThreadStreamMap(allDrafts, cachedStreams)
 
   const draftsById = useMemo(() => {
     const map = new Map<string, CachedDraft>()
@@ -707,12 +721,14 @@ export interface DraftSummary {
  * NO preview building, sealed-body decryption, location resolution, or sort, so
  * a keystroke's debounced draft save doesn't rebuild the full {@link useAllDrafts}
  * explorer model (which it does on every change) just to read two values off it.
- * Shares {@link draftHasPayload} and {@link isStreamArchived} with the explorer,
- * so archived channel/DM drafts are hidden from the badge and the list alike.
- * Thread and board drafts resolve their host stream only in the explorer (via a
- * `db.events` / conversation lookup that would be too heavy for the always-
- * mounted sidebar), so the badge can over-count one whose root is archived —
- * rare, and the explorer still hides it.
+ * Shares {@link draftHasPayload}, {@link isStreamArchived}, and
+ * {@link useDraftThreadStreamMap} with the explorer, so archived channel/DM AND
+ * thread-reply drafts (including nested threads under an archived root) are hidden
+ * from the badge and the list alike. The shared thread map reads `db.events` only
+ * when a thread draft exists, so the always-mounted sidebar stays cheap otherwise.
+ * Board drafts still resolve their host stream only in the explorer (that needs
+ * the conversation lookups), so the badge can over-count a board reply under an
+ * archived root — rare, and the explorer still hides it.
  */
 export function useDraftSummary(workspaceId: string): DraftSummary {
   const draftScratchpads = useDraftScratchpadsFromStore(workspaceId)
@@ -747,6 +763,12 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
     return ids
   }, [cachedStreams])
 
+  // Parent-message → host-stream map for thread drafts, so the badge hides a
+  // thread reply under an archived root in step with the explorer. Gated on a
+  // thread draft existing (see `useDraftThreadStreamMap`), so the always-mounted
+  // sidebar reads no events until the user actually has one.
+  const messageToStreamMap = useDraftThreadStreamMap(allDrafts, cachedStreams)
+
   return useMemo(() => {
     let draftCount = 0
     const loadedDraftStreamIds = new Set<string>()
@@ -770,10 +792,13 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
       // Scratchpad-scoped rows are counted above; skip them and their siblings.
       if (parsed.type === "stream" && isDraftId(parsed.id)) continue
       if (!draftHasPayload(draft)) continue
-      // Hide archived channel/DM drafts (`parsed.id` is the stream). Thread
-      // drafts aren't resolved here (no events scan), so one under an archived
-      // root stays counted — the explorer still hides it.
-      if (parsed.type === "stream" && isStreamArchived(parsed.id, streamMap, archivedStreamIds)) continue
+      // Hide archived drafts: a channel/DM directly (`parsed.id` is the stream),
+      // a thread reply via its parent message's host stream (nested threads
+      // caught by the root check inside `isStreamArchived`). Board drafts still
+      // aren't resolved here, so one under an archived root stays counted — the
+      // explorer still hides it.
+      const hostStreamId = parsed.type === "thread" ? (messageToStreamMap.get(parsed.id)?.streamId ?? null) : parsed.id
+      if (isStreamArchived(hostStreamId, streamMap, archivedStreamIds)) continue
       draftCount++
       // A non-thread stream draft that is the loaded (not stashed) one for its
       // scope surfaces as the per-row "unsent draft" hint — mirrors
@@ -784,5 +809,5 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
     }
 
     return { draftCount, loadedDraftStreamIdSignature: [...loadedDraftStreamIds].sort().join(",") }
-  }, [draftScratchpads, allDrafts, loadedByScope, draftsById, streamMap, archivedStreamIds])
+  }, [draftScratchpads, allDrafts, loadedByScope, draftsById, streamMap, archivedStreamIds, messageToStreamMap])
 }
