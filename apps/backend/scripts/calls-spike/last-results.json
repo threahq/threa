@@ -1,0 +1,176 @@
+[
+  {
+    "matrix": "matrix-1-two-instances",
+    "pass": true,
+    "checks": [
+      {
+        "name": "B's join (instance B) fans out to A's socket (instance A)",
+        "pass": true,
+        "detail": "roster=usr_01KXWWX9MA1ZR0TYTWFXSCAJB9,usr_01KXWWX9MAFZZ1CYE5SV6S3HT3"
+      },
+      {
+        "name": "A's mute (instance A) fans out to B's socket (instance B)",
+        "pass": true,
+        "detail": "stateAck=true"
+      },
+      {
+        "name": "B's leave (instance B) fans out to A's socket (instance A)",
+        "pass": true,
+        "detail": "roster=usr_01KXWWX9MA1ZR0TYTWFXSCAJB9"
+      },
+      {
+        "name": "removal marks B removed + closes B's endpoints (cross-instance state)",
+        "pass": true,
+        "detail": "bStatus=removed bLiveEndpoints=0"
+      },
+      {
+        "name": "surviving instance's roster evicts B on B's own socket",
+        "pass": true,
+        "detail": "roster=usr_01KXWWX9MA1ZR0TYTWFXSCAJB9"
+      }
+    ],
+    "metrics": {
+      "crossInstanceJoinMs": 19,
+      "durationMs": 4663
+    }
+  },
+  {
+    "matrix": "matrix-2-kill9",
+    "pass": true,
+    "checks": [
+      {
+        "name": "live renewal extends the lease (pre-crash)",
+        "pass": true,
+        "detail": "renewOk=true"
+      },
+      {
+        "name": "surviving instance's sweeper reaps the stranded endpoint + graces the call",
+        "pass": true,
+        "detail": "ep=closed joined=0 call=empty_grace in 14152ms"
+      },
+      {
+        "name": "emptied call ends with reason 'reaped'",
+        "pass": true,
+        "detail": "status=ended reason=reaped in 15108ms"
+      },
+      {
+        "name": "sweeper closed the stranded CF session (no orphaned session)",
+        "pass": true,
+        "detail": "closeCalls(delta)=1 matchedSession=true"
+      },
+      {
+        "name": "ZERO stranded rows (no live endpoints, no joined participants, call ended)",
+        "pass": true,
+        "detail": "liveEndpoints=0 joined=0 call=ended"
+      }
+    ],
+    "metrics": {
+      "leaseTtlMs": 45000,
+      "emptyGraceMs": 45000,
+      "sweepIntervalMs": 15000,
+      "cfSessionId": "fakesess_1_5kyfih",
+      "reapMs": 14152,
+      "endMs": 15108,
+      "cfCloseCalls": 1,
+      "durationMs": 34695
+    }
+  },
+  {
+    "matrix": "matrix-3-two-devices",
+    "pass": true,
+    "checks": [
+      {
+        "name": "second device without takeover is rejected (CALL_ENDPOINT_ACTIVE)",
+        "pass": true,
+        "detail": "ok=false code=CALL_ENDPOINT_ACTIVE"
+      },
+      {
+        "name": "takeover admits device 2 with a higher epoch + closes device 1's endpoint",
+        "pass": true,
+        "detail": "epoch1=1 epoch2=2 ep1Status=closed sameEp=false"
+      },
+      {
+        "name": "old device's lease renew is fenced off (CALL_LEASE_SUPERSEDED)",
+        "pass": true,
+        "detail": "ok=false code=CALL_LEASE_SUPERSEDED"
+      },
+      {
+        "name": "new device's lease renew succeeds",
+        "pass": true,
+        "detail": "ok=true code=-"
+      }
+    ],
+    "metrics": {
+      "epoch1": 1,
+      "epoch2": 2,
+      "durationMs": 5370
+    }
+  },
+  {
+    "matrix": "matrix-4-glare",
+    "pass": true,
+    "checks": [
+      {
+        "name": "exactly one active call row for the stream",
+        "pass": true,
+        "detail": "active=1"
+      },
+      {
+        "name": "all callers landed in one call",
+        "pass": true,
+        "detail": "distinctCallIds=1 fulfilled=12/12"
+      },
+      {
+        "name": "exactly one winner minted the call (created=true), rest re-read",
+        "pass": true,
+        "detail": "created=true count=1"
+      },
+      {
+        "name": "every caller is a joined participant",
+        "pass": true,
+        "detail": "joined=12/12"
+      }
+    ],
+    "metrics": {
+      "concurrentStarters": 12,
+      "startsFulfilled": 12,
+      "startsRejected": 0,
+      "distinctCallIds": 1,
+      "createdTrueCount": 1,
+      "activeCallRows": 1,
+      "joinedParticipants": 12,
+      "durationMs": 867
+    }
+  },
+  {
+    "matrix": "matrix-5-grace-revive",
+    "pass": true,
+    "checks": [
+      {
+        "name": "last leave enters empty_grace(completed)",
+        "pass": true,
+        "detail": "status=empty_grace reason=completed"
+      },
+      {
+        "name": "join during grace revives to active (reason cleared)",
+        "pass": true,
+        "detail": "status=active reason=null"
+      },
+      {
+        "name": "grace sweep never ends a revived call",
+        "pass": true,
+        "detail": "status=active sweptEnded=0 joined=1"
+      },
+      {
+        "name": "expired grace ends the call with the entry reason (completed)",
+        "pass": true,
+        "detail": "status=ended reason=completed ended=1"
+      }
+    ],
+    "metrics": {
+      "secondGraceStatus": "empty_grace",
+      "endedCount": 1,
+      "durationMs": 675
+    }
+  }
+]
