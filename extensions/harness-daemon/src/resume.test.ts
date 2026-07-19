@@ -12,6 +12,7 @@ import {
 } from "./resume"
 import { launchAgentPlist } from "./boot"
 import { parseResume, parseSpawn } from "./cli"
+import { restoredSessionMatches } from "./commands"
 import { readInventory, upsertAgent } from "./inventory"
 import {
   claudeLaunchArgs,
@@ -130,6 +131,19 @@ test("watch loop keeps reconciling after a failed pass", async () => {
     sleeps: [12_000, 24_000],
     error: "Error: offline",
   })
+})
+
+test("restore events require an exact root and runtime identity match", () => {
+  const target = {
+    botId: "bot_1",
+    rootStreamId: "stream_1",
+    instanceId: "inst_1",
+    runtimeSessionId: "session_1",
+  }
+  expect(restoredSessionMatches({ ...target }, target)).toBe(true)
+  expect(restoredSessionMatches({ ...target, instanceId: "inst_2" }, target)).toBe(false)
+  expect(restoredSessionMatches({ ...target, runtimeSessionId: "session_2" }, target)).toBe(false)
+  expect(restoredSessionMatches({ ...target, rootStreamId: "stream_2" }, target)).toBe(false)
 })
 
 test("supervisor targets dedupe shared bot credentials", () => {

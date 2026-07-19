@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { BotSupervisorTransport } from "@threa/bot-runtime-client"
+import { BotSupervisorTransport, type BotSessionRestoredPayload } from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
 import { basename } from "node:path"
 import { installBootResume } from "./boot"
@@ -28,6 +28,17 @@ import { agentWindowExists, attachedTmuxSession, ensureTmuxSession, sendKeys } f
 import type { ManagedAgent, ResumeOptions, SpawnOptions } from "./types"
 import { restoreManagedWorktree } from "./worktree"
 import { runWatchLoop, unavailableBackoffMs, uniqueSupervisorTargets, watchIntervalMs } from "./watch"
+
+export function restoredSessionMatches(
+  candidate: { rootStreamId: string; instanceId?: string; runtimeSessionId?: string },
+  target: BotSessionRestoredPayload
+): boolean {
+  return (
+    candidate.rootStreamId === target.rootStreamId &&
+    candidate.instanceId === target.instanceId &&
+    candidate.runtimeSessionId === target.runtimeSessionId
+  )
+}
 
 function spawnCommand(options: SpawnOptions): string[] {
   const command = ["threa-harnessd", "spawn", options.runtime, "--name", options.name]
@@ -109,15 +120,15 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   let reconcileChain = Promise.resolve()
   let unavailablePasses = 0
   let retryTimer: ReturnType<typeof setTimeout> | undefined
-  const reconcile = (rootStreamId?: string) => {
+  const reconcile = (target?: BotSessionRestoredPayload) => {
     reconcileChain = reconcileChain
       .then(async () => {
         ensureTmuxSession(session, true)
-        const unavailable = await resumeActive({ ...options, tmux: session }, rootStreamId)
+        const unavailable = await resumeActive({ ...options, tmux: session }, target)
         if (!unavailable) {
           // A targeted restore event must not cancel an outstanding full
           // reconnect catch-up: another dormant runtime may still need it.
-          if (!rootStreamId) {
+          if (!target) {
             unavailablePasses = 0
             if (retryTimer) clearTimeout(retryTimer)
             retryTimer = undefined
@@ -143,7 +154,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
       new BotSupervisorTransport({
         ...target,
         onReady: () => reconcile(),
-        onSessionRestored: (payload) => reconcile(payload.rootStreamId),
+        onSessionRestored: (payload) => reconcile(payload),
         log: (message) => console.warn(`harnessd: supervisor socket: ${message}`),
       })
   )
@@ -168,16 +179,16 @@ export function installBootResumeAgent(options: ResumeOptions): void {
   installBootResume(options.tmux ?? "threa-agents")
 }
 
-export async function resumeActive(options: ResumeOptions, rootStreamId?: string): Promise<boolean> {
+export async function resumeActive(options: ResumeOptions, target?: BotSessionRestoredPayload): Promise<boolean> {
   output(["tmux", "wait-for", "-L", "harnessd-resume-active"])
   try {
-    return await resumeActiveUnlocked(options, rootStreamId)
+    return await resumeActiveUnlocked(options, target)
   } finally {
     output(["tmux", "wait-for", "-U", "harnessd-resume-active"], { allowFailure: true })
   }
 }
 
-async function resumeActiveUnlocked(options: ResumeOptions, rootStreamId?: string): Promise<boolean> {
+async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionRestoredPayload): Promise<boolean> {
   const claudeConfig = readThreaChannelConfig()
   const piConfig = readPiRemoteConfig()
   const agents = latestAgents(readInventory())
@@ -215,7 +226,27 @@ async function resumeActiveUnlocked(options: ResumeOptions, rootStreamId?: strin
       skip("invalid scratchpad URL")
       continue
     }
-    if (rootStreamId && scratchpad.streamId !== rootStreamId) continue
+    if (target && scratchpad.streamId !== target.rootStreamId) continue
+    if (target) {
+      let targetInstanceId = agent.instanceId
+      let targetRuntimeSessionId = agent.runtimeSessionId
+      if (agent.runtime === "pi" && targetRuntimeSessionId) {
+        targetInstanceId ??= readPiRemoteSession(targetRuntimeSessionId)?.instanceId
+      } else if (agent.runtime === "claude" && !targetInstanceId && !targetRuntimeSessionId && agent.worktree) {
+        const derived = claudeRuntimeIdentity(agent.worktree, claudeConfig)
+        targetInstanceId = derived.instanceId
+        targetRuntimeSessionId = derived.runtimeSessionId
+      }
+      if (
+        !restoredSessionMatches(
+          { rootStreamId: scratchpad.streamId, instanceId: targetInstanceId, runtimeSessionId: targetRuntimeSessionId },
+          target
+        )
+      ) {
+        skip("restore event identity does not match inventory")
+        continue
+      }
+    }
     const runtimeConfig = agent.runtime === "pi" ? piConfig : claudeConfig
     const workspaceId = process.env.THREA_WORKSPACE_ID || runtimeConfig.workspaceId
     const apiKey = process.env.THREA_API_KEY || runtimeConfig.apiKey
