@@ -13,6 +13,7 @@ import {
   setCallDiagnostics,
   setCallActiveElsewhere,
   setCallConfirmPending,
+  setCallCaptureError,
   clearCallState,
   registerCallHangup,
   getCallState,
@@ -63,6 +64,37 @@ interface RosterEvent {
   roster: CallRosterParticipant[]
 }
 
+/** Thrown by an in-flight `startCall` when `leaveCall` cancels it mid-join. */
+export class CallStartCancelledError extends Error {
+  constructor() {
+    super("Call start cancelled")
+    this.name = "CallStartCancelledError"
+  }
+}
+
+/**
+ * Thrown when a mid-call recapture fails. `capture_failed` means the prior
+ * capture was restored (audio survives); `capture_rollback_failed` means the
+ * restore also failed (outbound audio is dead). The store mirrors the code.
+ */
+export class CallCaptureError extends Error {
+  readonly code: "capture_failed" | "capture_rollback_failed"
+  constructor(code: "capture_failed" | "capture_rollback_failed", cause?: unknown) {
+    super(
+      code === "capture_rollback_failed"
+        ? "Recapture failed and the prior capture could not be restored"
+        : "Recapture failed"
+    )
+    this.name = "CallCaptureError"
+    this.code = code
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause
+  }
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 /** Minimal socket surface the manager needs — satisfied by socket.io's `Socket`. */
 export interface CallSocket {
   connected: boolean
@@ -97,9 +129,18 @@ export interface CallManagerDeps {
   locks: LockManager | null
   requestWakeLock(): Promise<WakeLockLike | null>
   mintIncarnation(): string
+  /**
+   * True on platforms that allow only one active `getUserMedia` at a time (iOS
+   * Safari): a recapture must stop the live tracks before acquiring, so an
+   * acquire failure is rolled back to the prior constraints. False elsewhere,
+   * where the new capture is acquired before the old is stopped.
+   */
+  singleActiveCapture: boolean
 }
 
 interface CallSession {
+  /** Monotonic generation claimed synchronously at `startCall`; identifies this incarnation. */
+  gen: number
   callId: string
   workspaceId: string
   streamId: string
@@ -113,6 +154,8 @@ interface CallSession {
   micTrack: MediaStreamTrack | null
   cameraTrack: MediaStreamTrack | null
   micStream: MediaStream | null
+  /** Constraints of the current capture, so a failed recapture can be rolled back. */
+  captureConstraints: { constraints: MediaStreamConstraints; camera: boolean } | null
   audioContext: AudioContext | null
   analyser: AnalyserNode | null
   pulled: Map<string, { ref: PeerTrackRef; kind: string }>
@@ -143,6 +186,21 @@ function refKey(ref: PeerTrackRef): string {
 export class CallManager {
   private readonly deps: CallManagerDeps
   private session: CallSession | null = null
+  // Monotonic generation, claimed synchronously by `startCall` before its first
+  // await. Every async continuation captures the gen it belongs to and rechecks
+  // `sessionForGen(gen)` before touching `this.session` or the store, so a stale
+  // continuation (torn down, or superseded by a newer call) becomes a no-op.
+  private sessionGen = 0
+  // Synchronous in-flight sentinel: true from `startCall` entry until `runStart`
+  // settles. A second `startCall` throws on it (no double-start); `leaveCall`
+  // reads it to cancel a start that has not yet produced a session.
+  private starting = false
+  // Set by `leaveCall` during the joining window; `runStart` checks it after each
+  // await and rolls back so a user's cancel wins over an in-flight join.
+  private cancelStart = false
+  // Serializes capture mutations (mic/camera acquire) so two never run concurrently
+  // — the iOS single-active-capture rule and the reentrancy latch in one chain.
+  private captureChain: Promise<void> = Promise.resolve()
   private unregisterHangup: (() => void) | null = null
   private readonly audioContainer: HTMLElement | null
 
@@ -161,11 +219,26 @@ export class CallManager {
    * Start (or join) the call on a stream and connect media. Must be invoked from
    * a user gesture — the AudioContext is created synchronously at the top so iOS
    * Safari honors it (an AudioContext created after an await stays suspended).
+   *
+   * Synchronous (not `async`) so the in-flight guard and generation claim run
+   * before the caller's synchronous tail: a second `startCall` before the first
+   * settles throws here, in the caller's stack, rather than passing a post-await
+   * check and leaking a whole second session.
    */
-  async startCall(params: { workspaceId: string; streamId: string; mode: CallMode }): Promise<void> {
-    if (this.session) throw new Error("A call is already active")
+  startCall(params: { workspaceId: string; streamId: string; mode: CallMode }): Promise<void> {
+    if (this.session || this.starting) throw new Error("A call is already active")
+    this.starting = true
+    this.cancelStart = false
+    const gen = ++this.sessionGen
+    return this.runStart(gen, params)
+  }
+
+  private async runStart(
+    gen: number,
+    params: { workspaceId: string; streamId: string; mode: CallMode }
+  ): Promise<void> {
     const mediaIncarnation = this.deps.mintIncarnation()
-    // Synchronous, in-gesture (see method doc). Held on a temp until the session exists.
+    // Synchronous, in-gesture (see startCall doc). Held on a temp until the session exists.
     const audioContext = this.deps.createAudioContext()
     void audioContext?.resume().catch(() => {})
 
@@ -175,12 +248,14 @@ export class CallManager {
     let socket: CallSocket | null = null
     try {
       const started = await this.deps.startCallRest({ ...params, mediaIncarnation })
+      this.assertStartLive(gen)
       const callId = started.call.id
       setCallSession({ callId, workspaceId: params.workspaceId, streamId: params.streamId, mode: params.mode })
       // One tab owns the call (Web Locks). A second tab sees the lock held →
       // activeElsewhere; on this tab's crash the lock releases and the other tab
       // may offer rejoin (surfaced via the store; UI is M1.2).
       releaseLock = await this.acquireLock(callId)
+      this.assertStartLive(gen)
 
       socket = this.deps.connectSocket(params.workspaceId)
       if (!socket) throw new Error("Calls socket is not available")
@@ -190,9 +265,11 @@ export class CallManager {
         callId,
         mediaIncarnation,
       })
+      this.assertStartLive(gen)
 
       const transport = this.deps.createTransport({ workspaceId: params.workspaceId, callId })
       const session: CallSession = {
+        gen,
         callId,
         workspaceId: params.workspaceId,
         streamId: params.streamId,
@@ -207,6 +284,7 @@ export class CallManager {
         micTrack: null,
         cameraTrack: null,
         micStream: null,
+        captureConstraints: null,
         audioContext,
         analyser: null,
         pulled: new Map(),
@@ -230,9 +308,11 @@ export class CallManager {
       this.wireSocket(session)
 
       await transport.connect({ endpointId: join.endpointId, mediaIncarnation })
+      this.assertStartLive(gen)
       // Video joins acquire mic+camera in ONE getUserMedia (iOS single-active-
       // capture: a second gUM while the first is live mutes it), then split.
       await this.captureAndPublish(session, { camera: params.mode === "video" })
+      this.assertStartLive(gen)
       if (params.mode === "video") {
         patchCallLocal({ cameraOn: true })
         this.emitState(session, { cameraOn: true })
@@ -242,27 +322,52 @@ export class CallManager {
       this.startLeaseTimer(session)
       this.startWatchdog(session)
       await this.acquireWakeLock(session)
+      this.assertStartLive(gen)
       await this.refreshDevices()
+      // Final gate before declaring connected: no await follows, so a cancel can
+      // no longer race in between this check and the phase flip.
+      this.assertStartLive(gen)
 
       setCallPhase("connected")
     } catch (err) {
-      if (this.session) {
-        await this.teardown()
-      } else {
-        // Threw before the session existed — teardown can't see these, so
-        // release the lock, socket, and AudioContext here or they orphan (a
-        // held-forever call lock wedges every later startCall on this tab).
-        releaseLock?.()
-        try {
-          socket?.disconnect()
-        } catch {
-          // ignore
-        }
-        void audioContext?.close?.().catch(() => {})
-        clearCallState()
-      }
+      await this.rollbackStart({ releaseLock, socket, audioContext })
       throw err
+    } finally {
+      this.starting = false
     }
+  }
+
+  /**
+   * Throws {@link CallStartCancelledError} at a start checkpoint when `leaveCall`
+   * cancelled the in-flight join, or when a newer generation superseded this one.
+   * Called after every await in `runStart` so a cancel wins over the join.
+   */
+  private assertStartLive(gen: number): void {
+    if (this.cancelStart || gen !== this.sessionGen) throw new CallStartCancelledError()
+  }
+
+  /** Ordered rollback of an aborted/failed start: teardown if a session exists, else the raw locals. */
+  private async rollbackStart(locals: {
+    releaseLock: (() => void) | null
+    socket: CallSocket | null
+    audioContext: AudioContext | null
+  }): Promise<void> {
+    if (this.session) {
+      // The session owns the lock/socket/audioContext — teardown releases them in order.
+      await this.teardown()
+      return
+    }
+    // Threw before the session existed — teardown can't see these, so release the
+    // lock, socket, and AudioContext here or they orphan (a held-forever call lock
+    // wedges every later startCall on this tab).
+    locals.releaseLock?.()
+    try {
+      locals.socket?.disconnect()
+    } catch {
+      // ignore
+    }
+    void locals.audioContext?.close?.().catch(() => {})
+    clearCallState()
   }
 
   /**
@@ -278,10 +383,27 @@ export class CallManager {
 
   /** Ordered teardown: emit leave → close transport → stop tracks. */
   async leaveCall(): Promise<void> {
+    // Cancel wins over an in-flight join: signal the running `runStart`, which
+    // rolls back whatever it acquired (lock, socket, context, tracks) at its next
+    // checkpoint — so a user's cancel during "joining" never lands a hot mic.
+    if (this.starting) {
+      this.cancelStart = true
+      return
+    }
     const session = this.session
     if (!session) return
     await this.emitLeave(session)
     await this.teardown()
+  }
+
+  /**
+   * The live session for `gen`, or null when this generation was torn down
+   * (`this.session === null`) or superseded by a newer `startCall`
+   * (`gen !== this.sessionGen`). Every async continuation gates on this before
+   * touching `this.session` or the global store.
+   */
+  private sessionForGen(gen: number): CallSession | null {
+    return gen === this.sessionGen ? this.session : null
   }
 
   setMuted(muted: boolean): void {
@@ -296,31 +418,37 @@ export class CallManager {
     const session = this.session
     if (!session) return
     if (session.mode === "audio_only") return
-    if (on) {
-      // Turning the camera on re-acquires mic+camera as ONE stream (iOS single-
-      // active-capture): a camera-only gUM while the mic is live would mute it.
-      await this.captureAndPublish(session, {
-        camera: true,
-        inputDeviceId: getCallState().local.devices.selectedInputId,
-      })
-    } else if (session.cameraTrack) {
-      // Camera off fully stops the track (kills the LED) and unpublishes; the
-      // mic is untouched, so no recapture is needed.
-      session.cameraTrack.stop()
-      session.cameraTrack = null
-      await session.transport.unpublish("camera")
-    }
-    patchCallLocal({ cameraOn: on })
-    this.emitState(session, { cameraOn: on })
+    // Serialized on the capture chain so a rapid on/off/switch never runs two
+    // captures at once (iOS single-active-capture) and settles at the last state.
+    await this.serializeCapture(session, async () => {
+      if (on) {
+        // Turning the camera on re-acquires mic+camera as ONE stream (iOS single-
+        // active-capture): a camera-only gUM while the mic is live would mute it.
+        await this.doCaptureAndPublish(session, {
+          camera: true,
+          inputDeviceId: getCallState().local.devices.selectedInputId,
+        })
+      } else if (session.cameraTrack) {
+        // Camera off fully stops the track (kills the LED) and unpublishes; the
+        // mic is untouched, so no recapture is needed.
+        session.cameraTrack.stop()
+        session.cameraTrack = null
+        await session.transport.unpublish("camera")
+      }
+      patchCallLocal({ cameraOn: on })
+      this.emitState(session, { cameraOn: on })
+    })
   }
 
   async switchInputDevice(deviceId: string): Promise<void> {
     const session = this.session
     if (!session) return
     // Recapture the whole stream (mic + camera if live) so iOS single-active-
-    // capture never mutes the surviving track.
-    await this.captureAndPublish(session, { camera: session.cameraTrack != null, inputDeviceId: deviceId })
-    patchCallLocal({ devices: { ...getCallState().local.devices, selectedInputId: deviceId } })
+    // capture never mutes the surviving track; serialized on the capture chain.
+    await this.serializeCapture(session, async () => {
+      await this.doCaptureAndPublish(session, { camera: session.cameraTrack != null, inputDeviceId: deviceId })
+      patchCallLocal({ devices: { ...getCallState().local.devices, selectedInputId: deviceId } })
+    })
     await this.refreshDevices()
   }
 
@@ -358,19 +486,25 @@ export class CallManager {
   }
 
   private wireSocket(session: CallSession): void {
+    const gen = session.gen
     session.socket.on("call:roster", (payload: unknown) => {
+      // Session-identity gate: an event already dispatched into the loop before a
+      // teardown/flush (or belonging to a superseded call) must not write the
+      // prior call's roster into the store.
+      const s = this.sessionForGen(gen)
+      if (!s) return
       const evt = payload as RosterEvent
-      if (evt.callId !== session.callId) return
-      this.applyRoster(session, evt.rosterVersion, evt.roster)
+      if (evt.callId !== s.callId) return
+      this.applyRoster(s, evt.rosterVersion, evt.roster)
     })
     session.socket.on("disconnect", () => {
       // A socket drop is NOT a call end (the lease holds the slot). Demote to
       // reconnecting; the CF media session survives brief socket loss.
-      if (this.session !== session) return
+      if (!this.sessionForGen(gen)) return
       setCallPhase("reconnecting")
     })
     session.socket.on("connect", () => {
-      if (this.session !== session) return
+      if (!this.sessionForGen(gen)) return
       // Transient reconnect: rejoin with the SAME incarnation (rebinds the same
       // endpoint + epoch). A new incarnation is only minted by a fresh page load.
       this.joinOverSocket(session.socket, {
@@ -379,11 +513,19 @@ export class CallManager {
         mediaIncarnation: session.mediaIncarnation,
       })
         .then((join) => {
-          session.endpointId = join.endpointId
-          this.applyRoster(session, join.rosterVersion, join.roster)
+          // Recheck AFTER the awaited rejoin: teardown/leave (or a newer call)
+          // may have run in between. A stale `.then` must not resurrect a phantom
+          // "connected" phase or overwrite a newer call's store.
+          const s = this.sessionForGen(gen)
+          if (!s) return
+          s.endpointId = join.endpointId
+          this.applyRoster(s, join.rosterVersion, join.roster)
           setCallPhase("connected")
         })
         .catch(() => {
+          // Same recheck: a stale failed rejoin for the OLD call must not tear
+          // down whatever `this.session` now is (possibly a newly started call).
+          if (!this.sessionForGen(gen)) return
           void this.teardown()
         })
     })
@@ -432,24 +574,99 @@ export class CallManager {
   // ── media ──────────────────────────────────────────────────────────────────
 
   /**
-   * Acquire mic (and camera when requested) in a SINGLE getUserMedia and publish
-   * the split tracks. Combined capture is the iOS rule: a second concurrent gUM
-   * mutes the first (single-active-capture), so every camera-on or input-switch
-   * routes through here — stop the live capture, then acquire one combined stream.
+   * Serialize a capture mutation on the capture chain: never two acquires in
+   * flight at once (iOS single-active-capture) and the reentrancy latch behind
+   * camera-toggle / input-switch. A mutation queued while the session was torn
+   * down is skipped. Chain links swallow their own outcome so one failure does
+   * not poison later mutations, but the result still propagates to the caller.
    */
-  private async captureAndPublish(
+  private serializeCapture(session: CallSession, fn: () => Promise<void>): Promise<void> {
+    const run = this.captureChain.then(() => {
+      if (this.sessionForGen(session.gen) !== session) return
+      return fn()
+    })
+    this.captureChain = run.then(
+      () => {},
+      () => {}
+    )
+    return run
+  }
+
+  private captureAndPublish(
     session: CallSession,
     opts: { camera: boolean; inputDeviceId?: string | null }
   ): Promise<void> {
-    session.micTrack?.stop()
-    session.cameraTrack?.stop()
-    session.micStream?.getTracks().forEach((t) => t.stop())
+    return this.serializeCapture(session, () => this.doCaptureAndPublish(session, opts))
+  }
 
+  private buildCaptureConstraints(opts: { camera: boolean; inputDeviceId?: string | null }): MediaStreamConstraints {
     const audio: MediaTrackConstraints = opts.inputDeviceId
       ? { ...AUDIO_CAPTURE_CONSTRAINTS, deviceId: { exact: opts.inputDeviceId } }
       : AUDIO_CAPTURE_CONSTRAINTS
-    const constraints: MediaStreamConstraints = opts.camera ? { audio, video: VIDEO_CAPTURE_CONSTRAINTS } : { audio }
-    const stream = await this.deps.acquireUserMedia(constraints)
+    return opts.camera ? { audio, video: VIDEO_CAPTURE_CONSTRAINTS } : { audio }
+  }
+
+  /**
+   * Acquire mic (and camera when requested) in a SINGLE getUserMedia and publish
+   * the split tracks. Combined capture is the iOS rule: a second concurrent gUM
+   * mutes the first (single-active-capture). Ordering by platform:
+   *
+   * - Single-active-capture (iOS): stop the live capture, THEN acquire. If the
+   *   acquire rejects (permission revoked, `NotReadableError`), roll back to the
+   *   previous constraints so outbound audio survives, and surface a typed
+   *   {@link CallCaptureError}.
+   * - Elsewhere: acquire the NEW capture FIRST, only stop the old once it
+   *   succeeds — a failed acquire leaves the current tracks untouched.
+   *
+   * Always run through {@link serializeCapture}, never called directly.
+   */
+  private async doCaptureAndPublish(
+    session: CallSession,
+    opts: { camera: boolean; inputDeviceId?: string | null }
+  ): Promise<void> {
+    const constraints = this.buildCaptureConstraints(opts)
+    const prev = session.captureConstraints
+
+    if (this.deps.singleActiveCapture) {
+      this.stopCapture(session)
+      let stream: MediaStream
+      try {
+        stream = await this.deps.acquireUserMedia(constraints)
+      } catch (acquireErr) {
+        if (this.sessionForGen(session.gen) !== session) throw acquireErr
+        await this.rollbackCapture(session, prev, acquireErr)
+        return // rollbackCapture always throws
+      }
+      if (this.sessionForGen(session.gen) !== session) {
+        stream.getTracks().forEach((t) => t.stop())
+        return
+      }
+      await this.publishStream(session, stream, opts.camera)
+      session.captureConstraints = { constraints, camera: opts.camera }
+      setCallCaptureError(null)
+      return
+    }
+
+    let stream: MediaStream
+    try {
+      stream = await this.deps.acquireUserMedia(constraints)
+    } catch (acquireErr) {
+      // Old capture untouched — outbound audio survives; just report the failure.
+      setCallCaptureError({ code: "capture_failed", message: describeError(acquireErr) })
+      throw new CallCaptureError("capture_failed", acquireErr)
+    }
+    if (this.sessionForGen(session.gen) !== session) {
+      stream.getTracks().forEach((t) => t.stop())
+      return
+    }
+    this.stopCapture(session)
+    await this.publishStream(session, stream, opts.camera)
+    session.captureConstraints = { constraints, camera: opts.camera }
+    setCallCaptureError(null)
+  }
+
+  /** Publish a freshly acquired stream's tracks and rewire the speaking analyser. */
+  private async publishStream(session: CallSession, stream: MediaStream, camera: boolean): Promise<void> {
     session.micStream = stream
 
     const micTrack = stream.getAudioTracks()[0] ?? null
@@ -459,7 +676,7 @@ export class CallManager {
       await session.transport.publish("mic", micTrack)
     }
 
-    const cameraTrack = opts.camera ? (stream.getVideoTracks()[0] ?? null) : null
+    const cameraTrack = camera ? (stream.getVideoTracks()[0] ?? null) : null
     session.cameraTrack = cameraTrack
     if (cameraTrack) {
       await session.transport.publish("camera", cameraTrack)
@@ -467,6 +684,46 @@ export class CallManager {
     }
 
     this.wireSpeakingAnalyser(session, stream)
+  }
+
+  /**
+   * iOS recapture-failure rollback: the live tracks are already stopped, so
+   * re-acquire the previous constraints and republish them. Always throws — a
+   * successful restore throws `capture_failed` (switch failed, audio back); a
+   * failed restore throws `capture_rollback_failed` (audio dead).
+   */
+  private async rollbackCapture(
+    session: CallSession,
+    prev: { constraints: MediaStreamConstraints; camera: boolean } | null,
+    acquireErr: unknown
+  ): Promise<never> {
+    this.stopCapture(session)
+    if (prev) {
+      try {
+        const restored = await this.deps.acquireUserMedia(prev.constraints)
+        if (this.sessionForGen(session.gen) === session) {
+          await this.publishStream(session, restored, prev.camera)
+          session.captureConstraints = prev
+        } else {
+          restored.getTracks().forEach((t) => t.stop())
+        }
+      } catch (rollbackErr) {
+        setCallCaptureError({ code: "capture_rollback_failed", message: describeError(rollbackErr) })
+        throw new CallCaptureError("capture_rollback_failed", rollbackErr)
+      }
+    }
+    setCallCaptureError({ code: "capture_failed", message: describeError(acquireErr) })
+    throw new CallCaptureError("capture_failed", acquireErr)
+  }
+
+  /** Stop and drop the current local capture tracks (does not touch the AudioContext). */
+  private stopCapture(session: CallSession): void {
+    session.micTrack?.stop()
+    session.cameraTrack?.stop()
+    session.micStream?.getTracks().forEach((t) => t.stop())
+    session.micTrack = null
+    session.cameraTrack = null
+    session.micStream = null
   }
 
   private wireSpeakingAnalyser(session: CallSession, stream: MediaStream): void {
@@ -561,9 +818,13 @@ export class CallManager {
   // ── lease + watchdog ─────────────────────────────────────────────────────
 
   private startLeaseTimer(session: CallSession): void {
+    const gen = session.gen
     const interval = leaseRenewIntervalMs(session.leaseTtlMs)
     session.leaseTimer = setInterval(() => {
       session.socket.emit("call:lease:renew", {}, (result: unknown) => {
+        // The ack can arrive after teardown/supersession; gate before acting so a
+        // stale ack never tears down a newer call.
+        if (!this.sessionForGen(gen)) return
         const ack = result as Ack<{ leaseExpiresAt: string }>
         // A superseded lease means our endpoint was taken over — the call is lost
         // on this incarnation; tear down rather than pretend we're still in.
@@ -573,11 +834,12 @@ export class CallManager {
   }
 
   private startWatchdog(session: CallSession): void {
+    const gen = session.gen
     session.watchdogTimer = setInterval(() => {
       void session.transport
         .getStats()
         .then((stats) => {
-          if (this.session !== session) return
+          if (this.sessionForGen(gen) !== session) return
           setCallDiagnostics({
             rttMs: stats.rttMs,
             packetLoss: stats.packetLoss,
@@ -747,6 +1009,10 @@ export class CallManager {
     for (const key of [...session.remoteAudioEls.keys()]) this.detachRemoteAudio(session, key)
     this.clearTimers(session)
     this.removeSessionListeners(session)
+    // Symmetric with teardown: detach the socket handlers so a roster/connect
+    // event already dispatched into the loop before this flush can't run against
+    // the just-switched-to account (the handlers also gate on gen, belt-and-braces).
+    this.removeSocketHandlers(session)
     void session.wakeLock?.release().catch(() => {})
     session.releaseLock?.()
     setDictationExternalHold(false)
@@ -764,13 +1030,7 @@ export class CallManager {
     if (!session) return
     this.session = null
     this.clearTimers(session)
-    try {
-      session.socket.off("call:roster")
-      session.socket.off("disconnect")
-      session.socket.off("connect")
-    } catch {
-      // ignore
-    }
+    this.removeSocketHandlers(session)
     await session.transport.close().catch(() => {})
     this.stopLocalCapture(session)
     for (const key of [...session.remoteAudioEls.keys()]) this.detachRemoteAudio(session, key)
@@ -797,6 +1057,16 @@ export class CallManager {
     session.cameraTrack = null
     session.micStream = null
     session.analyser = null
+  }
+
+  private removeSocketHandlers(session: CallSession): void {
+    try {
+      session.socket.off("call:roster")
+      session.socket.off("disconnect")
+      session.socket.off("connect")
+    } catch {
+      // ignore
+    }
   }
 
   private removeSessionListeners(session: CallSession): void {
@@ -829,6 +1099,18 @@ function resolveCallsUrl(workspaceId: string): string | null {
   const url = new URL(base)
   url.pathname = "/calls"
   return url.toString()
+}
+
+/**
+ * iOS/iPadOS Safari allows only one active `getUserMedia` at a time — a second
+ * concurrent capture mutes the first. iPadOS reports as "MacIntel", so fall
+ * through to the touch-point probe there.
+ */
+function detectSingleActiveCapture(): boolean {
+  if (typeof navigator === "undefined") return false
+  const ua = navigator.userAgent ?? ""
+  if (/iPad|iPhone|iPod/.test(ua)) return true
+  return navigator.platform === "MacIntel" && (navigator.maxTouchPoints ?? 0) > 1
 }
 
 export function defaultCallManagerDeps(): CallManagerDeps {
@@ -874,6 +1156,7 @@ export function defaultCallManagerDeps(): CallManagerDeps {
     mintIncarnation() {
       return `mi_${ulid()}`
     },
+    singleActiveCapture: detectSingleActiveCapture(),
   }
 }
 

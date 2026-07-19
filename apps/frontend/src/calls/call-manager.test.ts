@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { CallManager, type CallManagerDeps, type CallSocket } from "./call-manager"
+import {
+  CallManager,
+  CallCaptureError,
+  CallStartCancelledError,
+  type CallManagerDeps,
+  type CallSocket,
+} from "./call-manager"
 import type { MediaTransport } from "./media-transport"
-import { getCallState, clearCallState, type CallRosterParticipant } from "@/stores/call-store"
+import { getCallState, clearCallState, resetCallStoreCache, type CallRosterParticipant } from "@/stores/call-store"
 import { isDictationExternalHeld, setDictationExternalHold } from "@/contexts/dictation-coordinator-context"
 
 // Shared teardown-order log: the mic track, socket, and transport push into it so
@@ -71,6 +77,9 @@ interface FakeSocket extends CallSocket {
     roster: CallRosterParticipant[]
     leaseTtlMs: number
   }
+  /** When true, `call:join` stores its ack on `pendingJoinAck` instead of resolving it. */
+  deferJoin: boolean
+  pendingJoinAck: ((result: unknown) => void) | null
   fire(event: string, ...args: unknown[]): void
 }
 
@@ -82,11 +91,15 @@ function makeSocket(): FakeSocket {
     joinAck: { endpointId: "ep_1", epoch: 1, rosterVersion: 0, roster: [], leaseTtlMs: 45_000 },
     handlers,
     emitted,
+    deferJoin: false,
+    pendingJoinAck: null,
     emit(event, payload, ack) {
       emitted.push({ event, payload })
       if (event === "call:leave") order.push("leave")
-      if (event === "call:join") ack?.({ ok: true, data: socket.joinAck })
-      else if (event === "call:leave") ack?.({ ok: true })
+      if (event === "call:join") {
+        if (socket.deferJoin) socket.pendingJoinAck = ack ?? null
+        else ack?.({ ok: true, data: socket.joinAck })
+      } else if (event === "call:leave") ack?.({ ok: true })
       else if (event === "call:lease:renew") ack?.({ ok: true, data: { leaseExpiresAt: new Date().toISOString() } })
     },
     on(event, handler) {
@@ -127,6 +140,7 @@ function makeDeps(socket: FakeSocket, transport: MediaTransport) {
     locks: null,
     requestWakeLock: vi.fn(async () => null),
     mintIncarnation: vi.fn(() => `inc-${++inc}`),
+    singleActiveCapture: false,
   }
   return deps
 }
@@ -318,6 +332,165 @@ describe("CallManager", () => {
     expect(deps.mintIncarnation).toHaveBeenCalledTimes(2)
     const join = socket2.emitted.find((e) => e.event === "call:join")
     expect(join?.payload).toMatchObject({ mediaIncarnation: "inc-2" })
+  })
+
+  // ── session-generation guard (findings 1-6) ─────────────────────────────────
+
+  it("double startCall throws synchronously while the first is joining (in-flight guard)", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const manager = new CallManager(makeDeps(socket, transport), null)
+
+    // The first start suspends at its first await with the `starting` sentinel set.
+    const first = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    // A second start must throw in the caller's stack, not leak a parallel session.
+    expect(() => manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })).toThrow(
+      /already active/
+    )
+
+    await first
+    expect(manager.isActive()).toBe(true)
+    // Exactly one session was ever minted (one incarnation, one socket).
+    expect(socket.emitted.filter((e) => e.event === "call:join")).toHaveLength(1)
+  })
+
+  it("a stale reconnect-join continuation no-ops after teardown", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const manager = new CallManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    // A socket reconnect fires a rejoin whose ack we hold in flight.
+    socket.deferJoin = true
+    socket.fire("disconnect")
+    socket.fire("connect")
+    expect(socket.pendingJoinAck).not.toBeNull()
+
+    // The user leaves while the rejoin is still in flight.
+    await manager.leaveCall()
+    expect(manager.isActive()).toBe(false)
+    expect(getCallState().phase).toBe("idle")
+
+    // The rejoin resolves late — its `.then` must NOT resurrect a phantom "connected".
+    socket.pendingJoinAck?.({ ok: true, data: socket.joinAck })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(getCallState().phase).toBe("idle")
+    expect(manager.isActive()).toBe(false)
+  })
+
+  it("leaveCall during the joining window cancels the start and stops the mic", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    // Park the start at acquireWakeLock — one await past the mic capture — so the
+    // cancel lands with a live capture already in place.
+    let releaseWake: () => void = () => {}
+    ;(deps.requestWakeLock as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseWake = () => resolve(null)
+        })
+    )
+    const manager = new CallManager(deps, null)
+
+    const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    // Drain all microtasks so runStart reaches the parked wake-lock request.
+    await new Promise((r) => setTimeout(r, 0))
+    const micTrack = getMicTrack(transport)
+    expect(micTrack).toBeTruthy()
+    expect(manager.isActive()).toBe(true)
+
+    // User cancels mid-join; the in-flight start must roll back.
+    const leaving = manager.leaveCall()
+    releaseWake()
+    await expect(start).rejects.toBeInstanceOf(CallStartCancelledError)
+    await leaving
+
+    expect(manager.isActive()).toBe(false)
+    expect(getCallState().phase).toBe("idle")
+    expect(micTrack.stop).toHaveBeenCalled()
+  })
+
+  it("overlapping input-device switches serialize (never two captures at once)", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    let inFlight = 0
+    let maxConcurrent = 0
+    ;(deps.acquireUserMedia as ReturnType<typeof vi.fn>).mockImplementation(async (c: MediaStreamConstraints) => {
+      inFlight++
+      maxConcurrent = Math.max(maxConcurrent, inFlight)
+      await Promise.resolve()
+      await Promise.resolve()
+      inFlight--
+      const kinds: Array<"audio" | "video"> = ["audio"]
+      if (c.video) kinds.push("video")
+      return makeStream(kinds)
+    })
+    const manager = new CallManager(deps, null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    // Fire two switches without awaiting the first — the chain must serialize them.
+    const a = manager.switchInputDevice("dev-a")
+    const b = manager.switchInputDevice("dev-b")
+    await Promise.all([a, b])
+
+    // A concurrent second capture would be fatal on iOS single-active-capture.
+    expect(maxConcurrent).toBe(1)
+    // Serialized in request order → settles at the last requested device.
+    expect(getCallState().local.devices.selectedInputId).toBe("dev-b")
+  })
+
+  it("iOS mid-call recapture failure rolls back to the prior capture with a typed error", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    deps.singleActiveCapture = true
+    let calls = 0
+    ;(deps.acquireUserMedia as ReturnType<typeof vi.fn>).mockImplementation(async (c: MediaStreamConstraints) => {
+      calls++
+      // The device-switch acquire fails (e.g. NotReadableError); the rollback re-acquire succeeds.
+      if (calls === 2) throw new Error("device busy")
+      const kinds: Array<"audio" | "video"> = ["audio"]
+      if (c.video) kinds.push("video")
+      return makeStream(kinds)
+    })
+    const manager = new CallManager(deps, null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    const err = await manager.switchInputDevice("dev-x").catch((e) => e)
+    expect(err).toBeInstanceOf(CallCaptureError)
+    expect(err.code).toBe("capture_failed")
+
+    // Startup + failed switch + rollback re-acquire = 3 getUserMedia calls; audio restored.
+    expect(deps.acquireUserMedia).toHaveBeenCalledTimes(3)
+    expect(manager.isActive()).toBe(true)
+    // The store surfaces the typed failure for the UI.
+    expect(getCallState().captureError).toMatchObject({ code: "capture_failed" })
+  })
+
+  it("a roster event dispatched before hangupSync no-ops after the flush", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const manager = new CallManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    // Capture the handler as if a roster broadcast were already dispatched into the loop.
+    const rosterHandler = socket.handlers.get("call:roster")
+    expect(rosterHandler).toBeTruthy()
+
+    // Account switch / logout flush → hangupSync.
+    resetCallStoreCache()
+    expect(manager.isActive()).toBe(false)
+    // Symmetric with teardown: the socket handlers were detached.
+    expect(socket.handlers.has("call:roster")).toBe(false)
+
+    // The already-in-flight event still fires — it must NOT write the prior
+    // account's roster into the just-reset store.
+    rosterHandler?.({ callId: "call_1", rosterVersion: 99, roster: [participant({ userId: "usr_z" })] })
+    expect(getCallState().roster).toHaveLength(0)
+    expect(getCallState().rosterVersion).toBe(0)
   })
 })
 

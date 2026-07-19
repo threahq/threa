@@ -53,6 +53,18 @@ export interface CallDiagnostics {
   qualityLimitation: "none" | "cpu" | "bandwidth" | "other" | null
 }
 
+/**
+ * Surfaced when a mid-call recapture (device switch / camera on) fails. `code`
+ * distinguishes a switch that failed but restored the prior capture
+ * (`capture_failed`, audio survives) from one whose rollback also failed
+ * (`capture_rollback_failed`, outbound audio is dead). Cleared on the next
+ * successful capture and on teardown.
+ */
+export interface CallCaptureErrorInfo {
+  code: "capture_failed" | "capture_rollback_failed"
+  message: string
+}
+
 export interface CallState {
   phase: CallPhase
   callId: string | null
@@ -67,6 +79,8 @@ export interface CallState {
   /** Set when an account switch is requested with a live call — UI confirms (M1.2). */
   confirmPending: boolean
   diagnostics: CallDiagnostics
+  /** Last mid-call recapture failure, or null. See {@link CallCaptureErrorInfo}. */
+  captureError: CallCaptureErrorInfo | null
 }
 
 const EMPTY_DEVICES: CallDeviceState = {
@@ -91,6 +105,7 @@ function idleState(): CallState {
     activeElsewhere: false,
     confirmPending: false,
     diagnostics: { rttMs: null, packetLoss: null, qualityLimitation: null },
+    captureError: null,
   }
 }
 
@@ -160,6 +175,11 @@ export function setCallActiveElsewhere(activeElsewhere: boolean): void {
 export function setCallConfirmPending(confirmPending: boolean): void {
   if (state.confirmPending === confirmPending) return
   setState({ ...state, confirmPending })
+}
+
+export function setCallCaptureError(captureError: CallCaptureErrorInfo | null): void {
+  if (state.captureError === captureError) return
+  setState({ ...state, captureError })
 }
 
 /** Drop all call state without a hangup — the manager calls this after teardown. */
