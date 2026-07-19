@@ -77,6 +77,16 @@ curl -X PUT --data-binary @"$dir/bundle.zip" \
 
 The `200` response JSON carries `url` (latest, live-reload) and `versionUrl` (pinned) — give the user the `url`. Re-`PUT`ting the same slug publishes a new version at the same URL. Limit 50 MB; `..`/absolute-path zip entries are rejected; viewing requires the user's Google sign-in.
 
+Seer also hosts single images — the way to get a screenshot into a GitHub PR, issue, or README body:
+
+```sh
+curl -X PUT --data-binary @shot.png \
+  -H "Authorization: Bearer $SEER_API_KEY" \
+  https://seer.build/api/images/shot.png
+```
+
+The response's `markdown` field pastes straight into a PR body. Images are compressed on upload (2000px cap, re-encoded WebP when smaller, EXIF/GPS stripped), each upload mints a fresh immutable URL — so the returned filename may end `.webp` — and they always render on GitHub (its camo image proxy is allowed through) even when the workspace is private.
+
 Full contract: https://seer.build/skill.md
 
 ## Workflow and Verification
