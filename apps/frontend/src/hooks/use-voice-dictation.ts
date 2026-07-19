@@ -3,7 +3,7 @@ import { io, type Socket } from "socket.io-client"
 import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
 import { voiceApi } from "@/api/voice"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
-import { useDictationCoordinator } from "@/contexts"
+import { useDictationCoordinator, isDictationExternalHeld } from "@/contexts"
 
 export type VoiceDictationState = "idle" | "connecting" | "recording" | "stopping" | "error"
 
@@ -501,6 +501,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const start = useCallback(() => {
     if (!supportRef.current.supported) return
     if (state !== "idle" && state !== "error") return
+    // Composer dictation is disabled while a call holds the mic — two concurrent
+    // getUserMedia captures conflict (fatally on iOS). The call owns the seam.
+    if (isDictationExternalHeld()) return
 
     // Take the single active slot, flushing+stopping any other composer's take.
     coordinator.activate(coordinatedStop)

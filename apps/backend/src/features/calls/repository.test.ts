@@ -238,3 +238,27 @@ describe("CallInvitationRepository — expire only past-due rings", () => {
     expect(sql).toContain("status = 'ringing'")
   })
 })
+
+describe("CallParticipantRepository — roster carries the publisher's CF session", () => {
+  it("listRoster selects and maps cf_session_id so clients can address peer media", async () => {
+    const captured: Captured = { text: "" }
+    const roster = await CallParticipantRepository.listRoster(
+      createQuerier(captured, [
+        {
+          participant_id: "callp_1",
+          user_id: "usr_1",
+          participant_status: "joined",
+          endpoint_id: "callep_1",
+          endpoint_status: "connected",
+          cf_session_id: "cfsess_abc",
+          media_state: {},
+          published_tracks: [{ kind: "mic", trackName: "t1" }],
+        },
+      ]),
+      "ws_1",
+      "call_1"
+    )
+    expect(normalize(captured.text)).toContain("cf_session_id")
+    expect(roster[0]).toMatchObject({ endpointId: "callep_1", cfSessionId: "cfsess_abc" })
+  })
+})

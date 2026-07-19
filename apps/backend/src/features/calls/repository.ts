@@ -600,6 +600,7 @@ export const CallParticipantRepository = {
       participant_status: string
       endpoint_id: string | null
       connection_status: string | null
+      cf_session_id: string | null
       media_state: MediaState | null
       published_tracks: PublishedTrack[] | null
     }>(sql`
@@ -608,6 +609,7 @@ export const CallParticipantRepository = {
         p.status AS participant_status,
         e.id AS endpoint_id,
         e.status AS connection_status,
+        e.cf_session_id AS cf_session_id,
         e.media_state,
         e.published_tracks
       FROM call_participants p
@@ -622,6 +624,7 @@ export const CallParticipantRepository = {
       participantStatus: row.participant_status as CallParticipantStatus,
       endpointId: row.endpoint_id,
       connectionStatus: row.connection_status as CallEndpointStatus | null,
+      cfSessionId: row.cf_session_id,
       mediaState: row.media_state ?? {},
       publishedTracks: row.published_tracks ?? [],
     }))
@@ -634,6 +637,7 @@ export interface CallRosterEntry {
   participantStatus: CallParticipantStatus
   endpointId: string | null
   connectionStatus: CallEndpointStatus | null
+  cfSessionId: string | null
   mediaState: MediaState
   publishedTracks: PublishedTrack[]
 }

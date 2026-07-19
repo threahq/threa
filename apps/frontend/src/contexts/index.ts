@@ -59,7 +59,12 @@ export {
 export { SidebarProvider, useSidebar, type UrgencyBlock, type CollapseState } from "./sidebar-context"
 export { TraceProvider, useTrace } from "./trace-context"
 export { MediaGalleryProvider, useMediaGallery } from "./media-gallery-context"
-export { DictationCoordinatorProvider, useDictationCoordinator } from "./dictation-coordinator-context"
+export {
+  DictationCoordinatorProvider,
+  useDictationCoordinator,
+  setDictationExternalHold,
+  isDictationExternalHeld,
+} from "./dictation-coordinator-context"
 export {
   StreamAgentActivityProvider,
   useAgentActivitySummary,

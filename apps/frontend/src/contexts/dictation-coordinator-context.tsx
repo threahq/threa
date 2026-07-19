@@ -1,4 +1,22 @@
-import { createContext, useCallback, useContext, useMemo, useRef, type ReactNode } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react"
+
+// External hold: a non-React owner (the account-scoped CallManager) disables
+// composer dictation for the duration of a call — two concurrent getUserMedia
+// captures conflict, fatally on iOS. Module-level so the singleton can set it
+// without reaching into React context; the provider stops any live take when it
+// flips on, and `useVoiceDictation.start` bails while it's held.
+let externalHeld = false
+const holdListeners = new Set<() => void>()
+
+export function setDictationExternalHold(held: boolean): void {
+  if (held === externalHeld) return
+  externalHeld = held
+  for (const listener of holdListeners) listener()
+}
+
+export function isDictationExternalHeld(): boolean {
+  return externalHeld
+}
 
 interface DictationCoordinatorContextValue {
   /**
@@ -35,6 +53,18 @@ export function DictationCoordinatorProvider({ children }: { children: ReactNode
 
   const deactivate = useCallback((stop: () => void) => {
     if (activeStopRef.current === stop) activeStopRef.current = null
+  }, [])
+
+  // When an external hold engages mid-take, stop the live take so its mic
+  // releases before the call acquires its own capture.
+  useEffect(() => {
+    const onHoldChange = () => {
+      if (isDictationExternalHeld()) activeStopRef.current?.()
+    }
+    holdListeners.add(onHoldChange)
+    return () => {
+      holdListeners.delete(onHoldChange)
+    }
   }, [])
 
   const value = useMemo<DictationCoordinatorContextValue>(() => ({ activate, deactivate }), [activate, deactivate])

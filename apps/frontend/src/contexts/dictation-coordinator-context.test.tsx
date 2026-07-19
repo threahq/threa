@@ -1,7 +1,12 @@
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, afterEach } from "vitest"
 import { render } from "@testing-library/react"
 import { useEffect } from "react"
-import { DictationCoordinatorProvider, useDictationCoordinator } from "./dictation-coordinator-context"
+import {
+  DictationCoordinatorProvider,
+  useDictationCoordinator,
+  setDictationExternalHold,
+  isDictationExternalHeld,
+} from "./dictation-coordinator-context"
 
 function Activator({
   stop,
@@ -97,5 +102,32 @@ describe("DictationCoordinatorProvider", () => {
 
     activate()
     expect(stop).not.toHaveBeenCalled()
+  })
+})
+
+describe("dictation external hold (call coexistence)", () => {
+  afterEach(() => setDictationExternalHold(false))
+
+  it("tracks the held flag", () => {
+    expect(isDictationExternalHeld()).toBe(false)
+    setDictationExternalHold(true)
+    expect(isDictationExternalHeld()).toBe(true)
+    setDictationExternalHold(false)
+    expect(isDictationExternalHeld()).toBe(false)
+  })
+
+  it("stops the active take when the hold engages mid-take", () => {
+    const stop = vi.fn()
+    let activate = () => {}
+    render(
+      <DictationCoordinatorProvider>
+        <Activator stop={stop} onReady={(a) => (activate = a)} />
+      </DictationCoordinatorProvider>
+    )
+
+    activate()
+    expect(stop).not.toHaveBeenCalled()
+    setDictationExternalHold(true)
+    expect(stop).toHaveBeenCalledTimes(1)
   })
 })
