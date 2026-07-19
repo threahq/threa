@@ -1,118 +1,55 @@
-# Threa - AI-Powered Knowledge Chat
+# Threa — AI-Powered Knowledge Chat
 
-## What This Is
+Threa fixes "Slack, where critical information comes to die": GAM (General Agentic Memory) auto-extracts and preserves knowledge from conversations. Solo-first — scratchpads are the entry point, not channels.
 
-Threa tackles "Slack, where critical information comes to die" by building knowledge foundations with language models. The core differentiator is GAM (General Agentic Memory): automatically extracting and preserving knowledge from conversations.
+This file is the source of truth for architecture and code constraints. When rules compete:
 
-**Solo-first philosophy:** Threa starts as AI-powered personal knowledge management and grows into team chat. Scratchpads are the primary entry point, not channels.
+1. Correctness and safety (data integrity, concurrency, transactions)
+2. Architecture boundaries
+3. Task scope — smallest working change
+4. Style and polish
 
-## How To Use This Document
+Default mode: **minimal patch** — the smallest change that still fully solves the problem, not a half-fix. Order of work: get it working → get it nice → get it fast. Once it works, step back once — smaller? clearer? — then stop. No refactors, renames, or generalization unless a higher rule demands it.
 
-This file is the project source of truth for architecture and code constraints.
+## Output Style
 
-When rules compete, use this precedence order:
+Extremely terse. Density over grammar: fragments fine, drop articles and transitions, skip polish. Keep every fact — file names, symbols, reasons, tradeoffs — cut everything else: preamble, restating the request, hedging, self-narration. Lead with the result. Same rule for PR descriptions.
 
-1. **Correctness and safety first** (data integrity, concurrency, transaction safety)
-2. **Architecture boundaries second** (feature placement, layering, dependency flow)
-3. **Task scope third** (smallest working change that solves the request)
-4. **Style and ergonomics last** (cleanup, formatting, readability polish)
+Comments: default none (INV-25). A comment earns its place only by stating what the code cannot — an ordering/concurrency constraint, a load-bearing "looks wrong but isn't", why a bound is that value — and only if still true six months from now. Comments never dwarf the code: a long explanation of a 2-line fix belongs in the PR description, not the file. Delete on sight: change narration, restatement, section headers, speculative TODOs (INV-36).
 
-Default implementation mode for routine tasks: **minimal patch**. Do not refactor, rename, or generalize unless it is required to satisfy a higher-priority rule above.
+## Search Before Asking
 
-## Working Style
+Factual repo questions are yours to answer: Grep/Glob/Agent, starting from `docs/system-overview.md`, `docs/architecture.md`, `docs/core-concepts.md`, then `apps/*/src/` and the relevant feature folder. Before claiming something absent, sweep `apps/*/src/{components,pages,features,stores,lib}` with contains-match globs (`*settings*`, not `settings*`). Ask only when the search came back empty, it's a preference code can't reveal, or the action is destructive — and name what you searched.
 
-**Cut words, keep facts.** This is a binding constraint on every reply and every PR description, not a nicety. Keep all the substance — what changed, why, the file names, the tradeoffs. Cut the filler around it: preamble ("Great question", "Let me help you"), restating the request back, hedging, throat-clearing transitions ("It's worth noting that", "In order to"), and self-narration ("Now I'll…", "I've gone ahead and…"). Density is the goal, wordiness is the enemy — they are not the same thing. A reply packed with file names and reasons in ten words is good; the same ten facts wrapped in forty words of connective prose is what to avoid.
+"Always X" / "never Y" rules (INV-*, skill rules) are binding — re-read them before acting in their domain. Read a module and its neighbors before editing; features colocate (INV-51), so the answer is usually one directory away. Apply an invariant's intent, not its surface shape: INV-20 means "write paths tolerate concurrent callers", not "sprinkle ON CONFLICT".
 
-- Lead with the answer or result. No windup.
-- One fact per clause. If a sentence survives deleting half its words, delete them.
-- Prefer a short list of concrete points over a flowing paragraph.
-- Verbose: "I went ahead and updated the handler so that it now validates the input using the Zod schema, which should resolve the issue you were seeing." Tight: "Updated the handler to validate input via the Zod schema — fixes the bug."
+## Runtime
 
-The same rule governs PR descriptions: state what changed and why, name real symbols and files, drop the connective padding. Dense ≠ long.
+Bun, not Node: `bun <file>`, `bun run test`, `bun install`, `bun run <script>`, `bun build`. Bun auto-loads `.env` — no dotenv.
 
-Read this before asking the user anything.
+## Previewing HTML — Seer
 
-**Search before you ask.** If a question has a factual answer in the repo ("is there a sync path from control-plane to backend?", "which model does persona X use?", "how does auth flow through the workspace-router?"), it is your job to find it. Use Grep, Glob, and the Agent tool. Start from `docs/system-overview.md`, `docs/architecture.md`, `docs/core-concepts.md`, then `apps/*/src/` and the relevant feature folder under `apps/backend/src/features/`. Escalate to the user only when (a) the search genuinely came back empty, (b) the decision is a preference the code cannot reveal, or (c) the action is destructive or irreversible.
+Anthropic artifacts don't render for this user; publish on Seer instead. Use it liberally — plans, diagrams, mockups, dashboards, reports — a URL beats a wall of HTML/ASCII. Full contract: https://seer.build/skill.md. Auth: `SEER_API_KEY` (already set; never print it).
 
-**Sweep before concluding absent.** Before claiming a UI or feature is missing, sweep `apps/*/src/{components,pages,features,stores,lib}/` with contains-match globs (`*settings*`, not `settings*` — the latter misses `workspace-settings`). A wrong negative compounded by confidence is worse than asking.
+- Bundle: build in `mktemp -d`, `index.html` at root, relative self-contained assets; `(cd "$dir" && zip -r bundle.zip . -x bundle.zip)`; `curl -X PUT --data-binary @bundle.zip -H "Authorization: Bearer $SEER_API_KEY" https://seer.build/api/bundles/<slug>`. Unique slug (`plan-$(openssl rand -hex 3)`); re-PUT same slug = new version, same URL. Share the response's `url`.
+- Image (screenshots into PR/issue bodies): `PUT https://seer.build/api/images/shot.png` — response's `markdown` pastes into GitHub and renders even on private repos.
 
-**Prove you looked.** When you do ask, name what you already searched — file paths, grep patterns, docs read — so the user can redirect you instead of repeating the search. An unjustified clarifying question is worse than silence.
+## Workflow
 
-**Follow instructions verbatim.** When CLAUDE.md, a skill, or the user says "always use X", "never do Y", or "use the /foo skill for Z", that is a binding constraint, not a suggestion. Re-read the relevant rule before acting in its domain — especially invariants (INV-*), the automated-review rule, and skill invocation rules.
+Test-first when practical; else run the nearest suite and verify manually. Never ship unexecuted tests: `bun run test`, `bun run test:e2e`. Failing tests get fixed, never dismissed as pre-existing (INV-22).
 
-**Read before editing.** Before changing a module, read it and its neighbors. Backend features colocate (INV-51) — handler, service, repo, worker, config, tests all sit in the same folder, so the answer is usually one directory away.
+**Stacked PRs: always `gh stack`** (GitHub-native Stacks; extension installed — verify `gh extension list | grep stack`, never assume absence). Hand-rolling stacks with plain branches + `gh pr create --base` is the recurring failure — don't. `/gh-stack` skill has the full contract; core loop:
 
-**Understand intent, don't pattern-match.** Two similar lines aren't a pattern; the invariant is. INV-20 is not "sprinkle `ON CONFLICT`", it is "write paths tolerate concurrent callers". Apply the rule that fits the situation, not the shape that looks familiar.
+- Once: `git config rerere.enabled true` and `git config remote.pushDefault origin`
+- `gh stack init <branches bottom→top>` (adopts existing branches) · `gh stack add <branch>` per layer · `gh stack submit --auto` (recognizes `/create-pr`-made PRs and links them into the Stack)
+- After merges: `gh stack sync --prune` — auto-recovers squash-merges; replaces manual rebase-on-main
+- Non-interactive always: branch names as args, `submit --auto`, `view --json`
 
-**Worked example — the failure mode this replaces.** User asks: "Is there a sync path from control-plane to backend?" Wrong response: ask the user to confirm. Right response: grep `control-plane`, open `docs/system-overview.md`, discover the `provisionRegional` outbox event calling `POST /internal/workspaces` on the regional backend (lines 218-219, 274), answer with the citation. Do this every time before reaching for a clarifying question.
-
-## Runtime and Build
-
-Default to Bun instead of Node.js:
-
-- `bun <file>` instead of `node <file>` or `ts-node <file>`
-- `bun run test` instead of `jest` or `vitest`
-- `bun build <file>` instead of `webpack` or `esbuild`
-- `bun install` instead of `npm install`
-- `bun run <script>` instead of `npm run <script>`
-- Bun auto-loads `.env` - do not use `dotenv`
-
-## Previewing HTML
-
-**Use Seer, not Claude/Anthropic artifacts.** Claude artifacts do not render for this user — never publish a preview there. Reach for Seer liberally: plans, diagrams, examples, mockups, charts, dashboards, rendered reports — anything easier to grasp as a rendered page than as terminal text belongs here. Default to publishing and handing back the URL rather than pasting a wall of HTML or ASCII.
-
-Seer hosts self-contained HTML bundles behind a bearer token. The token is `SEER_API_KEY` in this runtime (already set; never print it).
-
-Upload flow:
-
-1. Build in a fresh temp dir so parallel sessions never clobber each other: `dir=$(mktemp -d)`. Put `index.html` at its root; use relative asset paths (`./style.css`, `assets/app.js`) since bundles serve under `/b/<slug>/`. Prefer inlined/self-contained assets over external requests.
-2. Zip from inside the build dir: `(cd "$dir" && zip -r bundle.zip . -x bundle.zip)`
-3. `PUT` under a slug matching `[a-z0-9][a-z0-9-]{0,63}`. Make it unique so concurrent sessions don't overwrite each other's previews — suffix a short random token (e.g. `plan-$(openssl rand -hex 3)`). Reuse the same slug only when you deliberately want to update an existing preview at its URL.
-
-```sh
-curl -X PUT --data-binary @"$dir/bundle.zip" \
-  -H "Authorization: Bearer $SEER_API_KEY" \
-  https://seer.build/api/bundles/<slug>
-```
-
-The `200` response JSON carries `url` (latest, live-reload) and `versionUrl` (pinned) — give the user the `url`. Re-`PUT`ting the same slug publishes a new version at the same URL. Limit 50 MB; `..`/absolute-path zip entries are rejected; viewing requires the user's Google sign-in.
-
-Seer also hosts single images — the way to get a screenshot into a GitHub PR, issue, or README body:
-
-```sh
-curl -X PUT --data-binary @shot.png \
-  -H "Authorization: Bearer $SEER_API_KEY" \
-  https://seer.build/api/images/shot.png
-```
-
-The response's `markdown` field pastes straight into a PR body. Images are compressed on upload (2000px cap, re-encoded WebP when smaller, EXIF/GPS stripped), each upload mints a fresh immutable URL — so the returned filename may end `.webp` — and they always render on GitHub (its camo image proxy is allowed through) even when the workspace is private.
-
-Full contract: https://seer.build/skill.md
-
-## Workflow and Verification
-
-Prefer test-first development: write or update a failing test that captures the desired behavior, then implement the fix.
-
-For small bug fixes where a reproducible test is not practical, at minimum run the most relevant existing test suite and verify behavior manually.
-
-Never ship unexecuted tests. Run:
-
-- `bun run test:e2e` for E2E coverage
-- `bun run test` for unit/integration coverage
-
-### Automated Reviews
-
-CodeRabbit reviews PRs automatically using the project rules in `.coderabbit.yaml` (derived from these invariants). When asked to check review comments, address review feedback, or respond to CodeRabbit, **always use the `/respond-to-pr-review` skill** — it handles triage and thread responses. Treat CodeRabbit findings with the same rigor as human review comments.
-
-If tests fail, fix them or explicitly isolate the failure in a separate follow-up change.
-
-### Opening Pull Requests
-
-When a unit of work is complete — committed, pushed, and verified — default to opening a pull request with the `/create-pr` skill rather than stopping at the pushed branch. The skill writes the structured description (summary, design decisions, file changes) the reviewers and CodeRabbit expect. Skip it only when the user has said not to open a PR, when the work is mid-stream and not yet coherent, or when a PR for the branch already exists (push the follow-up commits to it instead).
+CodeRabbit reviews every PR (`.coderabbit.yaml`, derived from these invariants) — treat its findings like human review. Addressing review comments → always the `/respond-to-pr-review` skill. Unit of work complete (committed, pushed, verified) → open a PR via `/create-pr`, unless told not to, work is mid-stream, or a PR exists (push to it).
 
 ## Project Structure
 
-Monorepo with Bun workspaces:
+Monorepo, Bun workspaces:
 
 ```text
 threa/
@@ -126,254 +63,106 @@ threa/
 |  |- prosemirror/      # Editor state wrapper
 |  `- backend-common/   # Shared backend infra (DB, auth, outbox, middleware)
 |- infra/aws/           # Terraform for per-region S3 buckets
-|- scripts/             # Dev orchestration and utilities
+|- scripts/             # Dev orchestration
 |- tests/               # Cross-app tests (Playwright)
-|- docs/                # Design docs and exploration notes
-|- .agents/skills/      # Shared agent skills (Claude + Codex)
-`- package.json         # Root workspace config
+|- docs/                # Design docs
+`- .agents/skills/      # Shared agent skills (.claude/skills symlinks here)
 ```
 
-For a high-level view of how the four services interact, their responsibilities, infrastructure dependencies, and deployment targets, see [`docs/system-overview.md`](docs/system-overview.md).
+Service interactions, responsibilities, deploy targets: `docs/system-overview.md`.
 
-Agent skills live in `.agents/skills/<name>/SKILL.md`. `.claude/skills` is a symlink to `.agents/skills/`.
+Backend domain logic: `apps/backend/src/features/<name>/` — handler, service, repo, outbox handler, worker, config, tests colocated (INV-51). `lib/` = cross-cutting infra only (queueing, outbox dispatch, AI wrapper, logging); domain prompt builders/classifiers/extractors stay in their feature. Cross-feature imports via `index.ts` barrels only (INV-52).
 
-### Backend Feature Colocation
+## Invariants
 
-Backend domain logic lives in `apps/backend/src/features/<name>/` (INV-51). Each feature colocates handler, service, repository, outbox handler, worker, config, and tests.
+Use INV ids in plans, review notes, PR comments.
 
-`lib/` is for cross-cutting infrastructure only (queueing, outbox dispatch, AI wrapper, utilities, logging). Domain-specific prompt builders, classifiers, extractors, and event handlers stay in feature folders.
+### Data & Persistence
 
-Feature public APIs are exported via `index.ts` barrels; other features import from barrels only (INV-52).
+- No foreign keys (INV-1). No DB enums — `TEXT` + code validation (INV-3). Prefixed ULIDs like `stream_xxx` (INV-2). Migrations append-only — never edit an existing file (INV-17).
+- Workspace is the ownership/sharding boundary (INV-8): every domain table carries `workspace_id`, every query/mutation filters on it. Exempt only global infra/auth tables (auth sessions, queue internals, outbox listeners, migration metadata).
+- `UserId` for workspace-scoped identity; `MemberId` only for stream-membership surfaces (`stream_members`, stream member APIs/events) (INV-50).
+- Stream access is inherited, never direct (INV-62): threads carry no access of their own — resolve through `root_stream_id` to the nearest non-thread ancestor; public roots grant read without a `stream_members` row. Any access-gated query (search, feeds, sync catch-up, attachments, notifications) reuses `checkStreamAccess`/`listAccessibleStreamIds` (`apps/backend/src/features/streams/access.ts`) or replicates the thread→root rule, plus a test for the non-member-thread-inside-a-member-channel case. Filtering on raw `stream_members` is the recurring footgun — it silently drops thread content (membership ≠ access).
 
-## Invariant Playbook (Narrative)
+Race-safe writes:
 
-Use invariant IDs in planning, review notes, and PR comments. The rules below are grouped by intent, with concrete examples.
+- No select-then-update without locking (INV-20); prefer upsert:
 
-### 1) Data Model and Persistence Safety
+  ```sql
+  INSERT INTO users (id, workspace_id, workos_user_id, email, role, slug, name)
+  VALUES ($1, $2, $3, $4, $5, $6, $7)
+  ON CONFLICT (workspace_id, workos_user_id)
+  DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name;
+  ```
 
-Relational integrity is enforced in application code, not in PostgreSQL schema design:
+- A check-then-act guard pins the identity/generation observed at read (row id, version, external key) — never just a status flag; status-only guards let stale work clobber a replaced row (INV-20).
+- Set-based/batch ops over per-row loops (INV-56). Single query → pass `pool`, not `withClient` (INV-30). Never hold a DB connection across slow AI/network work (INV-41). Transient workflow state in tracking tables, not domain entities (INV-57).
+- Optimistic concurrency = integer version columns, never timestamp equality (INV-66). PG stores µs, JS `Date` round-trips ms — `WHERE fetched_at = $expected` is false on virtually every write once it crosses the driver, so the path "works never" while looking tested. CAS on an `INTEGER` version incremented every write (`scheduled_messages.version`, `link_previews.refresh_version` are the references). Tests of any timestamp/version-gated predicate must produce the value through the repo's own `NOW()` path and read it back through the repo — hand-crafted `.000Z` fixtures mask exactly this bug.
+- Backfills activate via migration, deploy-safely (INV-67). A registered backfill definition is inert until enqueued — new-code tests all pass while old rows never flow through. Each backfill ships an enqueue migration (precedent: `20260621120000_backfill_mention_actor_refs.sql`) with `process_after = NOW() + ≥10 min`, so old-code replicas cut over before jobs run (`check:migrations` enforces the delay; premature claims throw `Unknown backfill` into the DLQ).
 
-- No foreign keys (INV-1)
-- No DB enums; use `TEXT` and validate in code (INV-3)
-- All entities use prefixed ULIDs like `stream_xxx` (INV-2)
-- Workspace is the data ownership and sharding boundary (INV-8)
-- All product/domain data persisted in PostgreSQL must be workspace-scoped via `workspace_id`
-  and must be queried/mutated with a workspace filter. Global-only infra/auth tables are the
-  explicit exception (e.g. auth sessions, queue internals, outbox listeners, migration metadata).
-- Use `UserId` for workspace-scoped identity.
-  `MemberId` is reserved for stream membership surfaces (`stream_members` and stream member APIs/events) (INV-50)
+### Architecture & Dependencies
 
-Stream access is inherited, never direct (INV-62): a thread carries no access of its own — visibility resolves through `root_stream_id` to the nearest non-thread ancestor, and public root streams grant read access without a `stream_members` row. `checkStreamAccess` and `listAccessibleStreamIds` in `apps/backend/src/features/streams/access.ts` are the canonical predicates. Any query or filter that gates rows on stream membership or visibility (search, feeds, sync catch-up, attachments, notifications) must reuse those helpers or replicate the thread→root rule and pair it with a test for the non-member-thread-inside-a-member-channel case. Filtering by direct `stream_members` rows alone is the recurring footgun: it silently drops thread content for root-stream members (membership ≠ access).
+- Real-time delivery via the outbox pattern, never ad hoc publishes (INV-4). Outbox events written in the same transaction as domain writes; dispatcher publishes async. Event-source updates and read projections commit together (INV-7).
+- Services own transactions (INV-6). Handlers/workers thin, infrastructure-only (INV-34). Data access through repositories (INV-5); composable generic repo methods over one-off sprawl (INV-27).
+- No hidden singletons (exceptions: logger, Langfuse/OTEL, web-push bootstrap) (INV-9). Dependency names describe what they are (INV-10). Fail loudly, no silent fallbacks (INV-11). Pass constructed dependencies, not raw config (INV-12); construct long-lived collaborators once (INV-13) — `new ConversationService({ pool, outboxPublisher })` then call with params, never per-call assembly from connection strings. Reuse existing helpers over parallel implementations (INV-35, INV-37).
 
-Migrations are append-only (INV-17). Never edit existing migration files.
+### API Contracts & Types
 
-Write paths must be race-safe:
+- Validate `body`/`query`/`params` with Zod, not manual `typeof` (INV-55). Errors via `HttpError` classes (`status`, `code`), formatted by middleware (INV-32). Derive types from schemas/constants (INV-31). Centralize constants at the source of truth (INV-33). No hardcoded display text in backend responses — structured data, frontend formats (INV-46).
+- `contentJson` (ProseMirror JSONContent) is the canonical internal representation; markdown is a wire format for external callers only. Internal code passes/stores `contentJson`; serialize at the API boundary (INV-58).
+- Mentions/channel links resolve to ids at ingestion (INV-64). `attrs.id` is authoritative in stored `contentJson` (`usr_`/`persona_`/`bot_` actors, `stream_` channels, `broadcast:here`/`broadcast:channel` sentinels); `slug` is display-only; backend resolves by id, never slug. Markdown wire format carries the id as a pointer link — `[@slug](user:usr_x)`, `[@slug](persona:persona_x)`, `[@slug](bot:bot_x)`, `[@here](broadcast:here)`, `[#slug](channel:stream_x)` — parsed/serialized in `packages/prosemirror/src/markdown.ts` (same scheme-routing as `attachment:`/`memo:`). Bare `@slug`/`#slug` = lenient input (agent/API authored) and the fallback for unresolved ids; `EventService` runs `resolveMentionContent` on every create/edit (rewrites bare-slug ids, re-derives `content_markdown`) before projections, mention extraction, or the outbox — idempotent, no-op when already resolved. Ambiguous-slug precedence: user › persona › bot.
 
-- Never do select-then-update without locking/concurrency control (INV-20)
-- Prefer set-based/batch DB operations over per-row loops (INV-56)
-- Avoid `withClient` for single-query paths; pass `pool` directly (INV-30)
-- Do not keep DB connections open during slow AI/network work (INV-41)
-- Do not store transient workflow state on core domain entities; use tracking tables (INV-57)
-- A check-then-act guard must pin the identity/generation observed at read (the row's id, version, or external key), not just a status flag — status-only guards let stale work clobber a row that was replaced in between (INV-20)
+### AI & Language Behavior
 
-Optimistic concurrency uses integer version columns, never timestamp equality (INV-66). PostgreSQL timestamps carry microseconds; a JS `Date` round-trips at millisecond precision, so a CAS like `WHERE fetched_at = $expected` (or `IS NOT DISTINCT FROM`) is false on virtually every uncontended write once the value has crossed the driver boundary — the write path looks tested and works never. Add an `INTEGER` version column, increment it on every write, and CAS on the version (`scheduled_messages.version` and `link_previews.refresh_version` are the references). Tests for any timestamp- or version-gated predicate must produce the compared value through the repository's own `NOW()`-writing code path and read it back through the repository — hand-crafted `.000Z` fixture timestamps mask exactly this bug.
+- Only current-gen models from `docs/model-reference.md` (INV-16). All AI calls through `createAI`, never raw SDK (INV-28), always with telemetry metadata (INV-19).
+- AI component config lives beside the component in `config.ts`, shared by prod and evals (INV-44); evals call production entry points (INV-45).
+- No language-specific heuristics or English-only literals/regexes for semantic decisions — model-based decisions for language-dependent behavior (INV-54).
+- Companion sessions are minutes-bounded (INV-65). No long-horizon in-session agent work — anything longer becomes a scheduled follow-up (`agent_follow_ups`, `schedule_follow_up` tool) or a delegation to the user's local agent (`delegated_tasks`, `delegate_task` tool, `features/delegations/`): Threa compiles the hand-off brief, the local agent executes with the user's credentials, completion posts back and GAM memorizes it. No tools/prompts that encourage hours-long in-session work; see `docs/plans/ariadne-collaborator-roadmap.md` Phase 5.
+- Memory capture is visible in situ (INV-62). The transaction inserting GAM memo rows also appends a `memos:captured` broadcast timeline event to the source stream with per-memo provenance (`memoId`, `title`, `knowledgeType`, `sourceMessageIds`), rendering and deep-linking to the memory explorer (`?memo=`) without extra fetches. Never silent. Extraction is debounced per stream — the payload's source ids, not event position, are the authoritative link. Event type is in `TIMELINE_BROADCAST_EVENT_TYPES`, so it takes a dense broadcast slot and contiguity (INV-61) covers it.
 
-Backfills activate via migration, deploy-safely (INV-67). A backfill definition registered in code is inert until something enqueues its `backfill.plan` jobs — shipping the definition without the enqueue migration means existing rows never flow through the new path while every new-code test passes. Each new backfill ships an enqueue migration (precedent: `20260621120000_backfill_mention_actor_refs.sql`), and that migration sets `process_after = NOW() + interval` (≥10 minutes): the migration runs before old-code replicas cut over, and an old replica that claims the job throws `Unknown backfill` and burns its retries into the DLQ. `check:migrations` enforces the delay.
+### Frontend & UX
 
-Example: race-safe upsert instead of check-then-act.
+- Shadcn primitives from `apps/frontend/src/components/ui/` (INV-14). Components UI-focused — no business logic or persistence (INV-15). No component definitions inside components (INV-18). Hints/tooltips/popovers never cause layout shift (INV-21).
+- Navigation = `<Link>`, actions = `<button onClick>` — never `onClick={() => navigate(...)}` (INV-40).
+- Socket subscriptions always pair with bootstrap fetches; invalidate bootstrap on reconnect/resubscribe to close event gaps (INV-53).
+- Dates render in device-local time via `apps/frontend/src/lib/dates.ts` (`formatDate`, `formatTime`, `formatRelative`, `formatFull`) (INV-42). Their `prefs?: TimePrefs` arg is for non-UI contexts only (background jobs, prompt rendering, scheduled notifications) — never force `prefs.timezone` into UI. Exception: agent temporal grounding prefers device timezone (`users.timezone`, socket-heartbeat-fresh) over `preferences.timezone` — `deviceTimezone` option on `buildStreamContext` (`apps/backend/src/features/agents/context-builder.ts`).
+- Multi-view pages derive the active view from the URL, not `useState` — refresh/back/shared link lands on the same view (INV-59). Small fixed view sets get route segments (`/saved`, `/saved/done`, `/saved/archived`), tab onChange `navigate(...)`, hook reads `useParams()` with a default.
+- Preview surfaces strip markdown before rendering (INV-60): any user-content preview (thread cards, sidebar previews, activity snippets, notification text, quoted snippets, search results) routes `contentMarkdown` through `stripMarkdownToInline()` (`apps/frontend/src/lib/markdown/strip.ts`) or `truncateContent()` (`apps/frontend/src/components/layout/sidebar/utils.ts`) — never raw markdown into a `<span>`. Backend sends raw markdown; frontend strips at render. Reference surfaces: `StreamItemPreview`, `ActivityPreview`.
+- Timeline window is verifiably contiguous (INV-61). `TIMELINE_BROADCAST_EVENT_TYPES` (`packages/types`) events consume a dense per-stream `broadcastSequence` allocated by `StreamEventRepository` alongside the global `sequence`; author-scoped command events and patch rows (edits, reactions, deletes) don't — so a missing broadcast number is ALWAYS a real gap, never another user's invisible event. Message-move (the one slot-vacating op) declares `vacatedBroadcastSequences` on its source tombstone. `computeTimelineHoles` (`apps/frontend/src/sync/contiguity.ts`) is the single read-side authority: holes render as in-place loading placeholders (never silent gaps) and trigger scoped backfill. Catch-up cursor has one owner — `SyncEngine.joinStreamForCatchUp` reads it BEFORE joining the room; never re-derive at call sites.
+- Success is silent; toasts are for what needs attention (INV-63). No `toast.success` when the UI already shows the result. Toasts: failures (`toast.error`), warnings needing action (`toast.warning`), deferred/offline state (`toast.info`). Actions with no other on-screen signal (clipboard copy, download) confirm in place — swap the trigger's icon to a checkmark, same footprint (INV-21); references: image-gallery toolbar, mobile attachment drawer. Only anchor-less surfaces (closing dropdown, keyboard shortcut) keep `toast.success`, each with an `INV-63-allow:` comment. Guard test: `apps/frontend/src/lib/no-happy-path-success-toast.test.ts`.
 
-```sql
--- Preferred (INV-20)
-INSERT INTO users (id, workspace_id, workos_user_id, email, role, slug, name)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (workspace_id, workos_user_id)
-DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name;
-```
+### Testing
 
-```sql
--- Avoid (INV-20)
-SELECT id FROM users WHERE workspace_id = $1 AND workos_user_id = $2;
--- then conditionally INSERT or UPDATE in app code
-```
+- Fix failing tests; never dismiss as pre-existing (INV-22). No `.skip()`/`.todo()` (INV-26).
+- Assert presence/content of specific events, not counts (INV-23). One object comparison over chains of narrow assertions (INV-24).
+- No `mock.module()`/`vi.mock()` on shared modules — scoped `spyOn` against namespace imports (INV-48). Frontend integration tests mount real components and exercise observable behavior (INV-39).
 
-### 2) Architecture Boundaries and Dependency Flow
+### Hygiene & Scope
 
-Real-time delivery goes through the outbox pattern, not ad hoc publish calls (INV-4). Event-source updates and read projections are committed together (INV-7).
+- No speculative features, config, or comments (INV-36). Delete dead code immediately (INV-38); no deprecated aliases after renames (INV-49).
+- Comments per Output Style above (INV-25). Nested ternaries max one level (INV-47). Colocate variant config; shared behavior on one path (INV-29, INV-43).
 
-Services own transactions (INV-6). Handlers and workers stay thin and infrastructure-focused (INV-34), delegating business logic to services and domain modules.
+### Quick Lookup
 
-Repository pattern expectations:
+- **Persistence:** INV-1, 2, 3, 8, 17, 20, 30, 41, 50, 56, 57, 62, 66, 67
+- **Architecture:** INV-4, 5, 6, 7, 9, 10, 11, 12, 13, 27, 34, 35, 37, 51, 52
+- **API contracts:** INV-31, 32, 33, 46, 55, 58, 64
+- **AI/evals:** INV-16, 19, 28, 44, 45, 54, 65
+- **Frontend/UX:** INV-14, 15, 18, 21, 40, 42, 53, 59, 60, 61, 62, 63
+- **Testing:** INV-22, 23, 24, 26, 39, 48
+- **Hygiene:** INV-25, 29, 36, 38, 43, 47, 49
 
-- Data access goes through repositories (INV-5)
-- Prefer composable generic repo methods over one-off method sprawl (INV-27)
+New invariant: document here with the next id, add enforcing tests, reference it in nearby code where non-obvious.
 
-Dependency rules are strict:
+## Backend Quick Reference
 
-- No hidden singletons (except approved logger, Langfuse/OTEL, and web-push bootstrap constraints) (INV-9)
-- Dependency names must describe what they are (INV-10)
-- Fail loudly; no silent fallback defaults (INV-11)
-- Pass constructed dependencies, not raw config values (INV-12)
-- Construct long-lived collaborators once; avoid per-call dependency assembly (INV-13)
-- Reuse existing helpers and abstractions instead of parallel implementations (INV-35, INV-37)
-
-Example: construct once, then call with params.
-
-```ts
-// Preferred (INV-12, INV-13)
-const conversationService = new ConversationService({ pool, outboxPublisher })
-await conversationService.createMessage({ streamId, content })
-```
-
-```ts
-// Avoid (INV-12, INV-13)
-await createMessage(
-  { connectionString, redisUrl, apiKey },
-  { streamId, content }
-)
-```
-
-### 3) API Contracts, Validation, and Types
-
-Inputs (`body`, `query`, `params`) are validated with Zod schemas, not manual `typeof` checks (INV-55).
-
-Errors carry explicit HTTP semantics via `HttpError` classes (`status`, `code`) and are formatted by middleware (INV-32).
-
-Type derivation should flow from schemas/constants to inferred types to avoid drift (INV-31).
-
-Avoid hardcoded display text in backend responses; return structured data and format in frontend (INV-46).
-
-Avoid magic strings by centralizing constants at the source of truth (INV-33).
-
-`contentJson` (ProseMirror JSONContent) is the canonical internal representation for message content. Markdown is a serialization format for external callers (API wire format). Internal code (components, stores, optimistic events, IDB) should always pass and store `contentJson`; only serialize to markdown at the system boundary when sending to the API (INV-58).
-
-Mentions and channel links resolve to actor/stream ids at ingestion (INV-64). A `mention`/`channelLink` node's `attrs.id` is the authoritative reference in stored `contentJson` — `usr_`/`persona_`/`bot_` for actors, `stream_` for channels, and the `broadcast:here`/`broadcast:channel` sentinels for broadcasts; `slug` is a display label only. Backend logic resolves mentions by id, never slug. The markdown wire format carries the id in an attachment-style pointer link so it round-trips losslessly: `[@slug](user:usr_x)` / `[@slug](persona:persona_x)` / `[@slug](bot:bot_x)` / `[@here](broadcast:here)` / `[#slug](channel:stream_x)`, parsed/serialized in `packages/prosemirror/src/markdown.ts` via the same scheme-routing as `attachment:`/`memo:`. Bare `@slug`/`#slug` is still parsed as *lenient input* (agent/API authored, id unknown) and is the fallback serialization for an unresolved id; `EventService` runs `resolveMentionContent` on every create/edit to rewrite a bare-slug id to a real id (and re-derive `content_markdown` so the two stay consistent) before the body feeds projections, mention extraction, or the outbox. The resolver is idempotent and a no-op when ids are already resolved (rich-client writes / pointer-form markdown). Collision precedence for an ambiguous markdown slug is user › persona › bot.
-
-### 4) AI Integration and Language Behavior
-
-Use only current-generation models listed in `docs/model-reference.md` (INV-16). All AI usage goes through the project AI wrapper (`createAI`), not raw SDK imports (INV-28).
-
-Every AI wrapper call must include telemetry metadata (INV-19).
-
-AI component config lives next to the component in `config.ts` and is shared by production and evals (INV-44). Evals call production entry points rather than reimplementing logic (INV-45).
-
-Do not make semantic decisions with language-specific heuristics or English-only literals/regexes; use model-based decisions for language-dependent behavior (INV-54).
-
-Companion sessions are minutes-bounded (INV-65). Threa does not host long-horizon autonomous agent work — the cost, babysitting, and error compounding belong on the user's machine, not our compute. Anything longer than a session becomes a scheduled follow-up (`agent_follow_ups`, the `schedule_follow_up` tool) or a delegation to the user's local agent (`delegated_tasks`, the `delegate_task` tool in `features/delegations/`): Threa compiles the hand-off brief (it has the workspace context), the local agent executes with the user's own credentials and filesystem, and the completion posts back into the stream where GAM memorizes it. Do not build tools or prompts that encourage a persona to attempt hours-long in-session work; see `docs/plans/ariadne-collaborator-roadmap.md` Phase 5.
-
-Memory capture is visible in situ (INV-62). When GAM extracts memos from a stream's conversations, the same transaction that inserts the memo rows appends a `memos:captured` broadcast timeline event to the source stream, carrying per-memo provenance (`memoId`, `title`, `knowledgeType`, `sourceMessageIds`) so the row renders and deep-links to the memory explorer (`?memo=`) without an extra fetch. Memory creation is never silent — the stream that produced the knowledge shows the capture in its own timeline. Because extraction is debounced per stream, the event lands just after the conversation it came from; the payload's source ids, not the event's position, are the authoritative link back to the messages. The event type is in `TIMELINE_BROADCAST_EVENT_TYPES`, so it consumes a dense broadcast slot and contiguity (INV-61) covers it like any other row.
-
-### 5) Frontend Composition and UX Semantics
-
-Use Shadcn UI components from `apps/frontend/src/components/ui/` for primitives (INV-14). React components should stay UI-focused and avoid business logic or persistence access (INV-15).
-
-Do not define components inside other components (INV-18).
-
-Hints/tooltips/popovers must not cause layout shift (INV-21).
-
-Navigation uses links; actions use buttons (INV-40):
-
-```tsx
-// Preferred (INV-40)
-<Link to={streamUrl}>Open stream</Link>
-<button onClick={archiveStream}>Archive</button>
-```
-
-```tsx
-// Avoid (INV-40)
-<button onClick={() => navigate(streamUrl)}>Open stream</button>
-```
-
-Socket subscriptions must always pair with bootstrap fetches, and bootstrap must be invalidated on reconnect/resubscribe to close event gaps (INV-53).
-
-User-facing dates render in the device's local time (INV-42). Use the helpers in `apps/frontend/src/lib/dates.ts` (`formatDate`, `formatTime`, `formatRelative`, `formatFull`) — they fall through to the browser's locale and timezone, which is what users expect to see in the UI. The `prefs?: TimePrefs` argument these helpers accept is for non-UI contexts (background jobs, server-side prompt rendering, scheduled notifications) where there is no device — in those contexts `prefs.timezone` is the source of truth. Do not force `prefs.timezone` into UI surfaces; it overrides what the user's actual device shows and creates drift across the app. Exception: agent temporal grounding prefers the invoking user's *device* timezone (`users.timezone`, kept fresh by socket heartbeats) over `preferences.timezone`, falling back to the preference when no device has reported — see the `deviceTimezone` option on `buildStreamContext` in `apps/backend/src/features/agents/context-builder.ts`.
-
-Multi-view pages (tabs, sub-sections, filter states) must derive their active view from the URL, not from `useState` — a refresh, back/forward, or shared link must land the user on the same view they were looking at (INV-59). Use distinct route segments like `/saved`, `/saved/done`, `/saved/archived` rather than a query string when there's a small fixed set of views so the URLs read naturally. Tab onChange handlers should `navigate(...)` to the new segment; the view hook reads `useParams()` (or a route-level loader) and falls through to a sensible default for the unsegmented path.
-
-Preview surfaces must strip markdown before rendering. Any UI that shows a preview of user-authored message content (thread cards, sidebar stream previews, activity feed snippets, notification text, quoted snippets, search results) must route `contentMarkdown` through `stripMarkdownToInline()` in `apps/frontend/src/lib/markdown/strip.ts` or `truncateContent()` in `apps/frontend/src/components/layout/sidebar/utils.ts` — never pass raw markdown into a plain `<span>`, or literal syntax (`**bold**`, fenced code, `[text](url)`, `:emoji:` shortcodes) ships to users as characters (INV-60). Backend sends raw markdown on the wire; frontend strips at render time. Reference surfaces that already do this correctly: `StreamItemPreview` (sidebar stream list) and `ActivityPreview` (activity feed).
-
-The rendered timeline window is verifiably contiguous over the viewer-visible ordering (INV-61). Events every member receives as timeline rows (`TIMELINE_BROADCAST_EVENT_TYPES` in `packages/types`) consume a dense per-stream `broadcastSequence` allocated by `StreamEventRepository` alongside the global `sequence`; author-scoped command events and patch-style rows (edits, reactions, deletes) do not, so for any viewer a missing broadcast number is ALWAYS a real gap — never another user's invisible event. The message-move flow, the one operation that vacates slots, declares them on its source tombstone (`vacatedBroadcastSequences`). On the frontend, `computeTimelineHoles` (`apps/frontend/src/sync/contiguity.ts`) is the single read-side authority: a detected hole renders as an in-place loading placeholder (never a silent gap) and triggers a scoped backfill, so a missed message resolves the placeholder where it belongs instead of popping in above rows already on screen. The catch-up cursor has exactly one owner — `SyncEngine.joinStreamForCatchUp` reads the cursor BEFORE joining the room; never re-derive it at call sites.
-
-Success is silent; toasts are for what needs attention (INV-63). Do not confirm a happy-path action with a `toast.success(...)` when the UI already reflects it — a saved setting, a renamed stream, an archived channel, a sent message all show their own result, so the toast is noise (and on mobile it covers the very control the user just touched). Reserve toasts for what the user must notice or act on: failures (`toast.error`), warnings the user must resolve (`toast.warning`), and deferred/offline state ("Edit queued — will be saved when back online", `toast.info`). When an action genuinely has no other on-screen signal — clipboard copy or file download — confirm it **in place** (swap the triggering button's icon to a checkmark, same footprint so nothing shifts per INV-21) rather than toasting; reference surfaces are the image-gallery toolbar and the mobile attachment drawer. The only surfaces that keep a `toast.success` are those with no persistent anchor at all (a closing dropdown item, a keyboard shortcut), and each such call carries an `INV-63-allow:` justification comment. The guard test `apps/frontend/src/lib/no-happy-path-success-toast.test.ts` fails on any unjustified `toast.success`, so the policy can't regress as new mutation handlers land.
-
-### 6) Testing and Reliability Expectations
-
-Always resolve failing tests; do not dismiss failures as pre-existing (INV-22).
-
-Tests should verify behavior, not brittle internals:
-
-- Do not assert event counts; assert presence/content of specific events (INV-23)
-- Prefer one object comparison over chains of narrow assertions (INV-24)
-- No `.skip()` or `.todo()` tests (INV-26)
-- Avoid `mock.module()` and `vi.mock()` for shared modules; prefer scoped `spyOn` patterns against namespace imports (INV-48)
-
-Frontend integration tests should mount real components and exercise observable user behavior (INV-39).
-
-### 7) Maintainability and Scope Control
-
-Do not add speculative features, configuration, or comments for imagined requirements (INV-36).
-
-Delete dead code immediately (INV-38). Do not carry deprecated aliases after renames (INV-49).
-
-Comments explain why the current implementation works; they do not narrate the change history (INV-25). **Default to no comment.** A comment is a liability — it can go stale and then lie, and a stale comment is worse than none because the next reader (human or agent) trusts it. Spend one only when removing it would let a future reader silently break something or waste real time re-deriving intent.
-
-The test a comment must pass to survive: **would it still be true, and still tell the reader something the code itself cannot, six months from now once the diff that introduced it is forgotten?** If not, delete it.
-
-What earns a comment (the "why" the code can't show):
-
-- A non-obvious ordering, concurrency, or atomicity constraint ("append after the deletes so it sorts last").
-- A "this looks wrong but is load-bearing" — a backwards-compat shim, a race guard, a deliberate deviation from the obvious approach.
-- Intent the code genuinely can't express — why a bound is the value it is, why two fields are both optional, a reference to the invariant or external contract that forces the shape.
-
-What to delete on sight:
-
-- **Change narration** — "previously X, now Y", "renamed from", "used to use a loop" — that belongs in the commit message / PR, never in the code.
-- **Restatement** — a comment that says in prose what the next line already says in code. Zero information and the first to rot.
-- **Section-header / decoration** comments that just label the obvious (`// helpers`, `// state`).
-- **Speculative or TODO-for-imagined-requirements** comments (see INV-36).
-
-Comment density is not a navigation aid for agents — code is found by symbol, type, and structure, not by grepping prose. Fewer, load-bearing comments beat many shallow ones.
-
-Avoid nested ternaries beyond one level (INV-47).
-
-When handling variants, colocate variant config and keep shared behavior on one path (INV-29, INV-43).
-
-## Quick Invariant Lookup
-
-- **Persistence and data integrity:** INV-1, INV-2, INV-3, INV-8, INV-17, INV-20, INV-30, INV-41, INV-50, INV-56, INV-57, INV-62, INV-66, INV-67
-- **Architecture and dependencies:** INV-4, INV-5, INV-6, INV-7, INV-9, INV-10, INV-11, INV-12, INV-13, INV-27, INV-34, INV-35, INV-37, INV-51, INV-52
-- **API and backend contracts:** INV-31, INV-32, INV-33, INV-46, INV-55, INV-58, INV-64
-- **AI and eval discipline:** INV-16, INV-19, INV-28, INV-44, INV-45, INV-54, INV-65
-- **Frontend and UX behavior:** INV-14, INV-15, INV-18, INV-21, INV-40, INV-42, INV-53, INV-59, INV-60, INV-61, INV-62, INV-63
-- **Testing:** INV-22, INV-23, INV-24, INV-26, INV-39, INV-48
-- **Code hygiene and maneuverability:** INV-25, INV-29, INV-36, INV-38, INV-43, INV-47, INV-49
-
-When introducing a new invariant:
-
-1. Document it in this file with the next available ID.
-2. Add tests that enforce it.
-3. Reference it in nearby code comments if the constraint is non-obvious.
-
-## Backend Architecture Quick Reference
-
-Three-layer model:
-
-- **Handlers**: validate input, check auth, delegate to services, format responses
-- **Services**: orchestrate business logic and transaction boundaries
-- **Repositories**: pure data access, first arg is a `Querier` (`Pool` or `PoolClient`), map snake_case <-> camelCase
-
-Common patterns:
-
-- Factory pattern for handlers/middleware dependency injection
-- Single query: pass `pool`; multiple related reads: `withClient`; multi-operation writes: `withTransaction`
-- Two pools: main (30 conns) and listen (12 conns) to avoid LISTEN starving transactional work
-- Handlers throw `HttpError`; error middleware handles response formatting
-- Outbox events are written in the same transaction as domain writes; dispatcher publishes asynchronously
-
-See `docs/backend/` for deeper guides.
+- Handlers validate input, check auth, delegate, format responses; services orchestrate logic and transaction boundaries; repositories are pure data access — first arg a `Querier` (`Pool` | `PoolClient`), map snake_case ↔ camelCase.
+- Factory pattern for handler/middleware DI. Single query: `pool`; multiple related reads: `withClient`; multi-op writes: `withTransaction`. Two pools: main (30) + listen (12) so LISTEN can't starve transactions. Handlers throw `HttpError`; middleware formats.
+- Deeper guides: `docs/backend/`.
 
 ## Frontend Patterns
 
-Cache-only observer pattern for TanStack Query v5: provide a `queryFn` that reads from cache. `enabled: false` alone is not enough.
+Cache-only observer for TanStack Query v5 — `enabled: false` alone is not enough:
 
 ```tsx
 const { data } = useQuery({
@@ -384,6 +173,6 @@ const { data } = useQuery({
 })
 ```
 
-Do not call `queryClient.getQueryData()` directly in render for reactive reads.
+No direct `queryClient.getQueryData()` in render for reactive reads.
 
-`WorkspaceBootstrap.streams` is `StreamWithPreview[]`, not `Stream[]`. When adding streams to sidebar cache, spread with `{ ...stream, lastMessagePreview: null }`.
+`WorkspaceBootstrap.streams` is `StreamWithPreview[]`, not `Stream[]` — when adding streams to sidebar cache, spread `{ ...stream, lastMessagePreview: null }`.
