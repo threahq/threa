@@ -169,7 +169,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     handle: () => debouncer.trigger(),
   }
 
-  const outboxDispatcher = new OutboxDispatcher({ listenPool })
+  const outboxDispatcher = new OutboxDispatcher({ listenPool, fallbackPollMs: config.outboxFallbackPollMs })
 
   // WorkOS authz mirror — passive polling, no fan-out yet (Phase 1).
   // Multi-instance safe via the time-based lease in WorkosEventPollerLock,
@@ -212,7 +212,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       workosOrgService,
       authzService,
       lock: workosEventLock,
-      pollIntervalMs: 5_000,
+      pollIntervalMs: config.workosAuthzPollIntervalMs,
       batchSize: 100,
     })
 
@@ -248,7 +248,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       workosOrgService,
       authLogService,
       lock: authLogLock,
-      pollIntervalMs: 5_000,
+      pollIntervalMs: config.authLogPollIntervalMs,
       batchSize: 100,
     })
     authLogPoller.start()

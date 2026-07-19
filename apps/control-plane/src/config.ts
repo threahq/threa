@@ -60,6 +60,12 @@ export interface ControlPlaneConfig {
     authMax: number
     waitlistMax: number
   }
+  /** Outbox dispatcher fallback poll interval (ms) — LISTEN-miss safety net. */
+  outboxFallbackPollMs: number
+  /** WorkOS authz-mirror poller interval (ms). */
+  workosAuthzPollIntervalMs: number
+  /** auth_log ingestion poller interval (ms). */
+  authLogPollIntervalMs: number
   waitlist: {
     /**
      * Resend API key for the waitlist confirmation email. Null falls back to a
@@ -170,6 +176,9 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
       authMax: Number(process.env.AUTH_RATE_LIMIT_MAX) || 20,
       waitlistMax: Number(process.env.WAITLIST_RATE_LIMIT_MAX) || 10,
     },
+    outboxFallbackPollMs: Number(process.env.OUTBOX_FALLBACK_POLL_MS) || 2000,
+    workosAuthzPollIntervalMs: Number(process.env.WORKOS_AUTHZ_POLL_INTERVAL_MS) || 5000,
+    authLogPollIntervalMs: Number(process.env.AUTH_LOG_POLL_INTERVAL_MS) || 5000,
     waitlist: {
       resendApiKey: process.env.RESEND_API_KEY?.trim() || null,
       fromEmail: process.env.WAITLIST_FROM_EMAIL?.trim() || "Threa <hello@threa.io>",
