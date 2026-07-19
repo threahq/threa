@@ -280,7 +280,12 @@ export class CallManager implements CallController {
       const started = await this.deps.startCallRest({ ...params, mediaIncarnation })
       this.assertStartLive(gen)
       const callId = started.call.id
-      setCallSession({ callId, workspaceId: params.workspaceId, streamId: params.streamId, mode: params.mode })
+      // The server owns the mode: joining an existing call ignores our requested
+      // mode, so adopt `started.call.mode` (an audio_only call must stay audio_only
+      // even when the launch surface hardcoded "video") — the camera control hides
+      // instead of tripping the server's camera-not-allowed gate.
+      const mode = started.call.mode
+      setCallSession({ callId, workspaceId: params.workspaceId, streamId: params.streamId, mode })
       // One tab owns the call (Web Locks). A second tab sees the lock held →
       // activeElsewhere; on this tab's crash the lock releases and the other tab
       // may offer rejoin (surfaced via the store; UI is M1.2).
@@ -303,7 +308,7 @@ export class CallManager implements CallController {
         callId,
         workspaceId: params.workspaceId,
         streamId: params.streamId,
-        mode: params.mode,
+        mode,
         mediaIncarnation,
         endpointId: join.endpointId,
         leaseTtlMs: join.leaseTtlMs || ENDPOINT_LEASE_TTL_MS,

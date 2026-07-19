@@ -158,6 +158,13 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
           mediaIncarnation,
         })
 
+        // A rebind on a live socket (hostile/custom client) must leave the prior
+        // call's rooms first, or it keeps receiving that call's roster fan-in.
+        if (binding) {
+          await socket.leave(callRoom(binding.callId))
+          await socket.leave(endpointRoom(binding.callId, binding.endpointId))
+        }
+
         binding = {
           workspaceId,
           callId,

@@ -199,6 +199,30 @@ describe("CallManager", () => {
     expect(getCallState().local.cameraOn).toBe(true)
   })
 
+  it("adopts the server-returned mode over the requested mode (join-existing audio_only)", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    // The launch surface hardcodes "video", but this stream already hosts an
+    // audio_only call — the server returns audio_only and the client must adopt it.
+    ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockResolvedValue({
+      call: { id: "call_1", workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" },
+      created: false,
+      participant: { id: "p_1" },
+      endpoint: { id: "ep_rest" },
+      rosterVersion: 0,
+      roster: [],
+    })
+    const manager = new CallManager(deps, null)
+
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    expect(getCallState().mode).toBe("audio_only")
+    // The adopted mode caps the camera: setCameraOn is a no-op, never tripping the server gate.
+    await manager.setCameraOn(true)
+    expect(transport._events).not.toContain("publish:camera")
+  })
+
   it("audio_only mode ignores setCameraOn", async () => {
     const socket = makeSocket()
     const transport = makeTransport()

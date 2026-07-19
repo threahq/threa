@@ -740,12 +740,18 @@ export class CallService {
       callCfSessionCreateTotal.inc({ status: "error" })
       throw err
     }
+    const sessionCreatedAt = Date.now()
     callCfSessionCreateTotal.inc({ status: "success" })
-    callCfSessionCreateDuration.observe((Date.now() - sessionStartedAt) / 1000)
-    // Server-side time-to-join: from endpoint admission (the join that created the
-    // row) to its first CF session (media "connected"). Only observed on the
-    // fresh-session path (this method returns early when cfSessionId is already set).
-    callTimeToJoinSeconds.observe(Math.max(0, sessionStartedAt - endpoint.createdAt.getTime()) / 1000)
+    callCfSessionCreateDuration.observe((sessionCreatedAt - sessionStartedAt) / 1000)
+    // Server-side time-to-join: endpoint admission (the mint that created the row)
+    // → CF session created — measured AFTER the createSession round-trip, so the
+    // media-connect latency is included. First binding only: a reload REBINDS the
+    // same row (created_at preserved, cf_session_id cleared, connection_seq bumped),
+    // so observing a rebind would charge the whole prior connected duration to the
+    // histogram. connection_seq is 0 only at mint; any rebind makes it ≥1.
+    if (endpoint.connectionSeq === 0) {
+      callTimeToJoinSeconds.observe(Math.max(0, sessionCreatedAt - endpoint.createdAt.getTime()) / 1000)
+    }
 
     let bound: CallEndpoint | null
     try {
@@ -793,7 +799,16 @@ export class CallService {
     tracks: Array<{ kind: PublishedTrack["kind"]; mid: string; trackName: string }>
   }): Promise<{ cf: TracksResult; snapshot: CallRosterSnapshot }> {
     const cf = this.requireCloudflare()
-    const { endpoint } = await this.fenceEndpoint(params)
+    const { endpoint, call } = await this.fenceEndpoint(params)
+    // Cap camera on the track path too, not only the media-state claim gate — the
+    // published-track registry is the other route a camera reaches peers. Screen
+    // share stays allowed (huddle semantics), matching setEndpointMediaState.
+    if (call.mode === "audio_only" && params.tracks.some((t) => t.kind === "camera")) {
+      throw new HttpError("Camera is not allowed on an audio-only call", {
+        status: 409,
+        code: "CALL_CAMERA_NOT_ALLOWED",
+      })
+    }
     const cfSessionId = this.requireCfSession(endpoint)
 
     const localTracks: LocalTrackRequest[] = params.tracks.map((t) => ({
@@ -1037,6 +1052,22 @@ export class CallService {
           graceDeadline: new Date(Date.now() + EMPTY_GRACE_MS),
           reason: "completed",
         })
+        // The call is now empty: retract every outstanding ring in the same tx
+        // (INV-7) so an emptied call's rings never lapse into false missed calls.
+        const cancelled = await CallInvitationRepository.cancelRingingForCall(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+        })
+        await this.settleCancelledRings(client, cancelled)
+      } else {
+        // The call lives on, but the removed user's own outgoing ring is abandoned
+        // (they can no longer answer for the invitee they were calling).
+        const cancelled = await CallInvitationRepository.cancelRingingByInviter(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+          inviterUserId: params.targetUserId,
+        })
+        await this.settleCancelledRings(client, cancelled)
       }
 
       // Removal is a membership change: bump the roster version in the same tx as
@@ -1071,8 +1102,9 @@ export class CallService {
    * Insert the missed-call activity row for the invitee of an expired ring and
    * emit its `activity:created` (with the invitee's absolute unread counts, sync
    * phase 2c) so the badge and push land the same way a mention or DM message
-   * would. The call row supplies the host stream and mode; a missing call/inviter
-   * degrades to a row without those context fields rather than skipping the miss.
+   * would. The call row supplies the host stream and mode; a missing inviter/stream
+   * degrades the context fields, but a missing call row skips the activity entirely
+   * — there is no stream to land the miss on.
    */
   private async recordMissedCall(client: PoolClient, invitation: CallInvitation): Promise<void> {
     const call = await CallRepository.findById(client, invitation.workspaceId, invitation.callId)

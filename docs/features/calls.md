@@ -156,15 +156,15 @@ Calls are gated by **two independent switches**, both required:
 Prometheus metrics on the backend registry (`apps/backend/src/lib/observability/metrics.ts`),
 low-cardinality (no `workspace_id`) — fleet health, not per-tenant billing:
 
-| Metric                                    | Type      | Labels                                                         | What it answers                                                                            |
-| ----------------------------------------- | --------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `call_cf_session_create_total`            | counter   | `status` (success\|error)                                      | CF session-create success rate                                                             |
-| `call_cf_session_create_duration_seconds` | histogram | —                                                              | CF session-create latency                                                                  |
-| `call_cf_errors_total`                    | counter   | `operation`, `cf_code`                                         | connect failure by op + CF error code (renegotiation failures = `operation="renegotiate"`) |
-| `call_time_to_join_seconds`               | histogram | —                                                              | server-side join (endpoint admission) → CF session (connected)                             |
-| `call_ended_total`                        | counter   | `reason` (completed\|reaped)                                   | call-end reason distribution                                                               |
-| `call_ring_outcomes_total`                | counter   | `outcome` (accepted\|declined\|cancelled\|expired\|superseded) | ring outcomes                                                                              |
-| `call_sweep_reaped_total`                 | counter   | `kind` (endpoint\|participant\|grace_call\|expired_ring)       | lease-sweep throughput                                                                     |
+| Metric                                    | Type      | Labels                                                         | What it answers                                                                                   |
+| ----------------------------------------- | --------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `call_cf_session_create_total`            | counter   | `status` (success\|error)                                      | CF session-create success rate                                                                    |
+| `call_cf_session_create_duration_seconds` | histogram | —                                                              | CF session-create latency                                                                         |
+| `call_cf_errors_total`                    | counter   | `operation`, `cf_code`                                         | connect failure by op + CF error code (renegotiation failures = `operation="renegotiate"`)        |
+| `call_time_to_join_seconds`               | histogram | —                                                              | server-side join (endpoint admission) → CF session created (first binding only; rejoins excluded) |
+| `call_ended_total`                        | counter   | `reason` (completed\|reaped)                                   | call-end reason distribution                                                                      |
+| `call_ring_outcomes_total`                | counter   | `outcome` (accepted\|declined\|cancelled\|expired\|superseded) | ring outcomes                                                                                     |
+| `call_sweep_reaped_total`                 | counter   | `kind` (endpoint\|participant\|grace_call\|expired_ring)       | lease-sweep throughput                                                                            |
 
 Per-call egress GB (the bill), loss/RTT, and caption/STT metrics from the plan's
 day-1 list belong to later milestones (egress is a CF-account-level signal; captions

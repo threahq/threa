@@ -15,6 +15,7 @@ import * as streamsModule from "../streams"
 import * as workspacesModule from "../workspaces"
 import * as activityModule from "../activity"
 import * as dbModule from "../../db"
+import * as observabilityModule from "../../lib/observability"
 import { OutboxRepository } from "../../lib/outbox"
 import { CALL_PRODUCT_CAP } from "./config"
 
@@ -655,6 +656,86 @@ describe("CallService.removeParticipant", () => {
       })
     ).rejects.toMatchObject({ code: "CALL_NOT_PARTICIPANT", status: 403 })
   })
+
+  it("cancels the removed user's own outstanding ring while the call lives on", async () => {
+    stubTransaction()
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant({ userId: "usr_remover" }))
+    spyOn(CallParticipantRepository, "remove").mockResolvedValue(
+      fakeParticipant({ id: "callp_target", userId: "usr_target", status: "removed", removedBy: "usr_remover" })
+    )
+    spyOn(CallEndpointRepository, "closeByParticipant").mockResolvedValue([])
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
+    const grace = spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(null)
+    const cancelByInviter = spyOn(CallInvitationRepository, "cancelRingingByInviter").mockResolvedValue([
+      {
+        id: "callinv_3",
+        workspaceId: "ws_1",
+        callId: "call_1",
+        inviteeUserId: "usr_peer",
+        inviterUserId: "usr_target",
+      },
+    ] as never)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().removeParticipant({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      byUserId: "usr_remover",
+      targetUserId: "usr_target",
+    })
+
+    // The call lives on (others remain) — only the removed user's own ring is retracted.
+    expect(grace).not.toHaveBeenCalled()
+    expect(cancelByInviter).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ callId: "call_1", inviterUserId: "usr_target" })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:invitation_settled",
+      expect.objectContaining({ attemptId: "callinv_3", outcome: "cancelled" })
+    )
+  })
+
+  it("cancels every outstanding ring when the removal empties the call", async () => {
+    stubTransaction()
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant({ userId: "usr_remover" }))
+    spyOn(CallParticipantRepository, "remove").mockResolvedValue(
+      fakeParticipant({ id: "callp_target", userId: "usr_target", status: "removed", removedBy: "usr_remover" })
+    )
+    spyOn(CallEndpointRepository, "closeByParticipant").mockResolvedValue([])
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
+    const grace = spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
+    const cancelAll = spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([
+      {
+        id: "callinv_4",
+        workspaceId: "ws_1",
+        callId: "call_1",
+        inviteeUserId: "usr_peer",
+        inviterUserId: "usr_remover",
+      },
+    ] as never)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().removeParticipant({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      byUserId: "usr_remover",
+      targetUserId: "usr_target",
+    })
+
+    expect(grace).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reason: "completed" }))
+    expect(cancelAll).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ callId: "call_1" }))
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:invitation_settled",
+      expect.objectContaining({ targetUserId: "usr_peer", attemptId: "callinv_4", outcome: "cancelled" })
+    )
+  })
 })
 
 describe("CallService invitations", () => {
@@ -1093,6 +1174,49 @@ describe("CallService.createEndpointCfSession", () => {
     await expect(promise).rejects.toMatchObject({ status: 409, code: "CALL_STALE_INCARNATION" })
     expect(cf.closeSession).toHaveBeenCalledWith("sess_new")
   })
+
+  it("observes time-to-join on a first-binding endpoint (connection_seq 0)", async () => {
+    stubWithClient()
+    stubFence(fakeEndpoint({ id: "callep_1", cfSessionId: null, mediaIncarnation: "inc_1", connectionSeq: 0 }))
+    spyOn(CallEndpointRepository, "setCfSessionIfUnset").mockResolvedValue(
+      fakeEndpoint({ id: "callep_1", cfSessionId: "sess_new", mediaIncarnation: "inc_1" })
+    )
+    const observe = spyOn(observabilityModule.callTimeToJoinSeconds, "observe").mockImplementation(() => {})
+    const cf = fakeCloudflare()
+
+    await makeServiceWithCf(cf).createEndpointCfSession({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+    })
+
+    expect(observe).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not observe time-to-join when minting a session for a rebound endpoint (connection_seq ≥ 1)", async () => {
+    stubWithClient()
+    // A reload rebinds the same row (created_at preserved, cf_session_id cleared,
+    // connection_seq bumped); observing it would charge the prior connected
+    // duration to the histogram.
+    stubFence(fakeEndpoint({ id: "callep_1", cfSessionId: null, mediaIncarnation: "inc_2", connectionSeq: 1 }))
+    spyOn(CallEndpointRepository, "setCfSessionIfUnset").mockResolvedValue(
+      fakeEndpoint({ id: "callep_1", cfSessionId: "sess_new", mediaIncarnation: "inc_2" })
+    )
+    const observe = spyOn(observabilityModule.callTimeToJoinSeconds, "observe").mockImplementation(() => {})
+    const cf = fakeCloudflare()
+
+    await makeServiceWithCf(cf).createEndpointCfSession({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_2",
+    })
+
+    expect(observe).not.toHaveBeenCalled()
+  })
 })
 
 describe("CallService.setEndpointMediaState", () => {
@@ -1179,6 +1303,54 @@ describe("CallService.publishTracks", () => {
       tracks: [{ kind: "mic", mid: "0", trackName: "mic0" }],
     })
     await expect(promise).rejects.toMatchObject({ status: 503, code: "CALLS_UNAVAILABLE" })
+  })
+
+  it("rejects a camera-kind publish on an audio-only call before any CF call", async () => {
+    stubWithClient()
+    stubFence(
+      fakeEndpoint({ id: "callep_1", cfSessionId: "sess_1", mediaIncarnation: "inc_1" }),
+      fakeCall({ mode: "audio_only" })
+    )
+    const cf = fakeCloudflare()
+
+    const promise = makeServiceWithCf(cf).publishTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      sdp: { type: "offer", sdp: "o" },
+      tracks: [{ kind: "camera", mid: "1", trackName: "cam1" }],
+    })
+
+    await expect(promise).rejects.toMatchObject({ status: 409, code: "CALL_CAMERA_NOT_ALLOWED" })
+    expect(cf.addLocalTracks).not.toHaveBeenCalled()
+  })
+
+  it("allows a screen-share publish on an audio-only call (huddle semantics)", async () => {
+    stubWithClient()
+    stubTransaction()
+    stubFence(
+      fakeEndpoint({ id: "callep_1", cfSessionId: "sess_1", mediaIncarnation: "inc_1" }),
+      fakeCall({ mode: "audio_only" })
+    )
+    spyOn(CallEndpointRepository, "setPublishedTracks").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(5)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+    const cf = fakeCloudflare()
+
+    const result = await makeServiceWithCf(cf).publishTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      sdp: { type: "offer", sdp: "o" },
+      tracks: [{ kind: "share_video", mid: "2", trackName: "share2" }],
+    })
+
+    expect(cf.addLocalTracks).toHaveBeenCalledTimes(1)
+    expect(result.snapshot.rosterVersion).toBe(5)
   })
 })
 

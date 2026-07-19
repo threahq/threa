@@ -153,6 +153,45 @@ describe("registerCallGateway call:join", () => {
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "VALIDATION_ERROR" }))
     expect(callService.joinCall).not.toHaveBeenCalled()
   })
+
+  it("leaves the prior call's rooms when a bound socket rejoins (no stale fan-in on rebind)", async () => {
+    let joinCount = 0
+    const { socket } = setup({
+      callService: {
+        joinCall: mock(async () => {
+          joinCount += 1
+          return joinCount === 1
+            ? {
+                call: { id: "call_1" },
+                participant: { id: "callp_1" },
+                endpoint: { id: "callep_1", epoch: 2, connectionSeq: 4 },
+              }
+            : {
+                call: { id: "call_2" },
+                participant: { id: "callp_2" },
+                endpoint: { id: "callep_2", epoch: 1, connectionSeq: 1 },
+              }
+        }),
+      },
+    })
+
+    await socket.trigger(
+      "call:join",
+      JOIN,
+      mock(() => {})
+    )
+    await socket.trigger(
+      "call:join",
+      { workspaceId: "ws_1", callId: "call_2", mediaIncarnation: "inc_2" },
+      mock(() => {})
+    )
+
+    // The prior call's rooms are left so its roster fan-out no longer reaches this socket.
+    expect(socket.left.has("call:call_1")).toBe(true)
+    expect(socket.left.has("call:call_1:ep:callep_1")).toBe(true)
+    expect(socket.joined.has("call:call_2")).toBe(true)
+    expect(socket.joined.has("call:call_2:ep:callep_2")).toBe(true)
+  })
 })
 
 describe("registerCallGateway call:state", () => {
