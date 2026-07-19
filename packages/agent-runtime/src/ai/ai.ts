@@ -650,13 +650,23 @@ export function createAI(config: AIConfig): AI {
 
     const budgetMetadata = budgetDecision ? buildBudgetTelemetryMetadata(budgetDecision) : {}
 
+    // Non-scalar metadata (subjectRefs rides this channel for the access-log
+    // sink) is not a valid OTEL attribute value — the SDK would diag-warn and
+    // drop it, polluting traces. Only scalars flow to span attributes.
+    const scalarMetadata: Record<string, string | number | boolean | undefined> = {}
+    for (const [key, value] of Object.entries(telemetry.metadata ?? {})) {
+      if (value === undefined || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        scalarMetadata[key] = value
+      }
+    }
+
     return {
       isEnabled: true,
       functionId: telemetry.functionId,
       metadata: {
         ...modelMetadata,
         ...budgetMetadata,
-        ...telemetry.metadata,
+        ...scalarMetadata,
       },
     } as const
   }
