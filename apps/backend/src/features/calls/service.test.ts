@@ -476,6 +476,67 @@ describe("CallService.leaveCall", () => {
     ).rejects.toMatchObject({ code: "CALL_ENDPOINT_NOT_FOUND", status: 404 })
     expect(close).not.toHaveBeenCalled()
   })
+
+  it("cancels the outstanding ring when the inviter hangs up before an answer (no missed call)", async () => {
+    stubTransaction()
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallEndpointRepository, "findById").mockResolvedValue(fakeEndpoint())
+    spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant())
+    spyOn(CallEndpointRepository, "close").mockResolvedValue(fakeEndpoint({ status: "closed" }))
+    spyOn(CallParticipantRepository, "markLeftIfNoLiveEndpoint").mockResolvedValue(fakeParticipant({ status: "left" }))
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
+    spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    const cancelAll = spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([
+      { id: "callinv_1", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_peer", inviterUserId: "usr_a" },
+    ] as never)
+    const activityInsert = spyOn(activityModule.ActivityRepository, "insert").mockResolvedValue({} as never)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().leaveCall({ workspaceId: "ws_1", callId: "call_1", userId: "usr_a", endpointId: "callep_1" })
+
+    expect(cancelAll).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ callId: "call_1" }))
+    // The retracted ring settles as cancelled to the invitee in the same tx (INV-7).
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:invitation_settled",
+      expect.objectContaining({ targetUserId: "usr_peer", attemptId: "callinv_1", outcome: "cancelled" })
+    )
+    // A cancelled ring never lapses to expired → no missed-call activity is created.
+    expect(activityInsert).not.toHaveBeenCalled()
+  })
+
+  it("cancels the leaving inviter's ring even when other participants remain", async () => {
+    stubTransaction()
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallEndpointRepository, "findById").mockResolvedValue(fakeEndpoint())
+    spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant())
+    spyOn(CallEndpointRepository, "close").mockResolvedValue(fakeEndpoint({ status: "closed" }))
+    spyOn(CallParticipantRepository, "markLeftIfNoLiveEndpoint").mockResolvedValue(fakeParticipant({ status: "left" }))
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(2)
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall())
+    const grace = spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(null)
+    const cancelByInviter = spyOn(CallInvitationRepository, "cancelRingingByInviter").mockResolvedValue([
+      { id: "callinv_2", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_peer", inviterUserId: "usr_a" },
+    ] as never)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().leaveCall({ workspaceId: "ws_1", callId: "call_1", userId: "usr_a", endpointId: "callep_1" })
+
+    // The call lives on (others remain) — only the leaver's own ring is retracted.
+    expect(grace).not.toHaveBeenCalled()
+    expect(cancelByInviter).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ callId: "call_1", inviterUserId: "usr_a" })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:invitation_settled",
+      expect.objectContaining({ attemptId: "callinv_2", outcome: "cancelled" })
+    )
+  })
 })
 
 describe("CallService.renewEndpointLease — fencing", () => {

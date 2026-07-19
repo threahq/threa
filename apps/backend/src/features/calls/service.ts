@@ -368,6 +368,23 @@ export class CallService {
           graceDeadline: new Date(Date.now() + EMPTY_GRACE_MS),
           reason: "completed",
         })
+        // The call is now empty: retract every outstanding ring in the same tx
+        // (INV-7). Cancelling (not letting it lapse) is what prevents a
+        // missed-call activity for a caller who hung up before an answer.
+        const cancelled = await CallInvitationRepository.cancelRingingForCall(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+        })
+        await this.settleCancelledRings(client, cancelled)
+      } else {
+        // The call lives on, but the leaving user's own outgoing ring is
+        // abandoned (a DM inviter hanging up while a group call continues).
+        const cancelled = await CallInvitationRepository.cancelRingingByInviter(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+          inviterUserId: params.userId,
+        })
+        await this.settleCancelledRings(client, cancelled)
       }
 
       // A leave is a membership change: bump the roster version in the same tx as
@@ -427,13 +444,24 @@ export class CallService {
     invitation: CallInvitation,
     outcome: "accepted" | "declined" | "cancelled" | "expired" | "superseded"
   ): Promise<void> {
+    // Carry the inviter name so the SW's offline "Call ended" fallback can name
+    // the caller when the cancel push collapsed a ring that was never shown.
+    const inviter = await UserRepository.findById(client, invitation.workspaceId, invitation.inviterUserId)
     await OutboxRepository.insert(client, "call:invitation_settled", {
       workspaceId: invitation.workspaceId,
       targetUserId: invitation.inviteeUserId,
       attemptId: invitation.id,
       callId: invitation.callId,
       outcome,
+      inviterName: inviter?.name ?? null,
     })
+  }
+
+  /** Cancel the given outstanding rings (`ringing → cancelled` already applied) and settle each. */
+  private async settleCancelledRings(client: PoolClient, invitations: CallInvitation[]): Promise<void> {
+    for (const invitation of invitations) {
+      await this.emitSettled(client, invitation, "cancelled")
+    }
   }
 
   /**
@@ -956,6 +984,15 @@ export class CallService {
         graceDeadline: new Date(now.getTime() + EMPTY_GRACE_MS),
       })
 
+      // A graced call is abandoned (its last live endpoint lapsed): retract every
+      // outstanding ring in the same tx (INV-7) so the invitee's overlay clears
+      // and the caller-gone ring never lands a missed-call activity.
+      const cancelledRings = await CallInvitationRepository.cancelRingingForCalls(
+        client,
+        graced.map((c) => c.id)
+      )
+      await this.settleCancelledRings(client, cancelledRings)
+
       // The reap changed membership on every call it touched: bump their roster
       // versions in the same tx (the call rows are already locked FOR UPDATE) so a
       // later roster fan-out is strictly newer than what peers hold (INV-66).
@@ -982,6 +1019,14 @@ export class CallService {
   async endGraceExpiredCalls(now: Date = new Date()): Promise<{ ended: number }> {
     return withTransaction(this.pool, async (client) => {
       const ended = await CallRepository.endGraceExpired(client, now)
+      // Belt for any ring still ringing on a call that reaches `ended` without
+      // having been abandoned through leave/reap: cancel and settle it in the
+      // same tx (INV-7) rather than leaving it to lapse into a missed call.
+      const cancelledRings = await CallInvitationRepository.cancelRingingForCalls(
+        client,
+        ended.map((c) => c.id)
+      )
+      await this.settleCancelledRings(client, cancelledRings)
       return { ended: ended.length }
     })
   }

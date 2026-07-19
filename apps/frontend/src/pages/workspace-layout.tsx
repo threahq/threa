@@ -526,7 +526,7 @@ export function WorkspaceLayout() {
                   </MentionableWrapper>
                 </UserProfileProvider>
                 <CallDock />
-                <IncomingCallOverlay />
+                <IncomingCallOverlay workspaceId={workspaceId} />
               </CallLaunchProvider>
             </ChannelLinkProvider>
           </CoordinatedLoadingProvider>

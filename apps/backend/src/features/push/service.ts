@@ -618,18 +618,27 @@ export class PushService {
   /**
    * Cancel a ring push on every settle (accept/decline/cancel/expire). Same topic
    * as the ring so an undelivered ring queued for an offline device collapses to
-   * this cancel; a delivered ring is closed by the service worker. No preference
-   * gate — a cancel must always chase whatever ring might have gone out.
+   * this cancel; a delivered ring is closed by the service worker.
+   *
+   * Gated on the same preference/DND check as {@link deliverCallRing}: if the ring
+   * itself was suppressed (NONE / do-not-disturb) then nothing was ever queued to
+   * collapse, and a cancel push that shows no notification would burn the browser's
+   * silent-push quota (Firefox revokes the subscription at 0) — so there is nothing
+   * to cancel.
    */
   async deliverCallRingCancel(payload: CallInvitationSettledOutboxPayload): Promise<void> {
     if (!this.canSend) return
-    const { workspaceId, targetUserId, attemptId } = payload
+    const { workspaceId, targetUserId, attemptId, inviterName } = payload
+
+    const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
+    if (prefLevel === PrefNotificationLevels.NONE) return
+    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) return
 
     const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, targetUserId)
     if (subscriptions.length === 0) return
 
     const pushPayload = JSON.stringify({
-      data: { kind: "call_ring_cancel", workspaceId, attemptId },
+      data: { kind: "call_ring_cancel", workspaceId, attemptId, inviterName: inviterName ?? undefined },
     })
 
     await this.sendAndEvictStale(workspaceId, subscriptions, pushPayload, {

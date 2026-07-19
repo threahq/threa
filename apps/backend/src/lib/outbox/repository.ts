@@ -923,6 +923,12 @@ export interface CallInvitationSettledOutboxPayload extends WorkspaceScopedPaylo
   callId: string
   outcome: "accepted" | "declined" | "cancelled" | "expired" | "superseded"
   settledBy?: string
+  /**
+   * Inviter display name, for the SW's offline "Call ended" fallback. Present so
+   * a cancel that collapsed an unshown ring can still name the caller; null when
+   * the inviter row is gone.
+   */
+  inviterName?: string | null
 }
 
 // Bot event payloads

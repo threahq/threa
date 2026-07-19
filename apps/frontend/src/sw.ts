@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from "workbox-precaching"
 import { resolveTag } from "./lib/sw-notification-format"
+import { planRingCancel } from "./calls/call-ring-cancel"
 import { isDevicePresent, PRESENCE_CACHE } from "./lib/sw-presence"
 import { readVisibleStreams } from "./lib/visible-streams"
 import {
@@ -482,13 +483,21 @@ self.addEventListener("push", (event) => {
   }
 
   // Ring retracted (accepted elsewhere / declined / cancelled / expired). Close
-  // the ring notification best-effort — platform retract support varies (some
-  // won't remove an already-shown notification), documented in the plan.
+  // the tagged ring notification best-effort — platform retract support varies
+  // (some won't remove an already-shown notification), documented in the plan.
+  // When nothing was closed the cancel collapsed a ring this device never showed
+  // (offline topic-collapse); show a minimal, silent "Call ended" so the push is
+  // never notification-less (a silent-result push burns the browser's silent-push
+  // quota — Firefox revokes the subscription at 0).
   if (data.kind === "call_ring_cancel") {
     if (!data.attemptId) return
     event.waitUntil(
       self.registration.getNotifications({ tag: `call-${data.attemptId}` }).then((ns) => {
         for (const n of ns) n.close()
+        const plan = planRingCancel(ns.length, data)
+        if (plan.show) {
+          return self.registration.showNotification(plan.title, plan.options as ExtendedNotificationOptions)
+        }
       })
     )
     return

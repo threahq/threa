@@ -2,9 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { render, screen, cleanup, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
+import { toast } from "sonner"
 import { IncomingCallOverlay } from "./incoming-call-overlay"
 import * as launchCtx from "./call-launch-context"
 import * as ringTone from "@/calls/ring-tone"
+import * as workspacesHooks from "@/hooks/use-workspaces"
+import * as workspaceStore from "@/stores/workspace-store"
 import { api } from "@/api/client"
 import {
   addIncomingCall,
@@ -33,7 +36,7 @@ let launch: ReturnType<typeof vi.fn>
 function renderOverlay() {
   return render(
     <MemoryRouter>
-      <IncomingCallOverlay />
+      <IncomingCallOverlay workspaceId="ws_1" />
     </MemoryRouter>
   )
 }
@@ -51,6 +54,9 @@ beforeEach(() => {
   vi.spyOn(ringTone, "installRingAudioWarmup").mockReturnValue(() => {})
   vi.spyOn(ringTone, "startRing").mockReturnValue(true)
   vi.spyOn(ringTone, "stopRing").mockReturnValue(undefined)
+  // Default: no notification suppression (level not none, no do-not-disturb).
+  vi.spyOn(workspacesHooks, "useCurrentWorkspaceUser").mockReturnValue(null)
+  vi.spyOn(workspaceStore, "useWorkspaceUserPreferences").mockReturnValue(undefined)
 })
 
 afterEach(() => {
@@ -128,5 +134,64 @@ describe("IncomingCallOverlay", () => {
       "Ada is calling…",
       expect.objectContaining({ tag: "call-callinv_1", body: "Video call" })
     )
+  })
+
+  it("suppresses the audible ring on do-not-disturb but still renders the card", () => {
+    vi.spyOn(workspacesHooks, "useCurrentWorkspaceUser").mockReturnValue({
+      statusEmoji: null,
+      statusText: null,
+      statusExpiresAt: null,
+      statusPausesNotifications: false,
+      notificationsPausedUntil: null,
+      notificationsPausedIndefinitely: true,
+    } as never)
+
+    act(() => addIncomingCall(makeCall()))
+    renderOverlay()
+
+    // The visual card stays — the ring is still actionable, just silent.
+    expect(screen.getByText("Ada is calling…")).toBeInTheDocument()
+    expect(ringTone.startRing).not.toHaveBeenCalled()
+  })
+
+  it("suppresses the audible ring when the notification level is none", () => {
+    vi.spyOn(workspaceStore, "useWorkspaceUserPreferences").mockReturnValue({ notificationLevel: "none" } as never)
+
+    act(() => addIncomingCall(makeCall()))
+    renderOverlay()
+
+    expect(screen.getByText("Ada is calling…")).toBeInTheDocument()
+    expect(ringTone.startRing).not.toHaveBeenCalled()
+  })
+
+  it("scopes mute per attempt — a later ring still sounds", async () => {
+    act(() => addIncomingCall(makeCall({ attemptId: "callinv_A", callId: "call_A" })))
+    renderOverlay()
+
+    await userEvent.click(screen.getByLabelText("Silence ring"))
+    ;(ringTone.startRing as ReturnType<typeof vi.fn>).mockClear()
+
+    act(() => addIncomingCall(makeCall({ attemptId: "callinv_B", callId: "call_B", inviterName: "Bo" })))
+
+    expect(ringTone.startRing).toHaveBeenCalled()
+  })
+
+  it("tells the user when a ?call deep-link has no matching live ring", () => {
+    const info = vi.spyOn(toast, "info").mockReturnValue("t" as never)
+
+    render(
+      <MemoryRouter initialEntries={["/?call=call_missing"]}>
+        <IncomingCallOverlay workspaceId="ws_1" />
+      </MemoryRouter>
+    )
+
+    expect(info).toHaveBeenCalledWith("This call has ended")
+  })
+
+  it("announces the ring through an alert live region", () => {
+    act(() => addIncomingCall(makeCall()))
+    renderOverlay()
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Ada is calling…")
   })
 })
