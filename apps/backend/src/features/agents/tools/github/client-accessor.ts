@@ -15,10 +15,11 @@ export interface GitHubToolError {
 
 export async function withGithubClient<T>(
   deps: GitHubToolDeps,
+  owner: string | undefined,
   fn: (client: GitHubClient) => Promise<T>
 ): Promise<T | GitHubToolError> {
   try {
-    const client = await deps.getClient()
+    const client = await deps.getClient(owner)
     if (!client) {
       return {
         error:
@@ -33,10 +34,12 @@ export async function withGithubClient<T>(
 }
 
 /**
- * Memoize `WorkspaceIntegrationService.getGithubClient` for the lifetime of a single
- * agent turn so chained GitHub tool calls share one DB fetch and (possibly) one token
- * refresh. A rejection clears the cache so a later call in the same turn gets a fresh
- * attempt instead of inheriting a transient failure.
+ * Memoize `WorkspaceIntegrationService.getGithubClient` per repository owner for the
+ * lifetime of a single agent turn so chained GitHub tool calls against the same owner
+ * share one DB fetch and (possibly) one token refresh. Different owners resolve
+ * independently because owner-aware routing can pick a different installation. A
+ * rejection clears only that owner's entry so a later call gets a fresh attempt
+ * instead of inheriting a transient failure.
  *
  * Agent tools opt into the unauthenticated fallback: when the workspace has no GitHub
  * integration, the tools still work against public/open-source repositories instead of
@@ -45,14 +48,22 @@ export async function withGithubClient<T>(
 export function createMemoizedGithubClient(
   service: WorkspaceIntegrationService,
   workspaceId: string
-): () => Promise<GitHubClient | null> {
-  let cached: Promise<GitHubClient | null> | null = null
-  return async () => {
-    if (cached === null) cached = service.getGithubClient(workspaceId, { allowUnauthenticatedFallback: true })
+): (owner?: string) => Promise<GitHubClient | null> {
+  const cache = new Map<string, Promise<GitHubClient | null>>()
+  return async (owner?: string) => {
+    const key = owner?.toLowerCase() ?? ""
+    let pending = cache.get(key)
+    if (pending === undefined) {
+      pending = service.getGithubClient(
+        workspaceId,
+        owner ? { repoOwner: owner, allowUnauthenticatedFallback: true } : { allowUnauthenticatedFallback: true }
+      )
+      cache.set(key, pending)
+    }
     try {
-      return await cached
+      return await pending
     } catch (err) {
-      cached = null
+      cache.delete(key)
       throw err
     }
   }

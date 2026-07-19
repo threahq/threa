@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { fetchGitHubPreview } from "./github-preview"
+import { checkGitHubRefreshGate, fetchGitHubPreview } from "./github-preview"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 
 describe("fetchGitHubPreview", () => {
@@ -674,5 +674,36 @@ describe("fetchGitHubPreview", () => {
         },
       },
     })
+  })
+
+  test("routes the client fetch to the repository owner's installation", async () => {
+    let capturedOptions: unknown
+    await fetchGitHubPreview("ws_123", "https://github.com/octocat/hello-world/pull/42", {
+      async getGithubClient(_workspaceId: string, options?: unknown) {
+        capturedOptions = options
+        return null
+      },
+    } as unknown as WorkspaceIntegrationService)
+
+    expect(capturedOptions).toMatchObject({ repoOwner: "octocat" })
+  })
+})
+
+describe("checkGitHubRefreshGate", () => {
+  test("routes the conditional gate fetch to the repository owner's installation", async () => {
+    let capturedOptions: unknown
+    const result = await checkGitHubRefreshGate("ws_123", "https://github.com/octocat/hello-world/pull/42", null, {
+      async getGithubClient(_workspaceId: string, options?: unknown) {
+        capturedOptions = options
+        return {
+          async requestConditional() {
+            return { status: 304 as const, etag: null }
+          },
+        }
+      },
+    } as unknown as WorkspaceIntegrationService)
+
+    expect(capturedOptions).toMatchObject({ repoOwner: "octocat" })
+    expect(result).toEqual({ outcome: "not_modified" })
   })
 })

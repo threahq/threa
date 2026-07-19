@@ -59,7 +59,7 @@ export type IssuesInput = z.infer<typeof IssuesSchema>
 async function searchIssues(deps: GitHubToolDeps, input: IssuesInput): Promise<AgentToolResult> {
   const scopedQuery = `${input.query} repo:${input.owner}/${input.repo}`
 
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const response = await client.request<any>("GET /search/issues", {
       q: scopedQuery,
       sort: input.sort === "best-match" ? undefined : input.sort,
@@ -107,7 +107,7 @@ async function searchIssues(deps: GitHubToolDeps, input: IssuesInput): Promise<A
 }
 
 async function getIssue(deps: GitHubToolDeps, input: IssuesInput): Promise<AgentToolResult> {
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const issue = await client.request<any>("GET /repos/{owner}/{repo}/issues/{issue_number}", {
       owner: input.owner,
       repo: input.repo,

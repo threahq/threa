@@ -29,7 +29,7 @@ const ReleasesSchema = z.object({
 export type ReleasesInput = z.infer<typeof ReleasesSchema>
 
 async function listReleases(deps: GitHubToolDeps, input: ReleasesInput): Promise<AgentToolResult> {
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const response = await client.request<any[]>("GET /repos/{owner}/{repo}/releases", {
       owner: input.owner,
       repo: input.repo,
@@ -74,7 +74,7 @@ async function listReleases(deps: GitHubToolDeps, input: ReleasesInput): Promise
 }
 
 async function getRelease(deps: GitHubToolDeps, input: ReleasesInput): Promise<AgentToolResult> {
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const release = input.tag
       ? await client.request<any>("GET /repos/{owner}/{repo}/releases/tags/{tag}", {
           owner: input.owner,
