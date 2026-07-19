@@ -388,7 +388,17 @@ export class CallService {
     now: Date = new Date()
   ): Promise<{ endpoints: number; participants: number; calls: number }> {
     return withTransaction(this.pool, async (client) => {
-      const closed = await CallEndpointRepository.reapLapsed(client, now)
+      const lapsedCallIds = await CallEndpointRepository.findLapsedCallIds(client, now)
+      if (lapsedCallIds.length === 0) return { endpoints: 0, participants: 0, calls: 0 }
+
+      // Take the call-row locks first, in id order, so this sweep acquires the
+      // call lock before any endpoint/participant lock — the same
+      // call→endpoint→participant order every interactive path uses. Reaping
+      // endpoints first (as before) AB-BA deadlocked a concurrent leave/remove
+      // that locks the call first.
+      await CallRepository.lockForUpdateInOrder(client, lapsedCallIds)
+
+      const closed = await CallEndpointRepository.reapLapsed(client, now, lapsedCallIds)
       if (closed.length === 0) return { endpoints: 0, participants: 0, calls: 0 }
 
       const participantIds = [...new Set(closed.map((e) => e.participantId))]

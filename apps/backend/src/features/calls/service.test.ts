@@ -525,12 +525,20 @@ describe("CallService invitations", () => {
 describe("CallService sweeps", () => {
   afterEach(() => mock.restore())
 
-  it("reapLapsedEndpoints cascades participants and calls, returning counts", async () => {
+  it("reapLapsedEndpoints locks calls before closing endpoints, then cascades, returning counts", async () => {
     stubTransaction()
-    spyOn(CallEndpointRepository, "reapLapsed").mockResolvedValue([
-      fakeEndpoint({ id: "callep_a", participantId: "callp_a", callId: "call_1", status: "closed" }),
-      fakeEndpoint({ id: "callep_b", participantId: "callp_b", callId: "call_1", status: "closed" }),
-    ])
+    const order: string[] = []
+    spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue(["call_1"])
+    const lock = spyOn(CallRepository, "lockForUpdateInOrder").mockImplementation(async () => {
+      order.push("lock")
+    })
+    spyOn(CallEndpointRepository, "reapLapsed").mockImplementation(async () => {
+      order.push("reap")
+      return [
+        fakeEndpoint({ id: "callep_a", participantId: "callp_a", callId: "call_1", status: "closed" }),
+        fakeEndpoint({ id: "callep_b", participantId: "callp_b", callId: "call_1", status: "closed" }),
+      ]
+    })
     const markLeft = spyOn(CallParticipantRepository, "markLeftWhereNoLiveEndpoint").mockResolvedValue([
       fakeParticipant({ id: "callp_a", status: "left" }),
     ])
@@ -541,18 +549,25 @@ describe("CallService sweeps", () => {
     const result = await makeService().reapLapsedEndpoints(NOW)
 
     expect(result).toEqual({ endpoints: 2, participants: 1, calls: 1 })
+    // Call lock precedes the endpoint close — the fix for the endpoint→call AB-BA deadlock.
+    expect(order).toEqual(["lock", "reap"])
+    expect(lock).toHaveBeenCalledWith(expect.anything(), ["call_1"])
     expect(markLeft).toHaveBeenCalledWith(expect.anything(), ["callp_a", "callp_b"])
     expect(grace).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ callIds: ["call_1"] }))
   })
 
-  it("reapLapsedEndpoints short-circuits when nothing lapsed", async () => {
+  it("reapLapsedEndpoints short-circuits before locking when nothing lapsed", async () => {
     stubTransaction()
-    spyOn(CallEndpointRepository, "reapLapsed").mockResolvedValue([])
+    spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue([])
+    const lock = spyOn(CallRepository, "lockForUpdateInOrder").mockResolvedValue(undefined)
+    const reap = spyOn(CallEndpointRepository, "reapLapsed").mockResolvedValue([])
     const markLeft = spyOn(CallParticipantRepository, "markLeftWhereNoLiveEndpoint").mockResolvedValue([])
 
     const result = await makeService().reapLapsedEndpoints(NOW)
 
     expect(result).toEqual({ endpoints: 0, participants: 0, calls: 0 })
+    expect(lock).not.toHaveBeenCalled()
+    expect(reap).not.toHaveBeenCalled()
     expect(markLeft).not.toHaveBeenCalled()
   })
 

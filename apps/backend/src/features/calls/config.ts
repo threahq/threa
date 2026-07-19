@@ -34,12 +34,6 @@ export type CallParticipantStatus = (typeof CALL_PARTICIPANT_STATUSES)[number]
 export const CALL_ENDPOINT_STATUSES = ["connected", "reconnecting", "closed"] as const
 export type CallEndpointStatus = (typeof CALL_ENDPOINT_STATUSES)[number]
 
-/** Endpoint statuses that count as a live (admitted) media session. */
-export const LIVE_ENDPOINT_STATUSES = ["connected", "reconnecting"] as const
-
-/** Call statuses that hold the stream's active-call slot (joinable). */
-export const OPEN_CALL_STATUSES = ["active", "empty_grace"] as const
-
 /** How long a call sits in `empty_grace` after the last participant leaves before it ends. */
 export const EMPTY_GRACE_MS = 45_000
 

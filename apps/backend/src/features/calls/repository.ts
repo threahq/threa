@@ -136,6 +136,25 @@ export const CallRepository = {
   },
 
   /**
+   * Lock a batch of call rows in ascending id order (INV-56). The reaper takes
+   * these BEFORE touching any endpoint or participant, matching the
+   * call→endpoint→participant lock order every interactive path already uses via
+   * {@link findByIdForUpdate}; without it the endpoint-first reap would AB-BA
+   * deadlock a concurrent leave/remove that locks call-first. `ORDER BY id` under
+   * a single `FOR UPDATE` fixes acquisition order so lockers never cross. Locked
+   * by global id (no workspace filter) as the sweeper runs workspace-agnostic.
+   */
+  async lockForUpdateInOrder(db: Querier, callIds: readonly string[]): Promise<void> {
+    if (callIds.length === 0) return
+    await db.query(sql`
+      SELECT id FROM calls
+      WHERE id = ANY(${callIds as string[]})
+      ORDER BY id
+      FOR UPDATE
+    `)
+  },
+
+  /**
    * CAS `empty_grace → active` on a join-during-grace, clearing the deadline and
    * the provisional end reason so a revived call can never carry a stale one.
    */
@@ -169,7 +188,7 @@ export const CallRepository = {
       WHERE c.workspace_id = ${params.workspaceId} AND c.id = ${params.id} AND c.status = 'active'
         AND NOT EXISTS (
           SELECT 1 FROM call_participants p
-          WHERE p.call_id = c.id AND p.status = 'joined'
+          WHERE p.workspace_id = c.workspace_id AND p.call_id = c.id AND p.status = 'joined'
         )
       RETURNING ${sql.raw(CALL_COLUMNS)}
     `)
@@ -194,7 +213,7 @@ export const CallRepository = {
       WHERE c.id = ANY(${params.callIds as string[]}) AND c.status = 'active'
         AND NOT EXISTS (
           SELECT 1 FROM call_participants p
-          WHERE p.call_id = c.id AND p.status = 'joined'
+          WHERE p.workspace_id = c.workspace_id AND p.call_id = c.id AND p.status = 'joined'
         )
       RETURNING ${sql.raw(CALL_COLUMNS)}
     `)
@@ -216,7 +235,7 @@ export const CallRepository = {
       WHERE c.status = 'empty_grace' AND c.grace_deadline <= ${now}
         AND NOT EXISTS (
           SELECT 1 FROM call_participants p
-          WHERE p.call_id = c.id AND p.status = 'joined'
+          WHERE p.workspace_id = c.workspace_id AND p.call_id = c.id AND p.status = 'joined'
         )
       RETURNING ${sql.raw(CALL_COLUMNS)}
     `)
@@ -485,7 +504,7 @@ export const CallParticipantRepository = {
         AND p.user_id = ${params.userId} AND p.status = 'joined'
         AND NOT EXISTS (
           SELECT 1 FROM call_endpoints e
-          WHERE e.participant_id = p.id AND e.status IN ('connected', 'reconnecting')
+          WHERE e.workspace_id = p.workspace_id AND e.participant_id = p.id AND e.status IN ('connected', 'reconnecting')
         )
       RETURNING ${sql.raw(PARTICIPANT_COLUMNS)}
     `)
@@ -505,7 +524,7 @@ export const CallParticipantRepository = {
       WHERE p.id = ANY(${participantIds as string[]}) AND p.status = 'joined'
         AND NOT EXISTS (
           SELECT 1 FROM call_endpoints e
-          WHERE e.participant_id = p.id AND e.status IN ('connected', 'reconnecting')
+          WHERE e.workspace_id = p.workspace_id AND e.participant_id = p.id AND e.status IN ('connected', 'reconnecting')
         )
       RETURNING ${sql.raw(PARTICIPANT_COLUMNS)}
     `)
@@ -668,14 +687,31 @@ export const CallEndpointRepository = {
   },
 
   /**
-   * Set-based lease reaping (INV-56): close every live endpoint past its lease
-   * in one statement. Returns the closed rows so the sweeper can cascade
-   * participant/call state.
+   * First pass of the lease reaper: the distinct call ids that own a lapsed live
+   * endpoint, read WITHOUT locking so the reaper can lock those call rows first
+   * (call→endpoint order) before closing the endpoints under the lock.
    */
-  async reapLapsed(db: Querier, now: Date): Promise<CallEndpoint[]> {
+  async findLapsedCallIds(db: Querier, now: Date): Promise<string[]> {
+    const result = await db.query<{ call_id: string }>(sql`
+      SELECT DISTINCT call_id FROM call_endpoints
+      WHERE status IN ('connected', 'reconnecting') AND lease_expires_at <= ${now}
+    `)
+    return result.rows.map((r) => r.call_id)
+  },
+
+  /**
+   * Set-based lease reaping (INV-56): close every live endpoint past its lease on
+   * the given calls in one statement. Scoped to `callIds` — the rows the reaper
+   * has already locked FOR UPDATE — so it only ever writes endpoints whose call
+   * it holds (call→endpoint lock order). Returns the closed rows so the sweeper
+   * can cascade participant/call state.
+   */
+  async reapLapsed(db: Querier, now: Date, callIds: readonly string[]): Promise<CallEndpoint[]> {
+    if (callIds.length === 0) return []
     const result = await db.query<CallEndpointRow>(sql`
       UPDATE call_endpoints SET status = 'closed', status_changed_at = NOW()
-      WHERE status IN ('connected', 'reconnecting') AND lease_expires_at <= ${now}
+      WHERE call_id = ANY(${callIds as string[]})
+        AND status IN ('connected', 'reconnecting') AND lease_expires_at <= ${now}
       RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
     `)
     return result.rows.map(mapEndpoint)

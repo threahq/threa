@@ -56,6 +56,8 @@ describe("CallRepository — active-call glare + grace re-verification", () => {
     expect(sql).toContain("status = 'empty_grace'")
     expect(sql).toContain("grace_deadline <=")
     expect(sql).toMatch(/NOT EXISTS \([^)]*call_participants p[\s\S]*status = 'joined'/)
+    // Workspace-correlated so the anti-join seeks UNIQUE (workspace_id, call_id, user_id).
+    expect(sql).toContain("p.workspace_id = c.workspace_id")
   })
 
   it("enterGraceIfEmpty only graces an active call with no joined participant", async () => {
@@ -69,6 +71,30 @@ describe("CallRepository — active-call glare + grace re-verification", () => {
     const sql = normalize(captured.text)
     expect(sql).toContain("c.status = 'active'")
     expect(sql).toMatch(/NOT EXISTS \([^)]*call_participants p[\s\S]*status = 'joined'/)
+    expect(sql).toContain("p.workspace_id = c.workspace_id")
+  })
+
+  it("enterGraceIfEmptyBatch cascades reaped emptiness with a workspace-correlated anti-join", async () => {
+    const captured: Captured = { text: "" }
+    await CallRepository.enterGraceIfEmptyBatch(createQuerier(captured), {
+      callIds: ["call_1", "call_2"],
+      graceDeadline: NOW,
+    })
+    const sql = normalize(captured.text)
+    expect(sql).toContain("ended_reason = 'reaped'")
+    expect(sql).toContain("c.id = ANY")
+    expect(sql).toMatch(/NOT EXISTS \([^)]*call_participants p[\s\S]*status = 'joined'/)
+    expect(sql).toContain("p.workspace_id = c.workspace_id")
+  })
+
+  it("lockForUpdateInOrder locks the calls FOR UPDATE in id order (call→endpoint reap order)", async () => {
+    const captured: Captured = { text: "" }
+    await CallRepository.lockForUpdateInOrder(createQuerier(captured), ["call_2", "call_1"])
+    const sql = normalize(captured.text)
+    expect(sql).toContain("FROM calls")
+    expect(sql).toContain("id = ANY")
+    expect(sql).toContain("ORDER BY id")
+    expect(sql).toContain("FOR UPDATE")
   })
 })
 
@@ -102,13 +128,42 @@ describe("CallEndpointRepository — lease fencing + lapse-only reap", () => {
     expect(sql).toContain("status IN ('connected', 'reconnecting')")
   })
 
-  it("reapLapsed closes only live endpoints past their lease", async () => {
+  it("findLapsedCallIds reads distinct lapsed-endpoint call ids without locking", async () => {
     const captured: Captured = { text: "" }
-    await CallEndpointRepository.reapLapsed(createQuerier(captured), NOW)
+    await CallEndpointRepository.findLapsedCallIds(createQuerier(captured), NOW)
     const sql = normalize(captured.text)
+    expect(sql).toContain("SELECT DISTINCT call_id")
+    expect(sql).toContain("status IN ('connected', 'reconnecting')")
+    expect(sql).toContain("lease_expires_at <=")
+    expect(sql).not.toContain("FOR UPDATE")
+  })
+
+  it("reapLapsed closes only live lapsed endpoints scoped to the locked calls", async () => {
+    const captured: Captured = { text: "" }
+    await CallEndpointRepository.reapLapsed(createQuerier(captured), NOW, ["call_1", "call_2"])
+    const sql = normalize(captured.text)
+    expect(sql).toContain("call_id = ANY")
     expect(sql).toContain("status IN ('connected', 'reconnecting')")
     expect(sql).toContain("lease_expires_at <=")
     expect(sql).toContain("SET status = 'closed'")
+  })
+
+  it("reapLapsed is a no-op with no locked calls (never a global endpoint scan)", async () => {
+    const captured: Captured = { text: "" }
+    const rows = await CallEndpointRepository.reapLapsed(createQuerier(captured), NOW, [])
+    expect(rows).toEqual([])
+    expect(captured.text).toBe("")
+  })
+})
+
+describe("CallParticipantRepository — endpoint liveness anti-join", () => {
+  it("markLeftWhereNoLiveEndpoint workspace-correlates the endpoint anti-join", async () => {
+    const captured: Captured = { text: "" }
+    await CallParticipantRepository.markLeftWhereNoLiveEndpoint(createQuerier(captured), ["callp_1"])
+    const sql = normalize(captured.text)
+    expect(sql).toContain("SET status = 'left'")
+    expect(sql).toMatch(/NOT EXISTS \([^)]*call_endpoints e[\s\S]*status IN \('connected', 'reconnecting'\)/)
+    expect(sql).toContain("e.workspace_id = p.workspace_id")
   })
 })
 
