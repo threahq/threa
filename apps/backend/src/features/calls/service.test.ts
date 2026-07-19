@@ -65,6 +65,7 @@ function fakeEndpoint(overrides: Partial<CallEndpoint> = {}): CallEndpoint {
     callId: "call_1",
     participantId: "callp_1",
     epoch: 1,
+    connectionSeq: 0,
     status: "connected",
     cfSessionId: null,
     mediaIncarnation: null,
@@ -816,8 +817,18 @@ describe("CallService.joinCall — incarnation rebind", () => {
     spyOn(CallEndpointRepository, "findLiveByParticipant").mockResolvedValue(
       fakeEndpoint({ id: "callep_old", epoch: 5, status: "reconnecting", mediaIncarnation: "inc_old" })
     )
+    // A reload mints a new incarnation, so rebind drops the previous incarnation's
+    // dead CF session (cfSessionId null) — createEndpointCfSession then mints fresh
+    // instead of short-circuiting on the stale id (INV-41).
     const rebind = spyOn(CallEndpointRepository, "rebind").mockResolvedValue(
-      fakeEndpoint({ id: "callep_old", epoch: 5, status: "connected", mediaIncarnation: "inc_new" })
+      fakeEndpoint({
+        id: "callep_old",
+        epoch: 5,
+        connectionSeq: 6,
+        status: "connected",
+        mediaIncarnation: "inc_new",
+        cfSessionId: null,
+      })
     )
     const insert = spyOn(CallEndpointRepository, "insert").mockResolvedValue(fakeEndpoint())
     spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
@@ -834,7 +845,45 @@ describe("CallService.joinCall — incarnation rebind", () => {
       expect.objectContaining({ id: "callep_old", mediaIncarnation: "inc_new" })
     )
     expect(insert).not.toHaveBeenCalled()
-    expect(result.endpoint.id).toBe("callep_old")
-    expect(result.endpoint.epoch).toBe(5)
+    expect(result.endpoint).toMatchObject({ id: "callep_old", epoch: 5, cfSessionId: null })
+  })
+})
+
+describe("CallService.markEndpointReconnecting", () => {
+  afterEach(() => mock.restore())
+
+  it("demotes and bumps the roster version in the same tx", async () => {
+    stubTransaction()
+    spyOn(CallEndpointRepository, "markReconnecting").mockResolvedValue(
+      fakeEndpoint({ id: "callep_1", status: "reconnecting" })
+    )
+    const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(3)
+
+    const result = await makeService().markEndpointReconnecting({
+      workspaceId: "ws_1",
+      endpointId: "callep_1",
+      epoch: 2,
+      connectionSeq: 0,
+    })
+
+    expect(result?.status).toBe("reconnecting")
+    // The disconnect broadcast must be newer than what peers hold (INV-66).
+    expect(bump).toHaveBeenCalledWith(expect.anything(), "ws_1", "call_1")
+  })
+
+  it("skips the bump on a stale fence (a fast reconnect already re-bound the endpoint)", async () => {
+    stubTransaction()
+    spyOn(CallEndpointRepository, "markReconnecting").mockResolvedValue(null)
+    const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(3)
+
+    const result = await makeService().markEndpointReconnecting({
+      workspaceId: "ws_1",
+      endpointId: "callep_1",
+      epoch: 2,
+      connectionSeq: 0,
+    })
+
+    expect(result).toBeNull()
+    expect(bump).not.toHaveBeenCalled()
   })
 })

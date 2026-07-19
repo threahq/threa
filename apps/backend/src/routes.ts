@@ -1628,7 +1628,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     cloudflareEnabled: callsCloudflareEnabled,
   })
   app.post("/api/workspaces/:workspaceId/calls", ...authed, rateLimits.calls, calls.start)
-  app.get("/api/workspaces/:workspaceId/calls/:callId", ...authed, calls.bootstrap)
+  app.get("/api/workspaces/:workspaceId/calls/:callId", ...authed, rateLimits.calls, calls.bootstrap)
   app.post(
     "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/session",
     ...authed,

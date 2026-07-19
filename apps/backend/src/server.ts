@@ -831,6 +831,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerCallGateway(io, {
     authService,
     callService,
+    workspaceSettingsService,
     pool,
     cloudflareEnabled: config.cloudflareRealtime.enabled,
   })

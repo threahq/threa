@@ -29,7 +29,12 @@ function fakeSocket(workosUserId = "workos_1") {
   }
 }
 
-function setup(overrides?: { callService?: Record<string, unknown>; cloudflareEnabled?: boolean; user?: unknown }) {
+function setup(overrides?: {
+  callService?: Record<string, unknown>
+  cloudflareEnabled?: boolean
+  callsEnabled?: boolean
+  user?: unknown
+}) {
   const emit = mock(() => {})
   const to = mock(() => ({ emit }))
   let connectionHandler: ((socket: unknown) => void) | undefined
@@ -50,7 +55,7 @@ function setup(overrides?: { callService?: Record<string, unknown>; cloudflareEn
     joinCall: mock(async () => ({
       call: { id: "call_1" },
       participant: { id: "callp_1" },
-      endpoint: { id: "callep_1", epoch: 2 },
+      endpoint: { id: "callep_1", epoch: 2, connectionSeq: 4 },
     })),
     leaveCall: mock(async () => ({ call: { id: "call_1" } })),
     getRosterSnapshot: mock(async () => ({ rosterVersion: 7, roster: [{ userId: "usr_1" }] })),
@@ -63,9 +68,14 @@ function setup(overrides?: { callService?: Record<string, unknown>; cloudflareEn
     ...overrides?.callService,
   }
 
+  const workspaceSettingsService = {
+    getSettings: mock(async () => ({ callsEnabled: overrides?.callsEnabled ?? true })),
+  }
+
   registerCallGateway(io, {
     authService: {} as never,
     callService: callService as never,
+    workspaceSettingsService: workspaceSettingsService as never,
     pool: {} as never,
     cloudflareEnabled: overrides?.cloudflareEnabled ?? true,
   })
@@ -73,7 +83,7 @@ function setup(overrides?: { callService?: Record<string, unknown>; cloudflareEn
   const socket = fakeSocket()
   connectionHandler!(socket)
 
-  return { socket, callService, emit, to, namespace }
+  return { socket, callService, workspaceSettingsService, emit, to, namespace }
 }
 
 const JOIN = { workspaceId: "ws_1", callId: "call_1", mediaIncarnation: "inc_1" }
@@ -112,6 +122,14 @@ describe("registerCallGateway call:join", () => {
     const ack = mock(() => {})
     await socket.trigger("call:join", JOIN, ack)
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALLS_UNAVAILABLE" }))
+    expect(callService.joinCall).not.toHaveBeenCalled()
+  })
+
+  it("rejects the join with CALLS_DISABLED when the workspace kill-switch is off", async () => {
+    const { socket, callService } = setup({ callsEnabled: false })
+    const ack = mock(() => {})
+    await socket.trigger("call:join", JOIN, ack)
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALLS_DISABLED" }))
     expect(callService.joinCall).not.toHaveBeenCalled()
   })
 
@@ -199,6 +217,21 @@ describe("registerCallGateway call:lease:renew", () => {
     await socket.trigger("call:lease:renew", {}, ack)
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALL_LEASE_SUPERSEDED" }))
   })
+
+  it("rejects the renew with CALLS_DISABLED once the kill-switch is flipped off (drains live calls in one TTL)", async () => {
+    const { socket, callService, workspaceSettingsService } = setup()
+    await socket.trigger(
+      "call:join",
+      JOIN,
+      mock(() => {})
+    )
+    workspaceSettingsService.getSettings.mockResolvedValue({ callsEnabled: false } as never)
+
+    const ack = mock(() => {})
+    await socket.trigger("call:lease:renew", {}, ack)
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALLS_DISABLED" }))
+    expect(callService.renewEndpointLease).not.toHaveBeenCalled()
+  })
 })
 
 describe("registerCallGateway disconnect", () => {
@@ -219,6 +252,7 @@ describe("registerCallGateway disconnect", () => {
       workspaceId: "ws_1",
       endpointId: "callep_1",
       epoch: 2,
+      connectionSeq: 4,
     })
     expect(callService.leaveCall).not.toHaveBeenCalled()
   })

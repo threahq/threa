@@ -646,6 +646,7 @@ interface CallEndpointRow {
   call_id: string
   participant_id: string
   epoch: number
+  connection_seq: number
   status: string
   cf_session_id: string | null
   media_incarnation: string | null
@@ -662,6 +663,7 @@ export interface CallEndpoint {
   callId: string
   participantId: string
   epoch: number
+  connectionSeq: number
   status: CallEndpointStatus
   cfSessionId: string | null
   mediaIncarnation: string | null
@@ -673,7 +675,7 @@ export interface CallEndpoint {
 }
 
 const ENDPOINT_COLUMNS = `
-  id, workspace_id, call_id, participant_id, epoch, status,
+  id, workspace_id, call_id, participant_id, epoch, connection_seq, status,
   cf_session_id, media_incarnation, media_state, published_tracks,
   lease_expires_at, created_at, status_changed_at
 `
@@ -685,6 +687,7 @@ function mapEndpoint(row: CallEndpointRow): CallEndpoint {
     callId: row.call_id,
     participantId: row.participant_id,
     epoch: row.epoch,
+    connectionSeq: row.connection_seq,
     status: row.status as CallEndpointStatus,
     cfSessionId: row.cf_session_id,
     mediaIncarnation: row.media_incarnation,
@@ -727,6 +730,21 @@ export const CallEndpointRepository = {
    * epoch (the lease is the authority, INV — a transient socket drop or a reload
    * within the lease returns to the same endpoint). `null` when the endpoint is
    * no longer live.
+   *
+   * A reload mints a NEW incarnation, so its old `cf_session_id`/`published_tracks`
+   * belong to a dead peer connection the reloaded page can no longer drive; clear
+   * both when the incoming incarnation differs from the stored one so
+   * `createEndpointCfSession` mints a fresh session instead of short-circuiting on
+   * the stale id. A same-incarnation transient reconnect keeps both. `IS DISTINCT
+   * FROM` reads the pre-update `media_incarnation` (Postgres evaluates SET
+   * expressions against the old row).
+   *
+   * `connection_seq` bumps on every bind (INV-66): a fast same-incarnation
+   * reconnect rebinds to `connected` at the same epoch before the old socket's
+   * fire-and-forget demotion commits; the demotion's (epoch, status) fence would
+   * still match and wedge the endpoint at `reconnecting`, so `markReconnecting`
+   * additionally fences on the seq the socket bound at — advancing it here makes
+   * the stale demotion a no-op.
    */
   async rebind(
     db: Querier,
@@ -734,8 +752,17 @@ export const CallEndpointRepository = {
   ): Promise<CallEndpoint | null> {
     const result = await db.query<CallEndpointRow>(sql`
       UPDATE call_endpoints SET
-        status = 'connected', media_incarnation = ${params.mediaIncarnation},
-        lease_expires_at = ${params.leaseExpiresAt}, status_changed_at = NOW()
+        status = 'connected',
+        media_incarnation = ${params.mediaIncarnation},
+        cf_session_id = CASE
+          WHEN media_incarnation IS DISTINCT FROM ${params.mediaIncarnation} THEN NULL
+          ELSE cf_session_id END,
+        published_tracks = CASE
+          WHEN media_incarnation IS DISTINCT FROM ${params.mediaIncarnation} THEN '[]'::jsonb
+          ELSE published_tracks END,
+        connection_seq = connection_seq + 1,
+        lease_expires_at = ${params.leaseExpiresAt},
+        status_changed_at = NOW()
       WHERE workspace_id = ${params.workspaceId} AND id = ${params.id}
         AND status IN ('connected', 'reconnecting')
       RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
@@ -745,18 +772,21 @@ export const CallEndpointRepository = {
 
   /**
    * Fenced `connected → reconnecting` on a socket disconnect (INV-66): the lease
-   * still holds the slot, so a reconnect within it re-binds. Guarded on the epoch
-   * so a superseded instance's disconnect can't demote the live endpoint. `null`
-   * when nothing matched.
+   * still holds the slot, so a reconnect within it re-binds. Fenced on the
+   * `connection_seq` the disconnecting socket bound at — a faster same-incarnation
+   * reconnect bumps the seq via {@link rebind}, so this stale demotion matches
+   * nothing and cannot wedge the freshly re-bound endpoint at `reconnecting`. The
+   * epoch fence is retained as belt for the superseded-instance case. `null` when
+   * nothing matched.
    */
   async markReconnecting(
     db: Querier,
-    params: { workspaceId: string; id: string; epoch: number }
+    params: { workspaceId: string; id: string; epoch: number; connectionSeq: number }
   ): Promise<CallEndpoint | null> {
     const result = await db.query<CallEndpointRow>(sql`
       UPDATE call_endpoints SET status = 'reconnecting', status_changed_at = NOW()
       WHERE workspace_id = ${params.workspaceId} AND id = ${params.id} AND epoch = ${params.epoch}
-        AND status = 'connected'
+        AND connection_seq = ${params.connectionSeq} AND status = 'connected'
       RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
     `)
     return result.rows[0] ? mapEndpoint(result.rows[0]) : null

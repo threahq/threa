@@ -412,21 +412,25 @@ export class CallService {
   }
 
   /**
-   * Mark a disconnected endpoint `reconnecting` (fenced on epoch). The lease
-   * still holds the slot, so a reconnect within it re-binds — a socket drop is
-   * NOT a leave. `null` when the epoch is stale (a superseded instance's
-   * disconnect must not demote the live endpoint).
+   * Mark a disconnected endpoint `reconnecting` (fenced on epoch +
+   * `connection_seq`). The lease still holds the slot, so a reconnect within it
+   * re-binds — a socket drop is NOT a leave. `null` when the fence is stale: a
+   * superseded instance's disconnect, or a fast same-incarnation reconnect that
+   * already re-bound the endpoint (bumping `connection_seq`) before this demotion
+   * lands. Either way the live endpoint must not be demoted.
    */
   async markEndpointReconnecting(params: {
     workspaceId: string
     endpointId: string
     epoch: number
+    connectionSeq: number
   }): Promise<CallEndpoint | null> {
     return withTransaction(this.pool, async (client) => {
       const endpoint = await CallEndpointRepository.markReconnecting(client, {
         workspaceId: params.workspaceId,
         id: params.endpointId,
         epoch: params.epoch,
+        connectionSeq: params.connectionSeq,
       })
       // A connection transition (connected → reconnecting) changes the roster:
       // bump the version in the same tx so the disconnect broadcast is newer than

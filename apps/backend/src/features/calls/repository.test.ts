@@ -114,6 +114,54 @@ describe("CallParticipantRepository — actor-conditional admission", () => {
   })
 })
 
+describe("CallEndpointRepository — rebind clears stale media + bumps the connection seq", () => {
+  it("clears cf_session_id + published_tracks only when the incarnation changes, keeping them otherwise", async () => {
+    const captured: Captured = { text: "" }
+    await CallEndpointRepository.rebind(createQuerier(captured, [{}]), {
+      workspaceId: "ws_1",
+      id: "callep_1",
+      mediaIncarnation: "inc_new",
+      leaseExpiresAt: NOW,
+    })
+    const sql = normalize(captured.text)
+    // A reload's new incarnation drops the previous incarnation's dead CF session
+    // and track registry; a same-incarnation reconnect keeps both (the ELSE arm).
+    expect(sql).toMatch(
+      /cf_session_id = CASE WHEN media_incarnation IS DISTINCT FROM \$\d+ THEN NULL ELSE cf_session_id END/
+    )
+    expect(sql).toMatch(
+      /published_tracks = CASE WHEN media_incarnation IS DISTINCT FROM \$\d+ THEN '\[\]'::jsonb ELSE published_tracks END/
+    )
+  })
+
+  it("bumps connection_seq on every bind so a stale disconnect demotion no-ops", async () => {
+    const captured: Captured = { text: "" }
+    await CallEndpointRepository.rebind(createQuerier(captured, [{}]), {
+      workspaceId: "ws_1",
+      id: "callep_1",
+      mediaIncarnation: "inc_1",
+      leaseExpiresAt: NOW,
+    })
+    const sql = normalize(captured.text)
+    expect(sql).toContain("connection_seq = connection_seq + 1")
+  })
+
+  it("markReconnecting fences the demotion on (id, epoch, connection_seq, live status)", async () => {
+    const captured: Captured = { text: "" }
+    await CallEndpointRepository.markReconnecting(createQuerier(captured), {
+      workspaceId: "ws_1",
+      id: "callep_1",
+      epoch: 3,
+      connectionSeq: 5,
+    })
+    const sql = normalize(captured.text)
+    expect(sql).toContain("SET status = 'reconnecting'")
+    expect(sql).toContain("epoch =")
+    expect(sql).toContain("connection_seq =")
+    expect(sql).toContain("status = 'connected'")
+  })
+})
+
 describe("CallEndpointRepository — lease fencing + lapse-only reap", () => {
   it("renewLease is fenced on (id, epoch, live status)", async () => {
     const captured: Captured = { text: "" }
