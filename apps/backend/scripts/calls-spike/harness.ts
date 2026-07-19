@@ -37,9 +37,11 @@ import { StreamRepository } from "../../src/features/streams/repository"
 import { StreamMemberRepository } from "../../src/features/streams/member-repository"
 import { WorkspaceSettingsRepository } from "../../src/features/workspace-settings/repository"
 import { CallService, CloudflareRealtimeApi } from "../../src/features/calls"
-import { ENDPOINT_LEASE_TTL_MS, EMPTY_GRACE_MS } from "../../src/features/calls/config"
+import { ENDPOINT_LEASE_TTL_MS, EMPTY_GRACE_MS, CALL_SWEEP_INTERVAL_MS } from "../../src/features/calls/config"
 
-export const SWEEP_INTERVAL_MS = 15_000 // createCallSweeper default in server.ts
+// The production sweep cadence, imported (not re-literal'd) so the matrix's timing
+// assertions track `createCallSweeper` exactly — one SSOT in calls/config.ts.
+export const SWEEP_INTERVAL_MS = CALL_SWEEP_INTERVAL_MS
 export { ENDPOINT_LEASE_TTL_MS, EMPTY_GRACE_MS }
 
 export const DB_URL = process.env.CALLS_SPIKE_DB_URL ?? "postgresql://threa:threa@localhost:5454/threa_test"

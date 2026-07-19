@@ -24,6 +24,7 @@ import {
   CloudflareRealtimeApi,
   createCallSweeper,
   registerCallGateway,
+  CALL_SWEEP_INTERVAL_MS,
   type RealtimeMediaApi,
 } from "./features/calls"
 import { BotApiKeyService, createBotRuntimeWriteOps } from "./features/public-api"
@@ -638,7 +639,9 @@ export async function startServer(): Promise<ServerInstance> {
     ? new CloudflareRealtimeApi(config.cloudflareRealtime)
     : null
   const callService = new CallService({ pool, cloudflare: cloudflareRealtime })
-  const callSweeper = createCallSweeper(callService)
+  const callSweeper = createCallSweeper(callService, {
+    intervalMs: Number(process.env.CALL_SWEEP_INTERVAL_MS) || CALL_SWEEP_INTERVAL_MS,
+  })
 
   const botApiKeyService = new BotApiKeyService(pool)
 

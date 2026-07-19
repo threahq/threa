@@ -213,6 +213,65 @@ export const aiTokensUsed = new Counter({
   registers: [registry],
 })
 
+// ── Calls (voice/video) ──────────────────────────────────────────────────────
+// Day-1 operational health for the media plane (docs/features/calls.md §Observability).
+// CF Realtime is a hard dependency (every call dies with a CF outage), so
+// session-create success/latency and connect-failure-by-code are the first
+// signals; time-to-join, end reasons, ring outcomes, and sweep counts cover the
+// lifecycle. Labels stay low-cardinality (no workspace_id) — these are fleet
+// health, not per-tenant billing.
+
+export const callCfSessionCreateTotal = new Counter({
+  name: "call_cf_session_create_total",
+  help: "CF Realtime SFU session-create attempts by outcome",
+  labelNames: ["status"], // success | error
+  registers: [registry],
+})
+
+export const callCfSessionCreateDuration = new Histogram({
+  name: "call_cf_session_create_duration_seconds",
+  help: "CF Realtime SFU session-create latency in seconds",
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10], // 50ms to 10s
+  registers: [registry],
+})
+
+export const callCfErrorsTotal = new Counter({
+  name: "call_cf_errors_total",
+  help: "CF Realtime proxy call failures by operation and CF error code",
+  // operation: session_create | publish_tracks | pull_tracks | renegotiate | close_tracks
+  // cf_code: the CloudflareRealtimeError.code (CF_TIMEOUT | CF_HTTP_ERROR | CF_TRANSPORT_ERROR | ...)
+  labelNames: ["operation", "cf_code"],
+  registers: [registry],
+})
+
+export const callTimeToJoinSeconds = new Histogram({
+  name: "call_time_to_join_seconds",
+  help: "Server-side time from endpoint admission (join) to CF session creation (connected)",
+  buckets: [0.1, 0.25, 0.5, 1, 2, 5, 10, 30], // 100ms to 30s
+  registers: [registry],
+})
+
+export const callEndedTotal = new Counter({
+  name: "call_ended_total",
+  help: "Calls ended by reason",
+  labelNames: ["reason"], // completed | reaped
+  registers: [registry],
+})
+
+export const callRingOutcomesTotal = new Counter({
+  name: "call_ring_outcomes_total",
+  help: "Call ring (invitation) attempts settled by outcome",
+  labelNames: ["outcome"], // accepted | declined | cancelled | expired | superseded
+  registers: [registry],
+})
+
+export const callSweepReapedTotal = new Counter({
+  name: "call_sweep_reaped_total",
+  help: "Rows reaped by the call lease sweeper by kind",
+  labelNames: ["kind"], // endpoint | participant | grace_call | expired_ring
+  registers: [registry],
+})
+
 /** Collect prom-client default metrics (process stats, memory, etc.). */
 export function collectDefaultMetrics() {
   const promClient = require("prom-client")

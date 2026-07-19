@@ -107,6 +107,10 @@ entirely under `apps/backend/scripts/`, outside `src/`).
 3. **Sweep cadence is a hardcoded 15 s** in `server.ts` (`createCallSweeper(callService)`
    with no interval option). Fine for prod; the matrix works around it by
    fast-forwarding deadlines. If M1 wants faster crash recovery, expose the interval.
+   _(Resolved in PR 1.5: `CALL_SWEEP_INTERVAL_MS` is one SSOT in `calls/config.ts`,
+   referenced by `server.ts` and the harness's `SWEEP_INTERVAL_MS`, and env-overridable;
+   `EMPTY_GRACE_MS` gained the same `CALL_EMPTY_GRACE_MS` override so crash-recovery
+   latency is deployment-tunable and the e2e can drive it low.)_
 
 ## Half B — live-CF status (BUILT, UNEXECUTED)
 

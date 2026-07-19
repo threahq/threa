@@ -29,5 +29,12 @@ export {
   aiCallsTotal,
   aiCallDuration,
   aiTokensUsed,
+  callCfSessionCreateTotal,
+  callCfSessionCreateDuration,
+  callCfErrorsTotal,
+  callTimeToJoinSeconds,
+  callEndedTotal,
+  callRingOutcomesTotal,
+  callSweepReapedTotal,
 } from "./metrics"
 export { PoolMonitor, type PoolStats, type PoolMonitorOptions } from "./pool-monitor"

@@ -35,18 +35,39 @@ export interface FakeCfServer {
 
 let sessionCounter = 0
 
+export interface FakeCfOptions {
+  /**
+   * Omit the `sessionDescription` from every session/track response (and never
+   * request renegotiation). The control-plane matrices don't care about SDP (no
+   * real PeerConnection), but a REAL browser (the two-context Playwright e2e)
+   * feeds any returned SDP to `RTCPeerConnection.setRemoteDescription`, which
+   * rejects the placeholder string and tears the call down. In this mode the fake
+   * forwards nothing — exactly the "media plane carries no media" seam the e2e
+   * asserts against (roster/dock/phases from the control plane, never getStats):
+   * the browser's local offer stays un-answered, the PC never connects, and the
+   * call surface still converges through the `/calls` socket roster.
+   */
+  negotiationless?: boolean
+}
+
 /**
  * Start the fake CF server on `port` (0 ⇒ OS-assigned). The backend's
  * `CLOUDFLARE_REALTIME_API_BASE` must point at `${url}/v1/apps` so
  * `CloudflareRealtimeApi` builds `/${appId}/sessions/new` beneath it.
  */
-export function startFakeCfServer(port = 0): FakeCfServer {
+export function startFakeCfServer(port = 0, options: FakeCfOptions = {}): FakeCfServer {
   const requests: FakeCfRequest[] = []
+  const negotiationless = options.negotiationless === true
 
   const server = Bun.serve({
     port,
     async fetch(req) {
       const url = new URL(req.url)
+      // Liveness probe for the Playwright `webServer` readiness check — not part
+      // of the CF API surface, never called by the control-plane harness.
+      if (req.method === "GET" && url.pathname === "/healthz") {
+        return new Response("ok", { status: 200 })
+      }
       // Path shape: /v1/apps/{appId}/sessions/new
       //             /v1/apps/{appId}/sessions/{sessionId}/tracks/new
       //             /v1/apps/{appId}/sessions/{sessionId}/renegotiate
@@ -70,7 +91,7 @@ export function startFakeCfServer(port = 0): FakeCfServer {
         sessionCounter += 1
         return Response.json({
           sessionId: `fakesess_${sessionCounter}_${Math.random().toString(36).slice(2, 8)}`,
-          sessionDescription: { type: "offer", sdp: "v=0\r\n// fake-cf offer\r\n" },
+          ...(negotiationless ? {} : { sessionDescription: { type: "offer", sdp: "v=0\r\n// fake-cf offer\r\n" } }),
         })
       }
       // POST /sessions/{id}/tracks/new  (publish or pull)
@@ -79,12 +100,14 @@ export function startFakeCfServer(port = 0): FakeCfServer {
         return Response.json({
           requiresImmediateRenegotiation: false,
           tracks: reqTracks.map((t) => ({ ...t })),
-          sessionDescription: { type: "answer", sdp: "v=0\r\n// fake-cf answer\r\n" },
+          ...(negotiationless ? {} : { sessionDescription: { type: "answer", sdp: "v=0\r\n// fake-cf answer\r\n" } }),
         })
       }
       // PUT /sessions/{id}/renegotiate
       if (req.method === "PUT" && tail[tail.length - 1] === "renegotiate") {
-        return Response.json({ sessionDescription: { type: "answer", sdp: "v=0\r\n// fake-cf reneg\r\n" } })
+        return Response.json(
+          negotiationless ? {} : { sessionDescription: { type: "answer", sdp: "v=0\r\n// fake-cf reneg\r\n" } }
+        )
       }
       // PUT /sessions/{id}/tracks/close
       if (req.method === "PUT" && tail[tail.length - 1] === "close") {

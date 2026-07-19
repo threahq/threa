@@ -12,6 +12,14 @@ import {
 import { withTransaction, withClient } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
+import {
+  callCfSessionCreateTotal,
+  callCfSessionCreateDuration,
+  callCfErrorsTotal,
+  callTimeToJoinSeconds,
+  callEndedTotal,
+  callRingOutcomesTotal,
+} from "../../lib/observability"
 import { callId, callInvitationId, callParticipantId, callEndpointId, eventId } from "../../lib/id"
 import { checkStreamAccess, StreamMemberRepository, StreamRepository, StreamEventRepository } from "../streams"
 import { UserRepository } from "../workspaces"
@@ -48,6 +56,9 @@ import {
   type RenegotiateResult,
   type CloseTracksResult,
 } from "./cloudflare"
+
+/** CF proxy operations, the label space for the connect-failure metric. */
+type CfOperation = "session_create" | "publish_tracks" | "pull_tracks" | "renegotiate" | "close_tracks"
 
 export interface StartCallResult {
   call: Call
@@ -550,6 +561,7 @@ export class CallService {
       outcome,
       inviterName: inviter?.name ?? null,
     })
+    callRingOutcomesTotal.inc({ outcome })
   }
 
   /** Cancel the given outstanding rings (`ringing → cancelled` already applied) and settle each. */
@@ -720,7 +732,20 @@ export class CallService {
       return { cfSessionId: endpoint.cfSessionId, idempotent: true }
     }
 
-    const created = await this.cfCall(() => cf.createSession())
+    const sessionStartedAt = Date.now()
+    let created: Awaited<ReturnType<RealtimeMediaApi["createSession"]>>
+    try {
+      created = await this.cfCall(() => cf.createSession(), "session_create")
+    } catch (err) {
+      callCfSessionCreateTotal.inc({ status: "error" })
+      throw err
+    }
+    callCfSessionCreateTotal.inc({ status: "success" })
+    callCfSessionCreateDuration.observe((Date.now() - sessionStartedAt) / 1000)
+    // Server-side time-to-join: from endpoint admission (the join that created the
+    // row) to its first CF session (media "connected"). Only observed on the
+    // fresh-session path (this method returns early when cfSessionId is already set).
+    callTimeToJoinSeconds.observe(Math.max(0, sessionStartedAt - endpoint.createdAt.getTime()) / 1000)
 
     let bound: CallEndpoint | null
     try {
@@ -776,7 +801,10 @@ export class CallService {
       trackName: t.trackName,
       mid: t.mid,
     }))
-    const cfResult = await this.cfCall(() => cf.addLocalTracks(cfSessionId, { sdp: params.sdp, tracks: localTracks }))
+    const cfResult = await this.cfCall(
+      () => cf.addLocalTracks(cfSessionId, { sdp: params.sdp, tracks: localTracks }),
+      "publish_tracks"
+    )
 
     const registry: PublishedTrack[] = params.tracks.map((t) => ({ kind: t.kind, trackName: t.trackName }))
     const snapshot = await withTransaction(this.pool, async (client) => {
@@ -809,7 +837,7 @@ export class CallService {
     const cf = this.requireCloudflare()
     const { endpoint } = await this.fenceEndpoint(params)
     const cfSessionId = this.requireCfSession(endpoint)
-    const cfResult = await this.cfCall(() => cf.pullRemoteTracks(cfSessionId, { tracks: params.tracks }))
+    const cfResult = await this.cfCall(() => cf.pullRemoteTracks(cfSessionId, { tracks: params.tracks }), "pull_tracks")
     return { cf: cfResult }
   }
 
@@ -825,7 +853,7 @@ export class CallService {
     const cf = this.requireCloudflare()
     const { endpoint } = await this.fenceEndpoint(params)
     const cfSessionId = this.requireCfSession(endpoint)
-    const cfResult = await this.cfCall(() => cf.renegotiateSession(cfSessionId, params.sdp))
+    const cfResult = await this.cfCall(() => cf.renegotiateSession(cfSessionId, params.sdp), "renegotiate")
     return { cf: cfResult }
   }
 
@@ -847,8 +875,9 @@ export class CallService {
     const cf = this.requireCloudflare()
     const { endpoint } = await this.fenceEndpoint(params)
     const cfSessionId = this.requireCfSession(endpoint)
-    const cfResult = await this.cfCall(() =>
-      cf.closeTracks(cfSessionId, { mids: params.mids, force: false, sdp: params.sdp })
+    const cfResult = await this.cfCall(
+      () => cf.closeTracks(cfSessionId, { mids: params.mids, force: false, sdp: params.sdp }),
+      "close_tracks"
     )
 
     if (!params.unpublishKinds || params.unpublishKinds.length === 0) {
@@ -873,12 +902,17 @@ export class CallService {
     return { cf: cfResult, snapshot }
   }
 
-  /** Run a CF call, translating a transport/CF error into a surfaced HttpError (502/504). */
-  private async cfCall<T>(fn: () => Promise<T>): Promise<T> {
+  /**
+   * Run a CF call, translating a transport/CF error into a surfaced HttpError
+   * (502/504). `operation` labels the connect-failure metric so renegotiation
+   * failures and session-create failures are separable in one counter.
+   */
+  private async cfCall<T>(fn: () => Promise<T>, operation: CfOperation): Promise<T> {
     try {
       return await fn()
     } catch (err) {
       if (err instanceof CloudflareRealtimeError) {
+        callCfErrorsTotal.inc({ operation, cf_code: err.code })
         const status = err.code === "CF_TIMEOUT" ? 504 : 502
         throw new HttpError("Calls media provider error", {
           status,
@@ -1303,6 +1337,7 @@ export class CallService {
       streamVisibility: ctx.streamVisibility,
       memberUserIds: ctx.memberUserIds,
     })
+    callEndedTotal.inc({ reason: payload.endedReason })
   }
 
   /**
