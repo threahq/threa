@@ -381,6 +381,7 @@ interface Dependencies {
   botRuntimeService: BotRuntimeService
   commandAvailabilityService: CommandAvailabilityService
   workspaceIntegrationService: WorkspaceIntegrationService
+  callService?: import("../calls").CallService
 }
 
 /**
@@ -525,6 +526,7 @@ export function createStreamHandlers({
   botRuntimeService,
   commandAvailabilityService,
   workspaceIntegrationService,
+  callService,
 }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
@@ -1093,6 +1095,14 @@ export function createStreamHandlers({
       else if (events.length > 0) bootstrapRef.fromSeq = Number(events[0].sequence)
       setAuditSubjects(res, [bootstrapRef])
 
+      // The live call on this stream, if any (roadmap 1.4) — the INV-53 pair for
+      // the timeline card's live state and the reload rejoin bar. Access already
+      // validated above. Calls exist only on channel/DM roots, so skip the lookup
+      // entirely for stream types that can structurally never carry one.
+      const canCarryCall = stream.type === StreamTypes.CHANNEL || stream.type === StreamTypes.DM
+      const activeCall =
+        callService && canCarryCall ? await callService.getStreamActiveCall({ workspaceId, streamId, userId }) : null
+
       res.json({
         data: {
           stream,
@@ -1115,6 +1125,7 @@ export function createStreamHandlers({
           contextBag,
           allowedToolCategories,
           configuredToolCategories,
+          activeCall,
         },
       })
     },

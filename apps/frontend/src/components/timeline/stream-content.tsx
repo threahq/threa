@@ -64,6 +64,7 @@ import {
   type ConversationWithStaleness,
   type DelegationStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
+  type CallEndedEventPayload,
   type UnreadOpenPosition,
   type AgentSessionStartedPayload,
 } from "@threa/types"
@@ -81,6 +82,7 @@ import {
   collectCancelledFollowUpIds,
   collectDelegationStatusPatches,
   collectBotAccessStatusPatches,
+  collectCallEndedPatches,
   findMessageItemIndex,
   findEventItemIndex,
   findTimelineTargetIndex,
@@ -1351,6 +1353,10 @@ export function StreamContent({
   // filtered out of `visibleItems`): the card must see the approve/deny
   // resolution to render the authoritative terminal state on the virtualized path.
   const botAccessStatusPatches = useMemo(() => collectBotAccessStatusPatches(timelineItems), [timelineItems])
+  // Same full-window read for `call_ended` patches (zero-height, filtered out of
+  // `visibleItems`): the call card must see the end summary to render its ended
+  // face on the virtualized path (roadmap 1.4).
+  const callEndedPatches = useMemo(() => collectCallEndedPatches(timelineItems), [timelineItems])
 
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
   // its closure is created once per scroll but runs for up to ~1.2s, during
@@ -2409,6 +2415,7 @@ export function StreamContent({
                           cancelledFollowUpIds={cancelledFollowUpIds}
                           delegationStatusPatches={delegationStatusPatches}
                           botAccessStatusPatches={botAccessStatusPatches}
+                          callEndedPatches={callEndedPatches}
                           viewerIsMember={isMember}
                           isLoading={isLoading}
                           holdForDeepLink={holdForDeepLink}
@@ -2675,6 +2682,7 @@ function TimelineMessageList({
   cancelledFollowUpIds,
   delegationStatusPatches,
   botAccessStatusPatches,
+  callEndedPatches,
   viewerIsMember,
   isLoading,
   holdForDeepLink,
@@ -2714,6 +2722,7 @@ function TimelineMessageList({
   cancelledFollowUpIds: Set<string>
   delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
   botAccessStatusPatches: Map<string, BotAccessStatusChangedEventPayload>
+  callEndedPatches: Map<string, CallEndedEventPayload>
   /** True when the viewer is a member — gates the bot-access card's Approve/Deny. */
   viewerIsMember?: boolean
   isLoading: boolean
@@ -2834,6 +2843,7 @@ function TimelineMessageList({
       cancelledFollowUpIds,
       delegationStatusPatches,
       botAccessStatusPatches,
+      callEndedPatches,
       viewerIsMember,
       batch,
       conversationOverlay,
@@ -2855,6 +2865,7 @@ function TimelineMessageList({
       cancelledFollowUpIds,
       delegationStatusPatches,
       botAccessStatusPatches,
+      callEndedPatches,
       viewerIsMember,
       batch,
       conversationOverlay,

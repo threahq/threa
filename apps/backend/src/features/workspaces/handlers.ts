@@ -78,6 +78,7 @@ interface Dependencies {
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
   workosOrgService: WorkosOrgService
+  callService?: import("../calls").CallService
   pool: import("pg").Pool
 }
 
@@ -98,6 +99,7 @@ export function createWorkspaceHandlers({
   labelService,
   labelAssignmentService,
   workosOrgService,
+  callService,
   pool,
 }: Dependencies) {
   return {
@@ -283,6 +285,16 @@ export function createWorkspaceHandlers({
       for (const bot of bots) agentNameById.set(bot.id, bot.name)
       const activeAgentSessions = projectActiveAgentSessions(runningSessions, accessibleRootIds, agentNameById)
 
+      // Live calls in the viewer's accessible streams → sidebar call-dot seed
+      // (roadmap 1.4). Access-filtered by the same accessible-stream set as the
+      // agent-session seed (INV-62). Absent when calls are unconfigured.
+      const activeCalls = callService
+        ? await callService.listWorkspaceActiveCalls({
+            workspaceId,
+            accessibleStreamIds: [...accessibleRootIds],
+          })
+        : []
+
       const commands = commandAvailabilityService.listWorkspaceCommands()
 
       // Compute muted stream IDs: streams where effective notification level is "muted".
@@ -343,6 +355,7 @@ export function createWorkspaceHandlers({
           viewerIsPlatformAdmin,
           configuredToolCategories,
           activeAgentSessions,
+          activeCalls,
           syncHead: syncHead.toString(),
         },
       })

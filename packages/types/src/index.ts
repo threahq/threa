@@ -537,6 +537,8 @@ export type {
   DelegationStatusChangedEventPayload,
   BotAccessRequestedEventPayload,
   BotAccessStatusChangedEventPayload,
+  CallStartedEventPayload,
+  CallEndedEventPayload,
   DelegationSummary,
   ListDelegationsResponse,
   DescriptionSetEventPayload,
@@ -545,6 +547,8 @@ export type {
   CreateWorkspaceInput,
   WorkspaceBootstrap,
   ActiveAgentSession,
+  ActiveCall,
+  StreamActiveCall,
   // Invitations
   PendingInvitation,
   SendInvitationsInput,

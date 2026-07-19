@@ -256,6 +256,12 @@ export interface StreamBootstrap {
    * bootstraps only; absent elsewhere (and on older cached payloads).
    */
   configuredToolCategories?: ToolPrivacyCategory[]
+  /**
+   * The one live call on this stream, if any (roadmap 1.4) — the INV-53 pair for
+   * the timeline call card's live state and the reload rejoin bar. Absent when no
+   * call is live; re-read on reconnect. Optional for older cached payloads.
+   */
+  activeCall?: StreamActiveCall | null
 }
 
 /**
@@ -1272,6 +1278,38 @@ export interface DelegationStatusChangedEventPayload {
 }
 
 /**
+ * Payload for `call_started` timeline events (roadmap 1.4): appended in the same
+ * transaction as the call row insert (INV-4/7) when a call is first created on a
+ * stream. Renders the live call card. Liveness DEFAULTS DEAD — the card only
+ * renders live when the client's active-calls cache confirms a live call with
+ * this `callId` (a stale live card with a Join button on a dead call is an
+ * interactive lie); the ticking duration derives from `startedAt`.
+ */
+export interface CallStartedEventPayload {
+  callId: string
+  mode: "video" | "audio_only"
+  /** UserId of the participant who started the call. */
+  startedBy: string
+  /** ISO start instant, for the self-ticking duration leaf while live. */
+  startedAt: string
+}
+
+/**
+ * Payload for `call_ended` events (roadmap 1.4): appended in the same transaction
+ * as the `active|empty_grace → ended` transition. A patch, not a visible row: it
+ * carries the whole end SUMMARY so the matching `call_started` card renders its
+ * historical state with zero fetch (the delegation-pattern point). `endedReason`
+ * distinguishes a normal hang-up (`completed`) from a lease-reap (`reaped`).
+ */
+export interface CallEndedEventPayload {
+  callId: string
+  durationMs: number
+  /** Distinct UserIds of everyone who was ever a participant, for the ended card's avatars. */
+  participantUserIds: string[]
+  endedReason: "completed" | "reaped"
+}
+
+/**
  * Payload for `bot_access:requested` timeline events (F3): appended when a bot
  * runtime that received the workspace-wide `delegation:available` nudge but lacks
  * stream access files a request, in the same transaction as the
@@ -1629,6 +1667,13 @@ export interface WorkspaceBootstrap {
    * field shipped omit it (absent reads as empty).
    */
   archivedStreams?: Stream[]
+  /**
+   * Live calls in streams the viewer can access (roadmap 1.4), for the sidebar
+   * call dot. Seeds the active-calls store cold and, on reconnect, re-seeds it as
+   * the authoritative live set (INV-53). Optional: payloads cached before this
+   * field shipped omit it (absent reads as empty).
+   */
+  activeCalls?: ActiveCall[]
 }
 
 /**
@@ -1644,6 +1689,41 @@ export interface ActiveAgentSession {
   rootStreamId: string
   personaName: string
   startedAt: string
+}
+
+/**
+ * One live call, projected for the sidebar dot (roadmap 1.4). Seeded from the
+ * workspace bootstrap (`activeCalls`) and kept fresh by the `stream:call_started`
+ * / `stream:call_ended` fan-out (public channels via the workspace room,
+ * private/DM via member user rooms). `rootStreamId` is the non-thread ancestor
+ * whose sidebar row lights up (calls only exist on channels/DMs today, so this
+ * equals `streamId`, but the field mirrors `ActiveAgentSession` for the shared
+ * dot lookup). Live-call presence drives the "call dot wins over the agent dot"
+ * precedence at the sidebar decoration slot.
+ */
+export interface ActiveCall {
+  callId: string
+  streamId: string
+  rootStreamId: string
+  mode: "video" | "audio_only"
+  participantCount: number
+}
+
+/**
+ * The one live call on a stream, if any — the INV-53 pair for the timeline call
+ * card's live state and the reload rejoin bar. Served on {@link StreamBootstrap}
+ * and re-read on reconnect. `selfLiveParticipant` is true when the viewer holds a
+ * `joined` participant row with a live (unlapsed) endpoint — the rejoin-bar
+ * trigger after a fresh page load.
+ */
+export interface StreamActiveCall {
+  callId: string
+  mode: "video" | "audio_only"
+  participantCount: number
+  /** Distinct UserIds of the currently-joined participants (roster avatars). */
+  participantUserIds: string[]
+  /** True when the viewer is still `joined` with a live endpoint — drives the rejoin bar. */
+  selfLiveParticipant: boolean
 }
 
 export interface PendingInvitation {

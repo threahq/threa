@@ -91,6 +91,11 @@ function stubTransaction() {
   // emissions don't hit the no-op client (which would map an empty row set).
   spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
   spyOn(workspacesModule.UserRepository, "findById").mockResolvedValue({ id: "usr_a", name: "Ada" } as never)
+  // call_started/call_ended timeline appends (1.4) run in the same tx; stub the
+  // event insert + member lookup so unspied appends don't hit the no-op client
+  // (StreamEventRepository.insert reads back a sequence row that isn't there).
+  spyOn(streamsModule.StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+  spyOn(streamsModule.StreamMemberRepository, "list").mockResolvedValue([])
 }
 
 function makeService() {
@@ -783,6 +788,166 @@ describe("CallService sweeps", () => {
     // Only the endpoint that carried a CF session is torn down.
     expect(closeSession).toHaveBeenCalledTimes(1)
     expect(closeSession).toHaveBeenCalledWith("sess_a")
+  })
+})
+
+describe("CallService — call_started / call_ended timeline (1.4)", () => {
+  afterEach(() => mock.restore())
+
+  it("appends a call_started row + stream:call_started outbox + participants_changed when a call is created", async () => {
+    stubTransaction()
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({
+      id: "stream_1",
+      type: "channel",
+      visibility: "public",
+    } as never)
+    spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(fakeCall())
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
+    spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
+    stubCleanEndpointAdmission()
+    spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([
+      { userId: "usr_a", endpointId: "callep_1" },
+    ] as never)
+    const eventInsert = spyOn(streamsModule.StreamEventRepository, "insert").mockResolvedValue({
+      id: "evt_started",
+    } as never)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().startCall({ workspaceId: "ws_1", streamId: "stream_1", userId: "usr_a", mode: "video" })
+
+    expect(eventInsert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        eventType: "call_started",
+        payload: expect.objectContaining({ callId: "call_1", mode: "video", startedBy: "usr_a" }),
+      })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "stream:call_started",
+      expect.objectContaining({ callId: "call_1", streamId: "stream_1", streamVisibility: "public" })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:participants_changed",
+      expect.objectContaining({ callId: "call_1", participantCount: 1, participantUserIds: ["usr_a"] })
+    )
+  })
+
+  it("appends NO call_started row when joining an existing call (created=false)", async () => {
+    stubTransaction()
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({
+      id: "stream_1",
+      type: "channel",
+      visibility: "public",
+    } as never)
+    spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
+    spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall())
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
+    spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
+    stubCleanEndpointAdmission()
+    spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+    const eventInsert = spyOn(streamsModule.StreamEventRepository, "insert").mockResolvedValue({ id: "e" } as never)
+
+    await makeService().startCall({ workspaceId: "ws_1", streamId: "stream_1", userId: "usr_a", mode: "video" })
+
+    expect(eventInsert).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "call_started" })
+    )
+  })
+
+  it("appends call_ended carrying the end summary for both the completed and reaped paths", async () => {
+    stubTransaction()
+    const endedAt = new Date(NOW.getTime() + 5000)
+    spyOn(CallInvitationRepository, "cancelRingingForCalls").mockResolvedValue([])
+    spyOn(CallRepository, "endGraceExpired").mockResolvedValue([
+      fakeCall({ id: "call_done", status: "ended", endedReason: "completed", startedAt: NOW, endedAt }),
+      fakeCall({ id: "call_reaped", status: "ended", endedReason: "reaped", startedAt: NOW, endedAt }),
+    ])
+    spyOn(streamsModule.StreamRepository, "findById").mockResolvedValue({
+      id: "stream_1",
+      visibility: "private",
+    } as never)
+    spyOn(CallParticipantRepository, "listUserIdsByCall").mockImplementation(
+      async (_c: unknown, _ws: unknown, ids: readonly string[]) => new Map(ids.map((id) => [id, ["usr_a", "usr_b"]]))
+    )
+    const eventInsert = spyOn(streamsModule.StreamEventRepository, "insert").mockResolvedValue({
+      id: "evt_ended",
+    } as never)
+
+    const result = await makeService().endGraceExpiredCalls(NOW)
+
+    expect(result).toEqual({ ended: 2 })
+    expect(eventInsert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        eventType: "call_ended",
+        payload: {
+          callId: "call_done",
+          durationMs: 5000,
+          participantUserIds: ["usr_a", "usr_b"],
+          endedReason: "completed",
+        },
+      })
+    )
+    expect(eventInsert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        eventType: "call_ended",
+        payload: expect.objectContaining({ callId: "call_reaped", endedReason: "reaped" }),
+      })
+    )
+  })
+
+  it("getStreamActiveCall projects the live call with the viewer's own-participant flag", async () => {
+    stubWithClient()
+    spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall({ mode: "audio_only" }))
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([
+      { userId: "usr_a", endpointId: "callep_1" },
+      { userId: "usr_b", endpointId: null },
+    ] as never)
+
+    const active = await makeService().getStreamActiveCall({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      userId: "usr_a",
+    })
+
+    expect(active).toEqual({
+      callId: "call_1",
+      mode: "audio_only",
+      participantCount: 2,
+      participantUserIds: ["usr_a", "usr_b"],
+      selfLiveParticipant: true,
+    })
+  })
+
+  it("getStreamActiveCall returns null when no call is live", async () => {
+    stubWithClient()
+    spyOn(CallRepository, "findOpenByStream").mockResolvedValue(null)
+    expect(
+      await makeService().getStreamActiveCall({ workspaceId: "ws_1", streamId: "stream_1", userId: "usr_a" })
+    ).toBeNull()
+  })
+
+  it("listWorkspaceActiveCalls maps active calls to sidebar-dot summaries", async () => {
+    spyOn(CallRepository, "listActiveByStreamIds").mockResolvedValue([
+      { callId: "call_1", streamId: "stream_1", mode: "video", participantCount: 3 },
+    ])
+    const calls = await makeService().listWorkspaceActiveCalls({
+      workspaceId: "ws_1",
+      accessibleStreamIds: ["stream_1"],
+    })
+    expect(calls).toEqual([
+      { callId: "call_1", streamId: "stream_1", rootStreamId: "stream_1", mode: "video", participantCount: 3 },
+    ])
   })
 })
 

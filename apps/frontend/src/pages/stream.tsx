@@ -52,7 +52,7 @@ import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-
 import { useDecryptedStreamName, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useWorkspaceUserId, useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
-import { useCallLaunch } from "@/components/call"
+import { useCallLaunch, RejoinBar } from "@/components/call"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview } from "@/components/layout"
@@ -853,6 +853,7 @@ export function StreamPage() {
               ))}
           </div>
         </header>
+        {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId!} streamId={streamId!} />}
         <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
             <TimelineView isDraft={isDraft} autoFocus={!isMobile} />

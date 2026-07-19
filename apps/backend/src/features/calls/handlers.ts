@@ -140,6 +140,20 @@ export function createCallHandlers({
       })
     },
 
+    async leave(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { callId } = req.params
+      await assertAvailable(workspaceId)
+      await assertCallAccess(workspaceId, userId, callId)
+
+      // Self-leave, endpoint-id-free: the rejoin bar's "Leave" after a fresh load
+      // closes every live endpoint the user holds so the lease can't keep them a
+      // zombie participant for the grace window.
+      const result = await callService.leaveCallAsUser({ workspaceId, callId, userId })
+      res.json({ call: result.call })
+    },
+
     async declineInvitation(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id

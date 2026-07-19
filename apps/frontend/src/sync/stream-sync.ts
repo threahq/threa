@@ -26,6 +26,7 @@ import {
   dropReactionActivity,
   rehomeActivities,
 } from "./unread-counters"
+import { upsertActiveCall, updateCallParticipants } from "@/stores/active-calls-store"
 
 // ============================================================================
 // Bootstrap application — writes stream bootstrap data to IndexedDB
@@ -451,11 +452,34 @@ export async function applyStreamBootstrap(
   await db.transaction("rw", [db.events, db.streams, db.pendingMessages, db.pendingOperations], async () => {
     await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
   })
+  seedStreamActiveCall(workspaceId, streamId, bootstrap)
+}
+
+/**
+ * Seed the active-calls store with this stream's live call (INV-53 pair for the
+ * timeline card's live avatars + the reload rejoin bar). The workspace bootstrap
+ * seeds dot PRESENCE; this refines the joined roster for the stream in view.
+ * Calls live only on non-thread roots today, so rootStreamId equals streamId.
+ * A plain module-store write (not IDB), so it is safe from inside a caller's
+ * Dexie transaction — both bootstrap paths (initial open AND reconnect re-apply)
+ * must run it or the open stream's roster goes stale after a reconnect.
+ */
+function seedStreamActiveCall(workspaceId: string, streamId: string, bootstrap: StreamBootstrap): void {
+  if (!bootstrap.activeCall) return
+  upsertActiveCall(workspaceId, {
+    callId: bootstrap.activeCall.callId,
+    streamId,
+    rootStreamId: streamId,
+    mode: bootstrap.activeCall.mode,
+    participantCount: bootstrap.activeCall.participantCount,
+    participantUserIds: bootstrap.activeCall.participantUserIds,
+  })
 }
 
 /**
  * Same as `applyStreamBootstrap` but written for callers that have already
- * opened a `db.transaction` — it just delegates to `writeBootstrapEventsAndStream`.
+ * opened a `db.transaction` — it delegates to `writeBootstrapEventsAndStream`
+ * and performs the same store-side active-call seeding.
  */
 export async function applyStreamBootstrapInCurrentTransaction(
   workspaceId: string,
@@ -464,6 +488,7 @@ export async function applyStreamBootstrapInCurrentTransaction(
   now = Date.now()
 ): Promise<void> {
   await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
+  seedStreamActiveCall(workspaceId, streamId, bootstrap)
 }
 
 // ============================================================================
@@ -1134,6 +1159,30 @@ export function registerStreamSocketHandlers(
     }
   }
 
+  // Call started/ended append to the timeline like any broadcast/patch event
+  // (call_started is the slotted card; call_ended is the patch carrying the end
+  // summary). The stream:call_started/ended events also update the active-calls
+  // store, but that runs in workspace-sync (which owns the store from the
+  // workspace/user-room fan-out that reaches the sidebar); here we only append
+  // the row so the card renders in the timeline.
+  //
+  // call:participants_changed is stream-scoped and carries NO timeline row — it
+  // only refreshes the live card's roster in the active-calls store.
+  const handleCallParticipantsChanged = (payload: {
+    streamId: string
+    callId: string
+    participantCount: number
+    participantUserIds: string[]
+  }) => {
+    if (payload.streamId !== streamId) return
+    updateCallParticipants(workspaceId, {
+      callId: payload.callId,
+      streamId: payload.streamId,
+      participantCount: payload.participantCount,
+      participantUserIds: payload.participantUserIds,
+    })
+  }
+
   // Delegation events append to the timeline like any broadcast/patch event,
   // and additionally refresh the authoritative list behind the "In this
   // stream" panel (statuses live in these patches, so the list query is the
@@ -1259,6 +1308,9 @@ export function registerStreamSocketHandlers(
   socket.on("stream:bot_access_requested", handleAppendEvent)
   socket.on("stream:bot_access_status_changed", handleAppendEvent)
   socket.on("stream:brief_updated", handleAppendEvent)
+  socket.on("stream:call_started", handleAppendEvent)
+  socket.on("stream:call_ended", handleAppendEvent)
+  socket.on("call:participants_changed", handleCallParticipantsChanged)
   socket.on("stream:archived", handleAppendEvent)
   socket.on("stream:unarchived", handleAppendEvent)
   socket.on("stream:description_set", handleAppendEvent)
@@ -1294,6 +1346,9 @@ export function registerStreamSocketHandlers(
     socket.off("stream:bot_access_requested", handleAppendEvent)
     socket.off("stream:bot_access_status_changed", handleAppendEvent)
     socket.off("stream:brief_updated", handleAppendEvent)
+    socket.off("stream:call_started", handleAppendEvent)
+    socket.off("stream:call_ended", handleAppendEvent)
+    socket.off("call:participants_changed", handleCallParticipantsChanged)
     socket.off("stream:archived", handleAppendEvent)
     socket.off("stream:unarchived", handleAppendEvent)
     socket.off("stream:description_set", handleAppendEvent)

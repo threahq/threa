@@ -6,6 +6,7 @@ import {
   collectCancelledFollowUpIds,
   collectDelegationStatusPatches,
   collectBotAccessStatusPatches,
+  collectCallEndedPatches,
   filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
@@ -854,6 +855,34 @@ describe("collectBotAccessStatusPatches", () => {
   })
 })
 
+describe("collectCallEndedPatches", () => {
+  const endedItem = (id: string, callId: string, durationMs: number): TimelineItem => ({
+    type: "event",
+    event: createEvent({
+      id,
+      sequence: "5",
+      eventType: "call_ended",
+      payload: { callId, durationMs, participantUserIds: ["usr_a"], endedReason: "completed" },
+    }),
+  })
+
+  it("keeps the LAST ended patch per call", () => {
+    const patches = collectCallEndedPatches([
+      endedItem("evt_1", "call_1", 1000),
+      endedItem("evt_2", "call_1", 2000),
+      endedItem("evt_3", "call_2", 3000),
+    ])
+    expect(patches.get("call_1")).toMatchObject({ durationMs: 2000 })
+    expect(patches.get("call_2")).toMatchObject({ durationMs: 3000 })
+  })
+
+  it("must run on pre-filter items — call_ended is zero-height (filtered out of visible items)", () => {
+    const items = [endedItem("evt_1", "call_1", 1000)]
+    expect(collectCallEndedPatches(items).has("call_1")).toBe(true)
+    expect(collectCallEndedPatches(filterVisibleItems(items)).has("call_1")).toBe(false)
+  })
+})
+
 describe("OLDER_SKELETON_ITEMS (older-page skeleton rows)", () => {
   it("provides the configured number of skeleton items with stable, distinct keys", () => {
     expect(OLDER_SKELETON_ITEMS).toHaveLength(OLDER_SKELETON_COUNT)
@@ -883,6 +912,7 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: new Map(),
       botAccessStatusPatches: new Map(),
+      callEndedPatches: new Map(),
       ...overrides,
     }
   }

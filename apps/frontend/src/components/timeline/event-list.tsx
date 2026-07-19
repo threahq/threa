@@ -9,6 +9,7 @@ import {
   type CommandFailedPayload,
   type DelegationStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
+  type CallEndedEventPayload,
 } from "@threa/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import type { MessageAgentActivity } from "@/hooks"
@@ -347,6 +348,8 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "delegation:status_changed",
   // Status changes patch the bot-access request card (collectBotAccessStatusPatches).
   "bot_access:status_changed",
+  // The end summary patches the call card (collectCallEndedPatches).
+  "call_ended",
 ])
 
 /**
@@ -430,6 +433,23 @@ export function collectBotAccessStatusPatches(items: TimelineItem[]): Map<string
     if (item.type !== "event" || item.event.eventType !== "bot_access:status_changed") continue
     const payload = item.event.payload as BotAccessStatusChangedEventPayload | undefined
     if (payload?.requestId) patches.set(payload.requestId, payload)
+  }
+  return patches
+}
+
+/**
+ * Collect the latest `call_ended` payload per callId in the loaded window (items
+ * are in sequence order, so the last patch wins). A call card reads its entry to
+ * render the authoritative ended state — duration, participants, reason — for
+ * every viewer without a fetch (roadmap 1.4). Absent means the call has not
+ * ended in the loaded window (and liveness is decided by the active-calls cache).
+ */
+export function collectCallEndedPatches(items: TimelineItem[]): Map<string, CallEndedEventPayload> {
+  const patches = new Map<string, CallEndedEventPayload>()
+  for (const item of items) {
+    if (item.type !== "event" || item.event.eventType !== "call_ended") continue
+    const payload = item.event.payload as CallEndedEventPayload | undefined
+    if (payload?.callId) patches.set(payload.callId, payload)
   }
   return patches
 }
@@ -742,6 +762,8 @@ export interface TimelineItemRenderContext {
   delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
   /** Latest `bot_access:status_changed` payload per requestId in the loaded window. */
   botAccessStatusPatches: Map<string, BotAccessStatusChangedEventPayload>
+  /** Latest `call_ended` payload per callId in the loaded window — drives the call card's ended state. */
+  callEndedPatches: Map<string, CallEndedEventPayload>
   /**
    * True when the viewer is a member of this stream. Gates the bot-access
    * request card's Approve/Deny buttons — a non-member sees the card and its
@@ -787,6 +809,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         cancelledFollowUpIds={ctx.cancelledFollowUpIds}
         delegationStatusPatches={ctx.delegationStatusPatches}
         botAccessStatusPatches={ctx.botAccessStatusPatches}
+        callEndedPatches={ctx.callEndedPatches}
         viewerIsMember={ctx.viewerIsMember}
         batch={ctx.batch}
         // Continuations directly under an UnreadDivider promote back to head so
@@ -1023,6 +1046,16 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
       return false
   }
 
+  // A call card repaints when its own `call_ended` patch changes (the call ended
+  // within the window). Liveness itself is read from the active-calls store
+  // inside the card via useSyncExternalStore, so that flip repaints without a
+  // ctx change; here we only cover the in-window ended patch.
+  if (item.event.eventType === "call_started") {
+    const cid = (item.event.payload as { callId?: string })?.callId
+    if (cid !== undefined && !callEndedPatchEqual(p.callEndedPatches.get(cid), n.callEndedPatches.get(cid)))
+      return false
+  }
+
   const messageId = getEventMessageId(item.event)
   if ((p.highlightMessageId === messageId) !== (n.highlightMessageId === messageId)) return false
   if ((p.firstMessageId === messageId) !== (n.firstMessageId === messageId)) return false
@@ -1067,6 +1100,16 @@ function botAccessPatchEqual(
   if (a === b) return true
   if (!a || !b) return false
   return a.status === b.status
+}
+
+function callEndedPatchEqual(a: CallEndedEventPayload | undefined, b: CallEndedEventPayload | undefined): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.durationMs === b.durationMs &&
+    a.endedReason === b.endedReason &&
+    a.participantUserIds.length === b.participantUserIds.length
+  )
 }
 
 /**
@@ -1155,6 +1198,7 @@ export function EventList({
   const cancelledFollowUpIds = collectCancelledFollowUpIds(timelineItems)
   const delegationStatusPatches = collectDelegationStatusPatches(timelineItems)
   const botAccessStatusPatches = collectBotAccessStatusPatches(timelineItems)
+  const callEndedPatches = collectCallEndedPatches(timelineItems)
 
   if (timelineItems.length === 0) {
     return (
@@ -1184,6 +1228,7 @@ export function EventList({
     cancelledFollowUpIds,
     delegationStatusPatches,
     botAccessStatusPatches,
+    callEndedPatches,
     viewerIsMember,
     batch,
     conversationOverlay,

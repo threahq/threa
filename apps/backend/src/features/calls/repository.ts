@@ -121,6 +121,35 @@ export const CallRepository = {
     return result.rows[0] ? mapCall(result.rows[0]) : null
   },
 
+  /**
+   * The live calls (`active`/`empty_grace`) on any of `streamIds`, each with its
+   * current joined-participant count — the workspace bootstrap's `activeCalls`
+   * sidebar-dot seed. Caller passes only stream ids the viewer can access (INV-62
+   * is enforced upstream, at the accessible-stream projection). Batched (INV-56).
+   */
+  async listActiveByStreamIds(
+    db: Querier,
+    workspaceId: string,
+    streamIds: readonly string[]
+  ): Promise<Array<{ callId: string; streamId: string; mode: CallMode; participantCount: number }>> {
+    if (streamIds.length === 0) return []
+    const result = await db.query<{ id: string; stream_id: string; mode: string; participant_count: string }>(sql`
+      SELECT c.id, c.stream_id, c.mode,
+        (SELECT COUNT(*) FROM call_participants p
+           WHERE p.workspace_id = c.workspace_id AND p.call_id = c.id AND p.status = 'joined') AS participant_count
+      FROM calls c
+      WHERE c.workspace_id = ${workspaceId}
+        AND c.stream_id = ANY(${streamIds as string[]})
+        AND c.status IN ('active', 'empty_grace')
+    `)
+    return result.rows.map((row) => ({
+      callId: row.id,
+      streamId: row.stream_id,
+      mode: row.mode as CallMode,
+      participantCount: Number(row.participant_count),
+    }))
+  },
+
   /** Read a call, workspace-scoped (INV-8). */
   async findById(db: Querier, workspaceId: string, id: string): Promise<Call | null> {
     const result = await db.query<CallRow>(sql`
@@ -645,6 +674,35 @@ export const CallParticipantRepository = {
    * registry is how peers learn what to pull. Read alongside `calls.roster_version`
    * for the snapshot version.
    */
+  /**
+   * Distinct UserIds of everyone who was EVER a participant on each of `callIds`
+   * (any status), keyed by call id — the `call_ended` card's avatar set. Batched
+   * (INV-56) so the grace-end sweep can end many calls in one read.
+   */
+  async listUserIdsByCall(
+    db: Querier,
+    workspaceId: string,
+    callIds: readonly string[]
+  ): Promise<Map<string, string[]>> {
+    const byCall = new Map<string, string[]>()
+    if (callIds.length === 0) return byCall
+    const result = await db.query<{ call_id: string; user_id: string }>(sql`
+      SELECT call_id, user_id
+      FROM call_participants
+      WHERE workspace_id = ${workspaceId} AND call_id = ANY(${callIds as string[]})
+      ORDER BY joined_at ASC
+    `)
+    for (const row of result.rows) {
+      const list = byCall.get(row.call_id)
+      if (list) {
+        if (!list.includes(row.user_id)) list.push(row.user_id)
+      } else {
+        byCall.set(row.call_id, [row.user_id])
+      }
+    }
+    return byCall
+  },
+
   async listRoster(db: Querier, workspaceId: string, callId: string): Promise<CallRosterEntry[]> {
     const result = await db.query<{
       user_id: string

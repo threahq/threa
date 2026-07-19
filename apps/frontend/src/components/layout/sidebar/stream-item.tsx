@@ -27,6 +27,7 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useSidebar } from "@/contexts"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
+import { useActiveCallsForStream } from "@/stores/active-calls-store"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
@@ -148,6 +149,13 @@ interface StreamItemAvatarProps {
    * marker for the duration of the run.
    */
   agentActive?: boolean
+  /**
+   * True while a call is live in this stream. Renders a phone dot in the top-right
+   * slot, taking precedence over BOTH `agentActive` and `decoration` (roadmap 1.4)
+   * — a live call is the more time-sensitive signal (you can still join it), so
+   * the call dot wins over the agent-working dot at this one contested slot.
+   */
+  callActive?: boolean
 }
 
 /**
@@ -165,6 +173,24 @@ export function AgentActivityDot() {
     >
       <span className="absolute inline-flex h-1.5 w-1.5 rounded-full bg-primary opacity-60 animate-activity-pulse" />
       <span className="relative inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+    </span>
+  )
+}
+
+/**
+ * The live-call dot for the avatar's top-right slot (roadmap 1.4). A pulsing
+ * green dot, positioned identically to {@link AgentActivityDot} so toggling it
+ * shifts nothing (INV-21). It wins the slot over the agent dot — see `callActive`.
+ */
+export function CallActivityDot() {
+  return (
+    <span
+      role="img"
+      aria-label="Call in progress"
+      className="absolute -top-1 -right-1 inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-background"
+    >
+      <span className="absolute inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500 opacity-60 animate-activity-pulse" />
+      <span className="relative inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
     </span>
   )
 }
@@ -199,7 +225,15 @@ export function StreamItemAvatar({
   badge,
   decoration,
   agentActive,
+  callActive,
 }: StreamItemAvatarProps) {
+  // The one contested top-right slot: a live call wins over an agent-working
+  // signal, which in turn wins over the static companion decoration (INV-21:
+  // all three occupy the same absolute footprint, so swaps shift nothing).
+  let slot = null
+  if (callActive) slot = <CallActivityDot />
+  else if (agentActive) slot = <AgentActivityDot />
+  else if (decoration) slot = <AvatarDecoration {...decoration} />
   // Thread-of-DM: thread icon as main content, avatar as small badge overlay
   if (badge && avatarUrl) {
     return (
@@ -211,7 +245,7 @@ export function StreamItemAvatar({
             <badge.icon className="h-2 w-2" />
           </AvatarFallback>
         </Avatar>
-        {agentActive ? <AgentActivityDot /> : decoration && <AvatarDecoration {...decoration} />}
+        {slot}
       </div>
     )
   }
@@ -246,7 +280,7 @@ export function StreamItemAvatar({
           <badge.icon className="h-2 w-2" />
         </div>
       )}
-      {agentActive ? <AgentActivityDot /> : decoration && <AvatarDecoration {...decoration} />}
+      {slot}
     </div>
   )
 }
@@ -369,6 +403,10 @@ export function StreamItem({
     stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
   const agentSessions = useAgentActivityForStream(workspaceId, agentActivityStreamId)
   const agentActive = agentSessions.length > 0
+  // A live call keys on the sidebar root too (a call is anchored to a channel/DM
+  // root; threads carry no calls in v1). The call dot wins the slot over the
+  // agent dot (roadmap 1.4).
+  const callActive = useActiveCallsForStream(workspaceId, agentActivityStreamId).length > 0
 
   useUrgencyTracking(itemRef, stream.id, stream.urgency, scrollContainerRef)
 
@@ -601,6 +639,7 @@ export function StreamItem({
                 avatarAlt={name}
                 badge={threadBadge}
                 agentActive={agentActive}
+                callActive={callActive}
               />
 
               <div
