@@ -2305,12 +2305,18 @@ export async function applyWorkspaceBootstrap(
   seedWorkspaceCache(workspaceId, {
     workspace: { ...bootstrap.workspace, _cachedAt: now },
     users: bootstrap.users.map((u) => ({ ...u, _cachedAt: now })),
-    streams: bootstrap.streams.map((s) => ({
-      ...s,
-      notificationLevel: membershipByStream.get(s.id)?.notificationLevel,
-      lastReadEventId: membershipByStream.get(s.id)?.lastReadEventId,
-      _cachedAt: now,
-    })),
+    streams: [
+      ...bootstrap.streams.map((s) => ({
+        ...s,
+        notificationLevel: membershipByStream.get(s.id)?.notificationLevel,
+        lastReadEventId: membershipByStream.get(s.id)?.lastReadEventId,
+        _cachedAt: now,
+      })),
+      // Archived roots must be in the synchronous seed too, or the first paint
+      // can't tell a stream is archived until the IDB read resolves — a
+      // one-frame flash of archived-root drafts (INV-21-adjacent).
+      ...mapArchivedStreamRows(bootstrap.archivedStreams ?? [], existingByStreamId, now),
+    ],
     memberships: bootstrap.streamMemberships.map((sm) => ({
       ...sm,
       id: `${workspaceId}:${sm.streamId}`,
@@ -2529,12 +2535,17 @@ export async function applyReconnectBootstrapBatch(
   seedWorkspaceCache(workspaceId, {
     workspace: { ...finalBootstrap.workspace, _cachedAt: now },
     users: finalBootstrap.users.map((user) => ({ ...user, _cachedAt: now })),
-    streams: finalBootstrap.streams.map((stream) => ({
-      ...stream,
-      notificationLevel: membershipByStream.get(stream.id)?.notificationLevel,
-      lastReadEventId: membershipByStream.get(stream.id)?.lastReadEventId,
-      _cachedAt: now,
-    })),
+    streams: [
+      ...finalBootstrap.streams.map((stream) => ({
+        ...stream,
+        notificationLevel: membershipByStream.get(stream.id)?.notificationLevel,
+        lastReadEventId: membershipByStream.get(stream.id)?.lastReadEventId,
+        _cachedAt: now,
+      })),
+      // Mirrors applyWorkspaceBootstrap: archived roots ride the seed so the
+      // first paint after reconnect knows they're archived (no draft flash).
+      ...mapArchivedStreamRows(finalBootstrap.archivedStreams ?? [], new Map(localStreams.map((s) => [s.id, s])), now),
+    ],
     memberships: finalBootstrap.streamMemberships.map((membership) => ({
       ...membership,
       id: `${workspaceId}:${membership.streamId}`,

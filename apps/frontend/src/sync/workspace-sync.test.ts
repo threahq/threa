@@ -341,6 +341,21 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect(row?.archivedAt).toBe("2026-01-01T00:00:00Z")
   })
 
+  it("seeds archived roots into the synchronous in-memory cache (no first-paint flash)", async () => {
+    const fetchStartedAt = Date.now()
+    const archivedRoot = makeStream("stream_arch_seed", { archivedAt: "2026-01-01T00:00:00Z" })
+
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap({ archivedStreams: [archivedRoot] }), fetchStartedAt)
+
+    // The seed is what the first render reads before the async IDB query
+    // resolves; if archived roots are missing here, isStreamArchived is blind
+    // for one frame and archived-root drafts flash visible.
+    const { renderHook } = await import("@testing-library/react")
+    const { useWorkspaceStreamsRaw } = await import("@/stores/workspace-store")
+    const { result } = renderHook(() => useWorkspaceStreamsRaw("ws_1"))
+    expect(result.current.map((s) => s.id)).toContain("stream_arch_seed")
+  })
+
   it("preserves an existing row's lastMessagePreview when re-persisting an archived root", async () => {
     const fetchStartedAt = Date.now()
     const archivedRoot = makeStream("stream_arch_root", { archivedAt: "2026-01-01T00:00:00Z" })
