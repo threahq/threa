@@ -77,4 +77,6 @@ export {
   agentConfigOverrideId,
   personaConfigDraftId,
   personaConfigRevisionId,
+  accessLogId,
+  socketConnectionId,
 } from "@threa/backend-common"

@@ -50,6 +50,8 @@ import {
 } from "./features/workspaces"
 import { InvitationService, InvitationShadowSyncHandler } from "./features/invitations"
 import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threa/backend-common"
+import { PartitionMaintenanceWorker } from "@threa/backend-common"
+import { AccessLogService } from "./features/access-log"
 import {
   StreamService,
   StreamNamingService,
@@ -297,6 +299,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   const costService = new AICostService({ pool })
   const budgetService = new AIBudgetService({ pool })
+  const accessLogService = new AccessLogService({ pool })
 
   const ai = createAI({
     openrouter: { apiKey: config.ai.openRouterApiKey },
@@ -1447,9 +1450,19 @@ export async function startServer(): Promise<ServerInstance> {
     maxBatchesPerRun: Number(process.env.OUTBOX_RETENTION_MAX_BATCHES_PER_RUN) || 10,
   })
 
+  // Keeps access_log's monthly partitions provisioned ahead and drops expired
+  // ones (13-month retention). Idempotent, so it runs on every pod.
+  const accessLogPartitionWorker = new PartitionMaintenanceWorker(pool, {
+    parentTable: "access_log",
+    retainMonths: Number(process.env.ACCESS_LOG_RETENTION_MONTHS) || 13,
+    aheadMonths: Number(process.env.ACCESS_LOG_PARTITION_AHEAD_MONTHS) || 2,
+    intervalMs: Number(process.env.ACCESS_LOG_PARTITION_INTERVAL_MS) || 6 * 60 * 60 * 1000,
+  })
+
   // Start single LISTEN connection that notifies all handlers
   await outboxDispatcher.start()
   outboxRetentionWorker.start()
+  accessLogPartitionWorker.start()
 
   // Wake-up nudge LISTEN for the enclave claim long-poll (§2.7).
   await enclaveClaimNudge?.start()
@@ -1527,6 +1540,7 @@ export async function startServer(): Promise<ServerInstance> {
     await scheduleManager.stop()
     await cleanupWorker.stop()
     await outboxRetentionWorker.stop()
+    await accessLogPartitionWorker.stop()
     await syncLogReconciliationWorker.stop()
     await syncHeartbeatWorker.stop()
     await syncLogRetentionWorker.stop()
@@ -1553,6 +1567,9 @@ export async function startServer(): Promise<ServerInstance> {
       })
     }
     logger.info("Closing database pools...")
+    // Final responses/disconnects fire-and-forget audit rows; bounded drain so
+    // they don't lose the race against pool.end().
+    await accessLogService.drain()
     await pools.listen.end()
     await pools.realtime.end()
     await pools.main.end()

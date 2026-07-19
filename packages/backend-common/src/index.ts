@@ -18,6 +18,7 @@ export type {
   WorkosOrganizationMembership,
 } from "./auth/workos-org-service"
 export { StubWorkosOrgService } from "./auth/workos-org-service.stub"
+export type { Event as WorkosEvent, EventName as WorkosEventName } from "@workos-inc/node"
 export { createAuthMiddleware } from "./auth/middleware"
 export { WorkosApiKeyService } from "./auth/api-key-service"
 export type { ApiKeyService, ValidatedApiKey } from "./auth/api-key-service"
@@ -124,6 +125,9 @@ export {
   personaConfigRevisionId,
   integrationRouteId,
   githubWebhookDeliveryId,
+  accessLogId,
+  socketConnectionId,
+  authLogId,
 } from "./id"
 export {
   parseCookies,
@@ -174,4 +178,11 @@ export { DebounceWithMaxWait } from "./debounce"
 export { calculateBackoffMs, type BackoffOptions } from "./backoff"
 export { bigIntReplacer, serializeBigInt } from "./serialization"
 export { Ticker, type TickerConfig } from "./ticker"
+export {
+  monthlyPartitionName,
+  ensureMonthlyPartitions,
+  dropExpiredMonthlyPartitions,
+  PartitionMaintenanceWorker,
+} from "./partition/index"
+export type { EnsurePartitionsOptions, DropExpiredOptions, PartitionMaintenanceWorkerConfig } from "./partition/index"
 export { isValidIanaTimezone } from "./timezone"
