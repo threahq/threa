@@ -117,6 +117,54 @@ describe("CloudflareRealtimeApi tracks", () => {
     expect(init.method).toBe("PUT")
     expect(body).toEqual({ tracks: [{ mid: "0" }, { mid: "1" }], force: true })
   })
+
+  it("closeSession enumerates the session's tracks via state GET, then force-closes them by mid", async () => {
+    const f = stubFetch(async (url, init) => {
+      if (init.method === "GET") {
+        return jsonResponse({
+          tracks: [
+            { location: "local", mid: "0" },
+            { location: "remote", mid: "2" },
+          ],
+        })
+      }
+      return jsonResponse({ tracks: [] })
+    })
+    const api = new CloudflareRealtimeApi(CONFIG)
+
+    await api.closeSession("sess_1")
+
+    const stateCall = f.mock.calls[0] as [string, RequestInit]
+    expect(stateCall[0]).toBe("https://rtc.live.cloudflare.com/v1/apps/app_1/sessions/sess_1")
+    expect(stateCall[1].method).toBe("GET")
+    const { url, init, body } = lastCall(f)
+    expect(url).toBe("https://rtc.live.cloudflare.com/v1/apps/app_1/sessions/sess_1/tracks/close")
+    expect(init.method).toBe("PUT")
+    expect(body).toEqual({ tracks: [{ mid: "0" }, { mid: "2" }], force: true })
+  })
+
+  it("closeSession returns quietly when the state GET fails (session already dead) — no empty close", async () => {
+    const f = stubFetch(async (url, init) => {
+      if (init.method === "GET") {
+        return jsonResponse({ errorCode: "session_error", errorDescription: "disconnected" }, 410)
+      }
+      return jsonResponse({ tracks: [] })
+    })
+    const api = new CloudflareRealtimeApi(CONFIG)
+
+    await api.closeSession("sess_1")
+
+    expect(f.mock.calls).toHaveLength(1)
+  })
+
+  it("closeSession skips the close when the session has no tracks (CF rejects an empty tracks/close)", async () => {
+    const f = stubFetch(async () => jsonResponse({ tracks: [] }))
+    const api = new CloudflareRealtimeApi(CONFIG)
+
+    await api.closeSession("sess_1")
+
+    expect(f.mock.calls).toHaveLength(1)
+  })
 })
 
 describe("CloudflareRealtimeApi error handling", () => {

@@ -1062,7 +1062,7 @@ export class CallService {
         throw new HttpError("Calls media provider error", {
           status,
           code: "CALL_MEDIA_PROVIDER_ERROR",
-          details: { cfCode: err.code, cfErrorCode: err.cfErrorCode },
+          details: { cfCode: err.code, cfErrorCode: err.cfErrorCode, cfErrorDescription: err.cfErrorDescription },
         })
       }
       throw err

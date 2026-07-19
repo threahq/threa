@@ -58,7 +58,7 @@ async (cfg) => {
 
   // Create the CF session for this endpoint.
   const session = await api(base + '/cf/session', { mediaIncarnation: cfg.incarnation });
-  log.push(['session', session.status]);
+  log.push(['session', session.status, session.status >= 400 ? JSON.stringify(session.json) : undefined]);
 
   if (cfg.role === 'publisher') {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
@@ -69,7 +69,10 @@ async (cfg) => {
     });
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await iceDone();
+    // Production parity: send the offer immediately, candidate-less (no iceDone
+    // wait) — trickle candidates flow after; also keeps the create->publish gap
+    // tight enough that CF cannot consider the new session abandoned.
+
     const publishTracks = tracks.map(t => ({
       kind: t.kind, mid: t.transceiver.mid, trackName: cfg.userId + '-' + t.kind,
     }));
@@ -78,7 +81,7 @@ async (cfg) => {
       sdp: { type: 'offer', sdp: pc.localDescription.sdp },
       tracks: publishTracks,
     });
-    log.push(['publish', pub.status, JSON.stringify(pub.json && { rin: pub.json.requiresImmediateRenegotiation, hasAnswer: !!pub.json.sessionDescription, tracks: pub.json.tracks })]);
+    log.push(['publish', pub.status, pub.status >= 400 ? JSON.stringify(pub.json) : JSON.stringify(pub.json && { rin: pub.json.requiresImmediateRenegotiation, hasAnswer: !!pub.json.sessionDescription, tracks: pub.json.tracks })]);
     if (pub.json && pub.json.sessionDescription) {
       await pc.setRemoteDescription(pub.json.sessionDescription);
     }
@@ -94,12 +97,13 @@ async (cfg) => {
       await pc.setRemoteDescription(pull.json.sessionDescription);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      await iceDone();
+      // Production parity: answer immediately, candidate-less (trickle after).
+
       const reneg = await api(base + '/cf/renegotiate', {
         mediaIncarnation: cfg.incarnation,
         sdp: { type: 'answer', sdp: pc.localDescription.sdp },
       });
-      log.push(['renegotiate', reneg.status]);
+      log.push(['renegotiate', reneg.status, reneg.status >= 400 ? JSON.stringify(reneg.json) : undefined]);
     }
   }
 
@@ -183,7 +187,14 @@ async function main() {
 
     // Publisher first (its trackNames must exist before the puller pulls).
     const pubPage = await openPeer(pub.workosUserId)
-    const pubResult = (await pubPage.evaluate(PEER_SCRIPT as unknown as string, {
+    // Evaluate a self-invoking expression with the config inlined: Playwright's
+    // string-vs-function heuristic does NOT reliably treat a template-string
+    // arrow as callable (it returned the unserializable function → undefined on
+    // the first live run), so never rely on it.
+    const runPeer = (page: import("playwright-core").Page, cfg: unknown) =>
+      page.evaluate(`(${PEER_SCRIPT.trim()})(${JSON.stringify(cfg)})`) as Promise<PeerResult>
+
+    const pubResult = await runPeer(pubPage, {
       role: "publisher",
       workspaceId: wsId,
       callId,
@@ -191,8 +202,9 @@ async function main() {
       incarnation: pubInc,
       userId: pub.id,
       iceServers,
-    })) as PeerResult
+    })
     const publishedTrackNames = await pubPage.evaluate("window.__publishedTrackNames")
+    console.log("publisher log →", JSON.stringify(pubResult.log, null, 2))
 
     // The puller must reference the publisher's REAL CF session id (Q3): CF pull is
     // {sessionId: <publisher's CF session>, trackName}. The publisher's PEER_SCRIPT
@@ -207,7 +219,7 @@ async function main() {
     }
 
     const subPage = await openPeer(sub.workosUserId)
-    const subResult = (await subPage.evaluate(PEER_SCRIPT as unknown as string, {
+    const subResult = await runPeer(subPage, {
       role: "puller",
       workspaceId: wsId,
       callId,
@@ -219,7 +231,7 @@ async function main() {
         sessionId: publisherCfSessionId,
         trackName,
       })),
-    })) as PeerResult
+    })
 
     console.log("CF-2 publisher →", JSON.stringify(pubResult, null, 2))
     console.log("CF-2 puller →", JSON.stringify(subResult, null, 2))

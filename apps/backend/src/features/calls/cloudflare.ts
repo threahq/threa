@@ -137,7 +137,7 @@ export class CloudflareRealtimeApi implements RealtimeMediaApi {
       sessionDescription?: SessionDescription
       errorCode?: string
       errorDescription?: string
-    }>("POST", `/${this.appId}/sessions/new`, {})
+    }>("POST", `/${this.appId}/sessions/new`, undefined)
     if (!body.sessionId) {
       throw new CloudflareRealtimeError("CF session create returned no sessionId", {
         status: 502,
@@ -209,13 +209,27 @@ export class CloudflareRealtimeApi implements RealtimeMediaApi {
   }
 
   async closeSession(sessionId: string): Promise<void> {
-    // CF exposes no documented session-delete verb; sessions reap on their own
-    // inactivity timeout. We force-close all of a session's tracks as the
-    // closest available teardown so media stops promptly rather than lingering
-    // to the timeout. Confirming the exact teardown is a CLOUDFLARE_API.md open
-    // question for the 0.3 spike; callers treat this as best-effort.
+    // CF has no session-delete verb (DELETE → 405 "reserved for future
+    // WHIP/WHEP") and tracks/close REJECTS an empty track list (406 "Expecting
+    // at least 1 track") — live-probe findings, 2026-07-19. The only real
+    // teardown: enumerate the session's tracks via GET session state, then
+    // force-close them by mid. A GET failure (410 "disconnected", 404, timeout)
+    // means the PC is already gone — no media can flow, nothing to close; CF
+    // reaps disconnected sessions on its own inactivity timeout.
+    let state: { tracks?: Array<{ mid?: string | null }> }
+    try {
+      state = await this.request<{ tracks?: Array<{ mid?: string | null }> }>(
+        "GET",
+        `/${this.appId}/sessions/${encodeURIComponent(sessionId)}`,
+        undefined
+      )
+    } catch {
+      return
+    }
+    const mids = (state.tracks ?? []).map((t) => t.mid).filter((mid): mid is string => !!mid)
+    if (mids.length === 0) return
     await this.request("PUT", `/${this.appId}/sessions/${encodeURIComponent(sessionId)}/tracks/close`, {
-      tracks: [],
+      tracks: mids.map((mid) => ({ mid })),
       force: true,
     })
   }
@@ -225,13 +239,17 @@ export class CloudflareRealtimeApi implements RealtimeMediaApi {
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     let response: Response
     try {
+      // `undefined` body sends NO body at all: CF's sessions/new rejects a
+      // present-but-empty `{}` with 400 decoding_error ("validation error:
+      // sessionDescription") but accepts an absent body as a no-SDP create
+      // (live-CF probe finding, 2026-07-19).
       response = await fetch(`${this.apiBase}${path}`, {
         method,
         headers: {
           Authorization: `Bearer ${this.appSecret}`,
-          "Content-Type": "application/json",
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
         },
-        body: JSON.stringify(body),
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         signal: controller.signal,
       })
     } catch (err) {

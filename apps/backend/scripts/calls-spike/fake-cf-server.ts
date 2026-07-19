@@ -2,11 +2,11 @@
  * A local stand-in for the Cloudflare Realtime (SFU) HTTPS API, used by the
  * control-plane hostile matrix (Half A) so the calls surfaces run with
  * `cloudflareEnabled=true` WITHOUT a real CF dev account. It implements exactly
- * the four verbs `cloudflare.ts` calls (`sessions/new`, `tracks/new`,
- * `renegotiate`, `tracks/close`) and RECORDS every request, so a matrix can
- * assert the backend attempted a session teardown after a crash (the
- * `closeSession()` path is a `PUT .../tracks/close` with `force:true`, empty
- * `tracks`).
+ * the verbs `cloudflare.ts` calls (`sessions/new`, `tracks/new`, `renegotiate`,
+ * `tracks/close`, session-state `GET`) and RECORDS every request, so a matrix
+ * can assert the backend attempted a session teardown after a crash (the
+ * `closeSession()` path is a state GET followed by `PUT .../tracks/close` with
+ * `force:true` and the enumerated mids — the real CF rejects an empty close).
  *
  * This is NOT a media plane — it moves no RTP, answers with placeholder SDP, and
  * exists purely to exercise the backend's proxy + sweeper wiring against a real
@@ -113,15 +113,23 @@ export function startFakeCfServer(port = 0, options: FakeCfOptions = {}): FakeCf
       if (req.method === "PUT" && tail[tail.length - 1] === "close") {
         return Response.json({ tracks: [] })
       }
+      // GET /sessions/{id} — session state; closeSession() enumerates tracks here
+      // before force-closing them (the real CF rejects an empty tracks/close).
+      if (req.method === "GET" && sessionId && tail.length === 1) {
+        return Response.json({ tracks: [{ location: "local", mid: "0" }] })
+      }
 
       return Response.json({ errorCode: "NOT_FOUND", errorDescription: "fake-cf: unhandled route" }, { status: 404 })
     },
   })
 
+  // A session teardown is a FORCED close (interactive unpublish uses force:false).
+  // The mids come from the state GET, so the list is non-empty — never key on
+  // emptiness (the real CF rejects an empty tracks/close outright).
   const isClose = (r: FakeCfRequest): boolean => {
     if (r.method !== "PUT" || !r.path.endsWith("/tracks/close")) return false
     const b = r.body as { tracks?: unknown[]; force?: boolean } | null
-    return !!b && b.force === true && Array.isArray(b.tracks) && b.tracks.length === 0
+    return !!b && b.force === true
   }
 
   const boundPort = server.port ?? port

@@ -231,13 +231,19 @@ this is the honest M1-exit state, not a claim of readiness.
       fake-CF seam; wired into the browser-tests CI workflow (path filters already
       cover `tests/browser/**`).
 - [x] Observability counters implemented and exported on the metrics registry.
-- [ ] **CF Realtime app provisioned + env vars set** for the target environment
-      (dev/staging/prod), per [`docs/deployment.md`](../deployment.md). One app per
-      environment; never share the secret.
-- [ ] **Half-B live-CF spike executed** — the 7 `CLOUDFLARE_API.md` questions
-      answered against a real CF dev app (session teardown verb + inactivity
-      timeout, publish/pull contract, simulcast/layer semantics, error codes). Half
-      B is **built but unexecuted** (blocked on a CF dev app).
+- [x] **CF Realtime app provisioned + env vars set — DEV** (2026-07-19,
+      dashboard-created; the account-token API 403s despite Calls:Edit — see
+      `SPIKE_FINDINGS.md` — so provision per-env apps via the dashboard). Staging
+      and prod apps still needed, per [`docs/deployment.md`](../deployment.md).
+      One app per environment; never share the secret.
+- [x] **Half-B live-CF spike executed** (2026-07-19) — Q1-Q3/Q6/Q7 answered
+      against the real dev app, **cf-2 confirmed two-way media through the
+      production proxy** (159KB up / 197KB down, ICE connected), and three
+      adapter contract drifts were found and fixed (`sessions/new` body,
+      `closeSession` enumerate-then-close, immediate candidate-less SDP timing).
+      Q4/Q5 (simulcast/optional flags) stay open for M3 — synthetic SDP can't
+      probe them and v1 publishes single-encoding tracks. Answers in
+      `CLOUDFLARE_API.md`; findings in `SPIKE_FINDINGS.md`.
 - [ ] **Cloudflare on the GDPR processor/transfer register** — with SFU-first, CF is
       a content-level media processor from the first call. This is an **M1 exit
       gate** and a **compliance action, not a code change**: DPA coverage,
@@ -247,13 +253,14 @@ this is the honest M1-exit state, not a claim of readiness.
 - [ ] **Observability dashboards** wired to the new counters (metrics are emitted;
       the panels/alerts are not built).
 - [ ] **Hostile matrix green twice consecutively** against a real CF app (Half A is
-      green against the fake; the live-CF re-run is blocked on the same dev app as
-      Half B).
+      green against the fake; the dev app now exists, so the live re-run is
+      unblocked and just needs to be executed).
 - [ ] **Real browser media flow verified against live CF** using the production
-      `CloudflareSfuTransport` (not only the spike probe scripts): candidate-less
-      initial-SDP tolerance and the close/renegotiate contract exercised end-to-end
-      through the deployed proxy, so the shipped adapter — not just the fake seam — is
-      proven against a real CF app before the flag flips.
+      `CloudflareSfuTransport` (not only the spike probe scripts). Cf-2 (2026-07-19)
+      already proved the production proxy + the production SDP timing contract
+      (immediate, candidate-less — an ICE-gathering wait actively fails) with real
+      media both directions; what remains is the same flow driven by the shipped
+      frontend transport in a real session (dev stack + dev app, two browsers).
 
 Until the CF-app, live-spike, and DPA-register items are checked, `callsEnabled`
 stays off everywhere.
