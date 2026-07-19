@@ -253,9 +253,9 @@ describe("access-log socket capture", () => {
     const subject = JSON.stringify([{ type: "stream", id: stream.id }])
     await pool.query(
       `INSERT INTO access_log (id, workspace_id, occurred_at, actor_type, actor_id, auth_ref, operation, access_kind, outcome, subjects)
-       VALUES ('alog_v1s${testRunId}', $1, now() - interval '1 hour', 'user', $2, $3, 'socket.subscribe', 'subscribe', 'success', $4::jsonb),
-              ('alog_v1u${testRunId}', $1, now() + interval '1 minute', 'user', $2, $3, 'socket.unsubscribe', 'unsubscribe', 'success', $4::jsonb)`,
-      [ws.id, userId, authRef, subject]
+       VALUES ($5, $1, now() - interval '1 hour', 'user', $2, $3, 'socket.subscribe', 'subscribe', 'success', $4::jsonb),
+              ($6, $1, now() + interval '1 minute', 'user', $2, $3, 'socket.unsubscribe', 'unsubscribe', 'success', $4::jsonb)`,
+      [ws.id, userId, authRef, subject, `alog_v1s${testRunId}`, `alog_v1u${testRunId}`]
     )
 
     const delivered = await AccessLogRepository.reconstructDeliveredEvents(pool, {

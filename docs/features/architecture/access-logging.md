@@ -83,9 +83,10 @@ silently skip logging: the server refuses to start.
 
 **Sockets: coalesced intervals, not per-event or per-room rows.** A `sconn_`
 connection id is minted at connect. A client bulk-joins its whole sidebar within
-a second of connecting, and that is one access fact with many subjects: successful
-workspace and stream joins coalesce per (workspace, actor) into a single
-`subscribe` row whose `subjects` array carries every joined ref
+a second of connecting, and that is one access fact with many subjects: each
+connection's successful workspace and stream joins coalesce per (workspace,
+actor) into a single `subscribe` row whose `subjects` array carries every joined
+ref
 (`SubscribeCoalescer`, 2 second window, chunked at the subjects cap rather than
 truncated). The row's `occurred_at` is the first join's instant, so the window
 never shrinks the interval. Disconnect writes one coalesced `unsubscribe` closing
@@ -157,8 +158,9 @@ lock_timeout='5s'` on a held client with guaranteed rollback, because partition
   self-contained write-time fact; nothing in the log is derived from mutable
   product state, so the evidence never changes retroactively. The log identifies
   records by prefixed ULIDs and sequence ranges; the product database is the
-  inventory of what those records contained. The exact-event-id join
-  (`reconstructDeliveredEvents` against `stream_events`) is an enrichment that
+  inventory of what those records contained. Resolving subscription intervals to
+  the individual delivered event ids (`reconstructDeliveredEvents` pairing
+  intervals against `stream_events` by stream containment) is an enrichment that
   works wherever both id spaces are resolvable, not a dependency on living in the
   same database. Any export or migration of audit data to a dedicated store must
   preserve id resolvability, and the monthly partitions are the export seam: a
