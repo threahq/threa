@@ -29,3 +29,4 @@ export type {
 } from "./operations"
 export { createAuditMiddleware, assertAuditCoverage } from "./middleware"
 export type { AuditFactory, AuditAnnotation } from "./middleware"
+export { createAiAccessLogSink } from "./ai-sink"

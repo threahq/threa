@@ -51,7 +51,7 @@ import {
 import { InvitationService, InvitationShadowSyncHandler } from "./features/invitations"
 import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threa/backend-common"
 import { PartitionMaintenanceWorker } from "@threa/backend-common"
-import { AccessLogService } from "./features/access-log"
+import { AccessLogService, createAiAccessLogSink } from "./features/access-log"
 import {
   StreamService,
   StreamNamingService,
@@ -305,6 +305,7 @@ export async function startServer(): Promise<ServerInstance> {
     openrouter: { apiKey: config.ai.openRouterApiKey },
     costRecorder: costService,
     budgetEnforcer: budgetService,
+    accessLogSink: createAiAccessLogSink(accessLogService),
   })
   const modelRegistry = createModelRegistry()
   const configResolver = createStaticConfigResolver()

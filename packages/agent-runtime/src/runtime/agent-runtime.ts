@@ -1,7 +1,7 @@
 import type { LanguageModel, ModelMessage, Tool, ToolResultPart } from "ai"
 import type { SourceItem, TraceSource } from "@threa/types"
 import { AgentToolNames } from "@threa/types"
-import type { AI, CostContext } from "../ai/ai"
+import type { AI, CostContext, TelemetryMetadataValue } from "../ai/ai"
 import { logger } from "../logger"
 import { protectToolOutputText } from "./tool-trust-boundary"
 import { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"
@@ -57,7 +57,7 @@ export interface AgentRuntimeConfig {
   temperature?: number | null
   maxIterations?: number
   observers?: AgentObserver[]
-  telemetry?: { functionId: string; metadata?: Record<string, string | number | boolean> }
+  telemetry?: { functionId: string; metadata?: Record<string, TelemetryMetadataValue> }
   /** Cost context forwarded to every AI call the runtime makes (enables usage recording). */
   costContext?: CostContext
 

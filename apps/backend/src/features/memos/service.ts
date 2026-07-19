@@ -532,6 +532,7 @@ export class MemoService implements MemoServiceLike {
               existingMemos,
               existingTags: fetchedData.existingTags,
               workspaceId,
+              conversationId: conversation.id,
               authorTimezone,
               memoLanguage: fetchedData.memoLanguage,
             })
@@ -540,6 +541,7 @@ export class MemoService implements MemoServiceLike {
               content: messagesArray,
               existingTags: fetchedData.existingTags,
               workspaceId,
+              conversationId: conversation.id,
               authorTimezone,
               memoLanguage: fetchedData.memoLanguage,
             })
@@ -1044,6 +1046,7 @@ export class MemoService implements MemoServiceLike {
         content: [],
         existingTags: context.existingTags,
         workspaceId,
+        streamId,
         authorTimezone,
         memoLanguage: context.memoLanguage,
       })

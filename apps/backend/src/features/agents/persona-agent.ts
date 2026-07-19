@@ -1014,6 +1014,12 @@ export class PersonaAgent {
               model_provider: parsed.modelProvider,
               model_name: parsed.modelName,
               model_escalated: turnModel.escalated,
+              personaId: persona.id,
+              // The trigger stream the agent is invoked in — threaded as a
+              // `disclose` subject ref (design §7.3). The full set of streams
+              // read into context is not cheaply enumerable here, so the trigger
+              // stream stands in for the egress's data subject.
+              subjectRefs: [{ type: "stream", id: streamId }],
             },
           },
         }
@@ -1242,6 +1248,7 @@ export class PersonaAgent {
             trace,
             sessionId: session.id,
             workspaceId,
+            streamId,
             invokingUserId: agentContext.invokingUserId,
             replyText: loopResult.sentContents.at(-1),
           })
@@ -1327,10 +1334,11 @@ export class PersonaAgent {
     trace: SessionTrace
     sessionId: string
     workspaceId: string
+    streamId: string
     invokingUserId: string | undefined
     replyText: string | undefined
   }): Promise<void> {
-    const { ai, digestCollector, trace, sessionId, workspaceId, invokingUserId, replyText } = params
+    const { ai, digestCollector, trace, sessionId, workspaceId, streamId, invokingUserId, replyText } = params
     if (!digestCollector.hasToolWork) return
 
     try {
@@ -1342,7 +1350,13 @@ export class PersonaAgent {
         replyText,
         telemetry: {
           functionId: "turn-digest",
-          metadata: { model_id: TURN_DIGEST_MODEL_ID, session_id: sessionId },
+          // The trigger stream rides as a `disclose` subject ref (design §7.3) so
+          // this secondary egress links to the same data subject as the agent loop.
+          metadata: {
+            model_id: TURN_DIGEST_MODEL_ID,
+            session_id: sessionId,
+            subjectRefs: [{ type: "stream", id: streamId }],
+          },
         },
         context: {
           workspaceId,

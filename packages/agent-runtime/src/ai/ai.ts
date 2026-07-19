@@ -57,6 +57,23 @@ export interface CostRecorder {
   }): Promise<void>
 }
 
+/**
+ * Sink for access-log `disclose` rows — content egress to a model provider is a
+ * trust-boundary crossing (design §7.3). Injected by the backend; agent-runtime
+ * never imports the backend, so the mapping to an audit row lives there. Fired
+ * best-effort after each AI call; a throw or rejection is swallowed and never
+ * fails the AI call.
+ */
+export interface AccessLogSink {
+  record(event: {
+    functionId: string
+    provider: string
+    modelId: string
+    context?: CostContext
+    metadata?: Record<string, unknown>
+  }): void | Promise<void>
+}
+
 export interface AIConfig {
   openrouter?: { apiKey: string }
   defaults?: {
@@ -66,11 +83,20 @@ export interface AIConfig {
   costRecorder?: CostRecorder
   /** When provided, model degradation and hard-stop policies are enforced before AI calls */
   budgetEnforcer?: BudgetEnforcer
+  /** When provided, a `disclose` access-log row is emitted for each AI call (design §7.3) */
+  accessLogSink?: AccessLogSink
 }
+
+/**
+ * Telemetry metadata values are scalar tags, plus an optional subject-ref array
+ * threaded to the access-log disclose sink (design §7.3) so AI egress is linkable
+ * by data subject — ids, never content.
+ */
+export type TelemetryMetadataValue = string | number | boolean | undefined | ReadonlyArray<{ type: string; id: string }>
 
 export interface TelemetryConfig {
   functionId: string
-  metadata?: Record<string, string | number | boolean | undefined>
+  metadata?: Record<string, TelemetryMetadataValue>
 }
 
 /** Context for cost tracking - when provided, usage will be recorded */
@@ -624,13 +650,23 @@ export function createAI(config: AIConfig): AI {
 
     const budgetMetadata = budgetDecision ? buildBudgetTelemetryMetadata(budgetDecision) : {}
 
+    // Non-scalar metadata (subjectRefs rides this channel for the access-log
+    // sink) is not a valid OTEL attribute value — the SDK would diag-warn and
+    // drop it, polluting traces. Only scalars flow to span attributes.
+    const scalarMetadata: Record<string, string | number | boolean | undefined> = {}
+    for (const [key, value] of Object.entries(telemetry.metadata ?? {})) {
+      if (value === undefined || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        scalarMetadata[key] = value
+      }
+    }
+
     return {
       isEnabled: true,
       functionId: telemetry.functionId,
       metadata: {
         ...modelMetadata,
         ...budgetMetadata,
-        ...telemetry.metadata,
+        ...scalarMetadata,
       },
     } as const
   }
@@ -684,9 +720,50 @@ export function createAI(config: AIConfig): AI {
   }
 
   /**
-   * Record usage to cost service if context is provided.
-   * Fire-and-forget to avoid blocking the AI call.
+   * Emit a `disclose` access-log row for this egress, if a sink is configured.
+   * Fired synchronously at send time — the content crosses the trust boundary the
+   * moment it is dispatched, so a provider call that errors after receiving the
+   * prompt must still produce a row (design §2). Best-effort: a sync throw or a
+   * returned rejection is swallowed so audit never fails or delays the AI call.
+   * When `modelString` is absent or not `provider:model` the egress still
+   * happened, so it records with provider/model `unknown` rather than dropping.
    */
+  function maybeDisclose(params: {
+    context?: CostContext
+    functionId: string
+    modelString?: string
+    metadata?: Record<string, unknown>
+  }): void {
+    if (!config.accessLogSink) return
+    try {
+      let provider = "unknown"
+      let modelId = "unknown"
+      if (params.modelString) {
+        try {
+          const parsed = parseModelId(params.modelString)
+          provider = parsed.provider
+          modelId = parsed.modelId
+        } catch {
+          // modelString present but not "provider:model" — keep unknown/unknown.
+        }
+      }
+      const result = config.accessLogSink.record({
+        functionId: params.functionId,
+        provider,
+        modelId,
+        context: params.context,
+        metadata: params.metadata,
+      })
+      if (result && typeof (result as Promise<void>).catch === "function") {
+        void (result as Promise<void>).catch((error) => {
+          logger.error({ error, functionId: params.functionId }, "Failed to record AI access-log disclose")
+        })
+      }
+    } catch (error) {
+      logger.error({ error, functionId: params.functionId }, "Failed to record AI access-log disclose")
+    }
+  }
+
   async function maybeRecordUsage(params: {
     context?: CostContext
     functionId: string
@@ -733,6 +810,12 @@ export function createAI(config: AIConfig): AI {
       })
       const effectiveModel = budgetDecision.effectiveModel
       const model = getLanguageModel(effectiveModel)
+      maybeDisclose({
+        context: options.context,
+        functionId: options.telemetry?.functionId ?? "generateText",
+        modelString: effectiveModel,
+        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+      })
       const response = await aiGenerateText({
         model,
         // Our Message type is compatible with AI SDK's ModelMessage at runtime
@@ -767,6 +850,15 @@ export function createAI(config: AIConfig): AI {
     },
 
     async generateTextWithTools(options: GenerateTextWithToolsOptions): Promise<GenerateTextWithToolsResult> {
+      // Disclose fires even without `modelString`: the egress happened, so a
+      // provider/model `unknown` row beats silence. Cost recording below stays
+      // gated on `modelString` (the recorder needs the parseable identifier).
+      maybeDisclose({
+        context: options.context,
+        functionId: options.telemetry?.functionId ?? "generateTextWithTools",
+        modelString: options.modelString,
+        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+      })
       const response = await aiGenerateText({
         model: options.model,
         system: options.system,
@@ -822,6 +914,12 @@ export function createAI(config: AIConfig): AI {
       const model = getLanguageModel(effectiveModel)
       const repair = options.repair === false ? undefined : (options.repair ?? defaultRepair)
 
+      maybeDisclose({
+        context: options.context,
+        functionId: options.telemetry?.functionId ?? "generateObject",
+        modelString: effectiveModel,
+        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+      })
       // @ts-expect-error AI SDK generateObject has complex generics; we validate schema type at our interface level
       const response = await aiGenerateObject({
         model,
@@ -866,6 +964,12 @@ export function createAI(config: AIConfig): AI {
       })
       const effectiveModel = budgetDecision.effectiveModel
       const model = getEmbeddingModel(effectiveModel)
+      maybeDisclose({
+        context: options.context,
+        functionId: options.telemetry?.functionId ?? "embed",
+        modelString: effectiveModel,
+        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+      })
       const response = await aiEmbed({
         model,
         value: options.value,
@@ -900,6 +1004,16 @@ export function createAI(config: AIConfig): AI {
       })
       const effectiveModel = budgetDecision.effectiveModel
       const model = getEmbeddingModel(effectiveModel)
+      const embedManyMetadata = { ...options.telemetry?.metadata, count: options.values.length } as Record<
+        string,
+        unknown
+      >
+      maybeDisclose({
+        context: options.context,
+        functionId: options.telemetry?.functionId ?? "embedMany",
+        modelString: effectiveModel,
+        metadata: embedManyMetadata,
+      })
       const response = await aiEmbedMany({
         model,
         values: options.values,
@@ -919,9 +1033,7 @@ export function createAI(config: AIConfig): AI {
         functionId: options.telemetry?.functionId ?? "embedMany",
         modelString: effectiveModel,
         usage,
-        metadata: { ...options.telemetry?.metadata, count: options.values.length } as
-          | Record<string, unknown>
-          | undefined,
+        metadata: embedManyMetadata,
       })
 
       return {

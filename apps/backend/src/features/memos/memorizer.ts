@@ -56,6 +56,15 @@ export interface MemorizerContext {
   existingTags?: string[]
   /** Required for AI cost attribution */
   workspaceId: string
+  /**
+   * Stream whose conversation is being memorized — threaded as a `disclose`
+   * subject ref (design §7.3). Explicit because reflective capture passes
+   * `content: []` (its source is the session anchor, not per-message ids), so
+   * the ref cannot be derived from the messages.
+   */
+  streamId?: string
+  /** Conversation whose messages are being memorized — threaded as a `disclose` subject ref (design §7.3). */
+  conversationId?: string
   /** Author's timezone for date anchoring (IANA identifier, e.g., "America/New_York") */
   authorTimezone?: string
   /**
@@ -127,7 +136,7 @@ export class Memorizer {
       temperature: config.temperature,
       telemetry: {
         functionId: telemetry.functionId,
-        metadata: { messageCount, ...telemetry.metadata },
+        metadata: { messageCount, ...telemetry.metadata, subjectRefs: this.buildSubjectRefs(context, messages) },
       },
       context: { workspaceId: context.workspaceId, origin: "system" },
     })
@@ -141,6 +150,19 @@ export class Memorizer {
       sourceMessageIds: resolveSourceMessageIds(memo.sourceMessageIds, messages),
       supersedesMemoIds: (memo.supersedesMemoIds ?? []).filter((id) => validSupersedeIds.has(id)),
     }))
+  }
+
+  /**
+   * Subject refs for the egress's `disclose` row: the conversation's stream (all
+   * messages in a conversation share it) plus the conversation id when scoped, so
+   * breach queries can link this egress back to the data subject (design §7.3).
+   */
+  private buildSubjectRefs(context: MemorizerContext, messages: Message[]): { type: string; id: string }[] {
+    const refs: { type: string; id: string }[] = []
+    const streamId = context.streamId ?? messages[0]?.streamId
+    if (streamId) refs.push({ type: "stream", id: streamId })
+    if (context.conversationId) refs.push({ type: "conversation", id: context.conversationId })
+    return refs
   }
 
   private formatMemoryContext(context: MemorizerContext): string {
