@@ -203,7 +203,7 @@ export function createWorkspaceHandlers({
         AgentSessionRepository.listRunningByWorkspace(pool, workspaceId),
         // Archived roots are pruned from `streams`; the client persists these
         // slim rows so archival survives reloads (drafts filters, saved/activity
-        // name resolution). No DM-name resolution — dmPeers persist independently.
+        // name resolution).
         streamService.listArchivedRoots(workspaceId, userId),
       ])
 
@@ -213,6 +213,11 @@ export function createWorkspaceHandlers({
 
       // Resolve DM display names — viewer-dependent, so computed at bootstrap time
       const resolvedStreams = await streamService.resolveDmDisplayNames(streams, users, userId)
+      // Archived DMs are excluded from dmPeers (listDmPeersForMember filters
+      // archived), so the client can't resolve their names peer-side; bake the
+      // viewer-dependent name onto the row instead so saved/activity labels
+      // survive a reload.
+      const resolvedArchivedStreams = await streamService.resolveDmDisplayNames(archivedStreams, users, userId)
 
       const streamMemberships = await streamService.getMembershipsBatch(
         resolvedStreams.map((s) => s.id),
@@ -308,7 +313,7 @@ export function createWorkspaceHandlers({
           workspace,
           users,
           streams: resolvedStreams,
-          archivedStreams,
+          archivedStreams: resolvedArchivedStreams,
           streamMemberships: serializedMemberships,
           readMessageIds,
           personas,

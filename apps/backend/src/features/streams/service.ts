@@ -280,11 +280,11 @@ export class StreamService {
    * because the name is viewer-dependent ("Max" vs "Sam" depending on who's looking).
    * This populates displayName with formatted participant names for the viewing member.
    */
-  async resolveDmDisplayNames(
-    streams: StreamWithPreview[],
+  async resolveDmDisplayNames<T extends Pick<StreamWithPreview, "id" | "type" | "displayName">>(
+    streams: T[],
     workspaceUsers: { id: string; name: string }[],
     viewingUserId: string
-  ): Promise<StreamWithPreview[]> {
+  ): Promise<T[]> {
     const dmStreams = streams.filter((s) => s.type === "dm")
     if (dmStreams.length === 0) return streams
 

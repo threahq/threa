@@ -15,7 +15,10 @@ function makeStreamService(archivedStreams: unknown[]) {
   return {
     listWithPreviews: async () => [],
     listDmPeers: async () => [],
-    resolveDmDisplayNames: async (streams: unknown[]) => streams,
+    // Mirrors the real resolver's contract: DM rows get a viewer-dependent
+    // displayName baked on; everything else passes through.
+    resolveDmDisplayNames: async (streams: Array<{ type?: string; displayName?: string | null }>) =>
+      streams.map((s) => (s.type === "dm" ? { ...s, displayName: "Peer Name" } : s)),
     getMembershipsBatch: async () => [],
     getUnreadCounts: async () => new Map(),
     getReadOverlayForMember: async () => new Map(),
@@ -85,13 +88,16 @@ describe("workspace bootstrap handler", () => {
     spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
     spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
 
-    const archived = [{ id: "stream_arch", workspaceId: "ws_1", type: "channel", archivedAt: new Date() }]
-    const handlers = createWorkspaceHandlers(makeDeps(archived))
+    const archivedChannel = { id: "stream_arch", workspaceId: "ws_1", type: "channel", archivedAt: new Date() }
+    // Archived DMs are absent from dmPeers, so the handler must bake the
+    // viewer-dependent name onto the row itself.
+    const archivedDm = { id: "stream_dm", workspaceId: "ws_1", type: "dm", displayName: null, archivedAt: new Date() }
+    const handlers = createWorkspaceHandlers(makeDeps([archivedChannel, archivedDm]))
     const { req, res, getJson } = makeReqRes()
 
     await handlers.bootstrap(req, res)
 
-    expect(getJson().data.archivedStreams).toEqual(archived)
+    expect(getJson().data.archivedStreams).toEqual([archivedChannel, { ...archivedDm, displayName: "Peer Name" }])
     // Active streams list stays a separate contract (empty here).
     expect(getJson().data.streams).toEqual([])
   })
