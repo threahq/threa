@@ -12,7 +12,18 @@ import {
 } from "@threa/backend-common"
 import { MAGIC_CODE_LENGTH, ORIGINAL_HOST_HEADER, SOCIAL_PROVIDERS } from "@threa/types"
 import type { AccountsService } from "../accounts"
+import type { AuthLogRequestContext, AuthLogService } from "../auth-log"
 import { parseCallbackState, splitInnerState } from "./callback-state"
+
+/** Client ip + user-agent for own-handler auth_log rows. CP sets `trust proxy`. */
+function authLogContext(req: Request, email: string | null): AuthLogRequestContext {
+  const userAgent = req.headers["user-agent"]
+  return {
+    email,
+    ip: req.ip ?? null,
+    userAgent: typeof userAgent === "string" && userAgent.length > 0 ? userAgent : null,
+  }
+}
 
 const callbackSchema = z.object({
   code: z.string().min(1),
@@ -67,6 +78,8 @@ interface Dependencies {
    * e.g. the backoffice at admin.threa.io.
    */
   dedicatedRedirectHosts: string[]
+  /** Records the auth failures WorkOS structurally cannot see (best-effort). */
+  authLogService: AuthLogService
 }
 
 /**
@@ -99,6 +112,7 @@ export function createControlPlaneAuthHandlers({
   frontendUrl,
   allowedRedirectDomain,
   dedicatedRedirectHosts,
+  authLogService,
 }: Dependencies) {
   return {
     async login(req: Request, res: Response) {
@@ -168,6 +182,7 @@ export function createControlPlaneAuthHandlers({
       const result = await authService.authenticateWithCode(code)
 
       if (!result.success || !result.user || !result.sealedSession) {
+        void authLogService.recordCallbackFailure(authLogContext(req, null))
         throw new HttpError("Authentication failed", { status: 401, code: "AUTH_FAILED" })
       }
 
@@ -299,6 +314,7 @@ export function createControlPlaneAuthHandlers({
 
       const result = await authService.authenticateWithMagicAuth(email, code)
       if (!result.success || !result.user || !result.sealedSession) {
+        void authLogService.recordMagicAuthVerifyFailure(authLogContext(req, email))
         throw new HttpError("Invalid or expired code", { status: 401, code: "INVALID_CODE" })
       }
 

@@ -60,6 +60,7 @@ import {
   OUTBOX_GITHUB_WEBHOOK_DISPATCH,
   type GithubWebhookDispatchPayload,
 } from "./features/github-webhooks"
+import { AuthLogService, AuthLogPoller, AuthLogRetentionWorker, AUTH_LOG_EVENT_POLLER_NAME } from "./features/auth-log"
 import { WorkosEventPollerLock } from "./lib/workos-event-poller-lock"
 import { CONTROL_PLANE_LISTENER_ID } from "./lib/outbox-listeners"
 
@@ -105,6 +106,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     : new StubWaitlistEmailSender()
   const waitlistService = new WaitlistService({ pool, emailSender: waitlistEmailSender })
   const workosAuthzAdminService = new WorkosAuthzAdminService({ pool, workosOrgService })
+  const authLogService = new AuthLogService({ pool })
   await seedPlatformAdmins(pool, config.platformAdminWorkosUserIds)
   // Re-emitting the fan-out for every seeded admin on each boot is the
   // self-heal path: idempotent snapshots, tiny N, and it converges regions
@@ -177,6 +179,8 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   // backfill, port bind) tears down the workers and pools we already spun up
   // — otherwise a crashed boot leaks intervals and connections.
   let authzPoller: WorkosAuthzPoller | undefined
+  let authLogPoller: AuthLogPoller | undefined
+  let authLogRetention: AuthLogRetentionWorker | undefined
   let server: Server | undefined
   try {
     await ensureListenerFromLatest(pool, LISTENER_ID)
@@ -228,6 +232,30 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     }
     authzPoller.start()
 
+    // Second WorkOS-event cursor consumer: auth_log ingestion. Own lease row
+    // ('auth-log-events') on the shared workos_event_poller_state table, so it
+    // advances independently of the authz mirror.
+    const authLogLock = new WorkosEventPollerLock({
+      pool,
+      name: AUTH_LOG_EVENT_POLLER_NAME,
+      lockDurationMs: 10_000,
+      refreshIntervalMs: 5_000,
+      maxRetries: 5,
+      baseBackoffMs: 1_000,
+    })
+    await authLogLock.ensureRow()
+    authLogPoller = new AuthLogPoller({
+      workosOrgService,
+      authLogService,
+      lock: authLogLock,
+      pollIntervalMs: 5_000,
+      batchSize: 100,
+    })
+    authLogPoller.start()
+
+    authLogRetention = new AuthLogRetentionWorker(pool)
+    authLogRetention.start()
+
     const isProduction = process.env.NODE_ENV === "production"
     const app = createApp({ corsAllowedOrigins: config.corsAllowedOrigins })
 
@@ -240,6 +268,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       backofficeService,
       workosAuthzAdminService,
       featureFlagService,
+      authLogService,
       internalApiKey: config.internalApiKey,
       allowDevAuthRoutes: config.useStubAuth && !isProduction,
       frontendUrl: config.frontendUrl,
@@ -264,16 +293,20 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   } catch (err) {
     await authzPoller?.stop().catch(() => {})
     await githubWebhookRetention.stop().catch(() => {})
+    await authLogPoller?.stop().catch(() => {})
+    await authLogRetention?.stop().catch(() => {})
     await outboxDispatcher.stop().catch(() => {})
     await listenPool.end().catch(() => {})
     await pool.end().catch(() => {})
     throw err
   }
 
-  // The try/catch above either returned with both set or rethrew, so we can
-  // narrow safely here without runtime checks.
+  // The try/catch above either returned with all four set or rethrew, so we
+  // can narrow safely here without runtime checks.
   const startedServer = server
   const startedPoller = authzPoller
+  const startedAuthLogPoller = authLogPoller
+  const startedAuthLogRetention = authLogRetention
 
   const stop = async () => {
     if (config.fastShutdown) {
@@ -281,6 +314,8 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       startedServer.close()
       await startedPoller.stop()
       await githubWebhookRetention.stop()
+      await startedAuthLogPoller.stop()
+      await startedAuthLogRetention.stop()
       await outboxDispatcher.stop()
       await listenPool.end()
       await pool.end()
@@ -295,6 +330,8 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     }
     await startedPoller.stop()
     await githubWebhookRetention.stop()
+    await startedAuthLogPoller.stop()
+    await startedAuthLogRetention.stop()
     await outboxDispatcher.stop()
     await listenPool.end()
     await pool.end()
