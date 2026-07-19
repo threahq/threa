@@ -80,6 +80,25 @@ describe("CallCard", () => {
     expect(launch).toHaveBeenCalledWith({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
   })
 
+  it("disables Join with an explanatory tooltip when the viewer is busy on another call", () => {
+    upsertActiveCall("ws_1", {
+      callId: "call_1",
+      streamId: "stream_1",
+      rootStreamId: "stream_1",
+      mode: "video",
+      participantCount: 1,
+      participantUserIds: ["usr_a"],
+    })
+    vi.spyOn(launchModule, "useCallLaunch").mockReturnValue({
+      launch,
+      callActive: true,
+    } as unknown as ReturnType<typeof launchModule.useCallLaunch>)
+    renderCard()
+    const join = screen.getByRole("button", { name: "Join" })
+    expect(join.hasAttribute("disabled")).toBe(true)
+    expect(join.getAttribute("title")).toMatch(/already in another call/i)
+  })
+
   it("shows 'In this call' instead of Join when the viewer's own session is on this stream", () => {
     upsertActiveCall("ws_1", {
       callId: "call_1",

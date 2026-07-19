@@ -3,8 +3,9 @@ import { Phone, Video } from "lucide-react"
 import { api } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { useStreamBootstrap } from "@/hooks"
+import { useActiveCall } from "@/stores/active-calls-store"
 import { useCallLaunch } from "./call-launch-context"
-import { useCallPhase } from "./call-store-hooks"
+import { useCallPhase, useCallStreamId } from "./call-store-hooks"
 
 /**
  * The reload-while-in-call story (roadmap 1.4, INV-59). A docked call is
@@ -17,20 +18,32 @@ import { useCallPhase } from "./call-store-hooks"
  * stream, gesture-safe). "Leave" is a real leave, not a dismiss: it closes the
  * viewer's live endpoints server-side so the lease can't keep them a zombie
  * participant for the ~45s grace window (the alternative — a silent dismiss —
- * would leave a ghost tile for peers). Shown only on a cold load (local call
- * idle); once the viewer rejoins, `callPhase` flips off idle and the bar hides.
+ * would leave a ghost tile for peers).
+ *
+ * Liveness rides the active-calls store (the SAME source the CallCard reads), not
+ * the bootstrap alone: `StreamBootstrap.activeCall` is a `staleTime:Infinity`
+ * snapshot that never refetches, so if the call ends mid-session only the store
+ * learns it. The bar needs BOTH — `selfLiveParticipant` (the "it was ME under a
+ * lease" fact only the bootstrap has) AND the store still confirming the call is
+ * live — or a dead Rejoin/Leave lingers after the call is over.
  */
 export function RejoinBar({ workspaceId, streamId }: { workspaceId: string; streamId: string }) {
   const { data } = useStreamBootstrap(workspaceId, streamId)
+  const activeCall = data?.activeCall
+  const live = useActiveCall(workspaceId, activeCall?.callId)
   const { launch } = useCallLaunch()
   const callPhase = useCallPhase()
+  const inCallStreamId = useCallStreamId()
   const [dismissed, setDismissed] = useState(false)
 
-  const activeCall = data?.activeCall
-  if (!activeCall || !activeCall.selfLiveParticipant) return null
-  // Only a cold load shows the bar: once the viewer is (re)joining/connected,
-  // their live session already reflects the call.
-  if (callPhase !== "idle") return null
+  // Both signals must hold: the viewer was a live participant (bootstrap) AND the
+  // store still tracks the call as live. When the store drops it, the bar hides.
+  if (!activeCall || !activeCall.selfLiveParticipant || !live) return null
+  // Hide only when the viewer's live local session is on THIS stream (already
+  // (re)joining/connected here). A call on a DIFFERENT stream must NOT suppress the
+  // bar — that's the un-reaped zombie lease it exists to clear. Mirrors the
+  // CallCard's stream-scoped `selfInThisCall`.
+  if (callPhase !== "idle" && inCallStreamId === streamId) return null
   if (dismissed) return null
 
   const ModeIcon = activeCall.mode === "audio_only" ? Phone : Video

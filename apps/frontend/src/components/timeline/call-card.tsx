@@ -161,6 +161,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardP
               type="button"
               onClick={() => launch({ workspaceId, streamId, mode: payload.mode })}
               disabled={callActive}
+              title={callActive ? "You're already in another call" : undefined}
               className={cn(
                 "shrink-0 rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-colors",
                 callActive ? "opacity-50" : "hover:bg-primary/90"

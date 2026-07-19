@@ -437,6 +437,13 @@ export class CallService {
       if (!call) {
         throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
       }
+      // An `ended` call is terminal: a self-leave against it is a no-op (idempotent
+      // user intent — the rejoin bar's stale "Leave"). Return before touching
+      // endpoints or emitting so a `call:participants_changed` never fans out for a
+      // dead call and resurrects its card as live on peers still holding the id.
+      if (call.status === "ended") {
+        return { call }
+      }
       const participant = await CallParticipantRepository.findByUser(
         client,
         params.workspaceId,
@@ -1180,11 +1187,52 @@ export class CallService {
       // completed (last-leave grace) and reaped paths (`ended_reason` on the row
       // distinguishes them). Same tx as the status write (INV-4/7). The card
       // renders its historical state from this payload with zero fetch.
-      for (const call of ended) {
-        await this.appendCallEnded(client, call)
-      }
+      await this.appendCallsEnded(client, ended)
       return { ended: ended.length }
     })
+  }
+
+  /**
+   * Batch the reads the per-call `call_ended` appends share, once for the whole
+   * grace-end sweep (INV-56). The sweep spans workspaces, so the ever-participant
+   * read groups by workspace (INV-8); the stream row and member reads are
+   * id-keyed across the set. The event/outbox append stays a loop — neither has a
+   * batch insert — but every lookup it needs is already resolved.
+   */
+  private async appendCallsEnded(client: PoolClient, calls: Call[]): Promise<void> {
+    if (calls.length === 0) return
+
+    const callIdsByWorkspace = new Map<string, string[]>()
+    for (const call of calls) {
+      const ids = callIdsByWorkspace.get(call.workspaceId)
+      if (ids) ids.push(call.id)
+      else callIdsByWorkspace.set(call.workspaceId, [call.id])
+    }
+    const participantUserIdsByCall = new Map<string, string[]>()
+    for (const [workspaceId, callIds] of callIdsByWorkspace) {
+      const partial = await CallParticipantRepository.listUserIdsByCall(client, workspaceId, callIds)
+      for (const [callId, userIds] of partial) participantUserIdsByCall.set(callId, userIds)
+    }
+
+    const streamIds = [...new Set(calls.map((c) => c.streamId))]
+    const streamById = new Map((await StreamRepository.findByIds(client, streamIds)).map((s) => [s.id, s]))
+
+    const memberUserIdsByStream = new Map<string, string[]>()
+    for (const member of await StreamMemberRepository.list(client, { streamIds })) {
+      const ids = memberUserIdsByStream.get(member.streamId)
+      if (ids) ids.push(member.memberId)
+      else memberUserIdsByStream.set(member.streamId, [member.memberId])
+    }
+
+    for (const call of calls) {
+      const stream = streamById.get(call.streamId)
+      if (!stream) continue
+      await this.appendCallEnded(client, call, {
+        streamVisibility: stream.visibility,
+        participantUserIds: participantUserIdsByCall.get(call.id) ?? [],
+        memberUserIds: memberUserIdsByStream.get(call.streamId) ?? [],
+      })
+    }
   }
 
   /**
@@ -1228,15 +1276,16 @@ export class CallService {
    * matching `call_started` card. Machine transition, so the event acts as the
    * system (no actorId, like the delegation sweeps).
    */
-  private async appendCallEnded(client: PoolClient, call: Call): Promise<void> {
-    const stream = await StreamRepository.findById(client, call.streamId)
-    if (!stream) return
-    const userIdsByCall = await CallParticipantRepository.listUserIdsByCall(client, call.workspaceId, [call.id])
+  private async appendCallEnded(
+    client: PoolClient,
+    call: Call,
+    ctx: { streamVisibility: Visibility; participantUserIds: string[]; memberUserIds: string[] }
+  ): Promise<void> {
     const endedAt = call.endedAt ?? new Date()
     const payload: CallEndedEventPayload = {
       callId: call.id,
       durationMs: Math.max(0, endedAt.getTime() - call.startedAt.getTime()),
-      participantUserIds: userIdsByCall.get(call.id) ?? [],
+      participantUserIds: ctx.participantUserIds,
       endedReason: call.endedReason ?? "completed",
     }
     const event = await StreamEventRepository.insert(client, {
@@ -1246,14 +1295,13 @@ export class CallService {
       payload,
       actorType: AuthorTypes.SYSTEM,
     })
-    const memberUserIds = await this.listStreamMemberUserIds(client, call.streamId)
     await OutboxRepository.insert(client, "stream:call_ended", {
       workspaceId: call.workspaceId,
       streamId: call.streamId,
       event,
       callId: call.id,
-      streamVisibility: stream.visibility,
-      memberUserIds,
+      streamVisibility: ctx.streamVisibility,
+      memberUserIds: ctx.memberUserIds,
     })
   }
 

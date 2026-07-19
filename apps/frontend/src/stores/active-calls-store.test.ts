@@ -55,7 +55,22 @@ describe("active-calls-store", () => {
     expect(entry?.participantUserIds).toEqual(["usr_a", "usr_b"])
   })
 
+  it("participants_changed for an unknown call is a no-op — never fabricates a live entry", () => {
+    // A late roster event for a call the store isn't tracking (already ended /
+    // removed) must not resurrect it — the seed/upsert paths own creation.
+    updateCallParticipants("ws_1", {
+      callId: "call_ghost",
+      streamId: "stream_1",
+      participantCount: 2,
+      participantUserIds: ["usr_a", "usr_b"],
+    })
+    expect(getActiveCall("ws_1", "call_ghost")).toBeNull()
+  })
+
   it("re-seed preserves a known roster the workspace seed does not carry", () => {
+    // The call is tracked (a `call_started` upsert) and then its roster is refined
+    // by a participants_changed, mirroring the live sequence.
+    upsertActiveCall("ws_1", call({ participantCount: 1 }))
     updateCallParticipants("ws_1", {
       callId: "call_1",
       streamId: "stream_1",

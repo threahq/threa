@@ -146,26 +146,24 @@ export function upsertActiveCall(workspaceId: string, call: ActiveCall & { parti
 }
 
 /**
- * Refine an existing live call's roster (from `call:participants_changed`), or
- * add it if not yet tracked. Carries the joined UserIds + count for the card.
+ * Refine an existing live call's roster (from `call:participants_changed`). Carries
+ * the joined UserIds + count for the card.
+ *
+ * REFINE-ONLY: a `participants_changed` for a call the store isn't tracking (its
+ * start was missed, or — the resurrection footgun — it already ended and was
+ * removed) must NEVER fabricate a live entry. Creation is owned by the seed/upsert
+ * paths (bootstrap + `call_started`); a late roster event for a dead call is a
+ * no-op so its card stays dead.
  */
 export function updateCallParticipants(
   workspaceId: string,
   args: { callId: string; streamId: string; participantCount: number; participantUserIds: string[] }
 ): void {
-  let ws = workspaces.get(workspaceId)
-  if (!ws) {
-    ws = new Map()
-    workspaces.set(workspaceId, ws)
-  }
-  const existing = ws.get(args.callId)
+  const ws = workspaces.get(workspaceId)
+  const existing = ws?.get(args.callId)
+  if (!ws || !existing) return
   const entry: ActiveCallEntry = {
-    callId: args.callId,
-    streamId: args.streamId,
-    // A participants_changed event has no mode/root; keep the tracked ones, else
-    // fall back to the stream id (calls live on non-thread roots today).
-    rootStreamId: existing?.rootStreamId ?? args.streamId,
-    mode: existing?.mode ?? "video",
+    ...existing,
     participantCount: args.participantCount,
     participantUserIds: args.participantUserIds,
   }

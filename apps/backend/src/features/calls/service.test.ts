@@ -544,6 +544,51 @@ describe("CallService.leaveCall", () => {
   })
 })
 
+describe("CallService.leaveCallAsUser", () => {
+  afterEach(() => mock.restore())
+
+  it("is a no-op on an ended call — never emits participants_changed for a dead call", async () => {
+    stubTransaction()
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall({ status: "ended" }))
+    const findByUser = spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant())
+    const closeByParticipant = spyOn(CallEndpointRepository, "closeByParticipant").mockResolvedValue([])
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    const result = await makeService().leaveCallAsUser({ workspaceId: "ws_1", callId: "call_1", userId: "usr_a" })
+
+    expect(result.call.status).toBe("ended")
+    // Terminal call: return before any endpoint churn or roster fan-out so a dead
+    // card can't flip back to live on peers still holding the id.
+    expect(findByUser).not.toHaveBeenCalled()
+    expect(closeByParticipant).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it("closes the user's endpoints and emits participants_changed on a live call", async () => {
+    stubTransaction()
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant())
+    const closeByParticipant = spyOn(CallEndpointRepository, "closeByParticipant").mockResolvedValue([])
+    spyOn(CallParticipantRepository, "markLeftIfNoLiveEndpoint").mockResolvedValue(fakeParticipant({ status: "left" }))
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
+    spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([])
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().leaveCallAsUser({ workspaceId: "ws_1", callId: "call_1", userId: "usr_a" })
+
+    expect(closeByParticipant).toHaveBeenCalledWith(expect.anything(), "ws_1", "callp_1")
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:participants_changed",
+      expect.objectContaining({ callId: "call_1" })
+    )
+  })
+})
+
 describe("CallService.renewEndpointLease — fencing", () => {
   afterEach(() => mock.restore())
 
@@ -871,11 +916,10 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
       fakeCall({ id: "call_done", status: "ended", endedReason: "completed", startedAt: NOW, endedAt }),
       fakeCall({ id: "call_reaped", status: "ended", endedReason: "reaped", startedAt: NOW, endedAt }),
     ])
-    spyOn(streamsModule.StreamRepository, "findById").mockResolvedValue({
-      id: "stream_1",
-      visibility: "private",
-    } as never)
-    spyOn(CallParticipantRepository, "listUserIdsByCall").mockImplementation(
+    spyOn(streamsModule.StreamRepository, "findByIds").mockResolvedValue([
+      { id: "stream_1", visibility: "private" },
+    ] as never)
+    const listUserIds = spyOn(CallParticipantRepository, "listUserIdsByCall").mockImplementation(
       async (_c: unknown, _ws: unknown, ids: readonly string[]) => new Map(ids.map((id) => [id, ["usr_a", "usr_b"]]))
     )
     const eventInsert = spyOn(streamsModule.StreamEventRepository, "insert").mockResolvedValue({
@@ -904,6 +948,10 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
         payload: expect.objectContaining({ callId: "call_reaped", endedReason: "reaped" }),
       })
     )
+    // The participant read is batched over every ended call in one pass (INV-56),
+    // not one single-element read per call.
+    expect(listUserIds).toHaveBeenCalledTimes(1)
+    expect(listUserIds).toHaveBeenCalledWith(expect.anything(), "ws_1", ["call_done", "call_reaped"])
   })
 
   it("getStreamActiveCall projects the live call with the viewer's own-participant flag", async () => {

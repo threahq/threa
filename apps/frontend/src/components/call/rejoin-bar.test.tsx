@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import type { StreamActiveCall } from "@threa/types"
 import * as hooksModule from "@/hooks"
 import * as launchModule from "./call-launch-context"
 import * as callHooksModule from "./call-store-hooks"
 import { api } from "@/api/client"
+import { seedActiveCalls, removeActiveCall, __resetActiveCallsStore } from "@/stores/active-calls-store"
 import { RejoinBar } from "./rejoin-bar"
 
 const launch = vi.fn()
@@ -14,6 +15,13 @@ function stubBootstrap(activeCall: StreamActiveCall | null) {
   vi.spyOn(hooksModule, "useStreamBootstrap").mockReturnValue({
     data: { activeCall },
   } as unknown as ReturnType<typeof hooksModule.useStreamBootstrap>)
+}
+
+/** Mark call_1 live in the active-calls store — the liveness source the bar reads. */
+function seedStoreLive() {
+  seedActiveCalls("ws_1", [
+    { callId: "call_1", streamId: "stream_1", rootStreamId: "stream_1", mode: "video", participantCount: 1 },
+  ])
 }
 
 const LIVE: StreamActiveCall = {
@@ -26,11 +34,13 @@ const LIVE: StreamActiveCall = {
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  __resetActiveCallsStore()
   launch.mockClear()
   vi.spyOn(launchModule, "useCallLaunch").mockReturnValue({
     launch,
   } as unknown as ReturnType<typeof launchModule.useCallLaunch>)
   vi.spyOn(callHooksModule, "useCallPhase").mockReturnValue("idle")
+  vi.spyOn(callHooksModule, "useCallStreamId").mockReturnValue(null)
   vi.spyOn(api, "post").mockResolvedValue({} as never)
 })
 
@@ -39,8 +49,9 @@ function renderBar() {
 }
 
 describe("RejoinBar", () => {
-  it("appears when the viewer is still a live participant and the local call is idle", () => {
+  it("appears when the viewer is a live participant, the store confirms the call, and the local call is idle", () => {
     stubBootstrap(LIVE)
+    seedStoreLive()
     renderBar()
     expect(screen.getByText(/still in this call/i)).toBeTruthy()
     expect(screen.getByRole("button", { name: "Rejoin" })).toBeTruthy()
@@ -48,6 +59,7 @@ describe("RejoinBar", () => {
 
   it("Rejoin dispatches the launch flow with the call's mode", async () => {
     stubBootstrap(LIVE)
+    seedStoreLive()
     renderBar()
     await userEvent.click(screen.getByRole("button", { name: "Rejoin" }))
     expect(launch).toHaveBeenCalledWith({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
@@ -55,6 +67,7 @@ describe("RejoinBar", () => {
 
   it("Leave posts the self-leave and hides the bar (no zombie lease)", async () => {
     stubBootstrap(LIVE)
+    seedStoreLive()
     renderBar()
     await userEvent.click(screen.getByRole("button", { name: "Leave" }))
     expect(api.post).toHaveBeenCalledWith("/api/workspaces/ws_1/calls/call_1/leave", {})
@@ -63,14 +76,43 @@ describe("RejoinBar", () => {
 
   it("stays hidden when the viewer is NOT a live participant", () => {
     stubBootstrap({ ...LIVE, selfLiveParticipant: false })
+    seedStoreLive()
     renderBar()
     expect(screen.queryByText(/still in this call/i)).toBeNull()
   })
 
-  it("stays hidden while a local call is already active (not a cold load)", () => {
+  it("stays hidden when the active-calls store never confirmed the call (stale bootstrap only)", () => {
     stubBootstrap(LIVE)
-    vi.spyOn(callHooksModule, "useCallPhase").mockReturnValue("connected")
+    // No seed: the frozen bootstrap says self was live, but the live store has no
+    // such call, so the bar must not render a dead Rejoin/Leave.
     renderBar()
     expect(screen.queryByText(/still in this call/i)).toBeNull()
+  })
+
+  it("hides when the store drops the call mid-session (call ended)", () => {
+    stubBootstrap(LIVE)
+    seedStoreLive()
+    renderBar()
+    expect(screen.getByText(/still in this call/i)).toBeTruthy()
+    act(() => removeActiveCall("ws_1", "call_1"))
+    expect(screen.queryByText(/still in this call/i)).toBeNull()
+  })
+
+  it("stays hidden while the local call is active on THIS stream (not a cold load)", () => {
+    stubBootstrap(LIVE)
+    seedStoreLive()
+    vi.spyOn(callHooksModule, "useCallPhase").mockReturnValue("connected")
+    vi.spyOn(callHooksModule, "useCallStreamId").mockReturnValue("stream_1")
+    renderBar()
+    expect(screen.queryByText(/still in this call/i)).toBeNull()
+  })
+
+  it("still shows when the local call is active on a DIFFERENT stream (zombie lease here)", () => {
+    stubBootstrap(LIVE)
+    seedStoreLive()
+    vi.spyOn(callHooksModule, "useCallPhase").mockReturnValue("connected")
+    vi.spyOn(callHooksModule, "useCallStreamId").mockReturnValue("stream_other")
+    renderBar()
+    expect(screen.getByText(/still in this call/i)).toBeTruthy()
   })
 })
