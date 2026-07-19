@@ -150,6 +150,25 @@ Calls are gated by **two independent switches**, both required:
 - **CF app provisioning** (one per environment, never shared) and the exact env-var
   placement (Railway backend service) live in
   [`docs/deployment.md` §Cloudflare Realtime app](../deployment.md).
+- **Rate limits.** Ring-capable call creation (`POST /calls`) uses a dedicated tight
+  budget (`calls-start`, 12/min/user) separate from the generous CF-proxy limiter
+  (`calls`, 240/min), so ring-spam is capped without throttling renegotiation churn.
+  **M2 follow-up:** add an invitee-side ring cooldown (per inviter→invitee pair) so a
+  caller can't re-ring a declining peer in a tight loop; the creator-side budget does
+  not bound that.
+
+### Residuals / known gaps
+
+- **Socket room membership outlives the lease.** A hostile socket that stops
+  renewing keeps its Socket.io room membership until it disconnects, so it can still
+  observe roster metadata of the call it was legitimately in, even though its
+  media/lease die on the next reap and its own renews now ack `CALL_ACCESS_REVOKED` /
+  `CALL_LEASE_SUPERSEDED` (and drop it from the rooms server-side). It is only the
+  socket that never renews again that lingers. **Follow-up:** push server-initiated
+  eviction via an outbox-driven `socketsLeave` on access-revoke/reap so a kicked
+  member is dropped from the fan-out immediately rather than on its next renew or
+  disconnect. Not built now — the renew-time re-check plus reap bounds the exposure
+  to one lease TTL and only for a socket that stops renewing.
 
 ## Observability
 
@@ -230,6 +249,11 @@ this is the honest M1-exit state, not a claim of readiness.
 - [ ] **Hostile matrix green twice consecutively** against a real CF app (Half A is
       green against the fake; the live-CF re-run is blocked on the same dev app as
       Half B).
+- [ ] **Real browser media flow verified against live CF** using the production
+      `CloudflareSfuTransport` (not only the spike probe scripts): candidate-less
+      initial-SDP tolerance and the close/renegotiate contract exercised end-to-end
+      through the deployed proxy, so the shipped adapter — not just the fake seam — is
+      proven against a real CF app before the flag flips.
 
 Until the CF-app, live-spike, and DPA-register items are checked, `callsEnabled`
 stays off everywhere.

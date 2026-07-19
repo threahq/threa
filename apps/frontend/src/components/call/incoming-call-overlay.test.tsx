@@ -94,7 +94,12 @@ describe("IncomingCallOverlay", () => {
 
     await userEvent.click(screen.getByLabelText("Accept call"))
 
-    expect(launch).toHaveBeenCalledWith({ workspaceId: "ws_1", streamId: "stream_dm", mode: "video" })
+    expect(launch).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      streamId: "stream_dm",
+      mode: "video",
+      expectedCallId: "call_1",
+    })
     expect(getIncomingCalls()).toEqual([])
   })
 

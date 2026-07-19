@@ -11,6 +11,12 @@ export interface CallLaunchRequest {
   workspaceId: string
   streamId: string
   mode: CallMode
+  /**
+   * Binds accept/rejoin/Join to the call the surface is showing: the server 409s
+   * `CALL_ENDED` if the stream's live call has since changed (INV-64-adjacent
+   * ring-to-call binding). A fresh start-or-join (header/profile) omits it.
+   */
+  expectedCallId?: string
 }
 
 /**

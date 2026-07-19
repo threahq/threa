@@ -10,8 +10,8 @@ export type CallStatus = (typeof CALL_STATUSES)[number]
 export const CALL_MODES = ["video", "audio_only"] as const
 export type CallMode = (typeof CALL_MODES)[number]
 
-/** v1 always 'sfu'; 'p2p' is reserved for the Later direct-calls privacy mode. */
-export const CALL_MEDIA_TRANSPORTS = ["sfu", "p2p"] as const
+/** v1 media transport. Only 'sfu' is accepted; the Later direct-calls privacy mode (p2p) is deferred. */
+export const CALL_MEDIA_TRANSPORTS = ["sfu"] as const
 export type CallMediaTransport = (typeof CALL_MEDIA_TRANSPORTS)[number]
 
 export const CALL_ENDED_REASONS = ["completed", "reaped"] as const

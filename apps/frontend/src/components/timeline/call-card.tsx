@@ -159,7 +159,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardP
           ) : (
             <button
               type="button"
-              onClick={() => launch({ workspaceId, streamId, mode: payload.mode })}
+              onClick={() => launch({ workspaceId, streamId, mode: payload.mode, expectedCallId: payload.callId })}
               disabled={callActive}
               title={callActive ? "You're already in another call" : undefined}
               className={cn(

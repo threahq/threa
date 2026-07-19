@@ -23,9 +23,14 @@ export function createCallSweeper(callService: CallService, options: { intervalM
   const sweep = async () => {
     const now = new Date()
     try {
-      const rings = await callService.expireStaleRings(now)
+      // Order matters: reap lapsed endpoints and end graced calls BEFORE
+      // expiring rings. An abandoned caller's lapsed endpoint and their 45s ring can
+      // fall due in the same tick; reaping first cancels the ring (leave/grace
+      // retracts it), so it never expires into a false missed call one statement
+      // before the reap would have cancelled it.
       const endpoints = await callService.reapLapsedEndpoints(now)
       const calls = await callService.endGraceExpiredCalls(now)
+      const rings = await callService.expireStaleRings(now)
       if (rings.expired > 0) callSweepReapedTotal.inc({ kind: "expired_ring" }, rings.expired)
       if (endpoints.endpoints > 0) callSweepReapedTotal.inc({ kind: "endpoint" }, endpoints.endpoints)
       if (endpoints.participants > 0) callSweepReapedTotal.inc({ kind: "participant" }, endpoints.participants)

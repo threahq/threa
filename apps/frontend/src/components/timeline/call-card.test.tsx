@@ -77,7 +77,12 @@ describe("CallCard", () => {
     expect(screen.getByText("Call in progress")).toBeTruthy()
     const join = screen.getByRole("button", { name: "Join" })
     await userEvent.click(join)
-    expect(launch).toHaveBeenCalledWith({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+    expect(launch).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      mode: "video",
+      expectedCallId: "call_1",
+    })
   })
 
   it("disables Join with an explanatory tooltip when the viewer is busy on another call", () => {
