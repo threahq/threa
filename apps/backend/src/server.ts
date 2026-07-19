@@ -19,6 +19,13 @@ import {
   registerVoiceGateway,
   createPolishTranscript,
 } from "./features/voice-transcription"
+import {
+  CallService,
+  CloudflareRealtimeApi,
+  createCallSweeper,
+  registerCallGateway,
+  type RealtimeMediaApi,
+} from "./features/calls"
 import { BotApiKeyService, createBotRuntimeWriteOps } from "./features/public-api"
 import {
   EnclaveRuntimesService,
@@ -622,6 +629,17 @@ export async function startServer(): Promise<ServerInstance> {
     modelRegistry,
   })
 
+  // Calls media plane — the CF Realtime SFU adapter (constructed only when the
+  // app id + secret pair is configured; absent ⇒ calls surfaces answer 503
+  // CALLS_UNAVAILABLE) and the transaction-owning CallService that proxies to it
+  // CF-call-first, DB-write-second (INV-41). One instance shared by the HTTP
+  // proxy routes, the /calls gateway, and the lease sweeper (INV-13).
+  const cloudflareRealtime: RealtimeMediaApi | null = config.cloudflareRealtime.enabled
+    ? new CloudflareRealtimeApi(config.cloudflareRealtime)
+    : null
+  const callService = new CallService({ pool, cloudflare: cloudflareRealtime })
+  const callSweeper = createCallSweeper(callService)
+
   const botApiKeyService = new BotApiKeyService(pool)
 
   // Enclave runtime registry — register/heartbeat/revoke of enclave instance
@@ -737,6 +755,8 @@ export async function startServer(): Promise<ServerInstance> {
     workosOrgService,
     userApiKeyService,
     voiceTranscriptionService,
+    callService,
+    callsCloudflareEnabled: config.cloudflareRealtime.enabled,
     enclaveRuntimesService,
     enclaveClaimService,
     enclaveClaimNudge,
@@ -803,6 +823,16 @@ export async function startServer(): Promise<ServerInstance> {
     userPreferencesService,
     workspaceSettingsService,
     polishTranscript,
+  })
+
+  // Dedicated /calls control namespace (mirrors the /voice gateway shape). Media
+  // negotiation rides the HTTPS CF proxy, not this socket; this carries only
+  // small control events (join/leave/state/lease renew) and the roster fan-out.
+  registerCallGateway(io, {
+    authService,
+    callService,
+    pool,
+    cloudflareEnabled: config.cloudflareRealtime.enabled,
   })
 
   const serverId = `server_${ulid()}`
@@ -1359,6 +1389,12 @@ export async function startServer(): Promise<ServerInstance> {
   scheduleManager.start()
   cleanupWorker.start()
   agentSessionMetrics.start()
+  // Reaps lapsed endpoint leases (→ left/empty_grace), expires stale rings, ends
+  // graced calls, and closes the CF sessions of reaped endpoints — every 15s
+  // (the lease-reap heartbeat vs the 45s TTL). In-process interval per instance
+  // (matching the sweepers above) so every instance reaps; each stage is
+  // idempotent CAS, so concurrent instance sweeps don't double-act.
+  callSweeper.start()
 
   // payload workspaceId "system" = system-wide check; schedule workspaceId null = global schedule
   if (!config.useStubAI) {
@@ -1560,6 +1596,7 @@ export async function startServer(): Promise<ServerInstance> {
     delegationExpirySweep.stop()
     pushSessionCleanup.stop()
     voiceSessionSweeper.stop()
+    callSweeper.stop()
     agentSessionMetrics.stop()
     await scheduleManager.stop()
     await cleanupWorker.stop()

@@ -18,6 +18,7 @@ function fakeCall(overrides: Partial<Call> = {}): Call {
     mediaTransport: "sfu",
     chatStreamId: null,
     sharingEndpointId: null,
+    rosterVersion: 0,
     graceDeadline: null,
     endedReason: null,
     startedAt: NOW,

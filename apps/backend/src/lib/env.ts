@@ -64,6 +64,22 @@ export interface GiphyConfig {
   apiKey: string
 }
 
+export interface CloudflareRealtimeConfig {
+  /** CF Realtime (Calls) app id — the SFU application the media plane runs on. */
+  appId: string
+  /** CF Realtime app secret — the media-plane credential, never shipped to clients. */
+  appSecret: string
+  /** API base override, for tests/staging. Defaults to CF's production base. */
+  apiBase?: string
+  /**
+   * Whether calls media can be served — true only when the app id + secret pair
+   * is present. Absent ⇒ the calls feature responds 503 CALLS_UNAVAILABLE at its
+   * HTTP/socket surfaces (deploying without the pair disables calls, breaks
+   * nothing).
+   */
+  enabled: boolean
+}
+
 export interface MediaConvertConfig {
   /** IAM role ARN that MediaConvert assumes to access S3 */
   roleArn: string
@@ -99,6 +115,7 @@ export interface Config {
   github: GitHubAppConfig
   linear: LinearOAuthConfig
   mediaConvert: MediaConvertConfig
+  cloudflareRealtime: CloudflareRealtimeConfig
   /** Control-plane URL for inter-service communication (optional — only needed in multi-region) */
   controlPlaneUrl: string | null
   /** Shared secret for authenticating internal API calls from the control-plane */
@@ -232,6 +249,12 @@ export function loadConfig(): Config {
       endpoint: process.env.MEDIACONVERT_ENDPOINT || undefined,
       enabled: process.env.MEDIACONVERT_ENABLED === "true",
     },
+    cloudflareRealtime: {
+      appId: process.env.CLOUDFLARE_REALTIME_APP_ID || "",
+      appSecret: process.env.CLOUDFLARE_REALTIME_APP_SECRET || "",
+      apiBase: process.env.CLOUDFLARE_REALTIME_API_BASE || undefined,
+      enabled: !!(process.env.CLOUDFLARE_REALTIME_APP_ID && process.env.CLOUDFLARE_REALTIME_APP_SECRET),
+    },
     controlPlaneUrl: process.env.CONTROL_PLANE_URL || null,
     internalApiKey: process.env.INTERNAL_API_KEY || null,
     enclaveInternalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY || null,
@@ -275,6 +298,18 @@ export function loadConfig(): Config {
   }
   if (linearSetCount === linearProviderVars.length && !process.env.WORKSPACE_INTEGRATIONS_SECRET) {
     throw new Error("WORKSPACE_INTEGRATIONS_SECRET is required when Linear OAuth credentials are configured")
+  }
+
+  // Validate co-presence: the CF Realtime app id + secret must both be set or
+  // both be absent (INV-11). The secret is the media-plane credential; one
+  // without the other is a misconfiguration that would silently half-enable
+  // calls. Absent pair ⇒ calls surfaces answer 503 CALLS_UNAVAILABLE.
+  const cfRealtimeVars = [process.env.CLOUDFLARE_REALTIME_APP_ID, process.env.CLOUDFLARE_REALTIME_APP_SECRET]
+  const cfRealtimeSetCount = cfRealtimeVars.filter(Boolean).length
+  if (cfRealtimeSetCount > 0 && cfRealtimeSetCount < cfRealtimeVars.length) {
+    throw new Error(
+      "CLOUDFLARE_REALTIME_APP_ID and CLOUDFLARE_REALTIME_APP_SECRET must both be set together — the calls media plane needs the app id and its secret"
+    )
   }
 
   if (config.mediaConvert.enabled && !config.mediaConvert.roleArn) {

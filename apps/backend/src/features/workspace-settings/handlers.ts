@@ -33,6 +33,9 @@ const updateWorkspaceSettingsSchema = z.object({
     .string()
     .refine(isValidIanaTimezone, { message: "must be a valid IANA timezone identifier" })
     .optional(),
+  // Voice/video calls feature flag (dark feature, default off). Admin-flipped per
+  // workspace during rollout; gated on the Cloudflare processor-register entry in prod.
+  callsEnabled: z.boolean().optional(),
 })
 
 export { updateWorkspaceSettingsSchema }

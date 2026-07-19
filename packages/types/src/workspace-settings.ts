@@ -75,6 +75,14 @@ export interface WorkspaceSettings {
    * shared money boundary has to be a deliberate choice, not one member's laptop.
    */
   billingTimezone: string
+  /**
+   * Feature flag for voice/video calls (dark feature, default OFF). Off ⇒ the
+   * calls HTTP/socket surfaces answer as if the feature does not exist
+   * (`CALLS_DISABLED`, 404-style) per the house convention for gated features.
+   * Flipped on per-workspace during rollout; the M1 exit gate requires the
+   * Cloudflare DPA/processor-register entry before enabling it in prod.
+   */
+  callsEnabled: boolean
   createdAt: string
   updatedAt: string
 }
@@ -88,6 +96,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
   defaultCompanionPersonaId: null,
   billingTimezone: "UTC",
+  callsEnabled: false,
 }
 
 /** Partial update — only provided fields are changed. */
@@ -99,6 +108,7 @@ export interface UpdateWorkspaceSettingsInput {
   maxPendingFollowUps?: number
   defaultCompanionPersonaId?: string | null
   billingTimezone?: string
+  callsEnabled?: boolean
 }
 
 /** Valid top-level settings keys that can be overridden. */

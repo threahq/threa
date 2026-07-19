@@ -289,6 +289,31 @@ See `.env.example` at the repo root for the full list with descriptions. The cri
 | `CONTROL_PLANE_URL`                                                  | `http://control-plane.railway.internal:8080`            |
 | `INTERNAL_API_KEY`                                                   | Shared inter-service secret                             |
 | `REGION`                                                             | `eu-north-1`                                            |
+| `CLOUDFLARE_REALTIME_APP_ID`                                         | CF Realtime (SFU) app id for calls — see below          |
+| `CLOUDFLARE_REALTIME_APP_SECRET`                                     | CF Realtime app secret (media-plane credential)         |
+
+#### Cloudflare Realtime app (voice/video calls)
+
+Calls media routes through a **Cloudflare Realtime (SFU) app**, one **per environment** (dev / staging / prod). Never share an app across environments — the app secret is the media-plane credential, and a shared secret couples the environments' media planes.
+
+- **Provisioning** (once per environment). Create the app with an account API token carrying the `Cloudflare Calls: Edit` permission:
+
+  ```sh
+  curl -X POST "https://api.cloudflare.com/client/v4/accounts/{account_id}/calls/apps" \
+    -H "Authorization: Bearer {account_token}" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"threa-calls-prod"}'
+  ```
+
+  The response carries the app **id** and **secret**. The **secret is shown once** — capture it immediately.
+
+- **Where the vars go**: set `CLOUDFLARE_REALTIME_APP_ID` and `CLOUDFLARE_REALTIME_APP_SECRET` as **Railway variables on the backend service** (`Dockerfile.backend` → backend service), per environment. They are backend-only — no other service reads them.
+
+- **Boot behavior**: the pair is co-presence-validated at startup (both set or both absent, INV-11). When absent, the backend boots normally but every calls HTTP/socket surface answers **503 `CALLS_UNAVAILABLE`** — deploying without them **disables calls and breaks nothing** else. A single one of the two set fails boot loudly.
+
+- **Per-workspace flag**: even with the app configured, calls stay dark until the `callsEnabled` workspace setting is turned on (default off).
+
+- **M1 exit gate**: the SFU is a content-level media processor from the first shipped call. Do **not** flip `callsEnabled` on in prod until Cloudflare's DPA / processor-register entry is in place — see the plan's `GDPR (v1)` section (`docs/plans/voice-video-calls.md`).
 
 ### Control-Plane
 

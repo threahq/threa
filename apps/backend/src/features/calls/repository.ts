@@ -8,6 +8,8 @@ import {
   type CallInvitationStatus,
   type CallParticipantStatus,
   type CallEndpointStatus,
+  type MediaState,
+  type PublishedTrack,
 } from "./config"
 
 // ── calls ────────────────────────────────────────────────────────────────────
@@ -22,6 +24,7 @@ interface CallRow {
   media_transport: string
   chat_stream_id: string | null
   sharing_endpoint_id: string | null
+  roster_version: number
   grace_deadline: Date | null
   ended_reason: string | null
   started_at: Date
@@ -41,6 +44,7 @@ export interface Call {
   mediaTransport: CallMediaTransport
   chatStreamId: string | null
   sharingEndpointId: string | null
+  rosterVersion: number
   graceDeadline: Date | null
   endedReason: CallEndedReason | null
   startedAt: Date
@@ -52,7 +56,7 @@ export interface Call {
 
 const CALL_COLUMNS = `
   id, workspace_id, stream_id, started_by, status, mode, media_transport,
-  chat_stream_id, sharing_endpoint_id, grace_deadline, ended_reason,
+  chat_stream_id, sharing_endpoint_id, roster_version, grace_deadline, ended_reason,
   started_at, ended_at, status_changed_at, created_at, updated_at
 `
 
@@ -67,6 +71,7 @@ function mapCall(row: CallRow): Call {
     mediaTransport: row.media_transport as CallMediaTransport,
     chatStreamId: row.chat_stream_id,
     sharingEndpointId: row.sharing_endpoint_id,
+    rosterVersion: row.roster_version,
     graceDeadline: row.grace_deadline,
     endedReason: row.ended_reason as CallEndedReason | null,
     startedAt: row.started_at,
@@ -240,6 +245,35 @@ export const CallRepository = {
       RETURNING ${sql.raw(CALL_COLUMNS)}
     `)
     return result.rows.map(mapCall)
+  },
+
+  /**
+   * Monotonically bump the roster version (INV-66). Every membership/media-state
+   * change bumps it so clients drop a stale snapshot by version. Single atomic
+   * increment — no read-modify-write. Returns the new version (`null` if the
+   * call vanished).
+   */
+  async bumpRosterVersion(db: Querier, workspaceId: string, id: string): Promise<number | null> {
+    const result = await db.query<{ roster_version: number }>(sql`
+      UPDATE calls SET roster_version = roster_version + 1, updated_at = NOW()
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
+      RETURNING roster_version
+    `)
+    return result.rows[0]?.roster_version ?? null
+  },
+
+  /**
+   * Batch roster-version bump for the reaper cascade (INV-56, INV-66): one atomic
+   * increment across every call whose membership the sweep just changed. Locked by
+   * global id (the sweeper already holds these call rows FOR UPDATE and runs
+   * workspace-agnostic), matching {@link lockForUpdateInOrder}.
+   */
+  async bumpRosterVersionBatch(db: Querier, callIds: readonly string[]): Promise<void> {
+    if (callIds.length === 0) return
+    await db.query(sql`
+      UPDATE calls SET roster_version = roster_version + 1, updated_at = NOW()
+      WHERE id = ANY(${callIds as string[]})
+    `)
   },
 }
 
@@ -551,6 +585,57 @@ export const CallParticipantRepository = {
     `)
     return result.rows[0] ? mapParticipant(result.rows[0]) : null
   },
+
+  /**
+   * The versioned roster's per-participant rows: every currently-joined
+   * participant with their single live endpoint's connection status, server-owned
+   * media state, and published-track registry (LEFT JOIN — a participant momentarily
+   * without a live endpoint still appears). CF pushes no track notifications, so this
+   * registry is how peers learn what to pull. Read alongside `calls.roster_version`
+   * for the snapshot version.
+   */
+  async listRoster(db: Querier, workspaceId: string, callId: string): Promise<CallRosterEntry[]> {
+    const result = await db.query<{
+      user_id: string
+      participant_status: string
+      endpoint_id: string | null
+      connection_status: string | null
+      media_state: MediaState | null
+      published_tracks: PublishedTrack[] | null
+    }>(sql`
+      SELECT
+        p.user_id,
+        p.status AS participant_status,
+        e.id AS endpoint_id,
+        e.status AS connection_status,
+        e.media_state,
+        e.published_tracks
+      FROM call_participants p
+      LEFT JOIN call_endpoints e
+        ON e.workspace_id = p.workspace_id AND e.participant_id = p.id
+        AND e.status IN ('connected', 'reconnecting')
+      WHERE p.workspace_id = ${workspaceId} AND p.call_id = ${callId} AND p.status = 'joined'
+      ORDER BY p.joined_at ASC
+    `)
+    return result.rows.map((row) => ({
+      userId: row.user_id,
+      participantStatus: row.participant_status as CallParticipantStatus,
+      endpointId: row.endpoint_id,
+      connectionStatus: row.connection_status as CallEndpointStatus | null,
+      mediaState: row.media_state ?? {},
+      publishedTracks: row.published_tracks ?? [],
+    }))
+  },
+}
+
+/** One participant's row in the versioned roster snapshot (see `listRoster`). */
+export interface CallRosterEntry {
+  userId: string
+  participantStatus: CallParticipantStatus
+  endpointId: string | null
+  connectionStatus: CallEndpointStatus | null
+  mediaState: MediaState
+  publishedTracks: PublishedTrack[]
 }
 
 // ── call_endpoints ────────────────────────────────────────────────────────────
@@ -562,6 +647,10 @@ interface CallEndpointRow {
   participant_id: string
   epoch: number
   status: string
+  cf_session_id: string | null
+  media_incarnation: string | null
+  media_state: MediaState
+  published_tracks: PublishedTrack[]
   lease_expires_at: Date
   created_at: Date
   status_changed_at: Date
@@ -574,6 +663,10 @@ export interface CallEndpoint {
   participantId: string
   epoch: number
   status: CallEndpointStatus
+  cfSessionId: string | null
+  mediaIncarnation: string | null
+  mediaState: MediaState
+  publishedTracks: PublishedTrack[]
   leaseExpiresAt: Date
   createdAt: Date
   statusChangedAt: Date
@@ -581,6 +674,7 @@ export interface CallEndpoint {
 
 const ENDPOINT_COLUMNS = `
   id, workspace_id, call_id, participant_id, epoch, status,
+  cf_session_id, media_incarnation, media_state, published_tracks,
   lease_expires_at, created_at, status_changed_at
 `
 
@@ -592,6 +686,10 @@ function mapEndpoint(row: CallEndpointRow): CallEndpoint {
     participantId: row.participant_id,
     epoch: row.epoch,
     status: row.status as CallEndpointStatus,
+    cfSessionId: row.cf_session_id,
+    mediaIncarnation: row.media_incarnation,
+    mediaState: row.media_state ?? {},
+    publishedTracks: row.published_tracks ?? [],
     leaseExpiresAt: row.lease_expires_at,
     createdAt: row.created_at,
     statusChangedAt: row.status_changed_at,
@@ -607,16 +705,110 @@ export const CallEndpointRepository = {
       callId: string
       participantId: string
       epoch: number
+      mediaIncarnation: string | null
       leaseExpiresAt: Date
     }
   ): Promise<CallEndpoint> {
     const result = await db.query<CallEndpointRow>(sql`
-      INSERT INTO call_endpoints (id, workspace_id, call_id, participant_id, epoch, status, lease_expires_at)
+      INSERT INTO call_endpoints (
+        id, workspace_id, call_id, participant_id, epoch, status, media_incarnation, lease_expires_at
+      )
       VALUES (${params.id}, ${params.workspaceId}, ${params.callId}, ${params.participantId},
-              ${params.epoch}, 'connected', ${params.leaseExpiresAt})
+              ${params.epoch}, 'connected', ${params.mediaIncarnation}, ${params.leaseExpiresAt})
       RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
     `)
     return mapEndpoint(result.rows[0])
+  },
+
+  /**
+   * Re-bind a participant's existing live endpoint to a (possibly new)
+   * incarnation on a reconnect/reload: CAS a live endpoint back to `connected`,
+   * set the incoming incarnation, and renew the lease — keeping the same row and
+   * epoch (the lease is the authority, INV — a transient socket drop or a reload
+   * within the lease returns to the same endpoint). `null` when the endpoint is
+   * no longer live.
+   */
+  async rebind(
+    db: Querier,
+    params: { workspaceId: string; id: string; mediaIncarnation: string | null; leaseExpiresAt: Date }
+  ): Promise<CallEndpoint | null> {
+    const result = await db.query<CallEndpointRow>(sql`
+      UPDATE call_endpoints SET
+        status = 'connected', media_incarnation = ${params.mediaIncarnation},
+        lease_expires_at = ${params.leaseExpiresAt}, status_changed_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND id = ${params.id}
+        AND status IN ('connected', 'reconnecting')
+      RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
+    `)
+    return result.rows[0] ? mapEndpoint(result.rows[0]) : null
+  },
+
+  /**
+   * Fenced `connected → reconnecting` on a socket disconnect (INV-66): the lease
+   * still holds the slot, so a reconnect within it re-binds. Guarded on the epoch
+   * so a superseded instance's disconnect can't demote the live endpoint. `null`
+   * when nothing matched.
+   */
+  async markReconnecting(
+    db: Querier,
+    params: { workspaceId: string; id: string; epoch: number }
+  ): Promise<CallEndpoint | null> {
+    const result = await db.query<CallEndpointRow>(sql`
+      UPDATE call_endpoints SET status = 'reconnecting', status_changed_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND id = ${params.id} AND epoch = ${params.epoch}
+        AND status = 'connected'
+      RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
+    `)
+    return result.rows[0] ? mapEndpoint(result.rows[0]) : null
+  },
+
+  /**
+   * CAS the CF session id onto a live endpoint, fenced on the incarnation
+   * (INV-66) and only when none is set yet — so a committed row can never claim
+   * a `cf_session_id` for a superseded incarnation. `null` when the endpoint is
+   * gone, the incarnation no longer matches, or a session was already set (the
+   * caller re-reads to distinguish idempotency from a stale fence).
+   */
+  async setCfSessionIfUnset(
+    db: Querier,
+    params: { workspaceId: string; id: string; mediaIncarnation: string; cfSessionId: string }
+  ): Promise<CallEndpoint | null> {
+    const result = await db.query<CallEndpointRow>(sql`
+      UPDATE call_endpoints SET cf_session_id = ${params.cfSessionId}, status_changed_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND id = ${params.id}
+        AND media_incarnation = ${params.mediaIncarnation}
+        AND status IN ('connected', 'reconnecting') AND cf_session_id IS NULL
+      RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
+    `)
+    return result.rows[0] ? mapEndpoint(result.rows[0]) : null
+  },
+
+  /** Overwrite the server-owned media state (mute/camera claims). `null` when the endpoint is gone. */
+  async setMediaState(
+    db: Querier,
+    params: { workspaceId: string; id: string; mediaState: MediaState }
+  ): Promise<CallEndpoint | null> {
+    const result = await db.query<CallEndpointRow>(sql`
+      UPDATE call_endpoints SET media_state = ${JSON.stringify(params.mediaState)}::jsonb, status_changed_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND id = ${params.id}
+        AND status IN ('connected', 'reconnecting')
+      RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
+    `)
+    return result.rows[0] ? mapEndpoint(result.rows[0]) : null
+  },
+
+  /** Overwrite the published-track registry. `null` when the endpoint is gone. */
+  async setPublishedTracks(
+    db: Querier,
+    params: { workspaceId: string; id: string; publishedTracks: PublishedTrack[] }
+  ): Promise<CallEndpoint | null> {
+    const result = await db.query<CallEndpointRow>(sql`
+      UPDATE call_endpoints SET published_tracks = ${JSON.stringify(params.publishedTracks)}::jsonb, status_changed_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND id = ${params.id}
+        AND status IN ('connected', 'reconnecting')
+      RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
+    `)
+    return result.rows[0] ? mapEndpoint(result.rows[0]) : null
   },
 
   /** Read an endpoint by id, workspace-scoped (INV-8). Used to verify leave ownership. */
