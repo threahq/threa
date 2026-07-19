@@ -36,6 +36,7 @@
     "typecheck": "bun run --cwd packages/types typecheck && bun run --cwd packages/prosemirror typecheck && bun run --cwd packages/crypto typecheck && bun run --cwd packages/backend-common typecheck && bun run --cwd packages/agent-runtime typecheck && bun run --cwd packages/cli typecheck && bun run --cwd apps/backend typecheck && bun run --cwd apps/control-plane typecheck && bun run --cwd apps/workspace-router typecheck && bun run --cwd apps/backoffice-router typecheck && bun run --cwd apps/frontend typecheck && bun run --cwd apps/backoffice typecheck && bun run --cwd apps/db-read-proxy typecheck && bun run --cwd apps/enclave typecheck && bun run --cwd apps/public-site typecheck",
     "eval": "bun run --cwd apps/backend eval --",
     "test": "bun run --cwd apps/backend test",
+    "test:scripts": "bun test ./scripts/",
     "test:unit": "bun run --cwd apps/backend test:unit",
     "test:e2e": "bun run --cwd apps/backend test:e2e",
     "test:browser": "bun scripts/test-silent.ts browser",

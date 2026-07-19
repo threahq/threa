@@ -92,6 +92,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Run scripts tests
+        run: bun run test:scripts
+
       - name: Create test databases
         run: |
           PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c "CREATE DATABASE threa_test;"

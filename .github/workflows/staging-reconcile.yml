@@ -1,0 +1,73 @@
+name: Staging Reconcile
+
+# Event-driven teardown (staging.yml) can never be reliable on its own: a
+# closed-without-merge PR — common in stack shuffles — often produces NO
+# workflow run at all (no merge ref → no run), so its per-PR staging resources
+# leak. This nightly sweep discovers every PR number that still owns a matching
+# resource (Railway service, pr_N/pr_N_cp databases, KV region entry), cross-
+# references the open+`staging`-labeled PRs, and tears down the rest.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the orphan plan without deleting anything"
+        type: boolean
+        default: false
+
+jobs:
+  reconcile:
+    name: Reconcile staging
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install PostgreSQL 18 client
+        run: |
+          # The Azure-hosted runner ships Microsoft apt repos (azure-cli, prod)
+          # whose signature check intermittently fails ("NOSPLIT"), aborting
+          # apt-get update with exit 100 — a recurring, unrelated cause of staging
+          # deploy failures. We only need the pgdg repo here, so drop the MS
+          # sources before touching apt.
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* || true
+          sudo apt-get install -y curl ca-certificates
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-18
+
+      - name: Reconcile orphaned PR environments
+        run: |
+          DRY_RUN_FLAG=""
+          if [[ "${{ github.event.inputs.dry_run }}" == "true" ]]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          bun scripts/staging-pr.ts --action=reconcile $DRY_RUN_FLAG
+        env:
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_KV_NAMESPACE_ID: ${{ secrets.STAGING_KV_NAMESPACE_ID }}
+          STAGING_INTERNAL_API_KEY: ${{ secrets.STAGING_INTERNAL_API_KEY }}
+          STAGING_CONTROL_PLANE_URL: ${{ secrets.STAGING_CONTROL_PLANE_URL }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
