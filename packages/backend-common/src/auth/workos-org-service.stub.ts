@@ -1,4 +1,5 @@
 import { ulid } from "ulid"
+import type { Event, EventName } from "@workos-inc/node"
 import { logger } from "../logger"
 import type {
   WorkosAppInvitation,
@@ -18,6 +19,12 @@ export class StubWorkosOrgService implements WorkosOrgService {
    * `pushMirrorEvent` and the poller drains via `listMirrorEvents`.
    */
   private mirrorEvents: WorkosMembershipEvent[] = []
+  /**
+   * Test helper: in-memory stack of raw WorkOS events for the `auth_log`
+   * consumer. Tests push with `pushEvent` and the poller drains via
+   * `listEvents`.
+   */
+  private rawEvents: Event[] = []
   /**
    * Test helper: per-org membership listing returned by backfill. Tests seed
    * it via `setOrganizationMemberships`.
@@ -217,6 +224,18 @@ export class StubWorkosOrgService implements WorkosOrgService {
     return { data: slice, after: next }
   }
 
+  async listEvents(params: {
+    events: EventName[]
+    after?: string
+    limit?: number
+  }): Promise<{ data: Event[]; after: string | null }> {
+    const filtered = this.rawEvents.filter((e) => (params.events as readonly string[]).includes(e.event))
+    const startIdx = params.after ? filtered.findIndex((e) => e.id === params.after) + 1 : 0
+    const slice = filtered.slice(startIdx, startIdx + (params.limit ?? 100))
+    const next = startIdx + slice.length < filtered.length ? (slice[slice.length - 1]?.id ?? null) : null
+    return { data: slice, after: next }
+  }
+
   async listOrganizationMemberships(organizationId: string): Promise<WorkosOrganizationMembership[]> {
     return [...(this.membershipsByOrg.get(organizationId) ?? [])]
   }
@@ -224,6 +243,16 @@ export class StubWorkosOrgService implements WorkosOrgService {
   /** Test helper: append a mirror event to the stub queue. */
   pushMirrorEvent(event: WorkosMembershipEvent): void {
     this.mirrorEvents.push(event)
+  }
+
+  /** Test helper: append a raw WorkOS event to the `listEvents` queue. */
+  pushEvent(event: Event): void {
+    this.rawEvents.push(event)
+  }
+
+  /** Test helper: clear all queued raw events. */
+  clearEvents(): void {
+    this.rawEvents = []
   }
 
   /** Test helper: replace the membership listing for an organization. */

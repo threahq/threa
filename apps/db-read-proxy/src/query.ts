@@ -185,13 +185,19 @@ export async function executeReadOnly(req: QueryRequest, opts: ExecuteOptions): 
     const allRows = result.rows
     const truncated = WRAPPABLE_KEYWORDS.has(keyword) && allRows.length > opts.maxRows
     const rows = truncated ? allRows.slice(0, opts.maxRows) : allRows
+    const durationMs = Math.round(performance.now() - start)
+
+    // Log every executed query's SQL (§7.6) — the prod pool is BEGIN READ ONLY,
+    // so structured stdout is the only durable record. Both success and failure
+    // logging live in this one function; app.ts does not re-log the success.
+    logger.info({ sql, rowCount: rows.length, truncated, durationMs }, "db-read-proxy query ok")
 
     return {
       columns: result.fields.map((f) => f.name),
       rows,
       rowCount: rows.length,
       truncated,
-      durationMs: Math.round(performance.now() - start),
+      durationMs,
     }
   } catch (err) {
     try {

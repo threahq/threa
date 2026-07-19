@@ -1,4 +1,4 @@
-import { WorkOS } from "@workos-inc/node"
+import { WorkOS, type Event, type EventName } from "@workos-inc/node"
 import { logger } from "../logger"
 import { WORKOS_REQUEST_TIMEOUT_MS, type WorkosConfig } from "./types"
 
@@ -135,6 +135,17 @@ export interface WorkosOrgService {
     after?: string
     limit?: number
   }): Promise<{ data: WorkosMembershipEvent[]; after: string | null }>
+  /**
+   * List raw WorkOS events for a caller-supplied event set. Unlike
+   * {@link listMirrorEvents} (which decodes membership payloads for the authz
+   * mirror), this returns the SDK events unmodified so a second consumer — the
+   * control-plane `auth_log` ingestion — can extract its own fields.
+   */
+  listEvents(params: {
+    events: EventName[]
+    after?: string
+    limit?: number
+  }): Promise<{ data: Event[]; after: string | null }>
   /**
    * List every membership for an organization, paginated to completion. Used
    * by backfill — low-frequency, run by an explicit operator action.
@@ -406,6 +417,19 @@ export class WorkosOrgServiceImpl implements WorkosOrgService {
       if (decoded) data.push(decoded)
     }
     return { data, after: page.listMetadata.after ?? null }
+  }
+
+  async listEvents(params: {
+    events: EventName[]
+    after?: string
+    limit?: number
+  }): Promise<{ data: Event[]; after: string | null }> {
+    const page = await this.workos.events.listEvents({
+      events: params.events,
+      ...(params.after ? { after: params.after } : {}),
+      ...(params.limit ? { limit: params.limit } : {}),
+    })
+    return { data: page.data, after: page.listMetadata.after ?? null }
   }
 
   async listOrganizationMemberships(organizationId: string): Promise<WorkosOrganizationMembership[]> {

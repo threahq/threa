@@ -74,10 +74,6 @@ export function createApp({ pool, config }: CreateAppOptions): Express {
         statementTimeoutMs: config.statementTimeoutMs,
         maxRows: config.maxRows,
       })
-      logger.info(
-        { rowCount: result.rowCount, truncated: result.truncated, durationMs: result.durationMs },
-        "db-read-proxy query ok"
-      )
       res.json(result)
     } catch (err) {
       if (err instanceof QueryValidationError) {

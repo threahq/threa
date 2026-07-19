@@ -23,6 +23,7 @@ import {
   createInternalAuthzAdminHandlers,
   type WorkosAuthzAdminService,
 } from "./features/workos-authz"
+import { createBackofficeAuditMiddleware, type AuthLogService } from "./features/auth-log"
 import { createInternalAuthMiddleware } from "./lib/internal-auth"
 import type { RegionConfig } from "./config"
 
@@ -41,6 +42,7 @@ interface Dependencies {
   backofficeService: BackofficeService
   workosAuthzAdminService: WorkosAuthzAdminService
   featureFlagService: ControlPlaneFeatureFlagService
+  authLogService: AuthLogService
   internalApiKey: string
   allowDevAuthRoutes: boolean
   frontendUrl: string
@@ -61,6 +63,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     backofficeService,
     workosAuthzAdminService,
     featureFlagService,
+    authLogService,
     internalApiKey,
     allowDevAuthRoutes,
   } = deps
@@ -114,6 +117,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     frontendUrl: deps.frontendUrl,
     allowedRedirectDomain: deps.allowedRedirectDomain,
     dedicatedRedirectHosts: deps.workosDedicatedRedirectHosts,
+    authLogService,
   })
   const workspace = createWorkspaceHandlers({ workspaceService, shadowService })
   const shadow = createInvitationShadowHandlers({ shadowService })
@@ -199,6 +203,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Backoffice app surface. `/me` returns both identity and admin status so
   // the frontend can render a friendly "not authorised" screen; every other
   // backoffice route is gated by requirePlatformAdmin.
+  // One mount covers the whole surface: platform-admin access to customer data
+  // is auth_log-audited per request (reads AND denials), since WorkOS events
+  // only cover identity lifecycle.
+  app.use("/api/backoffice", createBackofficeAuditMiddleware(authLogService))
   app.get("/api/backoffice/me", auth, backoffice.me)
   app.get("/api/backoffice/config", auth, requirePlatformAdmin, backoffice.getConfig)
   app.get("/api/backoffice/workspaces", auth, requirePlatformAdmin, backoffice.listWorkspaces)
