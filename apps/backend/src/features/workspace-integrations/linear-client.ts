@@ -176,6 +176,7 @@ export class LinearClient {
     const result = await this.service.updateLinearRateLimitMetadata(
       this.workspaceId,
       this.metadata,
+      this.record.installationId,
       {
         requestsRemaining,
         requestsResetAt,

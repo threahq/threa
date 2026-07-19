@@ -103,6 +103,7 @@ describe("GitHubClient captureRateLimit is best-effort", () => {
   }
   const metadata = {
     organizationName: "acme",
+    accountType: "Organization" as const,
     repositorySelection: "all" as const,
     permissions: {},
     repositories: [],
@@ -343,9 +344,9 @@ describe("LinearClient captureRateLimit is best-effort", () => {
     remaining = 100
     await client.request("query { b }")
 
-    // expectedVersion is the 4th positional arg (index 3).
-    expect(captureSpy.mock.calls[0][3]).toBe(1)
-    expect(captureSpy.mock.calls[1][3]).toBe(2)
+    // expectedVersion is the 5th positional arg (index 4).
+    expect(captureSpy.mock.calls[0][4]).toBe(1)
+    expect(captureSpy.mock.calls[1][4]).toBe(2)
   })
 })
 
@@ -395,9 +396,9 @@ describe("getAvailableToolCategories", () => {
       github: githubEnabled,
       linear: linearEnabled,
     })
-    spyOn(service, "getGithubIntegration").mockResolvedValue({
-      status: "active",
-    } as Awaited<ReturnType<WorkspaceIntegrationService["getGithubIntegration"]>>)
+    spyOn(service, "listGithubInstallations").mockResolvedValue([{ status: "active" }] as Awaited<
+      ReturnType<WorkspaceIntegrationService["listGithubInstallations"]>
+    >)
     spyOn(service, "getLinearIntegration").mockResolvedValue({
       status: "active",
     } as Awaited<ReturnType<WorkspaceIntegrationService["getLinearIntegration"]>>)

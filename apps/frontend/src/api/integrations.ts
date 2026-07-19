@@ -3,7 +3,7 @@ import type { GitHubWorkspaceIntegration, LinearWorkspaceIntegration } from "@th
 
 export interface GitHubIntegrationResponse {
   configured: boolean
-  integration: GitHubWorkspaceIntegration | null
+  integrations: GitHubWorkspaceIntegration[]
 }
 
 export interface LinearIntegrationResponse {
@@ -16,12 +16,14 @@ export const integrationsApi = {
     return api.get<GitHubIntegrationResponse>(`/api/workspaces/${workspaceId}/integrations/github`)
   },
 
-  async disconnectGithub(workspaceId: string): Promise<void> {
-    await api.delete(`/api/workspaces/${workspaceId}/integrations/github`)
+  async disconnectGithub(workspaceId: string, integrationId: string): Promise<void> {
+    await api.delete(`/api/workspaces/${workspaceId}/integrations/github/${integrationId}`)
   },
 
-  async syncGithub(workspaceId: string): Promise<GitHubIntegrationResponse> {
-    return api.post<GitHubIntegrationResponse>(`/api/workspaces/${workspaceId}/integrations/github/sync`)
+  async syncGithub(workspaceId: string, integrationId: string): Promise<GitHubIntegrationResponse> {
+    return api.post<GitHubIntegrationResponse>(
+      `/api/workspaces/${workspaceId}/integrations/github/${integrationId}/sync`
+    )
   },
 
   async getLinear(workspaceId: string): Promise<LinearIntegrationResponse> {
