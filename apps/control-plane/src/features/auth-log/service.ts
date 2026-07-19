@@ -56,7 +56,7 @@ export class AuthLogService {
     ip: string | null
     userAgent: string | null
     outcome: "success" | "denied"
-    detail: { method: string; path: string; status: number }
+    detail: { method: string; path: string; status: number; aborted?: boolean }
   }): Promise<void> {
     try {
       await AuthLogRepository.insert(this.pool, {

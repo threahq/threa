@@ -11,16 +11,26 @@ import type { AuthLogService } from "./service"
 export function createBackofficeAuditMiddleware(authLogService: AuthLogService): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     const path = req.path
-    res.on("finish", () => {
+    // Fire once on 'finish' OR 'close': an aborted response may already have
+    // streamed customer data to the admin's client, so it still records (same
+    // rule as the backend audit middleware's onResponseDone).
+    let fired = false
+    const record = (aborted: boolean) => {
+      if (fired) return
+      fired = true
       void authLogService.recordBackofficeRequest({
         workosUserId: req.workosUserId ?? null,
         email: req.authUser?.email ?? null,
         ip: req.ip ?? null,
         userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
         outcome: res.statusCode >= 400 ? "denied" : "success",
-        detail: { method: req.method, path, status: res.statusCode },
+        detail: aborted
+          ? { method: req.method, path, status: res.statusCode, aborted: true }
+          : { method: req.method, path, status: res.statusCode },
       })
-    })
+    }
+    res.on("finish", () => record(false))
+    res.on("close", () => record(!res.writableFinished))
     next()
   }
 }
