@@ -1365,6 +1365,10 @@ function isEnabled(ctx: ExtensionContext): boolean {
   return isCurrentSessionEnabled(ctx)
 }
 
+function shouldHandleSessionEvents(ctx: ExtensionContext): boolean {
+  return isEnabled(ctx)
+}
+
 function stopPolling(): void {
   pollingRunId += 1
   if (timer) clearTimeout(timer)
@@ -1531,6 +1535,10 @@ function botTraitDiagnostics(principal: BotPrincipal | null): string[] {
 async function disableRemote(ctx: ExtensionContext): Promise<void> {
   if (!config) return
   const link = setCurrentSessionEnabled(ctx, false)
+  if (!link) {
+    ctx.ui.notify("No Threa remote session is linked here.", "warning")
+    return
+  }
   stopPolling()
   teardownTransport()
   await failPending("Threa remote disabled", ctx)
@@ -3241,6 +3249,8 @@ export const __testing = {
   setConfigForTesting: (value: unknown) => {
     config = value as Config | undefined
   },
+  shouldHandleSessionEvents: (sessionId: string) =>
+    shouldHandleSessionEvents({ sessionManager: { getSessionId: () => sessionId } } as ExtensionContext),
   buildClaimInvocationPayload,
   buildPersistedConfig,
   buildRuntimeCapabilities,
@@ -3299,6 +3309,7 @@ export default function (pi: ExtensionAPI): void {
     description:
       "Link this Pi session to a Threa scratchpad: configure | status | open | rename <name> | on | off | debug | debug-polls [on|off]",
     handler: async (args, ctx) => {
+      if (ctx.mode === "print" || ctx.mode === "json") return
       const trimmedArgs = args.trim()
       const commandMatch = trimmedArgs.match(/^(\S+)(?:\s+([\s\S]*))?$/)
       const command = commandMatch?.[1]?.toLowerCase() ?? ""
@@ -3432,22 +3443,23 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("agent_start", async (_event, ctx) => {
-    if (config && isEnabled(ctx)) await heartbeatBusyIfStale("Thinking…", ctx).catch(() => undefined)
+    if (!config || !shouldHandleSessionEvents(ctx)) return
+    await heartbeatBusyIfStale("Thinking…", ctx).catch(() => undefined)
     // Just a live status heartbeat — no `thinking` trace step. The model's
     // real narration lands as `thinking` trace steps from `message_end` below,
     // so a placeholder "Thinking…" row here would only add noise to the trace.
     await traceHeartbeat("Thinking…", ctx)
   })
 
-  pi.on("tool_call", async (event) => {
-    if (!pending) return
+  pi.on("tool_call", async (event, ctx) => {
+    if (!pending || !shouldHandleSessionEvents(ctx)) return
     const description = describeToolCall(event)
     pendingToolCalls.set(event.toolCallId, { headline: description.replace(/…$/, "") })
     await recordTraceStep("tool_call", formatToolCallTrace(event, shouldEmitFullTrace(pending)), description)
   })
 
-  pi.on("tool_result", async (event) => {
-    if (!pending) return
+  pi.on("tool_result", async (event, ctx) => {
+    if (!pending || !shouldHandleSessionEvents(ctx)) return
     await recordTraceStep(
       event.isError ? "tool_error" : "tool_call",
       formatToolResultTrace(event, shouldEmitFullTrace(pending)),
@@ -3457,18 +3469,18 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("tool_execution_end", async (event, ctx) => {
-    if (!event.isError || !pendingToolCalls.has(event.toolCallId)) return
+    if (!shouldHandleSessionEvents(ctx) || !event.isError || !pendingToolCalls.has(event.toolCallId)) return
     await traceHeartbeat(`${event.toolName} failed`, ctx, "tool_error")
     pendingToolCalls.delete(event.toolCallId)
   })
 
   pi.on("message_start", async (event, ctx) => {
-    if (!pending || event.message.role !== "assistant") return
+    if (!pending || !shouldHandleSessionEvents(ctx) || event.message.role !== "assistant") return
     await traceHeartbeat("Composing response…", ctx)
   })
 
-  pi.on("message_end", async (event) => {
-    if (!pending) return
+  pi.on("message_end", async (event, ctx) => {
+    if (!pending || !shouldHandleSessionEvents(ctx)) return
     const modelError = extractModelError(event.message)
     if (modelError) {
       pendingModelError = modelError
@@ -3494,8 +3506,8 @@ export default function (pi: ExtensionAPI): void {
     }
   })
 
-  pi.on("after_provider_response", async (event) => {
-    if (!pending) return
+  pi.on("after_provider_response", async (event, ctx) => {
+    if (!pending || !shouldHandleSessionEvents(ctx)) return
     const raw = event as { status?: unknown; headers?: unknown }
     const status = typeof raw.status === "number" ? raw.status : 0
     if (status < 400) return
@@ -3506,6 +3518,7 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("agent_end", async (event, ctx) => {
+    if (!shouldHandleSessionEvents(ctx)) return
     if (!pending) {
       if (config && isEnabled(ctx)) {
         lastBusyHeartbeatAt = 0
@@ -3550,6 +3563,9 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("session_shutdown", async (event, ctx) => {
+    // In-process Pi child sessions can discover this global extension. Never
+    // let an unlinked child tear down or complete the linked parent's claim.
+    if (!shouldHandleSessionEvents(ctx)) return
     stopPolling()
     stopClaimRenewTimer()
     teardownTransport()

@@ -850,6 +850,25 @@ describe("buildPersistedConfig", () => {
   })
 })
 
+describe("session-scoped lifecycle isolation", () => {
+  afterEach(() => {
+    __testing.setConfigForTesting(undefined)
+  })
+
+  test("ignores in-process child events while the parent session is linked", () => {
+    __testing.setConfigForTesting({
+      linkedSessions: {
+        parent: {
+          enabled: true,
+        },
+      },
+    })
+
+    expect(__testing.shouldHandleSessionEvents("parent")).toBe(true)
+    expect(__testing.shouldHandleSessionEvents("workflow-child")).toBe(false)
+  })
+})
+
 describe("claim renewal during a turn", () => {
   const invocation = {
     id: "binv_renew_1",
