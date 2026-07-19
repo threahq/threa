@@ -79,4 +79,8 @@ export {
   personaConfigRevisionId,
   accessLogId,
   socketConnectionId,
+  callId,
+  callInvitationId,
+  callParticipantId,
+  callEndpointId,
 } from "@threa/backend-common"
