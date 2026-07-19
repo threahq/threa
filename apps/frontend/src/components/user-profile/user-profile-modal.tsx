@@ -2,7 +2,7 @@ import { useParams, Link } from "react-router-dom"
 import { MessageCircle, Phone, Github, Globe } from "lucide-react"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { buttonVariants } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
   ResponsiveDialog,
@@ -13,6 +13,8 @@ import {
   ResponsiveDialogBody,
 } from "@/components/ui/responsive-dialog"
 import { createDmDraftId } from "@/hooks"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useCallLaunch } from "@/components/call"
 import { useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAuth } from "@/auth"
@@ -59,6 +61,10 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
   const existingDmStreamId = idbDmPeers.find((p) => p.userId === userId)?.streamId
   const messageStreamId = existingDmStreamId ?? createDmDraftId(userId)
   const messageHref = workspaceId ? `/w/${workspaceId}/s/${messageStreamId}` : undefined
+
+  const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
+  const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? false
+  const { launch: launchCall } = useCallLaunch()
 
   if (!user) return null
 
@@ -133,14 +139,36 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
           {!isOwnProfile && messageHref && (
             <>
               <Separator />
-              <Link
-                to={messageHref}
-                onClick={() => onOpenChange(false)}
-                className={buttonVariants({ className: "w-full" })}
-              >
-                <MessageCircle className="h-4 w-4 mr-2" />
-                Message
-              </Link>
+              <div className="flex gap-2">
+                <Link
+                  to={messageHref}
+                  onClick={() => onOpenChange(false)}
+                  className={buttonVariants({ className: "flex-1" })}
+                >
+                  <MessageCircle className="h-4 w-4 mr-2" />
+                  Message
+                </Link>
+                {callsEnabled && (
+                  // A call needs a real DM stream; v1 has no message-less DM
+                  // materialization path (createDm posts on first send), so Call
+                  // is disabled until a DM exists — wrapped in a titled span so
+                  // the reason shows on a disabled button.
+                  <span title={existingDmStreamId ? undefined : "Send a message first to start a call"}>
+                    <Button
+                      variant="outline"
+                      disabled={!existingDmStreamId}
+                      onClick={() => {
+                        if (!existingDmStreamId || !workspaceId) return
+                        onOpenChange(false)
+                        launchCall({ workspaceId, streamId: existingDmStreamId, mode: "video" })
+                      }}
+                    >
+                      <Phone className="h-4 w-4 mr-2" />
+                      Call
+                    </Button>
+                  </span>
+                )}
+              </div>
             </>
           )}
         </ResponsiveDialogBody>

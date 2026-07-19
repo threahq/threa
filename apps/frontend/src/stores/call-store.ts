@@ -81,6 +81,15 @@ export interface CallState {
   diagnostics: CallDiagnostics
   /** Last mid-call recapture failure, or null. See {@link CallCaptureErrorInfo}. */
   captureError: CallCaptureErrorInfo | null
+  /**
+   * Monotonic tick bumped whenever the CallManager's per-endpoint video-track
+   * ref-map changes (a camera track attaches/detaches). The live
+   * `MediaStream`/`MediaStreamTrack` objects stay OFF the store snapshot — they
+   * are unstable for `useSyncExternalStore` and never belong in React state — so
+   * tiles read them from `getCallManager().getVideoStream(endpointId)` and
+   * re-attach their `<video>` when this counter changes. Discrete, not per-frame.
+   */
+  mediaEpoch: number
 }
 
 const EMPTY_DEVICES: CallDeviceState = {
@@ -106,6 +115,7 @@ function idleState(): CallState {
     confirmPending: false,
     diagnostics: { rttMs: null, packetLoss: null, qualityLimitation: null },
     captureError: null,
+    mediaEpoch: 0,
   }
 }
 
@@ -182,6 +192,11 @@ export function setCallCaptureError(captureError: CallCaptureErrorInfo | null): 
   setState({ ...state, captureError })
 }
 
+/** Bump the video ref-map version tick (see {@link CallState.mediaEpoch}). */
+export function bumpCallMediaEpoch(): void {
+  setState({ ...state, mediaEpoch: state.mediaEpoch + 1 })
+}
+
 /** Drop all call state without a hangup — the manager calls this after teardown. */
 export function clearCallState(): void {
   setState(idleState())
@@ -200,6 +215,16 @@ export function resetCallStoreCache(): void {
 function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
+}
+
+/**
+ * Raw store subscription. Exposed so selector hooks (`call-store-hooks.ts`) can
+ * subscribe once and re-render only on the slice they read — the whole-state
+ * {@link useCallState} re-renders every consumer on any change, including the
+ * per-frame `speakingLevel` tick.
+ */
+export function subscribeCall(listener: () => void): () => void {
+  return subscribe(listener)
 }
 
 export function useCallState(): CallState {
