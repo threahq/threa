@@ -104,133 +104,6 @@ describe("enqueue github installation backfill migration", () => {
 })
 
 /**
- * A stale lifecycle write must pin the installation it observed at read (INV-20):
- * a status-only guard would let a backfill/deactivation holding installation A
- * clobber a row that has since reconnected to installation B.
- * `expectedInstallationId: {value, allowNull}` encodes that pin; exercised
- * against real Postgres because a mock can't prove the WHERE actually gates.
- */
-describe("workspace_integrations installation_id guard", () => {
-  let pool: Pool
-
-  beforeAll(async () => {
-    pool = await setupTestDatabase()
-  })
-
-  afterAll(async () => {
-    await pool.end()
-  })
-
-  async function seed(client: Pool | import("pg").PoolClient, installationId: string | null): Promise<void> {
-    await client.query(
-      `INSERT INTO workspace_integrations (id, workspace_id, provider, status, installed_by, installation_id)
-       VALUES ('wsi_guard', 'ws_guard', 'github', 'active', 'usr_test', $1)`,
-      [installationId]
-    )
-  }
-
-  test("allowNull=true (backfill) matches a NULL column and fills it", async () => {
-    await withTestTransaction(pool, async (client) => {
-      await seed(client, null)
-
-      const updated = await WorkspaceIntegrationRepository.update(
-        client,
-        "ws_guard",
-        "github",
-        { installationId: "A" },
-        { expectedStatus: "active", expectedInstallationId: { value: "A", allowNull: true } }
-      )
-
-      expect(updated?.installationId).toBe("A")
-    })
-  })
-
-  test("allowNull=true (backfill) matches when the column already equals the value", async () => {
-    await withTestTransaction(pool, async (client) => {
-      await seed(client, "A")
-
-      const updated = await WorkspaceIntegrationRepository.update(
-        client,
-        "ws_guard",
-        "github",
-        { installationId: "A" },
-        { expectedStatus: "active", expectedInstallationId: { value: "A", allowNull: true } }
-      )
-
-      expect(updated?.installationId).toBe("A")
-    })
-  })
-
-  test("allowNull=true (backfill) does NOT match a row reinstalled to B — no clobber to A", async () => {
-    await withTestTransaction(pool, async (client) => {
-      await seed(client, "B")
-
-      const updated = await WorkspaceIntegrationRepository.update(
-        client,
-        "ws_guard",
-        "github",
-        { installationId: "A" },
-        { expectedStatus: "active", expectedInstallationId: { value: "A", allowNull: true } }
-      )
-
-      expect(updated).toBeNull()
-      const { rows } = await client.query(`SELECT installation_id FROM workspace_integrations WHERE id = 'wsi_guard'`)
-      expect(rows[0].installation_id).toBe("B")
-    })
-  })
-
-  test("allowNull=false (deactivate) matches only the exact installation id", async () => {
-    await withTestTransaction(pool, async (client) => {
-      await seed(client, "A")
-
-      const updated = await WorkspaceIntegrationRepository.update(
-        client,
-        "ws_guard",
-        "github",
-        { status: "inactive" },
-        { expectedStatus: "active", expectedInstallationId: { value: "A", allowNull: false } }
-      )
-
-      expect(updated?.status).toBe("inactive")
-    })
-  })
-
-  test("allowNull=false (deactivate) does NOT deactivate a row now on B", async () => {
-    await withTestTransaction(pool, async (client) => {
-      await seed(client, "B")
-
-      const updated = await WorkspaceIntegrationRepository.update(
-        client,
-        "ws_guard",
-        "github",
-        { status: "inactive" },
-        { expectedStatus: "active", expectedInstallationId: { value: "A", allowNull: false } }
-      )
-
-      expect(updated).toBeNull()
-      const { rows } = await client.query(`SELECT status FROM workspace_integrations WHERE id = 'wsi_guard'`)
-      expect(rows[0].status).toBe("active")
-    })
-  })
-
-  test("allowNull=false (deactivate) does NOT match a NULL column", async () => {
-    await withTestTransaction(pool, async (client) => {
-      await seed(client, null)
-
-      const updated = await WorkspaceIntegrationRepository.update(
-        client,
-        "ws_guard",
-        "github",
-        { status: "inactive" },
-        { expectedStatus: "active", expectedInstallationId: { value: "A", allowNull: false } }
-      )
-
-      expect(updated).toBeNull()
-    })
-  })
-})
-
-/**
  * INV-66 discipline: the compared version is produced by the repository's own
  * NOW()-writing update path and read back through the repository — never a
  * hand-crafted fixture — so the CAS is exercised against a value that actually
@@ -266,6 +139,7 @@ describe("workspace_integrations version CAS (INV-66)", () => {
         client,
         "ws_ver",
         "github",
+        "A",
         { metadata: { repositories: [{ fullName: "org/repo", private: false }] } },
         { expectedVersion: before!.version }
       )
@@ -284,6 +158,7 @@ describe("workspace_integrations version CAS (INV-66)", () => {
         client,
         "ws_ver",
         "github",
+        "A",
         { metadata: { winner: true } },
         { expectedVersion: before!.version }
       )
@@ -294,6 +169,7 @@ describe("workspace_integrations version CAS (INV-66)", () => {
         client,
         "ws_ver",
         "github",
+        "A",
         { metadata: { loser: true } },
         { expectedVersion: before!.version }
       )
@@ -313,6 +189,7 @@ describe("workspace_integrations version CAS (INV-66)", () => {
         client,
         "ws_ver",
         "github",
+        "A",
         { metadata: { a: 1 } },
         {
           expectedVersion: before!.version,
@@ -323,6 +200,7 @@ describe("workspace_integrations version CAS (INV-66)", () => {
         client,
         "ws_ver",
         "github",
+        "A",
         { metadata: { b: 2 } },
         {
           expectedVersion: before!.version,
@@ -335,6 +213,7 @@ describe("workspace_integrations version CAS (INV-66)", () => {
         client,
         "ws_ver",
         "github",
+        "A",
         { metadata: { b: 2 } },
         {
           expectedVersion: reread!.version,
@@ -347,7 +226,7 @@ describe("workspace_integrations version CAS (INV-66)", () => {
   test("an update without expectedVersion still bumps the version (every update increments)", async () => {
     await withTestTransaction(pool, async (client) => {
       await seed(client)
-      const updated = await WorkspaceIntegrationRepository.update(client, "ws_ver", "github", {
+      const updated = await WorkspaceIntegrationRepository.update(client, "ws_ver", "github", "A", {
         metadata: { touched: true },
       })
       expect(updated?.version).toBe(2)

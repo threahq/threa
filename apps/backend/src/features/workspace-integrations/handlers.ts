@@ -9,6 +9,10 @@ const githubCallbackSchema = z.object({
   state: z.string().min(1, "state is required"),
 })
 
+const githubInstallationParamsSchema = z.object({
+  integrationId: z.string().min(1, "integrationId is required"),
+})
+
 const linearCallbackSchema = z.object({
   code: z.string().min(1, "code is required"),
   state: z.string().min(1, "state is required"),
@@ -54,10 +58,10 @@ export function createWorkspaceIntegrationHandlers({
   return {
     async getGithub(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
-      const integration = await workspaceIntegrationService.getGithubIntegration(workspaceId)
+      const integrations = await workspaceIntegrationService.listGithubInstallations(workspaceId)
       res.json({
         configured: workspaceIntegrationService.isGitHubEnabled(),
-        integration,
+        integrations,
       })
     },
 
@@ -69,16 +73,19 @@ export function createWorkspaceIntegrationHandlers({
 
     async disconnectGithub(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
-      await workspaceIntegrationService.disconnectGithubIntegration(workspaceId)
+      const { integrationId } = validateRequest(githubInstallationParamsSchema, req.params)
+      await workspaceIntegrationService.disconnectGithubInstallation(workspaceId, integrationId)
       res.status(204).send()
     },
 
     async syncGithub(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
-      const integration = await workspaceIntegrationService.syncGithubRepositories(workspaceId)
+      const { integrationId } = validateRequest(githubInstallationParamsSchema, req.params)
+      await workspaceIntegrationService.syncGithubRepositories(workspaceId, integrationId)
+      const integrations = await workspaceIntegrationService.listGithubInstallations(workspaceId)
       res.json({
         configured: workspaceIntegrationService.isGitHubEnabled(),
-        integration,
+        integrations,
       })
     },
 

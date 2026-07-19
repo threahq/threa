@@ -826,13 +826,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceIntegration.connectGithub
   )
   app.delete(
-    "/api/workspaces/:workspaceId/integrations/github",
+    "/api/workspaces/:workspaceId/integrations/github/:integrationId",
     ...authed,
     requireWorkspaceAdmin,
     workspaceIntegration.disconnectGithub
   )
   app.post(
-    "/api/workspaces/:workspaceId/integrations/github/sync",
+    "/api/workspaces/:workspaceId/integrations/github/:integrationId/sync",
     ...authed,
     requireWorkspaceAdmin,
     workspaceIntegration.syncGithub

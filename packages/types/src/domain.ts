@@ -1248,7 +1248,10 @@ export interface GitHubInstalledRepository {
 
 export interface GitHubWorkspaceIntegration extends WorkspaceIntegration {
   provider: "github"
-  organizationName: string | null
+  /** Account login the app is installed on — an org OR a personal user (INV-10). */
+  accountLogin: string | null
+  installationId: string | null
+  accountType: "Organization" | "User" | null
   repositorySelection: "all" | "selected" | null
   permissions: Record<string, string>
   repositories: GitHubInstalledRepository[]

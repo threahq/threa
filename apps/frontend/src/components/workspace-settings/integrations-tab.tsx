@@ -40,14 +40,14 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
   })
 
   const disconnectMutation = useMutation({
-    mutationFn: () => integrationsApi.disconnectGithub(workspaceId),
+    mutationFn: (integrationId: string) => integrationsApi.disconnectGithub(workspaceId, integrationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["workspace-integrations", workspaceId, "github"] })
     },
   })
 
   const syncMutation = useMutation({
-    mutationFn: () => integrationsApi.syncGithub(workspaceId),
+    mutationFn: (integrationId: string) => integrationsApi.syncGithub(workspaceId, integrationId),
     onSuccess: (data) => {
       queryClient.setQueryData(["workspace-integrations", workspaceId, "github"], data)
     },
@@ -79,7 +79,7 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
   }
 
   const configured = query.data?.configured ?? false
-  const integration = query.data?.integration ?? null
+  const integration = query.data?.integrations?.[0] ?? null
   const repositories = integration?.repositories ?? []
   const isActive = integration?.status === "active"
 
@@ -116,10 +116,10 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
 
         {configured && isActive && (
           <div className="mt-3 space-y-3">
-            {integration.organizationName && (
+            {integration.accountLogin && (
               <div>
                 <h4 className="text-xs font-medium text-muted-foreground">Organization</h4>
-                <p className="text-sm">{integration.organizationName}</p>
+                <p className="text-sm">{integration.accountLogin}</p>
               </div>
             )}
 
@@ -166,7 +166,7 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => syncMutation.mutate()}
+                onClick={() => integration && syncMutation.mutate(integration.id)}
                 disabled={syncMutation.isPending}
               >
                 <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${syncMutation.isPending ? "animate-spin" : ""}`} />
@@ -177,7 +177,7 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => disconnectMutation.mutate()}
+                onClick={() => integration && disconnectMutation.mutate(integration.id)}
                 disabled={disconnectMutation.isPending}
               >
                 {disconnectMutation.isPending ? "Disconnecting\u2026" : "Disconnect"}

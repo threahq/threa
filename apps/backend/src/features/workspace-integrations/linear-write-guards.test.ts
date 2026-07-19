@@ -139,8 +139,8 @@ describe("persistLinearCredentials refresh path (isInstall:false)", () => {
     expect(update?.values).toContain("active")
     expect(update?.values).toContain("org_123")
     // Credential write → version-CAS on the record's observed generation (1).
-    expect(update?.text).toContain("version = $12")
-    expect(update?.values[11]).toBe(1)
+    expect(update?.text).toContain("version = $10")
+    expect(update?.values[9]).toBe(1)
     expect(calls.find((c) => c.text.includes("INSERT INTO workspace_integrations"))).toBeUndefined()
   })
 
@@ -197,14 +197,16 @@ describe("updateLinearRateLimitMetadata guards", () => {
     expect(update?.values).toContain("org_123")
   })
 
-  it("pins missing legacy org identity to NULL/empty instead of falling back to status-only", async () => {
+  it("scopes a missing legacy org identity to NULL instead of falling back to status-only", async () => {
     const { pool, calls } = recordingPool([{ ...linearRecordRow(), installation_id: null }])
     const service = makeService(pool)
 
     await service.updateLinearRateLimitMetadata("ws_1", linearMetadata(null), rateLimit)
 
     const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
-    expect(update?.values).toContain("")
+    // installationScope ($3) is NULL — matches only the NULL-column row, never a
+    // row that reconnected to a populated org id.
+    expect(update?.values[2]).toBeNull()
   })
 
   it("keeps the prior metadata when the write lands on a cleared row (guard no-op)", async () => {
@@ -228,18 +230,16 @@ describe("updateLinearRateLimitMetadata guards", () => {
     expect(result.version).toBeNull()
     const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
     expect(update?.text).toContain("version = version + 1")
-    expect(update?.text).toContain("version = $12")
-    // $12 (expectedVersion) is the last positional param.
-    expect(update?.values[11]).toBe(12)
+    expect(update?.text).toContain("version = $10")
+    // $10 (expectedVersion) is the last positional param.
+    expect(update?.values[9]).toBe(12)
   })
 })
 
 describe("disconnectLinearIntegration guard", () => {
-  it("pins the org id so a disconnect for org A cannot clobber a reconnected org B", async () => {
+  it("scopes to the org id column so a disconnect can't clobber a row reconnected to a different org", async () => {
     // credentials {} → parseLinearCredentials throws → revoke skipped (no network).
-    const { pool, calls } = recordingPool([
-      { ...linearRecordRow(), installation_id: null, metadata: { organizationId: "org_A" } },
-    ])
+    const { pool, calls } = recordingPool([{ ...linearRecordRow(), installation_id: "org_A" }])
     const service = makeService(pool)
 
     await service.disconnectLinearIntegration("ws_1")
@@ -247,7 +247,9 @@ describe("disconnectLinearIntegration guard", () => {
     const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
     expect(update).toBeDefined()
     expect(update?.values).toContain("inactive")
-    expect(update?.values).toContain("org_A")
+    // installationScope ($3) is the column value read before the clear; a reconnect
+    // to org B shifts the column and this write matches 0 rows.
+    expect(update?.values[2]).toBe("org_A")
   })
 })
 

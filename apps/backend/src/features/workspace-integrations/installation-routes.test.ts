@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
-import { WorkspaceIntegrationService } from "./service"
+import { GitHubClient, WorkspaceIntegrationService } from "./service"
 import {
   WorkspaceIntegrationRepository,
   type UpsertWorkspaceIntegrationParams,
@@ -101,6 +101,197 @@ afterEach(() => {
   mock.restore()
 })
 
+const FUTURE_ISO = new Date(Date.now() + 3_600_000).toISOString()
+
+function encryptedGithubCredentials(installationId: number): Record<string, unknown> {
+  return encryptJson(
+    SECRET,
+    { installationId, accessToken: "tok", tokenExpiresAt: FUTURE_ISO },
+    { workspaceId: "ws_1", provider: "github" }
+  )
+}
+
+/** An active install row with decryptable, non-expiring credentials and metadata. */
+function activeGithubInstall(installationId: string, metadata: Record<string, unknown> = {}): Record<string, unknown> {
+  return githubRow({
+    id: `wsi_${installationId}`,
+    installation_id: installationId,
+    credentials: encryptedGithubCredentials(Number(installationId)),
+    metadata,
+    version: 1,
+  })
+}
+
+const NEAR_LIMIT = { rateLimitRemaining: 5, rateLimitResetAt: FUTURE_ISO }
+
+describe("getGithubClient owner-aware resolution", () => {
+  function serviceWithInstalls(rows: Array<Record<string, unknown>>): WorkspaceIntegrationService {
+    // recordingPool returns the same rows for the listByWorkspaceAndProvider SELECT.
+    return new WorkspaceIntegrationService({
+      pool: recordingPool(rows).pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+  }
+
+  it("uses the install whose account login matches repoOwner (case-insensitive)", async () => {
+    const service = serviceWithInstalls([
+      activeGithubInstall("100", { organizationName: "Acme" }),
+      activeGithubInstall("200", { organizationName: "other" }),
+    ])
+    const client = await service.getGithubClient("ws_1", { repoOwner: "acme" })
+    expect(client).toBeInstanceOf(GitHubClient)
+  })
+
+  it("returns null (hard breaker) when the owner-matched install is throttled, never borrowing a sibling", async () => {
+    const service = serviceWithInstalls([
+      activeGithubInstall("100", { organizationName: "acme", ...NEAR_LIMIT }),
+      activeGithubInstall("200", { organizationName: "other" }),
+    ])
+    const client = await service.getGithubClient("ws_1", {
+      repoOwner: "acme",
+      allowUnauthenticatedFallback: true,
+    })
+    expect(client).toBeNull()
+  })
+
+  it("falls through to any non-throttled install when no login matches", async () => {
+    const service = serviceWithInstalls([
+      activeGithubInstall("100", { organizationName: "acme" }),
+      activeGithubInstall("200", { organizationName: "other" }),
+    ])
+    const client = await service.getGithubClient("ws_1", { repoOwner: "nobody" })
+    expect(client).toBeInstanceOf(GitHubClient)
+  })
+
+  it("returns null when every active install is throttled (breaker), even with fallback allowed", async () => {
+    const service = serviceWithInstalls([
+      activeGithubInstall("100", { organizationName: "acme", ...NEAR_LIMIT }),
+      activeGithubInstall("200", { organizationName: "other", ...NEAR_LIMIT }),
+    ])
+    const client = await service.getGithubClient("ws_1", { allowUnauthenticatedFallback: true })
+    expect(client).toBeNull()
+  })
+
+  it("falls back to anonymous when no install yields a client and fallback is allowed", async () => {
+    // Undecryptable credentials → no client parsed; not throttled → fallback path.
+    const service = serviceWithInstalls([githubRow({ installation_id: "100", credentials: { garbage: true } })])
+    const client = await service.getGithubClient("ws_1", { allowUnauthenticatedFallback: true })
+    expect(client).toBeInstanceOf(GitHubClient)
+  })
+
+  it("returns null (no fallback flag) when there are no active installs", async () => {
+    const service = serviceWithInstalls([githubRow({ status: "inactive" })])
+    expect(await service.getGithubClient("ws_1", { repoOwner: "acme" })).toBeNull()
+  })
+})
+
+describe("completeGithubInstallation account types", () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  function stubInstallationNetwork(service: WorkspaceIntegrationService, accountType: string, login: string): void {
+    spyOn(service as unknown as { getAppOctokit: () => unknown }, "getAppOctokit").mockReturnValue({
+      request: async (route: string) => {
+        if (route.startsWith("GET /app/installations")) {
+          return {
+            data: {
+              account: { type: accountType, login },
+              repository_selection: "all",
+              permissions: {},
+            },
+          }
+        }
+        return { data: { token: "tok", expires_at: FUTURE_ISO, permissions: {} } }
+      },
+    })
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ repositories: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch
+  }
+
+  function completeInstall(service: WorkspaceIntegrationService, rawId: string): Promise<void> {
+    return (
+      service as unknown as {
+        completeGithubInstallation(workspaceId: string, userId: string, rawId: string): Promise<void>
+      }
+    ).completeGithubInstallation("ws_1", "user_1", rawId)
+  }
+
+  it("accepts a personal (User) account and persists accountType into metadata", async () => {
+    const { pool } = recordingPool([])
+    spyOn(WorkspaceIntegrationRepository, "lockWorkspace").mockResolvedValue(undefined)
+    spyOn(WorkspaceIntegrationRepository, "listByWorkspaceAndProvider").mockResolvedValue([])
+    const upsertSpy = spyOn(WorkspaceIntegrationRepository, "upsert").mockImplementation(async (_c, params) => ({
+      id: params.id,
+      workspaceId: params.workspaceId,
+      provider: params.provider,
+      status: params.status,
+      credentials: params.credentials,
+      metadata: params.metadata,
+      installedBy: params.installedBy,
+      installationId: params.installationId ?? null,
+      version: 1,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }))
+    outboxSpy()
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+    stubInstallationNetwork(service, "User", "kristofferremback")
+
+    await completeInstall(service, "555")
+
+    const params = upsertSpy.mock.calls[0][1]
+    expect(params.status).toBe("active")
+    expect(params.installationId).toBe("555")
+    expect((params.metadata as { accountType?: unknown }).accountType).toBe("User")
+    expect((params.metadata as { organizationName?: unknown }).organizationName).toBe("kristofferremback")
+  })
+
+  it("accepts an Organization account (no org-required throw)", async () => {
+    const { pool } = recordingPool([])
+    spyOn(WorkspaceIntegrationRepository, "lockWorkspace").mockResolvedValue(undefined)
+    spyOn(WorkspaceIntegrationRepository, "listByWorkspaceAndProvider").mockResolvedValue([])
+    const upsertSpy = spyOn(WorkspaceIntegrationRepository, "upsert").mockImplementation(async (_c, params) => ({
+      id: params.id,
+      workspaceId: params.workspaceId,
+      provider: params.provider,
+      status: params.status,
+      credentials: params.credentials,
+      metadata: params.metadata,
+      installedBy: params.installedBy,
+      installationId: params.installationId ?? null,
+      version: 1,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }))
+    outboxSpy()
+    const service = new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+    stubInstallationNetwork(service, "Organization", "acme")
+
+    await completeInstall(service, "777")
+
+    const params = upsertSpy.mock.calls[0][1]
+    expect((params.metadata as { accountType?: unknown }).accountType).toBe("Organization")
+  })
+})
+
 describe("disconnectGithubIntegration route unregistration", () => {
   it("emits a github_route:unregister event with the plaintext installation id", async () => {
     const { pool } = recordingPool([githubRow()])
@@ -112,7 +303,7 @@ describe("disconnectGithubIntegration route unregistration", () => {
       region: "eu-north-1",
     })
 
-    await service.disconnectGithubIntegration("ws_1")
+    await service.disconnectGithubInstallation("ws_1", "wsi_1")
 
     expect(routeEvents(spy)).toEqual([
       {
@@ -137,7 +328,7 @@ describe("disconnectGithubIntegration route unregistration", () => {
       region: "eu-north-1",
     })
 
-    await service.disconnectGithubIntegration("ws_1")
+    await service.disconnectGithubInstallation("ws_1", "wsi_1")
 
     expect(routeEvents(spy)).toEqual([
       {
@@ -166,7 +357,7 @@ describe("disconnectGithubIntegration route unregistration", () => {
       region: "eu-north-1",
     })
 
-    await service.disconnectGithubIntegration("ws_1")
+    await service.disconnectGithubInstallation("ws_1", "wsi_1")
 
     const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
     expect(update).toBeDefined()
@@ -199,7 +390,7 @@ describe("disconnectGithubIntegration route unregistration", () => {
       region: "eu-north-1",
     })
 
-    await service.disconnectGithubIntegration("ws_1")
+    await service.disconnectGithubInstallation("ws_1", "wsi_1")
 
     const update = calls.find((call) => call.text.includes("UPDATE workspace_integrations"))
     expect(update?.values).toContain("42")
@@ -207,8 +398,8 @@ describe("disconnectGithubIntegration route unregistration", () => {
   })
 
   it("does NOT version-CAS, so a concurrent background version bump can't no-op the disconnect (asymmetry)", async () => {
-    // Lifecycle writes express absolute user intent: the guarded UPDATE carries an
-    // installation-id guard but leaves the version guard ($12) NULL, so a
+    // Lifecycle writes express absolute user intent: the guarded UPDATE is scoped
+    // to the installation id but leaves the version guard ($10) NULL, so a
     // concurrent rate-limit/refresh version bump does not make the disconnect miss.
     const { pool, calls } = recordingPool([githubRow({ installation_id: "42", version: 9 })])
     const spy = outboxSpy()
@@ -219,12 +410,12 @@ describe("disconnectGithubIntegration route unregistration", () => {
       region: "eu-north-1",
     })
 
-    await service.disconnectGithubIntegration("ws_1")
+    await service.disconnectGithubInstallation("ws_1", "wsi_1")
 
     const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
     expect(update?.values).toContain("inactive")
-    // $12 (expectedVersion) is null → no version CAS on the lifecycle write.
-    expect(update?.values[11]).toBeNull()
+    // $10 (expectedVersion) is null → no version CAS on the lifecycle write.
+    expect(update?.values[9]).toBeNull()
     expect(routeEvents(spy)).toEqual([
       {
         eventType: "github_route:unregister",
@@ -243,30 +434,19 @@ describe("disconnectGithubIntegration route unregistration", () => {
       region: null,
     })
 
-    await service.disconnectGithubIntegration("ws_1")
+    await service.disconnectGithubInstallation("ws_1", "wsi_1")
 
     expect(spy).not.toHaveBeenCalled()
   })
 })
 
-describe("GitHub installation replacement route lifecycle", () => {
-  it("serializes replacement and unregisters the previous route before registering the new one", async () => {
+describe("GitHub installation route lifecycle (additive)", () => {
+  it("serializes on the workspace lock and registers the new install WITHOUT unregistering siblings", async () => {
+    // Installs are additive (N rows per workspace): connecting installation 77
+    // must not unregister an existing installation 42. Only a register event fires.
     const { pool } = recordingPool([])
-    const previous: WorkspaceIntegrationRecord = {
-      id: "wsi_1",
-      workspaceId: "ws_1",
-      provider: "github",
-      status: "active",
-      credentials: {},
-      metadata: {},
-      installedBy: "user_1",
-      installationId: "42",
-      version: 1,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }
-    const replacement: UpsertWorkspaceIntegrationParams = {
-      id: "wsi_1",
+    const install: UpsertWorkspaceIntegrationParams = {
+      id: "wsi_2",
       workspaceId: "ws_1",
       provider: "github",
       status: "active",
@@ -276,8 +456,20 @@ describe("GitHub installation replacement route lifecycle", () => {
       installationId: "77",
     }
     const lockSpy = spyOn(WorkspaceIntegrationRepository, "lockWorkspace").mockResolvedValue(undefined)
-    spyOn(WorkspaceIntegrationRepository, "findByWorkspaceAndProvider").mockResolvedValue(previous)
-    spyOn(WorkspaceIntegrationRepository, "upsert").mockResolvedValue({ ...previous, installationId: "77" })
+    const findSpy = spyOn(WorkspaceIntegrationRepository, "findByWorkspaceAndProvider")
+    spyOn(WorkspaceIntegrationRepository, "upsert").mockResolvedValue({
+      id: "wsi_2",
+      workspaceId: "ws_1",
+      provider: "github",
+      status: "active",
+      credentials: {},
+      metadata: {},
+      installedBy: "user_1",
+      installationId: "77",
+      version: 1,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
     const spy = outboxSpy()
     const service = new WorkspaceIntegrationService({
       pool,
@@ -290,17 +482,16 @@ describe("GitHub installation replacement route lifecycle", () => {
       service as unknown as {
         persistGithubIntegration(
           params: UpsertWorkspaceIntegrationParams,
+          installationScope: string | null,
           routeInstallationId: string
         ): Promise<WorkspaceIntegrationRecord>
       }
-    ).persistGithubIntegration(replacement, "77")
+    ).persistGithubIntegration(install, null, "77")
 
     expect(lockSpy).toHaveBeenCalledWith(pool, "ws_1")
+    // The lifecycle branch no longer looks up the previous row to unregister it.
+    expect(findSpy).not.toHaveBeenCalled()
     expect(routeEvents(spy)).toEqual([
-      {
-        eventType: "github_route:unregister",
-        payload: { workspaceId: "ws_1", installationId: "42", region: "eu-north-1" },
-      },
       {
         eventType: "github_route:register",
         payload: { workspaceId: "ws_1", installationId: "77", region: "eu-north-1" },
@@ -496,7 +687,7 @@ describe("syncGithubRepositories version-CAS retry (INV-66)", () => {
 
     let caught: unknown
     try {
-      await service.syncGithubRepositories("ws_1")
+      await service.syncGithubRepositories("ws_1", "wsi_1")
     } catch (error) {
       caught = error
     }
@@ -532,7 +723,7 @@ describe("syncGithubRepositories version-CAS retry (INV-66)", () => {
     })
     stubGithubNetwork(service)
 
-    const result = await service.syncGithubRepositories("ws_1")
+    const result = await service.syncGithubRepositories("ws_1", "wsi_1")
 
     expect(result.status).toBe("active")
     expect(updateCount).toBe(2)
@@ -640,6 +831,7 @@ describe("deactivateInstallation", () => {
 describe("GitHub metadata write guards", () => {
   const metadata = {
     organizationName: "acme",
+    accountType: "Organization" as const,
     repositorySelection: "all" as const,
     permissions: {},
     repositories: [],
@@ -664,11 +856,11 @@ describe("GitHub metadata write guards", () => {
     expect(result.version).toBe(8)
     const update = calls.find((call) => call.text.includes("UPDATE workspace_integrations"))
     expect(update?.text).toContain("version = version + 1")
-    expect(update?.text).toContain("version = $12")
+    expect(update?.text).toContain("version = $10")
     expect(update?.values).toContain("active")
     expect(update?.values).toContain("42")
-    // Version-CAS: the observed generation is the last positional param ($12).
-    expect(update?.values[11]).toBe(7)
+    // Version-CAS: the observed generation is the last positional param ($10).
+    expect(update?.values[9]).toBe(7)
   })
 
   it("keeps the client's prior metadata when a replacement wins the guard", async () => {
@@ -704,7 +896,7 @@ describe("GitHub metadata write guards", () => {
     expect(result.metadata).toBe(metadata)
     expect(result.version).toBeNull()
     const update = calls.find((call) => call.text.includes("UPDATE workspace_integrations"))
-    expect(update?.values[11]).toBe(3)
+    expect(update?.values[9]).toBe(3)
   })
 })
 
@@ -730,11 +922,12 @@ describe("persistGithubIntegration token-refresh path (non-route)", () => {
       service as unknown as {
         persistGithubIntegration(
           p: UpsertWorkspaceIntegrationParams,
+          scope: string | null,
           r?: string,
           v?: number
         ): Promise<WorkspaceIntegrationRecord | null>
       }
-    ).persistGithubIntegration(params, routeInstallationId, expectedVersion)
+    ).persistGithubIntegration(params, params.installationId ?? null, routeInstallationId, expectedVersion)
   }
 
   it("uses the guarded UPDATE (not a blind upsert) and persists a normal refresh", async () => {
@@ -753,7 +946,7 @@ describe("persistGithubIntegration token-refresh path (non-route)", () => {
     expect(result).not.toBeNull()
     const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
     expect(update).toBeDefined()
-    // Guard values: expectedStatus 'active' and expectedInstallationId '42'.
+    // Guard values: expectedStatus 'active' and installationScope '42'.
     expect(update?.values).toContain("active")
     expect(update?.values).toContain("42")
     // The non-route path never locks the workspace, upserts, or emits a route event.
@@ -838,8 +1031,8 @@ describe("persistGithubIntegration token-refresh path (non-route)", () => {
 
     expect(result).toBeNull()
     const update = calls.find((c) => c.text.includes("UPDATE workspace_integrations"))
-    expect(update?.text).toContain("version = $12")
-    expect(update?.values[11]).toBe(4)
+    expect(update?.text).toContain("version = $10")
+    expect(update?.values[9]).toBe(4)
     expect(calls.find((c) => c.text.includes("INSERT INTO workspace_integrations"))).toBeUndefined()
   })
 })
