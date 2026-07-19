@@ -9,6 +9,7 @@ import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as generalTabModule from "./general-tab"
 import * as companionTabModule from "./companion-tab"
 import * as membersTabModule from "./members-tab"
+import * as useCurrentWorkspaceUserIdModule from "@/hooks/use-current-workspace-user-id"
 
 const useStreamSettingsMock = vi.fn()
 const useWorkspaceStreamsMock = vi.fn()
@@ -107,6 +108,7 @@ describe("StreamSettingsDialog", () => {
     vi.spyOn(membersTabModule, "MembersTab").mockImplementation((() => (
       <div>Members panel</div>
     )) as unknown as typeof membersTabModule.MembersTab)
+    vi.spyOn(useCurrentWorkspaceUserIdModule, "useCurrentWorkspaceUserId").mockReturnValue("user_1")
   })
 
   it("shows only the available sidebar items for the resolved stream type", async () => {
@@ -132,6 +134,39 @@ describe("StreamSettingsDialog", () => {
     expect(panels).toHaveClass("flex", "flex-1", "min-h-0", "overflow-hidden")
     expect(nav).toHaveClass("min-h-0", "overflow-y-auto")
     expect(content).toHaveClass("flex-1", "min-h-0", "overflow-y-auto")
+  })
+
+  it("opens for an archived stream with no membership row (the only unarchive affordance)", async () => {
+    // Memberships aren't bootstrapped for archived streams, so after a reload
+    // the archived row exists in the stream cache but no membership does. The
+    // dialog must still open — gating the viewer id on the membership row left
+    // it stuck on the loading state, with no other way to unarchive.
+    useStreamSettingsMock.mockReturnValue({
+      isOpen: true,
+      activeTab: "general",
+      streamId: "stream_archived",
+      closeStreamSettings,
+      setTab,
+    })
+    useWorkspaceStreamsMock.mockReturnValue([
+      makeStream({
+        id: "stream_archived",
+        type: StreamTypes.CHANNEL,
+        displayName: "Old Channel",
+        slug: "old-channel",
+        archivedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    ])
+    useWorkspaceStreamMembershipsMock.mockReturnValue([])
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StreamSettingsDialog workspaceId="ws_1" />
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText("General panel")).toBeVisible()
+    expect(screen.queryByText(/Loading stream settings/i)).not.toBeInTheDocument()
   })
 
   it("titles a DM with the resolved peer name when the stream row has no displayName", async () => {
