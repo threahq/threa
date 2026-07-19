@@ -770,7 +770,14 @@ export async function startServer(): Promise<ServerInstance> {
   // Bot runtime namespace — runtimes authenticate with a `threa_bk_*` key and
   // get invocation pushes over WebSocket so they no longer poll the HTTP
   // claim endpoint every second.
-  attachBotNamespace({ io, botRuntimeService, botRuntimeWriteOps, botApiKeyService, botSocketRegistry })
+  attachBotNamespace({
+    io,
+    botRuntimeService,
+    botRuntimeWriteOps,
+    botApiKeyService,
+    botSocketRegistry,
+    accessLogService,
+  })
 
   registerSocketHandlers(io, {
     pool,
@@ -781,6 +788,7 @@ export async function startServer(): Promise<ServerInstance> {
     userSocketRegistry,
     sessionAbortRegistry,
     jobQueue,
+    accessLogService,
   })
 
   // Dedicated voice relay on its own namespace so audio frames don't share the

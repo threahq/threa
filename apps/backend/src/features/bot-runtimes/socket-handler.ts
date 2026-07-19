@@ -6,7 +6,10 @@ import type { BotRuntimeService } from "./service"
 import type { BotInvocation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
 import type { BotRuntimeWriteOps } from "./runtime-write-ops"
 import type { BotApiKeyService } from "../public-api"
+import type { AccessLogService, AuditSubjectRef } from "../access-log"
 import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
+import { socketConnectionId } from "../../lib/id"
+import { socketHandshakeIp } from "../../lib/socket-ip"
 import { createBotSocketAuthMiddleware, readSocketToken, type BotSocketData } from "./socket-auth"
 import { BotSocketRegistry } from "./bot-socket-registry"
 import { logger } from "../../lib/logger"
@@ -166,6 +169,7 @@ interface BotSocketHandlerDeps {
   botRuntimeWriteOps: BotRuntimeWriteOps
   botApiKeyService: BotApiKeyService
   botSocketRegistry: BotSocketRegistry
+  accessLogService: AccessLogService
   /**
    * How often (ms) to re-check that the connecting key is still valid.
    * `BotApiKeyService.validateKey` has no cache, so HTTP revocation is
@@ -192,7 +196,7 @@ interface JoinedRoomState {
  * `BroadcastHandler` to the rooms joined here.
  */
 export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
-  const { io, botRuntimeService, botRuntimeWriteOps, botApiKeyService, botSocketRegistry } = deps
+  const { io, botRuntimeService, botRuntimeWriteOps, botApiKeyService, botSocketRegistry, accessLogService } = deps
   const keyRevalidationIntervalMs = deps.keyRevalidationIntervalMs ?? 60_000
   const namespace = io.of("/bot")
 
@@ -209,10 +213,71 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     }
     const { workspaceId, botId } = auth
 
+    const ip = socketHandshakeIp(socket.handshake)
+    const userAgent = socket.handshake.headers["user-agent"] ?? null
+    // Per-connection id correlating this socket's subscribe/unsubscribe rows
+    // (design §4). Distinct from `auth.keyId`, which a multi-instance runtime
+    // shares across concurrent connections — the connection id disambiguates them.
+    const sconnId = socketConnectionId()
+    // Subject refs for each subscribe row this socket wrote, replayed as
+    // unsubscribe rows on disconnect so the intervals pair (design §3).
+    const auditSubscriptions: AuditSubjectRef[][] = []
+    const recordBotSubscribe = (subjects: AuditSubjectRef[]): void => {
+      auditSubscriptions.push(subjects)
+      accessLogService.record({
+        workspaceId,
+        actorType: "bot",
+        actorId: botId,
+        authRef: sconnId,
+        operation: "socket.subscribe",
+        accessKind: "subscribe",
+        outcome: "success",
+        subjects,
+        // The bak_ credential: auth_ref carries the per-connection sconn for
+        // interval pairing, so the key a leaked-key investigation needs lives
+        // in detail (a bot may rotate keys between connections).
+        detail: { keyId: auth.keyId },
+        // Stamped at the join instant, not at insert time — insert lag must not
+        // shrink the interval (under-approximation is the wrong direction).
+        occurredAt: new Date(),
+        ip,
+        userAgent,
+      })
+    }
+
+    // The bot WS verbs are socket-borne twins of annotated REST routes
+    // (INV-35: same write ops) — without these rows a stolen key's invocation
+    // reads/writes over the socket would be invisible to the access log.
+    const recordBotVerb = (params: {
+      operation: Parameters<typeof accessLogService.record>[0]["operation"]
+      accessKind: "read" | "write"
+      outcome: "success" | "denied" | "error"
+      subjects: AuditSubjectRef[]
+    }): void => {
+      accessLogService.record({
+        workspaceId,
+        actorType: "bot",
+        actorId: botId,
+        authRef: sconnId,
+        operation: params.operation,
+        accessKind: params.accessKind,
+        outcome: params.outcome,
+        subjects: params.subjects,
+        detail: { keyId: auth.keyId },
+        occurredAt: new Date(),
+        ip,
+        userAgent,
+      })
+    }
+
+    const verbOutcome = (err: unknown): "denied" | "error" =>
+      err instanceof HttpError && err.status < 500 ? "denied" : "error"
+
     // Workspace-wide room is always safe — `bot:resync` with no botId fans
     // out to every bot socket in the workspace. The per-bot/instance rooms
     // are joined after `bot:hello` registers the instance identity.
     socket.join(`bot:${workspaceId}`)
+    recordBotSubscribe([{ type: "workspace", id: workspaceId }])
 
     let joined: JoinedRoomState | null = null
     // Synchronous guard against a runtime that sends two `bot:hello` frames
@@ -333,6 +398,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           runtimeKind: data.runtimeKind,
           runtimeSessionId,
         }
+        recordBotSubscribe([{ type: "bot", id: botId }])
 
         const response: BotHelloResponse = {
           ok: true,
@@ -342,6 +408,15 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           activeActorByStream: bootstrap.activeActorByStream.map(serializeActiveActor),
           activeSessionLinks: bootstrap.activeSessionLinks.map(serializeSessionLink),
         }
+        recordBotVerb({
+          operation: "bot.hello_bootstrap",
+          accessKind: "read",
+          outcome: "success",
+          subjects: [...bootstrap.available, ...bootstrap.ownedClaims].map((inv) => ({
+            type: "bot_invocation",
+            id: inv.id,
+          })),
+        })
         ack?.(response)
       } catch (err) {
         socket.leave(botRoom)
@@ -393,8 +468,20 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           publicKey: data.publicKey,
           publicKeyId: data.publicKeyId,
         })
+        recordBotVerb({
+          operation: "bot.presence_update",
+          accessKind: "write",
+          outcome: "success",
+          subjects: [{ type: "bot", id: botId }],
+        })
         ack?.({ ok: true })
       } catch (err) {
+        recordBotVerb({
+          operation: "bot.presence_update",
+          accessKind: "write",
+          outcome: verbOutcome(err),
+          subjects: [{ type: "bot", id: botId }],
+        })
         ack?.(toWriteErrorAck(err, { workspaceId, botId, event: "bot:presence:update" }))
       }
     })
@@ -418,8 +505,20 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
             claimToken: data.claimToken,
             claimTtlSeconds: data.claimTtlSeconds,
           })
+          recordBotVerb({
+            operation: "bot.invocation_renew",
+            accessKind: "write",
+            outcome: "success",
+            subjects: [{ type: "bot_invocation", id: data.invocationId }],
+          })
           ack?.({ ok: true, data: { ...renewed } })
         } catch (err) {
+          recordBotVerb({
+            operation: "bot.invocation_renew",
+            accessKind: "write",
+            outcome: verbOutcome(err),
+            subjects: [{ type: "bot_invocation", id: data.invocationId }],
+          })
           ack?.(toWriteErrorAck(err, { workspaceId, botId, event: "bot:invocation:renew" }))
         }
       }
@@ -445,11 +544,23 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
             steps: data.steps,
             statusText: data.statusText,
           })
+          recordBotVerb({
+            operation: "bot.invocation_steps",
+            accessKind: "write",
+            outcome: "success",
+            subjects: [{ type: "bot_invocation", id: data.invocationId }],
+          })
           ack?.({
             ok: true,
             data: { invocationId: result.invocationId, sessionId: result.sessionId, steps: result.steps },
           })
         } catch (err) {
+          recordBotVerb({
+            operation: "bot.invocation_steps",
+            accessKind: "write",
+            outcome: verbOutcome(err),
+            subjects: [{ type: "bot_invocation", id: data.invocationId }],
+          })
           ack?.(toWriteErrorAck(err, { workspaceId, botId, event: "bot:invocation:steps" }))
         }
       }
@@ -473,11 +584,23 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
             callbackToken: data.callbackToken,
             steps: data.steps,
           })
+          recordBotVerb({
+            operation: "bot.invocation_sealed_steps",
+            accessKind: "write",
+            outcome: "success",
+            subjects: [{ type: "bot_invocation", id: data.invocationId }],
+          })
           ack?.({
             ok: true,
             data: { invocationId: result.invocationId, sessionId: result.sessionId, steps: result.steps },
           })
         } catch (err) {
+          recordBotVerb({
+            operation: "bot.invocation_sealed_steps",
+            accessKind: "write",
+            outcome: verbOutcome(err),
+            subjects: [{ type: "bot_invocation", id: data.invocationId }],
+          })
           ack?.(toWriteErrorAck(err, { workspaceId, botId, event: "bot:invocation:sealed-steps" }))
         }
       }
@@ -488,6 +611,24 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
       if (joined) {
         botSocketRegistry.unregister({ workspaceId, botId, instanceId: joined.instanceId }, socket)
       }
+      const leftAt = new Date()
+      for (const subjects of auditSubscriptions) {
+        accessLogService.record({
+          workspaceId,
+          actorType: "bot",
+          actorId: botId,
+          authRef: sconnId,
+          operation: "socket.unsubscribe",
+          accessKind: "unsubscribe",
+          outcome: "success",
+          subjects,
+          detail: { keyId: auth.keyId },
+          occurredAt: leftAt,
+          ip,
+          userAgent,
+        })
+      }
+      auditSubscriptions.length = 0
     })
   })
 }
