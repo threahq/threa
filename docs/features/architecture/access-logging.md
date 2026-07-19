@@ -84,9 +84,10 @@ silently skip logging: the server refuses to start.
 **Sockets: intervals, not per-event rows.** A `sconn_` connection id is minted at
 connect. Joining a room writes one `subscribe` row (denied joins too); leaving or
 disconnecting writes the paired `unsubscribe`. The delivered set is derived, not
-materialized: `reconstructDeliveredEvents` joins subscription intervals against
-`stream_events` metadata (never payloads) to answer which events each connection
-received, one row per join instead of one per message per member. Interval edges
+materialized: the log stores one `subscribe` row per join instead of one row per
+message per member, and `reconstructDeliveredEvents` joins those intervals against
+`stream_events` metadata (never payloads) at query time, returning one row per
+delivered event per connection. Interval edges
 are widened by a clock-skew tolerance (default 5s) because subscribe rows are
 app-clock stamped while events are DB-clocked; unclosed intervals count as open,
 which over-approximates. The bot `/bot` namespace records its rooms and its verb
