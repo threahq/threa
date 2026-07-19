@@ -179,6 +179,7 @@ export function createWorkspaceHandlers({
         labelAssignments,
         configuredToolCategories,
         runningSessions,
+        archivedStreams,
       ] = await Promise.all([
         workspaceService.getWorkspaceById(workspaceId),
         workspaceService.getUsers(workspaceId),
@@ -200,6 +201,10 @@ export function createWorkspaceHandlers({
         // has no stream bootstrap yet).
         workspaceIntegrationService.getAvailableToolCategories(workspaceId),
         AgentSessionRepository.listRunningByWorkspace(pool, workspaceId),
+        // Archived roots are pruned from `streams`; the client persists these
+        // slim rows so archival survives reloads (drafts filters, saved/activity
+        // name resolution). No DM-name resolution — dmPeers persist independently.
+        streamService.listArchivedRoots(workspaceId, userId),
       ])
 
       if (!workspace) {
@@ -303,6 +308,7 @@ export function createWorkspaceHandlers({
           workspace,
           users,
           streams: resolvedStreams,
+          archivedStreams,
           streamMemberships: serializedMemberships,
           readMessageIds,
           personas,

@@ -741,6 +741,35 @@ export const StreamRepository = {
     return result.rows.map(mapRowToStreamWithPreview)
   },
 
+  /**
+   * Archived root streams visible to the viewer, as slim `Stream` rows (no
+   * preview/membership/unread joins). `archived_at` is only ever set on root
+   * rows (archiving marks only the root — see `resolveWritableMessageStream`
+   * in the service), so this needs no thread→root resolution; threads are
+   * excluded outright. Visibility mirrors `listWithPreviews`: public streams
+   * plus streams the viewer is a member of, workspace-scoped (INV-8). Feeds
+   * the bootstrap `archivedStreams` index so the client retains knowledge of
+   * archival across reloads (drafts filters, saved/activity name resolution).
+   */
+  async listArchivedRoots(db: Querier, workspaceId: string, userId: string): Promise<Stream[]> {
+    const result = await db.query<StreamRow>(
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams s
+          WHERE s.workspace_id = ${workspaceId}
+            AND s.archived_at IS NOT NULL
+            AND s.type != ${StreamTypes.THREAD}
+            AND (
+              s.visibility = 'public'
+              OR EXISTS (
+                SELECT 1 FROM stream_members m
+                WHERE m.stream_id = s.id AND m.member_id = ${userId}
+              )
+            )
+            AND ${sql.raw(purposeIsNull("s"))}
+          ORDER BY s.archived_at DESC`
+    )
+    return result.rows.map(mapRowToStream)
+  },
+
   async insert(db: Querier, params: InsertStreamParams): Promise<Stream> {
     const result = await db.query<StreamRow>(sql`
       INSERT INTO streams (
