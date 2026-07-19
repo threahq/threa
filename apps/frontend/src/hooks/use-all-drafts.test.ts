@@ -409,10 +409,10 @@ describe("useAllDrafts archived streams", () => {
     expect(result.current.summary.draftCount).toBe(result.current.all.drafts.length)
   })
 
-  it("badge still counts a thread draft under an archived root (deliberate: no events scan in the sidebar)", async () => {
-    // The explorer resolves the thread's stream via a db.events scan and hides
-    // the draft; the summary skips that scan to keep the always-mounted sidebar
-    // off a query that churns on every message, so it over-counts this rare case.
+  it("badge hides a thread draft under an archived root, in step with the list", async () => {
+    // The badge shares the gated events map with the explorer, so it resolves the
+    // reply's parent stream in the sidebar too and no longer over-counts a thread
+    // draft whose root is archived — it matches the list, which also hides it.
     await seedStream({ id: "stream_root_arch", archivedAt: "2026-01-01T00:00:00Z" })
     await seedStream({ id: "stream_thr", type: "thread", rootStreamId: "stream_root_arch" })
     await seedMessageEvent("msg_x", "stream_thr", 1)
@@ -423,11 +423,31 @@ describe("useAllDrafts archived streams", () => {
       wrapper,
     })
 
-    // Steady state: the explorer hides it while the badge still counts it.
-    // Asserted together so we read the settled state, not a co-mount transient.
+    // Once the gated events query resolves the parent stream, both the list and
+    // the badge hide the archived-root thread draft. Asserted together so we read
+    // the settled state, not a co-mount transient.
     await waitFor(() => {
       expect(result.current.all.drafts).toHaveLength(0)
+      expect(result.current.summary.draftCount).toBe(0)
+      expect(result.current.summary.draftCount).toBe(result.current.all.drafts.length)
+    })
+  })
+
+  it("badge keeps a thread draft under an active root (never over-hides on resolved events)", async () => {
+    await seedStream({ id: "stream_root_live" })
+    await seedStream({ id: "stream_thr_live", type: "thread", rootStreamId: "stream_root_live" })
+    await seedMessageEvent("msg_live", "stream_thr_live", 1)
+    await db.drafts.add(syncedDraft({ id: "draft_live", scope: "thread:msg_live", contentJson: makeDoc("reply") }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.all.drafts.map((d) => d.id)).toEqual(["draft_live"])
       expect(result.current.summary.draftCount).toBe(1)
+      expect(result.current.summary.draftCount).toBe(result.current.all.drafts.length)
     })
   })
 })
