@@ -15,15 +15,20 @@ import { SidebarSearchPanel } from "./sidebar-search-panel"
 import { mockStreamsList } from "@/test/fixtures"
 import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
+import type { AuthorType } from "@threa/types"
+import { ApiError } from "@/api"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
 
 const mockNavigate = vi.fn()
+let workspaceStreams = mockStreamsList
+
+type MockSearchResult = Omit<(typeof mockSearchResultsList)[number], "authorType"> & { authorType: AuthorType }
 
 const mockSearchState = {
-  results: [] as typeof mockSearchResultsList,
+  results: [] as MockSearchResult[],
   isLoading: false,
   search: vi.fn(),
   clear: vi.fn(),
@@ -167,13 +172,16 @@ function installSpies() {
   }) as unknown as typeof mentionablesModule.filterUsersOnly)
 
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockImplementation(
-    () => mockStreamsList as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
+    () => workspaceStreams as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
   )
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockImplementation(
     () => mockUsersList as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>
   )
   vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockImplementation(
     () => [] as ReturnType<typeof workspaceStoreModule.useWorkspacePersonas>
+  )
+  vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockImplementation(
+    () => [] as ReturnType<typeof workspaceStoreModule.useWorkspaceBots>
   )
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockImplementation(
     () => [] as ReturnType<typeof workspaceStoreModule.useWorkspaceDmPeers>
@@ -182,12 +190,16 @@ function installSpies() {
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: null,
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+  vi.spyOn(contextsModule, "useStreamService").mockReturnValue({
+    get: vi.fn(),
+  } as unknown as ReturnType<typeof contextsModule.useStreamService>)
 }
 
 describe("SidebarSearchPanel Integration Tests", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockNavigate.mockReset()
+    workspaceStreams = mockStreamsList
     mockSearchState.results = []
     mockSearchState.isLoading = false
     mockSearchState.search = vi.fn()
@@ -286,7 +298,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.type(editor, '"matched phrase"')
 
       await waitFor(() => {
-        expect(mockSearchState.search).toHaveBeenCalledWith("", {}, ["matched phrase"])
+        expect(mockSearchState.search).toHaveBeenCalledWith("", { status: ["active", "archived"] }, ["matched phrase"])
       })
       expect(screen.getByText("matched phrase", { selector: "mark" })).toBeInTheDocument()
       expect(screen.getByText("…")).toBeInTheDocument()
@@ -302,6 +314,128 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       expect(screen.getByText("Search supports at most 5 quoted phrases.")).toBeInTheDocument()
       expect(mockSearchState.search).not.toHaveBeenCalled()
+    })
+
+    it("resolves bot authors through the canonical actor lookup", async () => {
+      mockSearchState.results = [{ ...mockSearchResultsList[0]!, authorId: "bot_1", authorType: "bot" }]
+      vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([
+        { id: "bot_1", name: "Search Bot" },
+      ] as ReturnType<typeof workspaceStoreModule.useWorkspaceBots>)
+
+      const user = userEvent.setup()
+      renderPanel()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      expect(await screen.findByText("Search Bot")).toBeInTheDocument()
+    })
+
+    it("mutes a thread result when its root stream is archived", async () => {
+      const root = { ...mockStreamsList[0]!, archivedAt: "2026-01-01T00:00:00Z" }
+      const thread = { ...mockStreamsList[1]!, id: "stream_thread1", parentStreamId: root.id, rootStreamId: root.id }
+      workspaceStreams = [root, thread]
+      mockSearchState.results = [{ ...mockSearchResultsList[0]!, streamId: thread.id }]
+
+      const user = userEvent.setup()
+      renderPanel()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      const archive = await screen.findByLabelText("Archived stream")
+      expect(archive.closest("section")).toHaveClass("opacity-60")
+    })
+
+    it("mutes a nested thread result when its cached root is archived but its parent is missing", async () => {
+      const root = { ...mockStreamsList[0]!, archivedAt: "2026-01-01T00:00:00Z" }
+      const nestedThread = {
+        ...mockStreamsList[1]!,
+        id: "stream_nested_thread",
+        parentStreamId: "stream_missing_parent",
+        rootStreamId: root.id,
+      }
+      workspaceStreams = [root, nestedThread]
+      mockSearchState.results = [{ ...mockSearchResultsList[0]!, streamId: nestedThread.id }]
+
+      const user = userEvent.setup()
+      renderPanel()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      const archive = await screen.findByLabelText("Archived stream")
+      expect(archive.closest("section")).toHaveClass("opacity-60")
+    })
+
+    it("loads a missing result stream once, then renders its cached name", async () => {
+      let resolveStream: (stream: (typeof mockStreamsList)[number]) => void
+      const get = vi.fn(
+        () =>
+          new Promise<(typeof mockStreamsList)[number]>((resolve) => {
+            resolveStream = resolve
+          })
+      )
+      vi.spyOn(contextsModule, "useStreamService").mockReturnValue({
+        get,
+      } as unknown as ReturnType<typeof contextsModule.useStreamService>)
+      mockSearchState.results = [{ ...mockSearchResultsList[0]!, streamId: "stream_missing" }]
+
+      const user = userEvent.setup()
+      renderPanel()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      expect(await screen.findByLabelText("Loading stream")).toBeInTheDocument()
+      workspaceStreams = [...workspaceStreams]
+      await user.type(editor, "!")
+      expect(get).toHaveBeenCalledTimes(1)
+
+      const recovered = { ...mockStreamsList[0]!, id: "stream_missing", displayName: "Recovered" }
+      workspaceStreams = [recovered]
+      resolveStream!(recovered)
+      await waitFor(() => expect(screen.getByText("Recovered")).toBeInTheDocument())
+      expect(get).toHaveBeenCalledTimes(1)
+    })
+
+    it("loads one missing stream request for multiple results from that stream", async () => {
+      const missing = { ...mockStreamsList[0]!, id: "stream_missing" }
+      const get = vi.fn().mockResolvedValue(missing)
+      vi.spyOn(contextsModule, "useStreamService").mockReturnValue({
+        get,
+      } as unknown as ReturnType<typeof contextsModule.useStreamService>)
+      mockSearchState.results = [
+        { ...mockSearchResultsList[0]!, streamId: missing.id },
+        { ...mockSearchResultsList[1]!, id: "msg_missing_2", streamId: missing.id },
+      ]
+
+      const user = userEvent.setup()
+      renderPanel()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+      expect(get).toHaveBeenCalledWith("workspace_1", missing.id)
+    })
+
+    it("does not retry a terminal missing-stream failure after rerenders", async () => {
+      const get = vi.fn().mockRejectedValue(new ApiError(404, "STREAM_NOT_FOUND", "Not found"))
+      vi.spyOn(contextsModule, "useStreamService").mockReturnValue({
+        get,
+      } as unknown as ReturnType<typeof contextsModule.useStreamService>)
+      mockSearchState.results = [{ ...mockSearchResultsList[0]!, streamId: "stream_missing" }]
+
+      const user = userEvent.setup()
+      renderPanel()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+
+      await waitFor(() => expect(screen.getByText("Unknown stream")).toBeInTheDocument())
+      expect(get).toHaveBeenCalledTimes(1)
     })
 
     it("collapses and expands a stream group", async () => {
@@ -382,7 +516,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await waitFor(() => {
         expect(mockSearchState.search).toHaveBeenCalled()
       })
-      expect(mockSearchState.search).toHaveBeenCalledWith("hello", {})
+      expect(mockSearchState.search).toHaveBeenCalledWith("hello", { status: ["active", "archived"] })
     })
   })
 
@@ -419,6 +553,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await waitFor(() => {
         expect(mockSearchState.search).toHaveBeenCalledWith("hello", {
           before: new Date(2026, 5, 19).toISOString(),
+          status: ["active", "archived"],
         })
       })
     })
@@ -432,7 +567,10 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.type(editor, "from:@martin hello")
 
       await waitFor(() => {
-        expect(mockSearchState.search).toHaveBeenCalledWith("hello", { from: "member_1" })
+        expect(mockSearchState.search).toHaveBeenCalledWith("hello", {
+          from: "member_1",
+          status: ["active", "archived"],
+        })
       })
     })
 
@@ -536,7 +674,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
       // The slug resolves to the user id in the API call, same as the typed path
       await waitFor(() => {
-        expect(mockSearchState.search).toHaveBeenCalledWith("", { from: "member_1" })
+        expect(mockSearchState.search).toHaveBeenCalledWith("", { from: "member_1", status: ["active", "archived"] })
       })
     })
 
@@ -557,7 +695,10 @@ describe("SidebarSearchPanel Integration Tests", () => {
         expect(editor.textContent).toContain("in:#general")
       })
       await waitFor(() => {
-        expect(mockSearchState.search).toHaveBeenCalledWith("", { in: ["stream_channel1"] })
+        expect(mockSearchState.search).toHaveBeenCalledWith("", {
+          in: ["stream_channel1"],
+          status: ["active", "archived"],
+        })
       })
     })
 
@@ -577,7 +718,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
         expect(editor.textContent).toContain("in:@martin")
       })
       await waitFor(() => {
-        expect(mockSearchState.search).toHaveBeenCalledWith("", { in: ["member_1"] })
+        expect(mockSearchState.search).toHaveBeenCalledWith("", { in: ["member_1"], status: ["active", "archived"] })
       })
     })
 
