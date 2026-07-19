@@ -513,15 +513,20 @@ export class RemoteSession {
       runtimeSessionId: this.config.runtimeSessionId,
       displayName: this.config.displayName,
       localCwd: process.cwd(),
-      // Detached-pending-restore probes must WAIT on the archived scratchpad so
-      // an unarchive inside the grace window reattaches the same one. A cold
-      // start must not: the deterministic identity pointing at a scratchpad the
-      // user archived would otherwise wedge linking forever — replace it with a
-      // fresh scratchpad instead.
-      ifArchived: this.archivePending ? "wait" : "replace",
+      // Detached-pending-restore probes always wait. Cold starts replace by
+      // default, but supervisors reviving a known stream can force wait so an
+      // archive between their preflight and process launch cannot mint another
+      // scratchpad.
+      ifArchived: this.archivePending ? "wait" : (this.config.coldStartIfArchived ?? "replace"),
+      ifMissing: this.config.expectedRootStreamId ? "error" : (this.config.coldStartIfMissing ?? "create"),
       ...(this.config.defaultLabel && { labelName: this.config.defaultLabel }),
       ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
     })
+    if (this.config.expectedRootStreamId && link.rootStreamId !== this.config.expectedRootStreamId) {
+      throw new Error(
+        `Session link root mismatch: expected ${this.config.expectedRootStreamId}, got ${link.rootStreamId}`
+      )
+    }
     if (this.config.e2e && link.e2eEnabled !== true) {
       // A resume of a pre-existing PLAINTEXT scratchpad — nothing to provision,
       // but the user asked for encryption, so say why they aren't getting it.

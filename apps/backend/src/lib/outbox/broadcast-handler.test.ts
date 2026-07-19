@@ -20,29 +20,43 @@ function mockCursorLock(onRun?: (result: ProcessResult) => void) {
 }
 
 interface MockEmitChain {
+  to: (room: string) => MockEmitChain
   emit: ReturnType<typeof mock>
 }
 
 function createMockIo() {
   const emitChains: Array<{ room: string; eventType: string; payload: unknown; namespace?: string }> = []
 
-  const makeRoomChain = (room: string, namespace?: string): MockEmitChain => ({
-    emit: mock((eventType: string, payload: unknown) => {
-      emitChains.push({ room, eventType, payload, namespace })
-    }),
-  })
+  const makeRoomChain = (room: string, namespace?: string): MockEmitChain => {
+    const rooms = [room]
+    const chain: MockEmitChain = {
+      to(nextRoom: string) {
+        rooms.push(nextRoom)
+        return chain
+      },
+      emit: mock((eventType: string, payload: unknown) => {
+        for (const target of rooms) emitChains.push({ room: target, eventType, payload, namespace })
+      }),
+    }
+    return chain
+  }
 
   // The handler emits once to the union of rooms (string[]); record one chain
   // entry per room so assertions stay per-room.
   const makeRoomsChain = (rooms: string | string[]): MockEmitChain => {
     const roomList = Array.isArray(rooms) ? rooms : [rooms]
-    return {
+    const chain: MockEmitChain = {
+      to(room: string) {
+        roomList.push(room)
+        return chain
+      },
       emit: mock((eventType: string, payload: unknown) => {
         for (const room of roomList) {
           emitChains.push({ room, eventType, payload })
         }
       }),
     }
+    return chain
   }
 
   const namespaceCache = new Map<string, { to: (room: string) => MockEmitChain }>()
@@ -671,6 +685,29 @@ describe("BroadcastHandler", () => {
           e.namespace === "/bot"
       )
     ).toBe(false)
+  })
+
+  it("routes bot:session_restored to the runtime and side-effect-free supervisor room", async () => {
+    const event = makeEvent(4n, "bot:session_restored", {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      instanceId: "inst_42",
+      runtimeSessionId: "sess_99",
+      rootStreamId: "stream_pad",
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(emitChains.filter((entry) => entry.eventType === "bot:session_restored").map((entry) => entry.room)).toEqual(
+      [
+        "bot:ws_1:bot:bot_alice:session:sess_99",
+        "bot:ws_1:bot:bot_alice:instance:inst_42",
+        "bot:ws_1:bot:bot_alice:supervisor",
+      ]
+    )
   })
 
   it("fans bot:active_actor_changed to every affected bot room", async () => {

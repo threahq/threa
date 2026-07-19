@@ -158,6 +158,7 @@ const invocationSealedStepsSchema = z.object({
  * only a missing ack or a dead socket triggers the HTTP fallback.
  */
 export type BotWriteAck = { ok: true; data?: Record<string, unknown> } | { ok: false; code: string; message: string }
+export type BotSupervisorSubscribeResponse = { ok: true } | { ok: false; error: string }
 
 interface BotSocketHandlerDeps {
   io: Server
@@ -220,6 +221,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     // we'd double-upsert presence + send two acks. This flag flips to `true`
     // BEFORE the first await and clears in both success and catch paths.
     let helloInFlight = false
+    let supervisorJoined = false
 
     // Periodic key revalidation. validateKey hits the DB every time so HTTP
     // revocation takes effect on the next tick (default 60s) instead of
@@ -240,6 +242,18 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
         }, keyRevalidationIntervalMs)
       : null
 
+    socket.on("bot:supervisor:subscribe", (ack?: (response: BotSupervisorSubscribeResponse) => void): void => {
+      if (joined || helloInFlight) {
+        ack?.({ ok: false, error: "runtime connections cannot become supervisors" })
+        return
+      }
+      if (!supervisorJoined) {
+        socket.join(`bot:${workspaceId}:bot:${botId}:supervisor`)
+        supervisorJoined = true
+      }
+      ack?.({ ok: true })
+    })
+
     socket.on("bot:hello", async (payload: unknown, ack?: (response: BotHelloResponse) => void): Promise<void> => {
       const parsed = helloSchema.safeParse(payload)
       if (!parsed.success) {
@@ -249,6 +263,11 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           details: z.flattenError(parsed.error).fieldErrors,
         }
         ack?.(errorResponse)
+        return
+      }
+
+      if (supervisorJoined) {
+        ack?.({ ok: false, error: "supervisor connections cannot register a runtime" })
         return
       }
 
@@ -337,6 +356,12 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
       }
     })
 
+    const rejectSupervisorWrite = (ack?: (response: BotWriteAck) => void): boolean => {
+      if (!supervisorJoined) return false
+      ack?.({ ok: false, code: "FORBIDDEN", message: "Supervisor connections are read-only" })
+      return true
+    }
+
     // Background-write events. These move the noisy runtime chatter
     // (presence/heartbeat, claim renewal, trace steps) off the HTTP path — every
     // HTTP POST is a billed edge request, while these frames ride the already-open
@@ -346,6 +371,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     // per-claim `claimToken` carried in the frame — the socket identity alone does
     // not authorize a specific claim's writes.
     socket.on("bot:presence:update", async (payload: unknown, ack?: (response: BotWriteAck) => void): Promise<void> => {
+      if (rejectSupervisorWrite(ack)) return
       const parsed = presenceUpdateSchema.safeParse(payload)
       if (!parsed.success) {
         ack?.({ ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:presence:update payload" })
@@ -376,6 +402,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     socket.on(
       "bot:invocation:renew",
       async (payload: unknown, ack?: (response: BotWriteAck) => void): Promise<void> => {
+        if (rejectSupervisorWrite(ack)) return
         const parsed = invocationRenewSchema.safeParse(payload)
         if (!parsed.success) {
           ack?.({ ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:invocation:renew payload" })
@@ -401,6 +428,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     socket.on(
       "bot:invocation:steps",
       async (payload: unknown, ack?: (response: BotWriteAck) => void): Promise<void> => {
+        if (rejectSupervisorWrite(ack)) return
         const parsed = invocationStepsSchema.safeParse(payload)
         if (!parsed.success) {
           ack?.({ ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:invocation:steps payload" })
@@ -430,6 +458,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     socket.on(
       "bot:invocation:sealed-steps",
       async (payload: unknown, ack?: (response: BotWriteAck) => void): Promise<void> => {
+        if (rejectSupervisorWrite(ack)) return
         const parsed = invocationSealedStepsSchema.safeParse(payload)
         if (!parsed.success) {
           ack?.({ ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:invocation:sealed-steps payload" })

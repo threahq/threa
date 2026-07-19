@@ -486,6 +486,65 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await session.shutdown()
   })
 
+  test("a supervised cold start can wait instead of replacing an archived scratchpad", async () => {
+    const created: unknown[] = []
+    const client = {
+      createSession: async (body: unknown) => {
+        created.push(body)
+        return {
+          linkId: "brsl_1",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_root",
+          runtimeSessionId: "rts-test",
+          streamUrlPath: "/w/ws_1/s/stream_root",
+        }
+      },
+    } as unknown as ThreaClient
+    const { transport } = makeFakeTransport()
+    const session = new RemoteSession({
+      config: makeConfig({ coldStartIfArchived: "wait", coldStartIfMissing: "error" }),
+      client,
+      delegate: { deliverTurn: async () => {} },
+      runtime: RUNTIME,
+      transport,
+    })
+
+    await (session as unknown as { ensureLink: () => Promise<void> }).ensureLink()
+
+    expect(created).toHaveLength(1)
+    expect(created[0]).toMatchObject({ ifArchived: "wait", ifMissing: "error" })
+    await session.shutdown()
+  })
+
+  test("a supervised cold start rejects a link to another root stream without allowing creation", async () => {
+    let request: Record<string, unknown> | undefined
+    const client = {
+      createSession: async (body: Record<string, unknown>) => {
+        request = body
+        return {
+          linkId: "brsl_other",
+          rootStreamId: "stream_other",
+          activeStreamId: "stream_other",
+          runtimeSessionId: "rts-test",
+          streamUrlPath: "/w/ws_1/s/stream_other",
+        }
+      },
+    } as unknown as ThreaClient
+    const { transport } = makeFakeTransport()
+    const session = new RemoteSession({
+      config: makeConfig({ expectedRootStreamId: "stream_expected" }),
+      client,
+      delegate: { deliverTurn: async () => {} },
+      runtime: RUNTIME,
+      transport,
+    })
+
+    await expect((session as unknown as { ensureLink: () => Promise<void> }).ensureLink()).resolves.toBeUndefined()
+    expect(request).toMatchObject({ ifMissing: "error" })
+    expect((session as unknown as { link?: unknown }).link).toBeUndefined()
+    await session.shutdown()
+  })
+
   test("a link response that raced the archive push is dropped — it must not cancel the wind-down", async () => {
     let resolveCreate: ((link: unknown) => void) | undefined
     const client = {

@@ -150,19 +150,22 @@ Push delivery needs `THREA_BASE_URL` to be the app origin — the workspace rout
 
 ## Configuration reference
 
-| Env var                    | Config key         | Default                | Meaning                                                                                 |
-| -------------------------- | ------------------ | ---------------------- | --------------------------------------------------------------------------------------- |
-| `THREA_BASE_URL`           | `baseUrl`          | `https://app.threa.io` | Threa app origin                                                                        |
-| `THREA_WORKSPACE_ID`       | `workspaceId`      | (required)             | `ws_…`                                                                                  |
-| `THREA_API_KEY`            | `apiKey`           | (required)             | `threa_bk_…` bot key                                                                    |
-| `THREA_DISPLAY_NAME`       | `displayName`      | `Claude Code`          | Scratchpad name prefix; project dir appended                                            |
-| `THREA_DEFAULT_LABEL`      | `defaultLabel`     | (none)                 | Label applied to scratchpads this channel creates (only on first creation, not re-link) |
-| `THREA_PERMISSION_RELAY`   | `permissionRelay`  | `true`                 | Relay tool-approval prompts into the scratchpad                                         |
-| `THREA_POLL_MS`            | `pollMs`           | `3000`                 | Backstop claim poll (the socket pushes faster)                                          |
-| `THREA_IDLE_TIMEOUT_MS`    | `idleTimeoutMs`    | `3600000`              | Force-close a turn after this much inactivity (each `send` / approval resets it)        |
-| `THREA_DELEGATIONS`        | `delegations`      | `false`                | Run the workspace delegation queue in this session (see Delegations)                    |
-| `THREA_INSTANCE_ID`        | `instanceId`       | derived                | Override the per-directory instance id                                                  |
-| `THREA_RUNTIME_SESSION_ID` | `runtimeSessionId` | derived                | Override the per-directory session id                                                   |
+| Env var                         | Config key             | Default                | Meaning                                                                                  |
+| ------------------------------- | ---------------------- | ---------------------- | ---------------------------------------------------------------------------------------- |
+| `THREA_BASE_URL`                | `baseUrl`              | `https://app.threa.io` | Threa app origin                                                                         |
+| `THREA_WORKSPACE_ID`            | `workspaceId`          | (required)             | `ws_…`                                                                                   |
+| `THREA_API_KEY`                 | `apiKey`               | (required)             | `threa_bk_…` bot key                                                                     |
+| `THREA_DISPLAY_NAME`            | `displayName`          | `Claude Code`          | Scratchpad name prefix; project dir appended                                             |
+| `THREA_DEFAULT_LABEL`           | `defaultLabel`         | (none)                 | Label applied to scratchpads this channel creates (only on first creation, not re-link)  |
+| `THREA_COLD_START_IF_ARCHIVED`  | `coldStartIfArchived`  | `replace`              | Archived-link behavior on cold start; harness revival sets `wait` to prevent replacement |
+| `THREA_COLD_START_IF_MISSING`   | `coldStartIfMissing`   | `create`               | Missing-link behavior on cold start; harness revival sets `error` to prevent creation    |
+| `THREA_EXPECTED_ROOT_STREAM_ID` | `expectedRootStreamId` | (none)                 | Reject a returned session link to another root; set by harness revival                   |
+| `THREA_PERMISSION_RELAY`        | `permissionRelay`      | `true`                 | Relay tool-approval prompts into the scratchpad                                          |
+| `THREA_POLL_MS`                 | `pollMs`               | `3000`                 | Backstop claim poll (the socket pushes faster)                                           |
+| `THREA_IDLE_TIMEOUT_MS`         | `idleTimeoutMs`        | `3600000`              | Force-close a turn after this much inactivity (each `send` / approval resets it)         |
+| `THREA_DELEGATIONS`             | `delegations`          | `false`                | Run the workspace delegation queue in this session (see Delegations)                     |
+| `THREA_INSTANCE_ID`             | `instanceId`           | derived                | Override the per-directory instance id                                                   |
+| `THREA_RUNTIME_SESSION_ID`      | `runtimeSessionId`     | derived                | Override the per-directory session id                                                    |
 
 By default the instance and session ids are derived from your hostname and the working directory, so re-launching Claude Code in the same project reuses the same scratchpad.
 

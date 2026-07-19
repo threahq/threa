@@ -24,7 +24,16 @@ export function installBootResume(tmux: string): void {
   writeFileSync(plist, launchAgentPlist({ bun, entrypoint, tmux, logDir, path: process.env.PATH ?? "", environment }))
   chmodSync(plist, 0o600)
 
-  console.log(`harnessd: installed ${LABEL}; it will resume agents in tmux session '${tmux}' at the next login`)
+  const uid = process.getuid?.()
+  if (uid === undefined) throw new Error("install-boot-resume: could not determine the current user id")
+  const domain = `gui/${uid}`
+  Bun.spawnSync(["launchctl", "bootout", domain, plist], { stdout: "ignore", stderr: "ignore" })
+  const loaded = Bun.spawnSync(["launchctl", "bootstrap", domain, plist], { stdout: "pipe", stderr: "pipe" })
+  if (loaded.exitCode !== 0) {
+    throw new Error(loaded.stderr.toString().trim() || `launchctl bootstrap failed with exit code ${loaded.exitCode}`)
+  }
+
+  console.log(`harnessd: installed and started ${LABEL}; watching unarchived agents in tmux session '${tmux}'`)
 }
 
 export function launchAgentPlist(params: {
@@ -35,13 +44,15 @@ export function launchAgentPlist(params: {
   path: string
   environment: Record<string, string>
 }): string {
-  const command = `sleep 15; exec ${shellQuote(params.bun)} ${shellQuote(params.entrypoint)} boot-resume --tmux ${shellQuote(params.tmux)}`
+  const command = `sleep 15; exec ${shellQuote(params.bun)} ${shellQuote(params.entrypoint)} watch-unarchived --tmux ${shellQuote(params.tmux)}`
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>${LABEL}</string>
 <key>ProgramArguments</key><array><string>/bin/bash</string><string>-c</string><string>${xmlEscape(command)}</string></array>
 <key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+<key>ThrottleInterval</key><integer>10</integer>
 <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xmlEscape(params.path)}</string>${Object.entries(
     params.environment
   )

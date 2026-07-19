@@ -324,11 +324,13 @@ export class BroadcastHandler implements OutboxHandler {
 
     if (isOutboxEventType(event, "bot:session_restored")) {
       const payload = event.payload as BotSessionRestoredOutboxPayload
-      // Same routing as bot:session_archived — the restore must reach exactly
-      // the session whose wind-down it cancels.
+      // Live runtimes get the narrow session/instance push. A side-effect-free
+      // supervisor room wakes dormant local runtimes without registering fake
+      // presence for each archived session.
       botNs
         .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.runtimeSessionId}`)
         .to(`bot:${workspaceId}:bot:${payload.botId}:instance:${payload.instanceId}`)
+        .to(`bot:${workspaceId}:bot:${payload.botId}:supervisor`)
         .emit(event.eventType, payload)
       return
     }

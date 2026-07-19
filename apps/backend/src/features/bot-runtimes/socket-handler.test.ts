@@ -4,7 +4,12 @@ import { HttpError } from "@threa/backend-common"
 import type { BotRuntimeService } from "./service"
 import type { BotApiKeyService } from "../public-api"
 import type { BotInvocation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
-import { attachBotNamespace, type BotHelloResponse, type BotWriteAck } from "./socket-handler"
+import {
+  attachBotNamespace,
+  type BotHelloResponse,
+  type BotSupervisorSubscribeResponse,
+  type BotWriteAck,
+} from "./socket-handler"
 import type { BotRuntimeWriteOps } from "./runtime-write-ops"
 import { BotSocketRegistry } from "./bot-socket-registry"
 
@@ -139,6 +144,60 @@ const VALID_HELLO = {
   runtimeKind: "pi-local" as const,
   supportedCapabilities: ["active-scratchpad"] as const,
 }
+
+describe("attachBotNamespace supervisor subscription", () => {
+  it("joins a bot-scoped supervisor room without writing presence", async () => {
+    const { socket, botRuntimeService } = setup()
+    const ack = mock((_response: BotSupervisorSubscribeResponse) => {})
+
+    await socket.trigger("bot:supervisor:subscribe", ack)
+
+    expect(socket.rooms.has("bot:ws_1:bot:bot_alice:supervisor")).toBe(true)
+    expect(botRuntimeService.upsertPresenceFromBotKey).not.toHaveBeenCalled()
+    expect(ack.mock.calls[0]?.[0]).toEqual({ ok: true })
+  })
+
+  it("does not allow one connection to mix supervisor and runtime roles", async () => {
+    const { socket } = setup()
+    const supervisorAck = mock((_response: BotSupervisorSubscribeResponse) => {})
+    const helloAck = mock((_response: BotHelloResponse) => {})
+
+    await socket.trigger("bot:supervisor:subscribe", supervisorAck)
+    await socket.trigger("bot:hello", VALID_HELLO, helloAck)
+
+    expect(helloAck.mock.calls[0]?.[0]).toEqual({
+      ok: false,
+      error: "supervisor connections cannot register a runtime",
+    })
+  })
+
+  it("rejects every runtime write frame after supervisor subscription", async () => {
+    const { socket, botRuntimeWriteOps } = setup()
+    await socket.trigger(
+      "bot:supervisor:subscribe",
+      mock(() => {})
+    )
+    const events = [
+      "bot:presence:update",
+      "bot:invocation:renew",
+      "bot:invocation:steps",
+      "bot:invocation:sealed-steps",
+    ]
+
+    for (const event of events) {
+      const ack = mock((_response: BotWriteAck) => {})
+      await socket.trigger(event, {}, ack)
+      expect(ack.mock.calls[0]?.[0]).toEqual({
+        ok: false,
+        code: "FORBIDDEN",
+        message: "Supervisor connections are read-only",
+      })
+    }
+    expect(botRuntimeWriteOps.applyPresence).not.toHaveBeenCalled()
+    expect(botRuntimeWriteOps.renewClaim).not.toHaveBeenCalled()
+    expect(botRuntimeWriteOps.recordSteps).not.toHaveBeenCalled()
+  })
+})
 
 describe("attachBotNamespace bot:hello", () => {
   it("joins workspace + bot + instance rooms before the bootstrap read", async () => {

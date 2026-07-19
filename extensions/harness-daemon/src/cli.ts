@@ -9,8 +9,11 @@ Usage:
   threa-harnessd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
   threa-harnessd do <natural language command>
   threa-harnessd list
-  threa-harnessd resume-active [--tmux <session>] [--dry-run] [--force]
-  threa-harnessd boot-resume [--tmux <session>] [--dry-run] [--force]
+  threa-harnessd revive-unarchived [--tmux <session>] [--dry-run]
+  threa-harnessd resume-active [--tmux <session>] [--dry-run]
+  threa-harnessd watch-unarchived [--tmux <session>] [--dry-run]
+  threa-harnessd boot-resume [--tmux <session>] [--dry-run]
+  threa-harnessd install-watch [--tmux <session>]
   threa-harnessd install-boot-resume [--tmux <session>]
   threa-harnessd stop <agent-id-or-name>
   threa-harnessd interrupt <agent-id-or-name>
@@ -23,7 +26,8 @@ Examples:
   threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
   threa-harnessd spawn claude --name fix-sidebar --branch fix/sidebar
   threa-harnessd resume-active --dry-run
-  threa-harnessd install-boot-resume
+  threa-harnessd watch-unarchived --tmux threa-agents
+  threa-harnessd install-watch
   threa-harnessd do spawn a pi agent for long chat performance
   threa-harnessd interrupt fix-sidebar
   threa-harnessd steer fix-sidebar "also update the tests"
@@ -90,10 +94,12 @@ export function inferBranch(name: string, text?: string): string {
 
 export function parseResume(args: string[]): ResumeOptions {
   const flags = parseFlags(args)
+  if (Object.keys(flags).some((key) => key === "force" || key.startsWith("force="))) {
+    die("--force was removed; revival never launches archived or inaccessible scratchpads")
+  }
   return {
     tmux: stringFlag(flags, "tmux"),
     dryRun: boolFlag(flags, "dry-run"),
-    force: boolFlag(flags, "force"),
   }
 }
 
@@ -108,7 +114,7 @@ export function parseSpawn(args: string[]): SpawnOptions {
     name: normalizeName(name),
     branch: stringFlag(flags, "branch"),
     base: stringFlag(flags, "base"),
-    repo: stringFlag(flags, "repo") ?? defaultRepo(),
+    repo: resolve(stringFlag(flags, "repo") ?? defaultRepo()),
     tmux: stringFlag(flags, "tmux"),
     skipSetup: boolFlag(flags, "skip-setup"),
     noRemote: boolFlag(flags, "no-remote"),

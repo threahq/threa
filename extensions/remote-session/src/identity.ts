@@ -8,6 +8,12 @@ export interface RemoteSessionConfig {
   displayName: string
   /** Sent as `labelName` on session create; the backend applies it only to a newly created scratchpad. Unset = no label. */
   defaultLabel?: string
+  /** Cold-start behavior when this identity still points at an archived scratchpad. Default: replace. */
+  coldStartIfArchived?: "wait" | "replace"
+  /** Cold-start behavior when this identity has no session link. Default: create. */
+  coldStartIfMissing?: "create" | "error"
+  /** When set by a supervisor, refuse a session link to any other scratchpad root. */
+  expectedRootStreamId?: string
   /** `^[A-Za-z0-9_-]+$`, ≤64 — must satisfy the `/bot` hello schema. */
   instanceId: string
   runtimeSessionId: string
@@ -101,6 +107,9 @@ export interface RawConfig {
   apiKey?: unknown
   displayName?: unknown
   defaultLabel?: unknown
+  coldStartIfArchived?: unknown
+  coldStartIfMissing?: unknown
+  expectedRootStreamId?: unknown
   permissionRelay?: unknown
   pollMs?: unknown
   idleTimeoutMs?: unknown
@@ -122,6 +131,14 @@ export function parseConfigFile(text: string): RawConfig {
 
 function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+}
+
+function parseColdStartIfArchived(value: unknown): "wait" | "replace" {
+  return str(value)?.toLowerCase() === "wait" ? "wait" : "replace"
+}
+
+function parseColdStartIfMissing(value: unknown): "create" | "error" {
+  return str(value)?.toLowerCase() === "error" ? "error" : "create"
 }
 
 function parseBool(value: unknown, fallback: boolean): boolean {
@@ -189,6 +206,9 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       apiKey: apiKey!,
       displayName,
       defaultLabel,
+      coldStartIfArchived: parseColdStartIfArchived(str(env.THREA_COLD_START_IF_ARCHIVED) ?? file.coldStartIfArchived),
+      coldStartIfMissing: parseColdStartIfMissing(str(env.THREA_COLD_START_IF_MISSING) ?? file.coldStartIfMissing),
+      expectedRootStreamId: str(env.THREA_EXPECTED_ROOT_STREAM_ID) ?? str(file.expectedRootStreamId),
       instanceId,
       runtimeSessionId,
       permissionRelay: parseBool(env.THREA_PERMISSION_RELAY ?? file.permissionRelay, true),

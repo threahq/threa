@@ -143,39 +143,47 @@ export const upsertPresenceSchema = z
     path: ["publicKey"],
   })
 
-export const createRuntimeSessionSchema = z.object({
-  // The runtime kinds whose active-scratchpad turns are pinned to a session
-  // link (see runtime-kind-config). Other kinds dispatch untargeted and never
-  // create a link, so they have no business calling this endpoint.
-  runtimeKind: z.enum(["pi-local", "claude-code-channel"]),
-  instanceId: z.string().min(1).max(128),
-  runtimeSessionId: z.string().min(1).max(256),
-  displayName: z.string().min(1).max(100),
-  localCwd: z.string().max(1000).optional(),
-  // Defaults to 'off' server-side for these coding-agent scratchpads; send
-  // 'auto' to opt the session's scratchpad into GAM memory extraction.
-  memoryMode: z.enum(MEMORY_MODES).optional(),
-  // Optional owner-scoped label name to assign to the created scratchpad stream.
-  labelName: z.string().trim().min(1).max(100).regex(/\S/).optional(),
-  // Optional markdown description set on the new scratchpad (parsed to rich text,
-  // same as message content) — e.g. an orchestrator's handover note. Surfaces as
-  // a "set the description" timeline row and in the agent's prompt context. Only
-  // applied when the session creates a fresh scratchpad, not on resume.
-  description: z.string().max(STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH).optional(),
-  // Create the linked scratchpad end-to-end encrypted (INV-E1: the flag lands in
-  // the create transaction). `ownerKeyId` must be the bot OWNER's active UIK —
-  // the harness wraps the generation-0 stream key to it (plus its own BIK) in a
-  // follow-up provisioning call, because the wrap AAD binds to the server-minted
-  // stream id. Personal bots only (a shared bot has no owner to wrap to).
-  e2e: z.object({ ownerKeyId: z.string().min(1).max(128) }).optional(),
-  // What to do when this identity's link exists but its scratchpad is archived.
-  // "wait" (default) 409s with SCRATCHPAD_ARCHIVED — the archive-grace reattach
-  // probe uses it so an unarchive within the window revives the SAME scratchpad.
-  // "replace" retires the archived link (terminal, identity freed) and creates a
-  // fresh scratchpad — cold starts use it so a deliberately archived scratchpad
-  // can never wedge auto-connect for its project directory.
-  ifArchived: z.enum(["wait", "replace"]).optional(),
-})
+export const createRuntimeSessionSchema = z
+  .object({
+    // The runtime kinds whose active-scratchpad turns are pinned to a session
+    // link (see runtime-kind-config). Other kinds dispatch untargeted and never
+    // create a link, so they have no business calling this endpoint.
+    runtimeKind: z.enum(["pi-local", "claude-code-channel"]),
+    instanceId: z.string().min(1).max(128),
+    runtimeSessionId: z.string().min(1).max(256),
+    displayName: z.string().min(1).max(100),
+    localCwd: z.string().max(1000).optional(),
+    // Defaults to 'off' server-side for these coding-agent scratchpads; send
+    // 'auto' to opt the session's scratchpad into GAM memory extraction.
+    memoryMode: z.enum(MEMORY_MODES).optional(),
+    // Optional owner-scoped label name to assign to the created scratchpad stream.
+    labelName: z.string().trim().min(1).max(100).regex(/\S/).optional(),
+    // Optional markdown description set on the new scratchpad (parsed to rich text,
+    // same as message content) — e.g. an orchestrator's handover note. Surfaces as
+    // a "set the description" timeline row and in the agent's prompt context. Only
+    // applied when the session creates a fresh scratchpad, not on resume.
+    description: z.string().max(STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH).optional(),
+    // Create the linked scratchpad end-to-end encrypted (INV-E1: the flag lands in
+    // the create transaction). `ownerKeyId` must be the bot OWNER's active UIK —
+    // the harness wraps the generation-0 stream key to it (plus its own BIK) in a
+    // follow-up provisioning call, because the wrap AAD binds to the server-minted
+    // stream id. Personal bots only (a shared bot has no owner to wrap to).
+    e2e: z.object({ ownerKeyId: z.string().min(1).max(128) }).optional(),
+    // What to do when this identity's link exists but its scratchpad is archived.
+    // "wait" (default) 409s with SCRATCHPAD_ARCHIVED — the archive-grace reattach
+    // probe uses it so an unarchive within the window revives the SAME scratchpad.
+    // "replace" retires the archived link (terminal, identity freed) and creates a
+    // fresh scratchpad — cold starts use it so a deliberately archived scratchpad
+    // can never wedge auto-connect for its project directory.
+    ifArchived: z.enum(["wait", "replace"]).optional(),
+    // Supervisors preflighting a known inventory row must not create a new
+    // scratchpad when its runtime identity no longer has any link.
+    ifMissing: z.enum(["create", "error"]).optional(),
+  })
+  .refine((data) => data.ifMissing !== "error" || data.ifArchived !== "replace", {
+    message: 'ifMissing="error" cannot be combined with ifArchived="replace"',
+    path: ["ifArchived"],
+  })
 
 // Generation-0 SSK wraps a sealed harness provisions right after creating its
 // E2E scratchpad: one wrap for the stream owner's UIK and one for its own BIK.

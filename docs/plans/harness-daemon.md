@@ -16,6 +16,9 @@ bun extensions/harness-daemon/src/index.ts spawn pi --name explore-foo --branch 
 bun extensions/harness-daemon/src/index.ts spawn claude --name fix-bar --branch fix/bar
 bun extensions/harness-daemon/src/index.ts do "spawn a pi agent for long chat performance"
 bun extensions/harness-daemon/src/index.ts list
+bun extensions/harness-daemon/src/index.ts revive-unarchived [--dry-run]
+bun extensions/harness-daemon/src/index.ts watch-unarchived --tmux threa-agents
+bun extensions/harness-daemon/src/index.ts install-watch --tmux threa-agents
 bun extensions/harness-daemon/src/index.ts attach <agent-id-or-name>
 bun extensions/harness-daemon/src/index.ts stop <agent-id-or-name>
 ```
@@ -47,7 +50,12 @@ Tracked fields:
 - tmux session/window
 - scratchpad URL when available from Pi pane capture or Claude pre-link
 - command used to spawn
+- runtime instance/session IDs needed to reattach the same scratchpad
 - last output tail for debugging
+
+`revive-unarchived` runs one reconciliation pass. `watch-unarchived` opens one side-effect-free supervisor socket per configured bot key; the backend's existing `bot:session_restored` outbox event wakes the matching inventory row immediately when its scratchpad is unarchived. The supervisor socket never writes presence, advertises capabilities, joins invocation rooms, or claims work. A full reconciliation runs once after every socket connection/reconnection to cover events missed while offline; only unavailable catch-up calls use jittered exponential backoff. `THREA_HARNESSD_WATCH_INTERVAL_MS` controls failed socket-hint redial checks (default 60 seconds, minimum 10 seconds), not stream polling.
+
+`install-watch` installs and immediately starts the watcher as a persistent macOS LaunchAgent; the legacy `install-boot-resume` and `boot-resume` commands use the same watcher. Recovery restores the original worktree when possible, preflights the stored runtime identity with no-create/`ifArchived: "wait"` policy, verifies the returned root stream, then relaunches Claude with `server:threa-channel` or Pi with its original `--session-id`. Every skip and revival is logged with its reason.
 
 The first version briefly used JSON, but SQLite is the intended default because lifecycle reconciliation needs atomic updates and queryable state.
 
@@ -66,6 +74,6 @@ This is command smoothing, not planning.
 ## Next steps
 
 1. Add a manager/control scratchpad that runs Pi + OpenCode Go and calls this CLI.
-2. Add reconciliation: inspect tmux windows, mark dead agents offline, preserve inventory across crashes.
+2. Add reconciliation: inspect tmux windows and mark dead agents offline.
 3. Add stream/archive cleanup once we have a reliable event source or command path.
 4. Add handoff/switching: stop old runtime, start new runtime, reuse/rebind scratchpad where backend support is sufficient.

@@ -34,3 +34,89 @@ export function latestAgents(agents: ManagedAgent[]): ManagedAgent[] {
 export function recordedNoYolo(agent: ManagedAgent): boolean {
   return agent.command.includes("--no-yolo")
 }
+
+export type ScratchpadStatus = "active" | "archived" | "inaccessible" | "unavailable"
+
+export async function fetchScratchpadStatus(params: {
+  baseUrl: string
+  workspaceId: string
+  apiKey: string
+  streamId: string
+}): Promise<ScratchpadStatus> {
+  try {
+    const response = await fetch(
+      `${params.baseUrl.replace(/\/$/, "")}/api/v1/workspaces/${params.workspaceId}/streams/${params.streamId}`,
+      { headers: { authorization: `Bearer ${params.apiKey}` }, signal: AbortSignal.timeout(10_000) }
+    )
+    if (response.status === 403 || response.status === 404) return "inaccessible"
+    if (!response.ok) return response.status === 429 || response.status >= 500 ? "unavailable" : "inaccessible"
+    const json = (await response.json()) as { data?: { archivedAt?: string | null } }
+    if (!json.data || typeof json.data !== "object") return "inaccessible"
+    return json.data.archivedAt ? "archived" : "active"
+  } catch {
+    return "unavailable"
+  }
+}
+
+export type RuntimePreflightResult =
+  | { status: "linked"; rootStreamId: string }
+  | { status: "archived" | "inaccessible" | "unavailable"; reason: string }
+  | { status: "mismatch"; rootStreamId: string; expectedRootStreamId: string }
+
+export async function preflightRuntimeSession(params: {
+  baseUrl: string
+  workspaceId: string
+  apiKey: string
+  runtimeKind: "claude-code-channel" | "pi-local"
+  instanceId: string
+  runtimeSessionId: string
+  displayName: string
+  localCwd: string
+  expectedRootStreamId: string
+  labelName?: string
+}): Promise<RuntimePreflightResult> {
+  try {
+    const response = await fetch(
+      `${params.baseUrl.replace(/\/$/, "")}/api/v1/workspaces/${params.workspaceId}/bot-runtime/sessions`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${params.apiKey}` },
+        body: JSON.stringify({
+          runtimeKind: params.runtimeKind,
+          instanceId: params.instanceId,
+          runtimeSessionId: params.runtimeSessionId,
+          displayName: params.displayName,
+          localCwd: params.localCwd,
+          ...(params.labelName ? { labelName: params.labelName } : {}),
+          ifArchived: "wait",
+          ifMissing: "error",
+        }),
+        signal: AbortSignal.timeout(10_000),
+      }
+    )
+    if (response.status === 409) {
+      const json = (await response.json().catch(() => ({}))) as { code?: string }
+      return json.code === "SCRATCHPAD_ARCHIVED"
+        ? { status: "archived", reason: "linked scratchpad is archived" }
+        : { status: "inaccessible", reason: json.code ?? "session preflight returned 409" }
+    }
+    if (response.status === 403 || response.status === 404) {
+      return { status: "inaccessible", reason: `session preflight returned ${response.status}` }
+    }
+    if (!response.ok) {
+      const reason = `session preflight returned ${response.status}`
+      return response.status === 429 || response.status >= 500
+        ? { status: "unavailable", reason }
+        : { status: "inaccessible", reason }
+    }
+    const json = (await response.json()) as { data?: { rootStreamId?: string } }
+    const rootStreamId = json.data?.rootStreamId
+    if (!rootStreamId) return { status: "inaccessible", reason: "session preflight returned no root stream" }
+    if (rootStreamId !== params.expectedRootStreamId) {
+      return { status: "mismatch", rootStreamId, expectedRootStreamId: params.expectedRootStreamId }
+    }
+    return { status: "linked", rootStreamId }
+  } catch (error) {
+    return { status: "unavailable", reason: error instanceof Error ? error.message : String(error) }
+  }
+}

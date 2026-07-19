@@ -18,6 +18,8 @@ interface ManagedAgentRow {
   tmux_window: string | null
   tmux_window_id: string | null
   scratchpad_url: string | null
+  instance_id: string | null
+  runtime_session_id: string | null
   command_json: string
   created_at: string
   updated_at: string
@@ -43,6 +45,8 @@ function openInventory(): Database {
       tmux_session TEXT,
       tmux_window TEXT,
       scratchpad_url TEXT,
+      instance_id TEXT,
+      runtime_session_id TEXT,
       command_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -52,8 +56,10 @@ function openInventory(): Database {
   // Inventories predating the window-id column: CREATE TABLE IF NOT EXISTS
   // won't extend an existing table, so add the column in place.
   const columns = db.query("PRAGMA table_info(managed_agents)").all() as Array<{ name: string }>
-  if (!columns.some((column) => column.name === "tmux_window_id")) {
-    db.exec("ALTER TABLE managed_agents ADD COLUMN tmux_window_id TEXT")
+  for (const column of ["tmux_window_id", "instance_id", "runtime_session_id"]) {
+    if (!columns.some((existing) => existing.name === column)) {
+      db.exec(`ALTER TABLE managed_agents ADD COLUMN ${column} TEXT`)
+    }
   }
   return db
 }
@@ -70,6 +76,8 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
     tmuxWindow: row.tmux_window ?? undefined,
     tmuxWindowId: row.tmux_window_id ?? undefined,
     scratchpadUrl: row.scratchpad_url ?? undefined,
+    instanceId: row.instance_id ?? undefined,
+    runtimeSessionId: row.runtime_session_id ?? undefined,
     command: JSON.parse(row.command_json) as string[],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -94,8 +102,9 @@ export function upsertAgent(agent: ManagedAgent): void {
       `
       INSERT INTO managed_agents (
         id, name, runtime, status, worktree, branch, tmux_session, tmux_window,
-        tmux_window_id, scratchpad_url, command_json, created_at, updated_at, last_output
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tmux_window_id, scratchpad_url, instance_id, runtime_session_id, command_json,
+        created_at, updated_at, last_output
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         runtime = excluded.runtime,
@@ -106,6 +115,8 @@ export function upsertAgent(agent: ManagedAgent): void {
         tmux_window = excluded.tmux_window,
         tmux_window_id = excluded.tmux_window_id,
         scratchpad_url = excluded.scratchpad_url,
+        instance_id = excluded.instance_id,
+        runtime_session_id = excluded.runtime_session_id,
         command_json = excluded.command_json,
         updated_at = excluded.updated_at,
         last_output = excluded.last_output
@@ -121,6 +132,8 @@ export function upsertAgent(agent: ManagedAgent): void {
       agent.tmuxWindow ?? null,
       agent.tmuxWindowId ?? null,
       agent.scratchpadUrl ?? null,
+      agent.instanceId ?? null,
+      agent.runtimeSessionId ?? null,
       JSON.stringify(agent.command),
       agent.createdAt,
       agent.updatedAt,

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { die } from "./errors"
 import { output, run } from "./shell"
-import type { SpawnOptions } from "./types"
+import type { ManagedAgent, SpawnOptions } from "./types"
 
 function repoWorktreeDir(repo: string, name: string): string {
   return resolve(dirname(resolve(repo)), `threa.${name}`)
@@ -30,6 +30,24 @@ export function ensureWorktree(options: SpawnOptions): { worktree: string; branc
   run(["git", "-C", repo, "worktree", "add", "-b", branch, worktree, base])
   maybeSetupWorktree(worktree, options.skipSetup === true)
   return { worktree, branch }
+}
+
+export function restoreManagedWorktree(agent: ManagedAgent): { restored: boolean; reason?: string } {
+  if (agent.worktree && existsSync(agent.worktree)) return { restored: false }
+  if (!agent.worktree) return { restored: false, reason: "no worktree path recorded" }
+  if (!agent.branch) return { restored: false, reason: "no branch recorded" }
+  const repoFlag = agent.command.indexOf("--repo")
+  const repo = repoFlag >= 0 ? agent.command[repoFlag + 1] : undefined
+  if (!repo) return { restored: false, reason: "no source repo recorded" }
+  if (!existsSync(repo)) return { restored: false, reason: `source repo missing: ${repo}` }
+
+  output(["git", "-C", repo, "worktree", "prune"], { allowFailure: true })
+  const result = output(["git", "-C", repo, "worktree", "add", agent.worktree, agent.branch], { allowFailure: true })
+  if (result.exitCode !== 0) {
+    return { restored: false, reason: result.stderr.trim() || `could not restore ${agent.branch}` }
+  }
+  maybeSetupWorktree(agent.worktree, agent.command.includes("--skip-setup"))
+  return { restored: true }
 }
 
 function maybeSetupWorktree(worktree: string, skipSetup: boolean): void {

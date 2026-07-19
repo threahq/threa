@@ -274,6 +274,7 @@ let lastBusyHeartbeatAt = 0
 let lastPollDebugSummary: string | undefined
 let pollingRunId = 0
 let fallbackRuntimeSessionId: string | undefined
+let supervisedRevivalBlocked = false
 // Owns the /bot socket + routes presence/renew/steps over it (HTTP fallback
 // when the socket is down). Built lazily once the session ctx is known; torn
 // down + rebuilt on a workspace/auth change so it never reuses a stale target.
@@ -1217,6 +1218,9 @@ async function provisionE2eStreamKey(
 
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
   if (!config) throw new Error("Threa remote config not loaded")
+  if (process.env.THREA_EXPECTED_ROOT_STREAM_ID) {
+    throw new Error("Supervised revival cannot create or relink a Pi scratchpad")
+  }
   const runtimeSessionId = getRuntimeSessionId(ctx)
   const instanceId = createInstanceId()
   const displayName = args.trim() || defaultDisplayNameFor(ctx.cwd, config.defaultDisplayName)
@@ -1262,6 +1266,52 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
   ctx.ui.notify(`Threa remote linked: ${body.data.streamUrlPath}`, "info")
   setRemoteStatus(ctx, `Threa remote: ${displayName}`)
   await heartbeat("available", undefined, ctx)
+}
+
+async function verifySupervisedRevival(ctx: ExtensionContext): Promise<boolean> {
+  const expectedRootStreamId = process.env.THREA_EXPECTED_ROOT_STREAM_ID?.trim()
+  if (!expectedRootStreamId) {
+    supervisedRevivalBlocked = false
+    return true
+  }
+  if (!config) {
+    supervisedRevivalBlocked = true
+    return false
+  }
+  const link = getCurrentSessionLink(ctx)
+  if (!link || link.rootStreamId !== expectedRootStreamId) {
+    supervisedRevivalBlocked = true
+    ctx.ui.notify("Threa revival blocked: the local Pi session points at a different scratchpad.", "error")
+    return false
+  }
+  try {
+    const body = await request<{ data: RuntimeSessionLink }>(
+      `/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          runtimeKind: "pi-local",
+          instanceId: getSessionInstanceId(ctx),
+          runtimeSessionId: getRuntimeSessionId(ctx),
+          displayName: defaultDisplayNameFor(ctx.cwd, config.defaultDisplayName),
+          localCwd: ctx.cwd,
+          ifArchived: "wait",
+          ifMissing: "error",
+        }),
+      }
+    )
+    if (body.data.rootStreamId !== expectedRootStreamId) {
+      supervisedRevivalBlocked = true
+      ctx.ui.notify("Threa revival blocked: the server session points at a different scratchpad.", "error")
+      return false
+    }
+    supervisedRevivalBlocked = false
+    return true
+  } catch (error) {
+    supervisedRevivalBlocked = true
+    ctx.ui.notify(`Threa revival blocked: ${summarizeError(error)}`, "error")
+    return false
+  }
 }
 
 async function renameRemoteSession(ctx: ExtensionCommandContext, displayName: string): Promise<void> {
@@ -1362,7 +1412,7 @@ function stopClaimRenewTimer(): void {
 }
 
 function isEnabled(ctx: ExtensionContext): boolean {
-  return isCurrentSessionEnabled(ctx)
+  return !supervisedRevivalBlocked && isCurrentSessionEnabled(ctx)
 }
 
 function shouldHandleSessionEvents(ctx: ExtensionContext): boolean {
@@ -1555,6 +1605,10 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
     return
   }
   await tryRebindLegacySessionInstance(ctx)
+  if (!(await verifySupervisedRevival(ctx))) {
+    setRemoteStatus(ctx, "Threa remote: revival blocked")
+    return
+  }
   lastBusyHeartbeatAt = 0
   await heartbeat("available", undefined, ctx)
   await ensureTransport(pi, ctx)?.connect()
@@ -3420,6 +3474,10 @@ export default function (pi: ExtensionAPI): void {
         return
       }
       await createRemoteSession(ctx, trimmedArgs)
+      if (!(await verifySupervisedRevival(ctx))) {
+        setRemoteStatus(ctx, "Threa remote: revival blocked")
+        return
+      }
       await ensureTransport(pi, ctx)?.connect()
       startPolling(pi, ctx)
     },
@@ -3428,11 +3486,15 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_start", async (event, ctx) => {
     config = readConfig()
     if (!config) return
-    if (!isEnabled(ctx)) {
+    if (!isCurrentSessionEnabled(ctx)) {
       setRemoteStatus(ctx, getCurrentSessionLink(ctx) ? "Threa remote: off" : "Threa remote: not linked")
       return
     }
     await tryRebindLegacySessionInstance(ctx)
+    if (!(await verifySupervisedRevival(ctx))) {
+      setRemoteStatus(ctx, "Threa remote: revival blocked")
+      return
+    }
     lastBusyHeartbeatAt = 0
     await heartbeat("available", undefined, ctx)
     await ensureTransport(pi, ctx)?.connect()

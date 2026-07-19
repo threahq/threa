@@ -71,6 +71,23 @@ describe("createRuntimeSessionSchema runtimeKind", () => {
     ).toBe(false)
   })
 
+  it("accepts the no-create preflight policy", () => {
+    expect(
+      createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "claude-code-channel", ifMissing: "error" }).success
+    ).toBe(true)
+    expect(
+      createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "claude-code-channel", ifMissing: "ignore" }).success
+    ).toBe(false)
+    expect(
+      createRuntimeSessionSchema.safeParse({
+        ...base,
+        runtimeKind: "claude-code-channel",
+        ifMissing: "error",
+        ifArchived: "replace",
+      }).success
+    ).toBe(false)
+  })
+
   it("accepts an optional label name", () => {
     const parsed = createRuntimeSessionSchema.parse({ ...base, runtimeKind: "pi-local", labelName: " Pi remote " })
     expect(parsed.labelName).toBe("Pi remote")

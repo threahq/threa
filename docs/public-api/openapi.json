@@ -1120,7 +1120,8 @@
                     "required": ["ownerKeyId"],
                     "additionalProperties": false
                   },
-                  "ifArchived": { "type": "string", "enum": ["wait", "replace"] }
+                  "ifArchived": { "type": "string", "enum": ["wait", "replace"] },
+                  "ifMissing": { "type": "string", "enum": ["create", "error"] }
                 },
                 "required": ["runtimeKind", "instanceId", "runtimeSessionId", "displayName"],
                 "additionalProperties": false
