@@ -788,8 +788,9 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
-    // Update IndexedDB — partial merge to preserve lastMessagePreview etc.
-    db.streams.update(payload.stream.id, { ...payload.stream, _cachedAt: Date.now() })
+    // Upsert IndexedDB — partial merge preserves lastMessagePreview etc.; a
+    // missing row (swept while archived) is restored rather than silently lost.
+    void upsertStreamRow(payload.stream)
   }
 
   const handleStreamUnarchived = (payload: StreamPayload) => {
@@ -815,8 +816,9 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
-    // Update IndexedDB — partial merge to preserve lastMessagePreview etc.
-    db.streams.update(payload.stream.id, { ...payload.stream, _cachedAt: Date.now() })
+    // Upsert IndexedDB — partial merge preserves lastMessagePreview etc.; a
+    // missing row (swept while archived) is restored rather than silently lost.
+    void upsertStreamRow(payload.stream)
   }
 
   const handleWorkspaceUserAdded = (payload: WorkspaceUserAddedPayload) => {
@@ -2105,6 +2107,36 @@ export function registerWorkspaceSocketHandlers(
  *
  * This prevents stale data from accumulating across environments or DB resets.
  */
+/**
+ * Upsert a stream row into IDB. Partial-merges onto an existing row so the
+ * socket payload doesn't clobber fields it never carries (lastMessagePreview,
+ * membership). When no row exists — an archived root swept before it was
+ * unarchived live — a fully-mapped row is put instead, so a live
+ * archive/unarchive can't silently drop the local row (INV-11: no silent loss).
+ */
+async function upsertStreamRow(stream: Stream): Promise<void> {
+  const now = Date.now()
+  const updated = await db.streams.update(stream.id, { ...stream, _cachedAt: now })
+  if (updated === 0) {
+    await db.streams.put({ ...stream, lastMessagePreview: null, _cachedAt: now })
+  }
+}
+
+/**
+ * Map slim archived-root `Stream` rows (bootstrap.archivedStreams — no preview
+ * or membership joins) to `CachedStream` rows, merging onto any existing row so
+ * a live-archived row's `lastMessagePreview`/membership/`contextBag` survive a
+ * reload's bootstrap apply. When no local row exists, the result is just the
+ * plain stream fields stamped with `_cachedAt`.
+ */
+function mapArchivedStreamRows(
+  archivedStreams: Stream[],
+  existingByStreamId: Map<string, CachedStream>,
+  now: number
+): CachedStream[] {
+  return archivedStreams.map((s) => ({ ...existingByStreamId.get(s.id), ...s, _cachedAt: now }))
+}
+
 export async function applyWorkspaceBootstrap(
   workspaceId: string,
   bootstrap: WorkspaceBootstrap,
@@ -2174,6 +2206,11 @@ export async function applyWorkspaceBootstrap(
             }
           })
         ),
+        // Archived roots ship slim (no preview/membership) but must persist so
+        // every `useWorkspaceStreams` consumer (drafts, name resolution) keeps
+        // seeing them across a reload. Not added to the TanStack bootstrap
+        // `streams` cache — that list stays active-only.
+        db.streams.bulkPut(mapArchivedStreamRows(bootstrap.archivedStreams ?? [], existingByStreamId, now)),
         db.streamMemberships.bulkPut(
           bootstrap.streamMemberships.map((sm) => ({
             ...sm,
@@ -2401,6 +2438,10 @@ export async function applyReconnectBootstrapBatch(
             }
           })
         ),
+        // Persist archived roots on reconnect too (mirrors applyWorkspaceBootstrap).
+        db.streams.bulkPut(
+          mapArchivedStreamRows(finalBootstrap.archivedStreams ?? [], new Map(localStreams.map((s) => [s.id, s])), now)
+        ),
         db.streamMemberships.bulkPut(
           finalBootstrap.streamMemberships.map((membership) => ({
             ...membership,
@@ -2553,7 +2594,13 @@ export async function applyReconnectBootstrapBatch(
 }
 
 async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBootstrap, now: number): Promise<void> {
-  const bootstrapStreamIds = new Set(bootstrap.streams.map((s) => s.id))
+  // Archived roots ride in bootstrap.archivedStreams (absent from .streams);
+  // keep them so the absence-sweep doesn't delete rows every consumer still
+  // needs (drafts hiding, name resolution) across a reload.
+  const bootstrapStreamIds = new Set([
+    ...bootstrap.streams.map((s) => s.id),
+    ...(bootstrap.archivedStreams ?? []).map((s) => s.id),
+  ])
   const bootstrapUserIds = new Set(bootstrap.users.map((u) => u.id))
   const bootstrapMembershipIds = new Set(bootstrap.streamMemberships.map((sm) => `${workspaceId}:${sm.streamId}`))
   const bootstrapDmPeerIds = new Set(bootstrap.dmPeers.map((dp) => `${workspaceId}:${dp.streamId}`))

@@ -2,8 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
-import type { JSONContent } from "@threa/types"
+import {
+  DEFAULT_SIDEBAR_CONFIG,
+  defaultFeatureFlags,
+  type JSONContent,
+  type Stream,
+  type WorkspaceBootstrap,
+} from "@threa/types"
 import { db, type CachedDraft } from "@/db"
+import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import * as syncEngineModule from "@/sync/sync-engine"
@@ -86,6 +93,72 @@ function seedMessageEvent(messageId: string, streamId: string, seq: number): Pro
     createdAt: new Date(seq).toISOString(),
     _cachedAt: seq,
   } as never)
+}
+
+function makeArchivedRoot(id: string): Stream {
+  return {
+    id,
+    workspaceId,
+    type: "channel",
+    displayName: `Archived ${id}`,
+    slug: id,
+    description: null,
+    visibility: "public",
+    parentStreamId: null,
+    parentMessageId: null,
+    rootStreamId: null,
+    companionMode: "off",
+    companionPersonaId: null,
+    createdBy: "user_1",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    archivedAt: "2026-01-01T00:00:00Z",
+  }
+}
+
+function makeReloadBootstrap(archivedStreams: Stream[], streams: Stream[] = []): WorkspaceBootstrap {
+  return {
+    workspace: {
+      id: workspaceId,
+      name: "Test",
+      slug: "test",
+      createdBy: "user_1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    users: [],
+    // Active-only, exactly as the backend now ships it — the archived root is
+    // absent here and rides in `archivedStreams`.
+    streams: streams.map((s) => ({ ...s, lastMessagePreview: null })),
+    archivedStreams,
+    streamMemberships: [],
+    dmPeers: [],
+    personas: [],
+    bots: [],
+    labels: [],
+    labelAssignments: [],
+    emojis: [],
+    emojiWeights: {},
+    commands: [],
+    unreadCounts: {},
+    mentionCounts: {},
+    activityCounts: {},
+    unreadActivityCount: 0,
+    mutedStreamIds: [],
+    featureFlags: defaultFeatureFlags(),
+    sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
+    userPreferences: {
+      workspaceId,
+      userId: "user_1",
+      theme: "system",
+      messageSendMode: "enter",
+      messageDisplay: "default",
+      accessibility: { fontSize: "medium", fontFamily: "default", reducedMotion: false, highContrast: false },
+      keyboardShortcuts: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  } as unknown as WorkspaceBootstrap
 }
 
 beforeEach(async () => {
@@ -448,6 +521,39 @@ describe("useAllDrafts archived streams", () => {
       expect(result.current.all.drafts.map((d) => d.id)).toEqual(["draft_live"])
       expect(result.current.summary.draftCount).toBe(1)
       expect(result.current.summary.draftCount).toBe(result.current.all.drafts.length)
+    })
+  })
+})
+
+describe("useAllDrafts archived-root persistence across reload (the whole-feature regression)", () => {
+  it("hides a thread draft whose host arrives only via bootstrap.archivedStreams", async () => {
+    const archivedRoot = makeArchivedRoot("stream_arch_reload")
+    const activeRoot: Stream = { ...makeArchivedRoot("stream_active_reload"), archivedAt: null }
+
+    // A thread-reply draft to a message in the archived root, plus an active
+    // control draft. The control anchors the settle: the assertion only holds
+    // once the hook has resolved (control present) AND the archived-root draft
+    // is excluded — so it can't pass trivially on the empty loading state.
+    await seedMessageEvent("msg_parent", "stream_arch_reload", 1)
+    await db.drafts.bulkAdd([
+      syncedDraft({ id: "draft_reload", scope: "thread:msg_parent", contentJson: makeDoc("reply") }),
+      syncedDraft({ id: "draft_control", scope: "stream:stream_active_reload", contentJson: makeDoc("keep") }),
+    ])
+
+    // Reload: stream rows land in IDB ONLY through the bootstrap apply. Without
+    // deliverables 1+2 the archived root is swept (or never written), so
+    // isStreamArchived resolves false and the archived draft wrongly reappears.
+    await applyWorkspaceBootstrap(workspaceId, makeReloadBootstrap([archivedRoot], [activeRoot]), Date.now())
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(
+      () => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }),
+      { wrapper }
+    )
+
+    await waitFor(() => {
+      expect(result.current.all.drafts.map((d) => d.id)).toEqual(["draft_control"])
+      expect(result.current.summary.draftCount).toBe(1)
     })
   })
 })

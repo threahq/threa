@@ -22,6 +22,7 @@ import {
   type LabelAssignment,
   type SavedMessageView,
   type ScheduledMessageView,
+  type Stream,
   type StreamBootstrap,
   type StreamMember,
   type StreamWithPreview,
@@ -110,6 +111,28 @@ function makeStreamBootstrap(streamId: string, overrides: Partial<StreamBootstra
     unreadCount: 0,
     mentionCount: 0,
     activityCount: 0,
+    ...overrides,
+  }
+}
+
+function makeStream(id: string, overrides: Partial<Stream> = {}): Stream {
+  return {
+    id,
+    workspaceId: "ws_1",
+    type: "channel",
+    displayName: `Stream ${id}`,
+    slug: id,
+    description: null,
+    visibility: "public",
+    parentStreamId: null,
+    parentMessageId: null,
+    rootStreamId: null,
+    companionMode: "off",
+    companionPersonaId: null,
+    createdBy: "user_1",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    archivedAt: null,
     ...overrides,
   }
 }
@@ -301,6 +324,39 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     await applyWorkspaceBootstrap("ws_1", makeBootstrap())
 
     expect(await db.streams.get("stream_keep")).toBeDefined()
+  })
+
+  it("persists archived roots from bootstrap.archivedStreams and the sweep keeps them", async () => {
+    const fetchStartedAt = Date.now()
+    const archivedRoot = makeStream("stream_arch_root", { archivedAt: "2026-01-01T00:00:00Z" })
+
+    // A root live-archived in a prior session, now stale in IDB and absent from
+    // the active `streams` snapshot — old behaviour swept it on reload.
+    await db.streams.put({ ...archivedRoot, _cachedAt: fetchStartedAt - 86400000 })
+
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap({ archivedStreams: [archivedRoot] }), fetchStartedAt)
+
+    const row = await db.streams.get("stream_arch_root")
+    expect(row).toBeDefined()
+    expect(row?.archivedAt).toBe("2026-01-01T00:00:00Z")
+  })
+
+  it("preserves an existing row's lastMessagePreview when re-persisting an archived root", async () => {
+    const fetchStartedAt = Date.now()
+    const archivedRoot = makeStream("stream_arch_root", { archivedAt: "2026-01-01T00:00:00Z" })
+
+    await db.streams.put({
+      ...archivedRoot,
+      lastMessagePreview: { authorId: "user_1", authorType: "user", content: "kept", createdAt: "2026-01-01T00:00:00Z" },
+      _cachedAt: fetchStartedAt - 1000,
+    })
+
+    // Bootstrap ships the slim archived root (no preview); the merge must not
+    // clobber the preview the live-archived row already carried.
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap({ archivedStreams: [archivedRoot] }), fetchStartedAt)
+
+    const row = await db.streams.get("stream_arch_root")
+    expect(row?.lastMessagePreview?.content).toBe("kept")
   })
 })
 
@@ -1677,6 +1733,55 @@ describe("registerWorkspaceSocketHandlers", () => {
     })
     expect(await db.streams.get("stream_1")).toMatchObject({
       lastReadEventId: "event_new",
+    })
+
+    cleanup()
+  })
+
+  it("puts a stream row on stream:unarchived when none exists in IDB (swept while archived)", async () => {
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    // No pre-existing row — a bare .update() would no-op and silently lose it.
+    emit("stream:unarchived", {
+      workspaceId: "ws_1",
+      streamId: "stream_unarch",
+      stream: makeStream("stream_unarch", { archivedAt: null }),
+    })
+
+    await vi.waitFor(async () => {
+      const row = await db.streams.get("stream_unarch")
+      expect(row).toBeDefined()
+      expect(row?.archivedAt).toBeNull()
+      expect(row?.lastMessagePreview).toBeNull()
+    })
+
+    cleanup()
+  })
+
+  it("preserves an existing row's lastMessagePreview on stream:unarchived", async () => {
+    await db.streams.put({
+      ...makeStream("stream_unarch2", { archivedAt: "2026-01-01T00:00:00Z" }),
+      lastMessagePreview: { authorId: "member_1", authorType: "user", content: "kept", createdAt: "2026-01-01T00:00:00Z" },
+      _cachedAt: Date.now(),
+    })
+
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:unarchived", {
+      workspaceId: "ws_1",
+      streamId: "stream_unarch2",
+      stream: makeStream("stream_unarch2", { archivedAt: null }),
+    })
+
+    await vi.waitFor(async () => {
+      const row = await db.streams.get("stream_unarch2")
+      expect(row?.archivedAt).toBeNull()
+      // Partial-merge upsert keeps the preview the socket payload never carries.
+      expect(row?.lastMessagePreview?.content).toBe("kept")
     })
 
     cleanup()
