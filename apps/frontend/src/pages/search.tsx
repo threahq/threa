@@ -12,6 +12,8 @@ import { extractSearchTerms } from "@/components/search/highlight"
 import { SearchFilterChips } from "@/components/search/search-filter-chips"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
 import { SearchResults } from "@/components/search/search-results"
+import { SearchResultDisplayToggle } from "@/components/search/search-result-display-toggle"
+import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
 import { useInputMode } from "@/hooks/use-input-mode"
 
 /**
@@ -66,6 +68,7 @@ export function SearchPage() {
   )
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
+  const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
 
   if (!workspaceId) {
     return null
@@ -110,6 +113,9 @@ export function SearchPage() {
             onQueryChange={handleQueryChange}
             className="h-7"
           />
+          {hasQuery && !isLoading && !displayError && (
+            <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} size="touch" className="ml-auto" />
+          )}
         </div>
       </header>
 
@@ -147,6 +153,7 @@ export function SearchPage() {
               terms={terms}
               activeResultId={activeResultId}
               onResultSelect={(result) => setActiveResultId(result.id)}
+              mode={displayMode}
             />
           )}
 

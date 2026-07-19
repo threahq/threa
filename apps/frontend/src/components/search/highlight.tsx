@@ -83,7 +83,7 @@ export function HighlightedText({ text, terms }: { text: string; terms: string[]
       {segments.map((segment, index) =>
         // Odd indices are capture-group matches by String.split contract
         index % 2 === 1 ? (
-          <mark key={index} className="rounded-[2px] bg-primary/20 px-px text-foreground">
+          <mark key={index} className="rounded-[2px] bg-primary/20 px-px font-medium text-foreground">
             {segment}
           </mark>
         ) : (

@@ -199,6 +199,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockNavigate.mockReset()
+    localStorage.clear()
     workspaceStreams = mockStreamsList
     mockSearchState.results = []
     mockSearchState.isLoading = false
@@ -282,6 +283,48 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(markTexts).toContain("hello")
     })
 
+    it("defaults to grouped results and persists ranked mode per workspace in API order", async () => {
+      mockSearchState.results = [mockSearchResultsList[1]!, mockSearchResultsList[0]!]
+      const user = userEvent.setup()
+      const view = renderPanel()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      expect(await screen.findByText("#general")).toBeInTheDocument()
+      await user.click(screen.getByRole("radio", { name: "Ranked results" }))
+
+      await waitFor(() => expect(document.querySelector("section")).toBeNull())
+      expect(
+        Array.from(document.querySelectorAll("[data-search-result-id]"), (row) =>
+          row.getAttribute("data-search-result-id")
+        )
+      ).toEqual(["msg_2", "msg_1"])
+      expect(document.querySelectorAll("[data-search-stream-label]")).toHaveLength(2)
+      expect(localStorage.getItem("threa-search-result-display:workspace_1")).toBe("ranked")
+
+      view.unmount()
+      renderPanel()
+      const persistedEditor = screen.getByLabelText("Search messages")
+      await user.click(persistedEditor)
+      await user.type(persistedEditor, "hello")
+      await waitFor(() => expect(document.querySelector("section")).toBeNull())
+    })
+
+    it("shows archived stream metadata on ranked rows", async () => {
+      workspaceStreams = [{ ...mockStreamsList[0]!, archivedAt: "2026-01-01T00:00:00Z" }]
+      mockSearchState.results = [{ ...mockSearchResultsList[0]!, streamId: mockStreamsList[0]!.id }]
+      localStorage.setItem("threa-search-result-display:workspace_1", "ranked")
+      const user = userEvent.setup()
+      renderPanel()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      expect(await screen.findByLabelText("Archived stream")).toBeInTheDocument()
+      expect(document.querySelector(`[data-search-stream-label="${mockStreamsList[0]!.id}"]`)).toBeInTheDocument()
+    })
+
     it("preserves phrase-only highlighting and snippet positioning", async () => {
       mockSearchState.results = [
         {
@@ -331,7 +374,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(await screen.findByText("Search Bot")).toBeInTheDocument()
     })
 
-    it("mutes a thread result when its root stream is archived", async () => {
+    it("marks a thread result archived when its root stream is archived", async () => {
       const root = { ...mockStreamsList[0]!, archivedAt: "2026-01-01T00:00:00Z" }
       const thread = { ...mockStreamsList[1]!, id: "stream_thread1", parentStreamId: root.id, rootStreamId: root.id }
       workspaceStreams = [root, thread]
@@ -343,11 +386,10 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.click(editor)
       await user.type(editor, "hello")
 
-      const archive = await screen.findByLabelText("Archived stream")
-      expect(archive.closest("section")).toHaveClass("opacity-60")
+      expect(await screen.findByLabelText("Archived stream")).toBeInTheDocument()
     })
 
-    it("mutes a nested thread result when its cached root is archived but its parent is missing", async () => {
+    it("marks a nested thread result archived when its cached root is archived but its parent is missing", async () => {
       const root = { ...mockStreamsList[0]!, archivedAt: "2026-01-01T00:00:00Z" }
       const nestedThread = {
         ...mockStreamsList[1]!,
@@ -364,11 +406,11 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.click(editor)
       await user.type(editor, "hello")
 
-      const archive = await screen.findByLabelText("Archived stream")
-      expect(archive.closest("section")).toHaveClass("opacity-60")
+      expect(await screen.findByLabelText("Archived stream")).toBeInTheDocument()
     })
 
-    it("loads a missing result stream once, then renders its cached name", async () => {
+    it("shows ranked loading metadata until a missing stream resolves once", async () => {
+      localStorage.setItem("threa-search-result-display:workspace_1", "ranked")
       let resolveStream: (stream: (typeof mockStreamsList)[number]) => void
       const get = vi.fn(
         () =>
@@ -459,8 +501,9 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(screen.getByText(/from the search results/)).toBeInTheDocument()
     })
 
-    it("navigates to the stream focused on the message when clicking a result", async () => {
+    it("uses ranked result Links to navigate to the focused message", async () => {
       mockSearchState.results = mockSearchResultsList
+      localStorage.setItem("threa-search-result-display:workspace_1", "ranked")
 
       const user = userEvent.setup()
       renderPanel()
@@ -481,7 +524,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-open", "true")
     })
 
-    it("steps through results with ArrowDown and opens the active one with Enter", async () => {
+    it("keeps API-order keyboard navigation after switching to ranked", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
@@ -494,10 +537,12 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await waitFor(() => {
         expect(screen.getByText(/from the search results/)).toBeInTheDocument()
       })
+      await user.click(screen.getByRole("radio", { name: "Ranked results" }))
+      await user.click(editor)
 
       await user.keyboard("{ArrowDown}{ArrowDown}")
 
-      // Second result is now active
+      // Second API result is now active
       const activeRow = document.querySelector('[aria-current="true"]')
       expect(activeRow?.textContent).toContain("Another search result message")
 
