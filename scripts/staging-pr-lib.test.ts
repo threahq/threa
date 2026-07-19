@@ -92,6 +92,18 @@ describe("classifyStagingOrphans", () => {
     expect(plan.keep).toEqual([])
   })
 
+  test("ignores non-canonical digit strings — teardown re-derives names, so pr_0123 must not become pr_123", () => {
+    const plan = classifyStagingOrphans({
+      serviceNames: ["pr-0300-backend"],
+      dbNames: ["pr_0123", "pr_0123_cp"],
+      kvRegionKeys: ["pr-007"],
+      openLabeledPrNumbers: [],
+    })
+
+    expect(plan.orphans).toEqual([])
+    expect(plan.keep).toEqual([])
+  })
+
   test("unions candidates across sources and sorts orphans by PR number", () => {
     const plan = classifyStagingOrphans({
       serviceNames: ["pr-300-backend"],

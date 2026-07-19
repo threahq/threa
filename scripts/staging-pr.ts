@@ -811,14 +811,19 @@ async function resetDb(names: StagingResourceNames, branch: string): Promise<voi
 async function teardownResources(names: StagingResourceNames): Promise<void> {
   const { regionName, prHostname, serviceName, prDbName, prCpDbName } = names
 
-  await unregisterRegion(regionName)
-
+  // KV goes LAST: it is one of reconcile's discovery sources while DNS/route
+  // are not, so removing it first would let a mid-teardown crash strand a
+  // DNS+route-only leftover with no remaining signal to rediscover it by.
+  // A KV entry outliving its DNS/route/service is harmless in the meantime —
+  // nothing routes to the pr-N hostname once the route is gone.
   await deletePrDnsAndRoute(prHostname)
 
   await deleteRailwayService(serviceName)
 
   await dropDatabase(prDbName)
   await dropDatabase(prCpDbName)
+
+  await unregisterRegion(regionName)
 }
 
 async function teardown(names: StagingResourceNames): Promise<void> {
@@ -834,9 +839,14 @@ async function teardown(names: StagingResourceNames): Promise<void> {
  * every PR number that owns a matching resource, cross-references the open+
  * `staging`-labeled PRs, and tears down the rest.
  *
- * Fail-hard-before-mutation: the open-PR fetch runs (and throws on any GitHub
- * error) BEFORE the first teardown, so a GitHub outage aborts the whole run
- * rather than misclassifying live PRs as orphans and deleting them.
+ * Fail-hard-before-mutation, twice over. A transport failure on any GitHub
+ * call throws before the first teardown. But a wrong-yet-HTTP-200 answer (the
+ * `staging` label renamed → `labels=staging` returns an empty set) is the
+ * catastrophic case for an unattended nightly sweep, so two structural guards
+ * defend it: the label's existence is asserted up front, and every would-be
+ * orphan is re-verified against the per-PR endpoint (an independent signal)
+ * before ANY deletion — a single open+labeled hit there aborts the whole run
+ * as an endpoint inconsistency.
  */
 async function reconcile(dryRun: boolean): Promise<void> {
   const GITHUB_TOKEN = requireEnv("GITHUB_TOKEN")
@@ -851,6 +861,8 @@ async function reconcile(dryRun: boolean): Promise<void> {
   const kvRaw = await kvGet("__regions_config__")
   const kvRegionKeys = kvRaw ? Object.keys(JSON.parse(kvRaw) as Record<string, unknown>) : []
 
+  await assertStagingLabelExists(GITHUB_TOKEN)
+
   // Fetch open+labeled PRs. THROWS on any GitHub error — must run before any
   // teardown so a transient API failure never reads as "everything is orphaned".
   const openLabeledPrNumbers = await fetchOpenStagingPrs(GITHUB_TOKEN)
@@ -861,6 +873,11 @@ async function reconcile(dryRun: boolean): Promise<void> {
   if (dryRun) {
     console.log(`\nDry-run — no resources modified.`)
     return
+  }
+
+  // Second, independent confirmation for EVERY orphan before ANY deletion.
+  for (const orphan of plan.orphans) {
+    await assertOrphanNotOpenLabeled(GITHUB_TOKEN, orphan.pr)
   }
 
   const failures: { pr: number; error: string }[] = []
@@ -885,6 +902,34 @@ async function reconcile(dryRun: boolean): Promise<void> {
 }
 
 const GITHUB_REPO = "threahq/threa"
+const STAGING_LABEL = "staging"
+
+async function githubGet(token: string, path: string): Promise<Response> {
+  return fetch(`https://api.github.com/repos/${GITHUB_REPO}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "threa-staging-reconcile",
+    },
+  })
+}
+
+/**
+ * The `labels=staging` filter answers `200 []` for a renamed/deleted label —
+ * indistinguishable from "no open staging PRs", which would classify every
+ * live environment as an orphan. Asserting the label itself exists turns that
+ * silent mass-delete into a loud abort.
+ */
+async function assertStagingLabelExists(token: string): Promise<void> {
+  const res = await githubGet(token, `/labels/${STAGING_LABEL}`)
+  if (res.status === 404) {
+    throw new Error(`Label '${STAGING_LABEL}' does not exist on ${GITHUB_REPO} — refusing to reconcile (renamed?)`)
+  }
+  if (!res.ok) {
+    throw new Error(`GitHub label check HTTP ${res.status}: ${(await res.text()).slice(0, 500)}`)
+  }
+}
 
 /**
  * Open PR numbers carrying the `staging` label. The issues endpoint returns PRs
@@ -895,15 +940,7 @@ const GITHUB_REPO = "threahq/threa"
 async function fetchOpenStagingPrs(token: string): Promise<number[]> {
   const numbers: number[] = []
   for (let page = 1; ; page++) {
-    const url = `https://api.github.com/repos/${GITHUB_REPO}/issues?labels=staging&state=open&per_page=100&page=${page}`
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "threa-staging-reconcile",
-      },
-    })
+    const res = await githubGet(token, `/issues?labels=${STAGING_LABEL}&state=open&per_page=100&page=${page}`)
     if (!res.ok) {
       throw new Error(`GitHub API HTTP ${res.status}: ${(await res.text()).slice(0, 500)}`)
     }
@@ -914,6 +951,31 @@ async function fetchOpenStagingPrs(token: string): Promise<number[]> {
     if (items.length < 100) break
   }
   return numbers
+}
+
+/**
+ * Independent second signal before deletion: the per-PR endpoint, not the
+ * label-filtered issues listing. 404 = the number was never a PR (e.g. a
+ * hand-made pr_N experiment DB) — confirmed orphan. An open PR that carries
+ * the staging label here means the issues listing lied (label index lag,
+ * token scoping) — abort the ENTIRE run, trusting neither endpoint. This also
+ * closes the just-labeled-PR race: a deploy triggered seconds ago shows
+ * open+labeled here even if the listing missed it.
+ */
+async function assertOrphanNotOpenLabeled(token: string, pr: number): Promise<void> {
+  const res = await githubGet(token, `/pulls/${pr}`)
+  if (res.status === 404) return
+  if (!res.ok) {
+    throw new Error(`GitHub PR #${pr} check HTTP ${res.status}: ${(await res.text()).slice(0, 500)}`)
+  }
+  const data = (await res.json()) as { state?: string; labels?: { name?: string }[] }
+  const isOpenLabeled = data.state === "open" && (data.labels ?? []).some((l) => l.name === STAGING_LABEL)
+  if (isOpenLabeled) {
+    throw new Error(
+      `PR #${pr} is open with the '${STAGING_LABEL}' label but was classified as an orphan — ` +
+        `endpoint inconsistency, aborting the whole reconcile without deleting anything`
+    )
+  }
 }
 
 function printReconcilePlan(plan: StagingReconcilePlan, openLabeledPrNumbers: number[], dryRun: boolean): void {

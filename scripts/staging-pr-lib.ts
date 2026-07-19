@@ -41,9 +41,23 @@ export function stagingResourceNames(prNumber: number): StagingResourceNames {
 // shared infra — `backend`, `control-plane`, `Postgres`, `staging_main`,
 // `staging_main_cp`, `railway`, `postgres`, `template0/1` — matches none of
 // these, so it is structurally unreachable, not merely skipped.
+//
+// The flip side: the whole `pr_<digits>` / `pr-<digits>` namespace is
+// reserved-and-reaped. A hand-made `pr_9999` experiment DB WILL be swept as an
+// orphan on the next nightly run — name experiments anything else.
 export const STAGING_SERVICE_RE = /^pr-(\d+)-backend$/
 export const STAGING_DB_RE = /^pr_(\d+)(_cp)?$/
 export const STAGING_KV_REGION_RE = /^pr-(\d+)$/
+
+/**
+ * Teardown re-derives resource names from the parsed number, so a discovered
+ * name must round-trip exactly (`pr_0123` → 123 → `pr_123` would drop the
+ * wrong DB and leak the discovered one). Reject non-canonical digit strings.
+ */
+function canonicalPrNumber(digits: string): number | null {
+  const pr = Number(digits)
+  return String(pr) === digits ? pr : null
+}
 
 export interface StagingReconcileInput {
   /** All Railway service names in the project. */
@@ -97,20 +111,23 @@ export function classifyStagingOrphans(input: StagingReconcileInput): StagingRec
 
   for (const name of input.serviceNames) {
     const match = STAGING_SERVICE_RE.exec(name)
-    if (match) get(Number(match[1])).hasService = true
+    const pr = match ? canonicalPrNumber(match[1]) : null
+    if (pr !== null) get(pr).hasService = true
   }
 
   for (const name of input.dbNames) {
     const match = STAGING_DB_RE.exec(name)
-    if (!match) continue
-    const entry = get(Number(match[1]))
+    const pr = match ? canonicalPrNumber(match[1]) : null
+    if (match === null || pr === null) continue
+    const entry = get(pr)
     if (match[2] === "_cp") entry.hasCpDb = true
     else entry.hasDb = true
   }
 
   for (const key of input.kvRegionKeys) {
     const match = STAGING_KV_REGION_RE.exec(key)
-    if (match) get(Number(match[1])).hasKvRegion = true
+    const pr = match ? canonicalPrNumber(match[1]) : null
+    if (pr !== null) get(pr).hasKvRegion = true
   }
 
   const openSet = new Set(input.openLabeledPrNumbers)

@@ -12,9 +12,15 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Print the orphan plan without deleting anything"
+        description: "Print the orphan plan without deleting anything (uncheck for a real teardown)"
         type: boolean
-        default: false
+        default: true
+
+# Two overlapping reconciles race each other's DROP DATABASE into spurious red
+# runs (TOCTOU on databaseExists). Serialize; never cancel a live teardown.
+concurrency:
+  group: staging-reconcile
+  cancel-in-progress: false
 
 jobs:
   reconcile:
