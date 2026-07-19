@@ -3,6 +3,7 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import type { SearchFilters, SearchService } from "../search"
+import { setAuditSubjects } from "../access-log"
 import { serializeSearchResult, resolveUserAccessibleStreamIds, SearchRepository } from "../search"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import { MessageRepository, type EventService, type Message } from "../messaging"
@@ -1879,6 +1880,10 @@ export function createPublicApiHandlers({
         skipEmbedding: !semantic,
       })
 
+      setAuditSubjects(
+        res,
+        results.map((r) => ({ type: "message", id: r.id }))
+      )
       const authorNames = await resolveAuthorDisplayNames(pool, workspaceId, results)
       const serialized: WireSearchResult[] = results.map((r) => {
         const name = authorNames.get(r.authorId)
@@ -1936,6 +1941,10 @@ export function createPublicApiHandlers({
         limit,
       })
 
+      setAuditSubjects(
+        res,
+        results.map((r) => ({ type: "memo", id: r.memo.id }))
+      )
       res.json({ data: results.map(serializeMemoSearchResult) })
     },
 
@@ -1954,6 +1963,7 @@ export function createPublicApiHandlers({
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }
 
+      setAuditSubjects(res, [{ type: "memo", id: memoId }])
       res.json({ data: serializeMemoDetail(memo) })
     },
 
@@ -1987,6 +1997,10 @@ export function createPublicApiHandlers({
         limit,
       })
 
+      setAuditSubjects(
+        res,
+        attachments.map((a) => ({ type: "attachment", id: a.id }))
+      )
       res.json({ data: attachments.map(serializeAttachmentSearchResult) })
     },
 
@@ -1994,6 +2008,7 @@ export function createPublicApiHandlers({
       const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
       const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, attachment.id)
 
+      setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       res.json({ data: serializeAttachmentDetail(attachment, extraction) })
     },
 
@@ -2004,6 +2019,7 @@ export function createPublicApiHandlers({
         expiresIn: 900,
       }
 
+      setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       res.json({ data })
     },
 
@@ -2179,6 +2195,19 @@ export function createPublicApiHandlers({
         page = after ? messages.slice(0, limit) : messages.slice(-limit)
       }
 
+      setAuditSubjects(
+        res,
+        page.length > 0
+          ? [
+              {
+                type: "stream",
+                id: streamId,
+                fromSeq: Number(page[0].sequence),
+                toSeq: Number(page[page.length - 1].sequence),
+              },
+            ]
+          : [{ type: "stream", id: streamId }]
+      )
       const pageMessageIds = page.map((m) => m.id)
       const [authorNames, threadMap, attachmentsByMessage] = await Promise.all([
         resolveAuthorDisplayNames(pool, req.workspaceId!, page),
@@ -2346,6 +2375,10 @@ export function createPublicApiHandlers({
 
       const authorNames = await resolveAuthorDisplayNames(pool, workspaceId, messages)
 
+      setAuditSubjects(
+        res,
+        messages.map((m) => ({ type: "message", id: m.id }))
+      )
       res.json({
         data: messages.map((m) => serializeMessage(m, { authorDisplayName: authorNames.get(m.authorId) ?? null })),
       })

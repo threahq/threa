@@ -8,6 +8,7 @@ import type { LinkPreviewService } from "../link-previews"
 import type { BotRuntimeService } from "../bot-runtimes"
 import type { CommandAvailabilityService } from "../commands"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
+import { setAuditSubjects, type AuditSubjectRef } from "../access-log"
 import type { StreamEvent } from "./event-repository"
 import type {
   EventType,
@@ -278,6 +279,21 @@ const actorRewrapSchema = z.object({
 
 /** Default number of events returned in bootstrap and event list queries. */
 const EVENTS_DEFAULT_LIMIT = 50
+
+/** Audit ref for a range read: the stream plus the min/max sequence loaded. */
+function streamSequenceRangeRef(streamId: string, events: readonly StreamEvent[]): AuditSubjectRef {
+  const ref: AuditSubjectRef = { type: "stream", id: streamId }
+  if (events.length === 0) return ref
+  let min = events[0].sequence
+  let max = events[0].sequence
+  for (const event of events) {
+    if (event.sequence < min) min = event.sequence
+    if (event.sequence > max) max = event.sequence
+  }
+  ref.fromSeq = Number(min)
+  ref.toSeq = Number(max)
+  return ref
+}
 
 const numericString = z.string().regex(/^\d+$/, "must be a numeric string")
 
@@ -732,6 +748,8 @@ export function createStreamHandlers({
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(linkPreviewService, workspaceId, userId, events)
       const sharedMessages = await hydrateSharedMessagesForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
 
+      setAuditSubjects(res, [streamSequenceRangeRef(streamId, events)])
+
       res.json({ events: eventsWithLinkPreviews, sharedMessages })
     },
 
@@ -772,6 +790,11 @@ export function createStreamHandlers({
         enrichedEvents
       )
       const sharedMessages = await hydrateSharedMessagesForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
+
+      const aroundSubjects: AuditSubjectRef[] = [streamSequenceRangeRef(streamId, result.events)]
+      const anchorId = anchorMessageId ?? messageId ?? eventId
+      if (anchorId) aroundSubjects.push({ type: eventId ? "event" : "message", id: anchorId })
+      setAuditSubjects(res, aroundSubjects)
 
       res.json({
         events: eventsWithLinkPreviews,
@@ -1064,6 +1087,11 @@ export function createStreamHandlers({
       // Resolve the tool-policy reads started up front (parallel with the rest
       // of bootstrap, not serial after enrichment).
       const [allowedToolCategories, configuredToolCategories] = await toolPolicyReads
+
+      const bootstrapRef: AuditSubjectRef = { type: "stream", id: streamId, toSeq: Number(latestSequence ?? 0n) }
+      if (afterSequence !== undefined) bootstrapRef.fromSeq = Number(afterSequence)
+      else if (events.length > 0) bootstrapRef.fromSeq = Number(events[0].sequence)
+      setAuditSubjects(res, [bootstrapRef])
 
       res.json({
         data: {

@@ -27,3 +27,5 @@ export type {
   PublicApiOperation,
   AiOperation,
 } from "./operations"
+export { createAuditMiddleware, assertAuditCoverage } from "./middleware"
+export type { AuditFactory, AuditAnnotation } from "./middleware"

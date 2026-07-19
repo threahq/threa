@@ -745,6 +745,7 @@ export async function startServer(): Promise<ServerInstance> {
     ai,
     controlPlaneClient,
     costService,
+    accessLogService,
   })
 
   app.use(errorHandler)

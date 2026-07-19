@@ -5,6 +5,7 @@ import type { SearchService } from "./service"
 import type { SearchResult } from "./repository"
 import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
 import { validateRequest } from "../../lib/validation"
+import { setAuditSubjects } from "../access-log"
 import { STREAM_TYPES } from "@threa/types"
 
 const ARCHIVE_STATUSES = ["active", "archived"] as const
@@ -88,6 +89,11 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
         exact,
         limit,
       })
+
+      setAuditSubjects(
+        res,
+        results.map((r) => ({ type: "message", id: r.id }))
+      )
 
       res.json({
         results: results.map(serializeSearchResult),

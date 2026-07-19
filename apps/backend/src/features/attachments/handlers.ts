@@ -13,6 +13,7 @@ import {
 import { AttachmentUploadRepository } from "./upload-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
 import type { StreamService } from "../streams"
+import { setAuditSubjects } from "../access-log"
 import { VideoTranscodeJobRepository } from "./video"
 import { isImageAttachment } from "./image-caption"
 import type { StorageProvider } from "../../lib/storage/s3-client"
@@ -223,6 +224,7 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const { attachmentId } = req.params
+      setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
 
       const attachment = await attachmentService.getById(attachmentId)
       if (!attachment || attachment.workspaceId !== workspaceId) {
@@ -292,6 +294,7 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const { attachmentId } = req.params
+      setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
 
       const attachment = await attachmentService.getById(attachmentId)
       if (!attachment || attachment.workspaceId !== workspaceId) {
@@ -404,6 +407,7 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const { attachmentId } = req.params
+      setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
 
       const attachment = await attachmentService.getById(attachmentId)
       if (!attachment || attachment.workspaceId !== workspaceId) {
@@ -481,6 +485,11 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const items = hasMore ? rows.slice(0, limit) : rows
       const last = items[items.length - 1]
       const nextCursor = hasMore && last ? encodeCursor({ createdAt: last.createdAt, id: last.id }) : null
+
+      setAuditSubjects(
+        res,
+        items.map((i) => ({ type: "attachment", id: i.id }))
+      )
 
       res.json({
         items: items.map(serializeSearchRow),

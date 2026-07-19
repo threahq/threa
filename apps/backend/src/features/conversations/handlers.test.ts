@@ -16,6 +16,7 @@ function mockRes() {
   const res = {
     statusCode: 200,
     body: null as unknown,
+    locals: {} as Record<string, unknown>,
     status(code: number) {
       res.statusCode = code
       return res

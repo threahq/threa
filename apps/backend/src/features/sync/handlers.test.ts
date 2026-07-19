@@ -13,7 +13,7 @@ function makeReqRes(query: Record<string, string>, role: string = "member") {
     query,
   } as unknown as Request
   const json = mock((_body: unknown) => {})
-  const res = { json } as unknown as Response
+  const res = { json, locals: {} } as unknown as Response
   return { req, res, json }
 }
 
