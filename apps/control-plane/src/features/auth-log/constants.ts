@@ -4,11 +4,13 @@ import type { WorkosEventName } from "@threa/backend-common"
 export const AUTH_LOG_EVENT_POLLER_NAME = "auth-log-events"
 
 /**
- * WorkOS event types ingested into `auth_log` (design §7.5). Every name is
- * verified against the SDK 7.82.0 `EventName` union. Excluded until relevant:
- * `connection.*`/`dsync.*` (no SSO/SCIM orgs yet), `flag.*`, role/permission
- * template events, and the deprecated `organization_membership.added/removed`
- * aliases (superseded by created/deleted).
+ * WorkOS event types ingested into `auth_log` (design §7.5). Names must match
+ * the live Events API catalog (https://workos.com/docs/events), not the SDK
+ * `EventName` union — one name the API rejects 400s the whole `listEvents`
+ * call and stalls the poller. Excluded until relevant: `connection.*`/
+ * `dsync.*` (no SSO/SCIM orgs yet), `flag.*`, role/permission template
+ * events, and the deprecated `organization_membership.added/removed` aliases
+ * (superseded by created/deleted).
  */
 export const AUTH_LOG_EVENT_TYPES = [
   "authentication.email_verification_succeeded",
@@ -41,8 +43,11 @@ export const AUTH_LOG_EVENT_TYPES = [
   "magic_auth.created",
   "email_verification.created",
   "api_key.created",
-  "api_key.deleted",
-] as const satisfies readonly WorkosEventName[]
+  "api_key.revoked",
+  // The SDK 7.82.0 union lags the API: it types `api_key.deleted`, but the
+  // live Events API only accepts `api_key.revoked`. Drop the widening once
+  // the SDK union includes it.
+] as const satisfies readonly (WorkosEventName | "api_key.revoked")[]
 
 export type AuthLogEventType = (typeof AUTH_LOG_EVENT_TYPES)[number]
 

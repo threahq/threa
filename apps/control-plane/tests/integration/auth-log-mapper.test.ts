@@ -143,4 +143,17 @@ describe("mapWorkosEventToAuthLogRow", () => {
     expect(row.organizationId).toBe("org_gamma")
     expect(row.outcome).toBe("success")
   })
+
+  test("api_key.revoked reads org from owner.id and maps success", () => {
+    const row = mapWorkosEventToAuthLogRow(
+      event({
+        id: "event_apikey_revoked",
+        event: "api_key.revoked",
+        data: { object: "api_key", id: "key_1", owner: { type: "organization", id: "org_gamma" } },
+      })
+    )
+    expect(row.eventType).toBe("api_key.revoked")
+    expect(row.organizationId).toBe("org_gamma")
+    expect(row.outcome).toBe("success")
+  })
 })
