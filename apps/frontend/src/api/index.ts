@@ -1,4 +1,4 @@
-export { api, ApiError } from "./client"
+export { api, ApiError, isPermanentApiError } from "./client"
 export { accountsApi, ACCOUNTS_LIST_KEY, type AccountSummary } from "./accounts"
 export { workspacesApi, type WorkspaceBootstrap } from "./workspaces"
 export { boardViewsApi, type SaveBoardViewInput, type UpdateBoardViewInput } from "./board-views"

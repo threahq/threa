@@ -1,9 +1,87 @@
 import { describe, expect, it } from "bun:test"
 import express from "express"
+import type { AddressInfo } from "node:net"
 import { assertAuditCoverage, createAuditMiddleware } from "./middleware"
+import { setAuditSubjects } from "./subjects"
 import type { AccessLogService } from "./service"
 
 const noopService = { record() {} } as unknown as AccessLogService
+
+function recordingService() {
+  const rows: Record<string, unknown>[] = []
+  const service = {
+    record(row: Record<string, unknown>) {
+      rows.push(row)
+    },
+  } as unknown as AccessLogService
+  return { service, rows }
+}
+
+async function requestAndAwaitRow(app: express.Express, path: string, rows: unknown[]): Promise<void> {
+  const server = app.listen(0)
+  try {
+    const port = (server.address() as AddressInfo).port
+    await fetch(`http://127.0.0.1:${port}${path}`, { method: "POST" })
+    // The record hook fires on the response 'finish' event, after the fetch
+    // resolves — poll briefly rather than racing it.
+    const deadline = Date.now() + 2000
+    while (rows.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
+  } finally {
+    server.close()
+  }
+  expect(rows.length).toBe(1)
+}
+
+describe("audit() denied-row forensics", () => {
+  it("records detail.status and route-param subject refs on a denial with no service subjects", async () => {
+    const { service, rows } = recordingService()
+    const audit = createAuditMiddleware(service)
+    const app = express()
+    app.post(
+      "/api/workspaces/:workspaceId/scheduled/:id/send-now",
+      audit("scheduled_messages.send_now", "write"),
+      (_req, res) => void res.status(409).json({ error: "already sent" })
+    )
+
+    await requestAndAwaitRow(app, "/api/workspaces/ws_1/scheduled/sched_1/send-now", rows)
+
+    expect(rows[0]).toMatchObject({
+      operation: "scheduled_messages.send_now",
+      outcome: "denied",
+      workspaceId: "ws_1",
+      detail: { status: 409 },
+      subjects: [{ type: "param", id: "sched_1" }],
+    })
+  })
+
+  it("keeps service-set subjects over the param fallback and omits detail on success", async () => {
+    const { service, rows } = recordingService()
+    const audit = createAuditMiddleware(service)
+    const app = express()
+    app.post(
+      "/api/workspaces/:workspaceId/streams/:id/read",
+      (req, _res, next) => {
+        req.user = { id: "usr_1" } as NonNullable<express.Request["user"]>
+        next()
+      },
+      audit("streams.get", "read"),
+      (_req, res) => {
+        setAuditSubjects(res, [{ type: "stream", id: "stream_1" }])
+        res.status(200).json({ ok: true })
+      }
+    )
+
+    await requestAndAwaitRow(app, "/api/workspaces/ws_1/streams/stream_9/read", rows)
+
+    expect(rows[0]).toMatchObject({
+      outcome: "success",
+      detail: null,
+      subjects: [{ type: "stream", id: "stream_1" }],
+    })
+  })
+})
 
 describe("assertAuditCoverage", () => {
   it("passes when every /api route carries an audit annotation", () => {
