@@ -753,7 +753,7 @@ export const StreamRepository = {
    */
   async listArchivedRoots(db: Querier, workspaceId: string, userId: string): Promise<Stream[]> {
     const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams s
+      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)}
           WHERE s.workspace_id = ${workspaceId}
             AND s.archived_at IS NOT NULL
             AND s.type != ${StreamTypes.THREAD}

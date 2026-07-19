@@ -172,6 +172,14 @@ describe("StreamRepository.listArchivedRoots", () => {
     expect(text).toContain("m.member_id = ")
   })
 
+  test("ships E2E fields so a cold-loaded archived E2E scratchpad keeps its sealed name", async () => {
+    const db = makeDb([])
+    await StreamRepository.listArchivedRoots(db, "ws_1", "usr_1")
+    const text = queryText(db)
+    expect(text).toContain("LEFT JOIN e2e_streams e")
+    expect(text).toContain("e2e_name_ciphertext")
+  })
+
   test("maps archived rows through the shared row mapper", async () => {
     const archivedAt = new Date()
     const db = makeDb([

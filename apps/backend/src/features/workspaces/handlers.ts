@@ -212,12 +212,14 @@ export function createWorkspaceHandlers({
       }
 
       // Resolve DM display names — viewer-dependent, so computed at bootstrap time
-      const resolvedStreams = await streamService.resolveDmDisplayNames(streams, users, userId)
       // Archived DMs are excluded from dmPeers (listDmPeersForMember filters
       // archived), so the client can't resolve their names peer-side; bake the
-      // viewer-dependent name onto the row instead so saved/activity labels
-      // survive a reload.
-      const resolvedArchivedStreams = await streamService.resolveDmDisplayNames(archivedStreams, users, userId)
+      // viewer-dependent name onto the archived rows too so saved/activity
+      // labels survive a reload.
+      const [resolvedStreams, resolvedArchivedStreams] = await Promise.all([
+        streamService.resolveDmDisplayNames(streams, users, userId),
+        streamService.resolveDmDisplayNames(archivedStreams, users, userId),
+      ])
 
       const streamMemberships = await streamService.getMembershipsBatch(
         resolvedStreams.map((s) => s.id),
