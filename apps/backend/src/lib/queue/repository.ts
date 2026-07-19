@@ -407,6 +407,12 @@ export const QueueRepository = {
         DELETE FROM queue_messages
         USING candidates
         WHERE queue_messages.id = candidates.id
+          -- Re-assert the terminal predicate: the CTE's filter is evaluated at
+          -- statement snapshot, so a concurrent reactivation (unDlq) committing
+          -- mid-statement would otherwise pass the id-only re-check and delete
+          -- a now-live row.
+          AND queue_messages.${column} IS NOT NULL
+          AND queue_messages.${column} < ${params.cutoff}
       `
     )
 
