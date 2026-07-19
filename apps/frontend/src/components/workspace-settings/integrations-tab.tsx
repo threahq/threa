@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Github, ExternalLink, RefreshCw, Plus } from "lucide-react"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
@@ -39,17 +40,36 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
     enabled: canManage,
   })
 
+  // Sync/disconnect failures render inside the row that was acted on — with N
+  // installation rows, a section-level error can sit off-screen and a failed
+  // disconnect would read as a silent no-op.
+  const [actionError, setActionError] = useState<{ integrationId: string; message: string } | null>(null)
+
   const disconnectMutation = useMutation({
     mutationFn: (integrationId: string) => integrationsApi.disconnectGithub(workspaceId, integrationId),
+    onMutate: () => setActionError(null),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["workspace-integrations", workspaceId, "github"] })
+    },
+    onError: (error, integrationId) => {
+      setActionError({
+        integrationId,
+        message: error instanceof Error ? error.message : "Failed to disconnect GitHub.",
+      })
     },
   })
 
   const syncMutation = useMutation({
     mutationFn: (integrationId: string) => integrationsApi.syncGithub(workspaceId, integrationId),
+    onMutate: () => setActionError(null),
     onSuccess: (data) => {
       queryClient.setQueryData(["workspace-integrations", workspaceId, "github"], data)
+    },
+    onError: (error, integrationId) => {
+      setActionError({
+        integrationId,
+        message: error instanceof Error ? error.message : "Failed to sync GitHub repositories.",
+      })
     },
   })
 
@@ -129,8 +149,10 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
 
               return (
                 <div key={installation.id} className="rounded-md border border-border p-3 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{installation.accountLogin ?? "GitHub installation"}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 max-w-full truncate text-sm font-medium">
+                      {installation.accountLogin ?? "GitHub installation"}
+                    </span>
                     <Badge variant="secondary">
                       {installation.accountType === "User" ? "Personal" : "Organization"}
                     </Badge>
@@ -187,6 +209,14 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
                         {syncPending ? "Syncing\u2026" : "Sync repos"}
                       </Button>
                     )}
+                    {installation.status === "error" && (
+                      <Button variant="outline" size="sm" asChild>
+                        <a href={`/api/workspaces/${workspaceId}/integrations/github/connect`}>
+                          <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                          Reconnect
+                        </a>
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -196,6 +226,10 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
                       {disconnectPending ? "Disconnecting\u2026" : "Disconnect"}
                     </Button>
                   </div>
+
+                  {actionError?.integrationId === installation.id && (
+                    <p className="text-sm text-destructive">{actionError.message}</p>
+                  )}
                 </div>
               )
             })}
@@ -209,23 +243,9 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
           </div>
         )}
 
-        {syncMutation.error && (
-          <p className="mt-2 text-sm text-destructive">
-            {syncMutation.error instanceof Error ? syncMutation.error.message : "Failed to sync GitHub repositories."}
-          </p>
-        )}
-
         {query.error && (
           <p className="mt-2 text-sm text-destructive">
             {query.error instanceof Error ? query.error.message : "Failed to load integration status."}
-          </p>
-        )}
-
-        {disconnectMutation.error && (
-          <p className="mt-2 text-sm text-destructive">
-            {disconnectMutation.error instanceof Error
-              ? disconnectMutation.error.message
-              : "Failed to disconnect GitHub."}
           </p>
         )}
       </section>

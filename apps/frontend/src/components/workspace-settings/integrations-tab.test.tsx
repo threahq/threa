@@ -108,6 +108,50 @@ describe("IntegrationsTab GitHub installations", () => {
     expect(await screen.findByRole("link", { name: /add organization or account/i })).toBeInTheDocument()
   })
 
+  it("renders a failed disconnect inside the row that was acted on", async () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN])
+    vi.spyOn(integrationsApi, "getGithub").mockResolvedValue({
+      configured: true,
+      integrations: [
+        githubInstall({ id: "wsint_org", accountLogin: "acme" }),
+        githubInstall({ id: "wsint_user", accountLogin: "kris", accountType: "User" }),
+      ],
+    })
+    vi.spyOn(integrationsApi, "getLinear").mockResolvedValue({ configured: false, integration: null })
+    vi.spyOn(integrationsApi, "disconnectGithub").mockRejectedValue(new Error("GitHub said no"))
+    const user = userEvent.setup()
+
+    renderTab(queryClient)
+
+    const secondRow = (await screen.findByText("kris")).closest("div.rounded-md") as HTMLElement
+    await user.click(within(secondRow).getByRole("button", { name: /disconnect/i }))
+
+    await waitFor(() => expect(within(secondRow).getByText("GitHub said no")).toBeInTheDocument())
+    const firstRow = screen.getByText("acme").closest("div.rounded-md") as HTMLElement
+    expect(within(firstRow).queryByText("GitHub said no")).not.toBeInTheDocument()
+  })
+
+  it("offers Reconnect on an errored installation", async () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN])
+    vi.spyOn(integrationsApi, "getGithub").mockResolvedValue({
+      configured: true,
+      integrations: [
+        githubInstall({ id: "wsint_ok", accountLogin: "acme" }),
+        githubInstall({ id: "wsint_broken", accountLogin: "kris", accountType: "User", status: "error" }),
+      ],
+    })
+    vi.spyOn(integrationsApi, "getLinear").mockResolvedValue({ configured: false, integration: null })
+
+    renderTab(queryClient)
+
+    const brokenRow = (await screen.findByText("kris")).closest("div.rounded-md") as HTMLElement
+    expect(within(brokenRow).getByRole("link", { name: /reconnect/i })).toBeInTheDocument()
+    const healthyRow = screen.getByText("acme").closest("div.rounded-md") as HTMLElement
+    expect(within(healthyRow).queryByRole("link", { name: /reconnect/i })).not.toBeInTheDocument()
+  })
+
   it("keeps a single Connect button in the empty state", async () => {
     const queryClient = new QueryClient()
     seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN])
