@@ -367,6 +367,82 @@ describe("TokenPoolRepository", () => {
       })
     })
 
+    test("should exclude cancelled messages (fairness=workspace)", async () => {
+      await withTestTransaction(pool, async (client) => {
+        const now = new Date()
+
+        // Cancelled row kept leasable on every other axis (process_after <= now,
+        // no claim) so the exclusion is proven to come from cancelled_at alone.
+        await QueueRepository.insert(client, {
+          id: "queue_test_cancelled",
+          queueName: "test.queue",
+          workspaceId: "ws_test_cancelled",
+          payload: { order: 1 },
+          processAfter: now,
+          insertedAt: now,
+        })
+        await client.query("UPDATE queue_messages SET cancelled_at = $1 WHERE id = $2", [now, "queue_test_cancelled"])
+
+        // Identical non-cancelled row on a different pair.
+        await QueueRepository.insert(client, {
+          id: "queue_test_live",
+          queueName: "test.queue",
+          workspaceId: "ws_test_live",
+          payload: { order: 2 },
+          processAfter: now,
+          insertedAt: now,
+        })
+
+        const tokens = await TokenPoolRepository.batchLeaseTokens(client, {
+          leasedBy: "ticker_test",
+          leasedAt: now,
+          leasedUntil: new Date(now.getTime() + 10000),
+          now,
+          limit: 10,
+          queueNames: ["test.queue"],
+        })
+
+        expect(tokens.map((t) => t.workspaceId)).toEqual(["ws_test_live"])
+      })
+    })
+
+    test("should exclude cancelled messages (fairness=none)", async () => {
+      await withTestTransaction(pool, async (client) => {
+        const now = new Date()
+
+        await QueueRepository.insert(client, {
+          id: "queue_test_cancelled",
+          queueName: "test.queue",
+          workspaceId: "ws_test_cancelled",
+          payload: { order: 1 },
+          processAfter: now,
+          insertedAt: now,
+        })
+        await client.query("UPDATE queue_messages SET cancelled_at = $1 WHERE id = $2", [now, "queue_test_cancelled"])
+
+        await QueueRepository.insert(client, {
+          id: "queue_test_live",
+          queueName: "test.queue",
+          workspaceId: "ws_test_live",
+          payload: { order: 2 },
+          processAfter: now,
+          insertedAt: now,
+        })
+
+        const tokens = await TokenPoolRepository.batchLeaseTokens(client, {
+          leasedBy: "ticker_test",
+          leasedAt: now,
+          leasedUntil: new Date(now.getTime() + 10000),
+          now,
+          limit: 10,
+          queueNames: ["test.queue"],
+          fairnessMode: "none",
+        })
+
+        expect(tokens.map((t) => t.workspaceId)).toEqual(["ws_test_live"])
+      })
+    })
+
     test("fairness=none allows multiple concurrent tokens per (queue, workspace) pair", async () => {
       await withTestTransaction(pool, async (client) => {
         const now = new Date()

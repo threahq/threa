@@ -118,6 +118,9 @@ export const TokenPoolRepository = {
                 WHERE process_after <= ${params.now}
                   AND dlq_at IS NULL
                   AND completed_at IS NULL
+                  -- Must mirror idx_queue_messages_available's partial predicate
+                  -- (dlq/completed/cancelled all NULL) or the planner seq-scans.
+                  AND cancelled_at IS NULL
                   AND (claimed_until IS NULL OR claimed_until < ${params.now})
                   AND queue_name = ANY(${params.queueNames})
                 GROUP BY queue_name, workspace_id
@@ -183,6 +186,7 @@ export const TokenPoolRepository = {
                 WHERE process_after <= ${params.now}
                   AND dlq_at IS NULL
                   AND completed_at IS NULL
+                  AND cancelled_at IS NULL
                   AND (claimed_until IS NULL OR claimed_until < ${params.now})
                   AND queue_name = ANY(${params.queueNames})
                 GROUP BY queue_name, workspace_id

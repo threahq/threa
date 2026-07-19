@@ -87,10 +87,18 @@ export interface UnDlqParams {
   processAfter: Date
 }
 
-export interface DeleteOldMessagesParams {
-  completedBeforeDate: Date
-  dlqBeforeDate: Date
-  cancelledBeforeDate: Date
+export type QueueRetentionCategory = "completed" | "cancelled" | "dlq"
+
+export interface DeleteExpiredMessagesBatchParams {
+  category: QueueRetentionCategory
+  cutoff: Date
+  limit: number
+}
+
+const RETENTION_COLUMN: Record<QueueRetentionCategory, "completed_at" | "cancelled_at" | "dlq_at"> = {
+  completed: "completed_at",
+  cancelled: "cancelled_at",
+  dlq: "dlq_at",
 }
 
 function mapRowToMessage(row: QueueMessageRow): QueueMessage {
@@ -370,40 +378,36 @@ export const QueueRepository = {
     }
   },
 
-  /** Delete completed/cancelled/DLQ messages past their per-category retention cutoff. */
-  async deleteOldMessages(
-    db: Querier,
-    params: DeleteOldMessagesParams
-  ): Promise<{ completedDeleted: number; cancelledDeleted: number; dlqDeleted: number }> {
-    const completedResult = await db.query(
-      sql`
-        DELETE FROM queue_messages
-        WHERE completed_at IS NOT NULL
-          AND completed_at < ${params.completedBeforeDate}
-      `
-    )
-
-    const cancelledResult = await db.query(
-      sql`
-        DELETE FROM queue_messages
-        WHERE cancelled_at IS NOT NULL
-          AND cancelled_at < ${params.cancelledBeforeDate}
-      `
-    )
-
-    const dlqResult = await db.query(
-      sql`
-        DELETE FROM queue_messages
-        WHERE dlq_at IS NOT NULL
-          AND dlq_at < ${params.dlqBeforeDate}
-      `
-    )
-
-    return {
-      completedDeleted: completedResult.rowCount ?? 0,
-      cancelledDeleted: cancelledResult.rowCount ?? 0,
-      dlqDeleted: dlqResult.rowCount ?? 0,
+  /**
+   * Delete one batch (up to `limit`) of terminal messages in `category` whose
+   * retention timestamp is older than `cutoff`. Returns rows deleted; callers
+   * loop until it returns < limit. The `IS NOT NULL AND < cutoff` predicate on
+   * the category column matches its partial cleanup index
+   * (idx_queue_messages_cleanup_completed / _cleanup_cancelled / _dlq).
+   */
+  async deleteExpiredMessagesBatch(db: Querier, params: DeleteExpiredMessagesBatchParams): Promise<number> {
+    if (params.limit <= 0) {
+      return 0
     }
+
+    const column = sql.raw(RETENTION_COLUMN[params.category])
+    const result = await db.query(
+      sql`
+        WITH candidates AS (
+          SELECT id
+          FROM queue_messages
+          WHERE ${column} IS NOT NULL
+            AND ${column} < ${params.cutoff}
+          ORDER BY ${column}
+          LIMIT ${params.limit}
+        )
+        DELETE FROM queue_messages
+        USING candidates
+        WHERE queue_messages.id = candidates.id
+      `
+    )
+
+    return result.rowCount ?? 0
   },
 
   /** For testing/debugging. */
