@@ -166,6 +166,7 @@ describe("loadConfig github app configuration", () => {
   test("requires a control-plane destination for regional GitHub in production", () => {
     setBaseEnv()
     process.env.NODE_ENV = "production"
+    process.env.S3_REGION = "eu-north-1"
     process.env.USE_STUB_AUTH = "false"
     process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
     process.env.WORKOS_API_KEY = "key"
@@ -186,6 +187,7 @@ describe("loadConfig github app configuration", () => {
   test("throws when GitHub is enabled in production with neither control plane nor region", () => {
     setBaseEnv()
     process.env.NODE_ENV = "production"
+    process.env.S3_REGION = "eu-north-1"
     process.env.USE_STUB_AUTH = "false"
     process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
     process.env.WORKOS_API_KEY = "key"
@@ -205,6 +207,7 @@ describe("loadConfig github app configuration", () => {
   test("keeps the precise REGION-missing message when only CONTROL_PLANE_URL is set", () => {
     setBaseEnv()
     process.env.NODE_ENV = "production"
+    process.env.S3_REGION = "eu-north-1"
     process.env.USE_STUB_AUTH = "false"
     process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
     process.env.WORKOS_API_KEY = "key"
@@ -223,6 +226,7 @@ describe("loadConfig github app configuration", () => {
   test("boots when GitHub is enabled in production with both control plane and region", () => {
     setBaseEnv()
     process.env.NODE_ENV = "production"
+    process.env.S3_REGION = "eu-north-1"
     process.env.USE_STUB_AUTH = "false"
     process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
     process.env.WORKOS_API_KEY = "key"
