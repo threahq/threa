@@ -60,6 +60,20 @@ describe("PushService do-not-disturb gating", () => {
     expect(findByUserId).not.toHaveBeenCalled()
   })
 
+  it("suppresses the ring push while notifications are paused (the socket ring still fires)", async () => {
+    await makeService(true).deliverCallRing({
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      attemptId: "callinv_01ABCDEF",
+      callId: "call_1",
+      streamId: "stream_dm",
+      inviter: { id: "usr_2", name: "Ada" },
+      mode: "video",
+      expiresAt: "2026-07-19T12:00:45.000Z",
+    })
+    expect(findByUserId).not.toHaveBeenCalled()
+  })
+
   it("resolves the user's devices when notifications are not paused", async () => {
     await makeService(false).deliverPushForActivity(makeActivityPayload())
     expect(findByUserId).toHaveBeenCalledTimes(1)
@@ -117,6 +131,38 @@ describe("PushService delivery options", () => {
 
     const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
     expect(options.topic).toBe("1m")
+  })
+
+  it("sends a call ring with high urgency, a 45s TTL, and an attempt-keyed topic", async () => {
+    await makeService(false).deliverCallRing({
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      attemptId: "callinv_01ABCDEF",
+      callId: "call_1",
+      streamId: "stream_dm",
+      inviter: { id: "usr_2", name: "Ada" },
+      mode: "video",
+      expiresAt: "2026-07-19T12:00:45.000Z",
+    })
+
+    expect(sendNotification).toHaveBeenCalledTimes(1)
+    const [, payload, options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+    expect(JSON.parse(payload).data).toMatchObject({ kind: "call_ring", attemptId: "callinv_01ABCDEF", mode: "video" })
+    expect(options).toEqual({ timeout: 10_000, TTL: 45, urgency: "high", topic: "01ABCDEFc" })
+  })
+
+  it("sends the ring cancel on the same topic so an undelivered ring collapses to it", async () => {
+    await makeService(false).deliverCallRingCancel({
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      attemptId: "callinv_01ABCDEF",
+      callId: "call_1",
+      outcome: "declined",
+    })
+
+    const [, payload, options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+    expect(JSON.parse(payload).data).toMatchObject({ kind: "call_ring_cancel", attemptId: "callinv_01ABCDEF" })
+    expect(options).toEqual({ timeout: 10_000, TTL: 45, urgency: "high", topic: "01ABCDEFc" })
   })
 
   it("sends the diagnostic test push with a short TTL so it can't arrive stale", async () => {

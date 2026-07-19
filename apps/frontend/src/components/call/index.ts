@@ -1,3 +1,4 @@
 export { CallDock } from "./call-dock"
+export { IncomingCallOverlay } from "./incoming-call-overlay"
 export { CallLaunchProvider, useCallLaunch, type CallLaunchRequest } from "./call-launch-context"
 export { CallManagerProvider, useCallManager } from "./call-manager-context"

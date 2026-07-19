@@ -12,7 +12,10 @@ import {
 } from "./repository"
 import * as accessModule from "./access"
 import * as streamsModule from "../streams"
+import * as workspacesModule from "../workspaces"
+import * as activityModule from "../activity"
 import * as dbModule from "../../db"
+import { OutboxRepository } from "../../lib/outbox"
 import { CALL_PRODUCT_CAP } from "./config"
 
 const NOW = new Date("2026-07-19T12:00:00.000Z")
@@ -84,6 +87,10 @@ function stubTransaction() {
   // that cares spies CallRepository.bumpRosterVersion(Batch) directly and asserts.
   const client = { query: async () => ({ rows: [] }) } as unknown as PoolClient
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn(client))
+  // Ring lifecycle now emits outbox events in-tx; stub the insert so unspied
+  // emissions don't hit the no-op client (which would map an empty row set).
+  spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+  spyOn(workspacesModule.UserRepository, "findById").mockResolvedValue({ id: "usr_a", name: "Ada" } as never)
 }
 
 function makeService() {
@@ -201,13 +208,28 @@ describe("CallService.startCall — DM ring", () => {
       { memberId: "usr_a" } as never,
       { memberId: "usr_peer" } as never,
     ])
-    const ring = spyOn(CallInvitationRepository, "insertRinging").mockResolvedValue({} as never)
+    const ring = spyOn(CallInvitationRepository, "insertRinging").mockResolvedValue({
+      id: "callinv_1",
+      expiresAt: NOW,
+    } as never)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
 
     await makeService().startCall({ workspaceId: "ws_1", streamId: "stream_dm", userId: "usr_a", mode: "audio_only" })
 
     expect(ring).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ inviteeUserId: "usr_peer", inviterUserId: "usr_a", callId: "call_1" })
+    )
+    // The ring reaches the invitee (INV-4): user-scoped created event in the same tx.
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:invitation_created",
+      expect.objectContaining({
+        targetUserId: "usr_peer",
+        attemptId: "callinv_1",
+        callId: "call_1",
+        mode: "audio_only",
+      })
     )
   })
 
@@ -254,8 +276,11 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
     spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
     stubCleanEndpointAdmission()
-    const accept = spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
+    const accept = spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([
+      { id: "callinv_1", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_b" } as never,
+    ])
     const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
 
     const result = await makeService().joinCall({ workspaceId: "ws_1", callId: "call_1", userId: "usr_b" })
 
@@ -263,6 +288,12 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
     expect(accept).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ inviteeUserId: "usr_b" }))
     // A join bumps the roster version in the same tx (INV-66) so peers don't drop the arrival.
     expect(bump).toHaveBeenCalledWith(expect.anything(), "ws_1", "call_1")
+    // Accepting the ring on join settles it across the invitee's devices.
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:invitation_settled",
+      expect.objectContaining({ targetUserId: "usr_b", attemptId: "callinv_1", outcome: "accepted" })
+    )
     expect(result.endpoint.id).toBe("callep_1")
   })
 
@@ -518,9 +549,16 @@ describe("CallService.removeParticipant", () => {
 describe("CallService invitations", () => {
   afterEach(() => mock.restore())
 
-  it("declineInvitation returns the declined ring", async () => {
+  it("declineInvitation returns the declined ring and settles it to the invitee", async () => {
     stubTransaction()
-    spyOn(CallInvitationRepository, "decline").mockResolvedValue({ id: "callinv_1", status: "declined" } as never)
+    spyOn(CallInvitationRepository, "decline").mockResolvedValue({
+      id: "callinv_1",
+      status: "declined",
+      workspaceId: "ws_1",
+      callId: "call_1",
+      inviteeUserId: "usr_peer",
+    } as never)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
 
     const result = await makeService().declineInvitation({
       workspaceId: "ws_1",
@@ -529,6 +567,31 @@ describe("CallService invitations", () => {
     })
 
     expect(result).toMatchObject({ status: "declined" })
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:invitation_settled",
+      expect.objectContaining({ targetUserId: "usr_peer", attemptId: "callinv_1", outcome: "declined" })
+    )
+  })
+
+  it("cancelInvitation settles the ring to the invitee as cancelled", async () => {
+    stubTransaction()
+    spyOn(CallInvitationRepository, "cancel").mockResolvedValue({
+      id: "callinv_1",
+      status: "cancelled",
+      workspaceId: "ws_1",
+      callId: "call_1",
+      inviteeUserId: "usr_peer",
+    } as never)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().cancelInvitation({ workspaceId: "ws_1", invitationId: "callinv_1", userId: "usr_a" })
+
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:invitation_settled",
+      expect.objectContaining({ targetUserId: "usr_peer", attemptId: "callinv_1", outcome: "cancelled" })
+    )
   })
 
   it("declineInvitation throws when the ring is no longer ringing", async () => {
@@ -597,9 +660,49 @@ describe("CallService sweeps", () => {
     stubTransaction()
     spyOn(CallInvitationRepository, "expireStaleRings").mockResolvedValue([{ id: "callinv_1" } as never])
     spyOn(CallRepository, "endGraceExpired").mockResolvedValue([fakeCall({ status: "ended" })])
+    spyOn(CallRepository, "findById").mockResolvedValue(null)
 
     expect(await makeService().expireStaleRings(NOW)).toEqual({ expired: 1 })
     expect(await makeService().endGraceExpiredCalls(NOW)).toEqual({ ended: 1 })
+  })
+
+  it("expireStaleRings settles each ring and lands a missed-call activity for the invitee", async () => {
+    stubTransaction()
+    spyOn(CallInvitationRepository, "expireStaleRings").mockResolvedValue([
+      { id: "callinv_1", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_peer", inviterUserId: "usr_a" },
+    ] as never)
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ streamId: "stream_dm", mode: "audio_only" }))
+    const activityInsert = spyOn(activityModule.ActivityRepository, "insert").mockResolvedValue({
+      id: "act_1",
+      activityType: "missed_call",
+      streamId: "stream_dm",
+      messageId: null,
+      actorId: "usr_a",
+      actorType: "user",
+      context: {},
+      createdAt: NOW,
+      isSelf: false,
+      emoji: null,
+    } as never)
+    spyOn(activityModule.ActivityRepository, "countUnreadForPairs").mockResolvedValue(new Map())
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().expireStaleRings(NOW)
+
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "call:invitation_settled",
+      expect.objectContaining({ targetUserId: "usr_peer", attemptId: "callinv_1", outcome: "expired" })
+    )
+    expect(activityInsert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ activityType: "missed_call", userId: "usr_peer", streamId: "stream_dm" })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "activity:created",
+      expect.objectContaining({ targetUserId: "usr_peer" })
+    )
   })
 
   it("reapLapsedEndpoints closes the CF sessions of reaped endpoints AFTER commit", async () => {

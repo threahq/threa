@@ -157,7 +157,7 @@ import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-s
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
-import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
+import { PushService, PushNotificationHandler, CallRingPushHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
 import { AICostService, AIBudgetService } from "./features/ai-usage"
 import { CommandRegistry, InviteCommand, createCommandWorker, CommandHandler } from "./features/commands"
@@ -1448,6 +1448,9 @@ export async function startServer(): Promise<ServerInstance> {
   const pushNotificationHandler = pushService.isEnabled()
     ? new PushNotificationHandler({ pool: pools.realtime, pushService })
     : null
+  const callRingPushHandler = pushService.isEnabled()
+    ? new CallRingPushHandler({ pool: pools.realtime, pushService })
+    : null
   const linkPreviewOutboxHandler = new LinkPreviewOutboxHandler(pool, jobQueue)
   const shadowSyncHandler =
     controlPlaneClient && config.region
@@ -1483,6 +1486,7 @@ export async function startServer(): Promise<ServerInstance> {
     linkPreviewOutboxHandler,
     ...(enclaveDispatchHandler ? [enclaveDispatchHandler] : []),
     ...(pushNotificationHandler ? [pushNotificationHandler] : []),
+    ...(callRingPushHandler ? [callRingPushHandler] : []),
     ...(shadowSyncHandler ? [shadowSyncHandler] : []),
     ...(githubRouteSyncHandler ? [githubRouteSyncHandler] : []),
   ]

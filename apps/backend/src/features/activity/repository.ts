@@ -117,7 +117,9 @@ function conflictClauseFor(activityType: string) {
       "ON CONFLICT (user_id, message_id, actor_id, emoji) WHERE activity_type = 'reaction' DO UPDATE SET id = user_activity.id"
     )
   }
-  if (activityType === ActivityTypes.SAVED_REMINDER) {
+  if (activityType === ActivityTypes.SAVED_REMINDER || activityType === ActivityTypes.MISSED_CALL) {
+    // Both carry a null message_id, so the (…, message_id, …) dedup arbiter can
+    // never match — emit a plain INSERT and let every occurrence mint a row.
     return sql.raw("")
   }
   return sql.raw(

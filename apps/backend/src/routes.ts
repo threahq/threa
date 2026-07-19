@@ -1634,6 +1634,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     rateLimits.calls,
     calls.start
   )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/invitations/:invitationId/decline",
+    ...authed,
+    audit("calls.decline_invitation", "write"),
+    rateLimits.calls,
+    calls.declineInvitation
+  )
   app.get(
     "/api/workspaces/:workspaceId/calls/:callId",
     ...authed,

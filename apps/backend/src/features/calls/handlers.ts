@@ -140,6 +140,19 @@ export function createCallHandlers({
       })
     },
 
+    async declineInvitation(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { invitationId } = req.params
+      await assertAvailable(workspaceId)
+
+      // Scoped to the invitee's own ring — `declineInvitation` CASes on
+      // invitee_user_id, so a non-invitee gets the 409 not-actionable, never
+      // another user's invitation.
+      const invitation = await callService.declineInvitation({ workspaceId, invitationId, userId })
+      res.json({ invitation })
+    },
+
     async bootstrap(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id

@@ -20,6 +20,8 @@ import type {
   ActivityCreatedOutboxPayload,
   SavedReminderFiredOutboxPayload,
   EnclaveRewrapNudgeOutboxPayload,
+  CallInvitationCreatedOutboxPayload,
+  CallInvitationSettledOutboxPayload,
 } from "../../lib/outbox"
 
 /** Maximum push subscriptions per user per workspace to bound parallel delivery calls */
@@ -47,6 +49,14 @@ const SESSION_EXPIRED_TTL_SECONDS = 7 * 24 * 60 * 60
 
 /** A test push is only meaningful while the user is watching for it. */
 const TEST_PUSH_TTL_SECONDS = 60
+
+/**
+ * A ring is only worth delivering while it's still ringing. Bounded to the
+ * invitation TTL so a device that reconnects after the ring lapsed never wakes
+ * to a call that already went to the missed-call feed. The matching cancel push
+ * rides the same topic to collapse an undelivered ring.
+ */
+const CALL_RING_TTL_SECONDS = 45
 
 /**
  * Delivery class for a push send. `urgency: "high"` wakes a dozing Android
@@ -382,11 +392,16 @@ export class PushService {
     const recipientWorkosUserId = await this.lookups.getWorkosUserId(workspaceId, targetUserId)
 
     const context = activity.context as
-      | { contentPreview?: string; streamName?: string; authorName?: string; emoji?: string }
+      | { contentPreview?: string; streamName?: string; authorName?: string; emoji?: string; mode?: string }
       | null
       | undefined
+    // A missed call renders with its own SW branch ("Missed call from …"): the
+    // generic message-grouping path has no missed_call copy, so it would title
+    // the banner "New message". The kind + mode route it to the dedicated branch.
+    const isMissedCall = activity.activityType === ActivityTypes.MISSED_CALL
     const pushPayload = JSON.stringify({
       data: {
+        ...(isMissedCall ? { kind: "missed_call" as const, mode: context?.mode } : {}),
         workspaceId,
         workosUserId: recipientWorkosUserId ?? undefined,
         streamId: activity.streamId,
@@ -542,6 +557,12 @@ export class PushService {
       return true
     }
 
+    // A missed call is direct communication like a DM message — it pushes in
+    // mentions mode regardless of the host stream type.
+    if (activityType === ActivityTypes.MISSED_CALL) {
+      return true
+    }
+
     if ((activityType === ActivityTypes.MESSAGE || activityType === ActivityTypes.REACTION) && streamId !== null) {
       const streamType = await this.lookups.getStreamType(workspaceId, streamId)
       if (streamType === StreamTypes.DM || streamType === StreamTypes.SCRATCHPAD) {
@@ -550,6 +571,72 @@ export class PushService {
     }
 
     return false
+  }
+
+  /**
+   * Deliver the incoming-call ring push. High-urgency, short-TTL, topic-collapsed
+   * on the attempt id so the matching cancel push supersedes an undelivered ring.
+   * Respects the invitee's notification preference and do-not-disturb (NONE or
+   * DND → no push; the in-app socket ring still fires, and the overlay is
+   * quiet-able). Fans to the invitee's devices without the focus-suppression
+   * of `getTargetSubscriptions` — a ring must reach a locked phone. Structured
+   * payload (INV-46): the service worker composes the notification.
+   */
+  async deliverCallRing(payload: CallInvitationCreatedOutboxPayload): Promise<void> {
+    if (!this.canSend) return
+    const { workspaceId, targetUserId, attemptId, callId, streamId, inviter, mode, expiresAt } = payload
+
+    const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
+    if (prefLevel === PrefNotificationLevels.NONE) return
+    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) return
+
+    const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, targetUserId)
+    if (subscriptions.length === 0) return
+
+    const recipientWorkosUserId = await this.lookups.getWorkosUserId(workspaceId, targetUserId)
+    const pushPayload = JSON.stringify({
+      data: {
+        kind: "call_ring",
+        workspaceId,
+        workosUserId: recipientWorkosUserId ?? undefined,
+        attemptId,
+        callId,
+        streamId,
+        inviterName: inviter.name ?? undefined,
+        mode,
+        expiresAt,
+      },
+    })
+
+    await this.sendAndEvictStale(workspaceId, subscriptions, pushPayload, {
+      ttlSeconds: CALL_RING_TTL_SECONDS,
+      urgency: "high",
+      topic: pushTopic(attemptId, "c"),
+    })
+  }
+
+  /**
+   * Cancel a ring push on every settle (accept/decline/cancel/expire). Same topic
+   * as the ring so an undelivered ring queued for an offline device collapses to
+   * this cancel; a delivered ring is closed by the service worker. No preference
+   * gate — a cancel must always chase whatever ring might have gone out.
+   */
+  async deliverCallRingCancel(payload: CallInvitationSettledOutboxPayload): Promise<void> {
+    if (!this.canSend) return
+    const { workspaceId, targetUserId, attemptId } = payload
+
+    const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, targetUserId)
+    if (subscriptions.length === 0) return
+
+    const pushPayload = JSON.stringify({
+      data: { kind: "call_ring_cancel", workspaceId, attemptId },
+    })
+
+    await this.sendAndEvictStale(workspaceId, subscriptions, pushPayload, {
+      ttlSeconds: CALL_RING_TTL_SECONDS,
+      urgency: "high",
+      topic: pushTopic(attemptId, "c"),
+    })
   }
 
   /**

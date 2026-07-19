@@ -357,9 +357,21 @@ interface PushData {
    * Payload kind: "test" is sent by the in-app diagnostic to verify
    * end-to-end delivery; "saved_reminder" marks reminder pushes so clicks on
    * standalone (message-less) items can land on the Saved page;
-   * "rewrap_needed" pulls the owner back to re-key a stuck encrypted scratchpad.
+   * "rewrap_needed" pulls the owner back to re-key a stuck encrypted scratchpad;
+   * "call_ring" is an incoming DM call, "call_ring_cancel" retracts it;
+   * "missed_call" is a ring that lapsed while the app was closed.
    */
-  kind?: "test" | "saved_reminder" | "rewrap_needed"
+  kind?: "test" | "saved_reminder" | "rewrap_needed" | "call_ring" | "call_ring_cancel" | "missed_call"
+  /** Ring attempt id (invitation id) — the `call-<attemptId>` notification tag key. */
+  attemptId?: string
+  /** Call id a ring click accepts into. */
+  callId?: string
+  /** Inviter display name for the ring notification title. */
+  inviterName?: string
+  /** Ring media mode ("video" | "audio_only"). */
+  mode?: string
+  /** ISO deadline the ring lapses at. */
+  expiresAt?: string
 }
 
 self.addEventListener("push", (event) => {
@@ -442,6 +454,62 @@ self.addEventListener("push", (event) => {
         renotify: true, // Re-alert (vibrate/sound) when a later nudge replaces an earlier same-tag one
         vibrate: THREA_VIBRATION_PATTERN,
         data: { ...data, kind: "rewrap_needed" },
+      } as ExtendedNotificationOptions)
+    )
+    return
+  }
+
+  // Incoming call ring. Always display (a ring the user isn't looking at is the
+  // whole point) with a distinct tag so the in-app socket-fallback notification
+  // and this push collapse to one entry per attempt. `renotify` re-alerts.
+  // Clicking opens/focuses the app to the host stream with `?call=<callId>`,
+  // which the app reads as accept-intent (declining from the notification is
+  // v1-omitted — no notification action buttons yet).
+  if (data.kind === "call_ring") {
+    if (!data.attemptId) return
+    event.waitUntil(
+      self.registration.showNotification(data.inviterName ? `${data.inviterName} is calling…` : "Incoming call…", {
+        body: data.mode === "audio_only" ? "Voice call" : "Video call",
+        icon: "/threa-logo-192.png",
+        badge: "/threa-logo-192.png",
+        tag: `call-${data.attemptId}`,
+        renotify: true,
+        vibrate: THREA_VIBRATION_PATTERN,
+        data: { ...data, kind: "call_ring" },
+      } as ExtendedNotificationOptions)
+    )
+    return
+  }
+
+  // Ring retracted (accepted elsewhere / declined / cancelled / expired). Close
+  // the ring notification best-effort — platform retract support varies (some
+  // won't remove an already-shown notification), documented in the plan.
+  if (data.kind === "call_ring_cancel") {
+    if (!data.attemptId) return
+    event.waitUntil(
+      self.registration.getNotifications({ tag: `call-${data.attemptId}` }).then((ns) => {
+        for (const n of ns) n.close()
+      })
+    )
+    return
+  }
+
+  // Missed call (ring expired while the app was closed). Its own copy — the
+  // generic message-grouping path below has no missed_call branch and would
+  // title the banner "New message" with the caller's name as the body. Clicking
+  // opens the host stream via the generic deep-link handler.
+  if (data.kind === "missed_call") {
+    const inviter = data.authorName
+    const where = data.streamName ? ` in ${data.streamName}` : ""
+    event.waitUntil(
+      self.registration.showNotification(inviter ? `Missed call from ${inviter}` : "Missed call", {
+        body: (data.mode === "audio_only" ? "Voice call" : "Video call") + where,
+        icon: "/threa-logo-192.png",
+        badge: "/threa-logo-192.png",
+        tag: data.streamId ? `missed-call:${data.streamId}` : "missed-call",
+        renotify: true,
+        vibrate: THREA_VIBRATION_PATTERN,
+        data: { ...data, kind: "missed_call" },
       } as ExtendedNotificationOptions)
     )
     return
@@ -541,7 +609,13 @@ self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data as PushData | undefined
   let targetUrl = "/"
 
-  if (data?.workspaceId && data?.conversationId) {
+  if (data?.workspaceId && data?.callId && data.kind === "call_ring") {
+    // Ring click = accept-intent: land on the host stream with `?call=<callId>`,
+    // which the app interprets as "join this call".
+    targetUrl = data.streamId
+      ? `/w/${data.workspaceId}/s/${data.streamId}?call=${data.callId}`
+      : `/w/${data.workspaceId}?call=${data.callId}`
+  } else if (data?.workspaceId && data?.conversationId) {
     // Conversation origin wins over the stream permalink: reopen the message in
     // the conversation panel. `conv:` is the panel-id wire prefix
     // (createConversationPanelId); inlined here since the SW can't import the

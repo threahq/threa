@@ -51,6 +51,8 @@ import type {
 import { cachedPersonaFromListItem } from "@/lib/personas"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { conversationKeys } from "@/hooks/use-conversations"
+import { addIncomingCall, settleIncomingCall } from "@/stores/incoming-call-store"
+import type { CallMode } from "@/calls/config"
 import { personaKeys } from "@/hooks/use-personas"
 import { mergeBoardConversation, addBoardConversationStream } from "@/stores/board-store"
 import { putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
@@ -1968,6 +1970,38 @@ export function registerWorkspaceSocketHandlers(
   // that stream on the board row so the card subscribes to its rail and draws the
   // member live — no board refetch. The aggregate `conversation:updated` re-sorts
   // the card; this only widens its stream set.
+  // Incoming DM call ring (user-scoped: lands in the account's user room, so it
+  // reaches every device this user has open). One attempt id = one ring across
+  // devices; the store drops a ring already past its deadline (stale replay).
+  const handleCallInvitationCreated = (payload: {
+    workspaceId: string
+    attemptId: string
+    callId: string
+    streamId: string
+    inviter: { id: string; name: string | null }
+    mode: string
+    expiresAt: string
+  }) => {
+    if (payload.workspaceId !== workspaceId) return
+    addIncomingCall({
+      attemptId: payload.attemptId,
+      callId: payload.callId,
+      workspaceId: payload.workspaceId,
+      streamId: payload.streamId,
+      inviterId: payload.inviter.id,
+      inviterName: payload.inviter.name,
+      mode: payload.mode as CallMode,
+      expiresAtMs: Date.parse(payload.expiresAt),
+    })
+  }
+
+  // Ring settled anywhere (accept on another device, decline, cancel, expire) →
+  // drop the overlay on this device too.
+  const handleCallInvitationSettled = (payload: { workspaceId: string; attemptId: string }) => {
+    if (payload.workspaceId !== workspaceId) return
+    settleIncomingCall(payload.attemptId)
+  }
+
   const handleConversationMessageAssigned = (payload: {
     workspaceId: string
     streamId: string
@@ -2036,6 +2070,8 @@ export function registerWorkspaceSocketHandlers(
   socket.on("conversation:created", handleConversationUpserted)
   socket.on("conversation:updated", handleConversationUpserted)
   socket.on("conversation:message_assigned", handleConversationMessageAssigned)
+  socket.on("call:invitation_created", handleCallInvitationCreated)
+  socket.on("call:invitation_settled", handleCallInvitationSettled)
 
   return () => {
     abortController.abort()
@@ -2100,6 +2136,8 @@ export function registerWorkspaceSocketHandlers(
     socket.off("conversation:created", handleConversationUpserted)
     socket.off("conversation:updated", handleConversationUpserted)
     socket.off("conversation:message_assigned", handleConversationMessageAssigned)
+    socket.off("call:invitation_created", handleCallInvitationCreated)
+    socket.off("call:invitation_settled", handleCallInvitationSettled)
   }
 }
 

@@ -1,10 +1,13 @@
 import type { Pool, PoolClient } from "pg"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes, ActivityTypes, AuthorTypes } from "@threa/types"
 import { withTransaction, withClient } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
 import { callId, callInvitationId, callParticipantId, callEndpointId } from "../../lib/id"
-import { checkStreamAccess, StreamMemberRepository } from "../streams"
+import { checkStreamAccess, StreamMemberRepository, StreamRepository } from "../streams"
+import { UserRepository } from "../workspaces"
+import { ActivityRepository } from "../activity"
+import { OutboxRepository } from "../../lib/outbox"
 import { checkCallAccess } from "./access"
 import {
   CallRepository,
@@ -143,13 +146,26 @@ export class CallService {
       if (created && stream.type === StreamTypes.DM) {
         const peerId = await this.findDmPeer(client, params.streamId, params.userId)
         if (peerId) {
-          await CallInvitationRepository.insertRinging(client, {
+          const invitation = await CallInvitationRepository.insertRinging(client, {
             id: callInvitationId(),
             workspaceId: params.workspaceId,
             callId: targetCallId,
             inviteeUserId: peerId,
             inviterUserId: params.userId,
             expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
+          })
+          // Ring reaches the invitee (INV-4): user-scoped to their room so every
+          // device rings off one attempt id. Same tx as the invitation insert.
+          const inviter = await UserRepository.findById(client, params.workspaceId, params.userId)
+          await OutboxRepository.insert(client, "call:invitation_created", {
+            workspaceId: params.workspaceId,
+            targetUserId: peerId,
+            attemptId: invitation.id,
+            callId: targetCallId,
+            streamId: params.streamId,
+            inviter: { id: params.userId, name: inviter?.name ?? null },
+            mode: params.mode,
+            expiresAt: invitation.expiresAt.toISOString(),
           })
         }
       }
@@ -222,11 +238,17 @@ export class CallService {
     const live = await CallEndpointRepository.findLiveByParticipant(client, params.workspaceId, participant.id)
     const endpoint = await this.admitEndpoint(client, { params, participant, live, incarnation })
 
-    await CallInvitationRepository.acceptRingingForUser(client, {
+    const accepted = await CallInvitationRepository.acceptRingingForUser(client, {
       workspaceId: params.workspaceId,
       callId: params.callId,
       inviteeUserId: params.userId,
     })
+    // Settle the invitee's ring across their other devices (accept on the phone
+    // clears the laptop) and cancel the ring push. No-op for the creator's own
+    // join (they are the inviter, never an invitee here).
+    for (const invitation of accepted) {
+      await this.emitSettled(client, invitation, "accepted")
+    }
 
     // A join is a membership change: bump the roster version in the same tx as
     // the membership/endpoint writes so the snapshot the gateway reads after
@@ -371,6 +393,7 @@ export class CallService {
       if (!declined) {
         throw new HttpError("Invitation is not ringing", { status: 409, code: "CALL_INVITATION_NOT_ACTIONABLE" })
       }
+      await this.emitSettled(client, declined, "declined")
       return declined
     })
   }
@@ -389,7 +412,27 @@ export class CallService {
       if (!cancelled) {
         throw new HttpError("Invitation is not ringing", { status: 409, code: "CALL_INVITATION_NOT_ACTIONABLE" })
       }
+      await this.emitSettled(client, cancelled, "cancelled")
       return cancelled
+    })
+  }
+
+  /**
+   * User-scoped settle broadcast to the invitee (INV-4): clears the overlay on
+   * every device and cancels the ring push. Emitted in the caller's transaction
+   * on every terminal ring CAS (accept, decline, cancel, expire).
+   */
+  private async emitSettled(
+    client: PoolClient,
+    invitation: CallInvitation,
+    outcome: "accepted" | "declined" | "cancelled" | "expired" | "superseded"
+  ): Promise<void> {
+    await OutboxRepository.insert(client, "call:invitation_settled", {
+      workspaceId: invitation.workspaceId,
+      targetUserId: invitation.inviteeUserId,
+      attemptId: invitation.id,
+      callId: invitation.callId,
+      outcome,
     })
   }
 
@@ -801,11 +844,77 @@ export class CallService {
     })
   }
 
-  /** Sweep: expire `ringing` invitations past their deadline. Returns the count. */
+  /**
+   * Sweep: expire `ringing` invitations past their deadline. Each expiry, in the
+   * same transaction (INV-7): settle the invitee's ring across their devices and
+   * cancel the ring push (`call:invitation_settled` outcome `expired`), and land
+   * a missed-call activity row for the invitee whose `activity:created` the push
+   * handler then delivers under the invitee's normal notification preferences
+   * (structured payload — the frontend formats it, INV-46). Returns the count.
+   */
   async expireStaleRings(now: Date = new Date()): Promise<{ expired: number }> {
     return withTransaction(this.pool, async (client) => {
       const expired = await CallInvitationRepository.expireStaleRings(client, now)
+      for (const invitation of expired) {
+        await this.emitSettled(client, invitation, "expired")
+        await this.recordMissedCall(client, invitation)
+      }
       return { expired: expired.length }
+    })
+  }
+
+  /**
+   * Insert the missed-call activity row for the invitee of an expired ring and
+   * emit its `activity:created` (with the invitee's absolute unread counts, sync
+   * phase 2c) so the badge and push land the same way a mention or DM message
+   * would. The call row supplies the host stream and mode; a missing call/inviter
+   * degrades to a row without those context fields rather than skipping the miss.
+   */
+  private async recordMissedCall(client: PoolClient, invitation: CallInvitation): Promise<void> {
+    const call = await CallRepository.findById(client, invitation.workspaceId, invitation.callId)
+    if (!call) return
+    const inviter = await UserRepository.findById(client, invitation.workspaceId, invitation.inviterUserId)
+    const stream = await StreamRepository.findById(client, call.streamId)
+    const context = {
+      authorName: inviter?.name ?? null,
+      streamName: stream?.displayName ?? stream?.slug ?? null,
+      callId: invitation.callId,
+      mode: call.mode,
+    }
+    const activity = await ActivityRepository.insert(client, {
+      workspaceId: invitation.workspaceId,
+      userId: invitation.inviteeUserId,
+      activityType: ActivityTypes.MISSED_CALL,
+      streamId: call.streamId,
+      messageId: null,
+      actorId: invitation.inviterUserId,
+      actorType: AuthorTypes.USER,
+      context,
+    })
+    if (!activity) return
+    const counts = await ActivityRepository.countUnreadForPairs(client, invitation.workspaceId, [
+      { userId: invitation.inviteeUserId, streamId: call.streamId },
+    ])
+    const pair = counts.get(`${invitation.inviteeUserId}:${call.streamId}`)
+    await OutboxRepository.insert(client, "activity:created", {
+      workspaceId: invitation.workspaceId,
+      targetUserId: invitation.inviteeUserId,
+      counts: {
+        mentionCount: pair?.mentionCount ?? 0,
+        activityCount: pair?.totalCount ?? 0,
+      },
+      activity: {
+        id: activity.id,
+        activityType: activity.activityType,
+        streamId: activity.streamId,
+        messageId: activity.messageId,
+        actorId: activity.actorId,
+        actorType: activity.actorType,
+        context: activity.context,
+        createdAt: activity.createdAt.toISOString(),
+        isSelf: activity.isSelf,
+        emoji: activity.emoji,
+      },
     })
   }
 

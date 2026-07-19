@@ -3,6 +3,7 @@ import { act, render, waitFor } from "@/test"
 import { AuthProvider } from "@/auth"
 import { AccountScopeProvider, useAccountScope, type AccountScopeValue } from "@/auth/account-scope"
 import { hasSeededWorkspaceCache, seedWorkspaceCache } from "@/stores/workspace-store"
+import { addIncomingCall, getIncomingCalls } from "@/stores/incoming-call-store"
 import type { CachedWorkspace } from "@/db"
 
 // PR-4a headline test. Mounts the real AuthProvider + AccountScopeProvider
@@ -160,6 +161,20 @@ describe("AccountScope", () => {
     })
     expect(hasSeededWorkspaceCache("workspace_A")).toBe(true)
 
+    // A live incoming-call ring must not survive an account switch — the store
+    // is registered in flushModuleStoreCaches; this guards that registration.
+    addIncomingCall({
+      attemptId: "callinv_A",
+      callId: "call_A",
+      workspaceId: "workspace_A",
+      streamId: "stream_A",
+      inviterId: "user_A",
+      inviterName: "A",
+      mode: "video",
+      expiresAtMs: Date.now() + 60_000,
+    })
+    expect(getIncomingCalls()).toHaveLength(1)
+
     await act(async () => {
       await scope.switchAccount("workos_B")
     })
@@ -185,6 +200,7 @@ describe("AccountScope", () => {
 
     // Layer 3 — module store cache: flushed on switch.
     expect(hasSeededWorkspaceCache("workspace_A")).toBe(false)
+    expect(getIncomingCalls()).toHaveLength(0)
   })
 
   it("flips a second tab over BroadcastChannel and serves no cross-account data", async () => {
