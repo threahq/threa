@@ -1,4 +1,9 @@
 export { BotRuntimeTransport } from "./transport"
+export {
+  BotSupervisorTransport,
+  type BotSessionRestoredPayload,
+  type BotSupervisorTransportOptions,
+} from "./supervisor"
 export { parseWsHint, buildBotSocketUrl, isObject, type WsHint } from "./ws-hint"
 export type {
   BotWriteAck,

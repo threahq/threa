@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { BotSupervisorTransport } from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
 import { basename } from "node:path"
 import { installBootResume } from "./boot"
@@ -26,7 +27,7 @@ import {
 import { agentWindowExists, attachedTmuxSession, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions } from "./types"
 import { restoreManagedWorktree } from "./worktree"
-import { runWatchLoop, unavailableBackoffMs, watchIntervalMs } from "./watch"
+import { runWatchLoop, unavailableBackoffMs, uniqueSupervisorTargets, watchIntervalMs } from "./watch"
 
 function spawnCommand(options: SpawnOptions): string[] {
   const command = ["threa-harnessd", "spawn", options.runtime, "--name", options.name]
@@ -93,26 +94,68 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
 
 export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   const session = options.tmux ?? "threa-agents"
-  const intervalMs = watchIntervalMs()
+  const reconnectIntervalMs = watchIntervalMs()
+  const claudeConfig = readThreaChannelConfig()
+  const piConfig = readPiRemoteConfig()
+  const targetFor = (config: { baseUrl?: string; workspaceId?: string; apiKey?: string }) => {
+    const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
+    const apiKey = process.env.THREA_API_KEY || config.apiKey
+    if (!workspaceId || !apiKey) return undefined
+    return { baseUrl: configuredThreaBaseUrl(config), workspaceId, apiKey }
+  }
+  const targets = uniqueSupervisorTargets([targetFor(claudeConfig), targetFor(piConfig)])
+  if (targets.length === 0) throw new Error("harnessd: no Threa credentials found for the supervisor socket")
+
+  let reconcileChain = Promise.resolve()
   let unavailablePasses = 0
-  console.log(`harnessd: watching for unarchived sessions every ${intervalMs}ms in tmux '${session}'`)
+  let retryTimer: ReturnType<typeof setTimeout> | undefined
+  const reconcile = (rootStreamId?: string) => {
+    reconcileChain = reconcileChain
+      .then(async () => {
+        ensureTmuxSession(session, true)
+        const unavailable = await resumeActive({ ...options, tmux: session }, rootStreamId)
+        if (!unavailable) {
+          // A targeted restore event must not cancel an outstanding full
+          // reconnect catch-up: another dormant runtime may still need it.
+          if (!rootStreamId) {
+            unavailablePasses = 0
+            if (retryTimer) clearTimeout(retryTimer)
+            retryTimer = undefined
+          }
+          return
+        }
+        unavailablePasses += 1
+        const delayMs = unavailableBackoffMs(reconnectIntervalMs, unavailablePasses)
+        if (retryTimer) clearTimeout(retryTimer)
+        retryTimer = setTimeout(() => {
+          retryTimer = undefined
+          reconcile()
+        }, delayMs)
+        console.warn(`harnessd: reconciliation unavailable; retrying in ${delayMs}ms`)
+      })
+      .catch((error) => {
+        console.error(`harnessd: reconciliation failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+  }
+
+  const transports = targets.map(
+    (target) =>
+      new BotSupervisorTransport({
+        ...target,
+        onReady: () => reconcile(),
+        onSessionRestored: (payload) => reconcile(payload.rootStreamId),
+        log: (message) => console.warn(`harnessd: supervisor socket: ${message}`),
+      })
+  )
+  console.log(`harnessd: listening for unarchived sessions with ${transports.length} supervisor socket(s)`)
   await runWatchLoop({
     runPass: async () => {
-      ensureTmuxSession(session, true)
-      const unavailable = await resumeActive({ ...options, tmux: session })
-      if (!unavailable) {
-        unavailablePasses = 0
-        return intervalMs
-      }
-      unavailablePasses += 1
-      const delayMs = unavailableBackoffMs(intervalMs, unavailablePasses)
-      console.warn(`harnessd: Threa API unavailable; next reconciliation in ${delayMs}ms`)
-      return delayMs
+      await Promise.all(transports.map((transport) => transport.connect()))
     },
     sleep: Bun.sleep,
-    intervalMs,
+    intervalMs: reconnectIntervalMs,
     onError: (error) => {
-      console.error(`harnessd: reconciliation pass failed: ${error instanceof Error ? error.message : String(error)}`)
+      console.error(`harnessd: supervisor connect failed: ${error instanceof Error ? error.message : String(error)}`)
     },
   })
 }
@@ -125,16 +168,16 @@ export function installBootResumeAgent(options: ResumeOptions): void {
   installBootResume(options.tmux ?? "threa-agents")
 }
 
-export async function resumeActive(options: ResumeOptions): Promise<boolean> {
+export async function resumeActive(options: ResumeOptions, rootStreamId?: string): Promise<boolean> {
   output(["tmux", "wait-for", "-L", "harnessd-resume-active"])
   try {
-    return await resumeActiveUnlocked(options)
+    return await resumeActiveUnlocked(options, rootStreamId)
   } finally {
     output(["tmux", "wait-for", "-U", "harnessd-resume-active"], { allowFailure: true })
   }
 }
 
-async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
+async function resumeActiveUnlocked(options: ResumeOptions, rootStreamId?: string): Promise<boolean> {
   const claudeConfig = readThreaChannelConfig()
   const piConfig = readPiRemoteConfig()
   const agents = latestAgents(readInventory())
@@ -172,6 +215,7 @@ async function resumeActiveUnlocked(options: ResumeOptions): Promise<boolean> {
       skip("invalid scratchpad URL")
       continue
     }
+    if (rootStreamId && scratchpad.streamId !== rootStreamId) continue
     const runtimeConfig = agent.runtime === "pi" ? piConfig : claudeConfig
     const workspaceId = process.env.THREA_WORKSPACE_ID || runtimeConfig.workspaceId
     const apiKey = process.env.THREA_API_KEY || runtimeConfig.apiKey

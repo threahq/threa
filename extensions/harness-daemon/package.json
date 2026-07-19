@@ -10,6 +10,9 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@threa/bot-runtime-client": "file:../bot-runtime-client"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5"

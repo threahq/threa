@@ -1,6 +1,21 @@
 const DEFAULT_WATCH_INTERVAL_MS = 60_000
 const MIN_WATCH_INTERVAL_MS = 10_000
 
+export interface SupervisorTarget {
+  baseUrl: string
+  workspaceId: string
+  apiKey: string
+}
+
+export function uniqueSupervisorTargets(targets: Array<SupervisorTarget | undefined>): SupervisorTarget[] {
+  const unique = new Map<string, SupervisorTarget>()
+  for (const target of targets) {
+    if (!target) continue
+    unique.set(`${target.baseUrl}\0${target.workspaceId}\0${target.apiKey}`, target)
+  }
+  return [...unique.values()]
+}
+
 export function watchIntervalMs(value = process.env.THREA_HARNESSD_WATCH_INTERVAL_MS): number {
   if (value === undefined || value.trim() === "") return DEFAULT_WATCH_INTERVAL_MS
   const parsed = Number(value)

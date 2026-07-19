@@ -21,7 +21,7 @@ import {
   piResumeCommand,
 } from "./spawners"
 import type { ManagedAgent } from "./types"
-import { runWatchLoop, unavailableBackoffMs, watchIntervalMs } from "./watch"
+import { runWatchLoop, unavailableBackoffMs, uniqueSupervisorTargets, watchIntervalMs } from "./watch"
 
 afterEach(() => mock.restore())
 
@@ -132,7 +132,12 @@ test("watch loop keeps reconciling after a failed pass", async () => {
   })
 })
 
-test("watch interval is bounded and unavailable passes back off with jitter", () => {
+test("supervisor targets dedupe shared bot credentials", () => {
+  const target = { baseUrl: "https://app.threa.io", workspaceId: "ws_1", apiKey: "key_1" }
+  expect(uniqueSupervisorTargets([target, { ...target }, undefined])).toEqual([target])
+})
+
+test("socket retry interval is bounded and unavailable catch-up backs off with jitter", () => {
   expect(watchIntervalMs("")).toBe(60_000)
   expect(watchIntervalMs("15000")).toBe(15_000)
   expect(() => watchIntervalMs("9999")).toThrow("must be at least 10000")
