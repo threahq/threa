@@ -21,6 +21,12 @@ import { parseArgs } from "util"
 import { $ } from "bun"
 import path from "path"
 import { readdir } from "fs/promises"
+import {
+  classifyStagingOrphans,
+  stagingResourceNames,
+  type StagingReconcilePlan,
+  type StagingResourceNames,
+} from "./staging-pr-lib"
 
 const { values } = parseArgs({
   args: process.argv.slice(2),
@@ -28,26 +34,36 @@ const { values } = parseArgs({
     action: { type: "string" },
     pr: { type: "string" },
     branch: { type: "string" },
+    "dry-run": { type: "boolean" },
   },
 })
 
 const action = values.action
 const prNumber = values.pr
 const branch = values.branch
+const dryRun = values["dry-run"] ?? false
 
-if (!action || !prNumber) {
-  console.error("Usage: --action=deploy|teardown --pr=<number> [--branch=<name>]")
+if (!action) {
+  console.error("Usage: --action=deploy|teardown|reset-db|reconcile --pr=<number> [--branch=<name>] [--dry-run]")
   process.exit(1)
 }
 
-if (!/^\d+$/.test(prNumber)) {
-  console.error("--pr must be a positive integer")
-  process.exit(1)
-}
+// reconcile discovers PR numbers itself, so it takes no --pr/--branch.
+if (action !== "reconcile") {
+  if (!prNumber) {
+    console.error("Usage: --action=deploy|teardown|reset-db --pr=<number> [--branch=<name>]")
+    process.exit(1)
+  }
 
-if ((action === "deploy" || action === "reset-db") && !branch) {
-  console.error("--branch is required for deploy and reset-db actions")
-  process.exit(1)
+  if (!/^\d+$/.test(prNumber)) {
+    console.error("--pr must be a positive integer")
+    process.exit(1)
+  }
+
+  if ((action === "deploy" || action === "reset-db") && !branch) {
+    console.error("--branch is required for deploy and reset-db actions")
+    process.exit(1)
+  }
 }
 
 function requireEnv(name: string): string {
@@ -71,12 +87,10 @@ const CLOUDFLARE_ZONE_ID = requireEnv("CLOUDFLARE_ZONE_ID")
 const STAGING_WORKER_NAME = process.env.STAGING_WORKER_NAME ?? "workspace-router-staging"
 const STAGING_CORS_ORIGINS = process.env.STAGING_CORS_ORIGINS ?? ""
 
-const prDbName = `pr_${prNumber}`
-const prCpDbName = `pr_${prNumber}_cp`
-const regionName = `pr-${prNumber}`
-const serviceName = `pr-${prNumber}-backend`
-/** Flat subdomain: pr-228-staging.threa.io (covered by *.threa.io cert) */
-const prHostname = `pr-${prNumber}-staging.threa.io`
+// Per-PR resource names (pr_N, pr-N, pr-N-backend, pr-N-staging.threa.io) come
+// from stagingResourceNames() in staging-pr-lib.ts so teardown can run for many
+// numbers in one process (reconcile). Flat subdomain pr-N-staging.threa.io is
+// covered by the *.threa.io cert.
 
 // STAGING_DATABASE_URL is the public proxy URL (required so GH Actions runners
 // can reach Postgres for psql/pg_dump). Railway services in the same project
@@ -246,7 +260,7 @@ async function dropDatabase(dbName: string): Promise<void> {
   console.log(`Dropped '${dbName}'`)
 }
 
-async function updateWorkspaceSlug(dbName: string, branchName: string): Promise<void> {
+async function updateWorkspaceSlug(dbName: string, branchName: string, pr: number): Promise<void> {
   const slug = branchName
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")
@@ -254,7 +268,7 @@ async function updateWorkspaceSlug(dbName: string, branchName: string): Promise<
     .replace(/^-|-$/g, "")
     .slice(0, 48)
 
-  const name = `PR #${prNumber}`
+  const name = `PR #${pr}`
 
   console.log(`Updating workspace slug to '${slug}' and name to '${name}'...`)
   await runPsql(
@@ -355,12 +369,8 @@ async function listServices(): Promise<{ id: string; name: string }[]> {
   return data.project.services.edges.map((e) => e.node)
 }
 
-async function railwayServiceExists(): Promise<boolean> {
-  const services = await listServices()
-  return services.some((s) => s.name === serviceName)
-}
-
-async function createRailwayService(): Promise<string> {
+async function createRailwayService(names: StagingResourceNames): Promise<string> {
+  const { serviceName, regionName, prDbName } = names
   console.log(`Creating Railway service '${serviceName}'...`)
 
   let serviceId: string
@@ -445,7 +455,7 @@ async function createRailwayService(): Promise<string> {
   return serviceId
 }
 
-async function deployRailwayService(): Promise<string> {
+async function deployRailwayService(serviceName: string, branch: string): Promise<string> {
   console.log(`Deploying to Railway service '${serviceName}'...`)
 
   const services = await listServices()
@@ -484,7 +494,7 @@ async function deployRailwayService(): Promise<string> {
   return `https://${newDomain.serviceDomainCreate.domain}`
 }
 
-async function deleteRailwayService(): Promise<void> {
+async function deleteRailwayService(serviceName: string): Promise<void> {
   const services = await listServices()
   const service = services.find((s) => s.name === serviceName)
   if (!service) {
@@ -526,7 +536,7 @@ async function kvPut(key: string, value: string): Promise<void> {
  * on the next push. A proper fix would use KV metadata + compare-and-swap or a
  * mutex (e.g. Cloudflare Durable Object lock).
  */
-async function registerRegion(backendUrl: string): Promise<void> {
+async function registerRegion(regionName: string, backendUrl: string): Promise<void> {
   const existing = await kvGet("__regions_config__")
   const regions: Record<string, { apiUrl: string; wsUrl: string }> = existing ? JSON.parse(existing) : {}
 
@@ -579,7 +589,7 @@ async function registerStagingRegion(): Promise<void> {
   console.log(`Registered 'staging' region → ${backendUrl}`)
 }
 
-async function unregisterRegion(): Promise<void> {
+async function unregisterRegion(regionName: string): Promise<void> {
   const existing = await kvGet("__regions_config__")
   if (!existing) return
 
@@ -623,16 +633,16 @@ async function findWorkerRoute(pattern: string): Promise<string | null> {
   return data.result?.find((r) => r.pattern === pattern)?.id ?? null
 }
 
-async function createPrDnsAndRoute(): Promise<void> {
+async function createPrDnsAndRoute(pr: number, prHostname: string): Promise<void> {
   // Create proxied AAAA record for pr-N-staging.threa.io
   const existingDns = await findDnsRecord(prHostname)
   if (!existingDns) {
     const dns = await cfApi("/dns_records", "POST", {
       type: "AAAA",
-      name: `pr-${prNumber}-staging`,
+      name: `pr-${pr}-staging`,
       content: "100::",
       proxied: true,
-      comment: `Staging PR #${prNumber}`,
+      comment: `Staging PR #${pr}`,
     })
     if (!dns.success) {
       throw new Error(`Failed to create DNS record: ${dns.errors?.[0]?.message}`)
@@ -658,7 +668,7 @@ async function createPrDnsAndRoute(): Promise<void> {
   }
 }
 
-async function deletePrDnsAndRoute(): Promise<void> {
+async function deletePrDnsAndRoute(prHostname: string): Promise<void> {
   const routePattern = `${prHostname}/*`
   const routeId = await findWorkerRoute(routePattern)
   if (routeId) {
@@ -678,7 +688,7 @@ async function deletePrDnsAndRoute(): Promise<void> {
  * Used after a DB reset so the backend picks up fresh connections and re-runs
  * migrations against the newly cloned database.
  */
-async function redeployRailwayService(): Promise<void> {
+async function redeployRailwayService(serviceName: string, branch: string): Promise<void> {
   const services = await listServices()
   const service = services.find((s) => s.name === serviceName)
   if (!service) {
@@ -701,8 +711,9 @@ async function redeployRailwayService(): Promise<void> {
   console.log(`Restart triggered — service will reconnect to the fresh database and run pending migrations`)
 }
 
-async function deploy(): Promise<void> {
-  console.log(`\n=== Deploying staging environment for PR #${prNumber} (branch: ${branch}) ===\n`)
+async function deploy(names: StagingResourceNames, branch: string): Promise<void> {
+  const { pr, prDbName, prCpDbName, regionName, serviceName, prHostname } = names
+  console.log(`\n=== Deploying staging environment for PR #${pr} (branch: ${branch}) ===\n`)
 
   // 1. Create and clone databases on first deploy only.
   //    We check pure existence — NOT data integrity. Dropping a live DB to
@@ -718,7 +729,7 @@ async function deploy(): Promise<void> {
       console.log(`Creating and cloning backend database '${prDbName}'...`)
       await runPsqlOnDefault(`CREATE DATABASE "${prDbName}"`)
       await cloneDatabase("staging_main", prDbName)
-      await updateWorkspaceSlug(prDbName, branch!)
+      await updateWorkspaceSlug(prDbName, branch, pr)
     } else {
       console.log(`Backend database '${prDbName}' already exists — skipping clone`)
     }
@@ -741,8 +752,8 @@ async function deploy(): Promise<void> {
   await seedPreExistingMigrations(prDbName, "staging_main", "apps/backend/src/db/migrations")
   await seedPreExistingMigrations(prCpDbName, "staging_main_cp", "apps/control-plane/src/db/migrations")
 
-  await createRailwayService()
-  const backendUrl = await deployRailwayService()
+  await createRailwayService(names)
+  const backendUrl = await deployRailwayService(serviceName, branch)
 
   // 3. Register in Cloudflare KV
   //    - This PR's ephemeral region (pr-N → PR backend URL)
@@ -753,10 +764,10 @@ async function deploy(): Promise<void> {
   //    staging) for all staging traffic, so the per-workspace KV mapping is
   //    unnecessary in staging — and actively harmful, since cloned PR DBs
   //    share workspace IDs with staging_main and would clobber each other.
-  await registerRegion(backendUrl)
+  await registerRegion(regionName, backendUrl)
   await registerStagingRegion()
 
-  await createPrDnsAndRoute()
+  await createPrDnsAndRoute(pr, prHostname)
 
   console.log(`\n=== Staging environment deployed ===`)
   console.log(`Frontend: https://${prHostname}`)
@@ -765,13 +776,14 @@ async function deploy(): Promise<void> {
   console.log(`Database: ${prDbName}`)
 }
 
-async function resetDb(): Promise<void> {
-  console.log(`\n=== Resetting databases for PR #${prNumber} (branch: ${branch}) ===\n`)
+async function resetDb(names: StagingResourceNames, branch: string): Promise<void> {
+  const { pr, prDbName, prCpDbName, serviceName } = names
+  console.log(`\n=== Resetting databases for PR #${pr} (branch: ${branch}) ===\n`)
 
   await dropDatabase(prDbName)
   await runPsqlOnDefault(`CREATE DATABASE "${prDbName}"`)
   await cloneDatabase("staging_main", prDbName)
-  await updateWorkspaceSlug(prDbName, branch!)
+  await updateWorkspaceSlug(prDbName, branch, pr)
 
   await dropDatabase(prCpDbName)
   await runPsqlOnDefault(`CREATE DATABASE "${prCpDbName}"`)
@@ -783,38 +795,237 @@ async function resetDb(): Promise<void> {
 
   // Restart the Railway service so it starts with fresh DB connections and runs
   // any new PR-branch migrations against the restored schema
-  await redeployRailwayService()
+  await redeployRailwayService(serviceName, branch)
 
   console.log(`\n=== Database reset complete ===`)
   console.log(`Backend DB:       ${prDbName} (cloned from staging_main)`)
   console.log(`Control-plane DB: ${prCpDbName} (cloned from staging_main_cp)`)
 }
 
-async function teardown(): Promise<void> {
-  console.log(`\n=== Tearing down staging environment for PR #${prNumber} ===\n`)
+/**
+ * Delete every resource owned by one PR number. Each step is idempotent and
+ * tolerates absence, so it is safe to run for an orphan whose resources were
+ * only partially provisioned (or already hand-deleted). Shared by the CLI
+ * teardown action and the reconcile sweeper.
+ */
+async function teardownResources(names: StagingResourceNames): Promise<void> {
+  const { regionName, prHostname, serviceName, prDbName, prCpDbName } = names
 
-  await unregisterRegion()
+  // KV goes LAST: it is one of reconcile's discovery sources while DNS/route
+  // are not, so removing it first would let a mid-teardown crash strand a
+  // DNS+route-only leftover with no remaining signal to rediscover it by.
+  // A KV entry outliving its DNS/route/service is harmless in the meantime —
+  // nothing routes to the pr-N hostname once the route is gone.
+  await deletePrDnsAndRoute(prHostname)
 
-  await deletePrDnsAndRoute()
-
-  await deleteRailwayService()
+  await deleteRailwayService(serviceName)
 
   await dropDatabase(prDbName)
   await dropDatabase(prCpDbName)
 
+  await unregisterRegion(regionName)
+}
+
+async function teardown(names: StagingResourceNames): Promise<void> {
+  console.log(`\n=== Tearing down staging environment for PR #${names.pr} ===\n`)
+  await teardownResources(names)
   console.log(`\n=== Staging environment torn down ===`)
+}
+
+/**
+ * Sweep orphaned PR staging resources. Event-driven teardown can never be
+ * reliable on its own: a closed-unmerged PR (common in stack shuffles) often
+ * produces NO GitHub workflow run at all, so its resources leak. This discovers
+ * every PR number that owns a matching resource, cross-references the open+
+ * `staging`-labeled PRs, and tears down the rest.
+ *
+ * Fail-hard-before-mutation, twice over. A transport failure on any GitHub
+ * call throws before the first teardown. But a wrong-yet-HTTP-200 answer (the
+ * `staging` label renamed → `labels=staging` returns an empty set) is the
+ * catastrophic case for an unattended nightly sweep, so two structural guards
+ * defend it: the label's existence is asserted up front, and every would-be
+ * orphan is re-verified against the per-PR endpoint (an independent signal)
+ * before ANY deletion — a single open+labeled hit there aborts the whole run
+ * as an endpoint inconsistency.
+ */
+async function reconcile(dryRun: boolean): Promise<void> {
+  const GITHUB_TOKEN = requireEnv("GITHUB_TOKEN")
+  console.log(`\n=== Reconciling staging environments${dryRun ? " (dry-run)" : ""} ===\n`)
+
+  // Discover candidate resources (all read-only).
+  const serviceNames = (await listServices()).map((s) => s.name)
+  const dbNames = (await runPsqlOnDefault("SELECT datname FROM pg_database ORDER BY datname"))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const kvRaw = await kvGet("__regions_config__")
+  const kvRegionKeys = kvRaw ? Object.keys(JSON.parse(kvRaw) as Record<string, unknown>) : []
+
+  await assertStagingLabelExists(GITHUB_TOKEN)
+
+  // Fetch open+labeled PRs. THROWS on any GitHub error — must run before any
+  // teardown so a transient API failure never reads as "everything is orphaned".
+  const openLabeledPrNumbers = await fetchOpenStagingPrs(GITHUB_TOKEN)
+
+  const plan = classifyStagingOrphans({ serviceNames, dbNames, kvRegionKeys, openLabeledPrNumbers })
+  printReconcilePlan(plan, openLabeledPrNumbers, dryRun)
+
+  if (dryRun) {
+    console.log(`\nDry-run — no resources modified.`)
+    return
+  }
+
+  // Second, independent confirmation for EVERY orphan before ANY deletion.
+  for (const orphan of plan.orphans) {
+    await assertOrphanNotOpenLabeled(GITHUB_TOKEN, orphan.pr)
+  }
+
+  const failures: { pr: number; error: string }[] = []
+  for (const orphan of plan.orphans) {
+    console.log(`\n--- Tearing down orphan PR #${orphan.pr} ---`)
+    try {
+      await teardownResources(stagingResourceNames(orphan.pr))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      failures.push({ pr: orphan.pr, error: message })
+      console.error(`Teardown failed for PR #${orphan.pr}: ${message}`)
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error(`\n=== Reconcile finished with ${failures.length} failure(s) ===`)
+    for (const f of failures) console.error(`  PR #${f.pr}: ${f.error}`)
+    process.exit(1)
+  }
+
+  console.log(`\n=== Reconcile complete — ${plan.orphans.length} orphan(s) torn down ===`)
+}
+
+const GITHUB_REPO = "threahq/threa"
+const STAGING_LABEL = "staging"
+
+async function githubGet(token: string, path: string): Promise<Response> {
+  return fetch(`https://api.github.com/repos/${GITHUB_REPO}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "threa-staging-reconcile",
+    },
+  })
+}
+
+/**
+ * The `labels=staging` filter answers `200 []` for a renamed/deleted label —
+ * indistinguishable from "no open staging PRs", which would classify every
+ * live environment as an orphan. Asserting the label itself exists turns that
+ * silent mass-delete into a loud abort.
+ */
+async function assertStagingLabelExists(token: string): Promise<void> {
+  const res = await githubGet(token, `/labels/${STAGING_LABEL}`)
+  if (res.status === 404) {
+    throw new Error(`Label '${STAGING_LABEL}' does not exist on ${GITHUB_REPO} — refusing to reconcile (renamed?)`)
+  }
+  if (!res.ok) {
+    throw new Error(`GitHub label check HTTP ${res.status}: ${(await res.text()).slice(0, 500)}`)
+  }
+}
+
+/**
+ * Open PR numbers carrying the `staging` label. The issues endpoint returns PRs
+ * too (and filters by label server-side); we keep only entries with a
+ * `pull_request` field so plain issues never count. Throws on any non-2xx so
+ * the caller aborts before mutating.
+ */
+async function fetchOpenStagingPrs(token: string): Promise<number[]> {
+  const numbers: number[] = []
+  for (let page = 1; ; page++) {
+    const res = await githubGet(token, `/issues?labels=${STAGING_LABEL}&state=open&per_page=100&page=${page}`)
+    if (!res.ok) {
+      throw new Error(`GitHub API HTTP ${res.status}: ${(await res.text()).slice(0, 500)}`)
+    }
+    const items = (await res.json()) as { number: number; pull_request?: unknown }[]
+    for (const item of items) {
+      if (item.pull_request) numbers.push(item.number)
+    }
+    if (items.length < 100) break
+  }
+  return numbers
+}
+
+/**
+ * Independent second signal before deletion: the per-PR endpoint, not the
+ * label-filtered issues listing. 404 = the number was never a PR (e.g. a
+ * hand-made pr_N experiment DB) — confirmed orphan. An open PR that carries
+ * the staging label here means the issues listing lied (label index lag,
+ * token scoping) — abort the ENTIRE run, trusting neither endpoint. This also
+ * closes the just-labeled-PR race: a deploy triggered seconds ago shows
+ * open+labeled here even if the listing missed it.
+ */
+async function assertOrphanNotOpenLabeled(token: string, pr: number): Promise<void> {
+  const res = await githubGet(token, `/pulls/${pr}`)
+  if (res.status === 404) return
+  if (!res.ok) {
+    throw new Error(`GitHub PR #${pr} check HTTP ${res.status}: ${(await res.text()).slice(0, 500)}`)
+  }
+  const data = (await res.json()) as { state?: string; labels?: { name?: string }[] }
+  const isOpenLabeled = data.state === "open" && (data.labels ?? []).some((l) => l.name === STAGING_LABEL)
+  if (isOpenLabeled) {
+    throw new Error(
+      `PR #${pr} is open with the '${STAGING_LABEL}' label but was classified as an orphan — ` +
+        `endpoint inconsistency, aborting the whole reconcile without deleting anything`
+    )
+  }
+}
+
+function printReconcilePlan(plan: StagingReconcilePlan, openLabeledPrNumbers: number[], dryRun: boolean): void {
+  const resourceList = (c: { hasService: boolean; hasDb: boolean; hasCpDb: boolean; hasKvRegion: boolean }): string => {
+    const parts: string[] = []
+    if (c.hasService) parts.push("service")
+    if (c.hasDb) parts.push("db")
+    if (c.hasCpDb) parts.push("cp-db")
+    if (c.hasKvRegion) parts.push("kv-region")
+    return parts.join(", ") || "(none)"
+  }
+
+  const sortedOpen = [...openLabeledPrNumbers].sort((a, b) => a - b)
+  console.log(`Open+labeled staging PRs (${sortedOpen.length}): ${sortedOpen.join(", ") || "(none)"}`)
+  console.log(`\nClassification:`)
+  for (const c of plan.keep) {
+    console.log(`  KEEP  PR #${c.pr} — open+labeled — resources: ${resourceList(c)}`)
+  }
+  for (const c of plan.orphans) {
+    console.log(`  ORPHAN PR #${c.pr} — not open+labeled — resources: ${resourceList(c)}`)
+  }
+
+  if (plan.orphans.length === 0) {
+    console.log(`\nNo orphans found.`)
+    return
+  }
+
+  console.log(`\n${dryRun ? "Would tear down" : "Tearing down"} ${plan.orphans.length} orphan(s):`)
+  for (const c of plan.orphans) {
+    const names = stagingResourceNames(c.pr)
+    console.log(
+      `  PR #${c.pr}: unregister KV '${names.regionName}', delete DNS+route '${names.prHostname}', ` +
+        `delete service '${names.serviceName}', drop DB '${names.prDbName}' + '${names.prCpDbName}'`
+    )
+  }
 }
 
 async function main() {
   switch (action) {
     case "deploy":
-      await deploy()
+      await deploy(stagingResourceNames(Number(prNumber)), branch!)
       break
     case "teardown":
-      await teardown()
+      await teardown(stagingResourceNames(Number(prNumber)))
       break
     case "reset-db":
-      await resetDb()
+      await resetDb(stagingResourceNames(Number(prNumber)), branch!)
+      break
+    case "reconcile":
+      await reconcile(dryRun)
       break
     default:
       console.error(`Unknown action: ${action}`)
