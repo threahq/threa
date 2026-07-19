@@ -306,6 +306,22 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(screen.getByLabelText("Quick switcher input")).toBeInTheDocument()
     })
 
+    it("excludes archived streams from the default palette (they persist in the cache)", () => {
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        {
+          ...(mockStreamsList[0] as object),
+          id: "stream_archived_qs",
+          slug: "archived-qs",
+          displayName: "Archived QS Channel",
+          archivedAt: "2026-03-01T00:00:00.000Z",
+        },
+      ]
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      expect(screen.queryByText("Archived QS Channel")).not.toBeInTheDocument()
+    })
+
     it("should not render dialog content when open=false", () => {
       renderWithProviders(<QuickSwitcher {...defaultProps} open={false} />)
 

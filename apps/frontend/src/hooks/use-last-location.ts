@@ -33,9 +33,15 @@ interface UseLastLocationResult {
  */
 export function useLastLocation(workspaceId: string): UseLastLocationResult {
   const { user } = useAuth()
-  const streams = useWorkspaceStreams(workspaceId)
+  const allStreams = useWorkspaceStreams(workspaceId)
 
   const result = useMemo(() => {
+    // The stream cache durably holds archived rows (archived-stream index).
+    // They must not count as landing targets: archiving bumps updated_at, so an
+    // unfiltered most-recent fallback would redirect a fresh device INTO the
+    // most-recently-archived stream, and a workspace whose only streams are
+    // archived must still land on the fresh-start state.
+    const streams = allStreams.filter((s) => !s.archivedAt)
     const record = user ? getLastLocation(user.id, workspaceId) : null
 
     if (record?.surface === "board" && record.board) {
@@ -53,7 +59,10 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
 
     const storedId = record?.streamId ?? null
     if (storedId) {
-      const stillExists = streams.some((s) => s.id === storedId)
+      // Deliberately checked against ALL rows: a stored pointer to a stream
+      // archived since the last visit is still viewable, so honor it rather
+      // than evicting the record. Only the fallbacks below exclude archived.
+      const stillExists = allStreams.some((s) => s.id === storedId)
       if (stillExists) {
         return {
           redirectStreamId: storedId,
@@ -85,7 +94,7 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
       shouldOpenSidebar: true,
       staleStoredId: false,
     }
-  }, [user, workspaceId, streams])
+  }, [user, workspaceId, allStreams])
 
   useEffect(() => {
     if (result.staleStoredId && user) {

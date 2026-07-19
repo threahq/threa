@@ -431,7 +431,9 @@ export function mergeReconnectWorkspaceBootstrap({
 
   for (const streamId of staleStreamIds) {
     const localStream = localStreamById.get(streamId)
-    if (localStream) {
+    // Same archived guard as the locally-fresher loop above: archived rows
+    // persist in db.streams now, and this list must stay active-only.
+    if (localStream && !localStream.archivedAt) {
       streamsById.set(streamId, toWorkspaceBootstrapStream(localStream))
     }
 
@@ -2544,7 +2546,14 @@ export async function applyReconnectBootstrapBatch(
       })),
       // Mirrors applyWorkspaceBootstrap: archived roots ride the seed so the
       // first paint after reconnect knows they're archived (no draft flash).
-      ...mapArchivedStreamRows(finalBootstrap.archivedStreams ?? [], new Map(localStreams.map((s) => [s.id, s])), now),
+      // An archived stream open during reconnect can also land in the merged
+      // streams list via its per-stream bootstrap — skip those ids so the seed
+      // never carries duplicates.
+      ...mapArchivedStreamRows(
+        (finalBootstrap.archivedStreams ?? []).filter((s) => !finalBootstrap.streams.some((a) => a.id === s.id)),
+        new Map(localStreams.map((s) => [s.id, s])),
+        now
+      ),
     ],
     memberships: finalBootstrap.streamMemberships.map((membership) => ({
       ...membership,

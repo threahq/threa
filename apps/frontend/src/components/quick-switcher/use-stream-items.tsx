@@ -141,8 +141,11 @@ export function useStreamItems(context: ModeContext): ModeResult {
     const dmPeerByStreamId = new Map((dmPeers ?? []).map((peer) => [peer.streamId, peer.userId]))
 
     // Active streams are CachedStream (with lastMessagePreview), archived come from API as Stream.
+    // The stream cache durably holds archived rows (archived-stream index), so
+    // the active palette must exclude them — archived is its own gated surface
+    // below, and letting both in would double-list every archived stream.
     const allStreams: StreamLike[] = [
-      ...(showActive ? activeStreams : []),
+      ...(showActive ? activeStreams.filter((s) => !s.archivedAt) : []),
       ...(showArchived && archivedStreams ? archivedStreams : []),
     ]
 
