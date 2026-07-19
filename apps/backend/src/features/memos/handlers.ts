@@ -6,6 +6,7 @@ import { HttpError } from "../../lib/errors"
 import { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE_MAX_CHARS } from "./config"
 import { resolveUserAccessibleStreamIds, SearchRepository } from "../search"
 import { computeAgentAccessSpec } from "../agents"
+import { setAuditSubjects } from "../access-log"
 import { StreamRepository } from "../streams"
 import type { MemoExplorerDetail, MemoExplorerResult, MemoExplorerService } from "./explorer-service"
 import type { Memo } from "./repository"
@@ -179,6 +180,11 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         limit,
       })
 
+      setAuditSubjects(
+        res,
+        results.map((r) => ({ type: "memo", id: r.memo.id }))
+      )
+
       res.json({ results: results.map(serializeMemoResult) })
     },
 
@@ -200,6 +206,7 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }
 
+      setAuditSubjects(res, [{ type: "memo", id: memoId }])
       res.json({ memo: serializeMemoDetail(memo) })
     },
 

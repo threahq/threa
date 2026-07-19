@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { SyncCatchUpResponse } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import { permissionGroupsForRole } from "../../lib/outbox"
+import { setAuditSubjects } from "../access-log"
 import type { SyncService } from "./service"
 
 const catchUpQuerySchema = z.object({
@@ -35,6 +36,10 @@ export function createSyncHandlers({ syncService }: Dependencies) {
         after: BigInt(parsed.data.after),
         limit: parsed.data.limit,
       })
+
+      setAuditSubjects(res, [
+        { type: "workspace", id: workspaceId, fromSync: parsed.data.after, toSync: head.toString() },
+      ])
 
       res.json({
         entries: entries.map((entry) => ({

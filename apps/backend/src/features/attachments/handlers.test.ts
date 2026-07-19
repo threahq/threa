@@ -10,7 +10,7 @@ import { AttachmentRepository, type AttachmentSearchRow } from "./repository"
 import { VideoTranscodeJobRepository } from "./video"
 
 function createResponse() {
-  const res: any = {}
+  const res: any = { locals: {} }
   res.status = mock((code: number) => {
     res.statusCode = code
     return res
@@ -767,6 +767,7 @@ function createStreamingResponse() {
   })
   res.statusCode = 200
   res.headersSent = false
+  res.locals = {}
   res.headers = {} as Record<string, string>
   res.set = mock((name: string, value: string) => {
     res.headers[name.toLowerCase()] = value

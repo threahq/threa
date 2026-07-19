@@ -4,6 +4,7 @@ import type { ConversationService } from "./service"
 import type { BoundaryExtractionService } from "./boundary-extraction-service"
 import type { BoardExclusionService } from "./board-exclusion-service"
 import type { StreamService } from "../streams"
+import { setAuditSubjects } from "../access-log"
 import {
   CONVERSATION_STATUSES,
   ConversationStatuses,
@@ -226,6 +227,10 @@ export function createConversationHandlers({
       // validateStreamAccess handles public visibility + thread root membership
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
+      setAuditSubjects(res, [
+        { type: "conversation", id: conversationId },
+        { type: "stream", id: conversation.streamId },
+      ])
       res.json({ conversation })
     },
 
@@ -243,6 +248,10 @@ export function createConversationHandlers({
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
       const messages = await conversationService.getMessages(conversationId)
+      setAuditSubjects(res, [
+        { type: "conversation", id: conversationId },
+        { type: "stream", id: conversation.streamId },
+      ])
       res.json({ messages })
     },
 
@@ -265,6 +274,10 @@ export function createConversationHandlers({
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
       const messages = await conversationService.getBoardMessages(workspaceId, conversationId)
+      setAuditSubjects(res, [
+        { type: "conversation", id: conversationId },
+        { type: "stream", id: conversation.streamId },
+      ])
       res.json({ messages })
     },
 
@@ -292,6 +305,10 @@ export function createConversationHandlers({
       if (!post) {
         return res.status(404).json({ error: "Conversation not found" })
       }
+      setAuditSubjects(res, [
+        { type: "conversation", id: conversationId },
+        { type: "stream", id: conversation.streamId },
+      ])
       res.json({ post })
     },
 

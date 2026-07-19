@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
+import { setAuditSubjects } from "../access-log"
 import { isValidIanaTimezone } from "../../lib/temporal"
 import type { WorkspaceService } from "./service"
 import type { StreamService } from "../streams"
@@ -150,6 +151,7 @@ export function createWorkspaceHandlers({
     async bootstrap(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
+      setAuditSubjects(res, [{ type: "workspace", id: workspaceId }])
 
       // Read the sync-log head BEFORE the snapshot queries below: every
       // projection then observes a DB state at or after this read, so the
