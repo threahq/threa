@@ -45,7 +45,7 @@ const ReposSchema = z
 export type ReposInput = z.infer<typeof ReposSchema>
 
 async function listRepos(deps: GitHubToolDeps): Promise<AgentToolResult> {
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, undefined, async (client) => {
     const repos: any[] = []
     let page = 1
     for (;;) {
@@ -79,7 +79,7 @@ async function listRepos(deps: GitHubToolDeps): Promise<AgentToolResult> {
 }
 
 async function listBranches(deps: GitHubToolDeps, input: ReposInput): Promise<AgentToolResult> {
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const response = await client.request<any[]>("GET /repos/{owner}/{repo}/branches", {
       owner: input.owner,
       repo: input.repo,

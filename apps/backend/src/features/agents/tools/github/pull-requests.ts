@@ -58,7 +58,7 @@ export type PullsInput = z.infer<typeof PullsSchema>
 
 async function listPullRequests(deps: GitHubToolDeps, input: PullsInput): Promise<AgentToolResult> {
   const perPage = input.perPage ?? 20
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const response = await client.request<any[]>("GET /repos/{owner}/{repo}/pulls", {
       owner: input.owner,
       repo: input.repo,
@@ -111,7 +111,7 @@ async function listPullRequests(deps: GitHubToolDeps, input: PullsInput): Promis
 }
 
 async function getPullRequest(deps: GitHubToolDeps, input: PullsInput): Promise<AgentToolResult> {
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const [pull, reviews, commits] = await Promise.all([
       client.request<any>("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
         owner: input.owner,
@@ -194,7 +194,7 @@ async function getPullRequest(deps: GitHubToolDeps, input: PullsInput): Promise<
 
 async function listPrFiles(deps: GitHubToolDeps, input: PullsInput): Promise<AgentToolResult> {
   const perPage = input.perPage ?? 30
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const response = await client.request<any[]>("GET /repos/{owner}/{repo}/pulls/{pull_number}/files", {
       owner: input.owner,
       repo: input.repo,

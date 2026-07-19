@@ -39,7 +39,7 @@ export async function fetchGitHubPreview(
   const parsed = parseGitHubUrl(url)
   if (!parsed) return null
 
-  const client = await workspaceIntegrationService.getGithubClient(workspaceId)
+  const client = await workspaceIntegrationService.getGithubClient(workspaceId, { repoOwner: parsed.owner })
   if (!client) return null
 
   try {
@@ -92,7 +92,7 @@ export async function checkGitHubRefreshGate(
   const parsed = parseGitHubUrl(url)
   if (!parsed) return { outcome: "unavailable" }
 
-  const client = await workspaceIntegrationService.getGithubClient(workspaceId)
+  const client = await workspaceIntegrationService.getGithubClient(workspaceId, { repoOwner: parsed.owner })
   if (!client) return { outcome: "unavailable" }
 
   const gate = gateRequestFor(parsed)

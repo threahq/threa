@@ -68,7 +68,7 @@ async function listWorkflowRuns(deps: GitHubToolDeps, input: WorkflowsInput): Pr
     ? "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs"
     : "GET /repos/{owner}/{repo}/actions/runs"
 
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const response = await client.request<any>(route, {
       owner: input.owner,
       repo: input.repo,
@@ -119,7 +119,7 @@ async function listWorkflowRuns(deps: GitHubToolDeps, input: WorkflowsInput): Pr
 }
 
 async function getWorkflowRun(deps: GitHubToolDeps, input: WorkflowsInput): Promise<AgentToolResult> {
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const [run, jobsResponse] = await Promise.all([
       client.request<any>("GET /repos/{owner}/{repo}/actions/runs/{run_id}", {
         owner: input.owner,

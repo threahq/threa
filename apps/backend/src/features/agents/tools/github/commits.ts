@@ -48,7 +48,7 @@ const CommitsSchema = z
 export type CommitsInput = z.infer<typeof CommitsSchema>
 
 async function listCommits(deps: GitHubToolDeps, input: CommitsInput): Promise<AgentToolResult> {
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const response = await client.request<any[]>("GET /repos/{owner}/{repo}/commits", {
       owner: input.owner,
       repo: input.repo,
@@ -95,7 +95,7 @@ async function listCommits(deps: GitHubToolDeps, input: CommitsInput): Promise<A
 }
 
 async function getCommit(deps: GitHubToolDeps, input: CommitsInput): Promise<AgentToolResult> {
-  const result = await withGithubClient(deps, async (client) => {
+  const result = await withGithubClient(deps, input.owner, async (client) => {
     const commit = await client.request<any>("GET /repos/{owner}/{repo}/commits/{ref}", {
       owner: input.owner,
       repo: input.repo,

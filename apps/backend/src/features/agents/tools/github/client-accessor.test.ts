@@ -69,6 +69,47 @@ describe("createMemoizedGithubClient", () => {
     expect(result).toBe(client)
     expect(calls.length).toBe(2)
   })
+
+  it("memoizes per owner (case-insensitively) and passes repoOwner to the service", async () => {
+    const seenOwners: Array<string | undefined> = []
+    const client = { request: async () => null } as unknown as GitHubClient
+    const service = {
+      getGithubClient: async (_workspaceId: string, options?: { repoOwner?: string }) => {
+        seenOwners.push(options?.repoOwner)
+        return client
+      },
+    } as unknown as WorkspaceIntegrationService
+    const getClient = createMemoizedGithubClient(service, "ws_1")
+
+    await getClient("Acme")
+    await getClient("acme")
+    await getClient("other-org")
+
+    expect(seenOwners).toEqual(["Acme", "other-org"])
+  })
+
+  it("clears only the rejected owner's entry, leaving other owners cached", async () => {
+    const callsByOwner = new Map<string, number>()
+    const client = { request: async () => null } as unknown as GitHubClient
+    const service = {
+      getGithubClient: async (_workspaceId: string, options?: { repoOwner?: string }) => {
+        const owner = options?.repoOwner ?? ""
+        const count = (callsByOwner.get(owner) ?? 0) + 1
+        callsByOwner.set(owner, count)
+        if (owner === "flaky" && count === 1) throw new Error("transient DB hiccup")
+        return client
+      },
+    } as unknown as WorkspaceIntegrationService
+    const getClient = createMemoizedGithubClient(service, "ws_1")
+
+    expect(await getClient("stable")).toBe(client)
+    await expect(getClient("flaky")).rejects.toThrow("transient DB hiccup")
+    expect(await getClient("flaky")).toBe(client)
+    expect(await getClient("stable")).toBe(client)
+
+    expect(callsByOwner.get("stable")).toBe(1)
+    expect(callsByOwner.get("flaky")).toBe(2)
+  })
 })
 
 describe("withGithubClient", () => {
@@ -79,7 +120,7 @@ describe("withGithubClient", () => {
         throw new Error("pool: no available connections")
       },
     }
-    const result = await withGithubClient(deps, async () => "unreachable")
+    const result = await withGithubClient(deps, undefined, async () => "unreachable")
     expect(result).toEqual({
       error: "GitHub request failed: pool: no available connections",
       code: "GITHUB_REQUEST_FAILED",
@@ -88,7 +129,21 @@ describe("withGithubClient", () => {
 
   it("returns GITHUB_NOT_CONNECTED when getClient resolves to null", async () => {
     const deps = { workspaceId: "ws_1", getClient: async () => null }
-    const result = await withGithubClient(deps, async () => "unreachable")
+    const result = await withGithubClient(deps, undefined, async () => "unreachable")
     expect(result).toMatchObject({ code: "GITHUB_NOT_CONNECTED" })
+  })
+
+  it("threads the owner through to getClient so the service can route by installation", async () => {
+    let receivedOwner: string | undefined = "unset"
+    const client = { request: async () => null } as unknown as GitHubClient
+    const deps = {
+      workspaceId: "ws_1",
+      getClient: async (owner?: string) => {
+        receivedOwner = owner
+        return client
+      },
+    }
+    await withGithubClient(deps, "kristofferremback", async () => "ok")
+    expect(receivedOwner).toBe("kristofferremback")
   })
 })
