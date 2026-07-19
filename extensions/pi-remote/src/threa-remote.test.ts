@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
-import { __testing } from "./threa-remote"
+import threaRemote, { __testing } from "./threa-remote"
 
 describe("Pi remote trace safety", () => {
   test("omits sensitive bash command arguments from tool_call traces", () => {
@@ -847,6 +847,78 @@ describe("buildPersistedConfig", () => {
       {} as never
     )
     expect(result.streamCursors).toBeUndefined()
+  })
+})
+
+describe("session-scoped lifecycle isolation", () => {
+  afterEach(() => {
+    __testing.clearPendingForTesting()
+    __testing.setConfigForTesting(undefined)
+  })
+
+  test("child shutdown preserves the parent claim while parent shutdown clears it", async () => {
+    const shutdownHandlers: Array<(event: unknown, ctx: unknown) => Promise<void>> = []
+    threaRemote({
+      registerCommand: () => {},
+      on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => {
+        if (event === "session_shutdown") shutdownHandlers.push(handler)
+      },
+    } as never)
+    const shutdown = shutdownHandlers[0]
+    expect(shutdown).toBeDefined()
+
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        parent: {
+          enabled: true,
+          instanceId: "pi-parent",
+          runtimeSessionId: "parent",
+          activeStreamId: "stream_a",
+        },
+      },
+    })
+    __testing.beginPendingInvocation({
+      id: "binv_parent",
+      activeStreamId: "stream_a",
+      sourceMessageId: "msg_1",
+      promptMarkdown: "run workflow",
+      claimToken: "claim_1",
+      claimedInstanceId: "pi-parent",
+      claimExpiresAt: null,
+    } as never)
+
+    const requests: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      requests.push(String(input))
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+    const context = (sessionId: string) =>
+      ({
+        sessionManager: { getSessionId: () => sessionId },
+        ui: { setStatus: () => {}, notify: () => {} },
+      }) as never
+
+    try {
+      await shutdown({ reason: "quit" }, context("workflow-child"))
+      expect({ claimActive: __testing.claimRenewTimerActive(), requestCount: requests.length }).toEqual({
+        claimActive: true,
+        requestCount: 0,
+      })
+
+      await shutdown({ reason: "quit" }, context("parent"))
+      expect({ claimActive: __testing.claimRenewTimerActive(), madeRequests: requests.length > 0 }).toEqual({
+        claimActive: false,
+        madeRequests: true,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 })
 
