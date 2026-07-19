@@ -23,6 +23,17 @@ const MATRICES = [
 
 const here = new URL(".", import.meta.url).pathname
 
+// Ctrl-C must reach the running matrix (which kills ITS spawned backends via the
+// harness signal teardown) before this parent dies, or backends orphan two levels
+// deep and their global sweepers keep reaping threa_test.
+let currentChild: ReturnType<typeof Bun.spawn> | null = null
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    currentChild?.kill(sig === "SIGINT" ? 2 : 15)
+    setTimeout(() => process.exit(sig === "SIGINT" ? 130 : 143), 1_500)
+  })
+}
+
 async function runOne(file: string): Promise<MatrixResult> {
   const started = Date.now()
   const proc = Bun.spawn(["bun", `${here}${file}`], {
@@ -30,6 +41,7 @@ async function runOne(file: string): Promise<MatrixResult> {
     stdout: "pipe",
     stderr: "pipe",
   })
+  currentChild = proc
   const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
   await proc.exited
   const parsed = parseResultLine(out)

@@ -28,7 +28,7 @@ import { spawn, type Subprocess } from "bun"
 import * as net from "net"
 import { Pool } from "pg"
 import { io, type Socket } from "socket.io-client"
-import { createDatabasePool } from "../../src/db"
+import { createDatabasePool, withTransaction } from "../../src/db"
 import { createMigrator } from "../../src/db/migrations"
 import { workspaceId as newWorkspaceId, userId as newUserId, streamId as newStreamId } from "../../src/lib/id"
 import { WorkspaceRepository } from "../../src/features/workspaces/repository"
@@ -44,6 +44,28 @@ export { ENDPOINT_LEASE_TTL_MS, EMPTY_GRACE_MS }
 
 export const DB_URL = process.env.CALLS_SPIKE_DB_URL ?? "postgresql://threa:threa@localhost:5454/threa_test"
 const VERBOSE = process.env.CALLS_SPIKE_VERBOSE === "1"
+
+// A Ctrl-C without teardown would orphan spawned backends whose GLOBAL 15s
+// sweeper keeps reaping lapsed endpoints across all of threa_test — including a
+// co-resident dev stack's live calls. Kill every registered child before dying.
+const spawnedProcs = new Set<Subprocess>()
+let signalHandlersInstalled = false
+function installSignalTeardown() {
+  if (signalHandlersInstalled) return
+  signalHandlersInstalled = true
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.on(sig, () => {
+      for (const p of spawnedProcs) {
+        try {
+          p.kill(9)
+        } catch {
+          // already dead
+        }
+      }
+      process.exit(sig === "SIGINT" ? 130 : 143)
+    })
+  }
+}
 
 // ── ports ──────────────────────────────────────────────────────────────────
 
@@ -170,12 +192,15 @@ export async function startInstance(opts: {
     S3_ENDPOINT: "http://localhost:9099",
   }
 
+  installSignalTeardown()
   const proc = spawn(["bun", "apps/backend/src/index.ts"], {
     cwd: process.cwd(),
     env,
     stdout: VERBOSE ? "inherit" : "ignore",
     stderr: VERBOSE ? "inherit" : "ignore",
   })
+  spawnedProcs.add(proc)
+  void proc.exited.finally(() => spawnedProcs.delete(proc))
 
   const url = `http://localhost:${port}`
   const deadline = Date.now() + 60_000
@@ -228,7 +253,7 @@ function sessionCookie(workosUserId: string): string {
 }
 
 async function seedWorkspaceAndUsers(
-  pool: Pool,
+  client: import("pg").PoolClient,
   userCount: number,
   tag: string
 ): Promise<{ wsId: string; users: SeedUser[] }> {
@@ -241,14 +266,14 @@ async function seedWorkspaceAndUsers(
     const workosUserId = `workos_test_${tag}_${rand}_u${i}`
     users.push({ id, workosUserId, cookie: sessionCookie(workosUserId) })
   }
-  await WorkspaceRepository.insert(pool, {
+  await WorkspaceRepository.insert(client, {
     id: wsId,
     name: `calls-spike ${tag} ${rand}`,
     slug: `calls-spike-${tag}-${rand}`,
     createdBy: users[0].id,
   })
   for (let i = 0; i < users.length; i++) {
-    await UserRepository.insert(pool, {
+    await UserRepository.insert(client, {
       id: users[i].id,
       workspaceId: wsId,
       workosUserId: users[i].workosUserId,
@@ -259,38 +284,47 @@ async function seedWorkspaceAndUsers(
     })
   }
   // Enable the calls feature for this workspace (REST + gateway gate on it).
-  await WorkspaceSettingsRepository.setOverride(pool, wsId, "callsEnabled", true)
+  await WorkspaceSettingsRepository.setOverride(client, wsId, "callsEnabled", true)
   return { wsId, users }
 }
 
-/** Seed a workspace with a PUBLIC channel + `userCount` members. Public ⇒ every member has access without a membership row. */
+/**
+ * Seed a workspace with a PUBLIC channel + `userCount` members. Public ⇒ every
+ * member has access without a membership row. The whole seed is ONE transaction:
+ * a mid-seed failure must not commit partial rows the matrices' `if (wsId)
+ * cleanup` guard would never see.
+ */
 export async function seedChannel(pool: Pool, userCount: number, tag: string): Promise<SeedContext> {
-  const { wsId, users } = await seedWorkspaceAndUsers(pool, userCount, tag)
-  const sId = newStreamId()
-  await StreamRepository.insert(pool, {
-    id: sId,
-    workspaceId: wsId,
-    type: "channel",
-    slug: `spike-${tag}-${Math.random().toString(36).slice(2, 7)}`,
-    visibility: "public",
-    createdBy: users[0].id,
+  return withTransaction(pool, async (client) => {
+    const { wsId, users } = await seedWorkspaceAndUsers(client, userCount, tag)
+    const sId = newStreamId()
+    await StreamRepository.insert(client, {
+      id: sId,
+      workspaceId: wsId,
+      type: "channel",
+      slug: `spike-${tag}-${Math.random().toString(36).slice(2, 7)}`,
+      visibility: "public",
+      createdBy: users[0].id,
+    })
+    return { workspaceId: wsId, streamId: sId, users }
   })
-  return { workspaceId: wsId, streamId: sId, users }
 }
 
-/** Seed a workspace with a DM stream between exactly two members. */
+/** Seed a workspace with a DM stream between exactly two members. One transaction, same rationale as seedChannel. */
 export async function seedDm(pool: Pool, tag: string): Promise<SeedContext> {
-  const { wsId, users } = await seedWorkspaceAndUsers(pool, 2, tag)
-  const sId = newStreamId()
-  await StreamRepository.insert(pool, {
-    id: sId,
-    workspaceId: wsId,
-    type: "dm",
-    visibility: "private",
-    createdBy: users[0].id,
+  return withTransaction(pool, async (client) => {
+    const { wsId, users } = await seedWorkspaceAndUsers(client, 2, tag)
+    const sId = newStreamId()
+    await StreamRepository.insert(client, {
+      id: sId,
+      workspaceId: wsId,
+      type: "dm",
+      visibility: "private",
+      createdBy: users[0].id,
+    })
+    await StreamMemberRepository.insertMany(client, sId, [users[0].id, users[1].id])
+    return { workspaceId: wsId, streamId: sId, users }
   })
-  await StreamMemberRepository.insertMany(pool, sId, [users[0].id, users[1].id])
-  return { workspaceId: wsId, streamId: sId, users }
 }
 
 /** Delete every row this run created for a workspace, so threa_test is never wedged for the next run. */
