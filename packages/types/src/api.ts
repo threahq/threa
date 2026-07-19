@@ -1616,6 +1616,16 @@ export interface WorkspaceBootstrap {
    * cached before this field shipped omit it (absent reads as empty).
    */
   activeAgentSessions?: ActiveAgentSession[]
+  /**
+   * Archived root streams visible to the viewer, as slim `Stream` rows (no
+   * previews). Archived roots are pruned from `streams`, but the client must
+   * retain knowledge of archival across reloads: drafts filters hide
+   * archived-stream drafts, and Saved/Activity resolve stream names from this
+   * set once the active list no longer carries the row. Access-scoped and
+   * workspace-scoped like `streams`. Optional: payloads cached before this
+   * field shipped omit it (absent reads as empty).
+   */
+  archivedStreams?: Stream[]
 }
 
 /**
