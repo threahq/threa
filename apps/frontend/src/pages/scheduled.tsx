@@ -65,9 +65,7 @@ function ScheduledPageInner({ workspaceId, tab }: InnerProps) {
   }
 
   const handleSendNow = (id: string) => {
-    sendNowMutation.mutate(id, {
-      onError: (err: Error) => toast.error(err.message || "Could not send"),
-    })
+    sendNowMutation.mutate(id)
   }
 
   const handleEdit = (id: string) => {

@@ -1,4 +1,5 @@
 import { useMemo } from "react"
+import { toast } from "sonner"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { serializeToMarkdown } from "@threa/prosemirror"
@@ -9,6 +10,7 @@ import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useBatchedValue } from "@/stores/apply-window"
 import { db, type CachedScheduledMessage } from "@/db"
 import { enqueueOperation } from "@/sync/operation-queue"
+import { isPermanentApiError } from "@/api"
 import type {
   ScheduledMessageView,
   ScheduledMessageStatus,
@@ -368,11 +370,14 @@ export function useCancelScheduled(workspaceId: string) {
     mutationFn: async (id: string) => {
       try {
         await scheduledService.delete(workspaceId, id)
-      } catch {
+      } catch (err) {
         // Local placeholder rows have no server-side counterpart — just
         // dropping the placeholder is enough; the schedule op may still be
         // queued and will be a no-op for a row the user already cancelled.
-        if (!isLocalScheduledId(id)) {
+        // A permanent 4xx (already sent/gone) is equally final: the optimistic
+        // removal already matches server truth, so enqueueing would only
+        // replay a request the server will refuse forever.
+        if (!isLocalScheduledId(id) && !isPermanentApiError(err)) {
           await enqueueOperation(workspaceId, "cancel_scheduled_message", { id })
           syncEngine.kickOperationQueue()
         }
@@ -449,8 +454,15 @@ export function useSendScheduledNow(workspaceId: string) {
         return await scheduledService.sendNow(workspaceId, id)
       } catch (err) {
         if (!isLocalScheduledId(id)) {
-          await enqueueOperation(workspaceId, "send_scheduled_now", { id })
-          syncEngine.kickOperationQueue()
+          if (isPermanentApiError(err)) {
+            // Already sent/cancelled/deleted server-side: retrying can never
+            // succeed. Evict the stale local row so the UI stops offering the
+            // action; the caller's onError toasts the reason.
+            await removeScheduledRow(id)
+          } else {
+            await enqueueOperation(workspaceId, "send_scheduled_now", { id })
+            syncEngine.kickOperationQueue()
+          }
         }
         throw err
       }
@@ -461,5 +473,11 @@ export function useSendScheduledNow(workspaceId: string) {
         queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
       }
     },
+    // Hook-level so every surface gets failure feedback (INV-63) — the
+    // composer picker calls mutate() bare, and the permanent-4xx path above
+    // makes the row vanish, which would otherwise read as success. `||` not
+    // `??`: Error.message is typed string, so an empty message must also
+    // fall through to the human label.
+    onError: (err: Error) => toast.error(err.message || "Could not send"),
   })
 }

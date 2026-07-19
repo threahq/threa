@@ -14,6 +14,23 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * A 4xx verdict the server will keep returning no matter how many times the
+ * same request is replayed (excluding 408 timeout and 429 rate-limit, which
+ * are transient). Offline-replay and retry paths must treat these as
+ * terminal: drop the operation and reconcile local state to the server's
+ * answer instead of retrying.
+ */
+export function isPermanentApiError(error: unknown): error is ApiError {
+  return (
+    ApiError.isApiError(error) &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 408 &&
+    error.status !== 429
+  )
+}
+
 // Canonical error shape emitted by the backend's `errorHandler` middleware
 // (packages/backend-common/src/middleware/error-handler.ts) and matched by
 // inline handler responses: `{ error: "<message>", code?: "<CODE>" }`.

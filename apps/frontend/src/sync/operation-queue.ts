@@ -1,8 +1,8 @@
 import { db, sequenceToNum } from "@/db"
 import type { CachedEvent, PendingOperation } from "@/db/database"
 import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView } from "@threa/types"
-import { ApiError, commandsApi } from "@/api"
-import { persistScheduledRows, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
+import { ApiError, commandsApi, isPermanentApiError } from "@/api"
+import { persistScheduledRows, removeScheduledRow, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
 import { executeDraftDelete, executeDraftResolve, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
 
 function getRetryDelay(retryCount: number): number {
@@ -32,14 +32,22 @@ interface ScheduledServiceLike {
   sendNow: (workspaceId: string, id: string) => Promise<ScheduledMessageView>
 }
 
-function isPermanentCommandDispatchError(error: unknown): error is ApiError {
-  return (
-    ApiError.isApiError(error) &&
-    error.status >= 400 &&
-    error.status < 500 &&
-    error.status !== 408 &&
-    error.status !== 429
-  )
+/**
+ * A permanently-rejected op's local optimistic state must be unwound, or the
+ * UI keeps offering an action the server will always refuse (the user re-taps,
+ * a fresh op enqueues, and the queue grows a phantom-row loop). Scheduled ops
+ * evict the local row — bootstrap/socket events restore the server's truth.
+ */
+async function reconcileRejectedOperation(op: PendingOperation): Promise<void> {
+  switch (op.type) {
+    case "schedule_message":
+      await removeScheduledRow(op.payload.placeholderId as string)
+      break
+    case "send_scheduled_now":
+    case "cancel_scheduled_message":
+      await removeScheduledRow(op.payload.id as string)
+      break
+  }
 }
 
 async function markCommandDispatchFailed(workspaceId: string, optimisticEventId: string, error: Error): Promise<void> {
@@ -118,13 +126,22 @@ export async function processOperationQueue(
         await db.pendingOperations.update(next.id, { startedAt: Date.now() })
         await executeOperation(next, messageService, reactionService, scheduledService, draftsService)
         await db.pendingOperations.delete(next.id)
-      } catch {
-        const retryCount = next.retryCount + 1
-        await db.pendingOperations.update(next.id, {
-          retryCount,
-          retryAfter: Date.now() + getRetryDelay(retryCount),
-        })
-        skipped.add(next.id)
+      } catch (error) {
+        if (isPermanentApiError(error)) {
+          // A 4xx (minus 408/429) is the server's final answer for this
+          // payload — replaying it can never succeed, so the op must die
+          // here or it refires on every queue kick forever (the prod
+          // send-now denial loop of 2026-07-19).
+          await reconcileRejectedOperation(next)
+          await db.pendingOperations.delete(next.id)
+        } else {
+          const retryCount = next.retryCount + 1
+          await db.pendingOperations.update(next.id, {
+            retryCount,
+            retryAfter: Date.now() + getRetryDelay(retryCount),
+          })
+          skipped.add(next.id)
+        }
       }
     }
   }
@@ -217,7 +234,7 @@ async function executeOperation(
           })
         })
       } catch (error) {
-        if (!isPermanentCommandDispatchError(error)) throw error
+        if (!isPermanentApiError(error)) throw error
         await markCommandDispatchFailed(workspaceId, optimisticEventId, error)
       }
       break

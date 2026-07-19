@@ -1,7 +1,7 @@
 import type { Express, Request, RequestHandler, Response } from "express"
 import type { AccessLogService } from "./service"
 import type { AccessKind, AccessLogOperation, AccessOutcome, ActorType } from "./operations"
-import { readAuditSubjects } from "./subjects"
+import { capSubjects, readAuditSubjects } from "./subjects"
 
 /**
  * The marker a route's audit middleware carries so the boot-time coverage guard
@@ -65,6 +65,20 @@ function outcomeFromStatus(status: number): AccessOutcome {
 }
 
 /**
+ * Non-success rows carry the HTTP status in `detail` — `denied` deliberately
+ * over-approximates all 4xx, so without the status a row can't distinguish a
+ * real 403 from a 404/409 (the 2026-07-19 send-now loop needed a prod-DB dig
+ * to tell). A status code is content-free, so the design's no-content rule
+ * (§5) is untouched.
+ */
+function buildDetail(aborted: boolean, outcome: AccessOutcome, status: number): Record<string, unknown> | null {
+  const detail: Record<string, unknown> = {}
+  if (aborted) detail.aborted = true
+  if (outcome !== "success") detail.status = status
+  return Object.keys(detail).length > 0 ? detail : null
+}
+
+/**
  * Fire `cb` exactly once when the response is done: 'finish' for a fully
  * written response, 'close' for an aborted one (client gone or stream torn
  * down mid-write). Data may already have egressed either way, so an aborted
@@ -88,6 +102,13 @@ export function createAuditMiddleware(accessLogService: AccessLogService): Audit
       // Captured synchronously: Express restores `req.params` as the routing
       // stack unwinds, so it is not reliable inside the deferred hook.
       const routeWorkspaceId = req.params.workspaceId ?? null
+      // A handler that denies never reaches the service code that sets
+      // subjects, so the route params are the only refs available to say WHAT
+      // was denied. capSubjects shape-enforces them: an id-shaped param is a
+      // ref, probed free text is redacted (no-content rule, design §5).
+      const routeParamRefs = Object.entries(req.params)
+        .filter(([name]) => name !== "workspaceId")
+        .map(([, value]) => ({ type: "param", id: value }))
       onResponseDone(res, (aborted) => {
         const identity = resolveIdentity(req)
         const outcome = aborted && !res.headersSent ? "error" : outcomeFromStatus(res.statusCode)
@@ -105,8 +126,10 @@ export function createAuditMiddleware(accessLogService: AccessLogService): Audit
           operation,
           accessKind: kind,
           outcome,
-          subjects: readAuditSubjects(res) ?? null,
-          detail: aborted ? { aborted: true } : null,
+          subjects:
+            readAuditSubjects(res) ??
+            (outcome === "denied" && routeParamRefs.length > 0 ? capSubjects(routeParamRefs) : null),
+          detail: buildDetail(aborted, outcome, res.statusCode),
           ip: req.ip ?? null,
           userAgent: req.headers["user-agent"] ?? null,
           requestId: (req as Request & { id?: string }).id ?? null,
@@ -146,7 +169,7 @@ export function createAuditMiddleware(accessLogService: AccessLogService): Audit
         accessKind: req.method === "GET" ? "read" : "write",
         outcome,
         subjects: workspaceId ? [{ type: "workspace", id: workspaceId }] : null,
-        detail: aborted ? { aborted: true } : null,
+        detail: buildDetail(aborted, outcome, res.statusCode),
         ip: req.ip ?? null,
         userAgent: req.headers["user-agent"] ?? null,
         requestId: (req as Request & { id?: string }).id ?? null,
