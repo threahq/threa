@@ -114,7 +114,7 @@ function mapRowToActivity(row: ActivityRow): Activity {
 function conflictClauseFor(activityType: string) {
   if (activityType === ActivityTypes.REACTION) {
     return sql.raw(
-      "ON CONFLICT (user_id, message_id, actor_id, emoji) WHERE activity_type = 'reaction' DO UPDATE SET id = user_activity.id"
+      "ON CONFLICT (user_id, message_id, actor_id, emoji) WHERE activity_type = 'reaction' DO UPDATE SET read_at = COALESCE(user_activity.read_at, EXCLUDED.read_at)"
     )
   }
   if (activityType === ActivityTypes.SAVED_REMINDER || activityType === ActivityTypes.MISSED_CALL) {
@@ -123,7 +123,7 @@ function conflictClauseFor(activityType: string) {
     return sql.raw("")
   }
   return sql.raw(
-    "ON CONFLICT (user_id, message_id, activity_type, actor_id) WHERE activity_type NOT IN ('reaction', 'saved_reminder') DO UPDATE SET id = user_activity.id"
+    "ON CONFLICT (user_id, message_id, activity_type, actor_id) WHERE activity_type NOT IN ('reaction', 'saved_reminder') DO UPDATE SET read_at = COALESCE(user_activity.read_at, EXCLUDED.read_at)"
   )
 }
 

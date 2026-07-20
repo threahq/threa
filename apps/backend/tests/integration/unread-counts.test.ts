@@ -3,7 +3,7 @@ import { Pool } from "pg"
 import { withTransaction } from "./setup"
 import { StreamService, StreamEventRepository, StreamMemberRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
-import { ActivityService } from "../../src/features/activity"
+import { ActivityRepository, ActivityService } from "../../src/features/activity"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
 import { setupTestDatabase, testMessageContent } from "./setup"
 
@@ -717,6 +717,17 @@ describe("Unread Counts", () => {
 
       const events = await StreamEventRepository.list(pool, testStreamId)
       await streamService.markAsRead(testWorkspaceId, testStreamId, readerId, events[0].id)
+
+      // A notification worker that resolved before the read can commit its stale unread insert afterward.
+      await ActivityRepository.insertBatch(pool, {
+        workspaceId: testWorkspaceId,
+        userIds: [readerId],
+        activityType: "message",
+        streamId: testStreamId,
+        messageId: message.id,
+        actorId: authorId,
+        actorType: "user",
+      })
 
       const activities = await activityService.processMessageNotifications({
         workspaceId: testWorkspaceId,
