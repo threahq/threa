@@ -10,6 +10,14 @@ import type { CallMode, PublishedTrackKind } from "@/calls/config"
 
 export type CallPhase = "idle" | "joining" | "connected" | "reconnecting"
 
+/**
+ * Unified surface size for the call UI. One enum, four steps; each surface maps a
+ * step to its own presentation (mobile Tab/Bar/Tiny-gallery/Fullscreen; desktop-top
+ * Tab/Bar/Gallery/Fullscreen; desktop-side Rail/Panel/Wide/Fullscreen). Ephemeral —
+ * defaults to "min" ("opens minimal") and resets to "min" on teardown, like the roster.
+ */
+export type CallSurfaceMode = "min" | "compact" | "standard" | "full"
+
 export interface CallPublishedTrack {
   kind: PublishedTrackKind
   trackName: string
@@ -76,6 +84,8 @@ export interface CallCaptureErrorInfo {
 
 export interface CallState {
   phase: CallPhase
+  /** Unified surface size ({@link CallSurfaceMode}); "min" until a surface steps it up. */
+  surfaceMode: CallSurfaceMode
   callId: string | null
   workspaceId: string | null
   streamId: string | null
@@ -114,6 +124,7 @@ const EMPTY_DEVICES: CallDeviceState = {
 function idleState(): CallState {
   return {
     phase: "idle",
+    surfaceMode: "min",
     callId: null,
     workspaceId: null,
     streamId: null,
@@ -160,6 +171,11 @@ export function registerCallHangup(hangup: () => void): () => void {
 export function setCallPhase(phase: CallPhase): void {
   if (state.phase === phase) return
   setState({ ...state, phase })
+}
+
+export function setCallSurfaceMode(surfaceMode: CallSurfaceMode): void {
+  if (state.surfaceMode === surfaceMode) return
+  setState({ ...state, surfaceMode })
 }
 
 export function setCallSession(args: { callId: string; workspaceId: string; streamId: string; mode: CallMode }): void {

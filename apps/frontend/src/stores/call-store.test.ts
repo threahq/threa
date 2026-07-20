@@ -6,6 +6,7 @@ import {
   getCallState,
   setCallSession,
   setCallRoster,
+  setCallSurfaceMode,
   registerCallHangup,
   resetCallStoreCache,
   clearCallState,
@@ -67,6 +68,16 @@ describe("call-store", () => {
     // And that it's actually invoked inside flushModuleStoreCaches, not just imported.
     const flushBody = source.slice(source.indexOf("function flushModuleStoreCaches"))
     expect(flushBody).toContain("resetCallStoreCache()")
+  })
+
+  it("surfaceMode: defaults to min, sets, and resets to min on teardown", () => {
+    expect(getCallState().surfaceMode).toBe("min")
+
+    setCallSurfaceMode("full")
+    expect(getCallState().surfaceMode).toBe("full")
+
+    resetCallStoreCache()
+    expect(getCallState().surfaceMode).toBe("min")
   })
 
   it("unregistering the hangup makes reset a plain state drop", () => {

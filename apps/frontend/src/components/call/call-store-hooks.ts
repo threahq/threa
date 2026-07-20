@@ -4,6 +4,7 @@ import {
   getCallState,
   type CallState,
   type CallPhase,
+  type CallSurfaceMode,
   type CallRosterParticipant,
   type CallDeviceState,
   type CallDiagnostics,
@@ -38,6 +39,10 @@ function useCallSelector<T>(selector: (s: CallState) => T, isEqual: (a: T, b: T)
 
 export function useCallPhase(): CallPhase {
   return useCallSelector((s) => s.phase)
+}
+
+export function useCallSurfaceMode(): CallSurfaceMode {
+  return useCallSelector((s) => s.surfaceMode)
 }
 
 export function useCallStreamId(): string | null {

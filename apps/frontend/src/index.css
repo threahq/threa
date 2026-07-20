@@ -236,6 +236,13 @@ html[data-input="mouse"] .message-hover-wash:hover {
     --conversation-6: 22 70% 47%;
     --conversation-7: 245 50% 58%;
     --conversation-8: 88 45% 34%;
+
+    /* Call stage — the near-black bed behind live video + the fullscreen stage.
+       Fixed dark in BOTH themes (a light backdrop behind a feed reads as broken),
+       so the same values are set under .dark below. */
+    --call-stage: 30 15% 8%;
+    --call-stage-2: 30 12% 13%;
+    --call-stage-border: 30 10% 20%;
   }
 
   .dark {
@@ -307,6 +314,11 @@ html[data-input="mouse"] .message-hover-wash:hover {
     --conversation-6: 24 75% 60%;
     --conversation-7: 245 60% 72%;
     --conversation-8: 88 40% 52%;
+
+    /* Call stage — same near-black as :root; theme-stable so video never flips light. */
+    --call-stage: 30 15% 8%;
+    --call-stage-2: 30 12% 13%;
+    --call-stage-border: 30 10% 20%;
   }
 }
 
