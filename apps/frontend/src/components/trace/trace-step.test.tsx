@@ -464,9 +464,8 @@ describe("TraceStep", () => {
     )
 
     expect(screen.getByText("Editing file index.html")).toBeInTheDocument()
-    expect(screen.getByText("Arguments", { exact: false })).toBeInTheDocument()
-    expect(screen.getByText("Output", { exact: false })).toBeInTheDocument()
-    expect(screen.getAllByText("hidden for safety")).toHaveLength(2)
+    const notices = screen.getAllByText("hidden for safety").map((el) => el.parentElement?.textContent)
+    expect(notices).toEqual(["Arguments hidden for safety", "Output hidden for safety"])
     expect(screen.queryByRole("button", { name: /Arguments/i })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Output/i })).not.toBeInTheDocument()
     expect(screen.queryByText(PI_TOOL_TRACE_REDACTED_BODIES.ARGUMENTS)).not.toBeInTheDocument()
