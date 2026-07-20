@@ -7,6 +7,7 @@ import type {
   ConversationDirective,
   E2eActor,
   EventType,
+  FeatureFlagLayers,
   JSONContent,
   NotificationLevel,
   SidebarConfig,
@@ -841,6 +842,13 @@ export interface CachedWorkspaceMetadata {
    */
   configuredToolCategories?: ToolPrivacyCategory[]
   /**
+   * Raw feature-flag override layers (workspace + user), resolved through the
+   * registry at read time. Persisted so a warm start paints the resolved value
+   * instead of the registry default for a frame. Optional for rows cached
+   * before the field shipped — absent reads as all defaults.
+   */
+  featureFlags?: FeatureFlagLayers
+  /**
    * Commands surfaced in the slash-command menu. `kind` defaults to "server"
    * for backwards compatibility with older cached rows; "client-action" items
    * carry a `clientActionId` the frontend dispatches on locally.
@@ -1339,6 +1347,11 @@ export class ThreaDatabase extends Dexie {
     this.version(39).stores({
       uploadJobs: "attachmentId, workspaceId",
     })
+
+    // v40: workspaceMetadata gains optional `featureFlags` (raw override layers)
+    // for first-render correctness. An unindexed value field on existing rows,
+    // so the bump only guards the added shape — no schema delta (see v37).
+    this.version(40).stores({})
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
