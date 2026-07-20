@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
 import { FEATURE_FLAG_KEYS, defaultFeatureFlags } from "@threa/types"
 import { FeatureFlagService } from "./service"
-import { UserFeatureFlagRepository } from "./repository"
+import { FeatureFlagOverrideRepository } from "./repository"
 import { UserRepository } from "../workspaces"
 import { OutboxRepository } from "../../lib/outbox"
 import * as dbModule from "../../db"
@@ -18,23 +18,23 @@ function setupTransaction() {
 describe("FeatureFlagService.getFlags", () => {
   afterEach(() => mock.restore())
 
-  it("defaults every registry flag to its first declared value when nothing is stored", async () => {
-    spyOn(UserFeatureFlagRepository, "findForUser").mockResolvedValue([])
+  it("defaults every registry flag when nothing is stored", async () => {
+    spyOn(FeatureFlagOverrideRepository, "findLayers").mockResolvedValue({ workspace: {}, user: {} })
     const service = new FeatureFlagService({} as any)
 
-    const flags = await service.getFlags(WORKSPACE_ID, USER_ID)
+    const flags = await service.getFlags(WORKSPACE_ID, WORKOS_USER_ID)
 
     expect(flags).toEqual(defaultFeatureFlags())
   })
 
-  it("ignores stored rows whose key is no longer in the registry", async () => {
-    spyOn(UserFeatureFlagRepository, "findForUser").mockResolvedValue([
-      { flagKey: "retired-flag-not-in-registry", value: "on" },
-      { flagKey: "another-retired-flag", value: "off" },
-    ])
+  it("ignores stored overrides whose key is no longer in the registry", async () => {
+    spyOn(FeatureFlagOverrideRepository, "findLayers").mockResolvedValue({
+      workspace: { "retired-workspace-flag": "on" },
+      user: { "retired-user-flag": "off" },
+    })
     const service = new FeatureFlagService({} as any)
 
-    const flags = await service.getFlags(WORKSPACE_ID, USER_ID)
+    const flags = await service.getFlags(WORKSPACE_ID, WORKOS_USER_ID)
 
     expect(flags).toEqual(defaultFeatureFlags())
     expect(Object.keys(flags)).toEqual([...FEATURE_FLAG_KEYS])
@@ -44,44 +44,69 @@ describe("FeatureFlagService.getFlags", () => {
 describe("FeatureFlagService.applySync", () => {
   afterEach(() => mock.restore())
 
-  it("replaces the user's rows and broadcasts the resolved snapshot in one transaction", async () => {
+  it("writes the user layer and broadcasts the raw user overrides in one transaction", async () => {
     setupTransaction()
     spyOn(UserRepository, "findByWorkosUserIdInWorkspace").mockResolvedValue({ id: USER_ID } as any)
-    const replace = spyOn(UserFeatureFlagRepository, "replaceForUser").mockResolvedValue()
-    spyOn(UserFeatureFlagRepository, "findForUser").mockResolvedValue([])
+    const replace = spyOn(FeatureFlagOverrideRepository, "replaceForSubject").mockResolvedValue()
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
     const service = new FeatureFlagService({} as any)
 
-    const applied = await service.applySync({
+    await service.applySync({
       workspaceId: WORKSPACE_ID,
-      workosUserId: WORKOS_USER_ID,
-      flags: {},
+      subjectType: "user",
+      subjectId: WORKOS_USER_ID,
+      overrides: { newComposer: "on" },
     })
 
-    expect(applied).toBe(true)
-    expect(replace).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, {})
-    // User-scoped broadcast carrying the full resolved map (INV-7: same transaction).
+    // Storage keys on the workos id (decision 2), not the regional user id.
+    expect(replace).toHaveBeenCalledWith({}, WORKSPACE_ID, "user", WORKOS_USER_ID, { newComposer: "on" })
+    // User-scoped broadcast carrying the raw user layer, routed to the regional user.
     expect(insert).toHaveBeenCalledWith({}, "feature_flags:updated", {
       workspaceId: WORKSPACE_ID,
       targetUserId: USER_ID,
-      featureFlags: defaultFeatureFlags(),
+      overrides: { newComposer: "on" },
     })
   })
 
-  it("skips without writing when the WorkOS user has no regional row yet", async () => {
+  it("still writes the user layer when the WorkOS user has no regional row yet, skipping only the broadcast", async () => {
+    setupTransaction()
     spyOn(UserRepository, "findByWorkosUserIdInWorkspace").mockResolvedValue(null)
-    const replace = spyOn(UserFeatureFlagRepository, "replaceForUser").mockResolvedValue()
+    const replace = spyOn(FeatureFlagOverrideRepository, "replaceForSubject").mockResolvedValue()
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
     const service = new FeatureFlagService({} as any)
 
-    const applied = await service.applySync({
+    await service.applySync({
       workspaceId: WORKSPACE_ID,
-      workosUserId: WORKOS_USER_ID,
-      flags: {},
+      subjectType: "user",
+      subjectId: WORKOS_USER_ID,
+      overrides: { newComposer: "on" },
     })
 
-    expect(applied).toBe(false)
-    expect(replace).not.toHaveBeenCalled()
+    // The write lands regardless — the decision-2 fix (the old code dropped it).
+    expect(replace).toHaveBeenCalledWith({}, WORKSPACE_ID, "user", WORKOS_USER_ID, { newComposer: "on" })
     expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("writes the workspace layer and emits the workspace-scoped event, resolving no user", async () => {
+    setupTransaction()
+    const findUser = spyOn(UserRepository, "findByWorkosUserIdInWorkspace")
+    const replace = spyOn(FeatureFlagOverrideRepository, "replaceForSubject").mockResolvedValue()
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new FeatureFlagService({} as any)
+
+    await service.applySync({
+      workspaceId: WORKSPACE_ID,
+      subjectType: "workspace",
+      subjectId: WORKSPACE_ID,
+      overrides: { calls: "off" },
+    })
+
+    expect(replace).toHaveBeenCalledWith({}, WORKSPACE_ID, "workspace", WORKSPACE_ID, { calls: "off" })
+    expect(insert).toHaveBeenCalledWith({}, "feature_flags:workspace_updated", {
+      workspaceId: WORKSPACE_ID,
+      overrides: { calls: "off" },
+    })
+    // Workspace scope routes to the workspace room; no regional-user lookup happens.
+    expect(findUser).not.toHaveBeenCalled()
   })
 })

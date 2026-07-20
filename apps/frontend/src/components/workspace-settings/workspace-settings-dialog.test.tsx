@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { defaultFeatureFlags, type WorkspaceBootstrap } from "@threa/types"
+import { type WorkspaceBootstrap } from "@threa/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { WorkspaceSettingsDialog } from "./workspace-settings-dialog"
 import * as generalTabModule from "./general-tab"
@@ -80,7 +80,7 @@ describe("WorkspaceSettingsDialog", () => {
   describe("feature flags tab", () => {
     it("hides the tab when there are no overridden flags", async () => {
       const queryClient = new QueryClient()
-      seedBootstrapFlags(queryClient, defaultFeatureFlags())
+      seedBootstrapFlags(queryClient, { workspace: {}, user: {} })
 
       renderDialog("/w/ws_1?ws-settings=general", queryClient)
 

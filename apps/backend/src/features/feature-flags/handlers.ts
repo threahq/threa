@@ -6,11 +6,12 @@ import type { FeatureFlagService } from "./service"
 // Flag keys/values are not constrained to the registry here: the control
 // plane can deploy with a new key or value ahead of this region's release.
 // Unknown entries are stored and ignored at read time (resolveFeatureFlags
-// filters them).
+// filters them). subjectType IS constrained — it selects the storage layer.
 const syncSchema = z.object({
   workspaceId: z.string().min(1),
-  workosUserId: z.string().min(1),
-  flags: z.record(z.string().min(1), z.string().min(1)),
+  subjectType: z.enum(["workspace", "user"]),
+  subjectId: z.string().min(1),
+  overrides: z.record(z.string().min(1), z.string().min(1)),
 })
 
 interface Dependencies {
@@ -19,7 +20,7 @@ interface Dependencies {
 
 export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) {
   return {
-    /** CP fan-out endpoint: replace one user's flag snapshot in this region. */
+    /** CP fan-out endpoint: replace one subject's flag overrides in this region. */
     async sync(req: Request, res: Response, next: NextFunction) {
       const result = syncSchema.safeParse(req.body)
       if (!result.success) {

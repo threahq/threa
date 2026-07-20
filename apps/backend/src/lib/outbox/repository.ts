@@ -9,7 +9,6 @@ import type {
   UserPreferences,
   SidebarConfig,
   WorkspaceSettings,
-  FeatureFlags,
   LastMessagePreview,
   Bot as WireBot,
   BotInvocationCapability,
@@ -72,6 +71,7 @@ export type OutboxEventType =
   | "sidebar_config:updated"
   | "workspace_settings:updated"
   | "feature_flags:updated"
+  | "feature_flags:workspace_updated"
   | "agent_config:updated"
   | "budget:alert"
   | "stream:member_joined"
@@ -715,11 +715,20 @@ export interface AgentConfigUpdatedOutboxPayload extends WorkspaceScopedPayload 
   persona: PersonaListItem
 }
 
-// Feature flags event payload (user-scoped — flags are per user). Carries the
-// full resolved map so the frontend replaces its bootstrap field wholesale.
+// Feature flags event payload (user-scoped). Carries the user layer's raw
+// overrides — the frontend patches its user layer and re-resolves. A resolved
+// map cannot be broadcast because each recipient has their own workspace layer.
 export interface FeatureFlagsUpdatedOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
-  featureFlags: FeatureFlags
+  overrides: Record<string, string>
+}
+
+// Workspace-scope feature flags event payload (workspace-scoped — falls through
+// to the workspace room). Carries the workspace layer's raw overrides; the
+// frontend patches its workspace layer and re-resolves against its own user
+// layer, which the server cannot do on its behalf.
+export interface FeatureFlagsWorkspaceUpdatedOutboxPayload extends WorkspaceScopedPayload {
+  overrides: Record<string, string>
 }
 
 export interface InvitationSentOutboxPayload extends WorkspaceScopedPayload {
@@ -1159,6 +1168,7 @@ export interface OutboxEventPayloadMap {
   "sidebar_config:updated": SidebarConfigUpdatedOutboxPayload
   "workspace_settings:updated": WorkspaceSettingsUpdatedOutboxPayload
   "feature_flags:updated": FeatureFlagsUpdatedOutboxPayload
+  "feature_flags:workspace_updated": FeatureFlagsWorkspaceUpdatedOutboxPayload
   "agent_config:updated": AgentConfigUpdatedOutboxPayload
   "budget:alert": BudgetAlertOutboxPayload
   "invitation:sent": InvitationSentOutboxPayload
