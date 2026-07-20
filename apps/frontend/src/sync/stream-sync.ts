@@ -92,7 +92,7 @@ export async function getLatestPersistedSequence(streamId: string): Promise<stri
     .where("[streamId+_sequenceNum]")
     .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
     .reverse()
-    .filter((event) => event._status !== "pending" && event._status !== "failed")
+    .filter((event) => event._status == null)
     .first()
 
   return latestEvent?.sequence ?? null
@@ -121,7 +121,7 @@ export async function getPersistedTail(streamId: string): Promise<PersistedTail>
     .where("[streamId+_sequenceNum]")
     .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
     .reverse()
-    .filter((event) => event._status !== "pending" && event._status !== "failed")
+    .filter((event) => event._status == null)
     .limit(TAIL_SCAN_LIMIT)
     .toArray()
 

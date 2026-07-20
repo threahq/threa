@@ -189,6 +189,8 @@ export interface CachedEvent {
   // Optimistic sending state (for message_created events)
   _clientId?: string
   _status?: "pending" | "sent" | "failed" | "editing"
+  /** Persisted stream sequence visible when this optimistic row was created. */
+  _anchorSequenceNum?: number
   _cachedAt: number
   /**
    * Client wall-clock (ms) of the most recent socket-driven payload patch
@@ -1358,6 +1360,10 @@ export class ThreaDatabase extends Dexie {
     // for first-render correctness. An unindexed value field on existing rows,
     // so the bump only guards the added shape — no schema delta (see v37).
     this.version(40).stores({})
+
+    // v41: optimistic events gain an unindexed persisted-sequence anchor for
+    // clock-independent timeline ordering; existing rows need no migration.
+    this.version(41).stores({})
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }

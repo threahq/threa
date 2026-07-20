@@ -14,6 +14,7 @@ import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage, conversationTag } from "./use-queue-draft-message"
 import { useWorkspaceUsers, useWorkspaceStreams, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useSyncEngine } from "@/sync/sync-engine"
+import { getLatestPersistedSequence } from "@/sync/stream-sync"
 import { hasSeededDraftCache } from "@/stores/draft-store"
 import { getDraftMessageKey, purgeScopeDrafts, upsertLoadedDraft } from "./use-draft-message"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
@@ -665,6 +666,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       // message stays one queue item so replay cannot dispatch the command
       // before the message reaches the server.
       await db.transaction("rw", [db.pendingMessages, db.events], async () => {
+        const anchorSequence = await getLatestPersistedSequence(streamId)
         await db.pendingMessages.add({
           clientId,
           workspaceId,
@@ -684,6 +686,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           ...optimisticEvent,
           workspaceId,
           _sequenceNum: sequenceToNum(optimisticEvent.sequence),
+          _anchorSequenceNum: sequenceToNum(anchorSequence ?? "0"),
           _clientId: clientId,
           _status: "pending",
           _cachedAt: Date.now(),

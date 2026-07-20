@@ -25,7 +25,8 @@ function makeOptimisticEvent(
   streamId: string,
   clientId: string,
   placeholderSeq: string,
-  createdAt = new Date(2026, 0, 2).toISOString()
+  createdAt = new Date(2026, 0, 2).toISOString(),
+  anchorSequenceNum?: number
 ): CachedEvent {
   const sequenceNum = sequenceToNum(placeholderSeq)
   return {
@@ -41,6 +42,7 @@ function makeOptimisticEvent(
     createdAt,
     _clientId: clientId,
     _status: "pending",
+    _anchorSequenceNum: anchorSequenceNum,
     _cachedAt: Date.now(),
   }
 }
@@ -167,7 +169,7 @@ describe("loadStreamEvents", () => {
     for (let i = 1; i <= 200; i++) {
       reals.push(makeRealEvent(streamId, String(i)))
     }
-    const oldPending = makeOptimisticEvent(streamId, "temp_old", "10", new Date(2026, 0, 1, 0, 0, 10).toISOString())
+    const oldPending = makeOptimisticEvent(streamId, "temp_old", "10", new Date(2026, 0, 1, 0, 0, 10).toISOString(), 10)
     await db.events.bulkPut([...reals, oldPending])
 
     const events = await loadStreamEvents(streamId, null)
@@ -179,8 +181,8 @@ describe("loadStreamEvents", () => {
     const streamId = "stream_same_millisecond"
     const createdAt = "2026-01-01T20:30:00.000Z"
     await db.events.bulkPut([
-      makeOptimisticEvent(streamId, "temp_z", "1000", createdAt),
-      makeOptimisticEvent(streamId, "temp_a", "1001", createdAt),
+      makeOptimisticEvent(streamId, "temp_z", "1000", createdAt, 0),
+      makeOptimisticEvent(streamId, "temp_a", "1001", createdAt, 0),
     ])
 
     const events = await loadStreamEvents(streamId, null)
@@ -188,9 +190,29 @@ describe("loadStreamEvents", () => {
     expect(events.map((event) => event.id)).toEqual(["temp_z", "temp_a"])
   })
 
+  it("starts a clock-skewed optimistic row after its observed persisted tail", async () => {
+    const streamId = "stream_slow_clock"
+    const optimistic = makeOptimisticEvent(streamId, "temp_slow", "1714428000000", "1990-01-01T00:00:00.000Z", 2)
+    await db.events.bulkPut([
+      makeRealEvent(streamId, "1"),
+      makeRealEvent(streamId, "2"),
+      makeRealEvent(streamId, "3"),
+      optimistic,
+    ])
+
+    const events = await loadStreamEvents(streamId, 1)
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_slow_clock_1",
+      "evt_stream_slow_clock_2",
+      "temp_slow",
+      "evt_stream_slow_clock_3",
+    ])
+  })
+
   it("lets a failed optimistic command move above newer persisted events", async () => {
     const streamId = "stream_failed_command"
-    const failed = makeOptimisticEvent(streamId, "temp_cmd", "1714428000000", "2026-01-01T20:30:00.000Z")
+    const failed = makeOptimisticEvent(streamId, "temp_cmd", "1714428000000", "2036-01-01T20:30:00.000Z", 1)
     failed.eventType = "command_dispatched"
     failed._status = "failed"
     failed.payload = { commandId: failed.id, name: "thinking", args: "low", status: "dispatched" }

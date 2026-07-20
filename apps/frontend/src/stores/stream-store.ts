@@ -21,10 +21,10 @@ export function resetStreamStoreCache(): void {}
  *   - Without a floor: same range, but capped to the latest N events as a
  *     memory bound on initial pre-bootstrap load.
  *
- * Pending and failed optimistic events use placeholder sequences, so their
- * `createdAt` places them among server events while each source keeps its own
- * authoritative order. A pending send starts at the tail, then moves upward
- * naturally when newer server events arrive.
+ * Pending and failed optimistic events use the persisted sequence visible at
+ * creation as their anchor. A pending send starts at the tail, then moves
+ * upward naturally when newer server events arrive, without comparing client
+ * and server clocks.
  */
 export async function loadStreamEvents(streamId: string, fromSequenceNum: number | null): Promise<CachedEvent[]> {
   const hasFloor = fromSequenceNum != null
@@ -73,28 +73,21 @@ export function orderStreamEvents(events: CachedEvent[]): CachedEvent[] {
     else persisted.push(event)
   }
 
+  const anchor = (event: CachedEvent) => event._anchorSequenceNum ?? Number.POSITIVE_INFINITY
   persisted.sort((a, b) => a._sequenceNum - b._sequenceNum)
-  optimistic.sort((a, b) => {
-    const timeDiff = Date.parse(a.createdAt) - Date.parse(b.createdAt)
-    return timeDiff || a._sequenceNum - b._sequenceNum
-  })
+  optimistic.sort((a, b) => anchor(a) - anchor(b) || a._sequenceNum - b._sequenceNum || a.id.localeCompare(b.id))
 
   const ordered: CachedEvent[] = []
   let persistedIndex = 0
-  let optimisticIndex = 0
-  while (persistedIndex < persisted.length && optimisticIndex < optimistic.length) {
-    const persistedEvent = persisted[persistedIndex]
-    const optimisticEvent = optimistic[optimisticIndex]
-    if (Date.parse(optimisticEvent.createdAt) < Date.parse(persistedEvent.createdAt)) {
-      ordered.push(optimisticEvent)
-      optimisticIndex++
-    } else {
-      ordered.push(persistedEvent)
+  for (const optimisticEvent of optimistic) {
+    while (persistedIndex < persisted.length && persisted[persistedIndex]._sequenceNum <= anchor(optimisticEvent)) {
+      ordered.push(persisted[persistedIndex])
       persistedIndex++
     }
+    ordered.push(optimisticEvent)
   }
 
-  return ordered.concat(persisted.slice(persistedIndex), optimistic.slice(optimisticIndex))
+  return ordered.concat(persisted.slice(persistedIndex))
 }
 
 /**

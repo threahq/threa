@@ -6,7 +6,7 @@ import { db, sequenceToNum, type CachedStream, type PendingStreamCreation } from
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { StreamTypes, Visibilities, type ConversationDirective, type JSONContent, type StreamEvent } from "@threa/types"
 import { createDraftPanelId } from "@/contexts/panel-context"
-import { optimisticReplyCountUpdate } from "@/sync/stream-sync"
+import { getLatestPersistedSequence, optimisticReplyCountUpdate } from "@/sync/stream-sync"
 import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
 import { sealOutgoingMessage, type SealOutgoingMessageResult } from "@/lib/crypto/seal-send"
 import { reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
@@ -148,31 +148,35 @@ export function useQueueDraftMessage(workspaceId: string) {
 
       markPending(clientId)
 
-      await db.pendingMessages.add({
-        clientId,
-        workspaceId: params.workspaceId,
-        streamId: params.streamId,
-        content: contentMarkdown,
-        contentFormat: "markdown",
-        contentJson: input.contentJson,
-        attachmentIds: input.attachmentIds,
-        createdAt: Date.now(),
-        retryCount: 0,
-        streamCreation: params.streamCreation,
-        conversation: params.conversation,
-        draftId: params.draftId,
-        ...(e2eFields
-          ? { ciphertext: e2eFields.ciphertext, envelope: e2eFields.envelope, e2eVersion: e2eFields.e2eVersion }
-          : {}),
-      })
+      await db.transaction("rw", [db.pendingMessages, db.events], async () => {
+        const anchorSequence = await getLatestPersistedSequence(params.streamId)
+        await db.pendingMessages.add({
+          clientId,
+          workspaceId: params.workspaceId,
+          streamId: params.streamId,
+          content: contentMarkdown,
+          contentFormat: "markdown",
+          contentJson: input.contentJson,
+          attachmentIds: input.attachmentIds,
+          createdAt: Date.now(),
+          retryCount: 0,
+          streamCreation: params.streamCreation,
+          conversation: params.conversation,
+          draftId: params.draftId,
+          ...(e2eFields
+            ? { ciphertext: e2eFields.ciphertext, envelope: e2eFields.envelope, e2eVersion: e2eFields.e2eVersion }
+            : {}),
+        })
 
-      await db.events.add({
-        ...optimisticEvent,
-        workspaceId: params.workspaceId,
-        _sequenceNum: sequenceToNum(optimisticEvent.sequence),
-        _clientId: clientId,
-        _status: "pending",
-        _cachedAt: Date.now(),
+        await db.events.add({
+          ...optimisticEvent,
+          workspaceId: params.workspaceId,
+          _sequenceNum: sequenceToNum(optimisticEvent.sequence),
+          _anchorSequenceNum: sequenceToNum(anchorSequence ?? "0"),
+          _clientId: clientId,
+          _status: "pending",
+          _cachedAt: Date.now(),
+        })
       })
 
       // Surface the committed draft in the sidebar and quick switcher so the

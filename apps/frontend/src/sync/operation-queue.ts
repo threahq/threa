@@ -12,6 +12,8 @@ function getRetryDelay(retryCount: number): number {
   return 120_000
 }
 
+const OPERATION_QUEUE_LOCK = "threa-operation-queue"
+
 function generateId(): string {
   return `op_${Date.now()}_${Math.random().toString(36).slice(2)}`
 }
@@ -69,6 +71,7 @@ async function markCommandDispatchFailed(workspaceId: string, optimisticEventId:
       actorType: dispatched.actorType,
       createdAt: new Date().toISOString(),
       _sequenceNum: sequenceToNum(failedSequence),
+      _anchorSequenceNum: dispatched._anchorSequenceNum,
       _status: "failed",
       _cachedAt: Date.now(),
     }
@@ -101,6 +104,19 @@ export async function enqueueOperation(
  * Process pending operations from IDB. Called on socket connect/reconnect.
  * Uses Web Locks to prevent cross-tab double-processing.
  */
+export async function reclaimStaleCommandAttempts(): Promise<boolean> {
+  if (!navigator.locks) return false
+
+  return navigator.locks.request(OPERATION_QUEUE_LOCK, async () => {
+    await db.pendingOperations
+      .where("type")
+      .equals("dispatch_command")
+      .filter((operation) => operation.attempting === true)
+      .modify({ attempting: false })
+    return true
+  })
+}
+
 export async function processOperationQueue(
   messageService: MessageServiceLike,
   reactionService: ReactionServiceLike,
@@ -108,7 +124,15 @@ export async function processOperationQueue(
   draftsService: DraftsServiceLike | undefined,
   isOnline: () => boolean
 ): Promise<void> {
-  const processor = async () => {
+  const processor = async (ownsLock: boolean) => {
+    if (ownsLock) {
+      await db.pendingOperations
+        .where("type")
+        .equals("dispatch_command")
+        .filter((operation) => operation.attempting === true)
+        .modify({ attempting: false })
+    }
+
     const now = Date.now()
     const skipped = new Set<string>()
 
@@ -153,12 +177,12 @@ export async function processOperationQueue(
   }
 
   if (navigator.locks) {
-    await navigator.locks.request("threa-operation-queue", { ifAvailable: true }, async (lock) => {
+    await navigator.locks.request(OPERATION_QUEUE_LOCK, { ifAvailable: true }, async (lock) => {
       if (!lock) return
-      await processor()
+      await processor(true)
     })
   } else {
-    await processor()
+    await processor(false)
   }
 }
 
@@ -230,15 +254,17 @@ async function executeOperation(
           command: payload.command as string,
         })
         if (!result.success) throw new ApiError(400, "COMMAND_DISPATCH_FAILED", result.error)
-        await db.transaction("rw", db.events, async () => {
-          if (!(await db.events.get(optimisticEventId))) return
-          await db.events.delete(optimisticEventId)
-          await db.events.put({
-            ...result.event,
-            workspaceId,
-            _sequenceNum: sequenceToNum(result.event.sequence),
-            _cachedAt: Date.now(),
-          })
+        await db.transaction("rw", [db.events, db.pendingOperations], async () => {
+          if (await db.events.get(optimisticEventId)) {
+            await db.events.delete(optimisticEventId)
+            await db.events.put({
+              ...result.event,
+              workspaceId,
+              _sequenceNum: sequenceToNum(result.event.sequence),
+              _cachedAt: Date.now(),
+            })
+          }
+          await db.pendingOperations.delete(op.id)
         })
       } catch (error) {
         if (!isPermanentApiError(error)) throw error

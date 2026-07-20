@@ -1,8 +1,9 @@
-import { useCallback, useMemo } from "react"
+import { useCallback, useEffect, useMemo } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useUser } from "@/auth"
 import { db, sequenceToNum } from "@/db"
-import { enqueueOperation } from "@/sync/operation-queue"
+import { enqueueOperation, reclaimStaleCommandAttempts } from "@/sync/operation-queue"
+import { getLatestPersistedSequence } from "@/sync/stream-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { AuthorTypes, CommandKinds, type StreamEvent } from "@threa/types"
@@ -25,6 +26,7 @@ export async function cancelCommandDispatch(streamId: string, commandId: string)
 }
 
 export function useCommandDispatchCancellation(streamId: string, commandId: string, localStatus: string | undefined) {
+  const syncEngine = useOptionalSyncEngine()
   const operation = useLiveQuery(
     async () =>
       (await db.pendingOperations
@@ -35,6 +37,17 @@ export function useCommandDispatchCancellation(streamId: string, commandId: stri
     [commandId],
     undefined
   )
+  useEffect(() => {
+    if (!operation?.attempting) return
+    let active = true
+    void reclaimStaleCommandAttempts().then((reclaimed) => {
+      if (active && reclaimed) syncEngine?.kickOperationQueue()
+    })
+    return () => {
+      active = false
+    }
+  }, [operation?.attempting, syncEngine])
+
   const canCancel =
     localStatus === "failed" || (localStatus === "pending" && operation != null && !operation.attempting)
   const cancel = useCallback(() => cancelCommandDispatch(streamId, commandId), [commandId, streamId])
@@ -85,10 +98,12 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
       }
 
       await db.transaction("rw", [db.events, db.pendingOperations], async () => {
+        const anchorSequence = await getLatestPersistedSequence(streamId)
         await db.events.add({
           ...optimisticEvent,
           workspaceId,
           _sequenceNum: sequenceToNum(optimisticEvent.sequence),
+          _anchorSequenceNum: sequenceToNum(anchorSequence ?? "0"),
           _status: "pending",
           _cachedAt: Date.now(),
         })
