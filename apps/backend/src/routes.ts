@@ -1627,35 +1627,52 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceSettingsService,
     cloudflareEnabled: callsCloudflareEnabled,
   })
-  app.post("/api/workspaces/:workspaceId/calls", ...authed, rateLimits.calls, calls.start)
-  app.get("/api/workspaces/:workspaceId/calls/:callId", ...authed, rateLimits.calls, calls.bootstrap)
+  app.post(
+    "/api/workspaces/:workspaceId/calls",
+    ...authed,
+    audit("calls.start", "write"),
+    rateLimits.calls,
+    calls.start
+  )
+  app.get(
+    "/api/workspaces/:workspaceId/calls/:callId",
+    ...authed,
+    audit("calls.bootstrap", "read"),
+    rateLimits.calls,
+    calls.bootstrap
+  )
   app.post(
     "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/session",
     ...authed,
+    audit("calls.cf_session", "write"),
     rateLimits.calls,
     calls.createCfSession
   )
   app.post(
     "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/renegotiate",
     ...authed,
+    audit("calls.cf_renegotiate", "write"),
     rateLimits.calls,
     calls.renegotiate
   )
   app.post(
     "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/tracks/publish",
     ...authed,
+    audit("calls.cf_publish_tracks", "write"),
     rateLimits.calls,
     calls.publishTracks
   )
   app.post(
     "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/tracks/pull",
     ...authed,
+    audit("calls.cf_pull_tracks", "write"),
     rateLimits.calls,
     calls.pullTracks
   )
   app.post(
     "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/tracks/close",
     ...authed,
+    audit("calls.cf_close_tracks", "write"),
     rateLimits.calls,
     calls.closeTracks
   )
