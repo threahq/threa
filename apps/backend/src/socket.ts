@@ -5,6 +5,7 @@ import { createSocketAuthMiddleware } from "./lib/socket-auth"
 import { socketConnectionId } from "./lib/id"
 import { socketHandshakeIp } from "./lib/socket-ip"
 import type { AccessLogService, AuditSubjectRef } from "./features/access-log"
+import { SubscribeCoalescer, unionSubjectChunks } from "./features/access-log"
 import { DEVICE_KEY_LENGTH, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threa/types"
 import type { StreamService } from "./features/streams"
 import type { PushService } from "./features/push"
@@ -152,7 +153,11 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       })
     }
 
-    const recordUnsubscribe = (entry: JoinedRoomAudit): void => {
+    const recordUnsubscribe = (entry: {
+      workspaceId: string
+      actorUserId: string
+      subjects: AuditSubjectRef[]
+    }): void => {
       accessLogService.record({
         workspaceId: entry.workspaceId,
         actorType: "user",
@@ -168,18 +173,51 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       })
     }
 
+    // Successful ws/stream joins coalesce into one subjects-array row per
+    // (workspace, actor) window — the client bulk-joins its whole sidebar at
+    // connect, which is one access fact with many subjects, not ~30 facts.
+    // Denied joins and agent-session rooms bypass this (immediate rows).
+    const subscribeCoalescer = new SubscribeCoalescer({
+      emit: (batch) => {
+        accessLogService.record({
+          workspaceId: batch.workspaceId,
+          actorType: "user",
+          actorId: batch.actorId,
+          authRef: sconnId,
+          operation: "socket.subscribe",
+          accessKind: "subscribe",
+          outcome: "success",
+          subjects: batch.subjects,
+          occurredAt: batch.occurredAt,
+          ip,
+          userAgent,
+        })
+      },
+    })
+
     // Re-joining an already-open room (permission heal, redundant client join)
     // must not open a second interval — the original subscribe row still pairs
     // with the eventual unsubscribe.
-    const trackJoin = (room: string, entry: JoinedRoomAudit): void => {
+    const trackJoin = (room: string, entry: JoinedRoomAudit, opts?: { immediate?: boolean }): void => {
       const rejoin = metricsState.joinedRooms.has(room)
       metricsState.joinedRooms.set(room, entry)
       if (rejoin) return
-      recordSubscribe({
+      // Agent-session rooms record immediately: their two-subject rows are the
+      // shape reconstructDeliveredEvents excludes from stream-interval pairing,
+      // so they must never merge into a coalesced batch row.
+      if (opts?.immediate) {
+        recordSubscribe({
+          workspaceId: entry.workspaceId,
+          actorUserId: entry.actorUserId,
+          subjects: entry.subjects,
+          outcome: "success",
+        })
+        return
+      }
+      subscribeCoalescer.add({
         workspaceId: entry.workspaceId,
-        actorUserId: entry.actorUserId,
+        actorId: entry.actorUserId,
         subjects: entry.subjects,
-        outcome: "success",
       })
     }
 
@@ -432,15 +470,19 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         wsConnectionsActive.inc({ workspace_id: wsId, room_pattern: roomPattern })
         // Validation proved the session's stream belongs to wsId — the stream
         // ref is safe to record from here on.
-        trackJoin(room, {
-          workspaceId: wsId,
-          roomPattern,
-          actorUserId: workspaceUser.id,
-          subjects: [
-            { type: "agent_session", id: agentSessionId },
-            { type: "stream", id: session.streamId },
-          ],
-        })
+        trackJoin(
+          room,
+          {
+            workspaceId: wsId,
+            roomPattern,
+            actorUserId: workspaceUser.id,
+            subjects: [
+              { type: "agent_session", id: agentSessionId },
+              { type: "stream", id: session.streamId },
+            ],
+          },
+          { immediate: true }
+        )
         logger.debug({ workosUserId, room }, "Joined agent session room")
         callback?.({ ok: true })
         return
@@ -486,6 +528,9 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       const roomInfo = metricsState.joinedRooms.get(room)
       if (roomInfo) {
         wsConnectionsActive.dec({ workspace_id: roomInfo.workspaceId, room_pattern: roomInfo.roomPattern })
+        // A pending batch may still hold this room's subscribe — flush first so
+        // the unsubscribe row can never precede the row it closes.
+        subscribeCoalescer.flushAll()
         recordUnsubscribe(roomInfo)
         metricsState.joinedRooms.delete(room)
       }
@@ -637,10 +682,36 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       const connectionDurationSeconds = Number(process.hrtime.bigint() - metricsState.connectTime) / 1e9
       const workspaceIds = new Set<string>()
 
+      // A join within the coalescing window must flush before its close is
+      // written, or the interval would close before it opened.
+      subscribeCoalescer.flushAll()
+      // One coalesced unsubscribe row per (workspace, actor) closes every room
+      // this connection held — the batch twin of the coalesced subscribe.
+      // Agent-session rooms close individually: merging their agent_session ref
+      // into a batch row would make reconstructDeliveredEvents skip that row as
+      // a stream-interval closer, leaving intervals open forever.
+      const batchCloses = new Map<string, { workspaceId: string; actorUserId: string; lists: AuditSubjectRef[][] }>()
       for (const [, roomInfo] of metricsState.joinedRooms) {
         wsConnectionsActive.dec({ workspace_id: roomInfo.workspaceId, room_pattern: roomInfo.roomPattern })
-        recordUnsubscribe(roomInfo)
         workspaceIds.add(roomInfo.workspaceId)
+        if (roomInfo.subjects.some((s) => s.type === "agent_session")) {
+          recordUnsubscribe(roomInfo)
+          continue
+        }
+        const key = `${roomInfo.workspaceId} ${roomInfo.actorUserId}`
+        const group = batchCloses.get(key)
+        if (group) group.lists.push(roomInfo.subjects)
+        else
+          batchCloses.set(key, {
+            workspaceId: roomInfo.workspaceId,
+            actorUserId: roomInfo.actorUserId,
+            lists: [roomInfo.subjects],
+          })
+      }
+      for (const group of batchCloses.values()) {
+        for (const chunk of unionSubjectChunks(group.lists)) {
+          recordUnsubscribe({ workspaceId: group.workspaceId, actorUserId: group.actorUserId, subjects: chunk })
+        }
       }
 
       for (const workspaceId of workspaceIds) {

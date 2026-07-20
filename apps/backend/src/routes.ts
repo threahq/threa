@@ -1096,7 +1096,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get(
     "/api/workspaces/:workspaceId/streams/:streamId/commands",
     ...authed,
-    audit("commands.list_for_stream", "read"),
+    audit.none("static command definitions — config, no personal data (2026-07-19 volume reckoning)"),
     command.listForStream
   )
 

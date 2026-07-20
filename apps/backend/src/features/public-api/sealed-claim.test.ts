@@ -27,7 +27,8 @@ const TRIGGER_ENVELOPE = { v: 2, keyGeneration: 3, iv: "aXY=", aad: "YWFk" }
 
 function createResponse() {
   const payloads: unknown[] = []
-  const res = {} as Response
+  // setAuditSubjects / auditSkip write to res.locals in the claim handler.
+  const res = { locals: {} as Record<string, unknown> } as Response
   res.status = mock(() => res) as unknown as Response["status"]
   res.json = mock((body: unknown) => {
     payloads.push(body)

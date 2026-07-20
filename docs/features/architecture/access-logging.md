@@ -81,17 +81,30 @@ route without an annotation, and on any mounted sub-router (Express 5 hides moun
 paths, so strictness forces a conscious guard extension). A new endpoint cannot
 silently skip logging: the server refuses to start.
 
-**Sockets: intervals, not per-event rows.** A `sconn_` connection id is minted at
-connect. Joining a room writes one `subscribe` row (denied joins too); leaving or
-disconnecting writes the paired `unsubscribe`. The delivered set is derived, not
-materialized: the log stores one `subscribe` row per join instead of one row per
-message per member, and `reconstructDeliveredEvents` joins those intervals against
-`stream_events` metadata (never payloads) at query time, returning one row per
-delivered event per connection. Interval edges
-are widened by a clock-skew tolerance (default 5s) because subscribe rows are
-app-clock stamped while events are DB-clocked; unclosed intervals count as open,
-which over-approximates. The bot `/bot` namespace records its rooms and its verb
-surface (hello bootstrap, presence, claim renewal, steps) the same way.
+**Sockets: coalesced intervals, not per-event or per-room rows.** A `sconn_`
+connection id is minted at connect. A client bulk-joins its whole sidebar within
+a second of connecting, and that is one access fact with many subjects: each
+connection's successful workspace and stream joins coalesce per (workspace,
+actor) into a single `subscribe` row whose `subjects` array carries every joined
+ref
+(`SubscribeCoalescer`, 2 second window, chunked at the subjects cap rather than
+truncated). The row's `occurred_at` is the first join's instant, so the window
+never shrinks the interval. Disconnect writes one coalesced `unsubscribe` closing
+all of the connection's rooms; an explicit mid-session leave writes its own row.
+Denied joins and agent-session rooms record immediately and individually. The
+delivered set stays derived, not materialized: `reconstructDeliveredEvents` joins
+the intervals against `stream_events` metadata (never payloads) at query time,
+pairing any subscribe/unsubscribe rows that contain the stream ref and carry no
+`agent_session` ref, which accepts both the batch rows and the per-room rows
+written before coalescing landed. Interval edges are widened by a clock-skew
+tolerance (default 5s) because subscribe rows are app-clock stamped while events
+are DB-clocked; unclosed intervals count as open, which over-approximates. The
+bot `/bot` namespace records its rooms the same way; of its verb surface, only
+the hello bootstrap records success rows. Presence beats, claim renewals, and
+step appends are protocol cadence, not data access, and record only their denied
+and error outcomes. The same rule holds on HTTP: an empty bot-claim poll skips
+its row through a handler-declared no-op (denials always record), and pure
+config reads like the slash-command list are `audit.none`.
 
 **AI egress.** `createAI` accepts an injectable `AccessLogSink`
 (`packages/agent-runtime/src/ai/ai.ts`); the backend adapter maps each call to an
@@ -141,6 +154,24 @@ lock_timeout='5s'` on a held client with guaranteed rollback, because partition
   a unique index that omits the partition key, and event-id idempotency is the
   load-bearing property for replayable ingestion. Auth volume is small; retention
   is a batched DELETE worker.
+- **The coupling contract: stable ids, not colocation.** Every row is a
+  self-contained write-time fact; nothing in the log is derived from mutable
+  product state, so the evidence never changes retroactively. The log identifies
+  records by prefixed ULIDs and sequence ranges; the product database is the
+  inventory of what those records contained. Resolving subscription intervals to
+  the individual delivered event ids (`reconstructDeliveredEvents` pairing
+  intervals against `stream_events` by stream containment) is an enrichment that
+  works wherever both id spaces are resolvable, not a dependency on living in the
+  same database. Any export or migration of audit data to a dedicated store must
+  preserve id resolvability, and the monthly partitions are the export seam: a
+  closed partition can be detached and shipped whole.
+- **Proportionality.** Row volume must scale with access performed, not with
+  connection churn or protocol cadence. Day one in production wrote 96 rows per
+  product event, dominated by per-room socket rows, a per-stream-switch config
+  fetch, and bot heartbeats; the coalesced socket capture, the heartbeat and
+  empty-poll exclusions, and the config-read exemption exist to hold that ratio
+  near 1. When adding capture, ask what fact the row states that an existing row
+  does not.
 
 ## Boundaries
 
@@ -155,9 +186,12 @@ lock_timeout='5s'` on a held client with guaranteed rollback, because partition
 - Suspicious-behavior detection and alerting do not exist yet; the log is the raw
   material. The sketched follow-up is detection workers per store posting
   content-free alerts to a security stream.
-- The WorkOS ingestion has run only against the stub in test environments; the
-  first production ingestion, the first production partitioned-table migration, and
-  the maintenance worker's first production tick are deploy-day watch items.
+- The deploy-day watch items all cleared on 2026-07-19: the partitioned-table
+  migration, the maintenance worker's eager first tick, and (after an event-name
+  fix, since the SDK's EventName union lags the live API catalog) the first real
+  WorkOS ingestion. Event names in `AUTH_LOG_EVENT_TYPES` are validated against
+  the live catalog at workos.com/docs/events, not the SDK types: one rejected
+  name fails the whole listEvents call and stalls the poller.
 - db-read-proxy queries log to stdout (Railway retention applies), not to a table:
   the proxy's connection is read-only by construction.
 

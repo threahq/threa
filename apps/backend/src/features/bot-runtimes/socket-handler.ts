@@ -248,6 +248,11 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     // The bot WS verbs are socket-borne twins of annotated REST routes
     // (INV-35: same write ops) — without these rows a stolen key's invocation
     // reads/writes over the socket would be invisible to the access log.
+    // Success rows are recorded only for bot:hello (a real bootstrap read):
+    // presence beats, claim renewals, and step appends are protocol cadence,
+    // not data access — logging each buried the log in machine noise
+    // (2026-07-19 volume reckoning). Their denied/error outcomes stay: a
+    // failing verb against a stolen key IS signal.
     const recordBotVerb = (params: {
       operation: Parameters<typeof accessLogService.record>[0]["operation"]
       accessKind: "read" | "write"
@@ -468,12 +473,6 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           publicKey: data.publicKey,
           publicKeyId: data.publicKeyId,
         })
-        recordBotVerb({
-          operation: "bot.presence_update",
-          accessKind: "write",
-          outcome: "success",
-          subjects: [{ type: "bot", id: botId }],
-        })
         ack?.({ ok: true })
       } catch (err) {
         recordBotVerb({
@@ -504,12 +503,6 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
             instanceId: data.instanceId,
             claimToken: data.claimToken,
             claimTtlSeconds: data.claimTtlSeconds,
-          })
-          recordBotVerb({
-            operation: "bot.invocation_renew",
-            accessKind: "write",
-            outcome: "success",
-            subjects: [{ type: "bot_invocation", id: data.invocationId }],
           })
           ack?.({ ok: true, data: { ...renewed } })
         } catch (err) {
@@ -544,12 +537,6 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
             steps: data.steps,
             statusText: data.statusText,
           })
-          recordBotVerb({
-            operation: "bot.invocation_steps",
-            accessKind: "write",
-            outcome: "success",
-            subjects: [{ type: "bot_invocation", id: data.invocationId }],
-          })
           ack?.({
             ok: true,
             data: { invocationId: result.invocationId, sessionId: result.sessionId, steps: result.steps },
@@ -583,12 +570,6 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
             invocationId: data.invocationId,
             callbackToken: data.callbackToken,
             steps: data.steps,
-          })
-          recordBotVerb({
-            operation: "bot.invocation_sealed_steps",
-            accessKind: "write",
-            outcome: "success",
-            subjects: [{ type: "bot_invocation", id: data.invocationId }],
           })
           ack?.({
             ok: true,
