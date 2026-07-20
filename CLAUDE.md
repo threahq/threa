@@ -42,6 +42,7 @@ Test-first when practical; else run the nearest suite and verify manually. Never
 
 - Once: `git config rerere.enabled true` and `git config remote.pushDefault origin`
 - `gh stack init <branches bottom→top>` (adopts existing branches) · `gh stack add <branch>` per layer · `gh stack submit --auto` (recognizes `/create-pr`-made PRs and links them into the Stack)
+- **`submit` is mandatory, not optional.** `/create-pr` (or `gh pr create --base <parent>`) opens the PRs but does NOT make a Stack — running `init`/`add` then skipping `submit` leaves unlinked, chained-base PRs. Finish every stack with `gh stack submit --auto` and confirm `gh stack view --json` shows a `Stack #NNNN`. Already have unlinked PRs? `gh stack submit --auto --open` retrofits the linkage in place.
 - After merges: `gh stack sync --prune` — auto-recovers squash-merges; replaces manual rebase-on-main
 - Non-interactive always: branch names as args, `submit --auto`, `view --json`
 
