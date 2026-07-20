@@ -15,6 +15,8 @@ import { extractSearchTerms } from "./highlight"
 import { SearchFilterChips } from "./search-filter-chips"
 import { SearchFilterMenu } from "./search-filter-menu"
 import { SearchResults } from "./search-results"
+import { SearchResultDisplayToggle } from "./search-result-display-toggle"
+import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
 
 /**
  * Desktop sidebar in search mode — VS Code-style: the stream list swaps for a
@@ -31,6 +33,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   )
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const { preferences } = usePreferences()
+  const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
 
   const inputRef = useRef<RichInputRef>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -161,11 +164,14 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
           </div>
 
           {hasQuery && !isLoading && !displayError && (
-            <p className="px-3 pb-2 text-[11px] tabular-nums text-muted-foreground/70">
-              {results.length === 0
-                ? "No results"
-                : `${results.length} result${results.length === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`}
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 px-3 pb-2">
+              <p className="min-w-0 truncate text-[11px] tabular-nums text-muted-foreground">
+                {results.length === 0
+                  ? "No results"
+                  : `${results.length} result${results.length === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`}
+              </p>
+              <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} />
+            </div>
           )}
         </div>
       }
@@ -199,6 +205,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
               terms={terms}
               activeResultId={activeResultId}
               onResultSelect={handleResultSelect}
+              mode={displayMode}
             />
           )}
 
