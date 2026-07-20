@@ -20,10 +20,11 @@ function createWrapper(queryClient: QueryClient) {
   }
 }
 
-// The shipped FEATURE_FLAGS is empty between rollouts, so inject a stand-in
-// registry (visible to the code-bound predicates + resolver, which read
+// These layering/provenance cases need flags with specific scopes and defaults
+// that the shipped registry doesn't carry, so inject a stand-in registry
+// (visible to the code-bound predicates + resolver, which read
 // FEATURE_FLAG_DEFINITIONS dynamically) and clear it after each test rather
-// than committing a fake flag to @threa/types. `warmStart` is default-on: the
+// than committing test-only flags to @threa/types. `warmStart` is default-on: the
 // case the persistence fix protects — a warm paint must not flash the default.
 const STANDIN_REGISTRY = {
   warmStart: { values: ["off", "on"], scopes: ["workspace", "user"], default: "on" },
@@ -73,9 +74,9 @@ describe("useOverriddenFeatureFlags", () => {
       wrapper: createWrapper(queryClient),
     })
 
-    // Empty registry: every override is inert, so nothing is surfaced (and the
-    // layered shape does not crash the resolve).
-    expect(result.current).toEqual([])
+    // `calls` is the shipped workspace-scope flag (default on): an off override
+    // surfaces. `newComposer` is not in the registry, so it is dropped.
+    expect(result.current).toEqual([{ key: "calls", value: "off", defaultValue: "on", scope: "workspace" }])
   })
 })
 

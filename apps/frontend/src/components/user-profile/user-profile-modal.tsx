@@ -14,12 +14,12 @@ import {
   ResponsiveDialogBody,
 } from "@/components/ui/responsive-dialog"
 import { createDmDraftId } from "@/hooks"
-import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useCallLaunch } from "@/components/call"
 import { useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAuth } from "@/auth"
-import { DEFAULT_WORKSPACE_SETTINGS, getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
+import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
 import { getInitials } from "@/lib/initials"
 import { formatStatusClearLabel } from "@/lib/status"
 
@@ -114,8 +114,7 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
   const messageStreamId = existingDmStreamId ?? createDmDraftId(userId)
   const messageHref = workspaceId ? `/w/${workspaceId}/s/${messageStreamId}` : undefined
 
-  const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
-  const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? DEFAULT_WORKSPACE_SETTINGS.callsEnabled
+  const callsEnabled = useFeatureFlag(workspaceId ?? "", "calls") === "on"
   const { launch: launchCall, callActive } = useCallLaunch()
 
   if (!user) return null

@@ -51,7 +51,8 @@ import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-enc
 import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
 import { useDecryptedStreamName, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useWorkspaceUserId, useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useCallLaunch, RejoinBar } from "@/components/call"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { ThreadHeader } from "@/components/thread"
@@ -61,13 +62,7 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
-import {
-  BotRuntimeStatuses,
-  CompanionModes,
-  DEFAULT_WORKSPACE_SETTINGS,
-  LabelableResourceTypes,
-  StreamTypes,
-} from "@threa/types"
+import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threa/types"
 import { getStreamName, getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { StreamContextSurface, StreamContextGallery, useStreamGallery } from "@/components/stream-context"
@@ -230,8 +225,7 @@ export function StreamPage() {
   // Called here (above the early returns below) to keep hook order stable.
   const activeBotPresence = useActiveBotPresence(workspaceId, streamId)
 
-  const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
-  const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? DEFAULT_WORKSPACE_SETTINGS.callsEnabled
+  const callsEnabled = useFeatureFlag(workspaceId ?? "", "calls") === "on"
   const { launch: launchCall, callActive } = useCallLaunch()
 
   const isThread = stream?.type === StreamTypes.THREAD

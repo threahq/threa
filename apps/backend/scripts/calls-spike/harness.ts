@@ -35,7 +35,6 @@ import { WorkspaceRepository } from "../../src/features/workspaces/repository"
 import { UserRepository } from "../../src/features/workspaces/user-repository"
 import { StreamRepository } from "../../src/features/streams/repository"
 import { StreamMemberRepository } from "../../src/features/streams/member-repository"
-import { WorkspaceSettingsRepository } from "../../src/features/workspace-settings/repository"
 import { CallService, CloudflareRealtimeApi } from "../../src/features/calls"
 import { ENDPOINT_LEASE_TTL_MS, EMPTY_GRACE_MS, CALL_SWEEP_INTERVAL_MS } from "../../src/features/calls/config"
 
@@ -285,8 +284,9 @@ async function seedWorkspaceAndUsers(
       slug: `spike-${tag}-${rand}-u${i}`,
     })
   }
-  // Enable the calls feature for this workspace (REST + gateway gate on it).
-  await WorkspaceSettingsRepository.setOverride(client, wsId, "callsEnabled", true)
+  // Calls are gated by the `calls` feature flag (workspace scope), which defaults
+  // on — no per-workspace enable row needed; the fake-CF backends run with
+  // `cloudflareEnabled=true`, so the gates pass.
   return { wsId, users }
 }
 

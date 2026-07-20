@@ -196,9 +196,9 @@ export default defineConfig({
         USE_STUB_AI: "true",
         THREA_TEST_LOG_FILE: process.env.THREA_TEST_LOG_FILE,
         // Calls media plane → the fake CF server (negotiationless). App id/secret
-        // present ⇒ `cloudflareRealtime.enabled`; the workspace `callsEnabled`
-        // setting is still flipped per-test. Grace + sweep driven low so an ended
-        // call's timeline card lands inside the test window.
+        // present ⇒ `cloudflareRealtime.enabled`; the `calls` flag defaults on, so
+        // the workspace has calls with no per-test enable step. Grace + sweep driven
+        // low so an ended call's timeline card lands inside the test window.
         CLOUDFLARE_REALTIME_APP_ID: "e2e-calls-app",
         CLOUDFLARE_REALTIME_APP_SECRET: "e2e-calls-secret",
         CLOUDFLARE_REALTIME_API_BASE: `http://localhost:${fakeCfPort}/v1/apps`,

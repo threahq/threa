@@ -1,0 +1,19 @@
+-- Drop the retired `callsEnabled` workspace setting.
+--
+-- Calls gating moved to the `calls` feature flag (workspace scope, default on),
+-- resolved in the control plane and fanned out to regions. The regional setting
+-- is now dead: nothing reads `callsEnabled` anymore.
+--
+-- Unlike feature flags, workspace-setting reads have NO registry filter —
+-- `mergeOverrides` blind-assigns every stored override key onto the settings
+-- object. A leftover `callsEnabled` row would therefore resurface as an untyped
+-- property on `WorkspaceSettings` forever. Delete the now-inert rows so no stale
+-- key survives. Append-only (INV-17).
+--
+-- Since #1454 released calls with the setting defaulting ON, a stored
+-- `callsEnabled = false` is a deliberate opt-out (true equals the default and is
+-- never stored). This delete INTENTIONALLY erases those opt-outs: the flag
+-- defaults on and calls is "on for everyone" by ratified product decision
+-- (2026-07-20) — this migration dogfoods the flag system, not a policy change.
+-- A workspace that wants calls off sets a backoffice `calls = off` override after.
+DELETE FROM workspace_setting_overrides WHERE key = 'callsEnabled';
