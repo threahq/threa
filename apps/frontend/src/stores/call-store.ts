@@ -86,6 +86,12 @@ export interface CallState {
   phase: CallPhase
   /** Unified surface size ({@link CallSurfaceMode}); "min" until a surface steps it up. */
   surfaceMode: CallSurfaceMode
+  /**
+   * `Date.now()` at the first "connected" transition — the in-call timer anchor.
+   * Stamped once and preserved across reconnects (a blip must not reset the clock);
+   * reset to null on a new session and on teardown.
+   */
+  connectedAt: number | null
   callId: string | null
   workspaceId: string | null
   streamId: string | null
@@ -125,6 +131,7 @@ function idleState(): CallState {
   return {
     phase: "idle",
     surfaceMode: "min",
+    connectedAt: null,
     callId: null,
     workspaceId: null,
     streamId: null,
@@ -170,7 +177,9 @@ export function registerCallHangup(hangup: () => void): () => void {
 
 export function setCallPhase(phase: CallPhase): void {
   if (state.phase === phase) return
-  setState({ ...state, phase })
+  // Stamp the timer anchor on the first connect; keep it across reconnects.
+  const connectedAt = phase === "connected" ? (state.connectedAt ?? Date.now()) : state.connectedAt
+  setState({ ...state, phase, connectedAt })
 }
 
 export function setCallSurfaceMode(surfaceMode: CallSurfaceMode): void {
@@ -179,7 +188,7 @@ export function setCallSurfaceMode(surfaceMode: CallSurfaceMode): void {
 }
 
 export function setCallSession(args: { callId: string; workspaceId: string; streamId: string; mode: CallMode }): void {
-  setState({ ...state, ...args, phase: "joining" })
+  setState({ ...state, ...args, phase: "joining", connectedAt: null })
 }
 
 export function setCallRoster(roster: CallRosterParticipant[], rosterVersion: number): void {

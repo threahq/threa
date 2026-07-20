@@ -278,42 +278,43 @@ describe("CallDock — pre-join permission taxonomy", () => {
   })
 })
 
-describe("CallDock — collapsed + mobile", () => {
-  function forceMobile() {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+describe("CallDock — mobile drawer vs desktop dock", () => {
+  function forceMobile(value: boolean) {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(value)
   }
 
-  it("auto-collapses to a pill on mobile and offers mute, camera, and leave", async () => {
-    forceMobile()
+  it("renders the mobile drawer (Tab) on a phone, not the desktop dock", () => {
+    forceMobile(true)
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    expect(screen.getByTestId("mobile-call-drawer")).toBeInTheDocument()
+    // Tab is timer-only: no dock chevron and no tiles until it is opened.
+    expect(screen.getByLabelText("Call duration")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Collapse call")).toBeNull()
+    expect(screen.queryByTestId("call-tile")).toBeNull()
+  })
+
+  it("renders the desktop dock, not the drawer, on a wide viewport", () => {
+    forceMobile(false)
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    expect(screen.queryByTestId("mobile-call-drawer")).toBeNull()
+    expect(screen.getByTestId("call-tile")).toBeInTheDocument()
+    expect(screen.getByLabelText("Collapse call")).toBeInTheDocument()
+  })
+
+  it("opens the drawer's compact controls when the Tab pill is tapped", async () => {
+    forceMobile(true)
     const manager = makeManager()
     renderDock(manager)
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
-
-    // Collapsed: the expanded body (CallControls' diagnostics) is not mounted.
-    expect(screen.getByLabelText("Expand call")).toBeInTheDocument()
-    expect(screen.queryByLabelText("Connection diagnostics")).toBeNull()
-
-    await userEvent.click(screen.getByLabelText("Turn camera on"))
-    expect(manager.setCameraOn).toHaveBeenCalledWith(true)
-
-    await userEvent.click(screen.getByLabelText("Mute"))
-    expect(manager.setMuted).toHaveBeenCalledWith(true)
-
+    await userEvent.click(screen.getByRole("button", { name: "Expand call" }))
     await userEvent.click(screen.getByLabelText("Leave call"))
     expect(manager.leaveCall).toHaveBeenCalled()
   })
 
-  it("reflects camera-live state in the collapsed pill", () => {
-    forceMobile()
-    renderDock(makeManager())
-    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
-    expect(screen.getByLabelText("Turn camera on")).toBeInTheDocument()
-    act(() => patchCallLocal({ cameraOn: true }))
-    expect(screen.getByLabelText("Turn camera off")).toBeInTheDocument()
-  })
-
-  it("surfaces a capture error indicator while collapsed", () => {
-    forceMobile()
+  it("keeps the capture error visible on the mobile Tab", () => {
+    forceMobile(true)
     renderDock(makeManager())
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
     act(() => setCallCaptureError({ code: "capture_rollback_failed", message: "boom" }))

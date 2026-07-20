@@ -13,6 +13,10 @@ interface CallTileProps {
   participant: CallRosterParticipant
   workspaceId: string | null
   isSelf: boolean
+  /** Near-black `--call-stage` bed (mobile drawer / fullscreen), not the default `bg-muted` chrome tile. */
+  stage?: boolean
+  /** Fill the parent (fullscreen active speaker) instead of the default `aspect-video`. */
+  fill?: boolean
 }
 
 /**
@@ -22,7 +26,7 @@ interface CallTileProps {
  * ref-driven (`useSpeakingLevelRef`) so the analyser's per-frame level never
  * re-renders the tile, let alone the dock.
  */
-export function CallTile({ participant, workspaceId, isSelf }: CallTileProps) {
+export function CallTile({ participant, workspaceId, isSelf, stage = false, fill = false }: CallTileProps) {
   const users = useWorkspaceUsers(workspaceId ?? undefined)
   const user = users.find((u) => u.id === participant.userId)
   const name = user?.name ?? "Unknown"
@@ -56,7 +60,12 @@ export function CallTile({ participant, workspaceId, isSelf }: CallTileProps) {
 
   return (
     <div
-      className={cn("relative aspect-video overflow-hidden rounded-md bg-muted", reconnecting && "opacity-50")}
+      className={cn(
+        "relative overflow-hidden rounded-md",
+        fill ? "h-full w-full" : "aspect-video",
+        stage ? "bg-call-stage" : "bg-muted",
+        reconnecting && "opacity-50"
+      )}
       data-testid="call-tile"
       data-user-id={participant.userId}
     >
@@ -78,7 +87,7 @@ export function CallTile({ participant, workspaceId, isSelf }: CallTileProps) {
         data-testid="call-tile-video"
       />
       {!hasVideo && (
-        <div className="flex h-full w-full items-center justify-center">
+        <div className={cn("flex h-full w-full items-center justify-center", stage && "bg-call-stage-2")}>
           <Avatar className="h-12 w-12">
             {avatarUrl && <AvatarImage src={avatarUrl} alt={name} />}
             <AvatarFallback>{getInitials(name)}</AvatarFallback>

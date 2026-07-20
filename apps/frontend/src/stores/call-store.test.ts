@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import {
   getCallState,
   setCallSession,
+  setCallPhase,
   setCallRoster,
   setCallSurfaceMode,
   registerCallHangup,
@@ -78,6 +79,23 @@ describe("call-store", () => {
 
     resetCallStoreCache()
     expect(getCallState().surfaceMode).toBe("min")
+  })
+
+  it("connectedAt: stamped once on connect, preserved across reconnects, cleared on teardown", () => {
+    setCallSession({ callId: "call_1", workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+    expect(getCallState().connectedAt).toBeNull()
+
+    setCallPhase("connected")
+    const stamped = getCallState().connectedAt
+    expect(typeof stamped).toBe("number")
+
+    // A reconnect blip must not reset the clock.
+    setCallPhase("reconnecting")
+    setCallPhase("connected")
+    expect(getCallState().connectedAt).toBe(stamped)
+
+    resetCallStoreCache()
+    expect(getCallState().connectedAt).toBeNull()
   })
 
   it("unregistering the hangup makes reset a plain state drop", () => {
