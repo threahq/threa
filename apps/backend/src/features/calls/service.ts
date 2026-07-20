@@ -12,6 +12,14 @@ import {
 import { withTransaction, withClient } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
+import {
+  callCfSessionCreateTotal,
+  callCfSessionCreateDuration,
+  callCfErrorsTotal,
+  callTimeToJoinSeconds,
+  callEndedTotal,
+  callRingOutcomesTotal,
+} from "../../lib/observability"
 import { callId, callInvitationId, callParticipantId, callEndpointId, eventId } from "../../lib/id"
 import { checkStreamAccess, StreamMemberRepository, StreamRepository, StreamEventRepository } from "../streams"
 import { UserRepository } from "../workspaces"
@@ -48,6 +56,14 @@ import {
   type RenegotiateResult,
   type CloseTracksResult,
 } from "./cloudflare"
+
+/** CF proxy operations, the label space for the connect-failure metric. */
+type CfOperation = "session_create" | "publish_tracks" | "pull_tracks" | "renegotiate" | "close_tracks"
+
+/** Collision-safe key for a pull authorization set; JSON so no separator can be forged. */
+function pullRefKey(sessionId: string, trackName: string): string {
+  return JSON.stringify([sessionId, trackName])
+}
 
 export interface StartCallResult {
   call: Call
@@ -113,10 +129,17 @@ export class CallService {
    * participant with no lease the sweeper can reap. A DM start rings the peer.
    */
   async startCall(
-    params: { workspaceId: string; streamId: string; userId: string; mode: CallMode; mediaIncarnation?: string },
+    params: {
+      workspaceId: string
+      streamId: string
+      userId: string
+      mode: CallMode
+      mediaIncarnation?: string
+      expectedCallId?: string
+    },
     tx?: PoolClient
   ): Promise<StartCallResult> {
-    return withTransaction(tx ?? this.pool, async (client) => {
+    const { result, closedSessionIds } = await withTransaction(tx ?? this.pool, async (client) => {
       const stream = await checkStreamAccess(client, params.streamId, params.workspaceId, params.userId)
       if (!stream) {
         throw new HttpError("No access to this stream", { status: 403, code: "CALL_STREAM_ACCESS_DENIED" })
@@ -143,6 +166,15 @@ export class CallService {
         }
         targetCallId = existing.id
         created = false
+      }
+
+      // Ring-acceptance guard: the client accepted a specific call. If the
+      // call it would now join (a re-entered active one or a freshly created one)
+      // is not that call, the ring's call ended in the click window — 409 so the
+      // overlay clears instead of silently joining/starting a different call. The
+      // insert (if any) rolls back with the transaction.
+      if (params.expectedCallId && targetCallId !== params.expectedCallId) {
+        throw new HttpError("Call has ended", { status: 409, code: "CALL_ENDED" })
       }
 
       const admitted = await this.joinLockedCall(client, {
@@ -192,8 +224,18 @@ export class CallService {
         }
       }
 
-      return { call: admitted.call, created, participant: admitted.participant, endpoint: admitted.endpoint }
+      return {
+        result: { call: admitted.call, created, participant: admitted.participant, endpoint: admitted.endpoint },
+        closedSessionIds: admitted.closedSessionIds,
+      }
     })
+    // Close the CF sessions of any endpoint this start superseded (takeover/rebind)
+    // AFTER the tx commits, never inside it (INV-41). Only when we own the outermost
+    // commit (`tx` unset); a caller-supplied savepoint owns its own teardown point.
+    if (!tx) {
+      for (const sessionId of closedSessionIds) await this.bestEffortCloseSession(sessionId)
+    }
+    return result
   }
 
   /**
@@ -209,7 +251,7 @@ export class CallService {
     params: { workspaceId: string; callId: string; userId: string; takeover?: boolean; mediaIncarnation?: string },
     tx?: PoolClient
   ): Promise<JoinCallResult> {
-    return withTransaction(tx ?? this.pool, async (client) => {
+    const { closedSessionIds, ...result } = await withTransaction(tx ?? this.pool, async (client) => {
       const access = await checkCallAccess(client, {
         workspaceId: params.workspaceId,
         userId: params.userId,
@@ -221,6 +263,11 @@ export class CallService {
 
       return this.joinLockedCall(client, params)
     })
+    // Tear down any endpoint this join superseded (takeover/rebind) after commit (INV-41).
+    if (!tx) {
+      for (const sessionId of closedSessionIds) await this.bestEffortCloseSession(sessionId)
+    }
+    return result
   }
 
   /**
@@ -235,7 +282,7 @@ export class CallService {
   private async joinLockedCall(
     client: PoolClient,
     params: { workspaceId: string; callId: string; userId: string; takeover?: boolean; mediaIncarnation?: string }
-  ): Promise<JoinCallResult> {
+  ): Promise<JoinCallResult & { closedSessionIds: string[] }> {
     let call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
     if (!call) {
       throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
@@ -258,7 +305,7 @@ export class CallService {
 
     const incarnation = params.mediaIncarnation ?? null
     const live = await CallEndpointRepository.findLiveByParticipant(client, params.workspaceId, participant.id)
-    const endpoint = await this.admitEndpoint(client, { params, participant, live, incarnation })
+    const { endpoint, closedCfSessionId } = await this.admitEndpoint(client, { params, participant, live, incarnation })
 
     const accepted = await CallInvitationRepository.acceptRingingForUser(client, {
       workspaceId: params.workspaceId,
@@ -278,7 +325,7 @@ export class CallService {
     await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
     await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
-    return { call, participant, endpoint }
+    return { call, participant, endpoint, closedSessionIds: closedCfSessionId ? [closedCfSessionId] : [] }
   }
 
   /**
@@ -302,9 +349,12 @@ export class CallService {
       live: CallEndpoint | null
       incarnation: string | null
     }
-  ): Promise<CallEndpoint> {
+  ): Promise<{ endpoint: CallEndpoint; closedCfSessionId: string | null }> {
     const { params, participant, live, incarnation } = args
     const leaseExpiresAt = new Date(Date.now() + ENDPOINT_LEASE_TTL_MS)
+    // The CF session dropped by a takeover/rebind, to close AFTER the tx commits
+    // (INV-41). This is the one place the teardown handle was being lost.
+    let closedCfSessionId: string | null = null
 
     if (live) {
       // Rebind only applies to the incarnation-aware socket-join path. A caller
@@ -320,7 +370,14 @@ export class CallService {
           mediaIncarnation: incarnation,
           leaseExpiresAt,
         })
-        if (rebound) return rebound
+        if (rebound) {
+          // A reload (incarnation change) makes `rebind` clear `cf_session_id`, so
+          // capture the OLD session from the pre-rebind row (the call-row lock held
+          // by the join serializes this read). A same-incarnation reconnect keeps
+          // the session, so nothing is torn down.
+          if (live.cfSessionId && live.mediaIncarnation !== incarnation) closedCfSessionId = live.cfSessionId
+          return { endpoint: rebound, closedCfSessionId }
+        }
         // Lost the row to a concurrent close between read and CAS; fall through to a fresh mint.
       } else if (!params.takeover) {
         throw new HttpError("An active endpoint already exists for this user", {
@@ -328,12 +385,13 @@ export class CallService {
           code: "CALL_ENDPOINT_ACTIVE",
         })
       } else {
-        await CallEndpointRepository.close(client, params.workspaceId, live.id)
+        const closed = await CallEndpointRepository.close(client, params.workspaceId, live.id)
+        closedCfSessionId = closed?.cfSessionId ?? null
       }
     }
 
     const maxEpoch = await CallEndpointRepository.maxEpochForParticipant(client, params.workspaceId, participant.id)
-    return CallEndpointRepository.insert(client, {
+    const endpoint = await CallEndpointRepository.insert(client, {
       id: callEndpointId(),
       workspaceId: params.workspaceId,
       callId: params.callId,
@@ -342,6 +400,7 @@ export class CallService {
       mediaIncarnation: incarnation,
       leaseExpiresAt,
     })
+    return { endpoint, closedCfSessionId }
   }
 
   /**
@@ -353,7 +412,7 @@ export class CallService {
     params: { workspaceId: string; callId: string; userId: string; endpointId: string },
     tx?: PoolClient
   ): Promise<{ call: Call }> {
-    return withTransaction(tx ?? this.pool, async (client) => {
+    const { call, closedSessionIds } = await withTransaction(tx ?? this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       if (!call) {
         throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
@@ -376,7 +435,7 @@ export class CallService {
         })
       }
 
-      await CallEndpointRepository.close(client, params.workspaceId, params.endpointId)
+      const closed = await CallEndpointRepository.close(client, params.workspaceId, params.endpointId)
       await CallParticipantRepository.markLeftIfNoLiveEndpoint(client, {
         workspaceId: params.workspaceId,
         callId: params.callId,
@@ -416,8 +475,13 @@ export class CallService {
       await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       const updated = (await CallRepository.findById(client, params.workspaceId, params.callId)) ?? call
-      return { call: updated }
+      return { call: updated, closedSessionIds: closed?.cfSessionId ? [closed.cfSessionId] : [] }
     })
+    // Close the reaped endpoint's CF session after the tx commits (INV-41).
+    if (!tx) {
+      for (const sessionId of closedSessionIds) await this.bestEffortCloseSession(sessionId)
+    }
+    return { call }
   }
 
   /**
@@ -432,7 +496,7 @@ export class CallService {
     params: { workspaceId: string; callId: string; userId: string },
     tx?: PoolClient
   ): Promise<{ call: Call }> {
-    return withTransaction(tx ?? this.pool, async (client) => {
+    const { call, closedSessionIds } = await withTransaction(tx ?? this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       if (!call) {
         throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
@@ -442,7 +506,7 @@ export class CallService {
       // endpoints or emitting so a `call:participants_changed` never fans out for a
       // dead call and resurrects its card as live on peers still holding the id.
       if (call.status === "ended") {
-        return { call }
+        return { call, closedSessionIds: [] as string[] }
       }
       const participant = await CallParticipantRepository.findByUser(
         client,
@@ -451,10 +515,10 @@ export class CallService {
         params.userId
       )
       if (!participant) {
-        return { call }
+        return { call, closedSessionIds: [] as string[] }
       }
 
-      await CallEndpointRepository.closeByParticipant(client, params.workspaceId, participant.id)
+      const closed = await CallEndpointRepository.closeByParticipant(client, params.workspaceId, participant.id)
       await CallParticipantRepository.markLeftIfNoLiveEndpoint(client, {
         workspaceId: params.workspaceId,
         callId: params.callId,
@@ -487,8 +551,14 @@ export class CallService {
       await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       const updated = (await CallRepository.findById(client, params.workspaceId, params.callId)) ?? call
-      return { call: updated }
+      const closedSessionIds = closed.map((e) => e.cfSessionId).filter((id): id is string => !!id)
+      return { call: updated, closedSessionIds }
     })
+    // Close every reaped endpoint's CF session after the tx commits (INV-41).
+    if (!tx) {
+      for (const sessionId of closedSessionIds) await this.bestEffortCloseSession(sessionId)
+    }
+    return { call }
   }
 
   /** Decline a live ring (`ringing → declined`); only the invitee may decline. */
@@ -550,6 +620,7 @@ export class CallService {
       outcome,
       inviterName: inviter?.name ?? null,
     })
+    callRingOutcomesTotal.inc({ outcome })
   }
 
   /** Cancel the given outstanding rings (`ringing → cancelled` already applied) and settle each. */
@@ -592,6 +663,13 @@ export class CallService {
     connectionSeq: number
   }): Promise<CallEndpoint | null> {
     return withTransaction(this.pool, async (client) => {
+      // No callId param: read the endpoint (unlocked) to learn its call, then lock
+      // the call row BEFORE the endpoint CAS (call→endpoint lock order). The CAS
+      // still fences on epoch + connection_seq, so the unlocked read can't let a
+      // stale demotion land on a freshly re-bound endpoint.
+      const existing = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
+      if (!existing) return null
+      await CallRepository.findByIdForUpdate(client, params.workspaceId, existing.callId)
       const endpoint = await CallEndpointRepository.markReconnecting(client, {
         workspaceId: params.workspaceId,
         id: params.endpointId,
@@ -680,6 +758,10 @@ export class CallService {
     mediaState: MediaState
   }): Promise<CallRosterSnapshot> {
     return withTransaction(this.pool, async (client) => {
+      // Lock the call row before any endpoint write: every endpoint-write path
+      // takes call→endpoint lock order, matching leave/remove/reap, so contention
+      // can't AB-BA deadlock. The subsequent fence read observes the locked row.
+      await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       const { endpoint, call } = await this.loadFencedEndpoint(client, params)
       if (params.mediaState.cameraOn === true && call.mode === "audio_only") {
         throw new HttpError("Camera is not allowed on an audio-only call", {
@@ -688,11 +770,17 @@ export class CallService {
         })
       }
       const merged: MediaState = { ...endpoint.mediaState, ...params.mediaState }
-      await CallEndpointRepository.setMediaState(client, {
+      const updated = await CallEndpointRepository.setMediaState(client, {
         workspaceId: params.workspaceId,
         id: endpoint.id,
+        mediaIncarnation: params.mediaIncarnation,
         mediaState: merged,
       })
+      if (!updated) {
+        // The endpoint closed or its incarnation was superseded between the fence
+        // read and this write — don't bump the roster for state that wasn't persisted.
+        throw new HttpError("Endpoint is no longer live", { status: 409, code: "CALL_ENDPOINT_NOT_LIVE" })
+      }
       const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
       const roster = await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId)
       return { rosterVersion: rosterVersion ?? call.rosterVersion, roster }
@@ -720,7 +808,26 @@ export class CallService {
       return { cfSessionId: endpoint.cfSessionId, idempotent: true }
     }
 
-    const created = await this.cfCall(() => cf.createSession())
+    const sessionStartedAt = Date.now()
+    let created: Awaited<ReturnType<RealtimeMediaApi["createSession"]>>
+    try {
+      created = await this.cfCall(() => cf.createSession(), "session_create")
+    } catch (err) {
+      callCfSessionCreateTotal.inc({ status: "error" })
+      throw err
+    }
+    const sessionCreatedAt = Date.now()
+    callCfSessionCreateTotal.inc({ status: "success" })
+    callCfSessionCreateDuration.observe((sessionCreatedAt - sessionStartedAt) / 1000)
+    // Server-side time-to-join: endpoint admission (the mint that created the row)
+    // → CF session created — measured AFTER the createSession round-trip, so the
+    // media-connect latency is included. First binding only: a reload REBINDS the
+    // same row (created_at preserved, cf_session_id cleared, connection_seq bumped),
+    // so observing a rebind would charge the whole prior connected duration to the
+    // histogram. connection_seq is 0 only at mint; any rebind makes it ≥1.
+    if (endpoint.connectionSeq === 0) {
+      callTimeToJoinSeconds.observe(Math.max(0, sessionCreatedAt - endpoint.createdAt.getTime()) / 1000)
+    }
 
     let bound: CallEndpoint | null
     try {
@@ -768,7 +875,16 @@ export class CallService {
     tracks: Array<{ kind: PublishedTrack["kind"]; mid: string; trackName: string }>
   }): Promise<{ cf: TracksResult; snapshot: CallRosterSnapshot }> {
     const cf = this.requireCloudflare()
-    const { endpoint } = await this.fenceEndpoint(params)
+    const { endpoint, call } = await this.fenceEndpoint(params)
+    // Cap camera on the track path too, not only the media-state claim gate — the
+    // published-track registry is the other route a camera reaches peers. Screen
+    // share stays allowed (huddle semantics), matching setEndpointMediaState.
+    if (call.mode === "audio_only" && params.tracks.some((t) => t.kind === "camera")) {
+      throw new HttpError("Camera is not allowed on an audio-only call", {
+        status: 409,
+        code: "CALL_CAMERA_NOT_ALLOWED",
+      })
+    }
     const cfSessionId = this.requireCfSession(endpoint)
 
     const localTracks: LocalTrackRequest[] = params.tracks.map((t) => ({
@@ -776,13 +892,38 @@ export class CallService {
       trackName: t.trackName,
       mid: t.mid,
     }))
-    const cfResult = await this.cfCall(() => cf.addLocalTracks(cfSessionId, { sdp: params.sdp, tracks: localTracks }))
+    const cfResult = await this.cfCall(
+      () => cf.addLocalTracks(cfSessionId, { sdp: params.sdp, tracks: localTracks }),
+      "publish_tracks"
+    )
+
+    // CF reports failures per track in a 2xx body (INV — the HTTP status alone is
+    // not success). A failed track must NOT be written into the registry as if it
+    // were pullable, so surface it as a provider error and skip the registry write.
+    const failedTracks = cfResult.tracks.filter((t) => t.errorCode)
+    if (failedTracks.length > 0) {
+      callCfErrorsTotal.inc({ operation: "publish_tracks", cf_code: failedTracks[0].errorCode ?? "unknown" })
+      throw new HttpError("Calls media provider error", {
+        status: 502,
+        code: "CALL_MEDIA_PROVIDER_ERROR",
+        details: {
+          tracks: failedTracks.map((t) => ({
+            trackName: t.trackName,
+            errorCode: t.errorCode,
+            errorDescription: t.errorDescription,
+          })),
+        },
+      })
+    }
 
     const registry: PublishedTrack[] = params.tracks.map((t) => ({ kind: t.kind, trackName: t.trackName }))
     const snapshot = await withTransaction(this.pool, async (client) => {
+      // Lock the call row before the endpoint write (call→endpoint lock order).
+      await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       const updated = await CallEndpointRepository.setPublishedTracks(client, {
         workspaceId: params.workspaceId,
         id: params.endpointId,
+        mediaIncarnation: params.mediaIncarnation,
         publishedTracks: registry,
       })
       if (!updated) {
@@ -809,8 +950,37 @@ export class CallService {
     const cf = this.requireCloudflare()
     const { endpoint } = await this.fenceEndpoint(params)
     const cfSessionId = this.requireCfSession(endpoint)
-    const cfResult = await this.cfCall(() => cf.pullRemoteTracks(cfSessionId, { tracks: params.tracks }))
+    await this.assertPullableRefs(params.workspaceId, params.callId, endpoint, params.tracks)
+    const cfResult = await this.cfCall(() => cf.pullRemoteTracks(cfSessionId, { tracks: params.tracks }), "pull_tracks")
     return { cf: cfResult }
+  }
+
+  /**
+   * Authorize every pull ref against THIS call's live roster. CF sessions are
+   * app-scoped, so an unvalidated `{sessionId, trackName}` lets a hostile
+   * participant of call A pull media from any other call by replaying a
+   * `cfSessionId` a roster elsewhere exposed. A ref is honored only when its
+   * `(cfSessionId, trackName)` belongs to a live endpoint of this call other than
+   * the caller's own. Any ref outside that set is rejected 403 — the message names
+   * nothing about other calls (no existence leak).
+   */
+  private async assertPullableRefs(
+    workspaceId: string,
+    targetCallId: string,
+    self: CallEndpoint,
+    tracks: RemoteTrackRequest[]
+  ): Promise<void> {
+    const live = await CallEndpointRepository.listLiveByCall(this.pool, workspaceId, targetCallId)
+    const allowed = new Set<string>()
+    for (const ep of live) {
+      if (ep.id === self.id || !ep.cfSessionId) continue
+      for (const track of ep.publishedTracks) allowed.add(pullRefKey(ep.cfSessionId, track.trackName))
+    }
+    for (const ref of tracks) {
+      if (!allowed.has(pullRefKey(ref.sessionId, ref.trackName))) {
+        throw new HttpError("Track is not pullable on this call", { status: 403, code: "CALL_PULL_FORBIDDEN" })
+      }
+    }
   }
 
   /** Renegotiate the CF session: a thin pass-through, incarnation-fenced. No DB write. */
@@ -825,7 +995,7 @@ export class CallService {
     const cf = this.requireCloudflare()
     const { endpoint } = await this.fenceEndpoint(params)
     const cfSessionId = this.requireCfSession(endpoint)
-    const cfResult = await this.cfCall(() => cf.renegotiateSession(cfSessionId, params.sdp))
+    const cfResult = await this.cfCall(() => cf.renegotiateSession(cfSessionId, params.sdp), "renegotiate")
     return { cf: cfResult }
   }
 
@@ -847,8 +1017,9 @@ export class CallService {
     const cf = this.requireCloudflare()
     const { endpoint } = await this.fenceEndpoint(params)
     const cfSessionId = this.requireCfSession(endpoint)
-    const cfResult = await this.cfCall(() =>
-      cf.closeTracks(cfSessionId, { mids: params.mids, force: false, sdp: params.sdp })
+    const cfResult = await this.cfCall(
+      () => cf.closeTracks(cfSessionId, { mids: params.mids, force: false, sdp: params.sdp }),
+      "close_tracks"
     )
 
     if (!params.unpublishKinds || params.unpublishKinds.length === 0) {
@@ -857,9 +1028,12 @@ export class CallService {
     const remove = new Set(params.unpublishKinds)
     const registry = endpoint.publishedTracks.filter((t) => !remove.has(t.kind))
     const snapshot = await withTransaction(this.pool, async (client) => {
+      // Lock the call row before the endpoint write (call→endpoint lock order).
+      await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       const updated = await CallEndpointRepository.setPublishedTracks(client, {
         workspaceId: params.workspaceId,
         id: params.endpointId,
+        mediaIncarnation: params.mediaIncarnation,
         publishedTracks: registry,
       })
       if (!updated) {
@@ -873,17 +1047,22 @@ export class CallService {
     return { cf: cfResult, snapshot }
   }
 
-  /** Run a CF call, translating a transport/CF error into a surfaced HttpError (502/504). */
-  private async cfCall<T>(fn: () => Promise<T>): Promise<T> {
+  /**
+   * Run a CF call, translating a transport/CF error into a surfaced HttpError
+   * (502/504). `operation` labels the connect-failure metric so renegotiation
+   * failures and session-create failures are separable in one counter.
+   */
+  private async cfCall<T>(fn: () => Promise<T>, operation: CfOperation): Promise<T> {
     try {
       return await fn()
     } catch (err) {
       if (err instanceof CloudflareRealtimeError) {
+        callCfErrorsTotal.inc({ operation, cf_code: err.code })
         const status = err.code === "CF_TIMEOUT" ? 504 : 502
         throw new HttpError("Calls media provider error", {
           status,
           code: "CALL_MEDIA_PROVIDER_ERROR",
-          details: { cfCode: err.code, cfErrorCode: err.cfErrorCode },
+          details: { cfCode: err.code, cfErrorCode: err.cfErrorCode, cfErrorDescription: err.cfErrorDescription },
         })
       }
       throw err
@@ -964,7 +1143,7 @@ export class CallService {
     params: { workspaceId: string; callId: string; byUserId: string; targetUserId: string },
     tx?: PoolClient
   ): Promise<CallParticipant> {
-    return withTransaction(tx ?? this.pool, async (client) => {
+    const { removed, closedSessionIds } = await withTransaction(tx ?? this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       if (!call) {
         throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
@@ -993,7 +1172,7 @@ export class CallService {
         throw new HttpError("Participant not found", { status: 404, code: "CALL_PARTICIPANT_NOT_FOUND" })
       }
 
-      await CallEndpointRepository.closeByParticipant(client, params.workspaceId, removed.id)
+      const closedEndpoints = await CallEndpointRepository.closeByParticipant(client, params.workspaceId, removed.id)
 
       const joined = await CallParticipantRepository.countJoined(client, params.workspaceId, params.callId)
       if (joined === 0 && call.status === "active") {
@@ -1003,6 +1182,22 @@ export class CallService {
           graceDeadline: new Date(Date.now() + EMPTY_GRACE_MS),
           reason: "completed",
         })
+        // The call is now empty: retract every outstanding ring in the same tx
+        // (INV-7) so an emptied call's rings never lapse into false missed calls.
+        const cancelled = await CallInvitationRepository.cancelRingingForCall(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+        })
+        await this.settleCancelledRings(client, cancelled)
+      } else {
+        // The call lives on, but the removed user's own outgoing ring is abandoned
+        // (they can no longer answer for the invitee they were calling).
+        const cancelled = await CallInvitationRepository.cancelRingingByInviter(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+          inviterUserId: params.targetUserId,
+        })
+        await this.settleCancelledRings(client, cancelled)
       }
 
       // Removal is a membership change: bump the roster version in the same tx as
@@ -1010,8 +1205,14 @@ export class CallService {
       await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
       await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
-      return removed
+      const closedSessionIds = closedEndpoints.map((e) => e.cfSessionId).filter((id): id is string => !!id)
+      return { removed, closedSessionIds }
     })
+    // Tear down the removed participant's CF sessions after the tx commits (INV-41).
+    if (!tx) {
+      for (const sessionId of closedSessionIds) await this.bestEffortCloseSession(sessionId)
+    }
+    return removed
   }
 
   /**
@@ -1037,8 +1238,9 @@ export class CallService {
    * Insert the missed-call activity row for the invitee of an expired ring and
    * emit its `activity:created` (with the invitee's absolute unread counts, sync
    * phase 2c) so the badge and push land the same way a mention or DM message
-   * would. The call row supplies the host stream and mode; a missing call/inviter
-   * degrades to a row without those context fields rather than skipping the miss.
+   * would. The call row supplies the host stream and mode; a missing inviter/stream
+   * degrades the context fields, but a missing call row skips the activity entirely
+   * — there is no stream to land the miss on.
    */
   private async recordMissedCall(client: PoolClient, invitation: CallInvitation): Promise<void> {
     const call = await CallRepository.findById(client, invitation.workspaceId, invitation.callId)
@@ -1303,6 +1505,7 @@ export class CallService {
       streamVisibility: ctx.streamVisibility,
       memberUserIds: ctx.memberUserIds,
     })
+    callEndedTotal.inc({ reason: payload.endedReason })
   }
 
   /**

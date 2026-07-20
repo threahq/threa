@@ -70,7 +70,7 @@ export function RejoinBar({ workspaceId, streamId }: { workspaceId: string; stre
         <Button
           size="sm"
           className="h-7 px-3 text-[12px]"
-          onClick={() => launch({ workspaceId, streamId, mode: activeCall.mode })}
+          onClick={() => launch({ workspaceId, streamId, mode: activeCall.mode, expectedCallId: activeCall.callId })}
         >
           Rejoin
         </Button>

@@ -204,6 +204,48 @@ describe("CallEndpointRepository — lease fencing + lapse-only reap", () => {
   })
 })
 
+describe("CallEndpointRepository — post-CF writes fenced on media_incarnation (S5)", () => {
+  it("setMediaState CASes on (id, media_incarnation, live status) so a stale incarnation matches nothing", async () => {
+    const captured: Captured = { text: "" }
+    await CallEndpointRepository.setMediaState(createQuerier(captured), {
+      workspaceId: "ws_1",
+      id: "callep_1",
+      mediaIncarnation: "inc_1",
+      mediaState: { muted: true },
+    })
+    const sql = normalize(captured.text)
+    expect(sql).toContain("SET media_state =")
+    expect(sql).toContain("media_incarnation =")
+    expect(sql).toContain("status IN ('connected', 'reconnecting')")
+  })
+
+  it("setPublishedTracks CASes on (id, media_incarnation, live status)", async () => {
+    const captured: Captured = { text: "" }
+    await CallEndpointRepository.setPublishedTracks(createQuerier(captured), {
+      workspaceId: "ws_1",
+      id: "callep_1",
+      mediaIncarnation: "inc_1",
+      publishedTracks: [{ kind: "mic", trackName: "mic0" }],
+    })
+    const sql = normalize(captured.text)
+    expect(sql).toContain("SET published_tracks =")
+    expect(sql).toContain("media_incarnation =")
+    expect(sql).toContain("status IN ('connected', 'reconnecting')")
+  })
+})
+
+describe("CallEndpointRepository — live-endpoint pull-authorization set (S1)", () => {
+  it("listLiveByCall reads the call's connected/reconnecting endpoints, workspace-scoped", async () => {
+    const captured: Captured = { text: "" }
+    await CallEndpointRepository.listLiveByCall(createQuerier(captured), "ws_1", "call_1")
+    const sql = normalize(captured.text)
+    expect(sql).toContain("FROM call_endpoints")
+    expect(sql).toContain("workspace_id =")
+    expect(sql).toContain("call_id =")
+    expect(sql).toContain("status IN ('connected', 'reconnecting')")
+  })
+})
+
 describe("CallParticipantRepository — endpoint liveness anti-join", () => {
   it("markLeftWhereNoLiveEndpoint workspace-correlates the endpoint anti-join", async () => {
     const captured: Captured = { text: "" }

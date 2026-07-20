@@ -64,6 +64,11 @@ const backendPort = getOrAllocatePort("PLAYWRIGHT_BACKEND_PORT")
 const controlPlanePort = getOrAllocatePort("PLAYWRIGHT_CONTROL_PLANE_PORT")
 const routerPort = getOrAllocatePort("PLAYWRIGHT_ROUTER_PORT")
 const frontendPort = getOrAllocatePort("PLAYWRIGHT_FRONTEND_PORT")
+// The calls media plane in e2e: a local fake Cloudflare Realtime server (the spike
+// harness's fake-cf-server in negotiationless mode) makes the backend's media plane
+// "configured" without a real CF account. The calls suite asserts the control plane
+// (roster/dock), never media bytes — see tests/browser/fake-cf-runner.ts.
+const fakeCfPort = getOrAllocatePort("FAKE_CF_PORT")
 const dbName = deriveTestDatabaseName()
 const cpDbName = `${dbName}_cp`
 const setupBrowserInfraCommand = "bun tests/browser/setup-infra.ts"
@@ -141,13 +146,42 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      // The calls suite needs fake-media launch flags + granted mic/camera, so it
+      // runs as its own project below; keep it out of the default project.
+      testIgnore: "**/calls.spec.ts",
       use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "calls",
+      testMatch: "**/calls.spec.ts",
+      use: {
+        ...devices["Desktop Chrome"],
+        // getUserMedia resolves with a synthetic mic/camera and the permission
+        // prompt auto-accepts, so a headless call reaches the connected phase
+        // without a real device or a click-through. Grant the permissions too so
+        // the context never blocks the capture.
+        permissions: ["microphone", "camera"],
+        launchOptions: {
+          args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
+        },
+      },
     },
   ],
 
   // Start backend, workspace-router, and frontend before running tests
   // Ports are dynamically allocated to avoid conflicts with other worktrees
   webServer: [
+    {
+      // The calls media plane: a local fake Cloudflare Realtime server the backend
+      // proxies to (negotiationless — forwards no media). Booting it here makes the
+      // backend's CF app id/secret point at a live HTTP boundary so `cloudflareEnabled`
+      // is true without a real CF account.
+      command: "bun tests/browser/fake-cf-runner.ts",
+      url: `http://localhost:${fakeCfPort}/healthz`,
+      reuseExistingServer: !process.env.CI,
+      timeout: webServerTimeout,
+      env: { FAKE_CF_PORT: String(fakeCfPort) },
+    },
     {
       command: `${setupBrowserInfraCommand} && bun run test:browser:backend`,
       url: `http://localhost:${backendPort}/readyz`,
@@ -161,6 +195,15 @@ export default defineConfig({
         USE_STUB_BOUNDARY_EXTRACTION: "true",
         USE_STUB_AI: "true",
         THREA_TEST_LOG_FILE: process.env.THREA_TEST_LOG_FILE,
+        // Calls media plane → the fake CF server (negotiationless). App id/secret
+        // present ⇒ `cloudflareRealtime.enabled`; the workspace `callsEnabled`
+        // setting is still flipped per-test. Grace + sweep driven low so an ended
+        // call's timeline card lands inside the test window.
+        CLOUDFLARE_REALTIME_APP_ID: "e2e-calls-app",
+        CLOUDFLARE_REALTIME_APP_SECRET: "e2e-calls-secret",
+        CLOUDFLARE_REALTIME_API_BASE: `http://localhost:${fakeCfPort}/v1/apps`,
+        CALL_EMPTY_GRACE_MS: "2000",
+        CALL_SWEEP_INTERVAL_MS: "1000",
         // MinIO S3-compatible storage for file uploads
         S3_BUCKET: "threa-browser-test",
         S3_REGION: "us-east-1",

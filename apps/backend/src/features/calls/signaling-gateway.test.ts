@@ -3,6 +3,7 @@ import type { Server } from "socket.io"
 import { registerCallGateway } from "./signaling-gateway"
 import { HttpError } from "../../lib/errors"
 import * as workspacesModule from "../workspaces"
+import * as accessModule from "./access"
 
 type Ack = (result: { ok: boolean; error?: string; code?: string; data?: unknown }) => void
 
@@ -34,6 +35,7 @@ function setup(overrides?: {
   cloudflareEnabled?: boolean
   callsEnabled?: boolean
   user?: unknown
+  callAccess?: unknown
 }) {
   const emit = mock(() => {})
   const to = mock(() => ({ emit }))
@@ -49,6 +51,12 @@ function setup(overrides?: {
 
   spyOn(workspacesModule.UserRepository, "findByWorkosUserIdInWorkspace").mockResolvedValue(
     (overrides?.user === undefined ? { id: "usr_1" } : overrides.user) as never
+  )
+
+  // The renew path re-checks host-stream access (S2); grant it by default so the
+  // renew tests exercise the lease fence, and let a test null it to prove revocation.
+  const checkCallAccess = spyOn(accessModule, "checkCallAccess").mockResolvedValue(
+    (overrides?.callAccess === undefined ? { call: { id: "call_1" } } : overrides.callAccess) as never
   )
 
   const callService = {
@@ -83,7 +91,7 @@ function setup(overrides?: {
   const socket = fakeSocket()
   connectionHandler!(socket)
 
-  return { socket, callService, workspaceSettingsService, emit, to, namespace }
+  return { socket, callService, workspaceSettingsService, checkCallAccess, emit, to, namespace }
 }
 
 const JOIN = { workspaceId: "ws_1", callId: "call_1", mediaIncarnation: "inc_1" }
@@ -153,6 +161,122 @@ describe("registerCallGateway call:join", () => {
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "VALIDATION_ERROR" }))
     expect(callService.joinCall).not.toHaveBeenCalled()
   })
+
+  it("leaves the prior call's rooms when a bound socket rejoins (no stale fan-in on rebind)", async () => {
+    let joinCount = 0
+    const { socket } = setup({
+      callService: {
+        joinCall: mock(async () => {
+          joinCount += 1
+          return joinCount === 1
+            ? {
+                call: { id: "call_1" },
+                participant: { id: "callp_1" },
+                endpoint: { id: "callep_1", epoch: 2, connectionSeq: 4 },
+              }
+            : {
+                call: { id: "call_2" },
+                participant: { id: "callp_2" },
+                endpoint: { id: "callep_2", epoch: 1, connectionSeq: 1 },
+              }
+        }),
+      },
+    })
+
+    await socket.trigger(
+      "call:join",
+      JOIN,
+      mock(() => {})
+    )
+    await socket.trigger(
+      "call:join",
+      { workspaceId: "ws_1", callId: "call_2", mediaIncarnation: "inc_2" },
+      mock(() => {})
+    )
+
+    // The prior call's rooms are left so its roster fan-out no longer reaches this socket.
+    expect(socket.left.has("call:call_1")).toBe(true)
+    expect(socket.left.has("call:call_1:ep:callep_1")).toBe(true)
+    expect(socket.joined.has("call:call_2")).toBe(true)
+    expect(socket.joined.has("call:call_2:ep:callep_2")).toBe(true)
+  })
+
+  it("leaves the prior call's domain state (endpoint/participant) when a bound socket rejoins (S8)", async () => {
+    let joinCount = 0
+    const leaveCall = mock(async () => ({ call: { id: "call_1" } }))
+    const { socket } = setup({
+      callService: {
+        leaveCall,
+        joinCall: mock(async () => {
+          joinCount += 1
+          return joinCount === 1
+            ? {
+                call: { id: "call_1" },
+                participant: { id: "callp_1" },
+                endpoint: { id: "callep_1", epoch: 2, connectionSeq: 4 },
+              }
+            : {
+                call: { id: "call_2" },
+                participant: { id: "callp_2" },
+                endpoint: { id: "callep_2", epoch: 1, connectionSeq: 1 },
+              }
+        }),
+      },
+    })
+
+    await socket.trigger(
+      "call:join",
+      JOIN,
+      mock(() => {})
+    )
+    await socket.trigger(
+      "call:join",
+      { workspaceId: "ws_1", callId: "call_2", mediaIncarnation: "inc_2" },
+      mock(() => {})
+    )
+
+    // The old endpoint is torn down in the domain (not left live until lease reap).
+    expect(leaveCall).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: "call_1", endpointId: "callep_1", userId: "usr_1" })
+    )
+  })
+
+  it("still completes the new join when leaving the prior call fails (best-effort, S8)", async () => {
+    let joinCount = 0
+    const { socket } = setup({
+      callService: {
+        leaveCall: mock(async () => {
+          throw new Error("prior leave blew up")
+        }),
+        joinCall: mock(async () => {
+          joinCount += 1
+          return joinCount === 1
+            ? {
+                call: { id: "call_1" },
+                participant: { id: "callp_1" },
+                endpoint: { id: "callep_1", epoch: 2, connectionSeq: 4 },
+              }
+            : {
+                call: { id: "call_2" },
+                participant: { id: "callp_2" },
+                endpoint: { id: "callep_2", epoch: 1, connectionSeq: 1 },
+              }
+        }),
+      },
+    })
+
+    await socket.trigger(
+      "call:join",
+      JOIN,
+      mock(() => {})
+    )
+    const ack = mock(() => {})
+    await socket.trigger("call:join", { workspaceId: "ws_1", callId: "call_2", mediaIncarnation: "inc_2" }, ack)
+
+    // The new join succeeds despite the prior-call teardown throwing.
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: true }))
+    expect(socket.joined.has("call:call_2:ep:callep_2")).toBe(true)
+  })
 })
 
 describe("registerCallGateway call:state", () => {
@@ -205,7 +329,7 @@ describe("registerCallGateway call:lease:renew", () => {
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: true }))
   })
 
-  it("acks CALL_LEASE_SUPERSEDED when the fenced renew returns null", async () => {
+  it("acks CALL_LEASE_SUPERSEDED and leaves the rooms when the fenced renew returns null", async () => {
     const { socket } = setup({ callService: { renewEndpointLease: mock(async () => null) } })
     await socket.trigger(
       "call:join",
@@ -216,6 +340,28 @@ describe("registerCallGateway call:lease:renew", () => {
     const ack = mock(() => {})
     await socket.trigger("call:lease:renew", {}, ack)
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALL_LEASE_SUPERSEDED" }))
+    // A superseded socket must stop receiving roster fan-out (S2).
+    expect(socket.left.has("call:call_1")).toBe(true)
+    expect(socket.left.has("call:call_1:ep:callep_1")).toBe(true)
+  })
+
+  it("acks CALL_ACCESS_REVOKED and leaves the rooms when host-stream access is gone (S2)", async () => {
+    const { socket, callService, checkCallAccess } = setup()
+    await socket.trigger(
+      "call:join",
+      JOIN,
+      mock(() => {})
+    )
+    // The user was kicked from the host stream after joining — access now null.
+    checkCallAccess.mockResolvedValue(null as never)
+
+    const ack = mock(() => {})
+    await socket.trigger("call:lease:renew", {}, ack)
+
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALL_ACCESS_REVOKED" }))
+    expect(callService.renewEndpointLease).not.toHaveBeenCalled()
+    expect(socket.left.has("call:call_1")).toBe(true)
+    expect(socket.left.has("call:call_1:ep:callep_1")).toBe(true)
   })
 
   it("rejects the renew with CALLS_DISABLED once the kill-switch is flipped off (drains live calls in one TTL)", async () => {

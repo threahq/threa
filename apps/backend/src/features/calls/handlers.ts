@@ -20,6 +20,10 @@ const startSchema = z.object({
   streamId: z.string().min(1),
   mode: z.enum(CALL_MODES),
   mediaIncarnation: mediaIncarnationSchema.optional(),
+  // Ring-acceptance guard: the id of the call the client meant to join. When
+  // set and the call it would actually join differs, the ring's call ended in the
+  // click window → 409 CALL_ENDED instead of silently joining/starting another.
+  expectedCallId: z.string().min(1).optional(),
 })
 
 const cfSessionSchema = z.object({
@@ -127,6 +131,7 @@ export function createCallHandlers({
         userId,
         mode: body.mode,
         mediaIncarnation: body.mediaIncarnation,
+        expectedCallId: body.expectedCallId,
       })
       const snapshot = await callService.getRosterSnapshot(workspaceId, result.call.id)
 

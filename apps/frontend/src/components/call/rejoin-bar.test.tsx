@@ -62,7 +62,12 @@ describe("RejoinBar", () => {
     seedStoreLive()
     renderBar()
     await userEvent.click(screen.getByRole("button", { name: "Rejoin" }))
-    expect(launch).toHaveBeenCalledWith({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+    expect(launch).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      mode: "video",
+      expectedCallId: "call_1",
+    })
   })
 
   it("Leave posts the self-leave and hides the bar (no zombie lease)", async () => {

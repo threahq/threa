@@ -121,7 +121,21 @@ export interface CallManagerDeps {
     streamId: string
     mode: CallMode
     mediaIncarnation: string
+    /**
+     * Binds the start to a specific live call: when set and the stream's live
+     * call differs, the server returns 409 `CALL_ENDED` rather than starting a
+     * new one. Threaded from ring-accept / rejoin / call-card Join, which each
+     * know the call they mean to enter; a fresh start-or-join passes none.
+     */
+    expectedCallId?: string
   }): Promise<StartCallResponse>
+  /**
+   * Endpoint-free REST self-leave: closes every live endpoint this user holds on
+   * the call and cancels their outgoing rings. Idempotent — the rollback backstop
+   * so a failed/cancelled start can't leave the leased endpoint live (~45s) or the
+   * DM peer ringing (a false missed call).
+   */
+  leaveCallRest(args: { workspaceId: string; callId: string }): Promise<void>
   connectSocket(workspaceId: string): CallSocket | null
   createTransport(args: { workspaceId: string; callId: string }): MediaTransport
   acquireUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream>
@@ -196,7 +210,7 @@ function refKey(ref: PeerTrackRef): string {
  * from here — this is action-only, plus the video ref-map accessor.
  */
 export interface CallController {
-  startCall(params: { workspaceId: string; streamId: string; mode: CallMode }): Promise<void>
+  startCall(params: { workspaceId: string; streamId: string; mode: CallMode; expectedCallId?: string }): Promise<void>
   leaveCall(): Promise<void>
   setMuted(muted: boolean): void
   setCameraOn(on: boolean): Promise<void>
@@ -255,7 +269,7 @@ export class CallManager implements CallController {
    * settles throws here, in the caller's stack, rather than passing a post-await
    * check and leaking a whole second session.
    */
-  startCall(params: { workspaceId: string; streamId: string; mode: CallMode }): Promise<void> {
+  startCall(params: { workspaceId: string; streamId: string; mode: CallMode; expectedCallId?: string }): Promise<void> {
     if (this.session || this.starting) throw new Error("A call is already active")
     this.starting = true
     this.cancelStart = false
@@ -265,7 +279,7 @@ export class CallManager implements CallController {
 
   private async runStart(
     gen: number,
-    params: { workspaceId: string; streamId: string; mode: CallMode }
+    params: { workspaceId: string; streamId: string; mode: CallMode; expectedCallId?: string }
   ): Promise<void> {
     const mediaIncarnation = this.deps.mintIncarnation()
     // Synchronous, in-gesture (see startCall doc). Held on a temp until the session exists.
@@ -276,11 +290,20 @@ export class CallManager implements CallController {
     // `this.session = session` (teardown early-returns on a null session).
     let releaseLock: (() => void) | null = null
     let socket: CallSocket | null = null
+    // Known only once the REST start responds; drives the rollback's server
+    // self-leave. Null until then — a throw before the response admitted
+    // nothing server-side, so there is nothing to settle.
+    let callId: string | null = null
     try {
       const started = await this.deps.startCallRest({ ...params, mediaIncarnation })
       this.assertStartLive(gen)
-      const callId = started.call.id
-      setCallSession({ callId, workspaceId: params.workspaceId, streamId: params.streamId, mode: params.mode })
+      callId = started.call.id
+      // The server owns the mode: joining an existing call ignores our requested
+      // mode, so adopt `started.call.mode` (an audio_only call must stay audio_only
+      // even when the launch surface hardcoded "video") — the camera control hides
+      // instead of tripping the server's camera-not-allowed gate.
+      const mode = started.call.mode
+      setCallSession({ callId, workspaceId: params.workspaceId, streamId: params.streamId, mode })
       // One tab owns the call (Web Locks). A second tab sees the lock held →
       // activeElsewhere; on this tab's crash the lock releases and the other tab
       // may offer rejoin (surfaced via the store; UI is M1.2).
@@ -303,7 +326,7 @@ export class CallManager implements CallController {
         callId,
         workspaceId: params.workspaceId,
         streamId: params.streamId,
-        mode: params.mode,
+        mode,
         mediaIncarnation,
         endpointId: join.endpointId,
         leaseTtlMs: join.leaseTtlMs || ENDPOINT_LEASE_TTL_MS,
@@ -360,7 +383,7 @@ export class CallManager implements CallController {
 
       setCallPhase("connected")
     } catch (err) {
-      await this.rollbackStart({ releaseLock, socket, audioContext })
+      await this.rollbackStart({ workspaceId: params.workspaceId, callId, releaseLock, socket, audioContext })
       throw err
     } finally {
       this.starting = false
@@ -376,28 +399,46 @@ export class CallManager implements CallController {
     if (this.cancelStart || gen !== this.sessionGen) throw new CallStartCancelledError()
   }
 
-  /** Ordered rollback of an aborted/failed start: teardown if a session exists, else the raw locals. */
+  /**
+   * Ordered rollback of an aborted/failed start. Local cleanup: teardown if a
+   * session exists, else the raw locals. Then a best-effort server settle:
+   * the REST start already admitted a participant, leased an endpoint, and (for a
+   * DM) rang the peer BEFORE media connected, so local cleanup alone leaves that
+   * endpoint live for the lease window (~45s) and the peer ringing (a false missed
+   * call). The endpoint-free REST self-leave closes all this user's endpoints for
+   * the call and cancels their rings; it is idempotent, so it composes with the
+   * socket leave below regardless of ordering.
+   */
   private async rollbackStart(locals: {
+    workspaceId: string
+    callId: string | null
     releaseLock: (() => void) | null
     socket: CallSocket | null
     audioContext: AudioContext | null
   }): Promise<void> {
-    if (this.session) {
-      // The session owns the lock/socket/audioContext — teardown releases them in order.
+    const session = this.session
+    if (session) {
+      // Socket leave is faster while the socket is still alive; teardown then
+      // releases the lock/socket/audioContext in order. The REST call below backs
+      // it up in case the socket had already dropped.
+      await this.emitLeave(session)
       await this.teardown()
-      return
+    } else {
+      // Threw before the session existed — teardown can't see these, so release the
+      // lock, socket, and AudioContext here or they orphan (a held-forever call lock
+      // wedges every later startCall on this tab).
+      locals.releaseLock?.()
+      try {
+        locals.socket?.disconnect()
+      } catch {
+        // ignore
+      }
+      void locals.audioContext?.close?.().catch(() => {})
+      clearCallState()
     }
-    // Threw before the session existed — teardown can't see these, so release the
-    // lock, socket, and AudioContext here or they orphan (a held-forever call lock
-    // wedges every later startCall on this tab).
-    locals.releaseLock?.()
-    try {
-      locals.socket?.disconnect()
-    } catch {
-      // ignore
+    if (locals.callId) {
+      await this.deps.leaveCallRest({ workspaceId: locals.workspaceId, callId: locals.callId }).catch(() => {})
     }
-    void locals.audioContext?.close?.().catch(() => {})
-    clearCallState()
   }
 
   /**
@@ -408,7 +449,13 @@ export class CallManager implements CallController {
   async rejoin(params: { workspaceId: string; streamId: string; callId: string; mode: CallMode }): Promise<void> {
     // startCall's REST endpoint is start-or-join, so a rejoin is a start on the
     // same stream with a fresh incarnation — the shared path keeps one lifecycle.
-    await this.startCall({ workspaceId: params.workspaceId, streamId: params.streamId, mode: params.mode })
+    // A rejoin knows exactly which call it means, so bind to it.
+    await this.startCall({
+      workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      mode: params.mode,
+      expectedCallId: params.callId,
+    })
   }
 
   /** Ordered teardown: emit leave → close transport → stop tracks. */
@@ -549,6 +596,17 @@ export class CallManager implements CallController {
           // "connected" phase or overwrite a newer call's store.
           const s = this.sessionForGen(gen)
           if (!s) return
+          // A reconnect that returns a DIFFERENT endpoint id means the old lease
+          // was reaped and the server minted a fresh endpoint. The transport and
+          // CF media session are bound to the endpoint id captured at
+          // createTransport/connect and can't be rebound in place, so every later
+          // media op would 409 while the UI showed "connected". Tear down instead;
+          // the user re-enters via the stream's live-call card / rejoin surfaces
+          // (a fresh incarnation on the fresh endpoint).
+          if (join.endpointId !== s.endpointId) {
+            void this.teardown()
+            return
+          }
           s.endpointId = join.endpointId
           this.applyRoster(s, join.rosterVersion, join.roster)
           setCallPhase("connected")
@@ -709,17 +767,41 @@ export class CallManager implements CallController {
     session.micTrack = micTrack
     if (micTrack) {
       micTrack.enabled = !getCallState().local.muted
-      await session.transport.publish("mic", micTrack)
+      try {
+        await session.transport.publish("mic", micTrack)
+      } catch (publishErr) {
+        // Mic publish failed on this fresh capture — stop the WHOLE stream (the mic
+        // and any not-yet-published camera track) so no acquired-but-unpublished
+        // track stays live, then let the caller's rollback run. The prior capture
+        // was already stopped before publish, so nothing survives to restore here.
+        stream.getTracks().forEach((t) => t.stop())
+        session.micTrack = null
+        session.cameraTrack = null
+        session.micStream = null
+        throw publishErr
+      }
     }
 
     const cameraTrack = camera ? (stream.getVideoTracks()[0] ?? null) : null
     session.cameraTrack = cameraTrack
     if (cameraTrack) {
-      await session.transport.publish("camera", cameraTrack)
-      await this.applyCameraLayer(session)
-      // Surface the local preview under the session's own endpoint id (self is on
-      // the roster with that endpoint), so the self tile renders it uniformly.
-      this.setVideoStream(session, session.endpointId, cameraTrack)
+      try {
+        await session.transport.publish("camera", cameraTrack)
+        await this.applyCameraLayer(session)
+        // Surface the local preview under the session's own endpoint id (self is on
+        // the roster with that endpoint), so the self tile renders it uniformly.
+        this.setVideoStream(session, session.endpointId, cameraTrack)
+      } catch (publishErr) {
+        // The camera track is live (LED on, possibly transmitting) but its publish
+        // failed — stop it and drop all camera state so the UI's camera-off truth
+        // matches the hardware. The mic published just above is left untouched.
+        cameraTrack.stop()
+        session.cameraTrack = null
+        this.clearVideoStream(session, session.endpointId)
+        await session.transport.unpublish("camera").catch(() => {})
+        setCallCaptureError({ code: "capture_failed", message: describeError(publishErr) })
+        throw new CallCaptureError("capture_failed", publishErr)
+      }
     } else {
       this.clearVideoStream(session, session.endpointId)
     }
@@ -1081,6 +1163,16 @@ export class CallManager implements CallController {
 
   /** Synchronous ordered hangup for the store flush (account switch / logout). */
   private hangupSync(): void {
+    // During most of runStart `starting` is true with no session yet, so the
+    // session teardown below would no-op and the in-flight continuation would go
+    // on to create a session and hot-mic under the just-switched-to account.
+    // Cancel it: the gen bump fails every assertStartLive / sessionForGen, so
+    // runStart rolls back at its next checkpoint (the rollback also settles the
+    // server endpoint).
+    if (this.starting) {
+      this.cancelStart = true
+      this.sessionGen++
+    }
     const session = this.session
     if (!session) return
     // Emit leave (fire-and-forget — the flush can't await), then close transport,
@@ -1201,8 +1293,16 @@ function detectSingleActiveCapture(): boolean {
 
 export function defaultCallManagerDeps(): CallManagerDeps {
   return {
-    async startCallRest({ workspaceId, streamId, mode, mediaIncarnation }) {
-      return api.post<StartCallResponse>(`/api/workspaces/${workspaceId}/calls`, { streamId, mode, mediaIncarnation })
+    async startCallRest({ workspaceId, streamId, mode, mediaIncarnation, expectedCallId }) {
+      return api.post<StartCallResponse>(`/api/workspaces/${workspaceId}/calls`, {
+        streamId,
+        mode,
+        mediaIncarnation,
+        expectedCallId,
+      })
+    },
+    async leaveCallRest({ workspaceId, callId }) {
+      await api.post(`/api/workspaces/${workspaceId}/calls/${callId}/leave`, {})
     },
     connectSocket(workspaceId) {
       const url = resolveCallsUrl(workspaceId)

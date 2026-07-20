@@ -11,6 +11,7 @@ export interface RateLimiterSet {
   commandDispatch: RequestHandler
   pushTest: RequestHandler
   calls: RequestHandler
+  callsStart: RequestHandler
   publicApiWorkspace: RequestHandler
   publicApiKey: RequestHandler
 }
@@ -84,6 +85,16 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       name: "calls",
       windowMs: 60_000,
       max: 240,
+      key: userScopeKey,
+    }),
+
+    // Ring-capable call creation (POST /calls) is high-urgency push spam if abused,
+    // so it gets its own tight budget instead of sharing the generous proxy limiter
+    // (S9). 12/min covers legit start + leave-retry churn and kills spam.
+    callsStart: createRateLimit({
+      name: "calls-start",
+      windowMs: 60_000,
+      max: 12,
       key: userScopeKey,
     }),
 

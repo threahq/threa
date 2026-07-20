@@ -7,6 +7,7 @@ import {
   type CallSocket,
 } from "./call-manager"
 import type { MediaTransport } from "./media-transport"
+import { ApiError } from "@/api/client"
 import { getCallState, clearCallState, resetCallStoreCache, type CallRosterParticipant } from "@/stores/call-store"
 import { isDictationExternalHeld, setDictationExternalHold } from "@/contexts/dictation-coordinator-context"
 
@@ -80,6 +81,8 @@ interface FakeSocket extends CallSocket {
   /** When true, `call:join` stores its ack on `pendingJoinAck` instead of resolving it. */
   deferJoin: boolean
   pendingJoinAck: ((result: unknown) => void) | null
+  /** When true, `call:join` acks with a failure so the join promise rejects. */
+  failJoin: boolean
   fire(event: string, ...args: unknown[]): void
 }
 
@@ -93,11 +96,13 @@ function makeSocket(): FakeSocket {
     emitted,
     deferJoin: false,
     pendingJoinAck: null,
+    failJoin: false,
     emit(event, payload, ack) {
       emitted.push({ event, payload })
       if (event === "call:leave") order.push("leave")
       if (event === "call:join") {
-        if (socket.deferJoin) socket.pendingJoinAck = ack ?? null
+        if (socket.failJoin) ack?.({ ok: false, code: "JOIN_FAILED" })
+        else if (socket.deferJoin) socket.pendingJoinAck = ack ?? null
         else ack?.({ ok: true, data: socket.joinAck })
       } else if (event === "call:leave") ack?.({ ok: true })
       else if (event === "call:lease:renew") ack?.({ ok: true, data: { leaseExpiresAt: new Date().toISOString() } })
@@ -127,6 +132,7 @@ function makeDeps(socket: FakeSocket, transport: MediaTransport) {
       rosterVersion: 0,
       roster: [],
     })),
+    leaveCallRest: vi.fn(async () => {}),
     connectSocket: vi.fn(() => socket),
     createTransport: vi.fn(() => transport),
     acquireUserMedia: vi.fn(async (c: MediaStreamConstraints) => {
@@ -197,6 +203,30 @@ describe("CallManager", () => {
     await manager.setCameraOn(true)
     expect(transport._events).toContain("publish:camera")
     expect(getCallState().local.cameraOn).toBe(true)
+  })
+
+  it("adopts the server-returned mode over the requested mode (join-existing audio_only)", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    // The launch surface hardcodes "video", but this stream already hosts an
+    // audio_only call — the server returns audio_only and the client must adopt it.
+    ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockResolvedValue({
+      call: { id: "call_1", workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" },
+      created: false,
+      participant: { id: "p_1" },
+      endpoint: { id: "ep_rest" },
+      rosterVersion: 0,
+      roster: [],
+    })
+    const manager = new CallManager(deps, null)
+
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    expect(getCallState().mode).toBe("audio_only")
+    // The adopted mode caps the camera: setCameraOn is a no-op, never tripping the server gate.
+    await manager.setCameraOn(true)
+    expect(transport._events).not.toContain("publish:camera")
   })
 
   it("audio_only mode ignores setCameraOn", async () => {
@@ -507,6 +537,192 @@ describe("CallManager", () => {
     rosterHandler?.({ callId: "call_1", rosterVersion: 99, roster: [participant({ userId: "usr_z" })] })
     expect(getCallState().roster).toHaveLength(0)
     expect(getCallState().rosterVersion).toBe(0)
+  })
+
+  // ── F1: a failed/cancelled start settles the server (no ghost endpoint / ring) ──
+
+  it("F1: a socket-join failure after the REST start settles the server via REST self-leave", async () => {
+    const socket = makeSocket()
+    socket.failJoin = true
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const manager = new CallManager(deps, null)
+
+    await expect(manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })).rejects.toThrow()
+
+    expect(manager.isActive()).toBe(false)
+    // The REST start admitted the participant + leased the endpoint before the join
+    // failed; the self-leave closes it so the endpoint isn't a ~45s zombie / the DM
+    // peer keeps ringing.
+    expect(deps.leaveCallRest).toHaveBeenCalledWith({ workspaceId: "ws_1", callId: "call_1" })
+  })
+
+  it("F1: a cancel during joining also settles the server via REST self-leave", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    // Park at acquireWakeLock (session already exists) so the cancel lands after the
+    // REST start — exercising rollbackStart's session branch (emitLeave + REST).
+    let releaseWake: () => void = () => {}
+    ;(deps.requestWakeLock as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseWake = () => resolve(null)
+        })
+    )
+    const manager = new CallManager(deps, null)
+
+    const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    await new Promise((r) => setTimeout(r, 0))
+
+    const leaving = manager.leaveCall()
+    releaseWake()
+    await expect(start).rejects.toBeInstanceOf(CallStartCancelledError)
+    await leaving
+
+    expect(manager.isActive()).toBe(false)
+    expect(deps.leaveCallRest).toHaveBeenCalledWith({ workspaceId: "ws_1", callId: "call_1" })
+  })
+
+  it("F1: a failure BEFORE the REST response does NOT self-leave (no callId, nothing admitted)", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("network down"))
+    const manager = new CallManager(deps, null)
+
+    await expect(manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })).rejects.toThrow(
+      /network down/
+    )
+
+    expect(manager.isActive()).toBe(false)
+    expect(deps.leaveCallRest).not.toHaveBeenCalled()
+  })
+
+  // ── F2: account switch cancels an in-flight start (no hot mic under new account) ──
+
+  it("F2: an account flush mid-start cancels the in-flight start (mic never acquired)", async () => {
+    const socket = makeSocket()
+    socket.deferJoin = true
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const manager = new CallManager(deps, null)
+
+    const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    // Park at the socket join — `starting` is true with no session yet.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(socket.pendingJoinAck).not.toBeNull()
+    expect(manager.isActive()).toBe(false)
+
+    // Account switch / logout flush → hangupSync during the joining window.
+    resetCallStoreCache()
+
+    // The parked join resolves late; the gen bump makes its continuation roll back
+    // rather than create a session under the just-switched-to account.
+    socket.pendingJoinAck?.({ ok: true, data: socket.joinAck })
+    await expect(start).rejects.toBeInstanceOf(CallStartCancelledError)
+
+    expect(manager.isActive()).toBe(false)
+    // Capture is downstream of the cancelled join — the mic is never acquired.
+    expect(deps.acquireUserMedia).not.toHaveBeenCalled()
+  })
+
+  // ── F3: a reconnect that returns a different endpoint id must not stay connected ──
+
+  it("F3: a reconnect returning a NEW endpoint id tears down instead of staying connected", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const manager = new CallManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    expect(getCallState().phase).toBe("connected")
+
+    // The old endpoint was reaped during the drop; the reconnect mints a fresh id.
+    socket.joinAck = { ...socket.joinAck, endpointId: "ep_2" }
+    socket.fire("disconnect")
+    expect(getCallState().phase).toBe("reconnecting")
+    socket.fire("connect")
+    await new Promise((r) => setTimeout(r, 0))
+
+    // The transport is bound to the old endpoint — a changed id is unrecoverable.
+    expect(manager.isActive()).toBe(false)
+    expect(getCallState().phase).not.toBe("connected")
+    expect(getCallState().phase).toBe("idle")
+  })
+
+  // ── F4: a failed camera publish must not leave a live undisclosed camera track ──
+
+  it("F4: a failed camera publish stops the camera track, keeps camera off, and leaves the mic live", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    // Holder object (not `let`): property reads aren't CFA-narrowed to null across
+    // the closure assignment, so the assertions below stay typed as the track.
+    const captured: { mic: MediaStreamTrack | null; camera: MediaStreamTrack | null } = { mic: null, camera: null }
+    ;(deps.acquireUserMedia as ReturnType<typeof vi.fn>).mockImplementation(async (c: MediaStreamConstraints) => {
+      const kinds: Array<"audio" | "video"> = ["audio"]
+      if (c.video) kinds.push("video")
+      const stream = makeStream(kinds)
+      captured.mic = stream.getAudioTracks()[0]
+      if (c.video) captured.camera = stream.getVideoTracks()[0]
+      return stream
+    })
+    ;(transport.publish as ReturnType<typeof vi.fn>).mockImplementation(async (kind: string) => {
+      if (kind === "camera") throw new Error("camera publish rejected")
+      transport._events.push(`publish:${kind}`)
+    })
+    const manager = new CallManager(deps, null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    const err = await manager.setCameraOn(true).catch((e) => e)
+    expect(err).toBeInstanceOf(CallCaptureError)
+    expect(err.code).toBe("capture_failed")
+
+    // The live camera track is stopped, so the UI's camera-off truth matches the LED.
+    expect(captured.camera?.stop).toHaveBeenCalled()
+    expect(getCallState().local.cameraOn).toBe(false)
+    expect(getCallState().captureError).toMatchObject({ code: "capture_failed" })
+    // The mic published in the same recapture survives — only the camera was rolled back.
+    expect(captured.mic?.stop).not.toHaveBeenCalled()
+    expect(manager.isActive()).toBe(true)
+  })
+
+  // ── F5: ring acceptance binds to the invitation's call (expectedCallId) ──
+
+  it("F5: threads expectedCallId to the REST start", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const manager = new CallManager(deps, null)
+
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", expectedCallId: "call_ring" })
+
+    expect(deps.startCallRest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "video",
+        expectedCallId: "call_ring",
+      })
+    )
+  })
+
+  it("F5: a 409 CALL_ENDED from the bound start leaves no session and does not self-leave", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(409, "CALL_ENDED", "Call ended"))
+    const manager = new CallManager(deps, null)
+
+    const err = await manager
+      .startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", expectedCallId: "call_gone" })
+      .catch((e) => e)
+
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).code).toBe("CALL_ENDED")
+    expect(manager.isActive()).toBe(false)
+    expect(getCallState().phase).toBe("idle")
+    // The bound start 409'd before admitting us — there is nothing to self-leave.
+    expect(deps.leaveCallRest).not.toHaveBeenCalled()
   })
 })
 

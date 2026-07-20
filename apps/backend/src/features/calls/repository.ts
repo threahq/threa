@@ -926,28 +926,40 @@ export const CallEndpointRepository = {
     return result.rows[0] ? mapEndpoint(result.rows[0]) : null
   },
 
-  /** Overwrite the server-owned media state (mute/camera claims). `null` when the endpoint is gone. */
+  /**
+   * Overwrite the server-owned media state (mute/camera claims), fenced on
+   * `media_incarnation` (INV-66): a stale incarnation that passed `fenceEndpoint`
+   * before a rebind cannot write its state onto the NEW incarnation after its CF
+   * call returns. `null` when the endpoint is gone or the incarnation moved on.
+   */
   async setMediaState(
     db: Querier,
-    params: { workspaceId: string; id: string; mediaState: MediaState }
+    params: { workspaceId: string; id: string; mediaIncarnation: string; mediaState: MediaState }
   ): Promise<CallEndpoint | null> {
     const result = await db.query<CallEndpointRow>(sql`
       UPDATE call_endpoints SET media_state = ${JSON.stringify(params.mediaState)}::jsonb, status_changed_at = NOW()
       WHERE workspace_id = ${params.workspaceId} AND id = ${params.id}
+        AND media_incarnation = ${params.mediaIncarnation}
         AND status IN ('connected', 'reconnecting')
       RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
     `)
     return result.rows[0] ? mapEndpoint(result.rows[0]) : null
   },
 
-  /** Overwrite the published-track registry. `null` when the endpoint is gone. */
+  /**
+   * Overwrite the published-track registry, fenced on `media_incarnation`
+   * (INV-66): the post-CF registry write of a stale incarnation must not land on
+   * the incarnation that replaced it. `null` when the endpoint is gone or the
+   * incarnation moved on.
+   */
   async setPublishedTracks(
     db: Querier,
-    params: { workspaceId: string; id: string; publishedTracks: PublishedTrack[] }
+    params: { workspaceId: string; id: string; mediaIncarnation: string; publishedTracks: PublishedTrack[] }
   ): Promise<CallEndpoint | null> {
     const result = await db.query<CallEndpointRow>(sql`
       UPDATE call_endpoints SET published_tracks = ${JSON.stringify(params.publishedTracks)}::jsonb, status_changed_at = NOW()
       WHERE workspace_id = ${params.workspaceId} AND id = ${params.id}
+        AND media_incarnation = ${params.mediaIncarnation}
         AND status IN ('connected', 'reconnecting')
       RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
     `)
@@ -971,6 +983,21 @@ export const CallEndpointRepository = {
         AND status IN ('connected', 'reconnecting')
     `)
     return result.rows[0] ? mapEndpoint(result.rows[0]) : null
+  },
+
+  /**
+   * Every live endpoint on a call (connected/reconnecting), workspace-scoped
+   * (INV-8). The pull authorization set: a pull ref is only honored when its
+   * `(cf_session_id, trackName)` belongs to a live endpoint of THIS call, so a
+   * hostile participant cannot replay a `cfSessionId` learned from another call.
+   */
+  async listLiveByCall(db: Querier, workspaceId: string, callId: string): Promise<CallEndpoint[]> {
+    const result = await db.query<CallEndpointRow>(sql`
+      SELECT ${sql.raw(ENDPOINT_COLUMNS)} FROM call_endpoints
+      WHERE workspace_id = ${workspaceId} AND call_id = ${callId}
+        AND status IN ('connected', 'reconnecting')
+    `)
+    return result.rows.map(mapEndpoint)
   },
 
   /** Highest epoch ever issued to a participant (over all endpoints), or 0. */

@@ -10,8 +10,8 @@ export type CallStatus = (typeof CALL_STATUSES)[number]
 export const CALL_MODES = ["video", "audio_only"] as const
 export type CallMode = (typeof CALL_MODES)[number]
 
-/** v1 always 'sfu'; 'p2p' is reserved for the Later direct-calls privacy mode. */
-export const CALL_MEDIA_TRANSPORTS = ["sfu", "p2p"] as const
+/** v1 media transport. Only 'sfu' is accepted; the Later direct-calls privacy mode (p2p) is deferred. */
+export const CALL_MEDIA_TRANSPORTS = ["sfu"] as const
 export type CallMediaTransport = (typeof CALL_MEDIA_TRANSPORTS)[number]
 
 export const CALL_ENDED_REASONS = ["completed", "reaped"] as const
@@ -59,8 +59,25 @@ export interface MediaState {
   cameraOn?: boolean
 }
 
-/** How long a call sits in `empty_grace` after the last participant leaves before it ends. */
-export const EMPTY_GRACE_MS = 45_000
+/**
+ * Sweep cadence for the lease reaper (`createCallSweeper`). One source of truth
+ * (INV-33) shared by `server.ts` (the production sweeper) and the spike harness
+ * (`SWEEP_INTERVAL_MS`), so the two can never drift — the hostile matrix's timing
+ * assertions and the deployed cadence are the same number by construction.
+ * `server.ts` layers a `CALL_SWEEP_INTERVAL_MS` env override on top (crash-recovery
+ * latency is deployment-tunable; the spike findings flagged a shorter cadence as
+ * an M1 option, and the e2e suite drives it low for a deterministic end).
+ */
+export const CALL_SWEEP_INTERVAL_MS = 15_000
+
+/**
+ * How long a call sits in `empty_grace` after the last participant leaves before
+ * it ends. Env-overridable for the same reason as the sweep cadence (SPIKE_FINDINGS
+ * §1: worst-case crash-recovery latency is grace + sweep; a shorter calls-specific
+ * grace was an explicit M1 option) — the e2e suite sets it low so an ended call's
+ * timeline card lands within the test window.
+ */
+export const EMPTY_GRACE_MS = Number(process.env.CALL_EMPTY_GRACE_MS) || 45_000
 
 /** Endpoint lease TTL; a lease not renewed within this window is swept to `closed`. */
 export const ENDPOINT_LEASE_TTL_MS = 45_000

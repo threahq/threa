@@ -107,7 +107,15 @@ export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
 
   const accept = useCallback(
     (call: IncomingCall) => {
-      launch({ workspaceId: call.workspaceId, streamId: call.streamId, mode: call.mode })
+      launch({
+        workspaceId: call.workspaceId,
+        streamId: call.streamId,
+        mode: call.mode,
+        // Bind the join to this invitation's call: if the stream's live call has
+        // since changed, the server 409s CALL_ENDED instead of dumping the user
+        // into an unrelated call.
+        expectedCallId: call.callId,
+      })
       settleIncomingCall(call.attemptId)
     },
     [launch]

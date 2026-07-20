@@ -7,6 +7,7 @@ import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
 import { UserRepository } from "../workspaces"
 import type { WorkspaceSettingsService } from "../workspace-settings"
+import { checkCallAccess } from "./access"
 import type { CallService, CallRosterSnapshot } from "./service"
 import { ENDPOINT_LEASE_TTL_MS, CALL_SOCKET_RATE_BURST, CALL_SOCKET_RATE_REFILL_PER_SEC } from "./config"
 
@@ -128,6 +129,12 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
       return true
     }
 
+    /** Drop this socket from a call's fan-out rooms (access-revoke / lease-supersede teardown). */
+    const leaveCallRooms = async (bound: SocketBinding): Promise<void> => {
+      await socket.leave(callRoom(bound.callId))
+      await socket.leave(endpointRoom(bound.callId, bound.endpointId))
+    }
+
     socket.on("call:join", async (payload: unknown, ack?: Ack) => {
       if (rateLimited(ack)) return
       // Availability before Zod (mirrors the REST gate order): the whole-feature
@@ -157,6 +164,31 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
           takeover,
           mediaIncarnation,
         })
+
+        // A rebind on a live socket (hostile/custom client) must leave the prior
+        // call's rooms first, or it keeps receiving that call's roster fan-in.
+        if (binding) {
+          const prior = binding
+          await socket.leave(callRoom(prior.callId))
+          await socket.leave(endpointRoom(prior.callId, prior.endpointId))
+          // Also leave the prior CALL's domain state: without this the old
+          // endpoint/participant stay live until lease reap (~45s), holding call
+          // capacity and any DM ring. Best-effort — a failure must not fail the new
+          // join, which already succeeded.
+          try {
+            await callService.leaveCall({
+              workspaceId: prior.workspaceId,
+              callId: prior.callId,
+              userId: prior.userId,
+              endpointId: prior.endpointId,
+            })
+          } catch (err) {
+            logger.warn(
+              { err, callId: prior.callId, endpointId: prior.endpointId },
+              "call rebind: leaving prior call failed"
+            )
+          }
+        }
 
         binding = {
           workspaceId,
@@ -253,12 +285,29 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
         // Gate the renew on the kill-switch so flipping calls off drains live
         // calls within one lease TTL rather than letting them run indefinitely.
         await assertWorkspaceCallsEnabled(bound.workspaceId)
+        // Re-check host-stream access on every renew: a user kicked from the
+        // host stream loses their lease within one TTL and the client tears down.
+        const access = await checkCallAccess(pool, {
+          workspaceId: bound.workspaceId,
+          userId: bound.userId,
+          callId: bound.callId,
+        })
+        if (!access) {
+          await leaveCallRooms(bound)
+          binding = null
+          ack?.({ ok: false, error: "Call access revoked", code: "CALL_ACCESS_REVOKED" })
+          return
+        }
         const endpoint = await callService.renewEndpointLease({
           workspaceId: bound.workspaceId,
           endpointId: bound.endpointId,
           epoch: bound.epoch,
         })
         if (!endpoint) {
+          // A superseded socket must stop receiving roster fan-out: leave both
+          // rooms and clear the binding, not merely ack.
+          await leaveCallRooms(bound)
+          binding = null
           ack?.({ ok: false, error: "Lease superseded", code: "CALL_LEASE_SUPERSEDED" })
           return
         }

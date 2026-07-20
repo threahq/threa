@@ -18,19 +18,19 @@ Two halves:
 
 ## Exit-criteria table
 
-| Criterion (from the plan / PR brief)                                                 | Result               | Number                                                                                                        |
-| ------------------------------------------------------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Two backend instances: join/leave/state fan-out cross-instance                       | **PASS**             | cross-instance roster delivery **~11 ms** (Postgres socket.io adapter)                                        |
-| Two backend instances: removal evicts cross-instance                                 | **PASS**             | removed participant + endpoints closed in shared DB; surviving instance's roster drops them                   |
-| `kill -9` mid-call ⇒ endpoints reaped, participants left, call → empty_grace → ended | **PASS**             | reap→grace **~14.7 s**, grace→ended **~15.1 s** after each deadline elapsed (isolates the 15 s sweep cadence) |
-| `kill -9`: **ZERO stranded rows** (the exit criterion)                               | **PASS**             | 0 live endpoints, 0 joined participants, call `ended` (reason `reaped`)                                       |
-| `kill -9`: sweeper attempted CF session close (no orphaned session)                  | **PASS**             | fake CF recorded exactly 1 `tracks/close force:true` for the stranded session                                 |
-| Two devices, one user: 2nd admit without takeover rejected                           | **PASS**             | `CALL_ENDPOINT_ACTIVE` (409)                                                                                  |
-| Two devices: takeover fences the old epoch                                           | **PASS**             | new epoch `2 > 1`, old endpoint `closed`, old renew → `CALL_LEASE_SUPERSEDED`                                 |
-| Glare: exactly one call under N-concurrent start                                     | **PASS**             | 12/12 concurrent starts → **1** active call row, 1 `created=true`, 12 joined, 0 rejected                      |
-| Grace/revive: join during grace revives; sweeper never ends a revived call           | **PASS**             | revive → active; grace sweep ended 0; expired grace ended 1 (reason `completed`)                              |
-| Time-to-join (control plane: socket `call:join` ack)                                 | **PASS**             | sub-second on a warm instance                                                                                 |
-| Live media time-to-join / connect success / getStats bytes                           | **BLOCKED-ON-CREDS** | Half B `cf-2` (needs CF dev app)                                                                              |
+| Criterion (from the plan / PR brief)                                                 | Result                 | Number                                                                                                        |
+| ------------------------------------------------------------------------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Two backend instances: join/leave/state fan-out cross-instance                       | **PASS**               | cross-instance roster delivery **~11 ms** (Postgres socket.io adapter)                                        |
+| Two backend instances: removal evicts cross-instance                                 | **PASS**               | removed participant + endpoints closed in shared DB; surviving instance's roster drops them                   |
+| `kill -9` mid-call ⇒ endpoints reaped, participants left, call → empty_grace → ended | **PASS**               | reap→grace **~14.7 s**, grace→ended **~15.1 s** after each deadline elapsed (isolates the 15 s sweep cadence) |
+| `kill -9`: **ZERO stranded rows** (the exit criterion)                               | **PASS**               | 0 live endpoints, 0 joined participants, call `ended` (reason `reaped`)                                       |
+| `kill -9`: sweeper attempted CF session close (no orphaned session)                  | **PASS**               | fake CF recorded exactly 1 `tracks/close force:true` for the stranded session                                 |
+| Two devices, one user: 2nd admit without takeover rejected                           | **PASS**               | `CALL_ENDPOINT_ACTIVE` (409)                                                                                  |
+| Two devices: takeover fences the old epoch                                           | **PASS**               | new epoch `2 > 1`, old endpoint `closed`, old renew → `CALL_LEASE_SUPERSEDED`                                 |
+| Glare: exactly one call under N-concurrent start                                     | **PASS**               | 12/12 concurrent starts → **1** active call row, 1 `created=true`, 12 joined, 0 rejected                      |
+| Grace/revive: join during grace revives; sweeper never ends a revived call           | **PASS**               | revive → active; grace sweep ended 0; expired grace ended 1 (reason `completed`)                              |
+| Time-to-join (control plane: socket `call:join` ack)                                 | **PASS**               | sub-second on a warm instance                                                                                 |
+| Live media time-to-join / connect success / getStats bytes                           | **GREEN** (2026-07-19) | Half B `cf-2`: 159KB sent / 197KB received, both peers ICE-connected through the production proxy             |
 
 ## Per-matrix result
 
@@ -107,26 +107,52 @@ entirely under `apps/backend/scripts/`, outside `src/`).
 3. **Sweep cadence is a hardcoded 15 s** in `server.ts` (`createCallSweeper(callService)`
    with no interval option). Fine for prod; the matrix works around it by
    fast-forwarding deadlines. If M1 wants faster crash recovery, expose the interval.
+   _(Resolved in PR 1.5: `CALL_SWEEP_INTERVAL_MS` is one SSOT in `calls/config.ts`,
+   referenced by `server.ts` and the harness's `SWEEP_INTERVAL_MS`, and env-overridable;
+   `EMPTY_GRACE_MS` gained the same `CALL_EMPTY_GRACE_MS` override so crash-recovery
+   latency is deployment-tunable and the e2e can drive it low.)_
 
-## Half B — live-CF status (BUILT, UNEXECUTED)
+## Half B — live-CF findings (EXECUTED 2026-07-19, real dev app)
 
-`scripts/calls-spike/live-cf/` contains four probes, each gated on
-`CLOUDFLARE_REALTIME_APP_ID` / `_APP_SECRET` (shared `cf-env.ts`). With no creds
-present, all four **fail fast with exit code 2** and the message pointing at
-`CLOUDFLARE_API.md` (verified). See that doc's "0.3 spike status" table for which
-question each answers:
+All four probes ran against the real SFU (dashboard-provisioned dev app — note:
+the account-token API `/accounts/{id}/calls/apps` 403s code 10002 despite
+Calls:Edit; app provisioning went through the dashboard and the runtime never
+needs the account API). Full per-question answers live in `CLOUDFLARE_API.md`
+§"0.3 spike status"; the headline results and the fixes they forced:
 
-- `cf-1-session-lifecycle.ts` — Q1 (teardown verb + inactivity timeout), Q7 (error codes).
-- `cf-2-publish-pull.ts` — Q2/Q3 (publish/pull contract, mid vs trackName), Q4 confirm.
-  Two real headless-Chromium peers (`--use-fake-device-for-media-stream`) publish/pull
-  through OUR proxy against the real SFU; asserts getStats bytes > 0 both directions.
-- `cf-3-reachability.ts` — Q6 (STUN/TURN/TLS-443 reachability) + a manual matrix for
-  strict-NAT / enterprise egress / network handoff / Safari-iOS.
-- `cf-4-simulcast-probe.ts` — Q4/Q5 (simulcast/layer request shape, optional flags).
-
-The one thing Half A _could_ confirm about the CF plane without creds — that the
-**sweeper actually calls `closeSession()` on a reaped endpoint's CF session** — is
-GREEN (matrix-2, via the fake recorder).
+- **`cf-2` — MEDIA FLOW CONFIRMED**: two headless-Chromium peers through OUR
+  production proxy; publisher 159KB `bytesSent`, puller 197KB `bytesReceived`,
+  both `iceConnectionState: connected`. Publish → answer (`rin:false`, per-track
+  `{mid, trackName}`); pull → offer (`rin:true`) → renegotiate 200.
+- **Fix 1 — `sessions/new` body**: CF 400s (`decoding_error`) on a present-but-
+  empty `{}` body but accepts an ABSENT body as a no-SDP create. `cloudflare.ts`
+  now sends no body on session create.
+- **Fix 2 — `closeSession()` was a silent no-op**: no delete verb exists (405
+  "reserved for future WHIP/WHEP") and an empty `tracks/close` is rejected (406
+  "Expecting at least 1 track"). Rewritten: `GET /sessions/{id}` (state endpoint
+  exists) → force-close the enumerated mids; a 410 `session_error` GET means the
+  session is already dead (CF self-reaps unconnected sessions within ~2 min).
+  The fake-CF server grew the state GET + the matrix teardown discriminator is
+  now force:true (not empty-tracks).
+- **Fix 3 — SDP timing is contractual**: the first negotiation must arrive
+  promptly and candidate-less — an ICE-gathering wait before publish → 502
+  `session_error` ("Session appears to be disconnected"). The probe originally
+  waited and FAILED; switched to production parity (immediate `offer.sdp`, as
+  `CloudflareSfuTransport` does) and media flowed. **Sol's UNVERIFIED
+  release-blocker (candidate-less SDP tolerance) resolved in production's favor.**
+- `cf-1`/`cf-7` evidence: bad bearer → 401; unknown-session GET **hangs** (the
+  8s adapter timeout is load-bearing); wrong-state ops → 406.
+- `cf-3`: rtc.live 443 + turn.cloudflare.com 443/3478 reachable, signaling
+  round-trip OK; stun 3478 TCP-probe failed on this network yet srflx gathered
+  (UDP fine). Manual matrix (enterprise TLS-443-only, CGNAT, handoff, iOS) remains.
+- `cf-4`: synthetic-SDP variants can't probe simulcast (CF strictly validates SDP:
+  400 no-ice-ufrag; 500 `internal_error` on the simulcast/flag variants). Q4/Q5
+  stay open for M3 with a real-browser-SDP probe; v1's single-encoding path is
+  what cf-2 proved.
+- Latent probe bug found on first execution: Playwright's `page.evaluate` does
+  NOT reliably invoke a template-string arrow with args (returned the
+  unserializable function → `undefined`); the probes now evaluate a
+  self-invoking expression with the config inlined.
 
 ## How to run
 
