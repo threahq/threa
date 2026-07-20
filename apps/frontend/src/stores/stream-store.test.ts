@@ -175,6 +175,19 @@ describe("loadStreamEvents", () => {
     expect(events[0].id).toBe("temp_old")
   })
 
+  it("preserves optimistic order when creation timestamps match", async () => {
+    const streamId = "stream_same_millisecond"
+    const createdAt = "2026-01-01T20:30:00.000Z"
+    await db.events.bulkPut([
+      makeOptimisticEvent(streamId, "temp_z", "1000", createdAt),
+      makeOptimisticEvent(streamId, "temp_a", "1001", createdAt),
+    ])
+
+    const events = await loadStreamEvents(streamId, null)
+
+    expect(events.map((event) => event.id)).toEqual(["temp_z", "temp_a"])
+  })
+
   it("lets a failed optimistic command move above newer persisted events", async () => {
     const streamId = "stream_failed_command"
     const failed = makeOptimisticEvent(streamId, "temp_cmd", "1714428000000", "2026-01-01T20:30:00.000Z")

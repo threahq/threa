@@ -54,7 +54,7 @@ describe("cancelCommandDispatch", () => {
     expect(await db.pendingOperations.toArray()).toEqual([])
   })
 
-  it("does not restore a command cancelled while its request is in flight", async () => {
+  it("refuses cancellation while a dispatch request is in flight", async () => {
     await db.events.put(commandEvent(commandId, "command_dispatched"))
     await db.pendingOperations.add({
       id: "op_1",
@@ -79,7 +79,7 @@ describe("cancelCommandDispatch", () => {
       () => true
     )
     await vi.waitFor(() => expect(commandsApi.dispatch).toHaveBeenCalledOnce())
-    await cancelCommandDispatch(streamId, commandId)
+    expect(await cancelCommandDispatch(streamId, commandId)).toBe(false)
     resolveDispatch({
       success: true,
       commandId: "cmd_confirmed",
@@ -98,6 +98,6 @@ describe("cancelCommandDispatch", () => {
     })
     await processing
 
-    expect(await db.events.toArray()).toEqual([])
+    expect((await db.events.toArray()).map((event) => event.id)).toEqual(["evt_confirmed"])
   })
 })

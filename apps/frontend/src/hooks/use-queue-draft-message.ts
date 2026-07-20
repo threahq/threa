@@ -7,6 +7,7 @@ import { serializeToMarkdown } from "@threa/prosemirror"
 import { StreamTypes, Visibilities, type ConversationDirective, type JSONContent, type StreamEvent } from "@threa/types"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { optimisticReplyCountUpdate } from "@/sync/stream-sync"
+import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
 import { sealOutgoingMessage, type SealOutgoingMessageResult } from "@/lib/crypto/seal-send"
 import { reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { generateClientId } from "./use-stream-or-draft"
@@ -73,7 +74,7 @@ export function useQueueDraftMessage(workspaceId: string) {
       const clientId = generateClientId()
       const now = new Date().toISOString()
       const contentMarkdown = serializeToMarkdown(input.contentJson)
-      const optimisticSequence = Date.now().toString()
+      const optimisticSequence = nextOptimisticSequence()
 
       const optimisticEvent: StreamEvent = {
         id: clientId,

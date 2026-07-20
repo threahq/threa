@@ -4,7 +4,7 @@ import { Loader2, CheckCircle, XCircle, ChevronRight, X } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useFormattedDate } from "@/hooks"
 import { stripMarkdownToInline } from "@/lib/markdown"
-import { useCancelCommandDispatch } from "@/hooks/use-command-dispatch-queue"
+import { useCommandDispatchCancellation } from "@/hooks/use-command-dispatch-queue"
 
 interface CommandEventProps {
   /** All events for this command, grouped by commandId */
@@ -25,13 +25,16 @@ export function CommandEvent({ events }: CommandEventProps) {
   const dispatchedEvent = events.find((e) => e.eventType === "command_dispatched")
   const completedEvent = events.find((e) => e.eventType === "command_completed")
   const failedEvent = events.find((e) => e.eventType === "command_failed")
-  const cancelCommand = useCancelCommandDispatch(dispatchedEvent?.streamId ?? "")
+  const localStatus = (dispatchedEvent as (StreamEvent & { _status?: string }) | undefined)?._status
+  const cancellation = useCommandDispatchCancellation(
+    dispatchedEvent?.streamId ?? "",
+    (dispatchedEvent?.payload as CommandDispatchedPayload | undefined)?.commandId ?? "",
+    localStatus
+  )
 
   if (!dispatchedEvent) return null
 
   const dispatchedPayload = dispatchedEvent.payload as CommandDispatchedPayload
-  const localStatus = (dispatchedEvent as StreamEvent & { _status?: string })._status
-  const canCancel = localStatus === "pending" || localStatus === "failed"
   let status: CommandStatus = "running"
   if (failedEvent) {
     status = "failed"
@@ -58,13 +61,13 @@ export function CommandEvent({ events }: CommandEventProps) {
             <span className="text-xs text-muted-foreground/50">{formatTime(new Date(dispatchedEvent.createdAt))}</span>
           </button>
         </CollapsibleTrigger>
-        {canCancel && (
+        {cancellation.canCancel && (
           <button
             type="button"
             className="mr-1 rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
             aria-label={status === "failed" ? "Remove failed command" : "Cancel pending command"}
             title={status === "failed" ? "Remove failed command" : "Cancel pending command"}
-            onClick={() => void cancelCommand(dispatchedPayload.commandId)}
+            onClick={() => void cancellation.cancel()}
           >
             <X className="h-3.5 w-3.5" />
           </button>

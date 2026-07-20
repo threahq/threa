@@ -51,26 +51,27 @@ async function reconcileRejectedOperation(op: PendingOperation): Promise<void> {
 }
 
 async function markCommandDispatchFailed(workspaceId: string, optimisticEventId: string, error: Error): Promise<void> {
-  const dispatched = await db.events.get(optimisticEventId)
-  if (!dispatched) return
-  const failedEvent: CachedEvent = {
-    id: `${optimisticEventId}:failed`,
-    workspaceId,
-    streamId: dispatched.streamId,
-    sequence: (Number(dispatched.sequence) + 1).toString(),
-    eventType: "command_failed",
-    payload: {
-      commandId: optimisticEventId,
-      error: error.message,
-    } satisfies CommandFailedPayload,
-    actorId: dispatched.actorId,
-    actorType: dispatched.actorType,
-    createdAt: new Date().toISOString(),
-    _sequenceNum: sequenceToNum((Number(dispatched.sequence) + 1).toString()),
-    _status: "failed",
-    _cachedAt: Date.now(),
-  }
   await db.transaction("rw", db.events, async () => {
+    const dispatched = await db.events.get(optimisticEventId)
+    if (!dispatched) return
+    const failedSequence = (Number(dispatched.sequence) + 1).toString()
+    const failedEvent: CachedEvent = {
+      id: `${optimisticEventId}:failed`,
+      workspaceId,
+      streamId: dispatched.streamId,
+      sequence: failedSequence,
+      eventType: "command_failed",
+      payload: {
+        commandId: optimisticEventId,
+        error: error.message,
+      } satisfies CommandFailedPayload,
+      actorId: dispatched.actorId,
+      actorType: dispatched.actorType,
+      createdAt: new Date().toISOString(),
+      _sequenceNum: sequenceToNum(failedSequence),
+      _status: "failed",
+      _cachedAt: Date.now(),
+    }
     await db.events.update(optimisticEventId, { _status: "failed" })
     await db.events.put(failedEvent)
   })
@@ -123,7 +124,11 @@ export async function processOperationQueue(
         // device, a coalescing replace of this op must carry its idempotency
         // lineage (writeId) forward instead of minting a fresh one — otherwise
         // a committed-but-unacked write reads as drift and splits server-side.
-        await db.pendingOperations.update(next.id, { startedAt: Date.now() })
+        const claimed = await db.pendingOperations.update(next.id, {
+          startedAt: Date.now(),
+          ...(next.type === "dispatch_command" && { attempting: true }),
+        })
+        if (claimed === 0) continue
         await executeOperation(next, messageService, reactionService, scheduledService, draftsService)
         await db.pendingOperations.delete(next.id)
       } catch (error) {
@@ -139,6 +144,7 @@ export async function processOperationQueue(
           await db.pendingOperations.update(next.id, {
             retryCount,
             retryAfter: Date.now() + getRetryDelay(retryCount),
+            ...(next.type === "dispatch_command" && { attempting: false }),
           })
           skipped.add(next.id)
         }

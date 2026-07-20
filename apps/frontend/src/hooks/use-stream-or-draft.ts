@@ -34,6 +34,7 @@ import type {
   ToolPrivacyPolicy,
 } from "@threa/types"
 import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
+import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
 
 const DM_DRAFT_PREFIX = "draft_dm_"
 
@@ -588,7 +589,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       // Use timestamp as sequence to ensure optimistic events sort after real events
       // Real events have low sequence numbers (1, 2, 3...), timestamps are ~13 digits
-      const optimisticSequence = Date.now().toString()
+      const optimisticSequence = nextOptimisticSequence()
 
       const optimisticEvent: StreamEvent = {
         id: clientId,
