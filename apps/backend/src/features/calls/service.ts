@@ -444,12 +444,17 @@ export class CallService {
 
       const joined = await CallParticipantRepository.countJoined(client, params.workspaceId, params.callId)
       if (joined === 0 && call.status === "active") {
-        await CallRepository.enterGraceIfEmpty(client, {
+        // Explicit last-leave ends the call in THIS tx (not empty_grace + a ~45s
+        // sweep): the clicker is functionally the last one out, so skip the grace
+        // window that only serves disconnect-driven emptiness (the reaper still
+        // graces). The CAS returns null on a concurrent join / double last-leave,
+        // in which case there is nothing to append.
+        const ended = await CallRepository.endActiveIfEmpty(client, {
           workspaceId: params.workspaceId,
           id: params.callId,
-          graceDeadline: new Date(Date.now() + EMPTY_GRACE_MS),
           reason: "completed",
         })
+        if (ended) await this.appendCallEndedForLeave(client, ended)
         // The call is now empty: retract every outstanding ring in the same tx
         // (INV-7). Cancelling (not letting it lapse) is what prevents a
         // missed-call activity for a caller who hung up before an answer.
@@ -527,12 +532,14 @@ export class CallService {
 
       const joined = await CallParticipantRepository.countJoined(client, params.workspaceId, params.callId)
       if (joined === 0 && call.status === "active") {
-        await CallRepository.enterGraceIfEmpty(client, {
+        // Explicit last-leave ends the call in THIS tx (see {@link leaveCall}) —
+        // grace stays only for the disconnect/reaper path.
+        const ended = await CallRepository.endActiveIfEmpty(client, {
           workspaceId: params.workspaceId,
           id: params.callId,
-          graceDeadline: new Date(Date.now() + EMPTY_GRACE_MS),
           reason: "completed",
         })
+        if (ended) await this.appendCallEndedForLeave(client, ended)
         const cancelled = await CallInvitationRepository.cancelRingingForCall(client, {
           workspaceId: params.workspaceId,
           callId: params.callId,
@@ -1468,6 +1475,27 @@ export class CallService {
       event,
       callId: args.call.id,
       streamVisibility: args.streamVisibility,
+      memberUserIds,
+    })
+  }
+
+  /**
+   * Assemble the `call_ended` ctx for an explicit last-leave and append it in the
+   * caller's transaction (INV-4/7). Mirrors {@link appendCallsEnded}'s per-call
+   * reads — ever-participant set, host-stream visibility, member UserIds — for a
+   * single just-ended call. A missing stream row (a call always has a host stream)
+   * skips the append: there is nowhere to land the card.
+   */
+  private async appendCallEndedForLeave(client: PoolClient, call: Call): Promise<void> {
+    const stream = await StreamRepository.findById(client, call.streamId)
+    if (!stream) return
+    const participantUserIdsByCall = await CallParticipantRepository.listUserIdsByCall(client, call.workspaceId, [
+      call.id,
+    ])
+    const memberUserIds = await this.listStreamMemberUserIds(client, call.streamId)
+    await this.appendCallEnded(client, call, {
+      streamVisibility: stream.visibility,
+      participantUserIds: participantUserIdsByCall.get(call.id) ?? [],
       memberUserIds,
     })
   }

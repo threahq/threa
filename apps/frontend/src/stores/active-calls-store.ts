@@ -47,6 +47,20 @@ function notify(key: string): void {
   for (const listener of keyListeners.get(key) ?? []) listener()
 }
 
+/**
+ * Liveness gate (chunk 2): a call reads as live/joinable ONLY while someone is
+ * still joined. A `participantCount === 0` entry is KEPT in the map (a rejoin
+ * during grace emits `call:participants_changed` with count 1 and must revive it
+ * via {@link updateCallParticipants}, which no-ops on a missing entry) but reads
+ * as not-live everywhere — no Join on the timeline card, no rejoin bar, no
+ * sidebar dot — so the UI never offers to join a functionally-dead call. The end
+ * signal (`stream:call_ended` → {@link removeActiveCall}) still deletes the entry;
+ * this only covers the count-0 window before it (or when that signal is missed).
+ */
+function isLive(entry: ActiveCallEntry): boolean {
+  return entry.participantCount > 0
+}
+
 function sameEntry(a: ActiveCallEntry | null, b: ActiveCallEntry | null): boolean {
   if (a === b) return true
   if (!a || !b) return false
@@ -84,7 +98,7 @@ function recomputeCall(workspaceId: string, callId: string): void {
 function recomputeRoot(workspaceId: string, rootStreamId: string): void {
   const key = rootKey(workspaceId, rootStreamId)
   const calls = [...(workspaces.get(workspaceId)?.values() ?? [])]
-    .filter((entry) => entry.rootStreamId === rootStreamId)
+    .filter((entry) => entry.rootStreamId === rootStreamId && isLive(entry))
     .sort((a, b) => a.callId.localeCompare(b.callId))
   const prev = rootSnapshots.get(key)
   if (calls.length === 0) {
@@ -180,9 +194,15 @@ export function removeActiveCall(workspaceId: string, callId: string): void {
   recompute(workspaceId, existing)
 }
 
-/** Non-reactive read of one live call by id (the card liveness gate). */
+/**
+ * Non-reactive read of one live call by id (the card liveness gate). Gated on
+ * {@link isLive}: a kept-but-empty (`participantCount === 0`) entry reads as null
+ * so no surface offers Join/Rejoin, while the entry survives for a grace-window
+ * revive.
+ */
 export function getActiveCall(workspaceId: string, callId: string): ActiveCallEntry | null {
-  return workspaces.get(workspaceId)?.get(callId) ?? null
+  const entry = workspaces.get(workspaceId)?.get(callId) ?? null
+  return entry && isLive(entry) ? entry : null
 }
 
 function subscribeKey(key: string, onChange: () => void): () => void {

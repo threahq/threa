@@ -67,6 +67,31 @@ describe("active-calls-store", () => {
     expect(getActiveCall("ws_1", "call_ghost")).toBeNull()
   })
 
+  it("count-0 reads as not-live (no Join for a dead call) but keeps the entry so a grace rejoin revives it", () => {
+    // A live call empties: participants_changed carries count 0. The liveness read
+    // must go null (the affordance gate) WITHOUT deleting the entry — a rejoin
+    // during grace re-populates it, which updateCallParticipants can only do when
+    // the entry still exists.
+    upsertActiveCall("ws_1", call({ participantCount: 2 }))
+    updateCallParticipants("ws_1", {
+      callId: "call_1",
+      streamId: "stream_1",
+      participantCount: 0,
+      participantUserIds: [],
+    })
+    expect(getActiveCall("ws_1", "call_1")).toBeNull()
+
+    // The entry survived: a count-1 rejoin during grace revives it.
+    updateCallParticipants("ws_1", {
+      callId: "call_1",
+      streamId: "stream_1",
+      participantCount: 1,
+      participantUserIds: ["usr_a"],
+    })
+    expect(getActiveCall("ws_1", "call_1")?.participantCount).toBe(1)
+    expect(getActiveCall("ws_1", "call_1")?.participantUserIds).toEqual(["usr_a"])
+  })
+
   it("re-seed preserves a known roster the workspace seed does not carry", () => {
     // The call is tracked (a `call_started` upsert) and then its roster is refined
     // by a participants_changed, mirroring the live sequence.
