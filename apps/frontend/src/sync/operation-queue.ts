@@ -225,7 +225,8 @@ async function executeOperation(
         })
         if (!result.success) throw new ApiError(400, "COMMAND_DISPATCH_FAILED", result.error)
         await db.transaction("rw", db.events, async () => {
-          await db.events.delete(optimisticEventId).catch(() => undefined)
+          if (!(await db.events.get(optimisticEventId))) return
+          await db.events.delete(optimisticEventId)
           await db.events.put({
             ...result.event,
             workspaceId,

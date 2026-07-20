@@ -1,9 +1,10 @@
 import { useState } from "react"
 import type { StreamEvent, CommandDispatchedPayload, CommandCompletedPayload, CommandFailedPayload } from "@threa/types"
-import { Loader2, CheckCircle, XCircle, ChevronRight } from "lucide-react"
+import { Loader2, CheckCircle, XCircle, ChevronRight, X } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useFormattedDate } from "@/hooks"
 import { stripMarkdownToInline } from "@/lib/markdown"
+import { useCancelCommandDispatch } from "@/hooks/use-command-dispatch-queue"
 
 interface CommandEventProps {
   /** All events for this command, grouped by commandId */
@@ -24,10 +25,13 @@ export function CommandEvent({ events }: CommandEventProps) {
   const dispatchedEvent = events.find((e) => e.eventType === "command_dispatched")
   const completedEvent = events.find((e) => e.eventType === "command_completed")
   const failedEvent = events.find((e) => e.eventType === "command_failed")
+  const cancelCommand = useCancelCommandDispatch(dispatchedEvent?.streamId ?? "")
 
   if (!dispatchedEvent) return null
 
   const dispatchedPayload = dispatchedEvent.payload as CommandDispatchedPayload
+  const localStatus = (dispatchedEvent as StreamEvent & { _status?: string })._status
+  const canCancel = localStatus === "pending" || localStatus === "failed"
   let status: CommandStatus = "running"
   if (failedEvent) {
     status = "failed"
@@ -37,22 +41,35 @@ export function CommandEvent({ events }: CommandEventProps) {
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <CollapsibleTrigger asChild>
-        <button className="flex w-full items-center gap-2 py-1.5 px-3 text-sm text-muted-foreground hover:bg-muted/50 rounded transition-colors">
-          <ChevronRight className={`h-3 w-3 transition-transform ${isOpen ? "rotate-90" : ""}`} />
-          <StatusIcon status={status} />
-          <span className="flex-1 text-left">
-            <code className="font-mono text-xs bg-muted text-primary font-bold px-1 py-0.5 rounded">
-              /{dispatchedPayload.name}
-            </code>
-            {dispatchedPayload.args && (
-              <span className="text-muted-foreground/70 ml-1">{truncateArgs(dispatchedPayload.args)}</span>
-            )}
-            <StatusLabel status={status} failedPayload={failedEvent?.payload as CommandFailedPayload | undefined} />
-          </span>
-          <span className="text-xs text-muted-foreground/50">{formatTime(new Date(dispatchedEvent.createdAt))}</span>
-        </button>
-      </CollapsibleTrigger>
+      <div className="flex items-center rounded hover:bg-muted/50">
+        <CollapsibleTrigger asChild>
+          <button className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-3 pr-1 text-sm text-muted-foreground transition-colors">
+            <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+            <StatusIcon status={status} />
+            <span className="min-w-0 flex-1 text-left">
+              <code className="font-mono text-xs bg-muted text-primary font-bold px-1 py-0.5 rounded">
+                /{dispatchedPayload.name}
+              </code>
+              {dispatchedPayload.args && (
+                <span className="text-muted-foreground/70 ml-1">{truncateArgs(dispatchedPayload.args)}</span>
+              )}
+              <StatusLabel status={status} failedPayload={failedEvent?.payload as CommandFailedPayload | undefined} />
+            </span>
+            <span className="text-xs text-muted-foreground/50">{formatTime(new Date(dispatchedEvent.createdAt))}</span>
+          </button>
+        </CollapsibleTrigger>
+        {canCancel && (
+          <button
+            type="button"
+            className="mr-1 rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label={status === "failed" ? "Remove failed command" : "Cancel pending command"}
+            title={status === "failed" ? "Remove failed command" : "Cancel pending command"}
+            onClick={() => void cancelCommand(dispatchedPayload.commandId)}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
       <CollapsibleContent>
         <div className="ml-8 border-l border-muted pl-3 py-1 space-y-1">
           {events.map((event) => (

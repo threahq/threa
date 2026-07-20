@@ -21,7 +21,12 @@ function makeRealEvent(streamId: string, sequence: string): CachedEvent {
   }
 }
 
-function makeOptimisticEvent(streamId: string, clientId: string, placeholderSeq: string): CachedEvent {
+function makeOptimisticEvent(
+  streamId: string,
+  clientId: string,
+  placeholderSeq: string,
+  createdAt = new Date(2026, 0, 2).toISOString()
+): CachedEvent {
   const sequenceNum = sequenceToNum(placeholderSeq)
   return {
     id: clientId,
@@ -33,7 +38,7 @@ function makeOptimisticEvent(streamId: string, clientId: string, placeholderSeq:
     payload: { messageId: clientId, contentMarkdown: clientId },
     actorId: "user_1",
     actorType: "user",
-    createdAt: new Date().toISOString(),
+    createdAt,
     _clientId: clientId,
     _status: "pending",
     _cachedAt: Date.now(),
@@ -156,32 +161,37 @@ describe("loadStreamEvents", () => {
     ])
   })
 
-  it("merges pending events that fell outside the count-capped window in ASC order", async () => {
-    // Defensive: if a pending event's _sequenceNum is somehow lower than the
-    // window of latest events, the merge step must still place it correctly
-    // by _sequenceNum rather than appending at the end.
+  it("merges optimistic events outside the count-capped window by createdAt", async () => {
     const streamId = "stream_fallback"
-
-    // Stuff the stream with > DEFAULT_IDB_EVENT_LIMIT (150) real events so the
-    // window cap matters. Insert one pending event with a deliberately low
-    // _sequenceNum (simulating a hypothetical alternative scheme).
     const reals: CachedEvent[] = []
     for (let i = 1; i <= 200; i++) {
       reals.push(makeRealEvent(streamId, String(i)))
     }
-    const lowPending = makeOptimisticEvent(streamId, "temp_low", "10")
-    await db.events.bulkPut([...reals, lowPending])
+    const oldPending = makeOptimisticEvent(streamId, "temp_old", "10", new Date(2026, 0, 1, 0, 0, 10).toISOString())
+    await db.events.bulkPut([...reals, oldPending])
 
     const events = await loadStreamEvents(streamId, null)
 
-    // Pending event must appear before the events with seq=11..200, between
-    // seq=10 and seq=51 (the floor of the latest 150 real events).
-    const ids = events.map((e) => e.id)
-    const lowIdx = ids.indexOf("temp_low")
-    expect(lowIdx).toBeGreaterThanOrEqual(0)
-    // It sorts by _sequenceNum=10, which falls before all reals in the window
-    // (seqs 51..200 — 200 reals capped to latest 150 = seqs 51..200).
-    expect(ids[0]).toBe("temp_low")
+    expect(events[0].id).toBe("temp_old")
+  })
+
+  it("lets a failed optimistic command move above newer persisted events", async () => {
+    const streamId = "stream_failed_command"
+    const failed = makeOptimisticEvent(streamId, "temp_cmd", "1714428000000", "2026-01-01T20:30:00.000Z")
+    failed.eventType = "command_dispatched"
+    failed._status = "failed"
+    failed.payload = { commandId: failed.id, name: "thinking", args: "low", status: "dispatched" }
+    const newer = makeRealEvent(streamId, "2")
+    newer.createdAt = "2026-01-01T21:13:00.000Z"
+    await db.events.bulkPut([makeRealEvent(streamId, "1"), failed, newer])
+
+    const events = await loadStreamEvents(streamId, 1)
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_failed_command_1",
+      "temp_cmd",
+      "evt_stream_failed_command_2",
+    ])
   })
 
   it("returns a large floored window fully ASC without an unsent merge", async () => {

@@ -6,6 +6,24 @@ import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { AuthorTypes, CommandKinds, type StreamEvent } from "@threa/types"
 
+export async function cancelCommandDispatch(streamId: string, commandId: string): Promise<void> {
+  await db.transaction("rw", [db.events, db.pendingOperations], async () => {
+    const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
+    const operationIds = operations
+      .filter((operation) => operation.payload.optimisticEventId === commandId)
+      .map((operation) => operation.id)
+    const dispatched = await db.events.get(commandId)
+    if (dispatched?.streamId !== streamId) return
+
+    await db.pendingOperations.bulkDelete(operationIds)
+    await db.events.bulkDelete([commandId, `${commandId}:failed`])
+  })
+}
+
+export function useCancelCommandDispatch(streamId: string) {
+  return useCallback((commandId: string) => cancelCommandDispatch(streamId, commandId), [streamId])
+}
+
 function parseCommandArgs(commandMarkdown: string): string {
   const trimmed = commandMarkdown.trim()
   const withoutSlash = trimmed.startsWith("/") ? trimmed.slice(1) : trimmed

@@ -21,9 +21,10 @@ export function resetStreamStoreCache(): void {}
  *   - Without a floor: same range, but capped to the latest N events as a
  *     memory bound on initial pre-bootstrap load.
  *
- * Pending and failed optimistic events with placeholder sequences are merged
- * in and the full list re-sorted, so they always land in their natural slot
- * by `_sequenceNum` rather than being appended at the end of the array.
+ * Pending and failed optimistic events use placeholder sequences, so their
+ * `createdAt` places them among server events while each source keeps its own
+ * authoritative order. A pending send starts at the tail, then moves upward
+ * naturally when newer server events arrive.
  */
 export async function loadStreamEvents(streamId: string, fromSequenceNum: number | null): Promise<CachedEvent[]> {
   const hasFloor = fromSequenceNum != null
@@ -58,17 +59,42 @@ export async function loadStreamEvents(streamId: string, fromSequenceNum: number
   )
   if (unsentForStream.length === 0) return base
 
-  // Only now pay for de-duplication: a pending row inside the scanned range is
-  // already present in `base`, so drop those before merging.
   const loadedIds = new Set(base.map((e) => e.id))
   const extra = unsentForStream.filter((e) => !loadedIds.has(e.id))
-  if (extra.length === 0) return base
+  return orderStreamEvents([...base, ...extra])
+}
 
-  // Re-sort the spliced list so order is determined solely by `_sequenceNum`,
-  // not by which path a row arrived on.
-  const merged = [...base, ...extra]
-  merged.sort((a, b) => a._sequenceNum - b._sequenceNum)
-  return merged
+export function orderStreamEvents(events: CachedEvent[]): CachedEvent[] {
+  const optimistic: CachedEvent[] = []
+  const persisted: CachedEvent[] = []
+
+  for (const event of events) {
+    if (event._status != null) optimistic.push(event)
+    else persisted.push(event)
+  }
+
+  persisted.sort((a, b) => a._sequenceNum - b._sequenceNum)
+  optimistic.sort((a, b) => {
+    const timeDiff = Date.parse(a.createdAt) - Date.parse(b.createdAt)
+    return timeDiff || a._sequenceNum - b._sequenceNum
+  })
+
+  const ordered: CachedEvent[] = []
+  let persistedIndex = 0
+  let optimisticIndex = 0
+  while (persistedIndex < persisted.length && optimisticIndex < optimistic.length) {
+    const persistedEvent = persisted[persistedIndex]
+    const optimisticEvent = optimistic[optimisticIndex]
+    if (Date.parse(optimisticEvent.createdAt) < Date.parse(persistedEvent.createdAt)) {
+      ordered.push(optimisticEvent)
+      optimisticIndex++
+    } else {
+      ordered.push(persistedEvent)
+      persistedIndex++
+    }
+  }
+
+  return ordered.concat(persisted.slice(persistedIndex), optimistic.slice(optimisticIndex))
 }
 
 /**
