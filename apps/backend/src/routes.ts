@@ -298,6 +298,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     labelService,
     labelAssignmentService,
     workosOrgService,
+    callService,
     pool,
   })
   const streamBriefService = new StreamBriefService({ pool })
@@ -311,6 +312,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     botRuntimeService,
     commandAvailabilityService,
     workspaceIntegrationService,
+    callService,
   })
   const message = createMessageHandlers({
     pool,
@@ -1647,6 +1649,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("calls.cancel_invitation", "write"),
     rateLimits.calls,
     calls.cancelInvitation
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/leave",
+    ...authed,
+    audit("calls.leave", "write"),
+    rateLimits.calls,
+    calls.leave
   )
   app.get(
     "/api/workspaces/:workspaceId/calls/:callId",

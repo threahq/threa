@@ -228,6 +228,16 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   "bot_access:requested": CHROME_BROADCAST,
   // A patch that advances the matching request card to approved/denied — not its own row.
   "bot_access:status_changed": PATCH,
+
+  // A call started on this stream (roadmap 1.4). Its own broadcast row — the live
+  // call card — mirroring `memos:captured`'s shape (own row, broadcast slot, no
+  // author-grouping). `conversationRef: "none"` and `bumps: false` because a call
+  // card is stream chrome, not anchored to a board conversation and never moving a
+  // card in the board's activity order (matching the delegation precedent).
+  call_started: CHROME_BROADCAST,
+  // A patch carrying the end summary onto the matching `call_started` card — not
+  // its own row (the delegation:status_changed analog).
+  call_ended: PATCH,
 }
 
 /**

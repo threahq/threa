@@ -140,6 +140,8 @@ export const EVENT_TYPES = [
   "delegation:status_changed",
   "bot_access:requested",
   "bot_access:status_changed",
+  "call_started",
+  "call_ended",
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -198,6 +200,11 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   // is deliberately NOT here — it is a patch on the request card, like the
   // delegation status change below.
   "bot_access:requested",
+  // A call started on this stream (roadmap 1.4): every member sees the live call
+  // card, so it takes a broadcast slot like `delegation:created`. `call_ended` is
+  // deliberately NOT here — it is a patch on the call card (carrying the end
+  // summary), like the delegation status change below.
+  "call_started",
   // `agent:follow_up_cancelled` and `delegation:status_changed` are deliberately
   // NOT here: each is a patch on its originating card (cancel flips the
   // scheduled card; a delegation status change flips the created card), not a

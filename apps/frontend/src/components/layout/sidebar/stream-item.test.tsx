@@ -3,7 +3,8 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { fireEvent, render, screen, spyOnExport } from "@/test"
 import { StreamTypes, Visibilities } from "@threa/types"
-import { StreamItem } from "./stream-item"
+import { Hash } from "lucide-react"
+import { StreamItem, StreamItemAvatar } from "./stream-item"
 import type { StreamItemData } from "./types"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import * as contextsModule from "@/contexts"
@@ -564,5 +565,21 @@ describe("StreamItem — board mode", () => {
     expect(screen.queryByText("Muted on the board")).not.toBeInTheDocument()
     expect(screen.getByText("14 topics · 6 active · 2 need resolution")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /general/i })).not.toHaveClass("opacity-50")
+  })
+})
+
+describe("StreamItemAvatar — decoration slot precedence (roadmap 1.4)", () => {
+  const avatar = <Hash className="h-3.5 w-3.5" />
+
+  it("a live call wins the slot over an agent-working signal", () => {
+    render(<StreamItemAvatar icon={avatar} className="bg-muted" callActive agentActive />)
+    expect(screen.getByRole("img", { name: "Call in progress" })).toBeInTheDocument()
+    expect(screen.queryByRole("img", { name: "Agent working" })).not.toBeInTheDocument()
+  })
+
+  it("the agent dot shows when no call is live", () => {
+    render(<StreamItemAvatar icon={avatar} className="bg-muted" agentActive />)
+    expect(screen.getByRole("img", { name: "Agent working" })).toBeInTheDocument()
+    expect(screen.queryByRole("img", { name: "Call in progress" })).not.toBeInTheDocument()
   })
 })

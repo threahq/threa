@@ -1,4 +1,9 @@
-import type { BotAccessStatusChangedEventPayload, DelegationStatusChangedEventPayload, StreamEvent } from "@threa/types"
+import type {
+  BotAccessStatusChangedEventPayload,
+  CallEndedEventPayload,
+  DelegationStatusChangedEventPayload,
+  StreamEvent,
+} from "@threa/types"
 import type { MessageAgentActivity } from "@/hooks"
 import type { BatchTimelineState } from "./event-list"
 import type { ConversationRevival } from "./conversation-overlay/model"
@@ -11,6 +16,7 @@ import { DelegationEvent } from "./delegation-event"
 import { BotAccessEvent } from "./bot-access-event"
 import { BriefUpdatedEvent } from "./brief-updated-event"
 import { DescriptionSetEvent } from "./description-set-event"
+import { CallCard } from "./call-card"
 import { SystemEvent } from "./system-event"
 
 interface EventItemProps {
@@ -31,6 +37,8 @@ interface EventItemProps {
   delegationStatusPatches?: Map<string, DelegationStatusChangedEventPayload>
   /** Latest status patch per bot-access requestId within the loaded window — drives the request card's state. */
   botAccessStatusPatches?: Map<string, BotAccessStatusChangedEventPayload>
+  /** Latest `call_ended` payload per callId within the loaded window — drives the call card's ended state. */
+  callEndedPatches?: Map<string, CallEndedEventPayload>
   /** True when the viewer is a stream member — gates the request card's Approve/Deny buttons. */
   viewerIsMember?: boolean
   /** Defer non-critical per-message hydration until coordinated reveal completes */
@@ -67,6 +75,7 @@ export function EventItem({
   cancelledFollowUpIds,
   delegationStatusPatches,
   botAccessStatusPatches,
+  callEndedPatches,
   viewerIsMember,
   deferSecondaryHydration = false,
   groupContinuation = false,
@@ -213,6 +222,21 @@ export function EventItem({
     case "bot_access:status_changed":
       // Patch, not a row: it resolves the matching request card via
       // botAccessStatusPatches (collected in event-list) — renders nothing.
+      return null
+
+    case "call_started": {
+      const callId = (event.payload as { callId?: string })?.callId
+      const endedPatch = callId ? callEndedPatches?.get(callId) : undefined
+      return (
+        <div data-event-id={event.id}>
+          <CallCard event={event} workspaceId={workspaceId} streamId={streamId} endedPatch={endedPatch} />
+        </div>
+      )
+    }
+
+    case "call_ended":
+      // Patch, not a row: it carries the end summary onto the matching call card
+      // via callEndedPatches (collected in event-list) — renders nothing itself.
       return null
 
     case "agent:follow_up_cancelled":

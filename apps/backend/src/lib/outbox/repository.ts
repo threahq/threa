@@ -125,6 +125,9 @@ export type OutboxEventType =
   | "github_route:unregister"
   | "call:invitation_created"
   | "call:invitation_settled"
+  | "stream:call_started"
+  | "stream:call_ended"
+  | "call:participants_changed"
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
@@ -148,6 +151,9 @@ export type StreamScopedEventType =
   | "stream:delegation_status_changed"
   | "stream:bot_access_requested"
   | "stream:bot_access_status_changed"
+  | "stream:call_started"
+  | "stream:call_ended"
+  | "call:participants_changed"
   | "stream:activity"
   | "conversation:created"
   | "conversation:updated"
@@ -931,6 +937,45 @@ export interface CallInvitationSettledOutboxPayload extends WorkspaceScopedPaylo
   inviterName?: string | null
 }
 
+/**
+ * Carries a `call_started` / `call_ended` timeline event (roadmap 1.4) to the
+ * host stream's room. Same envelope shape as the delegation events: the full
+ * stream event rides along so clients append it without a fetch (`call_started`
+ * renders the live card; `call_ended` patches it with the end summary).
+ *
+ * These events ALSO drive the sidebar live-call dot, which must reach members not
+ * currently in the stream room. `streamVisibility` + `memberUserIds` let
+ * `resolveDeliveryGroups` fan them additionally to the whole workspace (public
+ * channels) or to each member's user room (private/DM), mirroring the
+ * public-channel-conversation precedent.
+ */
+export interface StreamCallStartedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+  callId: string
+  streamVisibility: Visibility
+  /** Host-stream member UserIds — the dot fan-out targets for a private/DM call. */
+  memberUserIds: string[]
+}
+
+export interface StreamCallEndedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+  callId: string
+  streamVisibility: Visibility
+  memberUserIds: string[]
+}
+
+/**
+ * A call's live roster changed (join/leave/remove/reap). Stream-scoped ONLY (no
+ * timeline row, no EVENT_TYPES entry) — it refreshes the in-stream call card's
+ * live avatars/count for clients already in the room. The sidebar dot rides the
+ * `stream:call_started` / `stream:call_ended` presence events instead.
+ */
+export interface CallParticipantsChangedOutboxPayload extends StreamScopedPayload {
+  callId: string
+  participantCount: number
+  participantUserIds: string[]
+}
+
 // Bot event payloads
 export interface BotCreatedOutboxPayload extends WorkspaceScopedPayload {
   bot: WireBot
@@ -1156,6 +1201,9 @@ export interface OutboxEventPayloadMap {
   "github_route:unregister": GithubRouteUnregisterOutboxPayload
   "call:invitation_created": CallInvitationCreatedOutboxPayload
   "call:invitation_settled": CallInvitationSettledOutboxPayload
+  "stream:call_started": StreamCallStartedOutboxPayload
+  "stream:call_ended": StreamCallEndedOutboxPayload
+  "call:participants_changed": CallParticipantsChangedOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]
@@ -1208,6 +1256,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:delegation_status_changed",
   "stream:bot_access_requested",
   "stream:bot_access_status_changed",
+  "call:participants_changed",
   "stream:activity",
   "conversation:created",
   "conversation:updated",

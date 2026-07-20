@@ -1,10 +1,19 @@
 import type { Pool, PoolClient } from "pg"
-import { StreamTypes, ActivityTypes, AuthorTypes } from "@threa/types"
+import {
+  StreamTypes,
+  ActivityTypes,
+  AuthorTypes,
+  type CallStartedEventPayload,
+  type CallEndedEventPayload,
+  type Visibility,
+  type ActiveCall,
+  type StreamActiveCall,
+} from "@threa/types"
 import { withTransaction, withClient } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
-import { callId, callInvitationId, callParticipantId, callEndpointId } from "../../lib/id"
-import { checkStreamAccess, StreamMemberRepository, StreamRepository } from "../streams"
+import { callId, callInvitationId, callParticipantId, callEndpointId, eventId } from "../../lib/id"
+import { checkStreamAccess, StreamMemberRepository, StreamRepository, StreamEventRepository } from "../streams"
 import { UserRepository } from "../workspaces"
 import { ActivityRepository } from "../activity"
 import { OutboxRepository } from "../../lib/outbox"
@@ -143,6 +152,19 @@ export class CallService {
         mediaIncarnation: params.mediaIncarnation,
       })
 
+      // A newly created call is a slotted broadcast row on the host stream
+      // (INV-4/7): append it in the SAME transaction as the call insert so every
+      // member sees the live card and it survives reload. A join onto an existing
+      // call adds no row (the card already exists) — only the roster changes.
+      if (created) {
+        await this.appendCallStarted(client, {
+          call: admitted.call,
+          streamId: params.streamId,
+          streamVisibility: stream.visibility,
+          startedBy: params.userId,
+        })
+      }
+
       if (created && stream.type === StreamTypes.DM) {
         const peerId = await this.findDmPeer(client, params.streamId, params.userId)
         if (peerId) {
@@ -254,6 +276,7 @@ export class CallService {
     // the membership/endpoint writes so the snapshot the gateway reads after
     // commit is strictly newer than what peers hold (INV-66).
     await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+    await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
     return { call, participant, endpoint }
   }
@@ -390,6 +413,78 @@ export class CallService {
       // A leave is a membership change: bump the roster version in the same tx as
       // the endpoint-close/participant-left writes (INV-66).
       await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
+
+      const updated = (await CallRepository.findById(client, params.workspaceId, params.callId)) ?? call
+      return { call: updated }
+    })
+  }
+
+  /**
+   * Leave a call as the given user, closing ALL their live endpoints at once —
+   * the rejoin bar's "Leave" after a fresh page load, where the client holds no
+   * endpoint id (a prior incarnation's lease still keeps the participant `joined`,
+   * and dismissing without leaving would leave a 45s zombie). Idempotent: a user
+   * with no participant row is a no-op. Same emptiness→grace + ring-retraction +
+   * roster-fanout tail as {@link leaveCall}.
+   */
+  async leaveCallAsUser(
+    params: { workspaceId: string; callId: string; userId: string },
+    tx?: PoolClient
+  ): Promise<{ call: Call }> {
+    return withTransaction(tx ?? this.pool, async (client) => {
+      const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
+      if (!call) {
+        throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
+      }
+      // An `ended` call is terminal: a self-leave against it is a no-op (idempotent
+      // user intent — the rejoin bar's stale "Leave"). Return before touching
+      // endpoints or emitting so a `call:participants_changed` never fans out for a
+      // dead call and resurrects its card as live on peers still holding the id.
+      if (call.status === "ended") {
+        return { call }
+      }
+      const participant = await CallParticipantRepository.findByUser(
+        client,
+        params.workspaceId,
+        params.callId,
+        params.userId
+      )
+      if (!participant) {
+        return { call }
+      }
+
+      await CallEndpointRepository.closeByParticipant(client, params.workspaceId, participant.id)
+      await CallParticipantRepository.markLeftIfNoLiveEndpoint(client, {
+        workspaceId: params.workspaceId,
+        callId: params.callId,
+        userId: params.userId,
+      })
+
+      const joined = await CallParticipantRepository.countJoined(client, params.workspaceId, params.callId)
+      if (joined === 0 && call.status === "active") {
+        await CallRepository.enterGraceIfEmpty(client, {
+          workspaceId: params.workspaceId,
+          id: params.callId,
+          graceDeadline: new Date(Date.now() + EMPTY_GRACE_MS),
+          reason: "completed",
+        })
+        const cancelled = await CallInvitationRepository.cancelRingingForCall(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+        })
+        await this.settleCancelledRings(client, cancelled)
+      } else {
+        const cancelled = await CallInvitationRepository.cancelRingingByInviter(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+          inviterUserId: params.userId,
+        })
+        await this.settleCancelledRings(client, cancelled)
+      }
+
+      await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       const updated = (await CallRepository.findById(client, params.workspaceId, params.callId)) ?? call
       return { call: updated }
@@ -511,6 +606,52 @@ export class CallService {
       }
       return endpoint
     })
+  }
+
+  /**
+   * The one live call on a stream, projected for the stream bootstrap's
+   * `activeCall` (INV-53 pair for the timeline card's live state + the reload
+   * rejoin bar). `selfLiveParticipant` is true when the viewer holds a `joined`
+   * participant row with a live endpoint — the rejoin-bar trigger. Caller has
+   * already validated stream access, so this is a plain read (INV-30).
+   */
+  async getStreamActiveCall(params: {
+    workspaceId: string
+    streamId: string
+    userId: string
+  }): Promise<StreamActiveCall | null> {
+    return withClient(this.pool, async (client) => {
+      const call = await CallRepository.findOpenByStream(client, params.workspaceId, params.streamId)
+      if (!call) return null
+      const roster = await CallParticipantRepository.listRoster(client, params.workspaceId, call.id)
+      return {
+        callId: call.id,
+        mode: call.mode,
+        participantCount: roster.length,
+        participantUserIds: roster.map((r) => r.userId),
+        selfLiveParticipant: roster.some((r) => r.userId === params.userId && r.endpointId !== null),
+      }
+    })
+  }
+
+  /**
+   * Live calls across the viewer's accessible streams, for the workspace
+   * bootstrap's `activeCalls` sidebar-dot seed. `accessibleStreamIds` is the
+   * viewer's access-filtered stream set (INV-62 enforced by the caller). Calls
+   * only exist on non-thread roots today, so `rootStreamId` equals `streamId`.
+   */
+  async listWorkspaceActiveCalls(params: {
+    workspaceId: string
+    accessibleStreamIds: string[]
+  }): Promise<ActiveCall[]> {
+    const rows = await CallRepository.listActiveByStreamIds(this.pool, params.workspaceId, params.accessibleStreamIds)
+    return rows.map((row) => ({
+      callId: row.callId,
+      streamId: row.streamId,
+      rootStreamId: row.streamId,
+      mode: row.mode,
+      participantCount: row.participantCount,
+    }))
   }
 
   /** Read the versioned roster snapshot (call.roster_version + per-participant rows) on one connection. */
@@ -867,6 +1008,7 @@ export class CallService {
       // Removal is a membership change: bump the roster version in the same tx as
       // the participant-removed/endpoint-close writes (INV-66).
       await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       return removed
     })
@@ -998,6 +1140,18 @@ export class CallService {
       // later roster fan-out is strictly newer than what peers hold (INV-66).
       await CallRepository.bumpRosterVersionBatch(client, callIds)
 
+      // Fan the refreshed roster to each touched call's card in the same tx
+      // (INV-7). The call rows are locked; read each streamId to route the event.
+      // The sweep spans workspaces, so the workspace id comes from the closed
+      // endpoint that named each call.
+      const workspaceIdByCall = new Map(closed.map((e) => [e.callId, e.workspaceId]))
+      for (const cId of callIds) {
+        const wsId = workspaceIdByCall.get(cId)
+        if (!wsId) continue
+        const touched = await CallRepository.findById(client, wsId, cId)
+        if (touched) await this.emitParticipantsChanged(client, wsId, touched.streamId, cId)
+      }
+
       const closedSessionIds = closed.map((e) => e.cfSessionId).filter((id): id is string => !!id)
       return {
         closedSessionIds,
@@ -1027,8 +1181,156 @@ export class CallService {
         ended.map((c) => c.id)
       )
       await this.settleCancelledRings(client, cancelledRings)
+
+      // Append the `call_ended` patch (carrying the end summary) for every call
+      // that reached `ended` here — the single transition to `ended` for BOTH the
+      // completed (last-leave grace) and reaped paths (`ended_reason` on the row
+      // distinguishes them). Same tx as the status write (INV-4/7). The card
+      // renders its historical state from this payload with zero fetch.
+      await this.appendCallsEnded(client, ended)
       return { ended: ended.length }
     })
+  }
+
+  /**
+   * Batch the reads the per-call `call_ended` appends share, once for the whole
+   * grace-end sweep (INV-56). The sweep spans workspaces, so the ever-participant
+   * read groups by workspace (INV-8); the stream row and member reads are
+   * id-keyed across the set. The event/outbox append stays a loop — neither has a
+   * batch insert — but every lookup it needs is already resolved.
+   */
+  private async appendCallsEnded(client: PoolClient, calls: Call[]): Promise<void> {
+    if (calls.length === 0) return
+
+    const callIdsByWorkspace = new Map<string, string[]>()
+    for (const call of calls) {
+      const ids = callIdsByWorkspace.get(call.workspaceId)
+      if (ids) ids.push(call.id)
+      else callIdsByWorkspace.set(call.workspaceId, [call.id])
+    }
+    const participantUserIdsByCall = new Map<string, string[]>()
+    for (const [workspaceId, callIds] of callIdsByWorkspace) {
+      const partial = await CallParticipantRepository.listUserIdsByCall(client, workspaceId, callIds)
+      for (const [callId, userIds] of partial) participantUserIdsByCall.set(callId, userIds)
+    }
+
+    const streamIds = [...new Set(calls.map((c) => c.streamId))]
+    const streamById = new Map((await StreamRepository.findByIds(client, streamIds)).map((s) => [s.id, s]))
+
+    const memberUserIdsByStream = new Map<string, string[]>()
+    for (const member of await StreamMemberRepository.list(client, { streamIds })) {
+      const ids = memberUserIdsByStream.get(member.streamId)
+      if (ids) ids.push(member.memberId)
+      else memberUserIdsByStream.set(member.streamId, [member.memberId])
+    }
+
+    for (const call of calls) {
+      const stream = streamById.get(call.streamId)
+      if (!stream) continue
+      await this.appendCallEnded(client, call, {
+        streamVisibility: stream.visibility,
+        participantUserIds: participantUserIdsByCall.get(call.id) ?? [],
+        memberUserIds: memberUserIdsByStream.get(call.streamId) ?? [],
+      })
+    }
+  }
+
+  /**
+   * Append the `call_started` slotted broadcast row (+ its stream outbox) inside
+   * the caller's transaction (INV-4/7). The event carries the summary the live
+   * card renders; the outbox additionally fans the sidebar dot (workspace-wide
+   * for public channels, member user rooms for private/DM).
+   */
+  private async appendCallStarted(
+    client: PoolClient,
+    args: { call: Call; streamId: string; streamVisibility: Visibility; startedBy: string }
+  ): Promise<void> {
+    const payload: CallStartedEventPayload = {
+      callId: args.call.id,
+      mode: args.call.mode,
+      startedBy: args.startedBy,
+      startedAt: args.call.startedAt.toISOString(),
+    }
+    const event = await StreamEventRepository.insert(client, {
+      id: eventId(),
+      streamId: args.streamId,
+      eventType: "call_started",
+      payload,
+      actorId: args.startedBy,
+      actorType: AuthorTypes.USER,
+    })
+    const memberUserIds = await this.listStreamMemberUserIds(client, args.streamId)
+    await OutboxRepository.insert(client, "stream:call_started", {
+      workspaceId: args.call.workspaceId,
+      streamId: args.streamId,
+      event,
+      callId: args.call.id,
+      streamVisibility: args.streamVisibility,
+      memberUserIds,
+    })
+  }
+
+  /**
+   * Append the `call_ended` patch (+ its stream outbox) inside the caller's
+   * transaction. A patch, not a slotted row: it carries the end summary onto the
+   * matching `call_started` card. Machine transition, so the event acts as the
+   * system (no actorId, like the delegation sweeps).
+   */
+  private async appendCallEnded(
+    client: PoolClient,
+    call: Call,
+    ctx: { streamVisibility: Visibility; participantUserIds: string[]; memberUserIds: string[] }
+  ): Promise<void> {
+    const endedAt = call.endedAt ?? new Date()
+    const payload: CallEndedEventPayload = {
+      callId: call.id,
+      durationMs: Math.max(0, endedAt.getTime() - call.startedAt.getTime()),
+      participantUserIds: ctx.participantUserIds,
+      endedReason: call.endedReason ?? "completed",
+    }
+    const event = await StreamEventRepository.insert(client, {
+      id: eventId(),
+      streamId: call.streamId,
+      eventType: "call_ended",
+      payload,
+      actorType: AuthorTypes.SYSTEM,
+    })
+    await OutboxRepository.insert(client, "stream:call_ended", {
+      workspaceId: call.workspaceId,
+      streamId: call.streamId,
+      event,
+      callId: call.id,
+      streamVisibility: ctx.streamVisibility,
+      memberUserIds: ctx.memberUserIds,
+    })
+  }
+
+  /**
+   * Emit `call:participants_changed` (stream-scoped, no timeline row) after a
+   * membership transition, inside the caller's transaction. Refreshes the live
+   * call card's roster avatars/count for clients in the stream room; the sidebar
+   * dot rides the started/ended presence events instead.
+   */
+  private async emitParticipantsChanged(
+    client: PoolClient,
+    workspaceId: string,
+    streamId: string,
+    targetCallId: string
+  ): Promise<void> {
+    const roster = await CallParticipantRepository.listRoster(client, workspaceId, targetCallId)
+    const participantUserIds = roster.map((r) => r.userId)
+    await OutboxRepository.insert(client, "call:participants_changed", {
+      workspaceId,
+      streamId,
+      callId: targetCallId,
+      participantCount: participantUserIds.length,
+      participantUserIds,
+    })
+  }
+
+  private async listStreamMemberUserIds(client: PoolClient, streamId: string): Promise<string[]> {
+    const members = await StreamMemberRepository.list(client, { streamId })
+    return members.map((m) => m.memberId)
   }
 
   private async admitParticipant(

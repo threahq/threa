@@ -243,6 +243,56 @@ describe("resolveDeliveryGroups — call ring lifecycle", () => {
   })
 })
 
+describe("resolveDeliveryGroups — call lifecycle (roadmap 1.4)", () => {
+  for (const eventType of ["stream:call_started", "stream:call_ended"] as const) {
+    it(`fans ${eventType} on a PUBLIC channel to the stream room AND the workspace (sidebar dot)`, () => {
+      const groups = resolveDeliveryGroups(
+        event(eventType, {
+          workspaceId: "ws_1",
+          streamId: "stream_pub",
+          callId: "call_1",
+          streamVisibility: Visibilities.PUBLIC,
+          memberUserIds: ["usr_a", "usr_b"],
+          event: { id: "evt_1" },
+        })
+      )
+      expect(new Set(groups)).toEqual(new Set([streamGroup("stream_pub"), WORKSPACE_GROUP]))
+      // The private-only member rooms must NOT be added for a public channel.
+      expect(groups).not.toContain(userGroup("usr_a"))
+    })
+
+    it(`fans ${eventType} on a PRIVATE/DM stream to the stream room AND each member's user room, never workspace-wide`, () => {
+      const groups = resolveDeliveryGroups(
+        event(eventType, {
+          workspaceId: "ws_1",
+          streamId: "stream_dm",
+          callId: "call_1",
+          streamVisibility: Visibilities.PRIVATE,
+          memberUserIds: ["usr_a", "usr_b"],
+          event: { id: "evt_1" },
+        })
+      )
+      expect(new Set(groups)).toEqual(new Set([streamGroup("stream_dm"), userGroup("usr_a"), userGroup("usr_b")]))
+      // A private stream name/call must never leak to the whole workspace.
+      expect(groups).not.toContain(WORKSPACE_GROUP)
+    })
+  }
+
+  it("routes call:participants_changed to the stream room only (no dot fan-out, no timeline)", () => {
+    const groups = resolveDeliveryGroups(
+      event("call:participants_changed", {
+        workspaceId: "ws_1",
+        streamId: "stream_dm",
+        callId: "call_1",
+        participantCount: 2,
+        participantUserIds: ["usr_a", "usr_b"],
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_dm")])
+    expect(groups).not.toContain(WORKSPACE_GROUP)
+  })
+})
+
 describe("permissionGroupsForRole", () => {
   it("grants the members:write delivery group to admins and owners", () => {
     expect(permissionGroupsForRole("admin")).toEqual([MEMBERS_WRITE_GROUP])

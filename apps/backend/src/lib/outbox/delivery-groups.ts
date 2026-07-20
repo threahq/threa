@@ -33,6 +33,8 @@ import {
   type LabelAssignedOutboxPayload,
   type LabelUnassignedOutboxPayload,
   type AgentConfigUpdatedOutboxPayload,
+  type StreamCallStartedOutboxPayload,
+  type StreamCallEndedOutboxPayload,
 } from "./repository"
 
 /**
@@ -309,6 +311,23 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
       return [userGroup(payload.persona.ownerUserId)]
     }
     return [WORKSPACE_GROUP]
+  }
+
+  // Call lifecycle (roadmap 1.4): the timeline card lands in the host stream's
+  // room (every v1 participant is a stream member), AND the sidebar live-call dot
+  // must reach members NOT currently in that room. Public channels fan
+  // workspace-wide (the dot lives in the sidebar, which sits in the workspace
+  // room); private/DM calls fan to each member's user room (a private stream name
+  // must never leak workspace-wide). The public-channel-conversation precedent.
+  if (isOneOfOutboxEventType(event, ["stream:call_started", "stream:call_ended"])) {
+    const payload = event.payload as StreamCallStartedOutboxPayload | StreamCallEndedOutboxPayload
+    const groups = [streamGroup(payload.streamId)]
+    if (payload.streamVisibility === Visibilities.PUBLIC) {
+      groups.push(WORKSPACE_GROUP)
+    } else {
+      for (const userId of payload.memberUserIds) groups.push(userGroup(userId))
+    }
+    return groups
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to

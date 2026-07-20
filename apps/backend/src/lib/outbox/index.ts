@@ -73,6 +73,9 @@ export {
   type LinkPreviewReadyOutboxPayload,
   type CallInvitationCreatedOutboxPayload,
   type CallInvitationSettledOutboxPayload,
+  type StreamCallStartedOutboxPayload,
+  type StreamCallEndedOutboxPayload,
+  type CallParticipantsChangedOutboxPayload,
   type UserScopedEventType,
   isUserScopedEvent,
 } from "./repository"

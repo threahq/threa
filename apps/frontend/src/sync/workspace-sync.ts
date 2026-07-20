@@ -6,6 +6,8 @@ import {
   removeAgentSession,
   hasAgentSession,
 } from "@/stores/agent-activity-store"
+import { seedActiveCalls, upsertActiveCall, removeActiveCall } from "@/stores/active-calls-store"
+import type { CallStartedEventPayload } from "@threa/types"
 import type { SyncEventSource } from "./socket-event-gate"
 import type { QueryClient } from "@tanstack/react-query"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
@@ -2002,6 +2004,32 @@ export function registerWorkspaceSocketHandlers(
     settleIncomingCall(payload.attemptId)
   }
 
+  // Live-call presence for the sidebar dot (roadmap 1.4). These reach the
+  // workspace room (public channels) or the viewer's user room (private/DM),
+  // which the sidebar renders from even when the stream room isn't joined. Calls
+  // live only on non-thread roots today, so rootStreamId equals streamId.
+  const handleCallStarted = (payload: {
+    workspaceId: string
+    streamId: string
+    callId: string
+    event: StreamEvent
+  }) => {
+    if (payload.workspaceId !== workspaceId) return
+    const inner = payload.event.payload as CallStartedEventPayload
+    upsertActiveCall(workspaceId, {
+      callId: payload.callId,
+      streamId: payload.streamId,
+      rootStreamId: payload.streamId,
+      mode: inner.mode,
+      participantCount: 1,
+    })
+  }
+
+  const handleCallEnded = (payload: { workspaceId: string; callId: string }) => {
+    if (payload.workspaceId !== workspaceId) return
+    removeActiveCall(workspaceId, payload.callId)
+  }
+
   const handleConversationMessageAssigned = (payload: {
     workspaceId: string
     streamId: string
@@ -2072,6 +2100,8 @@ export function registerWorkspaceSocketHandlers(
   socket.on("conversation:message_assigned", handleConversationMessageAssigned)
   socket.on("call:invitation_created", handleCallInvitationCreated)
   socket.on("call:invitation_settled", handleCallInvitationSettled)
+  socket.on("stream:call_started", handleCallStarted)
+  socket.on("stream:call_ended", handleCallEnded)
 
   return () => {
     abortController.abort()
@@ -2138,6 +2168,8 @@ export function registerWorkspaceSocketHandlers(
     socket.off("conversation:message_assigned", handleConversationMessageAssigned)
     socket.off("call:invitation_created", handleCallInvitationCreated)
     socket.off("call:invitation_settled", handleCallInvitationSettled)
+    socket.off("stream:call_started", handleCallStarted)
+    socket.off("stream:call_ended", handleCallEnded)
   }
 }
 
@@ -2410,6 +2442,8 @@ export async function applyWorkspaceBootstrap(
   // Seed the sidebar agent-activity store so a session already running on cold
   // load paints its stream row without waiting for a live event.
   seedAgentActivity(workspaceId, bootstrap.activeAgentSessions ?? [])
+  // Same for the sidebar live-call dot (roadmap 1.4).
+  seedActiveCalls(workspaceId, bootstrap.activeCalls ?? [])
 }
 
 export async function applyReconnectBootstrapBatch(
@@ -2651,6 +2685,8 @@ export async function applyReconnectBootstrapBatch(
   // Re-seed the sidebar agent-activity store with the reconnect's running set —
   // the authority that drops any entry whose end signal was missed (INV-53).
   seedAgentActivity(workspaceId, finalBootstrap.activeAgentSessions ?? [])
+  // Same authoritative re-seed for the sidebar live-call dot (INV-53).
+  seedActiveCalls(workspaceId, finalBootstrap.activeCalls ?? [])
 
   return { workspaceBootstrap: finalBootstrap, streamBootstraps }
 }
