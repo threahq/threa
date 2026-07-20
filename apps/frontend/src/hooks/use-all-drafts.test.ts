@@ -2,13 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
-import {
-  DEFAULT_SIDEBAR_CONFIG,
-  defaultFeatureFlags,
-  type JSONContent,
-  type Stream,
-  type WorkspaceBootstrap,
-} from "@threa/types"
+import { DEFAULT_SIDEBAR_CONFIG, type JSONContent, type Stream, type WorkspaceBootstrap } from "@threa/types"
 import { db, type CachedDraft } from "@/db"
 import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
 import { resetDraftStoreCache } from "@/stores/draft-store"
@@ -145,7 +139,7 @@ function makeReloadBootstrap(archivedStreams: Stream[], streams: Stream[] = []):
     activityCounts: {},
     unreadActivityCount: 0,
     mutedStreamIds: [],
-    featureFlags: defaultFeatureFlags(),
+    featureFlags: { workspace: {}, user: {} },
     sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
     userPreferences: {
       workspaceId,
@@ -546,10 +540,9 @@ describe("useAllDrafts archived-root persistence across reload (the whole-featur
     await applyWorkspaceBootstrap(workspaceId, makeReloadBootstrap([archivedRoot], [activeRoot]), Date.now())
 
     const { wrapper } = createWrapper()
-    const { result } = renderHook(
-      () => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }),
-      { wrapper }
-    )
+    const { result } = renderHook(() => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.all.drafts.map((d) => d.id)).toEqual(["draft_control"])

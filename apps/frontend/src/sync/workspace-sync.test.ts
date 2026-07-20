@@ -18,7 +18,6 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
   SIDEBAR_CONFIG_VERSION,
-  defaultFeatureFlags,
   type LabelAssignment,
   type SavedMessageView,
   type ScheduledMessageView,
@@ -59,7 +58,7 @@ function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBo
     activityCounts: {},
     unreadActivityCount: 0,
     mutedStreamIds: [],
-    featureFlags: defaultFeatureFlags(),
+    featureFlags: { workspace: {}, user: {} },
     sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
     userPreferences: {
       workspaceId: "ws_1",
@@ -362,7 +361,12 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
     await db.streams.put({
       ...archivedRoot,
-      lastMessagePreview: { authorId: "user_1", authorType: "user", content: "kept", createdAt: "2026-01-01T00:00:00Z" },
+      lastMessagePreview: {
+        authorId: "user_1",
+        authorType: "user",
+        content: "kept",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
       _cachedAt: fetchStartedAt - 1000,
     })
 
@@ -1424,9 +1428,12 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
-  it("applies feature_flags:updated to the bootstrap cache", () => {
+  it("patches only the user layer on feature_flags:updated, leaving the workspace layer intact", () => {
     const queryClient = new QueryClient()
-    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ featureFlags: { workspace: { calls: "off" }, user: {} } })
+    )
 
     const { socket, emit } = createTestSocket()
     const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
@@ -1438,11 +1445,36 @@ describe("registerWorkspaceSocketHandlers", () => {
     emit("feature_flags:updated", {
       workspaceId: "ws_1",
       targetUserId: "member_1",
-      featureFlags: defaultFeatureFlags(),
+      overrides: { newComposer: "on" },
     })
 
     const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
-    expect(cached?.featureFlags).toEqual(defaultFeatureFlags())
+    expect(cached?.featureFlags).toEqual({ workspace: { calls: "off" }, user: { newComposer: "on" } })
+
+    cleanup()
+  })
+
+  it("patches only the workspace layer on feature_flags:workspace_updated, leaving the user layer intact", () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ featureFlags: { workspace: {}, user: { newComposer: "on" } } })
+    )
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+
+    emit("feature_flags:workspace_updated", {
+      workspaceId: "ws_1",
+      overrides: { calls: "off" },
+    })
+
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached?.featureFlags).toEqual({ workspace: { calls: "off" }, user: { newComposer: "on" } })
 
     cleanup()
   })
@@ -1796,7 +1828,12 @@ describe("registerWorkspaceSocketHandlers", () => {
   it("preserves an existing row's lastMessagePreview on stream:unarchived", async () => {
     await db.streams.put({
       ...makeStream("stream_unarch2", { archivedAt: "2026-01-01T00:00:00Z" }),
-      lastMessagePreview: { authorId: "member_1", authorType: "user", content: "kept", createdAt: "2026-01-01T00:00:00Z" },
+      lastMessagePreview: {
+        authorId: "member_1",
+        authorType: "user",
+        content: "kept",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
       _cachedAt: Date.now(),
     })
 

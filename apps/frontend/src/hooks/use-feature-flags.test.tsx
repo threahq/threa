@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderHook } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { describe, expect, it } from "vitest"
-import { defaultFeatureFlags, type WorkspaceBootstrap } from "@threa/types"
+import { type FeatureFlagLayers, type WorkspaceBootstrap } from "@threa/types"
 import { workspaceKeys } from "./use-workspaces"
 import { useOverriddenFeatureFlags } from "./use-feature-flags"
 
@@ -12,10 +12,12 @@ function createWrapper(queryClient: QueryClient) {
   }
 }
 
-// The registry is currently empty (no rollout in flight), so there is never a
-// non-default flag to surface. The per-flag hooks (useFeatureFlag /
-// useFeatureFlagWhenKnown) return with the next flag added to FEATURE_FLAGS;
-// until then only the overridden-flags view is exercisable.
+// The shipped registry is empty (no rollout in flight), so the per-flag hooks
+// (useFeatureFlag / useFeatureFlagWhenKnown) have no key to read and only the
+// overridden-flags view is exercisable end-to-end. The precedence the hooks
+// depend on is proven against the registry-parameterized resolver below — the
+// same function `useResolvedFeatureFlags` composes over — since a fake flag must
+// not enter FEATURE_FLAGS.
 describe("useOverriddenFeatureFlags", () => {
   it("returns no overridden flags before the bootstrap is cached", () => {
     const queryClient = new QueryClient()
@@ -26,16 +28,17 @@ describe("useOverriddenFeatureFlags", () => {
     expect(result.current).toEqual([])
   })
 
-  it("returns no overridden flags when the bootstrap carries the default map", () => {
+  it("consumes the layered bootstrap shape and drops keys not in the registry", () => {
     const queryClient = new QueryClient()
-    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
-      featureFlags: defaultFeatureFlags(),
-    } as WorkspaceBootstrap)
+    const layers: FeatureFlagLayers = { workspace: { calls: "off" }, user: { newComposer: "on" } }
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { featureFlags: layers } as WorkspaceBootstrap)
 
     const { result } = renderHook(() => useOverriddenFeatureFlags("ws_1"), {
       wrapper: createWrapper(queryClient),
     })
 
+    // Empty registry: every override is inert, so nothing is surfaced (and the
+    // layered shape does not crash the resolve).
     expect(result.current).toEqual([])
   })
 })

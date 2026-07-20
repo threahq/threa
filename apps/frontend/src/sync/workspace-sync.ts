@@ -24,7 +24,6 @@ import type {
   UserPreferences,
   SidebarConfig,
   WorkspaceSettings,
-  FeatureFlags,
   LastMessagePreview,
   Activity,
   AgentSessionStartedPayload,
@@ -238,7 +237,14 @@ interface WorkspaceSettingsUpdatedPayload {
 interface FeatureFlagsUpdatedPayload {
   workspaceId: string
   targetUserId: string
-  featureFlags: FeatureFlags
+  /** The user layer's raw overrides; the client re-resolves against its own workspace layer. */
+  overrides: Record<string, string>
+}
+
+interface FeatureFlagsWorkspaceUpdatedPayload {
+  workspaceId: string
+  /** The workspace layer's raw overrides; the client re-resolves against its own user layer. */
+  overrides: Record<string, string>
 }
 
 /**
@@ -1510,13 +1516,26 @@ export function registerWorkspaceSocketHandlers(
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, workspaceSettings: payload.settings }))
   }
 
-  // Handle feature flags updated (a platform admin toggled a flag for this
-  // user from the backoffice). User-scoped event carrying the full resolved
-  // map; lives only in the bootstrap query cache, like workspace settings.
+  // Handle feature flags updated (a platform admin toggled a flag from the
+  // backoffice). Two scope-routed events, each patching only its own raw layer
+  // and leaving the other intact; the hook re-resolves. Layers live only in the
+  // bootstrap query cache, like workspace settings (INV-53 via the guard).
   const handleFeatureFlagsUpdated = (payload: FeatureFlagsUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
-    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, featureFlags: payload.featureFlags }))
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
+      ...old,
+      featureFlags: { workspace: old.featureFlags?.workspace ?? {}, user: payload.overrides },
+    }))
+  }
+
+  const handleFeatureFlagsWorkspaceUpdated = (payload: FeatureFlagsWorkspaceUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
+      ...old,
+      featureFlags: { workspace: payload.overrides, user: old.featureFlags?.user ?? {} },
+    }))
   }
 
   const handleBotCreated = (payload: { workspaceId: string; bot: Bot }) => {
@@ -2066,6 +2085,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("sidebar_config:updated", handleSidebarConfigUpdated)
   socket.on("workspace_settings:updated", handleWorkspaceSettingsUpdated)
   socket.on("feature_flags:updated", handleFeatureFlagsUpdated)
+  socket.on("feature_flags:workspace_updated", handleFeatureFlagsWorkspaceUpdated)
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
   socket.on("agent_config:updated", handleAgentConfigUpdated)
@@ -2134,6 +2154,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("sidebar_config:updated", handleSidebarConfigUpdated)
     socket.off("workspace_settings:updated", handleWorkspaceSettingsUpdated)
     socket.off("feature_flags:updated", handleFeatureFlagsUpdated)
+    socket.off("feature_flags:workspace_updated", handleFeatureFlagsWorkspaceUpdated)
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
     socket.off("agent_config:updated", handleAgentConfigUpdated)

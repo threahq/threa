@@ -39,7 +39,7 @@ function makeDeps(archivedStreams: unknown[]) {
     streamService,
     userPreferencesService: { getPreferences: async () => ({}) },
     workspaceSettingsService: { getSettings: async () => ({}) },
-    featureFlagService: { getFlags: async () => ({}) },
+    featureFlagService: { getFlagLayers: async () => ({ workspace: {}, user: {} }) },
     platformAdminService: { hasAccess: async () => false },
     sidebarConfigService: { getConfig: async () => ({}) },
     boardViewService: { list: async () => [] },
@@ -100,5 +100,24 @@ describe("workspace bootstrap handler", () => {
     expect(getJson().data.archivedStreams).toEqual([archivedChannel, { ...archivedDm, displayName: "Peer Name" }])
     // Active streams list stays a separate contract (empty here).
     expect(getJson().data.streams).toEqual([])
+  })
+
+  it("emits the viewer's feature-flag layers, not a resolved map", async () => {
+    spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n } as never)
+    spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
+
+    const deps = makeDeps([])
+    // Override the default empty-layers mock so the assertion has something to bite on.
+    ;(deps as any).featureFlagService.getFlagLayers = async () => ({
+      workspace: { calls: "off" },
+      user: { newComposer: "on" },
+    })
+    const handlers = createWorkspaceHandlers(deps)
+    const { req, res, getJson } = makeReqRes()
+
+    await handlers.bootstrap(req, res)
+
+    expect(getJson().data.featureFlags).toEqual({ workspace: { calls: "off" }, user: { newComposer: "on" } })
   })
 })
