@@ -16,7 +16,9 @@ export function parseProcessTable(psOutput: string): ProcessRow[] {
   return rows
 }
 
-// Deepest-first so children are killed before their parents can respawn them.
+// Parents-first: SIGKILL runs no handlers, so a dead parent can't respawn a
+// child — but a still-live parent CAN respawn a killed child with a pid absent
+// from our snapshot. Killing top-down closes that window.
 export function computeDescendants(rows: ProcessRow[], roots: number[]): number[] {
   const childrenOf = new Map<number, number[]>()
   for (const row of rows) {
@@ -28,12 +30,12 @@ export function computeDescendants(rows: ProcessRow[], roots: number[]): number[
   const ordered: number[] = []
   const seen = new Set<number>(roots)
   const visit = (pid: number) => {
+    ordered.push(pid)
     for (const child of childrenOf.get(pid) ?? []) {
       if (seen.has(child)) continue
       seen.add(child)
       visit(child)
     }
-    ordered.push(pid)
   }
   for (const root of roots) visit(root)
   return ordered
@@ -83,8 +85,15 @@ export function installDevLifecycle(procs: Subprocess[]): () => Promise<void> {
   process.on("SIGTERM", shutdown)
   process.on("SIGHUP", shutdown)
 
+  // Probe the original parent's liveness with signal 0 rather than watching
+  // process.ppid: Bun caches ppid on first read so it never reflects
+  // reparenting, and ppid===1 both misfires under init shims/launchd (starts
+  // at 1) and misses under subreapers (orphan reparents to a non-1 pid).
+  const initialPpid = process.ppid
   const watchdog = setInterval(() => {
-    if (process.ppid === 1) {
+    try {
+      process.kill(initialPpid, 0)
+    } catch {
       console.log("Parent process died; shutting down orphaned dev stack.")
       void shutdown()
     }

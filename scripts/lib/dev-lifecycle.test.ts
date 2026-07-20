@@ -22,9 +22,9 @@ describe("computeDescendants", () => {
     { pid: 99, ppid: 1 }, // unrelated process
   ]
 
-  test("returns full tree deepest-first, roots last", () => {
+  test("returns full tree parents-first, so a live parent can't respawn a killed child", () => {
     const order = computeDescendants(rows, [20, 30])
-    expect(order).toEqual([21, 20, 31, 30])
+    expect(order).toEqual([20, 21, 30, 31])
   })
 
   test("never includes processes outside the given roots", () => {
@@ -41,6 +41,6 @@ describe("computeDescendants", () => {
       { pid: 5, ppid: 6 },
       { pid: 6, ppid: 5 },
     ]
-    expect(computeDescendants(cyclic, [5])).toEqual([6, 5])
+    expect(computeDescendants(cyclic, [5])).toEqual([5, 6])
   })
 })
