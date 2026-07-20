@@ -1,4 +1,5 @@
 import { $ } from "bun"
+import { installDevLifecycle } from "./lib/dev-lifecycle"
 import * as fs from "fs"
 import * as path from "path"
 import * as net from "net"
@@ -265,30 +266,7 @@ async function main() {
       env: backofficeEnvVars,
     })
 
-    let isShuttingDown = false
-    const shutdown = async () => {
-      if (isShuttingDown) return
-      isShuttingDown = true
-      console.log("\nShutting down test server...")
-      controlPlane.kill("SIGKILL")
-      backend.kill("SIGKILL")
-      router.kill("SIGKILL")
-      backofficeRouter.kill("SIGKILL")
-      frontend.kill("SIGKILL")
-      backoffice.kill("SIGKILL")
-      await Promise.all([
-        controlPlane.exited,
-        backend.exited,
-        router.exited,
-        backofficeRouter.exited,
-        frontend.exited,
-        backoffice.exited,
-      ])
-      process.exit(0)
-    }
-
-    process.on("SIGINT", shutdown)
-    process.on("SIGTERM", shutdown)
+    installDevLifecycle([controlPlane, backend, router, backofficeRouter, frontend, backoffice])
 
     await Promise.all([
       controlPlane.exited,
