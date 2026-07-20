@@ -54,7 +54,7 @@ Two rules for using it:
 | offline                                                                        | Composing offline, queued operations, connection status                                                                                         | `sw.ts`, `sync/operation-queue.ts`                                             |
 | [ai-companions](public/ai-companions.md) ✅                                    | Personas, companion mode, mentions, in-timeline activity card, agent traces                                                                     | `features/agents`, `docs/core-concepts.md`                                     |
 | [custom-personas](public/custom-personas.md) ✅                                | Fork/edit personas (workspace + personal scopes, visibility rules), the editor, test-drive, revisions, attached knowledge files                 | `features/agents`, `components/persona-editor/`                                |
-| [calls](calls.md) ✅ (M1, flag-gated)                                          | 1:1 DM voice/video via the Cloudflare Realtime SFU: header start, ring, docked call, timeline card, rejoin; flag `callsEnabled` + CF app        | `features/calls`, `apps/frontend/src/calls`, `docs/plans/voice-video-calls.md` |
+| [calls](calls.md) ✅ (M1, released)                                            | 1:1 DM voice/video via the Cloudflare Realtime SFU: header start, ring, docked call, timeline card, rejoin; `callsEnabled` kill switch + CF app | `features/calls`, `apps/frontend/src/calls`, `docs/plans/voice-video-calls.md` |
 
 ## Concepts
 

@@ -19,7 +19,7 @@ import { useCallLaunch } from "@/components/call"
 import { useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAuth } from "@/auth"
-import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
+import { DEFAULT_WORKSPACE_SETTINGS, getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
 import { getInitials } from "@/lib/initials"
 import { formatStatusClearLabel } from "@/lib/status"
 
@@ -115,7 +115,7 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
   const messageHref = workspaceId ? `/w/${workspaceId}/s/${messageStreamId}` : undefined
 
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
-  const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? false
+  const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? DEFAULT_WORKSPACE_SETTINGS.callsEnabled
   const { launch: launchCall, callActive } = useCallLaunch()
 
   if (!user) return null

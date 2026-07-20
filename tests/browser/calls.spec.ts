@@ -43,7 +43,7 @@ async function setUpDmPair(browser: Browser): Promise<DmPair> {
   const workspaceId = ownerPage.url().match(/\/w\/([^/]+)/)?.[1]
   if (!workspaceId) throw new Error("Could not resolve workspaceId from owner URL")
 
-  // Flip the workspace `callsEnabled` dark-feature flag on (admin-only; owner is admin).
+  // Assert calls on explicitly (they default on) so the test is independent of the default.
   await expectApiOk(
     await ownerPage.request.patch(`/api/workspaces/${workspaceId}/workspace-settings`, {
       data: { callsEnabled: true },
