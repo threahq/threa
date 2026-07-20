@@ -331,17 +331,18 @@ bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --dry-run
 bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --yes
 ```
 
-The target PR controls the range: target the top PR to land the whole stack or a lower PR for a partial stack merge. `--method squash` is the default; `merge` and `rebase` are also accepted.
+The target PR selects the intended range: target the top PR to land the whole stack or a lower PR for a partial stack merge. The wrapper treats any merged or closed PR above that target as an over-merge and fails loudly. `--method squash` is the default; `merge` and `rebase` are also accepted.
 
 The wrapper:
 
 1. Resolves the target PR's GitHub stack through the preview REST API.
 2. Rejects closed or draft entries in the selected range.
-3. Takes a consistent SQLite snapshot of Chrome's cookies inside a mode-`0700` temporary directory.
+3. Takes a consistent SQLite snapshot inside a mode-`0700` temporary directory, deletes every non-GitHub cookie, and vacuums the copy.
 4. Starts isolated headless Chrome over private DevTools pipes and verifies every selected entry is `MERGEABLE/READY`.
 5. Re-reads the stack and aborts if its base, ordered selected entries, states, or head SHAs changed.
-6. Sends GitHub's internal `page_data/enqueue_stack` request, then polls the stack resource until every selected PR is merged.
-7. Kills the isolated browser and deletes the copied browser state on success, failure, `SIGINT`, or `SIGTERM`.
+6. Sends GitHub's internal `page_data/enqueue_stack` request, then polls until every selected PR is merged with the expected head and every PR above the target remains unmerged.
+7. Treats a lost/timeout response as ambiguous and watches the stack before allowing a retry.
+8. Kills the isolated browser and deletes the copied browser state on success, failure, repeated `SIGINT`, `SIGTERM`, or `SIGHUP`.
 
 Requirements: Bun, `gh` authentication for REST reads, Google Chrome with an active github.com session, and a repository enrolled in the Stacked PRs preview. Override profile detection with `GH_STACK_CHROME_PROFILE` or `--chrome-profile`; override Chrome with `GH_STACK_CHROME_BIN` or `--chrome-bin`.
 
