@@ -19,3 +19,31 @@ The stack resource includes its base and ordered pull requests. Pull request res
 GitHub's [stacked PR guide](https://github.github.com/gh-stack/guides/stacked-prs/#merging-a-stack) defines merge by position: merging a pull request also merges every unmerged pull request below it. Merging the top pull request lands the whole stack; merging the bottom lands only that pull request. Remaining pull requests are rebased and retargeted after a partial merge.
 
 The documented REST surface does not include the merge operation used by the web UI.
+
+## Web merge request
+
+The pull request UI performs a stack merge through an internal website endpoint on the selected pull request:
+
+```http
+POST /{owner}/{repo}/pull/{pull_number}/page_data/enqueue_stack
+```
+
+```json
+{
+  "commitTitle": "…",
+  "commitMessage": "…",
+  "mergeMethod": "SQUASH"
+}
+```
+
+`mergeMethod` accepts `MERGE`, `SQUASH`, or `REBASE`. The UI also sends `authorEmail` when the account has selectable commit emails. Selecting a pull request merges that pull request and every unmerged entry below it, so the top pull request selects the whole stack.
+
+This is a website route, not an `api.github.com` REST endpoint. It requires an authenticated GitHub web session and the page's rotating `X-Fetch-Nonce`, along with GitHub's verified-fetch headers. A GitHub API token does not authenticate this route.
+
+## Probe results
+
+- `POST` probes of `/stacks/{number}/merge`, `/merges`, `/stack-merge`, `/enqueue`, and `/enqueue_stack` all returned `404 Not Found` through `gh api`.
+- A token-authenticated request to the website route failed before reaching the handler.
+- An authenticated browser replay against completed stack 1437 reached the handler and returned `422` because the stack was already merged. The stack resource was unchanged.
+
+A token-only `gh` command therefore cannot reproduce the web merge. Browser automation can invoke the route, but depends on private website behavior and a live browser session. Keep the documented per-layer CLI merge procedure as the non-browser fallback.
