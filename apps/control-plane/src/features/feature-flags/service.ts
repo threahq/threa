@@ -2,10 +2,10 @@ import type { Pool } from "pg"
 import { HttpError, withTransaction, logger, OutboxRepository } from "@threa/backend-common"
 import {
   defaultFeatureFlagValue,
+  flagAllowsScope,
   isFeatureFlagKey,
   isFeatureFlagValue,
-  resolveFeatureFlags,
-  type FeatureFlags,
+  type FeatureFlagScope,
 } from "@threa/types"
 import { FeatureFlagOverrideRepository, type FeatureFlagOverrideRecord } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
@@ -14,13 +14,14 @@ import type { RegionalClient } from "../../lib/regional-client"
 export const OUTBOX_FEATURE_FLAGS_SYNC = "feature_flags_sync"
 
 /**
- * Outbox payload for the regional fan-out. Carries only identity — the
- * handler re-reads the overrides at delivery time and pushes a full snapshot,
- * so rapid changes collapse to the latest state and replays are idempotent.
+ * Outbox payload for the regional fan-out. Carries only the subject identity —
+ * the handler re-reads that subject's overrides at delivery time, so rapid
+ * changes collapse to the latest state and replays are idempotent.
  */
 export interface FeatureFlagsSyncPayload extends Record<string, unknown> {
   workspaceId: string
-  workosUserId: string
+  subjectType: FeatureFlagScope
+  subjectId: string
 }
 
 interface Dependencies {
@@ -28,15 +29,20 @@ interface Dependencies {
   regionalClient: RegionalClient
 }
 
-function toOverrideRecord(rows: { flagKey: string; value: string }[]): Record<string, string> {
-  return Object.fromEntries(rows.map((row) => [row.flagKey, row.value]))
+/** A stored override still backed by the code registry — live key, declared value, and a scope the flag allows. */
+function isLiveOverride(record: FeatureFlagOverrideRecord): boolean {
+  return (
+    isFeatureFlagKey(record.flagKey) &&
+    isFeatureFlagValue(record.flagKey, record.value) &&
+    flagAllowsScope(record.flagKey, record.subjectType)
+  )
 }
 
 /**
- * Source of truth for per-user feature flags. Backoffice admins set values
- * here; every write emits a durable outbox event that pushes the user's
- * resolved flag snapshot to the workspace's regional backend, which in turn
- * broadcasts it to the user's live sessions.
+ * Source of truth for feature flag overrides. Backoffice admins set values
+ * here — at workspace or user scope; every write emits a durable outbox event
+ * that pushes that subject's raw overrides to the workspace's regional backend,
+ * which resolves them against the same registry and broadcasts to live sessions.
  */
 export class ControlPlaneFeatureFlagService {
   private pool: Pool
@@ -48,59 +54,69 @@ export class ControlPlaneFeatureFlagService {
   }
 
   /**
-   * All overrides stored for a workspace, filtered to keys/values still in
-   * the code registry so the backoffice never renders retired flags.
+   * All overrides stored for a workspace, filtered to keys/values/scopes still
+   * in the code registry so the backoffice never renders retired flags.
    */
   async listWorkspaceOverrides(workspaceId: string): Promise<FeatureFlagOverrideRecord[]> {
     const rows = await FeatureFlagOverrideRepository.listByWorkspace(this.pool, workspaceId)
-    return rows.filter((row) => isFeatureFlagKey(row.flagKey) && isFeatureFlagValue(row.flagKey, row.value))
+    return rows.filter(isLiveOverride)
   }
 
   /**
-   * Set one user's flag to a declared value. Choosing the default (first
-   * declared) value clears the override — only deviations from default are
-   * stored, mirroring workspace-settings. The override write and the fan-out
-   * outbox event commit atomically (INV-7).
+   * Set one subject's flag to a declared value. Choosing the flag's explicit
+   * default clears the override — only deviations from default are stored,
+   * mirroring workspace-settings. The override write and the fan-out outbox
+   * event commit atomically (INV-7).
    */
-  async setFlag(params: { workspaceId: string; workosUserId: string; flagKey: string; value: string }): Promise<void> {
-    const { flagKey, value } = params
+  async setFlag(params: {
+    workspaceId: string
+    subjectType: FeatureFlagScope
+    subjectId: string
+    flagKey: string
+    value: string
+  }): Promise<void> {
+    const { workspaceId, subjectType, subjectId, flagKey, value } = params
     if (!isFeatureFlagKey(flagKey)) {
       throw new HttpError("Unknown feature flag", { status: 400, code: "UNKNOWN_FLAG" })
+    }
+    if (!flagAllowsScope(flagKey, subjectType)) {
+      throw new HttpError("Feature flag does not allow this scope", { status: 400, code: "FLAG_SCOPE_NOT_ALLOWED" })
+    }
+    // The workspace layer is a single row keyed by the workspace itself; a
+    // subjectId other than the workspace id would orphan a second, unreadable
+    // workspace override (the PK permits it). Reject rather than normalize (INV-11).
+    if (subjectType === "workspace" && subjectId !== workspaceId) {
+      throw new HttpError("Workspace-scope override must target the workspace itself", {
+        status: 400,
+        code: "INVALID_SUBJECT",
+      })
     }
     if (!isFeatureFlagValue(flagKey, value)) {
       throw new HttpError("Value is not declared for this feature flag", { status: 400, code: "UNKNOWN_FLAG_VALUE" })
     }
-    const workspace = await WorkspaceRegistryRepository.findById(this.pool, params.workspaceId)
+    const workspace = await WorkspaceRegistryRepository.findById(this.pool, workspaceId)
     if (!workspace) {
       throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
     }
 
     await withTransaction(this.pool, async (client) => {
       if (value === defaultFeatureFlagValue(flagKey)) {
-        await FeatureFlagOverrideRepository.deleteOverride(client, {
-          workspaceId: params.workspaceId,
-          workosUserId: params.workosUserId,
-          flagKey,
-        })
+        await FeatureFlagOverrideRepository.deleteOverride(client, { workspaceId, subjectType, subjectId, flagKey })
       } else {
-        await FeatureFlagOverrideRepository.setOverride(client, {
-          workspaceId: params.workspaceId,
-          workosUserId: params.workosUserId,
-          flagKey,
-          value,
-        })
+        await FeatureFlagOverrideRepository.setOverride(client, { workspaceId, subjectType, subjectId, flagKey, value })
       }
       await OutboxRepository.insert(client, OUTBOX_FEATURE_FLAGS_SYNC, {
-        workspaceId: params.workspaceId,
-        workosUserId: params.workosUserId,
+        workspaceId,
+        subjectType,
+        subjectId,
       } satisfies FeatureFlagsSyncPayload)
     })
   }
 
   /**
-   * Outbox handler: push one user's resolved flag snapshot to the workspace's
-   * region. Reads current state (not event-time state) so the last event to
-   * drain always leaves the region consistent with the control plane.
+   * Outbox handler: push one subject's raw overrides to the workspace's region.
+   * Reads current state (not event-time state) and filters through the registry
+   * so retired flags never reach the region; the region resolves the layers.
    */
   async syncToRegion(payload: FeatureFlagsSyncPayload): Promise<void> {
     const workspace = await WorkspaceRegistryRepository.findById(this.pool, payload.workspaceId)
@@ -109,16 +125,18 @@ export class ControlPlaneFeatureFlagService {
       logger.warn({ workspaceId: payload.workspaceId }, "Feature flag sync skipped: workspace not in registry")
       return
     }
-    const flags = await this.resolveForUser(payload.workspaceId, payload.workosUserId)
-    await this.regionalClient.syncUserFeatureFlags(workspace.region, {
+    const rows = await FeatureFlagOverrideRepository.listForSubject(
+      this.pool,
+      payload.workspaceId,
+      payload.subjectType,
+      payload.subjectId
+    )
+    const overrides = Object.fromEntries(rows.filter(isLiveOverride).map((row) => [row.flagKey, row.value]))
+    await this.regionalClient.syncFeatureFlags(workspace.region, {
       workspaceId: payload.workspaceId,
-      workosUserId: payload.workosUserId,
-      flags,
+      subjectType: payload.subjectType,
+      subjectId: payload.subjectId,
+      overrides,
     })
-  }
-
-  private async resolveForUser(workspaceId: string, workosUserId: string): Promise<FeatureFlags> {
-    const overrides = await FeatureFlagOverrideRepository.listForUser(this.pool, workspaceId, workosUserId)
-    return resolveFeatureFlags({ workspace: {}, user: toOverrideRecord(overrides) })
   }
 }

@@ -1,4 +1,5 @@
 import { logger, INTERNAL_API_KEY_HEADER, type WorkosMembershipStatus } from "@threa/backend-common"
+import type { FeatureFlagScope } from "@threa/types"
 import type { RegionConfig } from "../config"
 
 const REGIONAL_REQUEST_TIMEOUT_MS = 15_000
@@ -174,13 +175,14 @@ export class RegionalClient {
   }
 
   /**
-   * Push one user's resolved feature-flag snapshot to the regional backend.
-   * Full-snapshot semantics keep the call idempotent and replay-safe — the
-   * region replaces the user's rows wholesale.
+   * Push one subject's raw feature-flag overrides to the regional backend. The
+   * region stores each layer separately and resolves at read. Full-snapshot
+   * semantics keep the call idempotent and replay-safe — the region replaces
+   * that subject's rows wholesale.
    */
-  async syncUserFeatureFlags(
+  async syncFeatureFlags(
     region: string,
-    data: { workspaceId: string; workosUserId: string; flags: Record<string, string> }
+    data: { workspaceId: string; subjectType: FeatureFlagScope; subjectId: string; overrides: Record<string, string> }
   ): Promise<void> {
     await this.postInternal(region, "/internal/feature-flags", data, "Regional feature flag sync")
   }
