@@ -41,7 +41,9 @@ export function SidebarToggle({ location, className }: SidebarToggleProps) {
   return (
     <div
       className={cn(
-        "flex items-center overflow-hidden transition-[width,margin,transform,opacity] duration-200 ease-out",
+        // shrink-0: overflow-hidden below means a squeezed wrapper slices the
+        // button rather than fitting it. Crowded headers shrink the title.
+        "flex shrink-0 items-center overflow-hidden transition-[width,margin,transform,opacity] duration-200 ease-out",
         hidden ? "pointer-events-none ml-0 -mr-2 w-0 -translate-x-2 opacity-0" : cn("w-8 opacity-100", offsetClass),
         className
       )}
