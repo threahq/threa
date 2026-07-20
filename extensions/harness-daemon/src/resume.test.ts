@@ -441,6 +441,49 @@ test("an explicit CLI run and a targeted restore event both probe through the ba
   expect(probes).toEqual(["status", "status"])
 })
 
+test("unarchiving revives immediately even when the row carries a probe backoff", async () => {
+  const probes: string[] = []
+  const deps = reviveDeps({
+    scratchpadStatus: async () => {
+      probes.push("status")
+      return "active"
+    },
+  })
+  const target = { botId: "bot_1", rootStreamId: "stream_01ABCDEF", instanceId: "cc-one", runtimeSessionId: "ccs-one" }
+  const backedOff = linkedAgent({
+    probeFailures: 9,
+    probeBackoffUntil: new Date(Date.now() + 6 * 3_600_000).toISOString(),
+  })
+
+  expect(await runRevive(backedOff, { dryRun: true, respectProbeBackoff: true }, deps, target)).toEqual({
+    status: "would start",
+    detail: "https://app.threa.io/w/ws_1/s/stream_01ABCDEF",
+  })
+  expect(probes).toEqual(["status"])
+})
+
+test("an archived scratchpad answers 200, so it never enters the backoff", async () => {
+  const persisted: ManagedAgent[] = []
+  const deps = reviveDeps({ scratchpadStatus: async () => "archived", persist: (managed) => persisted.push(managed) })
+  const probes: string[] = []
+  const counting = reviveDeps({
+    ...deps,
+    scratchpadStatus: async () => {
+      probes.push("status")
+      return "archived"
+    },
+  })
+
+  expect(await runRevive(linkedAgent(), { respectProbeBackoff: true }, counting)).toEqual({
+    status: "skipped archived",
+  })
+  expect(await runRevive(linkedAgent(), { respectProbeBackoff: true }, counting)).toEqual({
+    status: "skipped archived",
+  })
+  expect(probes).toEqual(["status", "status"])
+  expect(persisted).toEqual([])
+})
+
 test("a scratchpad that answers clears its recorded backoff", async () => {
   for (const status of ["active", "archived"] as const) {
     const persisted: ManagedAgent[] = []
