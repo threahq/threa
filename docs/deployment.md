@@ -311,7 +311,7 @@ Calls media routes through a **Cloudflare Realtime (SFU) app**, one **per enviro
 
 - **Boot behavior**: the pair is co-presence-validated at startup (both set or both absent, INV-11). When absent, the backend boots normally but every calls HTTP/socket surface answers **503 `CALLS_UNAVAILABLE`** — deploying without them **disables calls and breaks nothing** else. A single one of the two set fails boot loudly.
 
-- **Per-workspace kill switch**: `callsEnabled` is **on by default**. Turning it off makes every calls surface answer as if the feature does not exist — the way to stop calls in one workspace without a deploy, which matters because the media plane is a third-party dependency.
+- **Per-workspace kill switch**: the `calls` feature flag (workspace scope) is **on by default**. A workspace opts out with a `subject_type='workspace'` override of `"off"`, written from the backoffice (control-plane only). Off makes every calls surface answer as if the feature does not exist — the way to stop calls in one workspace without a deploy, which matters because the media plane is a third-party dependency.
 
 - **Outstanding GDPR item**: the SFU is a content-level media processor from the first real call. Calls were released pre-launch by an explicit product decision (2026-07-20); Cloudflare's DPA / processor-register entry is still **not** in place and must land before the product carries external users. See the plan's `GDPR (v1)` section (`docs/plans/voice-video-calls.md`).
 

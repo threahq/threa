@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import { HttpError } from "../../lib/errors"
-import type { WorkspaceSettingsService } from "../workspace-settings"
+import type { FeatureFlagService } from "../feature-flags"
 import { checkCallAccess } from "./access"
 import type { CallService } from "./service"
 import { broadcastRoster } from "./signaling-gateway"
@@ -69,7 +69,7 @@ interface Dependencies {
   pool: Pool
   io: Server
   callService: CallService
-  workspaceSettingsService: WorkspaceSettingsService
+  featureFlagService: FeatureFlagService
   /** False when the CF media plane is unconfigured — every calls surface 503s. */
   cloudflareEnabled: boolean
 }
@@ -94,19 +94,12 @@ function parseOrThrow<T>(schema: z.ZodType<T>, body: unknown): T {
  * pass-throughs to CF holding the app secret; publish/close additionally update the
  * roster and fan `call:roster` to the `/calls` namespace room.
  */
-export function createCallHandlers({
-  pool,
-  io,
-  callService,
-  workspaceSettingsService,
-  cloudflareEnabled,
-}: Dependencies) {
+export function createCallHandlers({ pool, io, callService, featureFlagService, cloudflareEnabled }: Dependencies) {
   async function assertAvailable(workspaceId: string): Promise<void> {
     if (!cloudflareEnabled) {
       throw new HttpError("Calls media is not configured", { status: 503, code: "CALLS_UNAVAILABLE" })
     }
-    const settings = await workspaceSettingsService.getSettings(workspaceId)
-    if (!settings.callsEnabled) {
+    if ((await featureFlagService.getWorkspaceFlag(workspaceId, "calls")) !== "on") {
       throw new HttpError("Calls are not enabled for this workspace", { status: 404, code: "CALLS_DISABLED" })
     }
   }

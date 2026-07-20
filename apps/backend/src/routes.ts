@@ -1626,7 +1626,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     pool,
     io: deps.io,
     callService,
-    workspaceSettingsService,
+    featureFlagService,
     cloudflareEnabled: callsCloudflareEnabled,
   })
   app.post(

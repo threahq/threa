@@ -84,8 +84,10 @@ function makeManager(): CallController {
 
 function renderModal(manager: CallController, callsEnabled: boolean) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  // `calls` is a workspace-scope flag defaulting on; an off workspace override
+  // turns the affordance dark. Seed the bootstrap's raw flag layers the hook reads.
   queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), {
-    workspaceSettings: { callsEnabled },
+    featureFlags: { workspace: callsEnabled ? {} : { calls: "off" }, user: {} },
   } as unknown as WorkspaceBootstrap)
   return render(
     <QueryClientProvider client={queryClient}>
