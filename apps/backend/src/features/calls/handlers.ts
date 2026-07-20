@@ -140,6 +140,33 @@ export function createCallHandlers({
       })
     },
 
+    async declineInvitation(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { invitationId } = req.params
+      await assertAvailable(workspaceId)
+
+      // Scoped to the invitee's own ring — `declineInvitation` CASes on
+      // invitee_user_id, so a non-invitee gets the 409 not-actionable, never
+      // another user's invitation.
+      const invitation = await callService.declineInvitation({ workspaceId, invitationId, userId })
+      res.json({ invitation })
+    },
+
+    async cancelInvitation(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { invitationId } = req.params
+      await assertAvailable(workspaceId)
+
+      // Inviter hang-up before an answer — scoped to the caller's own ring
+      // (`cancelInvitation` CASes on inviter_user_id), so a non-inviter gets the
+      // 409 not-actionable. Abandonment via leaving the call is handled in the
+      // service's leave/reap/grace paths; this is the explicit stop-ringing lever.
+      const invitation = await callService.cancelInvitation({ workspaceId, invitationId, userId })
+      res.json({ invitation })
+    },
+
     async bootstrap(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id

@@ -10,5 +10,7 @@ export { createPushHandlers } from "./handlers"
 
 export { PushNotificationHandler } from "./outbox-handler"
 
+export { CallRingPushHandler } from "./call-ring-outbox-handler"
+
 export { createPushSessionCleanup } from "./session-cleanup"
 export type { PushSessionCleanup } from "./session-cleanup"

@@ -241,7 +241,14 @@ export const NOTIFICATION_CONFIG: Record<StreamType, NotificationConfig> = {
   thread: { defaultLevel: "activity", allowedLevels: ["everything", "activity", "mentions", "muted"] },
 }
 
-export const ACTIVITY_TYPES = ["mention", "message", "reaction", "saved_reminder", "member_added"] as const
+export const ACTIVITY_TYPES = [
+  "mention",
+  "message",
+  "reaction",
+  "saved_reminder",
+  "member_added",
+  "missed_call",
+] as const
 export type ActivityType = (typeof ACTIVITY_TYPES)[number]
 
 export const ActivityTypes = {
@@ -250,6 +257,7 @@ export const ActivityTypes = {
   REACTION: "reaction",
   SAVED_REMINDER: "saved_reminder",
   MEMBER_ADDED: "member_added",
+  MISSED_CALL: "missed_call",
 } as const satisfies Record<string, ActivityType>
 
 export const SAVED_STATUSES = ["saved", "done", "archived"] as const

@@ -24,9 +24,17 @@ import {
 // Bottom-anchored call surfaces clear the iOS home indicator on desktop (app
 // convention — see message-composer.tsx) and, on a phone, sit a composer-height
 // above the bottom (`--composer-height`, published on :root) so the dock never
-// covers the floating composer.
-const DOCK_BOTTOM =
+// covers the floating composer. Shared with the incoming-call overlay so the two
+// bottom-right surfaces line up (INV-35).
+export const DOCK_BOTTOM =
   "bottom-[calc(var(--composer-height,5rem)_+_1rem)] sm:bottom-[max(1rem,env(safe-area-inset-bottom))]"
+
+// The incoming-ring overlay lifted clear of the dock when both render (in a call
+// + a second ring arrives): the dock's own bottom offset plus a fixed clearance
+// so the ring card sits above the dock frame and never covers its controls (which
+// live at the dock's bottom edge).
+export const RING_ABOVE_DOCK_BOTTOM =
+  "bottom-[calc(var(--composer-height,5rem)_+_5.5rem)] sm:bottom-[calc(max(1rem,env(safe-area-inset-bottom))_+_4.5rem)]"
 import { CallTile } from "./call-tile"
 import { CallControls } from "./call-controls"
 import { PreJoinGate } from "./pre-join-gate"

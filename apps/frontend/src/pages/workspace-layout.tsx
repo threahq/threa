@@ -73,7 +73,7 @@ import { CreateChannelDialog } from "@/components/create-channel"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search"
 import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
-import { CallDock, CallLaunchProvider } from "@/components/call"
+import { CallDock, CallLaunchProvider, IncomingCallOverlay } from "@/components/call"
 import { EnclaveRewrapNudgeListener } from "@/components/encryption/enclave-rewrap-nudge-listener"
 import { TraceDialog } from "@/components/trace"
 import { useQueryClient } from "@tanstack/react-query"
@@ -526,6 +526,7 @@ export function WorkspaceLayout() {
                   </MentionableWrapper>
                 </UserProfileProvider>
                 <CallDock />
+                <IncomingCallOverlay workspaceId={workspaceId} />
               </CallLaunchProvider>
             </ChannelLinkProvider>
           </CoordinatedLoadingProvider>

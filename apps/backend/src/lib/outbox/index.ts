@@ -71,6 +71,8 @@ export {
   type EnclaveRewrapNeededOutboxPayload,
   type EnclaveRewrapNudgeOutboxPayload,
   type LinkPreviewReadyOutboxPayload,
+  type CallInvitationCreatedOutboxPayload,
+  type CallInvitationSettledOutboxPayload,
   type UserScopedEventType,
   isUserScopedEvent,
 } from "./repository"

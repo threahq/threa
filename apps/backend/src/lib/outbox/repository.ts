@@ -123,6 +123,8 @@ export type OutboxEventType =
   | "enclave:rewrap_nudge"
   | "github_route:register"
   | "github_route:unregister"
+  | "call:invitation_created"
+  | "call:invitation_settled"
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
@@ -890,6 +892,45 @@ export interface GithubRouteUnregisterOutboxPayload extends WorkspaceScopedPaylo
   region: string
 }
 
+/**
+ * A DM call is ringing the invitee. User-scoped to the invitee (their user room,
+ * cross-device by construction) and emitted in the same tx as the invitation
+ * insert (INV-4). Carries everything the incoming-call overlay and the ring push
+ * need without a follow-up fetch: `attemptId` is the invitation id (the
+ * attempt-keyed handle M2 group-invites reuse), `expiresAt` bounds the ring so a
+ * stale replay self-dismisses. `mode` is the call's media mode ("video" |
+ * "audio_only").
+ */
+export interface CallInvitationCreatedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  attemptId: string
+  callId: string
+  streamId: string
+  inviter: { id: string; name: string | null }
+  mode: string
+  expiresAt: string
+}
+
+/**
+ * A ring reached a terminal state. User-scoped to the invitee so every one of
+ * their devices clears the overlay (an accept on the phone silences the laptop)
+ * and the ring push is cancelled. Emitted on every terminal CAS — join-accept,
+ * decline, cancel, sweeper-expire. `settledBy` is an optional device hint.
+ */
+export interface CallInvitationSettledOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  attemptId: string
+  callId: string
+  outcome: "accepted" | "declined" | "cancelled" | "expired" | "superseded"
+  settledBy?: string
+  /**
+   * Inviter display name, for the SW's offline "Call ended" fallback. Present so
+   * a cancel that collapsed an unshown ring can still name the caller; null when
+   * the inviter row is gone.
+   */
+  inviterName?: string | null
+}
+
 // Bot event payloads
 export interface BotCreatedOutboxPayload extends WorkspaceScopedPayload {
   bot: WireBot
@@ -1113,6 +1154,8 @@ export interface OutboxEventPayloadMap {
   "enclave:rewrap_nudge": EnclaveRewrapNudgeOutboxPayload
   "github_route:register": GithubRouteRegisterOutboxPayload
   "github_route:unregister": GithubRouteUnregisterOutboxPayload
+  "call:invitation_created": CallInvitationCreatedOutboxPayload
+  "call:invitation_settled": CallInvitationSettledOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]
@@ -1234,6 +1277,8 @@ export type UserScopedEventType =
   | "board:stream_mute_changed"
   | "feature_flags:updated"
   | "enclave:rewrap_needed"
+  | "call:invitation_created"
+  | "call:invitation_settled"
 
 const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "activity:created",
@@ -1250,6 +1295,8 @@ const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "board:stream_mute_changed",
   "feature_flags:updated",
   "enclave:rewrap_needed",
+  "call:invitation_created",
+  "call:invitation_settled",
 ]
 
 /**

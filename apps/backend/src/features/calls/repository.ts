@@ -400,6 +400,57 @@ export const CallInvitationRepository = {
     return result.rows[0] ? mapInvitation(result.rows[0]) : null
   },
 
+  /**
+   * CAS every `ringing` invitation on a call to `cancelled` (INV-56). The caller
+   * abandoned the call (last participant left, or a sweeper ended it), so every
+   * outstanding ring is retracted in the same transaction. Returns the cancelled
+   * rows so the service can settle each one; a ring already terminal is skipped.
+   */
+  async cancelRingingForCall(db: Querier, params: { workspaceId: string; callId: string }): Promise<CallInvitation[]> {
+    const result = await db.query<CallInvitationRow>(sql`
+      UPDATE call_invitations SET status = 'cancelled', status_changed_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND call_id = ${params.callId} AND status = 'ringing'
+      RETURNING ${sql.raw(INVITATION_COLUMNS)}
+    `)
+    return result.rows.map(mapInvitation)
+  },
+
+  /**
+   * CAS every `ringing` invitation on a call whose inviter is the given user to
+   * `cancelled`: an inviter leaving a DM call abandons their outgoing ring even
+   * when other participants remain. Returns the cancelled rows.
+   */
+  async cancelRingingByInviter(
+    db: Querier,
+    params: { workspaceId: string; callId: string; inviterUserId: string }
+  ): Promise<CallInvitation[]> {
+    const result = await db.query<CallInvitationRow>(sql`
+      UPDATE call_invitations SET status = 'cancelled', status_changed_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND call_id = ${params.callId}
+        AND inviter_user_id = ${params.inviterUserId} AND status = 'ringing'
+      RETURNING ${sql.raw(INVITATION_COLUMNS)}
+    `)
+    return result.rows.map(mapInvitation)
+  },
+
+  /**
+   * Batch cancel for the sweeper cascades (INV-56): CAS every `ringing`
+   * invitation across the given calls to `cancelled` in one statement, when those
+   * calls just graced/ended with no live participant. Cancelling here (rather than
+   * letting the ring lapse to `expired`) is what keeps an abandoned call from
+   * landing a spurious missed-call activity. Workspace-agnostic, matching the
+   * other sweeper batch methods (call ids are globally-unique ULIDs).
+   */
+  async cancelRingingForCalls(db: Querier, callIds: readonly string[]): Promise<CallInvitation[]> {
+    if (callIds.length === 0) return []
+    const result = await db.query<CallInvitationRow>(sql`
+      UPDATE call_invitations SET status = 'cancelled', status_changed_at = NOW()
+      WHERE call_id = ANY(${callIds as string[]}) AND status = 'ringing'
+      RETURNING ${sql.raw(INVITATION_COLUMNS)}
+    `)
+    return result.rows.map(mapInvitation)
+  },
+
   /** Set-based ring expiry (INV-56): `ringing → expired` past `expires_at`. */
   async expireStaleRings(db: Querier, now: Date): Promise<CallInvitation[]> {
     const result = await db.query<CallInvitationRow>(sql`

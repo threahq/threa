@@ -210,6 +210,39 @@ describe("resolveDeliveryGroups — conversation events (board liveness)", () =>
   })
 })
 
+describe("resolveDeliveryGroups — call ring lifecycle", () => {
+  it("routes call:invitation_created to the invitee's user room only", () => {
+    const groups = resolveDeliveryGroups(
+      event("call:invitation_created", {
+        workspaceId: "ws_1",
+        targetUserId: "usr_invitee",
+        attemptId: "callinv_1",
+        callId: "call_1",
+        streamId: "stream_dm",
+        inviter: { id: "usr_caller", name: "Ada" },
+        mode: "video",
+        expiresAt: "2026-07-19T12:00:45.000Z",
+      })
+    )
+    expect(groups).toEqual([userGroup("usr_invitee")])
+    expect(groups).not.toContain(WORKSPACE_GROUP)
+  })
+
+  it("routes call:invitation_settled to the invitee's user room only (cross-device clear)", () => {
+    const groups = resolveDeliveryGroups(
+      event("call:invitation_settled", {
+        workspaceId: "ws_1",
+        targetUserId: "usr_invitee",
+        attemptId: "callinv_1",
+        callId: "call_1",
+        outcome: "accepted",
+      })
+    )
+    expect(groups).toEqual([userGroup("usr_invitee")])
+    expect(groups).not.toContain(WORKSPACE_GROUP)
+  })
+})
+
 describe("permissionGroupsForRole", () => {
   it("grants the members:write delivery group to admins and owners", () => {
     expect(permissionGroupsForRole("admin")).toEqual([MEMBERS_WRITE_GROUP])

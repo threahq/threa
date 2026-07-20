@@ -1,7 +1,7 @@
 import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test"
 import webpush from "web-push"
 import type { Pool } from "pg"
-import { ActivityTypes, PrefNotificationLevels, SavedStatuses } from "@threa/types"
+import { ActivityTypes, PrefNotificationLevels, SavedStatuses, type PrefNotificationLevel } from "@threa/types"
 import { PushService } from "./service"
 import { PushSubscriptionRepository } from "./repository"
 import type { ActivityCreatedOutboxPayload, SavedReminderFiredOutboxPayload } from "../../lib/outbox"
@@ -30,13 +30,16 @@ const fakePool = {
   connect: async () => ({ query: async () => ({ rows: [] }), release: () => {} }),
 } as unknown as Pool
 
-function makeService(isNotificationPaused: boolean): PushService {
+function makeService(
+  isNotificationPaused: boolean,
+  level: PrefNotificationLevel = PrefNotificationLevels.ALL
+): PushService {
   const keys = webpush.generateVAPIDKeys()
   return new PushService({
     pool: fakePool,
     vapidConfig: { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: "mailto:test@example.com" },
     lookups: {
-      getUserNotificationLevel: async () => PrefNotificationLevels.ALL,
+      getUserNotificationLevel: async () => level,
       isNotificationPaused: async () => isNotificationPaused,
       getStreamType: async () => "channel",
       getWorkosUserId: async () => "workos_1",
@@ -57,6 +60,44 @@ describe("PushService do-not-disturb gating", () => {
 
   it("does not deliver — or even resolve devices — while notifications are paused", async () => {
     await makeService(true).deliverPushForActivity(makeActivityPayload())
+    expect(findByUserId).not.toHaveBeenCalled()
+  })
+
+  it("suppresses the ring push while notifications are paused (the socket ring still fires)", async () => {
+    await makeService(true).deliverCallRing({
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      attemptId: "callinv_01ABCDEF",
+      callId: "call_1",
+      streamId: "stream_dm",
+      inviter: { id: "usr_2", name: "Ada" },
+      mode: "video",
+      expiresAt: "2026-07-19T12:00:45.000Z",
+    })
+    expect(findByUserId).not.toHaveBeenCalled()
+  })
+
+  it("does not send a ring cancel when the invitee's notification level is none", async () => {
+    // The ring itself was suppressed, so nothing was queued to collapse — a cancel
+    // that shows no notification would burn the browser's silent-push quota.
+    await makeService(false, PrefNotificationLevels.NONE).deliverCallRingCancel({
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      attemptId: "callinv_01ABCDEF",
+      callId: "call_1",
+      outcome: "cancelled",
+    })
+    expect(findByUserId).not.toHaveBeenCalled()
+  })
+
+  it("does not send a ring cancel while notifications are paused", async () => {
+    await makeService(true).deliverCallRingCancel({
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      attemptId: "callinv_01ABCDEF",
+      callId: "call_1",
+      outcome: "cancelled",
+    })
     expect(findByUserId).not.toHaveBeenCalled()
   })
 
@@ -117,6 +158,44 @@ describe("PushService delivery options", () => {
 
     const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
     expect(options.topic).toBe("1m")
+  })
+
+  it("sends a call ring with high urgency, a 45s TTL, and an attempt-keyed topic", async () => {
+    await makeService(false).deliverCallRing({
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      attemptId: "callinv_01ABCDEF",
+      callId: "call_1",
+      streamId: "stream_dm",
+      inviter: { id: "usr_2", name: "Ada" },
+      mode: "video",
+      expiresAt: "2026-07-19T12:00:45.000Z",
+    })
+
+    expect(sendNotification).toHaveBeenCalledTimes(1)
+    const [, payload, options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+    expect(JSON.parse(payload).data).toMatchObject({ kind: "call_ring", attemptId: "callinv_01ABCDEF", mode: "video" })
+    expect(options).toEqual({ timeout: 10_000, TTL: 45, urgency: "high", topic: "01ABCDEFc" })
+  })
+
+  it("sends the ring cancel on the same topic so an undelivered ring collapses to it", async () => {
+    await makeService(false).deliverCallRingCancel({
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      attemptId: "callinv_01ABCDEF",
+      callId: "call_1",
+      outcome: "cancelled",
+      inviterName: "Ada",
+    })
+
+    const [, payload, options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+    // Inviter name rides the cancel so the SW's offline "Call ended" fallback can name the caller.
+    expect(JSON.parse(payload).data).toMatchObject({
+      kind: "call_ring_cancel",
+      attemptId: "callinv_01ABCDEF",
+      inviterName: "Ada",
+    })
+    expect(options).toEqual({ timeout: 10_000, TTL: 45, urgency: "high", topic: "01ABCDEFc" })
   })
 
   it("sends the diagnostic test push with a short TTL so it can't arrive stale", async () => {
