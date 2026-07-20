@@ -17,6 +17,7 @@ import {
   type CallRosterParticipant,
   type CallSurfaceMode,
 } from "@/stores/call-store"
+import { getCallPrefs, __resetCallPrefsForTests } from "@/stores/call-prefs-store"
 import type { CallController } from "@/calls/call-manager"
 import { MobileCallDrawer } from "./mobile-call-drawer"
 import { CallManagerProvider } from "./call-manager-context"
@@ -143,6 +144,8 @@ function setMode(m: CallSurfaceMode) {
 beforeEach(() => {
   clearCallState()
   resetWorkspaceStoreCache()
+  localStorage.clear()
+  __resetCallPrefsForTests()
   seedUsers()
   vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_self" } as ReturnType<typeof authModule.useUser>)
 })
@@ -202,6 +205,33 @@ describe("MobileCallDrawer — mode rendering", () => {
     expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
     expect(screen.getByLabelText("Devices")).toBeInTheDocument()
     expect(screen.getAllByTestId("call-tile").length).toBeGreaterThan(0)
+  })
+})
+
+describe("MobileCallDrawer — fullscreen layout switch (ch5)", () => {
+  it("mounts the LayoutToggle and switches Speaker↔Grid, persisting the pref", async () => {
+    renderDrawer()
+    enterConnected([
+      participant({ userId: "usr_self" }),
+      participant({ userId: "usr_peer", endpointId: "callep_peer" }),
+      participant({ userId: "usr_third", endpointId: "callep_third" }),
+    ])
+    setMode("full")
+
+    const speaker = screen.getByRole("radio", { name: "Speaker" })
+    const grid = screen.getByRole("radio", { name: "Grid" })
+    expect(speaker).toHaveAttribute("aria-checked", "true")
+    expect(screen.getByTestId("call-stage-speaker")).toBeInTheDocument()
+    expect(screen.getByTestId("call-filmstrip")).toBeInTheDocument()
+
+    await userEvent.click(grid)
+    expect(getCallPrefs().layout).toBe("grid")
+    expect(screen.getByTestId("call-stage-grid")).toBeInTheDocument()
+    expect(screen.queryByTestId("call-stage-speaker")).toBeNull()
+
+    await userEvent.click(speaker)
+    expect(getCallPrefs().layout).toBe("speaker")
+    expect(screen.getByTestId("call-filmstrip")).toBeInTheDocument()
   })
 })
 

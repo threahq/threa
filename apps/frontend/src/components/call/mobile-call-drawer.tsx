@@ -10,9 +10,12 @@ import {
   type CallRosterParticipant,
   type CallSurfaceMode,
 } from "@/stores/call-store"
+import { useCallPrefs } from "@/stores/call-prefs-store"
 import { CallTile } from "./call-tile"
+import { CallStageLayout } from "./call-stage-layout"
 import { CallControls } from "./call-controls"
 import { CameraButton, LeaveButton, MuteButton } from "./call-control-buttons"
+import { LayoutToggle } from "./layout-toggle"
 import { useCallCaptureError, useCallConnectedAt, useCallRoster, useCallSurfaceMode } from "./call-store-hooks"
 import { DRAWER_MIN_HEIGHT, nearestMode } from "./mobile-call-drawer-snap"
 
@@ -192,51 +195,10 @@ function TinyGalleryView({ workspaceId, connectedAt, currentUserId, roster, spea
   )
 }
 
-/** Draggable self-view PiP, constrained to the stage. Defaults to the top-right. */
-function SelfPip({ participant, workspaceId }: { participant: CallRosterParticipant; workspaceId: string | null }) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
-  const drag = useRef<{ dx: number; dy: number } | null>(null)
-
-  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const box = e.currentTarget.getBoundingClientRect()
-    drag.current = { dx: e.clientX - box.left, dy: e.clientY - box.top }
-    e.currentTarget.setPointerCapture(e.pointerId)
-  }
-  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const d = drag.current
-    const stage = e.currentTarget.parentElement
-    if (!d || !stage) return
-    const bounds = stage.getBoundingClientRect()
-    const box = e.currentTarget.getBoundingClientRect()
-    const x = Math.min(Math.max(e.clientX - d.dx - bounds.left, 0), Math.max(bounds.width - box.width, 0))
-    const y = Math.min(Math.max(e.clientY - d.dy - bounds.top, 0), Math.max(bounds.height - box.height, 0))
-    setPos({ x, y })
-  }
-  const onPointerUp = () => {
-    drag.current = null
-  }
-
-  return (
-    <div
-      className="absolute h-24 w-16 touch-none overflow-hidden rounded-lg shadow-lg"
-      style={pos ? { left: pos.x, top: pos.y } : { right: 12, top: 12 }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      data-testid="call-self-pip"
-    >
-      <CallTile participant={participant} workspaceId={workspaceId} isSelf stage fill />
-    </div>
-  )
-}
-
 function FullscreenView({ workspaceId, connectedAt, currentUserId, roster, title }: ViewProps) {
-  const joined = roster.filter((p) => p.participantStatus === "joined")
-  const self = joined.find((p) => p.userId === currentUserId) ?? null
-  const peer = joined.find((p) => p.userId !== currentUserId) ?? null
-  const pinned = peer ?? self
-  const selfPip = self && self !== pinned ? self : null
-  const filmstrip = joined.filter((p) => p !== pinned && p !== selfPip)
+  const { layout } = useCallPrefs()
+  // View-only pin (not the store): overrides the default speaker until the call ends.
+  const [pinnedUserId, setPinnedUserId] = useState<string | null>(null)
 
   return (
     <div className="flex h-full flex-col bg-call-stage text-white">
@@ -253,33 +215,20 @@ function FullscreenView({ workspaceId, connectedAt, currentUserId, roster, title
           <span className="truncate text-sm font-medium">{title}</span>
           <CallTimer connectedAt={connectedAt} className="text-white/70" />
         </div>
-        {/* ch5 seam: <LayoutToggle/> (Speaker/Grid) mounts here and switches the stage
-            between this speaker+filmstrip layout and an equal-tile Grid. */}
-        <div data-testid="call-layout-slot" className="ml-auto" />
-      </div>
-
-      <div className="relative min-h-0 flex-1">
-        {pinned && (
-          <CallTile
-            participant={pinned}
-            workspaceId={workspaceId}
-            isSelf={pinned.userId === currentUserId}
-            stage
-            fill
-          />
-        )}
-        {selfPip && <SelfPip participant={selfPip} workspaceId={workspaceId} />}
-      </div>
-
-      {filmstrip.length > 0 && (
-        <div className="flex shrink-0 gap-2 overflow-x-auto px-3 py-2">
-          {filmstrip.map((p) => (
-            <div key={p.userId} className="h-20 w-32 shrink-0">
-              <CallTile participant={p} workspaceId={workspaceId} isSelf={p.userId === currentUserId} stage fill />
-            </div>
-          ))}
+        <div data-testid="call-layout-slot" className="ml-auto">
+          <LayoutToggle className="bg-white/10" />
         </div>
-      )}
+      </div>
+
+      <CallStageLayout
+        layout={layout}
+        filmstripSide="bottom"
+        participants={roster}
+        currentUserId={currentUserId}
+        workspaceId={workspaceId}
+        pinnedUserId={pinnedUserId}
+        onPin={setPinnedUserId}
+      />
 
       <div className="shrink-0 px-3 pb-3 pt-1">
         <CallControls />
