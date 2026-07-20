@@ -265,6 +265,7 @@ test("reconstructs the current Claude channel launch with stable runtime identit
   expect(command).toContain("'THREA_RUNTIME_SESSION_ID=ccs-one'")
   expect(command).toContain("'THREA_DEFAULT_LABEL=coding'")
   expect(command).toContain("'THREA_HARNESSD_ENTRYPOINT=")
+  expect(command).toContain(`'THREA_HARNESSD_BUN_BIN=${process.execPath}'`)
   expect(command).toContain("'THREA_COLD_START_IF_ARCHIVED=wait'")
   expect(command).toContain("'THREA_COLD_START_IF_MISSING=error'")
   expect(command).toContain("'THREA_EXPECTED_ROOT_STREAM_ID=stream_expected'")
@@ -275,10 +276,12 @@ test("reconstructs the current Claude channel launch with stable runtime identit
 
 test("Pi revival reuses an exact recorded session id bound to the expected root", () => {
   expect(piLaunchArgs("pi", "019f-session")).toEqual(["pi", "--session-id", "019f-session"])
-  expect(piLaunchCommand("pi", "019f-session")).toContain("'THREA_HARNESSD_ENTRYPOINT=")
-  expect(piResumeCommand("pi", "019f-session", "stream_expected")).toContain(
-    "'THREA_EXPECTED_ROOT_STREAM_ID=stream_expected'"
-  )
+  const launch = piLaunchCommand("pi", "019f-session")
+  expect(launch).toContain("'THREA_HARNESSD_ENTRYPOINT=")
+  expect(launch).toContain(`'THREA_HARNESSD_BUN_BIN=${process.execPath}'`)
+  const resume = piResumeCommand("pi", "019f-session", "stream_expected")
+  expect(resume).toContain(`'THREA_HARNESSD_BUN_BIN=${process.execPath}'`)
+  expect(resume).toContain("'THREA_EXPECTED_ROOT_STREAM_ID=stream_expected'")
 })
 
 test("classifies active, archived, inaccessible, and unavailable scratchpads", async () => {

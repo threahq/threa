@@ -6,19 +6,17 @@ describe("runHarnessKick", () => {
     const calls: unknown[][] = []
     const result = runHarnessKick(" ccs_1 ", {
       entrypoint: "/repo/extensions/harness-daemon/src/index.ts",
+      bunExecutable: "/opt/bun/bin/bun",
       exists: () => true,
-      spawnSync: ((command: string[], options: unknown) => {
-        calls.push([command, options])
-        return { exitCode: 0, stdout: Buffer.from("kicked"), stderr: Buffer.from("") }
-      }) as typeof Bun.spawnSync,
+      spawnSync: (executable, args, options) => {
+        calls.push([executable, args, options])
+        return { status: 0, stdout: "kicked", stderr: "" }
+      },
     })
 
     expect(result).toEqual({ ok: true })
     expect(calls).toEqual([
-      [
-        [process.execPath, "/repo/extensions/harness-daemon/src/index.ts", "kick", "ccs_1"],
-        { stdout: "pipe", stderr: "pipe" },
-      ],
+      ["/opt/bun/bin/bun", ["/repo/extensions/harness-daemon/src/index.ts", "kick", "ccs_1"], { encoding: "utf8" }],
     ])
   })
 
@@ -26,14 +24,27 @@ describe("runHarnessKick", () => {
     const result = runHarnessKick("ccs_missing", {
       entrypoint: "/repo/index.ts",
       exists: () => true,
-      spawnSync: (() => ({
-        exitCode: 1,
-        stdout: Buffer.from(""),
-        stderr: Buffer.from("harnessd: no agent found for ccs_missing\n"),
-      })) as unknown as typeof Bun.spawnSync,
+      spawnSync: () => ({
+        status: 1,
+        stdout: "",
+        stderr: "harnessd: no agent found for ccs_missing\n",
+      }),
     })
 
     expect(result).toEqual({ ok: false, error: "harnessd: no agent found for ccs_missing" })
+  })
+
+  it("reports a missing Bun executable", () => {
+    const result = runHarnessKick("ccs_1", {
+      entrypoint: "/repo/index.ts",
+      exists: () => true,
+      spawnSync: () => ({
+        status: null,
+        error: new Error("spawnSync /missing/bun ENOENT"),
+      }),
+    })
+
+    expect(result).toEqual({ ok: false, error: "spawnSync /missing/bun ENOENT" })
   })
 
   it("does not spawn without a runtime session id or harnessd entrypoint", () => {

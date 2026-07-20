@@ -21,18 +21,21 @@ export function piLaunchArgs(piBin: string, runtimeSessionId: string): string[] 
   return [piBin, "--session-id", runtimeSessionId]
 }
 
-function harnessDaemonEnvironment(): string {
-  return `THREA_HARNESSD_ENTRYPOINT=${process.env.THREA_HARNESSD_ENTRYPOINT || join(import.meta.dir, "index.ts")}`
+function harnessDaemonEnvironment(): string[] {
+  return [
+    `THREA_HARNESSD_ENTRYPOINT=${process.env.THREA_HARNESSD_ENTRYPOINT || join(import.meta.dir, "index.ts")}`,
+    `THREA_HARNESSD_BUN_BIN=${process.env.THREA_HARNESSD_BUN_BIN || process.execPath}`,
+  ]
 }
 
 export function piLaunchCommand(piBin: string, runtimeSessionId: string): string {
-  return ["env", harnessDaemonEnvironment(), ...piLaunchArgs(piBin, runtimeSessionId)].map(shellQuote).join(" ")
+  return ["env", ...harnessDaemonEnvironment(), ...piLaunchArgs(piBin, runtimeSessionId)].map(shellQuote).join(" ")
 }
 
 export function piResumeCommand(piBin: string, runtimeSessionId: string, expectedRootStreamId: string): string {
   return [
     "env",
-    harnessDaemonEnvironment(),
+    ...harnessDaemonEnvironment(),
     `THREA_EXPECTED_ROOT_STREAM_ID=${expectedRootStreamId}`,
     ...piLaunchArgs(piBin, runtimeSessionId),
   ]
@@ -517,6 +520,7 @@ export function claudeLaunchCommand(
     THREA_DISPLAY_NAME: process.env.THREA_DISPLAY_NAME || config.displayName || "Claude Code",
     THREA_DEFAULT_LABEL: process.env.THREA_DEFAULT_LABEL || config.defaultLabel || "coding",
     THREA_HARNESSD_ENTRYPOINT: process.env.THREA_HARNESSD_ENTRYPOINT || join(import.meta.dir, "index.ts"),
+    THREA_HARNESSD_BUN_BIN: process.env.THREA_HARNESSD_BUN_BIN || process.execPath,
     THREA_COLD_START_IF_ARCHIVED: coldStartIfArchived,
     THREA_COLD_START_IF_MISSING: coldStartIfMissing,
     ...(expectedRootStreamId ? { THREA_EXPECTED_ROOT_STREAM_ID: expectedRootStreamId } : {}),
