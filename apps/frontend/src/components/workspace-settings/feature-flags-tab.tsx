@@ -25,14 +25,14 @@ export function FeatureFlagsTab({ workspaceId }: FeatureFlagsTabProps) {
         <p className="text-sm text-muted-foreground">No flags are set on your account.</p>
       ) : (
         <ul className="space-y-3">
-          {flags.map(({ key, value, defaultValue }) => (
+          {flags.map(({ key, value, defaultValue, scope }) => (
             <li key={key} className="flex items-center justify-between gap-3">
               <div>
                 <div className="font-mono text-sm">{key}</div>
                 <div className="text-xs text-muted-foreground">Default: {defaultValue}</div>
               </div>
               <Badge variant="secondary" className="font-mono">
-                {value}
+                {value} · {scope === "user" ? "you" : "workspace"}
               </Badge>
             </li>
           ))}

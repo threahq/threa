@@ -20,6 +20,7 @@ import type {
   User,
   Bot,
   WorkspaceBootstrap,
+  FeatureFlagLayers,
   StreamMember,
   UserPreferences,
   SidebarConfig,
@@ -1518,24 +1519,28 @@ export function registerWorkspaceSocketHandlers(
 
   // Handle feature flags updated (a platform admin toggled a flag from the
   // backoffice). Two scope-routed events, each patching only its own raw layer
-  // and leaving the other intact; the hook re-resolves. Layers live only in the
-  // bootstrap query cache, like workspace settings (INV-53 via the guard).
+  // and leaving the other intact; the hook re-resolves (INV-53 via the guard).
+  // The patched layers are also written back to the persisted metadata row so a
+  // warm restart before the next bootstrap repaints the live value, not a stale
+  // one — the whole point of persisting layers is first-render correctness.
+  const patchFeatureFlagLayers = (nextLayers: (old: WorkspaceBootstrap) => FeatureFlagLayers) => {
+    const patched = updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
+      ...old,
+      featureFlags: nextLayers(old),
+    }))
+    if (!patched) return
+    const layers = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.featureFlags
+    if (layers) void db.workspaceMetadata.update(workspaceId, { featureFlags: layers })
+  }
+
   const handleFeatureFlagsUpdated = (payload: FeatureFlagsUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-
-    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
-      ...old,
-      featureFlags: { workspace: old.featureFlags?.workspace ?? {}, user: payload.overrides },
-    }))
+    patchFeatureFlagLayers((old) => ({ workspace: old.featureFlags?.workspace ?? {}, user: payload.overrides }))
   }
 
   const handleFeatureFlagsWorkspaceUpdated = (payload: FeatureFlagsWorkspaceUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-
-    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
-      ...old,
-      featureFlags: { workspace: payload.overrides, user: old.featureFlags?.user ?? {} },
-    }))
+    patchFeatureFlagLayers((old) => ({ workspace: payload.overrides, user: old.featureFlags?.user ?? {} }))
   }
 
   const handleBotCreated = (payload: { workspaceId: string; bot: Bot }) => {
@@ -2335,6 +2340,7 @@ export async function applyWorkspaceBootstrap(
           emojiWeights: bootstrap.emojiWeights,
           commands: bootstrap.commands,
           configuredToolCategories: bootstrap.configuredToolCategories,
+          featureFlags: bootstrap.featureFlags,
           _cachedAt: now,
         }),
       ])
@@ -2584,6 +2590,7 @@ export async function applyReconnectBootstrapBatch(
           emojiWeights: finalBootstrap.emojiWeights,
           commands: finalBootstrap.commands,
           configuredToolCategories: finalBootstrap.configuredToolCategories,
+          featureFlags: finalBootstrap.featureFlags,
           _cachedAt: now,
         }),
       ])
