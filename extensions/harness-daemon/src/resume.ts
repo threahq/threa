@@ -1,4 +1,5 @@
 import type { ManagedAgent } from "./types"
+import { inaccessibleBackoffMs } from "./watch"
 
 export interface ScratchpadRef {
   baseUrl: string
@@ -33,6 +34,33 @@ export function latestAgents(agents: ManagedAgent[]): ManagedAgent[] {
 
 export function recordedNoYolo(agent: ManagedAgent): boolean {
   return agent.command.includes("--no-yolo")
+}
+
+/** An unparseable stored instant must not suppress forever, so it reads as due. */
+export function probeSuppressed(agent: ManagedAgent, nowMs: number): boolean {
+  if (!agent.probeBackoffUntil) return false
+  const until = Date.parse(agent.probeBackoffUntil)
+  return Number.isFinite(until) && until > nowMs
+}
+
+export function withProbeBackoff(
+  agent: ManagedAgent,
+  params: { intervalMs: number; nowMs: number; random?: () => number }
+): ManagedAgent {
+  const probeFailures = (agent.probeFailures ?? 0) + 1
+  const delayMs = inaccessibleBackoffMs(params.intervalMs, probeFailures, params.random)
+  return {
+    ...agent,
+    probeFailures,
+    probeBackoffUntil: new Date(params.nowMs + delayMs).toISOString(),
+    updatedAt: new Date(params.nowMs).toISOString(),
+  }
+}
+
+/** Undefined when there is nothing recorded, so a healthy row is never rewritten every pass. */
+export function withoutProbeBackoff(agent: ManagedAgent, nowMs: number): ManagedAgent | undefined {
+  if (agent.probeFailures === undefined && agent.probeBackoffUntil === undefined) return undefined
+  return { ...agent, probeFailures: undefined, probeBackoffUntil: undefined, updatedAt: new Date(nowMs).toISOString() }
 }
 
 export type ScratchpadStatus = "active" | "archived" | "inaccessible" | "unavailable"

@@ -24,6 +24,8 @@ interface ManagedAgentRow {
   created_at: string
   updated_at: string
   last_output: string | null
+  probe_failures: number | null
+  probe_backoff_until: string | null
 }
 
 export function inventoryPath(): string {
@@ -50,15 +52,24 @@ function openInventory(): Database {
       command_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      last_output TEXT
+      last_output TEXT,
+      probe_failures INTEGER,
+      probe_backoff_until TEXT
     )
   `)
   // Inventories predating the window-id column: CREATE TABLE IF NOT EXISTS
   // won't extend an existing table, so add the column in place.
   const columns = db.query("PRAGMA table_info(managed_agents)").all() as Array<{ name: string }>
-  for (const column of ["tmux_window_id", "instance_id", "runtime_session_id"]) {
+  const added: Array<[string, string]> = [
+    ["tmux_window_id", "TEXT"],
+    ["instance_id", "TEXT"],
+    ["runtime_session_id", "TEXT"],
+    ["probe_failures", "INTEGER"],
+    ["probe_backoff_until", "TEXT"],
+  ]
+  for (const [column, type] of added) {
     if (!columns.some((existing) => existing.name === column)) {
-      db.exec(`ALTER TABLE managed_agents ADD COLUMN ${column} TEXT`)
+      db.exec(`ALTER TABLE managed_agents ADD COLUMN ${column} ${type}`)
     }
   }
   return db
@@ -82,6 +93,8 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastOutput: row.last_output ?? undefined,
+    probeFailures: row.probe_failures ?? undefined,
+    probeBackoffUntil: row.probe_backoff_until ?? undefined,
   }
 }
 
@@ -104,8 +117,8 @@ export function upsertAgent(agent: ManagedAgent): void {
       INSERT INTO managed_agents (
         id, name, runtime, status, worktree, branch, tmux_session, tmux_window,
         tmux_window_id, scratchpad_url, instance_id, runtime_session_id, command_json,
-        created_at, updated_at, last_output
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, last_output, probe_failures, probe_backoff_until
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         runtime = excluded.runtime,
@@ -120,7 +133,9 @@ export function upsertAgent(agent: ManagedAgent): void {
         runtime_session_id = excluded.runtime_session_id,
         command_json = excluded.command_json,
         updated_at = excluded.updated_at,
-        last_output = excluded.last_output
+        last_output = excluded.last_output,
+        probe_failures = excluded.probe_failures,
+        probe_backoff_until = excluded.probe_backoff_until
     `
     ).run(
       agent.id,
@@ -138,7 +153,9 @@ export function upsertAgent(agent: ManagedAgent): void {
       JSON.stringify(agent.command),
       agent.createdAt,
       agent.updatedAt,
-      agent.lastOutput ?? null
+      agent.lastOutput ?? null,
+      agent.probeFailures ?? null,
+      agent.probeBackoffUntil ?? null
     )
   } finally {
     db.close()

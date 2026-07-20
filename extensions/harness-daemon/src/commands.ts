@@ -25,7 +25,10 @@ import {
   latestAgents,
   parseScratchpadUrl,
   preflightRuntimeSession,
+  probeSuppressed,
   recordedNoYolo,
+  withProbeBackoff,
+  withoutProbeBackoff,
   type RuntimePreflightResult,
   type ScratchpadStatus,
 } from "./resume"
@@ -131,7 +134,10 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
         if (!options.dryRun) ensureTmuxSession(session, true)
         // Unarchive/boot revival restores pruned worktrees: unarchiving on Threa
         // is an explicit revive request. Manual `up` requires --recreate-worktree.
-        const unavailable = await resumeActive({ ...options, tmux: session, recreateWorktree: true }, target)
+        const unavailable = await resumeActive(
+          { ...options, tmux: session, recreateWorktree: true, respectProbeBackoff: true },
+          target
+        )
         if (!unavailable) {
           // A targeted restore event must not cancel an outstanding full
           // reconnect catch-up: another dormant runtime may still need it.
@@ -313,12 +319,29 @@ export async function reviveAgent(
   const targetWorkspaceId = scratchpad.workspaceId || workspaceId
   if (!targetWorkspaceId || !apiKey) return { status: "skipped missing credentials" }
 
+  // A targeted restore event is the server saying this stream is live again, so it
+  // always probes; only the untargeted sweep honours the backoff.
+  if (options.respectProbeBackoff && !target && probeSuppressed(agent, Date.now())) {
+    return { status: "skipped inaccessible", detail: `probe suppressed until ${agent.probeBackoffUntil}` }
+  }
   const status = await deps.scratchpadStatus({
     baseUrl,
     workspaceId: targetWorkspaceId,
     apiKey,
     streamId: scratchpad.streamId,
   })
+  if (status === "inaccessible") {
+    const backedOff = withProbeBackoff(agent, { intervalMs: watchIntervalMs(), nowMs: Date.now() })
+    if (!options.dryRun) deps.persist(backedOff)
+    return { status: "skipped inaccessible", detail: `next probe after ${backedOff.probeBackoffUntil}` }
+  }
+  if (status !== "unavailable") {
+    const cleared = withoutProbeBackoff(agent, Date.now())
+    if (cleared) {
+      if (!options.dryRun) deps.persist(cleared)
+      agent = cleared
+    }
+  }
   if (status !== "active") return { status: `skipped ${status}` }
   if (agent.runtime === "pi" && !agent.runtimeSessionId) {
     return { status: "skipped missing session id", detail: "original Pi --session-id is not recorded" }

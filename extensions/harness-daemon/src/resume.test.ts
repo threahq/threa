@@ -8,6 +8,7 @@ import {
   latestAgents,
   parseScratchpadUrl,
   preflightRuntimeSession,
+  probeSuppressed,
   recordedNoYolo,
 } from "./resume"
 import { launchAgentPlist } from "./boot"
@@ -23,7 +24,13 @@ import {
   piResumeCommand,
 } from "./spawners"
 import type { ManagedAgent, ResumeOptions } from "./types"
-import { runWatchLoop, unavailableBackoffMs, uniqueSupervisorTargets, watchIntervalMs } from "./watch"
+import {
+  inaccessibleBackoffMs,
+  runWatchLoop,
+  unavailableBackoffMs,
+  uniqueSupervisorTargets,
+  watchIntervalMs,
+} from "./watch"
 
 afterEach(() => mock.restore())
 
@@ -69,9 +76,17 @@ test("migrates legacy inventory and persists runtime identity", () => {
   db.close()
   process.env.THREA_HARNESSD_INVENTORY = path
   try {
-    const managed = agent({ instanceId: "cc-one", runtimeSessionId: "ccs-one" })
+    const managed = agent({
+      instanceId: "cc-one",
+      runtimeSessionId: "ccs-one",
+      probeFailures: 3,
+      probeBackoffUntil: "2026-07-20T12:00:00.000Z",
+    })
     upsertAgent(managed)
     expect(readInventory()).toEqual([managed])
+    const cleared = { ...managed, probeFailures: undefined, probeBackoffUntil: undefined }
+    upsertAgent(cleared)
+    expect(readInventory()).toEqual([cleared])
   } finally {
     if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
     else process.env.THREA_HARNESSD_INVENTORY = previousPath
@@ -315,6 +330,7 @@ const REVIVE_ENV_KEYS = [
   "THREA_DEFAULT_LABEL",
   "THREA_INSTANCE_ID",
   "THREA_RUNTIME_SESSION_ID",
+  "THREA_HARNESSD_WATCH_INTERVAL_MS",
 ] as const
 
 function reviveDeps(overrides: Partial<ReviveDeps> = {}): ReviveDeps {
@@ -373,9 +389,100 @@ test("up skips archived and inaccessible scratchpads without launching", async (
   expect(await runRevive(linkedAgent(), {}, reviveDeps({ scratchpadStatus: async () => "archived" }))).toEqual({
     status: "skipped archived",
   })
-  expect(await runRevive(linkedAgent(), {}, reviveDeps({ scratchpadStatus: async () => "inaccessible" }))).toEqual({
-    status: "skipped inaccessible",
+  const inaccessible = await runRevive(linkedAgent(), {}, reviveDeps({ scratchpadStatus: async () => "inaccessible" }))
+  expect(inaccessible?.status).toBe("skipped inaccessible")
+})
+
+test("an inaccessible scratchpad records an escalating probe backoff", async () => {
+  const persisted: ManagedAgent[] = []
+  const deps = reviveDeps({
+    scratchpadStatus: async () => "inaccessible",
+    persist: (managed) => persisted.push(managed),
   })
+  await runRevive(linkedAgent(), {}, deps)
+  await runRevive(linkedAgent({ probeFailures: 4 }), {}, deps)
+
+  expect(persisted.map((managed) => managed.probeFailures)).toEqual([1, 5])
+  const [first, fifth] = persisted.map((managed) => Date.parse(managed.probeBackoffUntil!) - Date.now())
+  expect(first).toBeGreaterThan(60_000)
+  expect(fifth).toBeGreaterThan(first)
+})
+
+test("the watcher sweep does not re-probe a scratchpad inside its backoff window", async () => {
+  const probes: string[] = []
+  const deps = reviveDeps({
+    scratchpadStatus: async () => {
+      probes.push("status")
+      return "inaccessible"
+    },
+  })
+  const backedOff = linkedAgent({ probeFailures: 3, probeBackoffUntil: new Date(Date.now() + 3_600_000).toISOString() })
+
+  expect(await runRevive(backedOff, { respectProbeBackoff: true }, deps)).toEqual({
+    status: "skipped inaccessible",
+    detail: `probe suppressed until ${backedOff.probeBackoffUntil}`,
+  })
+  expect(probes).toEqual([])
+})
+
+test("an explicit CLI run and a targeted restore event both probe through the backoff (#1440)", async () => {
+  const probes: string[] = []
+  const deps = reviveDeps({
+    scratchpadStatus: async () => {
+      probes.push("status")
+      return "inaccessible"
+    },
+  })
+  const backedOff = linkedAgent({ probeFailures: 3, probeBackoffUntil: new Date(Date.now() + 3_600_000).toISOString() })
+  const target = { botId: "bot_1", rootStreamId: "stream_01ABCDEF", instanceId: "cc-one", runtimeSessionId: "ccs-one" }
+
+  await runRevive(backedOff, {}, deps)
+  await runRevive(backedOff, { respectProbeBackoff: true }, deps, target)
+  expect(probes).toEqual(["status", "status"])
+})
+
+test("a scratchpad that answers clears its recorded backoff", async () => {
+  for (const status of ["active", "archived"] as const) {
+    const persisted: ManagedAgent[] = []
+    // pathExists stops an "active" row right after the clear, before any launch.
+    const deps = reviveDeps({
+      scratchpadStatus: async () => status,
+      persist: (managed) => persisted.push(managed),
+      pathExists: () => false,
+    })
+    const backedOff = linkedAgent({ probeFailures: 3, probeBackoffUntil: "2026-07-20T00:00:00.000Z" })
+    await runRevive(backedOff, { dryRun: true }, deps)
+    await runRevive(backedOff, {}, deps)
+
+    expect(persisted).toEqual([
+      { ...backedOff, probeFailures: undefined, probeBackoffUntil: undefined, updatedAt: persisted[0]?.updatedAt },
+    ])
+    expect(Date.parse(persisted[0]!.updatedAt)).toBeGreaterThan(Date.parse(backedOff.updatedAt))
+  }
+})
+
+test("an unavailable Threa neither records nor clears a probe backoff", async () => {
+  const persisted: ManagedAgent[] = []
+  const deps = reviveDeps({
+    scratchpadStatus: async () => "unavailable",
+    persist: (managed) => persisted.push(managed),
+  })
+  expect(await runRevive(linkedAgent({ probeFailures: 3 }), {}, deps)).toEqual({ status: "skipped unavailable" })
+  expect(persisted).toEqual([])
+})
+
+test("probe suppression reads a missing or unparseable instant as due", () => {
+  const nowMs = Date.parse("2026-07-20T12:00:00.000Z")
+  expect(probeSuppressed(agent(), nowMs)).toBeFalse()
+  expect(probeSuppressed(agent({ probeBackoffUntil: "not-a-date" }), nowMs)).toBeFalse()
+  expect(probeSuppressed(agent({ probeBackoffUntil: "2026-07-20T11:00:00.000Z" }), nowMs)).toBeFalse()
+  expect(probeSuppressed(agent({ probeBackoffUntil: "2026-07-20T13:00:00.000Z" }), nowMs)).toBeTrue()
+})
+
+test("inaccessible probes back off for hours where unavailable ones cap at minutes", () => {
+  expect(inaccessibleBackoffMs(60_000, 1, () => 0)).toBe(120_000)
+  expect(inaccessibleBackoffMs(60_000, 99, () => 0)).toBe(6 * 60 * 60_000)
+  expect(unavailableBackoffMs(60_000, 99, () => 0)).toBe(15 * 60_000)
 })
 
 test("up skips an already-running agent before touching the network", async () => {
