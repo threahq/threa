@@ -17,7 +17,7 @@ interface PendingMessagesContextValue {
   /** Put a pending/failed message into editing mode so the queue skips it */
   markEditing: (id: string) => Promise<void>
   /** Save edits to an unsent message, return it to pending, and kick the queue */
-  saveEditedMessage: (id: string, contentJson: JSONContent) => Promise<void>
+  saveEditedMessage: (id: string, contentJson: JSONContent, options?: { steerAvailable?: boolean }) => Promise<void>
   /** Cancel editing and return message to its previous queue state */
   cancelEditing: (id: string) => Promise<void>
   /**
@@ -205,9 +205,9 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   }, [])
 
   const saveEditedMessage = useCallback(
-    async (id: string, contentJson: JSONContent) => {
+    async (id: string, contentJson: JSONContent, options?: { steerAvailable?: boolean }) => {
       const contentMarkdown = serializeToMarkdown(contentJson).trim()
-      const steerDirective = extractSteerDirective(contentJson)
+      const steerDirective = options?.steerAvailable ? extractSteerDirective(contentJson) : null
       const steer = steerDirective?.hasMessageContent === true ? true : undefined
 
       const updated = await db.transaction("rw", db.pendingMessages, db.events, async () => {

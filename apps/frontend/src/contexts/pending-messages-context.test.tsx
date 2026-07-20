@@ -323,6 +323,7 @@ describe("PendingMessagesContext", () => {
           type: "doc" as const,
           content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "plain edit" }] }],
         },
+        steerAvailable: true,
         expectedSteer: undefined,
       },
       {
@@ -332,7 +333,18 @@ describe("PendingMessagesContext", () => {
           type: "doc" as const,
           content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "redirect this /steer" }] }],
         },
+        steerAvailable: true,
         expectedSteer: true,
+      },
+      {
+        name: "does not arm steer when the command is unavailable",
+        existingSteer: undefined,
+        contentJson: {
+          type: "doc" as const,
+          content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "mention /steer" }] }],
+        },
+        steerAvailable: false,
+        expectedSteer: undefined,
       },
       {
         name: "does not turn a bare steer edit into a composite message",
@@ -341,9 +353,10 @@ describe("PendingMessagesContext", () => {
           type: "doc" as const,
           content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "/steer" }] }],
         },
+        steerAvailable: true,
         expectedSteer: undefined,
       },
-    ])("$name", async ({ existingSteer, contentJson, expectedSteer }) => {
+    ])("$name", async ({ existingSteer, contentJson, steerAvailable, expectedSteer }) => {
       mockGet.mockResolvedValue({ clientId: "temp_steer_edit", steer: existingSteer })
       mockEventsGet.mockResolvedValue({
         id: "temp_steer_edit",
@@ -353,7 +366,7 @@ describe("PendingMessagesContext", () => {
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
 
       await act(async () => {
-        await result.current.saveEditedMessage("temp_steer_edit", contentJson)
+        await result.current.saveEditedMessage("temp_steer_edit", contentJson, { steerAvailable })
       })
 
       expect(mockUpdate).toHaveBeenCalledWith(

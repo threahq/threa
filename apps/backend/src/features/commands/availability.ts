@@ -3,6 +3,7 @@ import {
   BotInvocationCapabilities,
   BotRuntimeKinds,
   BotRuntimeStatuses,
+  BotTypes,
   CommandKinds,
   DISCUSS_WITH_ARIADNE_COMMAND,
   StreamTypes,
@@ -44,7 +45,7 @@ export interface RuntimeCommandTarget {
   responseStreamId: string
   targetInstanceId: string
   targetRuntimeSessionId: string
-  /** Whether a source-message invocation may use mention routing for dedupe. */
+  /** Whether this user may invoke the target through mention routing for dedupe. */
   supportsMentionable: boolean
   /** Lowercased canonical names the runtime currently advertises. */
   advertisedCommandNames: ReadonlySet<string>
@@ -219,7 +220,11 @@ async function resolveRuntimeCommandTarget(
     responseStreamId: stream.id,
     targetInstanceId: link.instanceId,
     targetRuntimeSessionId: link.runtimeSessionId,
-    supportsMentionable: botHasCapability(bot, BotInvocationCapabilities.MENTIONABLE),
+    // Mirror BotRepository.findInvocableByIds: the composite must choose the
+    // same trigger as the later message outbox so their idempotency keys match.
+    supportsMentionable:
+      botHasCapability(bot, BotInvocationCapabilities.MENTIONABLE) &&
+      (bot.type === BotTypes.SHARED || bot.ownerUserId === params.userId),
     advertisedCommandNames,
     advertisedThinkingLevels: resolveAdvertisedThinkingLevels(presence),
     advertisedModelSuggestions: resolveAdvertisedModelSuggestions(presence),
