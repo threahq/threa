@@ -184,12 +184,28 @@ describe("CallManager", () => {
     expect(isDictationExternalHeld()).toBe(true)
   })
 
-  it("video mode publishes the camera; audio_only does not", async () => {
+  it("join defaults to mic-on / camera-off even in video mode; camera publishes only on setCameraOn", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const manager = new CallManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+    // Plan §In-call features: join is mic-on, camera-off — no camera capture yet.
+    expect(transport._events).toContain("publish:mic")
+    expect(transport._events).not.toContain("publish:camera")
+    expect(getCallState().local.cameraOn).toBe(false)
+
+    await manager.setCameraOn(true)
     expect(transport._events).toContain("publish:camera")
+    expect(getCallState().local.cameraOn).toBe(true)
+  })
+
+  it("audio_only mode ignores setCameraOn", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const manager = new CallManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    await manager.setCameraOn(true)
+    expect(transport._events).not.toContain("publish:camera")
   })
 
   it("drops a stale/duplicate roster version, applies a newer one", async () => {

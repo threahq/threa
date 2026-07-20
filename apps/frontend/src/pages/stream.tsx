@@ -20,6 +20,7 @@ import {
   PanelRight,
   ChevronDown,
   UserRound,
+  Phone,
 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DraftAgentSettings } from "@/components/stream-settings/draft-agent-settings"
@@ -50,7 +51,8 @@ import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-enc
 import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
 import { useDecryptedStreamName, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useWorkspaceUserId, useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useCallLaunch } from "@/components/call"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview } from "@/components/layout"
@@ -221,6 +223,10 @@ export function StreamPage() {
   // scratchpad. Drives the "External" pill state and its connection dot.
   // Called here (above the early returns below) to keep hook order stable.
   const activeBotPresence = useActiveBotPresence(workspaceId, streamId)
+
+  const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
+  const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? false
+  const { launch: launchCall, callActive } = useCallLaunch()
 
   const isThread = stream?.type === StreamTypes.THREAD
   const isChannel = stream?.type === StreamTypes.CHANNEL
@@ -711,6 +717,21 @@ export function StreamPage() {
             )}
           </div>
           <div className="flex items-center gap-1 ml-1">
+            {stream && !isDraft && (isChannel || isDm) && callsEnabled && (
+              // Dark feature: rendered only when the workspace `callsEnabled`
+              // setting is on, so an off workspace shows no calls surface at all.
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                title={callActive ? "You're already in a call" : "Start a call"}
+                aria-label={callActive ? "You're already in a call" : "Start a call"}
+                disabled={callActive}
+                onClick={() => launchCall({ workspaceId: workspaceId!, streamId: streamId!, mode: "video" })}
+              >
+                <Phone className="h-4 w-4" />
+              </Button>
+            )}
             {!isThread && !isDraft && (
               <Button
                 variant="ghost"

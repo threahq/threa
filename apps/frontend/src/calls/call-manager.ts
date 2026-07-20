@@ -14,6 +14,7 @@ import {
   setCallActiveElsewhere,
   setCallConfirmPending,
   setCallCaptureError,
+  bumpCallMediaEpoch,
   clearCallState,
   registerCallHangup,
   getCallState,
@@ -160,6 +161,19 @@ interface CallSession {
   analyser: AnalyserNode | null
   pulled: Map<string, { ref: PeerTrackRef; kind: string }>
   remoteAudioEls: Map<string, HTMLAudioElement>
+  /**
+   * refKey → owning endpoint id, recorded from the roster in `diffPulls` so an
+   * `onRemoteTrack` (which carries only the CF ref) can be attributed to the
+   * roster participant whose tile renders it.
+   */
+  remoteTrackOwner: Map<string, string>
+  /**
+   * endpoint id → the video `MediaStream` a tile attaches to its `<video>`. Kept
+   * on the session (never the store snapshot — see {@link CallState.mediaEpoch}),
+   * carries the local camera under the session's own endpoint and each pulled
+   * peer camera under theirs.
+   */
+  videoStreams: Map<string, MediaStream>
   cameraLayer: number
   healthySamples: number
   leaseTimer: ReturnType<typeof setInterval> | null
@@ -176,6 +190,22 @@ function refKey(ref: PeerTrackRef): string {
 }
 
 /**
+ * The command surface UI components drive (INV-15: components never touch
+ * `MediaTransport` or sockets). `CallManager` implements it; tests inject a fake
+ * through the `CallManagerProvider`. State is read from the call-store, never
+ * from here — this is action-only, plus the video ref-map accessor.
+ */
+export interface CallController {
+  startCall(params: { workspaceId: string; streamId: string; mode: CallMode }): Promise<void>
+  leaveCall(): Promise<void>
+  setMuted(muted: boolean): void
+  setCameraOn(on: boolean): Promise<void>
+  switchInputDevice(deviceId: string): Promise<void>
+  setOutputDevice(deviceId: string): Promise<void>
+  getVideoStream(endpointId: string): MediaStream | null
+}
+
+/**
  * The account-scoped, workspace-agnostic call singleton (calls carry their own
  * `workspaceId`, so — unlike the per-workspace SyncEngine — it survives a
  * workspace switch and only dies on account switch / logout via the call-store
@@ -183,7 +213,7 @@ function refKey(ref: PeerTrackRef): string {
  * media incarnation, leases, and local capture. It never activates on its own —
  * only an explicit `startCall`/`rejoin` from a user gesture brings it up.
  */
-export class CallManager {
+export class CallManager implements CallController {
   private readonly deps: CallManagerDeps
   private session: CallSession | null = null
   // Monotonic generation, claimed synchronously by `startCall` before its first
@@ -289,6 +319,8 @@ export class CallManager {
         analyser: null,
         pulled: new Map(),
         remoteAudioEls: new Map(),
+        remoteTrackOwner: new Map(),
+        videoStreams: new Map(),
         cameraLayer: 0,
         healthySamples: 0,
         leaseTimer: null,
@@ -309,14 +341,12 @@ export class CallManager {
 
       await transport.connect({ endpointId: join.endpointId, mediaIncarnation })
       this.assertStartLive(gen)
-      // Video joins acquire mic+camera in ONE getUserMedia (iOS single-active-
-      // capture: a second gUM while the first is live mutes it), then split.
-      await this.captureAndPublish(session, { camera: params.mode === "video" })
+      // Join default is mic-on / camera-off (plan §In-call features) regardless of
+      // mode — `mode: "video"` is a capability, not "camera on now". Acquiring only
+      // the mic keeps the camera dark on join and lets a camera-less device join a
+      // video call; the camera is acquired later via setCameraOn.
+      await this.captureAndPublish(session, { camera: false })
       this.assertStartLive(gen)
-      if (params.mode === "video") {
-        patchCallLocal({ cameraOn: true })
-        this.emitState(session, { cameraOn: true })
-      }
 
       this.applyRoster(session, join.rosterVersion, join.roster)
       this.startLeaseTimer(session)
@@ -434,6 +464,7 @@ export class CallManager {
         session.cameraTrack.stop()
         session.cameraTrack = null
         await session.transport.unpublish("camera")
+        this.clearVideoStream(session, session.endpointId)
       }
       patchCallLocal({ cameraOn: on })
       this.emitState(session, { cameraOn: on })
@@ -545,7 +576,7 @@ export class CallManager {
   private diffPulls(session: CallSession, roster: CallRosterParticipant[]): void {
     const desired = new Map<string, { ref: PeerTrackRef; kind: string }>()
     for (const p of roster) {
-      if (p.endpointId === session.endpointId) continue
+      if (!p.endpointId || p.endpointId === session.endpointId) continue
       if (p.connectionStatus !== "connected" && p.connectionStatus !== "reconnecting") continue
       // The publisher's CF session id is required to pull. The 0.2 roster does
       // not carry it (contract gap) — skip peers we can't address rather than
@@ -553,7 +584,10 @@ export class CallManager {
       if (!p.cfSessionId) continue
       for (const track of p.publishedTracks) {
         const ref: PeerTrackRef = { sessionId: p.cfSessionId, trackName: track.trackName }
-        desired.set(refKey(ref), { ref, kind: track.kind })
+        const key = refKey(ref)
+        desired.set(key, { ref, kind: track.kind })
+        // Attribute the eventual onRemoteTrack (CF ref only) to this participant's tile.
+        session.remoteTrackOwner.set(key, p.endpointId)
       }
     }
     for (const [key, entry] of desired) {
@@ -567,6 +601,8 @@ export class CallManager {
         session.pulled.delete(key)
         void session.transport.stopPull(entry.ref).catch(() => {})
         this.detachRemoteAudio(session, key)
+        this.detachRemoteVideo(session, key)
+        session.remoteTrackOwner.delete(key)
       }
     }
   }
@@ -681,6 +717,11 @@ export class CallManager {
     if (cameraTrack) {
       await session.transport.publish("camera", cameraTrack)
       await this.applyCameraLayer(session)
+      // Surface the local preview under the session's own endpoint id (self is on
+      // the roster with that endpoint), so the self tile renders it uniformly.
+      this.setVideoStream(session, session.endpointId, cameraTrack)
+    } else {
+      this.clearVideoStream(session, session.endpointId)
     }
 
     this.wireSpeakingAnalyser(session, stream)
@@ -778,9 +819,12 @@ export class CallManager {
       // NEVER routed through the AudioContext to the speakers (Web Audio taps are
       // pure sinks only).
       if (event.track.kind === "audio") this.attachRemoteAudio(session, event.ref, event.track)
+      else if (event.track.kind === "video") this.attachRemoteVideo(session, event.ref, event.track)
     }
     session.transport.onRemoteTrackEnded = (ref) => {
-      this.detachRemoteAudio(session, refKey(ref))
+      const key = refKey(ref)
+      this.detachRemoteAudio(session, key)
+      this.detachRemoteVideo(session, key)
     }
     session.transport.onConnectionStateChange = (state) => {
       if (this.session !== session) return
@@ -813,6 +857,48 @@ export class CallManager {
     el.srcObject = null
     el.remove()
     session.remoteAudioEls.delete(key)
+  }
+
+  // ── video registry (tiles read this via getVideoStream; never the store) ────
+
+  /** Wrap a track in a `MediaStream`, or null where the constructor is unavailable (jsdom). */
+  private makeVideoStream(track: MediaStreamTrack): MediaStream | null {
+    if (typeof MediaStream === "undefined") return null
+    return new MediaStream([track])
+  }
+
+  /** Register/replace an endpoint's video stream and tick the ref-map version. */
+  private setVideoStream(session: CallSession, endpointId: string, track: MediaStreamTrack): void {
+    const stream = this.makeVideoStream(track)
+    if (!stream) return
+    session.videoStreams.set(endpointId, stream)
+    bumpCallMediaEpoch()
+  }
+
+  /** Drop an endpoint's video stream and tick the version, if one was present. */
+  private clearVideoStream(session: CallSession, endpointId: string): void {
+    if (session.videoStreams.delete(endpointId)) bumpCallMediaEpoch()
+  }
+
+  private attachRemoteVideo(session: CallSession, ref: PeerTrackRef, track: MediaStreamTrack): void {
+    const endpointId = session.remoteTrackOwner.get(refKey(ref))
+    if (!endpointId) return
+    this.setVideoStream(session, endpointId, track)
+  }
+
+  private detachRemoteVideo(session: CallSession, key: string): void {
+    const endpointId = session.remoteTrackOwner.get(key)
+    if (endpointId) this.clearVideoStream(session, endpointId)
+  }
+
+  /**
+   * The video `MediaStream` for a roster participant's endpoint (self's own
+   * camera under the session endpoint, or a pulled peer's camera), or null when
+   * that endpoint publishes no video. Tiles attach it to their `<video>` and
+   * re-read on {@link CallState.mediaEpoch} changes.
+   */
+  getVideoStream(endpointId: string): MediaStream | null {
+    return this.session?.videoStreams.get(endpointId) ?? null
   }
 
   // ── lease + watchdog ─────────────────────────────────────────────────────
