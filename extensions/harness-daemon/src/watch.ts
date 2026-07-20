@@ -25,9 +25,24 @@ export function watchIntervalMs(value = process.env.THREA_HARNESSD_WATCH_INTERVA
   return Math.floor(parsed)
 }
 
+const UNAVAILABLE_BACKOFF_CAP_MS = 15 * 60_000
+const INACCESSIBLE_BACKOFF_CAP_MS = 6 * 60 * 60_000
+
+function backoffMs(intervalMs: number, failures: number, capMs: number, random: () => number): number {
+  const base = Math.min(intervalMs * 2 ** Math.max(1, failures), capMs)
+  return Math.min(base + Math.floor(base * 0.1 * random()), capMs)
+}
+
 export function unavailableBackoffMs(intervalMs: number, failures: number, random = Math.random): number {
-  const base = Math.min(intervalMs * 2 ** Math.max(1, failures), 15 * 60_000)
-  return Math.min(base + Math.floor(base * 0.1 * random()), 15 * 60_000)
+  return backoffMs(intervalMs, failures, UNAVAILABLE_BACKOFF_CAP_MS, random)
+}
+
+/**
+ * 403/404 means a revoked grant or a deleted stream, which outlives a pass, so its cap is
+ * hours rather than minutes. Backoff and not pruning: a re-granted stream still heals itself.
+ */
+export function inaccessibleBackoffMs(intervalMs: number, failures: number, random = Math.random): number {
+  return backoffMs(intervalMs, failures, INACCESSIBLE_BACKOFF_CAP_MS, random)
 }
 
 export async function runWatchLoop(params: {
