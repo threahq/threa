@@ -13,8 +13,17 @@ Self-review, write a dense verified description, open the PR, subscribe. Invokin
 2. **Draft Problem + Solution** before verifying — your claims become assertions step 3 holds against the code. A claim like "the prune is atomic" is description *and* correctness check; verifying catches prose drift and real bugs in one pass.
 3. **Self-review + verify every claim.** Walk the diff as a reviewer: race-safe writes (INV-20), workspace scoping (INV-8), outbox-in-tx (INV-4/7), canonical access predicates (INV-62), no silent fallbacks (INV-11), Zod inputs (INV-55), dead code (INV-38). Substantial change → `/code-review` on the diff. Then per draft sentence: named files/symbols exist and do what you said; behavioral claims ("atomic", "reads X before Y", "no schema change") literally true; INV refs apply; numbers match constants; "not included" claims real. Findings → fix in branch, note honestly: `(caught in self-review; commit N)` inline, or one-line tally in test plan ("Pre-PR review: 2 fixed, 3 dismissed pre-existing").
 4. **Files table + test plan** — after review, real run counts. Never check an unrun box; unchecked + honest reason beats a checkmark nobody can trust.
-5. **Create.** Body to `.tmp/pr-body.md`, then `gh pr create --base main --title "…" --body-file .tmp/pr-body.md`. Web/remote sessions (no `gh`): `mcp__github__create_pull_request`; fallback `gh api repos/{owner}/{repo}/pulls --method POST`. Always return the PR URL.
+5. **Create.** First, **is this branch part of a stack?** Run `gh stack view --json` — if it succeeds and lists the current branch, this is a stacked branch and the flow differs (see "Stacked branches" below). Otherwise: body to `.tmp/pr-body.md`, then `gh pr create --base main --title "…" --body-file .tmp/pr-body.md`. Web/remote sessions (no `gh`): `mcp__github__create_pull_request`; fallback `gh api repos/{owner}/{repo}/pulls --method POST`. Always return the PR URL.
 6. **Subscribe**: `mcp__github__subscribe_pr_activity` if available; say so. Skip if user declined watching.
+
+## Stacked branches
+
+If step 5 found the branch in a `gh stack`, a plain `gh pr create` is the wrong tool — it opens a PR that is **not linked into the GitHub Stack**, so reviewers never see the stack navigation and `gh stack` merge/sync can't drive it. Do the per-branch work of steps 1–4 the same way (verified body to `.tmp/pr-body.md`), then:
+
+1. `gh pr create --base <parent-branch> --title "…" --body-file .tmp/pr-body.md` — base is the branch **below** this one in the stack (`gh stack view` shows it), never `main` for anything but the bottom branch.
+2. **`gh stack submit --auto --open`** — this is the step that actually creates the GitHub Stack. It adopts the PRs you just made ("… is up to date"), links them, and adds the stack nav block. **Creating the PRs is not enough; without `submit` they are just chained-base PRs, not a Stack.** Run it once from any branch in the stack — it links the whole stack.
+
+Verify with `gh stack view --json` (a `Stack #NNNN` now exists). See the `gh-stack` skill for the full contract.
 
 ## Description template
 
