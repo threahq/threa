@@ -1,7 +1,7 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useRef } from "react"
-import { db, type CachedEvent, type CachedStream } from "@/db"
+import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 
 /**
  * Cap the number of events loaded from IDB per stream when no sequence floor
@@ -64,30 +64,45 @@ export async function loadStreamEvents(streamId: string, fromSequenceNum: number
   return orderStreamEvents([...base, ...extra])
 }
 
-export function orderStreamEvents(events: CachedEvent[]): CachedEvent[] {
-  const optimistic: CachedEvent[] = []
-  const persisted: CachedEvent[] = []
+type OrderableStreamEvent = Pick<CachedEvent, "id" | "sequence" | "createdAt"> &
+  Partial<Pick<CachedEvent, "_sequenceNum" | "_anchorSequenceNum" | "_status">>
+
+function eventSequence(event: OrderableStreamEvent): number {
+  return event._sequenceNum ?? sequenceToNum(event.sequence)
+}
+
+export function orderStreamEvents<T extends OrderableStreamEvent>(
+  events: T[],
+  persistedComparator: (a: T, b: T) => number = (a, b) => eventSequence(a) - eventSequence(b)
+): T[] {
+  const optimistic: T[] = []
+  const persisted: T[] = []
 
   for (const event of events) {
     if (event._status != null) optimistic.push(event)
     else persisted.push(event)
   }
 
-  const anchor = (event: CachedEvent) => event._anchorSequenceNum ?? Number.POSITIVE_INFINITY
-  persisted.sort((a, b) => a._sequenceNum - b._sequenceNum)
-  optimistic.sort((a, b) => anchor(a) - anchor(b) || a._sequenceNum - b._sequenceNum || a.id.localeCompare(b.id))
+  const anchor = (event: OrderableStreamEvent) => event._anchorSequenceNum ?? Number.POSITIVE_INFINITY
+  persisted.sort(persistedComparator)
+  optimistic.sort((a, b) => anchor(a) - anchor(b) || eventSequence(a) - eventSequence(b) || a.id.localeCompare(b.id))
 
-  const ordered: CachedEvent[] = []
-  let persistedIndex = 0
+  const optimisticAfterPersistedIndex = new Map<number, T[]>()
   for (const optimisticEvent of optimistic) {
-    while (persistedIndex < persisted.length && persisted[persistedIndex]._sequenceNum <= anchor(optimisticEvent)) {
-      ordered.push(persisted[persistedIndex])
-      persistedIndex++
+    let afterIndex = -1
+    for (let i = 0; i < persisted.length; i++) {
+      if (eventSequence(persisted[i]) <= anchor(optimisticEvent)) afterIndex = i
     }
-    ordered.push(optimisticEvent)
+    const slot = optimisticAfterPersistedIndex.get(afterIndex) ?? []
+    slot.push(optimisticEvent)
+    optimisticAfterPersistedIndex.set(afterIndex, slot)
   }
 
-  return ordered.concat(persisted.slice(persistedIndex))
+  const ordered = [...(optimisticAfterPersistedIndex.get(-1) ?? [])]
+  for (let i = 0; i < persisted.length; i++) {
+    ordered.push(persisted[i], ...(optimisticAfterPersistedIndex.get(i) ?? []))
+  }
+  return ordered
 }
 
 /**

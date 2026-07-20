@@ -528,7 +528,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     const bootstrap = makeBootstrap([makeEvent({ id: "evt_A", streamId, sequence: "100" })], streamId)
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    expect(await db.events.get("temp_pending")).toBeDefined()
+    expect((await db.events.get("temp_pending"))?._anchorSequenceNum).toBe(100)
     expect(await db.events.get("evt_A")).toBeDefined()
   })
 

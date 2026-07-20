@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { db, sequenceToNum, type CachedEvent } from "@/db"
-import { loadStreamEvents, shareEventIdentities } from "./stream-store"
+import { loadStreamEvents, orderStreamEvents, shareEventIdentities } from "./stream-store"
 import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
 
 const WORKSPACE_ID = "ws_1"
@@ -229,6 +229,28 @@ describe("loadStreamEvents", () => {
       "evt_stream_slow_clock_2",
       "temp_slow",
       "evt_stream_slow_clock_3",
+    ])
+  })
+
+  it("preserves thread chronology while anchoring optimistic rows", () => {
+    const streamId = "stream_thread"
+    const first = makeRealEvent(streamId, "1")
+    first.createdAt = "2026-01-02T00:00:00.000Z"
+    const movedOlder = makeRealEvent(streamId, "2")
+    movedOlder.createdAt = "2026-01-01T00:00:00.000Z"
+    const future = makeRealEvent(streamId, "3")
+    future.createdAt = "2026-01-03T00:00:00.000Z"
+    const optimistic = makeOptimisticEvent(streamId, "temp_thread", "1000", "1990-01-01T00:00:00.000Z", 1)
+
+    const events = orderStreamEvents([first, movedOlder, future, optimistic], (a, b) =>
+      a.createdAt.localeCompare(b.createdAt)
+    )
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_thread_2",
+      "evt_stream_thread_1",
+      "temp_thread",
+      "evt_stream_thread_3",
     ])
   })
 

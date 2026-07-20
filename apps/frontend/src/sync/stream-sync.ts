@@ -87,6 +87,14 @@ export function toCachedStreamBootstrap(
   }
 }
 
+async function resolveUnknownOptimisticAnchors(streamId: string, anchorSequence: number): Promise<void> {
+  await db.events
+    .where("_status")
+    .anyOf(["pending", "failed", "editing"])
+    .filter((event) => event.streamId === streamId && event._anchorSequenceNum == null)
+    .modify({ _anchorSequenceNum: anchorSequence })
+}
+
 export async function bumpLaterOptimisticAnchors(
   streamId: string,
   confirmedOptimisticSequence: number,
@@ -353,6 +361,8 @@ async function writeBootstrapEventsAndStream(
     if (toWrite.length > 0) {
       await db.events.bulkPut(toWrite)
     }
+    const bootstrapTail = bootstrap.events.reduce((max, event) => Math.max(max, sequenceToNum(event.sequence)), 0)
+    await resolveUnknownOptimisticAnchors(streamId, bootstrapTail)
 
     // Real rows are in place (bulkPut above, or already present via a skipped
     // rewrite) — now drop the optimistic copies and their outbox entries so a
@@ -868,6 +878,8 @@ export function registerStreamSocketHandlers(
         carriedConversationId = (optimistic?.payload as { conversationId?: string } | undefined)?.conversationId
       }
 
+      await resolveUnknownOptimisticAnchors(streamId, Math.max(0, sequenceToNum(newEvent.sequence) - 1))
+
       // Add the real event BEFORE deleting the optimistic one so that
       // Dexie live-query observers never see a frame with neither event.
       const eventToStore = carriedConversationId
@@ -1169,6 +1181,7 @@ export function registerStreamSocketHandlers(
       if (onSequenceGap) {
         gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), payload.event)
       }
+      await resolveUnknownOptimisticAnchors(streamId, Math.max(0, sequenceToNum(payload.event.sequence) - 1))
       await db.events.put({
         ...payload.event,
         workspaceId,

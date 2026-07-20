@@ -36,7 +36,7 @@ import {
   type AgentActivitySummaryEntry,
 } from "@/contexts"
 import { useMessageService } from "@/contexts"
-import { useStreamEvents } from "@/stores/stream-store"
+import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams, useWorkspaceStreamMemberships } from "@/stores/workspace-store"
 import { useUser } from "@/auth"
 import { Button } from "@/components/ui/button"
@@ -880,13 +880,14 @@ export function StreamContent({
   // conversation" reads as noise next to the author who clearly is here.
   const displayEvents = useMemo(() => {
     if (!isThread) return events
-    return [...events]
-      .filter((e) => !THREAD_HIDDEN_EVENT_TYPES.has(e.eventType))
-      .sort((a, b) => {
+    return orderStreamEvents(
+      events.filter((event) => !THREAD_HIDDEN_EVENT_TYPES.has(event.eventType)),
+      (a, b) => {
         const timeDelta = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         if (timeDelta !== 0) return timeDelta
         return a.id.localeCompare(b.id)
-      })
+      }
+    )
   }, [events, isThread])
 
   // See remapSuppressedWatermark: a fresh thread member's watermark sits on a
