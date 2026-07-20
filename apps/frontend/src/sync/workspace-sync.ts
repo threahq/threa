@@ -1194,58 +1194,65 @@ export function registerWorkspaceSocketHandlers(
     return stream.rootStreamId ?? stream.id
   }
 
-  const handleAgentSessionStartedActivity = async (payload: {
-    workspaceId: string
-    streamId: string
-    event: StreamEvent
-  }) => {
-    if (payload.workspaceId !== workspaceId) return
-    const inner = payload.event.payload as AgentSessionStartedPayload
-    const rootStreamId = await resolveRootStreamId(payload.streamId)
-    if (!rootStreamId) return
-    upsertAgentSession(workspaceId, {
-      sessionId: inner.sessionId,
-      streamId: payload.streamId,
-      rootStreamId,
-      personaName: inner.personaName,
-      startedAt: inner.startedAt,
+  let agentActivityQueue = Promise.resolve()
+  const enqueueAgentActivity = (task: () => void | Promise<void>): Promise<void> => {
+    const run = agentActivityQueue.then(task)
+    agentActivityQueue = run.catch((error) => {
+      console.error("Failed to update sidebar agent activity", error)
     })
+    return run
   }
 
-  const handleAgentSessionProgressActivity = async (payload: AgentSessionProgressPayload) => {
-    if (payload.workspaceId !== workspaceId) return
-    // Progress arrives per step, but only for the stream/parent rooms this viewer
-    // has joined (trace-emitter emits to streamRoom + parentRoom, never workspace-
-    // wide). Once the session is tracked, nothing the sidebar renders changes —
-    // skip the IDB lookup and the no-op upsert entirely.
-    if (hasAgentSession(workspaceId, payload.sessionId)) return
-    const rootStreamId = await resolveRootStreamId(payload.streamId)
-    if (!rootStreamId) return
-    upsertAgentSession(workspaceId, {
-      sessionId: payload.sessionId,
-      streamId: payload.streamId,
-      rootStreamId,
-      personaName: payload.personaName,
-      // Progress carries no start time; anchor sort order to arrival.
-      startedAt: new Date().toISOString(),
+  const handleAgentSessionStartedActivity = (payload: { workspaceId: string; streamId: string; event: StreamEvent }) =>
+    enqueueAgentActivity(async () => {
+      if (payload.workspaceId !== workspaceId) return
+      const inner = payload.event.payload as AgentSessionStartedPayload
+      const rootStreamId = await resolveRootStreamId(payload.streamId)
+      if (!rootStreamId) return
+      upsertAgentSession(workspaceId, {
+        sessionId: inner.sessionId,
+        streamId: payload.streamId,
+        rootStreamId,
+        personaName: inner.personaName,
+        startedAt: inner.startedAt,
+      })
     })
-  }
 
-  const handleAgentActivityStarted = async (payload: AgentActivityStartedPayload) => {
-    const rootStreamId = await resolveRootStreamId(payload.threadStreamId)
-    if (!rootStreamId) return
-    upsertAgentSession(workspaceId, {
-      sessionId: payload.sessionId,
-      streamId: payload.threadStreamId,
-      rootStreamId,
-      personaName: payload.personaName,
-      startedAt: new Date().toISOString(),
+  const handleAgentSessionProgressActivity = (payload: AgentSessionProgressPayload) =>
+    enqueueAgentActivity(async () => {
+      if (payload.workspaceId !== workspaceId) return
+      // Progress arrives per step, but only for the stream/parent rooms this viewer
+      // has joined (trace-emitter emits to streamRoom + parentRoom, never workspace-
+      // wide). Once the session is tracked, nothing the sidebar renders changes —
+      // skip the IDB lookup and the no-op upsert entirely.
+      if (hasAgentSession(workspaceId, payload.sessionId)) return
+      const rootStreamId = await resolveRootStreamId(payload.streamId)
+      if (!rootStreamId) return
+      upsertAgentSession(workspaceId, {
+        sessionId: payload.sessionId,
+        streamId: payload.streamId,
+        rootStreamId,
+        personaName: payload.personaName,
+        // Progress carries no start time; anchor sort order to arrival.
+        startedAt: new Date().toISOString(),
+      })
     })
-  }
 
-  const handleAgentActivityEnded = (payload: AgentActivityEndedPayload) => {
-    removeAgentSession(workspaceId, payload.sessionId)
-  }
+  const handleAgentActivityStarted = (payload: AgentActivityStartedPayload) =>
+    enqueueAgentActivity(async () => {
+      const rootStreamId = await resolveRootStreamId(payload.threadStreamId)
+      if (!rootStreamId) return
+      upsertAgentSession(workspaceId, {
+        sessionId: payload.sessionId,
+        streamId: payload.threadStreamId,
+        rootStreamId,
+        personaName: payload.personaName,
+        startedAt: new Date().toISOString(),
+      })
+    })
+
+  const handleAgentActivityEnded = (payload: AgentActivityEndedPayload) =>
+    enqueueAgentActivity(() => removeAgentSession(workspaceId, payload.sessionId))
 
   // agent_session:completed/failed reach this socket in two shapes: the
   // stream-scoped outbox form `{ workspaceId, streamId, event }`, and a flat
@@ -1258,11 +1265,12 @@ export function registerWorkspaceSocketHandlers(
     streamId?: string
     event?: StreamEvent
     sessionId?: string
-  }) => {
-    if (payload.workspaceId !== undefined && payload.workspaceId !== workspaceId) return
-    const sessionId = (payload.event?.payload as { sessionId?: string } | undefined)?.sessionId ?? payload.sessionId
-    if (sessionId) removeAgentSession(workspaceId, sessionId)
-  }
+  }) =>
+    enqueueAgentActivity(() => {
+      if (payload.workspaceId !== undefined && payload.workspaceId !== workspaceId) return
+      const sessionId = (payload.event?.payload as { sessionId?: string } | undefined)?.sessionId ?? payload.sessionId
+      if (sessionId) removeAgentSession(workspaceId, sessionId)
+    })
 
   // Handle stream display name updated (from auto-naming service)
   const handleStreamDisplayNameUpdated = (payload: StreamDisplayNameUpdatedPayload) => {
