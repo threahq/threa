@@ -3,14 +3,15 @@ import type { ActiveAgentSession } from "@threa/types"
 
 /**
  * Ephemeral, non-persisted store of the agent sessions running RIGHT NOW,
- * keyed by their sidebar root so a stream row can paint an "agent working"
- * state. Seeded from the workspace bootstrap (`activeAgentSessions`) and, on
+ * keyed by their exact stream so a stream row can paint an "agent working"
+ * state without inheriting activity from a parent or child. Seeded from the
+ * workspace bootstrap (`activeAgentSessions`) and, on
  * reconnect, re-seeded as the authoritative running set (INV-53) — the seed
  * REPLACES the workspace's entries, so any entry whose end signal was missed is
  * dropped at the next reconnect. Live starts/ends fold in from the
  * `agent_session:*` room events (see workspace-sync). Removal is by session id
- * (root-agnostic) so a terminal event always clears reliably regardless of which
- * root resolved it.
+ * (stream-agnostic) so a terminal event always clears reliably regardless of
+ * which room delivered it.
  *
  * Not in IDB: this is transient presence, not durable state — a cold reload
  * re-derives it from the fresh bootstrap.
@@ -19,15 +20,15 @@ import type { ActiveAgentSession } from "@threa/types"
 // workspaceId -> sessionId -> session
 const workspaces = new Map<string, Map<string, ActiveAgentSession>>()
 
-// `${workspaceId}:${rootStreamId}` -> listeners subscribed to that row
+// `${workspaceId}:${streamId}` -> listeners subscribed to that row
 const keyListeners = new Map<string, Set<() => void>>()
 // Content-stable snapshot per key (referential stability for useSyncExternalStore)
 const keySnapshots = new Map<string, ActiveAgentSession[]>()
 
 const EMPTY: readonly ActiveAgentSession[] = Object.freeze([])
 
-function subKey(workspaceId: string, rootStreamId: string): string {
-  return `${workspaceId}:${rootStreamId}`
+function subKey(workspaceId: string, streamId: string): string {
+  return `${workspaceId}:${streamId}`
 }
 
 function sameSnapshot(a: readonly ActiveAgentSession[], b: readonly ActiveAgentSession[]): boolean {
@@ -38,11 +39,11 @@ function sameSnapshot(a: readonly ActiveAgentSession[], b: readonly ActiveAgentS
   return true
 }
 
-/** Recompute the cached snapshot for one root key and notify iff its content changed. */
-function recomputeKey(workspaceId: string, rootStreamId: string): void {
-  const key = subKey(workspaceId, rootStreamId)
+/** Recompute the cached snapshot for one stream key and notify iff its content changed. */
+function recomputeKey(workspaceId: string, streamId: string): void {
+  const key = subKey(workspaceId, streamId)
   const sessions = [...(workspaces.get(workspaceId)?.values() ?? [])]
-    .filter((entry) => entry.rootStreamId === rootStreamId)
+    .filter((entry) => entry.streamId === streamId)
     // Most-recently-started first: the row's primary label picks [0].
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
 
@@ -60,17 +61,17 @@ function recomputeKey(workspaceId: string, rootStreamId: string): void {
 /** Replace the whole running set for a workspace (bootstrap / reconnect re-seed). */
 export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSession[]): void {
   const previous = workspaces.get(workspaceId)
-  const affectedRoots = new Set<string>()
-  for (const entry of previous?.values() ?? []) affectedRoots.add(entry.rootStreamId)
+  const affectedStreams = new Set<string>()
+  for (const entry of previous?.values() ?? []) affectedStreams.add(entry.streamId)
 
   const next = new Map<string, ActiveAgentSession>()
   for (const session of sessions) {
     next.set(session.sessionId, { ...session })
-    affectedRoots.add(session.rootStreamId)
+    affectedStreams.add(session.streamId)
   }
   workspaces.set(workspaceId, next)
 
-  for (const root of affectedRoots) recomputeKey(workspaceId, root)
+  for (const streamId of affectedStreams) recomputeKey(workspaceId, streamId)
 }
 
 /** Add or refresh one running session (live `started`/`progress`). */
@@ -90,19 +91,19 @@ export function upsertAgentSession(workspaceId: string, session: ActiveAgentSess
     return
   }
   ws.set(session.sessionId, { ...session })
-  if (existing && existing.rootStreamId !== session.rootStreamId) {
-    recomputeKey(workspaceId, existing.rootStreamId)
+  if (existing && existing.streamId !== session.streamId) {
+    recomputeKey(workspaceId, existing.streamId)
   }
-  recomputeKey(workspaceId, session.rootStreamId)
+  recomputeKey(workspaceId, session.streamId)
 }
 
-/** Remove a session by id on any terminal signal (root-agnostic). */
+/** Remove a session by id on any terminal signal. */
 export function removeAgentSession(workspaceId: string, sessionId: string): void {
   const ws = workspaces.get(workspaceId)
   const existing = ws?.get(sessionId)
   if (!ws || !existing) return
   ws.delete(sessionId)
-  recomputeKey(workspaceId, existing.rootStreamId)
+  recomputeKey(workspaceId, existing.streamId)
 }
 
 /** True if a session with this id is already tracked in the workspace. */
@@ -110,25 +111,24 @@ export function hasAgentSession(workspaceId: string, sessionId: string): boolean
   return workspaces.get(workspaceId)?.has(sessionId) ?? false
 }
 
-/** Non-reactive read of a root's running sessions (most recent first). */
-export function getAgentActivityForStream(workspaceId: string, rootStreamId: string): readonly ActiveAgentSession[] {
-  return keySnapshots.get(subKey(workspaceId, rootStreamId)) ?? EMPTY
+/** Non-reactive read of a stream's running sessions (most recent first). */
+export function getAgentActivityForStream(workspaceId: string, streamId: string): readonly ActiveAgentSession[] {
+  return keySnapshots.get(subKey(workspaceId, streamId)) ?? EMPTY
 }
 
 /**
- * The agent sessions running in `rootStreamId` (or any of its threads), most
- * recently started first; empty when idle. Reactive per-row read for the
- * sidebar — subscribes only to this root's slice, so an unrelated stream's
- * activity change re-renders nothing here.
+ * The agent sessions running directly in `streamId`, most recently started
+ * first; empty when idle. Reactive per-row read for the sidebar — subscribes
+ * only to this stream's slice, so parent and thread activity stay independent.
  */
 export function useAgentActivityForStream(
   workspaceId: string | undefined,
-  rootStreamId: string | undefined
+  streamId: string | undefined
 ): readonly ActiveAgentSession[] {
   const subscribe = useCallback(
     (onChange: () => void) => {
-      if (!workspaceId || !rootStreamId) return () => {}
-      const key = subKey(workspaceId, rootStreamId)
+      if (!workspaceId || !streamId) return () => {}
+      const key = subKey(workspaceId, streamId)
       let set = keyListeners.get(key)
       if (!set) {
         set = new Set()
@@ -140,11 +140,11 @@ export function useAgentActivityForStream(
         if (set.size === 0) keyListeners.delete(key)
       }
     },
-    [workspaceId, rootStreamId]
+    [workspaceId, streamId]
   )
   const getSnapshot = useCallback(
-    () => (workspaceId && rootStreamId ? getAgentActivityForStream(workspaceId, rootStreamId) : EMPTY),
-    [workspaceId, rootStreamId]
+    () => (workspaceId && streamId ? getAgentActivityForStream(workspaceId, streamId) : EMPTY),
+    [workspaceId, streamId]
   )
   return useSyncExternalStore(subscribe, getSnapshot)
 }

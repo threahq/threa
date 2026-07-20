@@ -24,21 +24,29 @@ function session(overrides: Partial<ActiveAgentSession>): ActiveAgentSession {
 describe("agent-activity-store", () => {
   beforeEach(() => __resetAgentActivityStore())
 
-  it("seeds by root and reads back the running sessions", () => {
-    seedAgentActivity(WS, [session({ sessionId: "s1", rootStreamId: "stream_a" })])
+  it("seeds by stream and reads back the running sessions", () => {
+    seedAgentActivity(WS, [session({ sessionId: "s1", streamId: "stream_a" })])
     expect(getAgentActivityForStream(WS, "stream_a").map((s) => s.sessionId)).toEqual(["s1"])
     expect(getAgentActivityForStream(WS, "stream_b")).toEqual([])
   })
 
   it("re-seed replaces the set, dropping entries whose end was missed (reconnect)", () => {
-    seedAgentActivity(WS, [session({ sessionId: "s1", rootStreamId: "stream_a" })])
+    seedAgentActivity(WS, [session({ sessionId: "s1", streamId: "stream_a" })])
     // Reconnect bootstrap no longer lists s1 → it must clear.
-    seedAgentActivity(WS, [session({ sessionId: "s2", rootStreamId: "stream_c" })])
+    seedAgentActivity(WS, [session({ sessionId: "s2", streamId: "stream_c" })])
     expect(getAgentActivityForStream(WS, "stream_a")).toEqual([])
     expect(getAgentActivityForStream(WS, "stream_c").map((s) => s.sessionId)).toEqual(["s2"])
   })
 
-  it("orders multiple sessions on a root by most recently started", () => {
+  it("keeps thread activity separate from its parent stream", () => {
+    seedAgentActivity(WS, [
+      session({ sessionId: "thread_session", streamId: "stream_thread", rootStreamId: "stream_parent" }),
+    ])
+    expect(getAgentActivityForStream(WS, "stream_parent")).toEqual([])
+    expect(getAgentActivityForStream(WS, "stream_thread").map((s) => s.sessionId)).toEqual(["thread_session"])
+  })
+
+  it("orders multiple sessions in a stream by most recently started", () => {
     seedAgentActivity(WS, [
       session({
         sessionId: "old",
@@ -70,9 +78,9 @@ describe("agent-activity-store", () => {
     expect(getAgentActivityForStream(WS, "stream_a")).toEqual([])
   })
 
-  it("moving a session to a new root clears the old root's snapshot", () => {
-    upsertAgentSession(WS, session({ sessionId: "s1", rootStreamId: "stream_a" }))
-    upsertAgentSession(WS, session({ sessionId: "s1", rootStreamId: "stream_b" }))
+  it("moving a session to a new stream clears the old stream's snapshot", () => {
+    upsertAgentSession(WS, session({ sessionId: "s1", streamId: "stream_a" }))
+    upsertAgentSession(WS, session({ sessionId: "s1", streamId: "stream_b" }))
     expect(getAgentActivityForStream(WS, "stream_a")).toEqual([])
     expect(getAgentActivityForStream(WS, "stream_b").map((s) => s.sessionId)).toEqual(["s1"])
   })

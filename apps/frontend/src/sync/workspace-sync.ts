@@ -1185,15 +1185,9 @@ export function registerWorkspaceSocketHandlers(
   }
 
   // Sidebar agent-activity: keep the running-session store live for stream rows
-  // the viewer isn't currently looking at. The sync engine joins every member
-  // stream's room, so these events arrive here for all of them. Root resolution
-  // rides the local streams cache (`db.streams` carries `rootStreamId`): a
-  // root-level session resolves to its own row; a thread session resolves to the
-  // channel row once the thread is cached (channel-mention threads are cached via
-  // their `stream:created`, which fans out to the parent room). An unresolved
-  // stream (uncached thread) is skipped — the next bootstrap/reconnect re-seed
-  // carries it. Terminal signals remove by session id (root-agnostic), so an end
-  // always clears regardless of which root resolved it.
+  // the viewer isn't currently looking at. Indicators key on the exact stream;
+  // the resolved root is retained for access metadata. An uncached stream is
+  // skipped until the next bootstrap/reconnect re-seed.
   const resolveRootStreamId = async (streamId: string): Promise<string | null> => {
     const stream = await db.streams.get(streamId)
     if (!stream) return null
@@ -1223,7 +1217,7 @@ export function registerWorkspaceSocketHandlers(
     // Progress arrives per step, but only for the stream/parent rooms this viewer
     // has joined (trace-emitter emits to streamRoom + parentRoom, never workspace-
     // wide). Once the session is tracked, nothing the sidebar renders changes —
-    // skip the IDB root lookup and the no-op upsert entirely.
+    // skip the IDB lookup and the no-op upsert entirely.
     if (hasAgentSession(workspaceId, payload.sessionId)) return
     const rootStreamId = await resolveRootStreamId(payload.streamId)
     if (!rootStreamId) return
@@ -1258,7 +1252,7 @@ export function registerWorkspaceSocketHandlers(
   // session-room form `{ sessionId }` (trace-emitter/orphan-cleanup/enclave/
   // public-api) delivered whenever the trace dialog holds the session room open
   // on this same shared socket. Read the id from either and remove by it —
-  // removal is root-agnostic and a no-op for an id this workspace never tracked.
+  // removal is stream-agnostic and a no-op for an id this workspace never tracked.
   const handleAgentSessionEndedActivity = (payload: {
     workspaceId?: string
     streamId?: string
