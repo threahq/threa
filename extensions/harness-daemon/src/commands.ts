@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto"
 import { BotSupervisorTransport, type BotSessionRestoredPayload } from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
-import { basename } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { installBootResume } from "./boot"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
 import { die } from "./errors"
 import { findAgent, inventoryPath, readInventory, upsertAgent } from "./inventory"
+import { acquireProcessLock } from "./lock"
 import { commandExists, commandPath, output } from "./shell"
 import {
   ClaudeRuntimeSpawner,
@@ -127,7 +128,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   const reconcile = (target?: BotSessionRestoredPayload) => {
     reconcileChain = reconcileChain
       .then(async () => {
-        ensureTmuxSession(session, true)
+        if (!options.dryRun) ensureTmuxSession(session, true)
         // Unarchive/boot revival restores pruned worktrees: unarchiving on Threa
         // is an explicit revive request. Manual `up` requires --recreate-worktree.
         const unavailable = await resumeActive({ ...options, tmux: session, recreateWorktree: true }, target)
@@ -186,11 +187,12 @@ export function installBootResumeAgent(options: ResumeOptions): void {
 }
 
 export async function resumeActive(options: ResumeOptions, target?: BotSessionRestoredPayload): Promise<boolean> {
-  output(["tmux", "wait-for", "-L", "harnessd-resume-active"])
+  if (options.dryRun) return resumeActiveUnlocked(options, target)
+  const release = await acquireProcessLock(join(dirname(inventoryPath()), "resume-active.lock"))
   try {
     return await resumeActiveUnlocked(options, target)
   } finally {
-    output(["tmux", "wait-for", "-U", "harnessd-resume-active"], { allowFailure: true })
+    release()
   }
 }
 
@@ -231,6 +233,7 @@ export interface ReviveDeps {
   piLink: (runtimeSessionId: string) => PiRemoteSession | undefined
   resumeRuntime: (agent: ManagedAgent, options: ResumeOptions) => Promise<SpawnResult>
   persist: (agent: ManagedAgent) => void
+  killWindow: (windowId: string) => void
 }
 
 export function defaultReviveDeps(): ReviveDeps {
@@ -247,6 +250,9 @@ export function defaultReviveDeps(): ReviveDeps {
     resumeRuntime: (agent, options) =>
       (agent.runtime === "pi" ? new PiRuntimeSpawner() : new ClaudeRuntimeSpawner()).resume(agent, options),
     persist: upsertAgent,
+    killWindow: (windowId) => {
+      output(["tmux", "kill-window", "-t", windowId], { allowFailure: true })
+    },
   }
 }
 
@@ -398,8 +404,34 @@ export async function reviveAgent(
   if (preflight.status !== "linked") return { status: `skipped ${preflight.status}`, detail: preflight.reason }
 
   const resumableAgent = { ...agent, instanceId, runtimeSessionId }
+  let result: SpawnResult
   try {
-    const result = await deps.resumeRuntime(resumableAgent, options)
+    result = await deps.resumeRuntime(resumableAgent, options)
+  } catch (error) {
+    deps.persist({ ...resumableAgent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
+    return { status: "failed", detail: `launch failed: ${error instanceof Error ? error.message : String(error)}` }
+  }
+  // Archive-during-launch TOCTOU: the preflight passed, but if the scratchpad
+  // was archived/deleted before the runtime attached, the window would wedge
+  // and read as "already running" forever — verify and kill instead of record.
+  // "unavailable" keeps the window: can't verify, and the runtime reconnects.
+  const recheck = await deps.scratchpadStatus({
+    baseUrl,
+    workspaceId: targetWorkspaceId,
+    apiKey,
+    streamId: scratchpad.streamId,
+  })
+  if (recheck === "archived" || recheck === "inaccessible") {
+    if (result.tmuxWindowId) deps.killWindow(result.tmuxWindowId)
+    deps.persist({
+      ...resumableAgent,
+      status: "error",
+      updatedAt: now(),
+      lastOutput: `scratchpad became ${recheck} during launch; window killed`,
+    })
+    return { status: `skipped ${recheck}`, detail: "scratchpad state changed during launch; window killed" }
+  }
+  try {
     deps.persist({
       ...resumableAgent,
       tmuxSession: result.tmuxSession,
@@ -409,13 +441,18 @@ export async function reviveAgent(
       updatedAt: now(),
       lastOutput: result.output.slice(-4000),
     })
-    const detail =
-      agent.runtime === "claude" ? `bypass ${recordedNoYolo(agent) ? "disabled" : "enabled"}` : "Pi session reused"
-    return { status: "started", detail }
   } catch (error) {
-    deps.persist({ ...resumableAgent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
-    return { status: "failed", detail: `launch failed: ${error instanceof Error ? error.message : String(error)}` }
+    // Inventory lost the new window identity, so a later pass would search the
+    // old fields and double-start — kill the untracked window instead.
+    if (result.tmuxWindowId) deps.killWindow(result.tmuxWindowId)
+    return {
+      status: "failed",
+      detail: `inventory write failed after launch; window killed: ${error instanceof Error ? error.message : String(error)}`,
+    }
   }
+  const detail =
+    agent.runtime === "claude" ? `bypass ${recordedNoYolo(agent) ? "disabled" : "enabled"}` : "Pi session reused"
+  return { status: "started", detail }
 }
 
 async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionRestoredPayload): Promise<boolean> {

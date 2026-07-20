@@ -26,7 +26,7 @@ A session starts only when ALL of these hold; otherwise it is reported with a sk
 
 Flags:
 
-- `--dry-run` — print the per-agent decisions and stop: no launches, no worktree changes, no server-state mutation. Exits before the bot-runtime preflight (that POST registers the session server-side), so it can't detect a preflight-level identity mismatch — everything else is exact, including restorability of a missing worktree. harnessd's own local bookkeeping (the tmux serialization lock, inventory file initialization) still runs.
+- `--dry-run` — print the per-agent decisions and stop: no launches, no worktree changes, no server-state mutation, no lock taken, and a missing inventory file is never created. Exits before the bot-runtime preflight (that POST registers the session server-side), so it can't detect a preflight-level identity mismatch — everything else is exact, including restorability of a missing worktree. (A legacy inventory already on disk may still be schema-migrated in place when read.)
 - `--recreate-worktree` — opt in to restoring a pruned worktree from the recorded repo + branch. Default is `skipped missing cwd`.
 - `--tmux <session>` — target tmux session.
 
@@ -36,6 +36,8 @@ Hard guarantees, regardless of flags:
 - Revival preflights `POST /api/v1/workspaces/:ws/bot-runtime/sessions` with `ifArchived: "wait"` and `ifMissing: "error"`, and requires the returned `rootStreamId` to equal the recorded stream — it never creates a replacement scratchpad; a would-be different stream is refused as `skipped identity mismatch`.
 - Claude sessions launch against the `threa-channel` MCP server (stale `threa` registrations are rewritten, `THREA_CHANNEL_SERVER_KEY=threa-channel` enforced) with `--dangerously-skip-permissions` unless the original launch recorded `--no-yolo`.
 - Pi sessions only reattach with their exact recorded `--session-id` and an enabled remote link bound to the same root stream.
+- After a launch, the scratchpad is re-checked: archived/inaccessible mid-launch → the new window is killed and the agent recorded `error`, never `online` (a wedged runtime would otherwise read as `already running` forever). If the post-launch inventory write fails, the window is killed rather than left running untracked under stale inventory fields.
+- Passes serialize through a pid-owned file lock (`resume-active.lock` beside the inventory) with stale-holder recovery — a crashed pass's lock is stolen on the next run instead of wedging every future revival (the old tmux `wait-for` lock survived its owner until the tmux server restarted).
 
 `watch-unarchived` / `boot-resume` run the same pass from the supervisor socket and DO restore pruned worktrees: unarchiving a scratchpad on Threa is an explicit revive request.
 

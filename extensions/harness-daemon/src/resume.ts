@@ -50,9 +50,9 @@ export async function fetchScratchpadStatus(
   // one rate-limit blip from aborting the whole sweep as "unavailable".
   for (let attempt = 0; ; attempt += 1) {
     const status = await fetchScratchpadStatusOnce(params)
-    if (status !== "rate-limited") return status
+    if (typeof status === "string") return status
     if (attempt >= 2) return "unavailable"
-    await sleep(2_000 * (attempt + 1))
+    await sleep(status.rateLimitedForMs || 2_000 * (attempt + 1))
   }
 }
 
@@ -61,13 +61,18 @@ async function fetchScratchpadStatusOnce(params: {
   workspaceId: string
   apiKey: string
   streamId: string
-}): Promise<ScratchpadStatus | "rate-limited"> {
+}): Promise<ScratchpadStatus | { rateLimitedForMs: number }> {
   try {
     const response = await fetch(
       `${params.baseUrl.replace(/\/$/, "")}/api/v1/workspaces/${params.workspaceId}/streams/${params.streamId}`,
       { headers: { authorization: `Bearer ${params.apiKey}` }, signal: AbortSignal.timeout(10_000) }
     )
-    if (response.status === 429) return "rate-limited"
+    if (response.status === 429) {
+      const retryAfter = Number(response.headers.get("retry-after"))
+      return {
+        rateLimitedForMs: Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 30_000) : 0,
+      }
+    }
     if (response.status === 403 || response.status === 404) return "inaccessible"
     if (!response.ok) return response.status >= 500 ? "unavailable" : "inaccessible"
     const json = (await response.json()) as { data?: { archivedAt?: string | null } }

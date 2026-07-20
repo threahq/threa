@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { afterEach, expect, mock, spyOn, test } from "bun:test"
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -14,6 +14,7 @@ import { launchAgentPlist } from "./boot"
 import { parseResume, parseSpawn } from "./cli"
 import { restoredSessionMatches, reviveAgent, type ReviveDeps, type ReviveOutcome } from "./commands"
 import { readInventory, upsertAgent } from "./inventory"
+import { acquireProcessLock } from "./lock"
 import {
   claudeLaunchArgs,
   claudeLaunchCommand,
@@ -241,7 +242,7 @@ test("classifies active, archived, inaccessible, and unavailable scratchpads", a
 
 test("scratchpad status rides out rate limiting but gives up after repeated 429s", async () => {
   const fetchMock = spyOn(globalThis, "fetch")
-  fetchMock.mockResolvedValueOnce(new Response("slow down", { status: 429 }))
+  fetchMock.mockResolvedValueOnce(new Response("slow down", { status: 429, headers: { "retry-after": "7" } }))
   fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: "stream_1" } }), { status: 200 }))
   fetchMock.mockResolvedValue(new Response("slow down", { status: 429 }))
   const params = { baseUrl: "https://app.threa.io", workspaceId: "ws_1", apiKey: "key", streamId: "stream_1" }
@@ -251,7 +252,7 @@ test("scratchpad status rides out rate limiting but gives up after repeated 429s
   }
   expect(await fetchScratchpadStatus(params, sleep)).toBe("active")
   expect(await fetchScratchpadStatus(params, sleep)).toBe("unavailable")
-  expect(sleeps).toEqual([2_000, 2_000, 4_000])
+  expect(sleeps).toEqual([7_000, 2_000, 4_000])
 })
 
 test("preflights revival with ifArchived=wait and refuses a root mismatch", async () => {
@@ -333,6 +334,9 @@ function reviveDeps(overrides: Partial<ReviveDeps> = {}): ReviveDeps {
       throw new Error("resumeRuntime must not be called")
     },
     persist: () => {},
+    killWindow: () => {
+      throw new Error("killWindow must not be called")
+    },
     ...overrides,
   }
 }
@@ -505,4 +509,93 @@ test("up accepts --recreate-worktree and --dry-run", () => {
     dryRun: true,
     recreateWorktree: true,
   })
+})
+
+test("a scratchpad archived during launch is killed, not recorded online", async () => {
+  let statusCalls = 0
+  const killed: string[] = []
+  const persisted: ManagedAgent[] = []
+  const deps = reviveDeps({
+    scratchpadStatus: async () => (++statusCalls === 1 ? "active" : "archived"),
+    resumeRuntime: async (managed) => ({
+      worktree: managed.worktree!,
+      branch: managed.branch ?? managed.name,
+      tmuxSession: "threa-agents",
+      tmuxWindow: "repair",
+      tmuxWindowId: "@7",
+      scratchpadUrl: managed.scratchpadUrl,
+      instanceId: managed.instanceId,
+      runtimeSessionId: managed.runtimeSessionId,
+      output: "ok",
+    }),
+    persist: (managed) => {
+      persisted.push(managed)
+    },
+    killWindow: (windowId) => {
+      killed.push(windowId)
+    },
+  })
+  expect(await runRevive(linkedAgent(), {}, deps)).toEqual({
+    status: "skipped archived",
+    detail: "scratchpad state changed during launch; window killed",
+  })
+  expect({ killed, persisted: persisted.map((entry) => entry.status) }).toEqual({
+    killed: ["@7"],
+    persisted: ["error"],
+  })
+})
+
+test("a persist failure after launch kills the window instead of leaving it untracked", async () => {
+  const killed: string[] = []
+  const deps = reviveDeps({
+    resumeRuntime: async (managed) => ({
+      worktree: managed.worktree!,
+      branch: managed.branch ?? managed.name,
+      tmuxSession: "threa-agents",
+      tmuxWindow: "repair",
+      tmuxWindowId: "@7",
+      scratchpadUrl: managed.scratchpadUrl,
+      instanceId: managed.instanceId,
+      runtimeSessionId: managed.runtimeSessionId,
+      output: "ok",
+    }),
+    persist: () => {
+      throw new Error("SQLITE_BUSY")
+    },
+    killWindow: (windowId) => {
+      killed.push(windowId)
+    },
+  })
+  expect(await runRevive(linkedAgent(), {}, deps)).toEqual({
+    status: "failed",
+    detail: "inventory write failed after launch; window killed: SQLITE_BUSY",
+  })
+  expect(killed).toEqual(["@7"])
+})
+
+test("process lock steals from a dead holder, times out on a live one, and releases only its own", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "harnessd-lock-")), "resume-active.lock")
+  writeFileSync(path, "11111")
+  const release = await acquireProcessLock(path, { pid: 22222, isAlive: () => false, sleep: async () => {} })
+  expect(readFileSync(path, "utf8")).toBe("22222")
+  expect(
+    acquireProcessLock(path, { pid: 33333, isAlive: () => true, sleep: async () => {}, timeoutMs: 0 })
+  ).rejects.toThrow("held by pid 22222")
+  writeFileSync(path, "44444")
+  release()
+  expect(readFileSync(path, "utf8")).toBe("44444")
+})
+
+test("reading a missing inventory creates nothing on disk", () => {
+  const previousPath = process.env.THREA_HARNESSD_INVENTORY
+  const dir = join(mkdtempSync(join(tmpdir(), "harnessd-fresh-")), "nested")
+  const path = join(dir, "inventory.sqlite")
+  process.env.THREA_HARNESSD_INVENTORY = path
+  try {
+    expect(readInventory()).toEqual([])
+    expect({ file: existsSync(path), dir: existsSync(dir) }).toEqual({ file: false, dir: false })
+  } finally {
+    if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
+    else process.env.THREA_HARNESSD_INVENTORY = previousPath
+  }
 })
