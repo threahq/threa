@@ -30,7 +30,7 @@ import {
 } from "./resume"
 import { agentWindowExists, attachedTmuxSession, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
-import { restoreManagedWorktree } from "./worktree"
+import { restorableWorktreeSource, restoreManagedWorktree } from "./worktree"
 import { runWatchLoop, unavailableBackoffMs, uniqueSupervisorTargets, watchIntervalMs } from "./watch"
 
 export function restoredSessionMatches(
@@ -227,6 +227,7 @@ export interface ReviveDeps {
   }) => Promise<ScratchpadStatus>
   preflight: (params: Parameters<typeof preflightRuntimeSession>[0]) => Promise<RuntimePreflightResult>
   restoreWorktree: (agent: ManagedAgent) => { restored: boolean; reason?: string }
+  restorableWorktree: (agent: ManagedAgent) => { repo: string } | { reason: string }
   piLink: (runtimeSessionId: string) => PiRemoteSession | undefined
   resumeRuntime: (agent: ManagedAgent, options: ResumeOptions) => Promise<SpawnResult>
   persist: (agent: ManagedAgent) => void
@@ -241,6 +242,7 @@ export function defaultReviveDeps(): ReviveDeps {
     scratchpadStatus: fetchScratchpadStatus,
     preflight: preflightRuntimeSession,
     restoreWorktree: restoreManagedWorktree,
+    restorableWorktree: restorableWorktreeSource,
     piLink: readPiRemoteSession,
     resumeRuntime: (agent, options) =>
       (agent.runtime === "pi" ? new PiRuntimeSpawner() : new ClaudeRuntimeSpawner()).resume(agent, options),
@@ -339,6 +341,10 @@ export async function reviveAgent(
   if (worktreeMissing && !options.recreateWorktree) {
     return { status: "skipped missing cwd", detail: agent.worktree ?? "no worktree path recorded" }
   }
+  if (worktreeMissing) {
+    const source = deps.restorableWorktree(agent)
+    if ("reason" in source) return { status: "skipped missing cwd", detail: source.reason }
+  }
   // Dry-run exits before preflight: registering the bot-runtime session mutates server state.
   if (options.dryRun) {
     return {
@@ -421,7 +427,9 @@ async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionR
   }
   const counts = new Map<ReviveStatus, number>()
   let unavailable = false
+  let evaluated = 0
   for (const agent of agents) {
+    evaluated += 1
     const outcome = await reviveAgent(agent, options, deps, target)
     if (!outcome) continue
     console.log(`${outcome.status}\t${agent.name}${outcome.detail ? `\t${outcome.detail}` : ""}`)
@@ -431,8 +439,11 @@ async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionR
       break
     }
   }
-  const summary = [...counts.entries()].map(([status, count]) => `${count} ${status}`).join(", ")
-  if (summary) console.log(`harnessd: ${summary}`)
+  const parts = [...counts.entries()].map(([status, count]) => `${count} ${status}`)
+  if (unavailable && evaluated < agents.length) {
+    parts.push(`${agents.length - evaluated} not evaluated (sweep aborted while Threa unavailable)`)
+  }
+  if (parts.length > 0) console.log(`harnessd: ${parts.join(", ")}`)
   return unavailable
 }
 

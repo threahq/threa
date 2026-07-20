@@ -26,7 +26,7 @@ A session starts only when ALL of these hold; otherwise it is reported with a sk
 
 Flags:
 
-- `--dry-run` — print the per-agent decisions and stop before any side effect. Exits before the bot-runtime preflight (that POST registers the session server-side), so it can't detect a preflight-level identity mismatch — everything else is exact.
+- `--dry-run` — print the per-agent decisions and stop: no launches, no worktree changes, no server-state mutation. Exits before the bot-runtime preflight (that POST registers the session server-side), so it can't detect a preflight-level identity mismatch — everything else is exact, including restorability of a missing worktree. harnessd's own local bookkeeping (the tmux serialization lock, inventory file initialization) still runs.
 - `--recreate-worktree` — opt in to restoring a pruned worktree from the recorded repo + branch. Default is `skipped missing cwd`.
 - `--tmux <session>` — target tmux session.
 

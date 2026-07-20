@@ -327,6 +327,7 @@ function reviveDeps(overrides: Partial<ReviveDeps> = {}): ReviveDeps {
     restoreWorktree: () => {
       throw new Error("restoreWorktree must not be called")
     },
+    restorableWorktree: () => ({ repo: "/tmp/repo" }),
     piLink: () => undefined,
     resumeRuntime: async () => {
       throw new Error("resumeRuntime must not be called")
@@ -349,12 +350,13 @@ function linkedAgent(overrides: Partial<ManagedAgent> = {}): ManagedAgent {
 async function runRevive(
   managed: ManagedAgent,
   options: ResumeOptions,
-  deps: ReviveDeps
+  deps: ReviveDeps,
+  target?: Parameters<typeof reviveAgent>[3]
 ): Promise<ReviveOutcome | undefined> {
   const saved = REVIVE_ENV_KEYS.map((key) => [key, process.env[key]] as const)
   for (const key of REVIVE_ENV_KEYS) delete process.env[key]
   try {
-    return await reviveAgent(managed, options, deps)
+    return await reviveAgent(managed, options, deps, target)
   } finally {
     for (const [key, value] of saved) {
       if (value === undefined) delete process.env[key]
@@ -395,6 +397,32 @@ test("up skips an active scratchpad whose worktree is missing unless --recreate-
   ).toEqual({
     status: "would start",
     detail: "https://app.threa.io/w/ws_1/s/stream_01ABCDEF (recreates worktree)",
+  })
+})
+
+test("dry-run with --recreate-worktree still skips an unrestorable worktree", async () => {
+  const deps = reviveDeps({
+    pathExists: () => false,
+    restorableWorktree: () => ({ reason: "no branch recorded" }),
+  })
+  expect(await runRevive(linkedAgent(), { dryRun: true, recreateWorktree: true }, deps)).toEqual({
+    status: "skipped missing cwd",
+    detail: "no branch recorded",
+  })
+})
+
+test("targeted restore events only start the matching inventory row", async () => {
+  const target = { botId: "bot_1", rootStreamId: "stream_01ABCDEF", instanceId: "cc-one", runtimeSessionId: "ccs-one" }
+  expect(
+    await runRevive(linkedAgent(), { dryRun: true }, reviveDeps(), { ...target, rootStreamId: "stream_other" })
+  ).toBeUndefined()
+  expect(await runRevive(linkedAgent({ instanceId: "cc-two" }), { dryRun: true }, reviveDeps(), target)).toEqual({
+    status: "skipped identity mismatch",
+    detail: "restore event identity does not match inventory",
+  })
+  expect(await runRevive(linkedAgent(), { dryRun: true }, reviveDeps(), target)).toEqual({
+    status: "would start",
+    detail: "https://app.threa.io/w/ws_1/s/stream_01ABCDEF",
   })
 })
 
