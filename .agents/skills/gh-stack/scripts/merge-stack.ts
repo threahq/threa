@@ -48,6 +48,11 @@ export interface MergePlan {
   baseRef: string
   entries: StackPullRequest[]
   expectedHeads: Record<number, string>
+  remainingEntries: Array<{
+    number: number
+    state: "open" | "closed"
+    mergedAt: string | null
+  }>
 }
 
 interface BrowserPreflight {
@@ -67,6 +72,8 @@ interface BrowserRequestResult {
   status: number
   message: string
 }
+
+class EnqueueRejectedError extends Error {}
 
 const usage = `Usage:
   bun .agents/skills/gh-stack/scripts/merge-stack.ts <pull-request> --yes [options]
@@ -169,8 +176,11 @@ export function parseArgs(argv: string[]): MergeStackArgs {
   if (yes === dryRun) {
     throw new Error("choose exactly one of --yes or --dry-run")
   }
-  if (repo && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
-    throw new Error(`invalid repository: ${repo}`)
+  if (repo) {
+    const parts = repo.split("/")
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || parts.some((part) => part === "." || part === "..")) {
+      throw new Error(`invalid repository: ${repo}`)
+    }
   }
 
   return {
@@ -215,6 +225,11 @@ export function createMergePlan(stack: StackResource, targetPullRequest: number)
     baseRef: stack.base.ref,
     entries,
     expectedHeads: Object.fromEntries(entries.map((pull) => [pull.number, pull.head.sha])),
+    remainingEntries: stack.pull_requests.slice(targetIndex + 1).map((pull) => ({
+      number: pull.number,
+      state: pull.state,
+      mergedAt: pull.merged_at,
+    })),
   }
 }
 
@@ -242,6 +257,37 @@ export function assertExpectedHeads(plan: MergePlan, current: StackResource): vo
   }
 }
 
+export function assertCompletedMerge(plan: MergePlan, stack: StackResource): void {
+  for (const entry of plan.entries) {
+    const merged = stack.pull_requests.find((pull) => pull.number === entry.number)
+    if (!merged?.merged_at) throw new Error(`pull request #${entry.number} did not merge`)
+    if (merged.head.sha !== plan.expectedHeads[entry.number]) {
+      throw new Error(`stack merged, but PR #${entry.number} used unexpected head ${merged.head.sha}`)
+    }
+  }
+
+  for (const expected of plan.remainingEntries) {
+    const current = stack.pull_requests.find((pull) => pull.number === expected.number)
+    if (!current || current.merged_at !== expected.mergedAt || current.state !== expected.state) {
+      throw new Error(`stack merged more than the requested range; inspect PR #${expected.number}`)
+    }
+  }
+}
+
+const timeoutMarker = Symbol("timeout")
+
+async function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof timeoutMarker> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<typeof timeoutMarker>((resolveTimeout) => {
+    timeout = setTimeout(() => resolveTimeout(timeoutMarker), timeoutMs)
+  })
+  try {
+    return await Promise.race([promise, deadline])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
 async function command(args: string[], timeoutMs = 30_000): Promise<string> {
   const subprocess = Bun.spawn(args, {
     env: process.env,
@@ -253,12 +299,12 @@ async function command(args: string[], timeoutMs = 30_000): Promise<string> {
     new Response(subprocess.stderr).text(),
     subprocess.exited,
   ])
-  const result = await Promise.race([completion, Bun.sleep(timeoutMs).then(() => null)])
-  if (!result) {
+  const result = await raceWithTimeout(completion, timeoutMs)
+  if (result === timeoutMarker) {
     subprocess.kill("SIGTERM")
-    await Promise.race([subprocess.exited, Bun.sleep(500)])
+    await raceWithTimeout(subprocess.exited, 500)
     if (subprocess.exitCode === null) subprocess.kill("SIGKILL")
-    await Promise.race([subprocess.exited, Bun.sleep(1_500)])
+    await raceWithTimeout(subprocess.exited, 1_500)
     throw new Error(`${args.join(" ")} timed out after ${timeoutMs}ms`)
   }
   const [stdout, stderr, exitCode] = result
@@ -360,14 +406,24 @@ async function copyFileSnapshot(source: string, destination: string): Promise<bo
 async function copySqliteSnapshot(source: string, destination: string): Promise<boolean> {
   if (!(await exists(source))) return false
   const database = new Database(source, { readonly: true })
+  let serialized: Uint8Array
   try {
     database.query("SELECT COUNT(*) AS count FROM sqlite_master").get()
-    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
-    await writeFile(destination, database.serialize(), { mode: 0o600 })
-    return true
+    serialized = database.serialize()
   } finally {
     database.close()
   }
+
+  await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+  await writeFile(destination, serialized, { mode: 0o600 })
+  const snapshot = new Database(destination)
+  try {
+    snapshot.query("DELETE FROM cookies WHERE host_key <> 'github.com' AND host_key <> '.github.com'").run()
+    snapshot.exec("VACUUM")
+  } finally {
+    snapshot.close()
+  }
+  return true
 }
 
 class CdpSession {
@@ -452,10 +508,13 @@ class CdpSession {
       const payload = this.buffer.subarray(0, boundary).toString("utf8")
       this.buffer = this.buffer.subarray(boundary + 1)
       if (payload) {
-        const message = JSON.parse(payload) as {
-          id?: number
-          result?: unknown
-          error?: { message: string }
+        let message: { id?: number; result?: unknown; error?: { message: string } }
+        try {
+          message = JSON.parse(payload) as typeof message
+        } catch {
+          this.failPending(new Error("Chrome DevTools returned a malformed frame"))
+          this.close()
+          return
         }
         if (message.id) {
           const waiter = this.pending.get(message.id)
@@ -528,6 +587,7 @@ class BrowserHarness {
         } finally {
           process.off("SIGINT", onSigint)
           process.off("SIGTERM", onSigterm)
+          process.off("SIGHUP", onSighup)
         }
         if (errors.length) throw new AggregateError(errors, errors.map((error) => error.message).join("; "))
       })()
@@ -546,8 +606,10 @@ class BrowserHarness {
     }
     const onSigint = () => closeForSignal(130)
     const onSigterm = () => closeForSignal(143)
-    process.once("SIGINT", onSigint)
-    process.once("SIGTERM", onSigterm)
+    const onSighup = () => closeForSignal(129)
+    process.on("SIGINT", onSigint)
+    process.on("SIGTERM", onSigterm)
+    process.on("SIGHUP", onSighup)
 
     try {
       await chmod(tempRoot, 0o700)
@@ -577,6 +639,8 @@ class BrowserHarness {
           "--disable-gpu",
           "--disable-sync",
           "--disable-extensions",
+          "--disable-background-networking",
+          "--disable-component-update",
           "--no-first-run",
           "--no-default-browser-check",
           `--user-data-dir=${tempUserData}`,
@@ -613,13 +677,19 @@ class BrowserHarness {
     await this.cdp.request("Page.navigate", { url })
     for (let attempt = 0; attempt < 300; attempt += 1) {
       const evaluation = await this.cdp.request<RuntimeEvaluation>("Runtime.evaluate", {
-        expression: "JSON.stringify({ready:document.readyState,path:location.pathname})",
+        expression: "JSON.stringify({ready:document.readyState,path:location.pathname,title:document.title})",
         returnByValue: true,
       })
       const value = evaluation.result.value
       if (value) {
-        const state = JSON.parse(value) as { ready: string; path: string }
+        const state = JSON.parse(value) as { ready: string; path: string; title: string }
         if (state.ready === "complete" && state.path === expectedPath) return
+        if (
+          state.ready === "complete" &&
+          (state.path.startsWith("/login") || state.title.toLowerCase().includes("sign in"))
+        ) {
+          throw new Error("Chrome GitHub session is not authenticated")
+        }
       }
       await Bun.sleep(100)
     }
@@ -659,7 +729,7 @@ class BrowserHarness {
       const query = '?merge_method=' + config.method + '&bypass_requirements=false'
       const mergeBox = await getJson(prefix + config.targetPullRequest + '/page_data/merge_box' + query)
       if (mergeBox.error) return JSON.stringify({ error: 'Merge box: ' + mergeBox.error })
-      if (mergeBox.body?.pullRequest?.state !== 'OPEN') {
+      if ((mergeBox.body?.pullRequest?.state || mergeBox.body?.pull_request?.state) !== 'OPEN') {
         return JSON.stringify({ error: 'Target pull request is not open in the browser session' })
       }
       const requirements = mergeBox.body?.mergeRequirements || mergeBox.body?.merge_requirements || {}
@@ -763,10 +833,10 @@ class BrowserHarness {
 
 async function runUtility(args: string[], timeoutMs = 5_000): Promise<number | null> {
   const process = Bun.spawn(args, { stdout: "ignore", stderr: "ignore" })
-  const result = await Promise.race([process.exited, Bun.sleep(timeoutMs).then(() => null)])
-  if (result !== null) return result
+  const result = await raceWithTimeout(process.exited, timeoutMs)
+  if (result !== timeoutMarker) return result
   process.kill("SIGKILL")
-  await Promise.race([process.exited, Bun.sleep(500)])
+  await raceWithTimeout(process.exited, 500)
   return null
 }
 
@@ -777,10 +847,7 @@ async function stopChrome(process: ChildProcess, tempUserData: string): Promise<
     } catch {
       // The process may have exited between the exitCode check and kill.
     }
-    await Promise.race([
-      new Promise<void>((resolveExit) => process.once("exit", () => resolveExit())),
-      Bun.sleep(2_000),
-    ])
+    await raceWithTimeout(new Promise<void>((resolveExit) => process.once("exit", () => resolveExit())), 2_000)
   }
   if (process.exitCode === null) {
     try {
@@ -793,13 +860,13 @@ async function stopChrome(process: ChildProcess, tempUserData: string): Promise<
   await runUtility(["pkill", "-TERM", "-f", tempUserData])
   await Bun.sleep(200)
   await runUtility(["pkill", "-KILL", "-f", tempUserData])
-  await Promise.race([
+  await raceWithTimeout(
     new Promise<void>((resolveExit) => {
       if (process.exitCode !== null) resolveExit()
       else process.once("exit", () => resolveExit())
     }),
-    Bun.sleep(2_000),
-  ])
+    2_000
+  )
 
   const matchingProcesses = await runUtility(["pgrep", "-f", tempUserData])
   if (process.exitCode === null || matchingProcesses === 0 || matchingProcesses === null) {
@@ -827,12 +894,7 @@ async function waitForMerge(repo: string, plan: MergePlan, timeoutSeconds: numbe
     const stack = await ghJson<StackResource>(`repos/${repo}/stacks/${plan.stackNumber}`, remaining)
     const selected = plan.entries.map((entry) => stack.pull_requests.find((pull) => pull.number === entry.number))
     if (selected.every((entry) => entry?.merged_at)) {
-      const unexpectedHead = selected.find((entry) => entry && entry.head.sha !== plan.expectedHeads[entry.number])
-      if (unexpectedHead) {
-        throw new Error(
-          `stack merged, but PR #${unexpectedHead.number} used unexpected head ${unexpectedHead.head.sha}`
-        )
-      }
+      assertCompletedMerge(plan, stack)
       return stack
     }
     const closedWithoutMerge = selected.find((entry) => entry && entry.state === "closed" && !entry.merged_at)
@@ -896,13 +958,31 @@ async function main(): Promise<void> {
     console.error(
       "Heads and topology verified immediately before enqueue; GitHub exposes no expected-head CAS for this private route."
     )
-    const request = await browser.enqueue(repo, plan, args.method, preflight)
-    if (request.status < 200 || request.status >= 300) {
-      throw new Error(`GitHub rejected stack merge (HTTP ${request.status}): ${request.message}`)
+    let mergedStack: StackResource | undefined
+    try {
+      const request = await browser.enqueue(repo, plan, args.method, preflight)
+      if (request.status < 200 || request.status >= 300) {
+        throw new EnqueueRejectedError(`GitHub rejected stack merge (HTTP ${request.status}): ${request.message}`)
+      }
+      console.error(`GitHub accepted stack merge: ${request.message}`)
+    } catch (error) {
+      if (error instanceof EnqueueRejectedError) throw error
+      const enqueueError = error instanceof Error ? error : new Error(String(error))
+      console.error(
+        `Enqueue outcome unknown (${enqueueError.message}); the request may have reached GitHub. Watching stack #${plan.stackNumber} before allowing a retry.`
+      )
+      try {
+        mergedStack = await waitForMerge(repo, plan, args.timeoutSeconds)
+      } catch (watchError) {
+        const watch = watchError instanceof Error ? watchError : new Error(String(watchError))
+        throw new AggregateError(
+          [enqueueError, watch],
+          `enqueue outcome remains unknown; inspect stack #${plan.stackNumber} before retrying: ${watch.message}`
+        )
+      }
     }
-    console.error(`GitHub accepted stack merge: ${request.message}`)
 
-    const mergedStack = await waitForMerge(repo, plan, args.timeoutSeconds)
+    mergedStack ??= await waitForMerge(repo, plan, args.timeoutSeconds)
     const merged = plan.entries.map((entry) => {
       const current = mergedStack.pull_requests.find((pull) => pull.number === entry.number)!
       return { number: current.number, mergedAt: current.merged_at }
