@@ -23,7 +23,12 @@ async function main(): Promise<void> {
   if (!command || command === "help" || command === "--help" || command === "-h") usage()
   if (command === "spawn") return spawnAgent(parseSpawn(args))
   if (command === "list") return listAgents()
-  if (command === "revive-unarchived" || command === "resume-active" || command === "restore-active") {
+  if (
+    command === "up" ||
+    command === "revive-unarchived" ||
+    command === "resume-active" ||
+    command === "restore-active"
+  ) {
     await resumeActive(parseResume(args))
     return
   }

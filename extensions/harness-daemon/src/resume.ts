@@ -37,19 +37,44 @@ export function recordedNoYolo(agent: ManagedAgent): boolean {
 
 export type ScratchpadStatus = "active" | "archived" | "inaccessible" | "unavailable"
 
-export async function fetchScratchpadStatus(params: {
+export async function fetchScratchpadStatus(
+  params: {
+    baseUrl: string
+    workspaceId: string
+    apiKey: string
+    streamId: string
+  },
+  sleep: (ms: number) => Promise<void> = Bun.sleep
+): Promise<ScratchpadStatus> {
+  // A full `up` pass probes every inventory row; retrying through 429s keeps
+  // one rate-limit blip from aborting the whole sweep as "unavailable".
+  for (let attempt = 0; ; attempt += 1) {
+    const status = await fetchScratchpadStatusOnce(params)
+    if (typeof status === "string") return status
+    if (attempt >= 2) return "unavailable"
+    await sleep(status.rateLimitedForMs || 2_000 * (attempt + 1))
+  }
+}
+
+async function fetchScratchpadStatusOnce(params: {
   baseUrl: string
   workspaceId: string
   apiKey: string
   streamId: string
-}): Promise<ScratchpadStatus> {
+}): Promise<ScratchpadStatus | { rateLimitedForMs: number }> {
   try {
     const response = await fetch(
       `${params.baseUrl.replace(/\/$/, "")}/api/v1/workspaces/${params.workspaceId}/streams/${params.streamId}`,
       { headers: { authorization: `Bearer ${params.apiKey}` }, signal: AbortSignal.timeout(10_000) }
     )
+    if (response.status === 429) {
+      const retryAfter = Number(response.headers.get("retry-after"))
+      return {
+        rateLimitedForMs: Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 30_000) : 0,
+      }
+    }
     if (response.status === 403 || response.status === 404) return "inaccessible"
-    if (!response.ok) return response.status === 429 || response.status >= 500 ? "unavailable" : "inaccessible"
+    if (!response.ok) return response.status >= 500 ? "unavailable" : "inaccessible"
     const json = (await response.json()) as { data?: { archivedAt?: string | null } }
     if (!json.data || typeof json.data !== "object") return "inaccessible"
     return json.data.archivedAt ? "archived" : "active"

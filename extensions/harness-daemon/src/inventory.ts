@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite"
-import { mkdirSync } from "node:fs"
+import { existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname } from "node:path"
 import { die } from "./errors"
@@ -86,6 +86,7 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
 }
 
 export function readInventory(): ManagedAgent[] {
+  if (!existsSync(inventoryPath())) return []
   const db = openInventory()
   try {
     const rows = db.query("SELECT * FROM managed_agents ORDER BY created_at ASC").all() as ManagedAgentRow[]

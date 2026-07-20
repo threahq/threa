@@ -38,6 +38,7 @@ export interface SpawnOptions {
 export interface ResumeOptions {
   tmux?: string
   dryRun?: boolean
+  recreateWorktree?: boolean
 }
 
 export interface SpawnResult {
