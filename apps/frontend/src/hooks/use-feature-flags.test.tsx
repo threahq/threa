@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { renderHook, waitFor } from "@testing-library/react"
+import { cleanup, renderHook, waitFor } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
@@ -88,6 +88,7 @@ describe("feature flags — first render off persisted layers", () => {
   })
 
   afterEach(async () => {
+    cleanup()
     resetRegistry()
     await db.workspaceMetadata.clear()
     resetWorkspaceStoreCache()
@@ -138,6 +139,7 @@ describe("feature flags — first render off persisted layers", () => {
 
 describe("useOverriddenFeatureFlags — provenance", () => {
   afterEach(() => {
+    cleanup()
     resetRegistry()
   })
 
