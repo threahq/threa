@@ -1,4 +1,4 @@
-import type { WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threa/types"
+import type { FeatureFlagScope, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threa/types"
 import { api } from "./client"
 
 /**
@@ -118,7 +118,9 @@ export interface WaitlistOverview {
 }
 
 export interface WorkspaceFeatureFlagOverride {
-  workosUserId: string
+  subjectType: FeatureFlagScope
+  /** Workspace id for workspace scope, workos_user_id for user scope. */
+  subjectId: string
   flagKey: string
   value: string
   updatedAt: string
@@ -126,14 +128,18 @@ export interface WorkspaceFeatureFlagOverride {
 
 export interface WorkspaceFeatureFlagDefinition {
   key: string
-  /** Declared values for the flag; the first one is the default. */
+  /** Declared values for the flag. */
   values: string[]
+  /** The flag's explicit default, resolved when no override applies. */
+  default: string
+  /** Subjects that may carry an override for this flag. */
+  scopes: FeatureFlagScope[]
 }
 
 export interface WorkspaceFeatureFlags {
   /** Flags currently in the code registry (@threa/types FEATURE_FLAGS). */
   flags: WorkspaceFeatureFlagDefinition[]
-  /** Stored per-user overrides; absence of an override means the default value. */
+  /** Stored overrides; absence of an override for a subject means the default value. */
   overrides: WorkspaceFeatureFlagOverride[]
 }
 
@@ -233,10 +239,10 @@ export function getWorkspaceFeatureFlags(workspaceId: string): Promise<Workspace
   return api.get<WorkspaceFeatureFlags>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/feature-flags`)
 }
 
-/** Setting a flag to its default (first declared) value clears the override. */
+/** Setting a flag to its explicit default value clears the override. */
 export function setWorkspaceFeatureFlag(
   workspaceId: string,
-  params: { workosUserId: string; flagKey: string; value: string }
+  params: { subjectType: FeatureFlagScope; subjectId: string; flagKey: string; value: string }
 ): Promise<void> {
   return api.put<void>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/feature-flags`, params)
 }

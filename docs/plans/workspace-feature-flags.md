@@ -211,6 +211,18 @@ first load after a flag ships; unavoidable without blocking paint on the network
 so no migration can carry a live value across; any enabled workspace must be re-enabled
 by hand in the backoffice.
 
+## Known boundary — no per-user opt-out below a workspace override
+
+Storage keeps only deviations from a flag's default (`setFlag` deletes the override when
+the chosen value equals `defaultFeatureFlagValue`). So for a both-scoped flag whose
+workspace override differs from the default, an individual user cannot be pinned back to
+a value that equals the default — selecting it clears the override and the user re-inherits
+the workspace value. The enable direction (user on, over a default-off / workspace-silent
+flag) is unaffected, which is the motivating use case. Nothing in this stack is both-scoped
+(`calls` is workspace-only), so this is latent. Lifting it means an explicit inherit/reset
+action that stores every concrete override rather than clearing on default — a stack-wide
+semantics change, deferred until a both-scoped flag needs per-user opt-out.
+
 ## Not building
 
 - localStorage mirror for flags (IDB + the existing gate covers it).
