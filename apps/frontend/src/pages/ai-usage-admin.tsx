@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { ArrowLeft, DollarSign } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { useAIBudget, useAIUsage, useUpdateAIBudget } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
@@ -160,18 +161,22 @@ export function AIUsageAdminPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 items-center gap-2 border-b px-4">
-        <SidebarToggle location="page" />
-        <Link to={`/w/${workspaceId}`}>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
+      {/* Two rows on mobile — the zone label can't truncate usefully, and on one
+          phone row it swallows the title. Same shape as PageHeaderTabs. */}
+      <header className="flex flex-col gap-1 border-b px-4 py-2 sm:h-12 sm:flex-row sm:items-center sm:gap-2 sm:py-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <SidebarToggle location="page" />
+          <Link
+            to={`/w/${workspaceId}`}
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
+            aria-label="Back to workspace"
+          >
             <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <div className="flex items-center gap-2">
-          <DollarSign className="h-5 w-5 text-muted-foreground" />
-          <h1 className="font-semibold">AI Usage &amp; Budget</h1>
+          </Link>
+          <DollarSign className="h-5 w-5 shrink-0 text-muted-foreground" />
+          <h1 className="truncate font-semibold">AI Usage &amp; Budget</h1>
         </div>
-        <div className="ml-auto">
+        <div className="flex min-w-0 sm:ml-auto sm:shrink-0">
           <UsageTimezoneSelector
             mode={tzMode}
             onModeChange={setTzMode}
