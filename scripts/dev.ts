@@ -1,4 +1,5 @@
 import { $ } from "bun"
+import { installDevLifecycle } from "./lib/dev-lifecycle"
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
@@ -506,39 +507,7 @@ async function main() {
     },
   })
 
-  let isShuttingDown = false
-
-  const shutdown = async () => {
-    if (isShuttingDown) return
-    isShuttingDown = true
-
-    console.log("\nShutting down...")
-
-    // Use SIGKILL for immediate termination in development
-    controlPlane.kill("SIGKILL")
-    backend.kill("SIGKILL")
-    router.kill("SIGKILL")
-    backofficeRouter.kill("SIGKILL")
-    frontend.kill("SIGKILL")
-    backoffice.kill("SIGKILL")
-    enclaveBuilder.kill("SIGKILL")
-    enclave.kill("SIGKILL")
-
-    await Promise.all([
-      controlPlane.exited,
-      backend.exited,
-      router.exited,
-      backofficeRouter.exited,
-      frontend.exited,
-      backoffice.exited,
-      enclaveBuilder.exited,
-      enclave.exited,
-    ])
-    process.exit(0)
-  }
-
-  process.on("SIGINT", shutdown)
-  process.on("SIGTERM", shutdown)
+  installDevLifecycle([controlPlane, backend, router, backofficeRouter, frontend, backoffice, enclaveBuilder, enclave])
 
   await Promise.all([
     controlPlane.exited,
