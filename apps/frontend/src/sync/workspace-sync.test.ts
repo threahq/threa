@@ -4,6 +4,7 @@ import { QueryClient } from "@tanstack/react-query"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import {
+  applyReconnectBootstrapBatch,
   applyWorkspaceBootstrap,
   mergeReconnectWorkspaceBootstrap,
   registerWorkspaceSocketHandlers,
@@ -376,6 +377,41 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
     const row = await db.streams.get("stream_arch_root")
     expect(row?.lastMessagePreview?.content).toBe("kept")
+  })
+
+  it("persists the bootstrap feature-flag layers to workspaceMetadata", async () => {
+    await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({ featureFlags: { workspace: { calls: "off" }, user: { newComposer: "on" } } }),
+      Date.now()
+    )
+
+    const stored = await db.workspaceMetadata.get("ws_1")
+    expect(stored?.featureFlags).toEqual({ workspace: { calls: "off" }, user: { newComposer: "on" } })
+  })
+
+  it("writes undefined featureFlags when the bootstrap omits them (old server)", async () => {
+    const bootstrap = makeBootstrap()
+    delete bootstrap.featureFlags
+
+    await applyWorkspaceBootstrap("ws_1", bootstrap, Date.now())
+
+    const stored = await db.workspaceMetadata.get("ws_1")
+    expect(stored?.featureFlags).toBeUndefined()
+  })
+
+  it("persists feature-flag layers on the reconnect apply path too", async () => {
+    await applyReconnectBootstrapBatch(
+      "ws_1",
+      makeBootstrap({ featureFlags: { workspace: { calls: "off" }, user: {} } }),
+      new Map(),
+      new Set(),
+      new Set(),
+      Date.now()
+    )
+
+    const stored = await db.workspaceMetadata.get("ws_1")
+    expect(stored?.featureFlags).toEqual({ workspace: { calls: "off" }, user: {} })
   })
 })
 
@@ -1477,6 +1513,40 @@ describe("registerWorkspaceSocketHandlers", () => {
     expect(cached?.featureFlags).toEqual({ workspace: { calls: "off" }, user: { newComposer: "on" } })
 
     cleanup()
+  })
+
+  it("writes the patched layers back to the persisted metadata row so a warm restart repaints the live value", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ featureFlags: { workspace: {}, user: {} } })
+    )
+    await db.workspaceMetadata.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      emojis: [],
+      emojiWeights: {},
+      commands: [],
+      featureFlags: { workspace: {}, user: {} },
+      _cachedAt: 1,
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+
+    emit("feature_flags:workspace_updated", { workspaceId: "ws_1", overrides: { calls: "off" } })
+
+    await vi.waitFor(async () => {
+      const persisted = await db.workspaceMetadata.get("ws_1")
+      expect(persisted?.featureFlags).toEqual({ workspace: { calls: "off" }, user: {} })
+    })
+
+    cleanup()
+    await db.workspaceMetadata.clear()
   })
 
   it("promotes newly created DMs for recipients without waiting for a workspace refetch", async () => {

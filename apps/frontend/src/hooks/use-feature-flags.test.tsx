@@ -1,10 +1,18 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { renderHook } from "@testing-library/react"
+import { renderHook, waitFor } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
-import { describe, expect, it } from "vitest"
-import { type FeatureFlagLayers, type WorkspaceBootstrap } from "@threa/types"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import {
+  FEATURE_FLAG_DEFINITIONS,
+  type FeatureFlagDefinition,
+  type FeatureFlagKey,
+  type FeatureFlagLayers,
+  type WorkspaceBootstrap,
+} from "@threa/types"
+import { db } from "@/db"
+import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { workspaceKeys } from "./use-workspaces"
-import { useOverriddenFeatureFlags } from "./use-feature-flags"
+import { useFeatureFlag, useOverriddenFeatureFlags } from "./use-feature-flags"
 
 function createWrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -12,12 +20,40 @@ function createWrapper(queryClient: QueryClient) {
   }
 }
 
-// The shipped registry is empty (no rollout in flight), so the per-flag hooks
-// (useFeatureFlag / useFeatureFlagWhenKnown) have no key to read and only the
-// overridden-flags view is exercisable end-to-end. The precedence the hooks
-// depend on is proven against the registry-parameterized resolver below — the
-// same function `useResolvedFeatureFlags` composes over — since a fake flag must
-// not enter FEATURE_FLAGS.
+// The shipped FEATURE_FLAGS is empty between rollouts, so inject a stand-in
+// registry (visible to the code-bound predicates + resolver, which read
+// FEATURE_FLAG_DEFINITIONS dynamically) and clear it after each test rather
+// than committing a fake flag to @threa/types. `warmStart` is default-on: the
+// case the persistence fix protects — a warm paint must not flash the default.
+const STANDIN_REGISTRY = {
+  warmStart: { values: ["off", "on"], scopes: ["workspace", "user"], default: "on" },
+  wsOnly: { values: ["off", "on"], scopes: ["workspace"], default: "off" },
+} as const satisfies Record<string, FeatureFlagDefinition>
+
+function injectRegistry() {
+  Object.assign(FEATURE_FLAG_DEFINITIONS, STANDIN_REGISTRY)
+}
+
+function resetRegistry() {
+  for (const key of Object.keys(STANDIN_REGISTRY)) delete FEATURE_FLAG_DEFINITIONS[key]
+}
+
+function cacheBootstrapLayers(queryClient: QueryClient, workspaceId: string, featureFlags: FeatureFlagLayers): void {
+  queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), { featureFlags } as WorkspaceBootstrap)
+}
+
+async function persistMetadataLayers(workspaceId: string, featureFlags: FeatureFlagLayers): Promise<void> {
+  await db.workspaceMetadata.put({
+    id: workspaceId,
+    workspaceId,
+    emojis: [],
+    emojiWeights: {},
+    commands: [],
+    featureFlags,
+    _cachedAt: Date.now(),
+  })
+}
+
 describe("useOverriddenFeatureFlags", () => {
   it("returns no overridden flags before the bootstrap is cached", () => {
     const queryClient = new QueryClient()
@@ -40,5 +76,93 @@ describe("useOverriddenFeatureFlags", () => {
     // Empty registry: every override is inert, so nothing is surfaced (and the
     // layered shape does not crash the resolve).
     expect(result.current).toEqual([])
+  })
+})
+
+describe("feature flags — first render off persisted layers", () => {
+  beforeEach(async () => {
+    await db.workspaceMetadata.clear()
+    resetWorkspaceStoreCache()
+    injectRegistry()
+  })
+
+  afterEach(async () => {
+    resetRegistry()
+    await db.workspaceMetadata.clear()
+    resetWorkspaceStoreCache()
+  })
+
+  it("returns the persisted workspace value, not the registry default, on a warm start with an empty query cache", async () => {
+    // Warm start: no bootstrap in the query cache yet, but IDB metadata carries
+    // a workspace override of "off" for a default-ON flag. The old query-cache-
+    // only read would return the "on" default here.
+    const queryClient = new QueryClient()
+    await persistMetadataLayers("ws_1", { workspace: { warmStart: "off" }, user: {} })
+
+    const { result } = renderHook(() => useFeatureFlag("ws_1", "warmStart" as FeatureFlagKey), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => expect(result.current).toBe("off"))
+  })
+
+  it("prefers the live query cache over the persisted layers when both are present", async () => {
+    const queryClient = new QueryClient()
+    // IDB persisted "off"; the live (socket-patched) query cache says "on".
+    await persistMetadataLayers("ws_1", { workspace: { warmStart: "off" }, user: {} })
+    cacheBootstrapLayers(queryClient, "ws_1", { workspace: { warmStart: "on" }, user: {} })
+
+    const { result } = renderHook(() => useFeatureFlag("ws_1", "warmStart" as FeatureFlagKey), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => expect(result.current).toBe("on"))
+  })
+
+  it("treats a cached bootstrap with no layers as authoritative, not a fall-through to stale IDB", async () => {
+    // A bootstrap is cached but carries no featureFlags (older server / no
+    // overrides = all defaults). IDB still holds a stale "off". The present
+    // bootstrap must win: the flag resolves to its default "on", not the IDB value.
+    const queryClient = new QueryClient()
+    await persistMetadataLayers("ws_1", { workspace: { warmStart: "off" }, user: {} })
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { featureFlags: undefined } as WorkspaceBootstrap)
+
+    const { result } = renderHook(() => useFeatureFlag("ws_1", "warmStart" as FeatureFlagKey), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => expect(result.current).toBe("on"))
+  })
+})
+
+describe("useOverriddenFeatureFlags — provenance", () => {
+  afterEach(() => {
+    resetRegistry()
+  })
+
+  it("labels a workspace-layer override with workspace scope", () => {
+    injectRegistry()
+    const queryClient = new QueryClient()
+    cacheBootstrapLayers(queryClient, "ws_1", { workspace: { wsOnly: "on" }, user: {} })
+
+    const { result } = renderHook(() => useOverriddenFeatureFlags("ws_1"), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    expect(result.current).toEqual([{ key: "wsOnly", value: "on", defaultValue: "off", scope: "workspace" }])
+  })
+
+  it("labels a user override with user scope, and user wins when both layers set the key", () => {
+    injectRegistry()
+    const queryClient = new QueryClient()
+    cacheBootstrapLayers(queryClient, "ws_1", { workspace: { warmStart: "off" }, user: { warmStart: "off" } })
+
+    const { result } = renderHook(() => useOverriddenFeatureFlags("ws_1"), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    // Both layers set warmStart=off (non-default); the user layer applies last,
+    // so the winning scope is "user".
+    expect(result.current).toEqual([{ key: "warmStart", value: "off", defaultValue: "on", scope: "user" }])
   })
 })
