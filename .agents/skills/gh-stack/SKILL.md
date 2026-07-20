@@ -1,6 +1,6 @@
 ---
 description: |
-    Manage stacked branches and pull requests with the gh-stack GitHub CLI extension. Use when the user wants to create, push, rebase, sync, navigate, or view stacks of dependent PRs. Triggers on tasks involving stacked diffs, dependent pull requests, branch chains, or incremental code review workflows.
+    Manage stacked branches and pull requests with the gh-stack GitHub CLI extension. Use when the user wants to create, push, rebase, sync, navigate, view, or merge stacks of dependent PRs. Triggers on tasks involving stacked diffs, dependent pull requests, branch chains, or incremental code review workflows.
 metadata:
     author: github
     github-path: skills/gh-stack
@@ -61,6 +61,7 @@ git config remote.pushDefault origin     # if multiple remotes exist (skips remo
 7. **Use standard `git add` and `git commit` for staging and committing.** This gives you full control over which changes go into each branch. The `-Am` shortcut is available but should not be the default approach—stacked PRs are most effective when each branch contains a deliberate, logical set of changes.
 8. **Navigate down the stack when you need to change a lower layer.** If you're working on a frontend branch and realize you need API changes, don't hack around it at the current layer. Navigate to the appropriate branch (`gh stack down`, `gh stack checkout`, or `gh stack bottom`), make and commit the changes there, run `gh stack rebase --upstack`, then navigate back up to continue.
 9. **Use `gh stack link` for external tool workflows.** When branches are managed by an external tool (jj, Sapling, etc.), use `gh stack link branch-a branch-b`. `link` does not rely on local tracking state and is intended for API-driven PR and stack management. Provide at least two branches/PRs to create or update a stack, or a stack number followed by the new branches/PRs to append them to the top of an existing stack (e.g. `gh stack link 7 branch-c`).
+10. **Merge with the guarded wrapper, never the raw website route.** GitHub's preview API has no token-authenticated stack merge endpoint. Run `bun .agents/skills/gh-stack/scripts/merge-stack.ts <target-pr> --yes`; the explicit target determines how much of the stack lands. The wrapper validates stack membership, every selected PR's browser mergeability, and unchanged head SHAs before using an isolated copy of the logged-in Chrome session. Never extract, print, or persist Chrome cookies or `X-Fetch-Nonce` values.
 
 **Never do any of the following — each triggers an interactive prompt or TUI that will hang:**
 - ❌ `gh stack view` or `gh stack view --short` — always use `gh stack view --json`
@@ -164,6 +165,8 @@ Small, incidental fixes (e.g., fixing a typo you noticed) can go in the current 
 | Check out by branch (local only) | `gh stack checkout feature-auth` |
 | Tear down the current stack to restructure it | `gh stack unstack` |
 | Tear down a specific stack by number | `gh stack unstack 7` |
+| Validate a stack merge | `bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --dry-run` |
+| Merge through PR #42 | `bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --yes` |
 
 ---
 
@@ -315,6 +318,34 @@ gh stack sync --prune
 > **Note for agents:** In non-interactive environments, the prune prompt is not shown. Use `--prune` explicitly to delete local branches for merged PRs.
 
 > **Note for agents:** `sync` also mirrors the stack on GitHub locally. If PRs were added to the stack on github.com, their branches are pulled down and appended to the local stack automatically. If the local and remote stacks have **diverged** (you changed the local stack while the remote stack changed differently), sync can only prompt to resolve it in an interactive terminal — in non-interactive environments it aborts the sync (nothing is pushed or updated) and exits successfully with `ℹ Sync aborted`. Resolve a divergence by unstacking and recreating the stack.
+
+### Merge a stack from an agent
+
+GitHub's private-preview web UI can merge stacked PRs server-side, but `gh stack` v0.0.8 and the documented REST API have no merge operation. This repository includes a guarded browser-session wrapper:
+
+```bash
+# Optional: validate the selected PRs without sending a merge request
+bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --dry-run
+
+# Squash-merge PR #42 and every unmerged PR below it
+bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --yes
+```
+
+The target PR controls the range: target the top PR to land the whole stack or a lower PR for a partial stack merge. `--method squash` is the default; `merge` and `rebase` are also accepted.
+
+The wrapper:
+
+1. Resolves the target PR's GitHub stack through the preview REST API.
+2. Rejects closed or draft entries in the selected range.
+3. Takes a consistent SQLite snapshot of Chrome's cookies inside a mode-`0700` temporary directory.
+4. Starts isolated headless Chrome over private DevTools pipes and verifies every selected entry is `MERGEABLE/READY`.
+5. Re-reads the stack and aborts if its base, ordered selected entries, states, or head SHAs changed.
+6. Sends GitHub's internal `page_data/enqueue_stack` request, then polls the stack resource until every selected PR is merged.
+7. Kills the isolated browser and deletes the copied browser state on success, failure, `SIGINT`, or `SIGTERM`.
+
+Requirements: Bun, `gh` authentication for REST reads, Google Chrome with an active github.com session, and a repository enrolled in the Stacked PRs preview. Override profile detection with `GH_STACK_CHROME_PROFILE` or `--chrome-profile`; override Chrome with `GH_STACK_CHROME_BIN` or `--chrome-bin`.
+
+This is private website behavior and may change without notice. The route exposes no expected-head compare-and-swap field: the wrapper verifies topology and heads immediately before enqueue and checks the merged heads afterward, but cannot eliminate the narrow race between those operations. A failure must stop loudly; do not fall back to unstacking automatically. If browser merging stops working, try `gh pr merge <bottom-pr>` first, then use the documented per-layer recovery only after observing the actual error.
 
 ### Squash-merge recovery
 
@@ -867,6 +898,6 @@ gh stack unstack --local
 1. **Stacks are strictly linear.** Branching stacks (multiple children on a single parent) are not supported. Each branch has exactly one parent and at most one child. If you need parallel workstreams, use separate stacks.
 2. **Stack disambiguation cannot be bypassed.** If the current branch is the trunk of multiple stacks, commands error with code 6. Check out a non-shared branch first.
 3. **Multiple remotes require `--remote` or config.** If more than one remote is configured, pass `--remote <name>` or set `remote.pushDefault` in git config before running `push`, `sync`, or `rebase`.
-4. **Merging PRs:** Merging Stacked PRs from the CLI is not supported yet. Direct users to open the PR URL in a browser to merge PRs.
+4. **Merging PRs:** `gh stack` itself has no merge command. This repository's guarded `merge-stack.ts` wrapper drives the private website operation through an isolated logged-in Chrome session. It is not a public or stable GitHub API and requires local browser authentication.
 5. **Remote stack checkout requires a PR number.** `checkout` with a branch name only works with locally tracked stacks. Use a PR number (e.g. `gh stack checkout 123`) to pull stacks from GitHub.
 6. **PR title and body are auto-generated.** There is no flag to set a custom PR title or body during `submit`. The title and body are generated from commit messages plus a footer. Use `gh pr edit` to modify PR title and body after creation.
