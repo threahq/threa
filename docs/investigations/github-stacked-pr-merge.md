@@ -47,3 +47,9 @@ This is a website route, not an `api.github.com` REST endpoint. It requires an a
 - An authenticated browser replay against completed stack 1437 reached the handler and returned `422` because the stack was already merged. The stack resource was unchanged.
 
 A token-only `gh` command therefore cannot reproduce the web merge. Browser automation can invoke the route, but depends on private website behavior and a live browser session. Keep the documented per-layer CLI merge procedure as the non-browser fallback.
+
+## Guarded wrapper
+
+`.agents/skills/gh-stack/scripts/merge-stack.ts` packages the browser operation behind explicit `--yes`, a non-mutating `--dry-run`, exact stack/head validation, GitHub-only cookie snapshots, private DevTools pipes, completion polling, over-merge detection, and signal-safe cleanup.
+
+Full-stack merges were live-validated twice: stacks 1443 and 1446 each merged two exact heads one second apart without unstacking. Partial-range validation succeeded on stack 1453: targeting middle PR 1451 merged PRs 1450 and 1451, left PR 1452 open, and retargeted it to `main`.
