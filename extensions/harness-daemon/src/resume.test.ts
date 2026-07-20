@@ -13,14 +13,15 @@ import {
 } from "./resume"
 import { launchAgentPlist } from "./boot"
 import { parseResume, parseSpawn } from "./cli"
-import { restoredSessionMatches, reviveAgent, type ReviveDeps, type ReviveOutcome } from "./commands"
-import { readInventory, upsertAgent } from "./inventory"
+import { kickAgent, restoredSessionMatches, reviveAgent, type ReviveDeps, type ReviveOutcome } from "./commands"
+import { findAgent, readInventory, upsertAgent } from "./inventory"
 import { acquireProcessLock } from "./lock"
 import {
   claudeLaunchArgs,
   claudeLaunchCommand,
   normalizeChannelMcpConfig,
   piLaunchArgs,
+  piLaunchCommand,
   piResumeCommand,
 } from "./spawners"
 import type { ManagedAgent, ResumeOptions } from "./types"
@@ -79,6 +80,7 @@ test("migrates legacy inventory and persists runtime identity", () => {
     const managed = agent({
       instanceId: "cc-one",
       runtimeSessionId: "ccs-one",
+      tmuxPaneId: "%8",
       probeFailures: 3,
       probeBackoffUntil: "2026-07-20T12:00:00.000Z",
     })
@@ -87,6 +89,45 @@ test("migrates legacy inventory and persists runtime identity", () => {
     const cleared = { ...managed, probeFailures: undefined, probeBackoffUntil: undefined }
     upsertAgent(cleared)
     expect(readInventory()).toEqual([cleared])
+  } finally {
+    if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
+    else process.env.THREA_HARNESSD_INVENTORY = previousPath
+  }
+})
+
+test("resolves slash-command kicks by the latest matching runtime session id", () => {
+  const previousPath = process.env.THREA_HARNESSD_INVENTORY
+  process.env.THREA_HARNESSD_INVENTORY = join(
+    mkdtempSync(join(tmpdir(), "harnessd-kick-inventory-")),
+    "inventory.sqlite"
+  )
+  try {
+    upsertAgent(agent({ id: "old", runtimeSessionId: "ccs-one" }))
+    upsertAgent(
+      agent({
+        id: "current",
+        runtimeSessionId: "ccs-one",
+        updatedAt: "2026-07-02T00:00:00.000Z",
+        tmuxWindowId: "@7",
+        tmuxPaneId: "%8",
+      })
+    )
+    expect(findAgent("ccs-one").id).toBe("current")
+  } finally {
+    if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
+    else process.env.THREA_HARNESSD_INVENTORY = previousPath
+  }
+})
+
+test("kick sends Enter to the managed tmux pane", () => {
+  const previousPath = process.env.THREA_HARNESSD_INVENTORY
+  const dir = mkdtempSync(join(tmpdir(), "harnessd-kick-"))
+  process.env.THREA_HARNESSD_INVENTORY = join(dir, "inventory.sqlite")
+  try {
+    const sent: Array<{ target: string; keys: string[] }> = []
+    upsertAgent(agent({ runtimeSessionId: "ccs-one", tmuxWindowId: "@7", tmuxPaneId: "%8" }))
+    kickAgent("ccs-one", (target, keys) => sent.push({ target, keys }))
+    expect(sent).toEqual([{ target: "%8", keys: ["Enter"] }])
   } finally {
     if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
     else process.env.THREA_HARNESSD_INVENTORY = previousPath
@@ -223,6 +264,7 @@ test("reconstructs the current Claude channel launch with stable runtime identit
   expect(command).toContain("'THREA_INSTANCE_ID=cc-one'")
   expect(command).toContain("'THREA_RUNTIME_SESSION_ID=ccs-one'")
   expect(command).toContain("'THREA_DEFAULT_LABEL=coding'")
+  expect(command).toContain("'THREA_HARNESSD_ENTRYPOINT=")
   expect(command).toContain("'THREA_COLD_START_IF_ARCHIVED=wait'")
   expect(command).toContain("'THREA_COLD_START_IF_MISSING=error'")
   expect(command).toContain("'THREA_EXPECTED_ROOT_STREAM_ID=stream_expected'")
@@ -233,6 +275,7 @@ test("reconstructs the current Claude channel launch with stable runtime identit
 
 test("Pi revival reuses an exact recorded session id bound to the expected root", () => {
   expect(piLaunchArgs("pi", "019f-session")).toEqual(["pi", "--session-id", "019f-session"])
+  expect(piLaunchCommand("pi", "019f-session")).toContain("'THREA_HARNESSD_ENTRYPOINT=")
   expect(piResumeCommand("pi", "019f-session", "stream_expected")).toContain(
     "'THREA_EXPECTED_ROOT_STREAM_ID=stream_expected'"
   )
@@ -633,6 +676,7 @@ test("up starts an eligible agent and records it online", async () => {
       tmuxSession: "threa-agents",
       tmuxWindow: "repair",
       tmuxWindowId: "@7",
+      tmuxPaneId: "%8",
       scratchpadUrl: managed.scratchpadUrl,
       instanceId: managed.instanceId,
       runtimeSessionId: managed.runtimeSessionId,
@@ -647,6 +691,7 @@ test("up starts an eligible agent and records it online", async () => {
     expect.objectContaining({
       status: "online",
       tmuxWindowId: "@7",
+      tmuxPaneId: "%8",
       instanceId: "cc-one",
       runtimeSessionId: "ccs-one",
     }),
@@ -673,6 +718,7 @@ test("a scratchpad archived during launch is killed, not recorded online", async
       tmuxSession: "threa-agents",
       tmuxWindow: "repair",
       tmuxWindowId: "@7",
+      tmuxPaneId: "%8",
       scratchpadUrl: managed.scratchpadUrl,
       instanceId: managed.instanceId,
       runtimeSessionId: managed.runtimeSessionId,
@@ -704,6 +750,7 @@ test("a persist failure after launch kills the window instead of leaving it untr
       tmuxSession: "threa-agents",
       tmuxWindow: "repair",
       tmuxWindowId: "@7",
+      tmuxPaneId: "%8",
       scratchpadUrl: managed.scratchpadUrl,
       instanceId: managed.instanceId,
       runtimeSessionId: managed.runtimeSessionId,

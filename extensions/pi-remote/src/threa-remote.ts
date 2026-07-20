@@ -24,6 +24,7 @@ import {
   openSealedTurnContext,
   parseSealedAckContext,
   parseSealedTurnContext,
+  runHarnessKick,
   scrubSealedError,
   sealReply,
   sealStep,
@@ -97,6 +98,7 @@ const SESSION_CONTROL_COMMANDS = [
   "shell",
   "steer",
   "stop",
+  "kick",
   "carry-on",
 ] as const
 type PiSessionControlCommandName = (typeof SESSION_CONTROL_COMMANDS)[number]
@@ -2489,6 +2491,12 @@ async function runCarryOnCommand(invocation: ClaimedInvocation, args: string, ct
   await completeInvocationWithMarkdown(invocation, `Queued — the retry${retryAt} folds it in.`, ctx)
 }
 
+async function runKickCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
+  const result = runHarnessKick(getRuntimeSessionId(ctx))
+  if (!result.ok) throw new Error(result.error ?? "Harness daemon kick failed.")
+  await completeInvocationWithMarkdown(invocation, "Kicked the linked Pi session.", ctx)
+}
+
 async function runStopCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
   const hadPendingRemoteInvocation = pending !== undefined
   const wasBusy = !ctx.isIdle()
@@ -2610,6 +2618,9 @@ async function handleSessionControlInvocation(
         return
       case "stop":
         await runStopCommand(invocation, ctx)
+        return
+      case "kick":
+        await runKickCommand(invocation, ctx)
         return
       case "carry-on":
         await runCarryOnCommand(invocation, command.args, ctx)

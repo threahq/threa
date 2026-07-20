@@ -423,7 +423,17 @@ export class BotRuntimeService {
         ...(params.runtimeKind === "pi-local"
           ? {
               supportsSessionControlCommands: true,
-              sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop"],
+              sessionControlCommands: [
+                "compact",
+                "model",
+                "thinking",
+                "skill",
+                "reload",
+                "shell",
+                "steer",
+                "stop",
+                "kick",
+              ],
             }
           : {}),
       },

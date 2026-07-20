@@ -17,6 +17,7 @@ interface ManagedAgentRow {
   tmux_session: string | null
   tmux_window: string | null
   tmux_window_id: string | null
+  tmux_pane_id: string | null
   scratchpad_url: string | null
   instance_id: string | null
   runtime_session_id: string | null
@@ -46,6 +47,8 @@ function openInventory(): Database {
       branch TEXT,
       tmux_session TEXT,
       tmux_window TEXT,
+      tmux_window_id TEXT,
+      tmux_pane_id TEXT,
       scratchpad_url TEXT,
       instance_id TEXT,
       runtime_session_id TEXT,
@@ -57,11 +60,11 @@ function openInventory(): Database {
       probe_backoff_until TEXT
     )
   `)
-  // Inventories predating the window-id column: CREATE TABLE IF NOT EXISTS
-  // won't extend an existing table, so add the column in place.
+  // CREATE TABLE IF NOT EXISTS won't extend an existing inventory, so add new columns in place.
   const columns = db.query("PRAGMA table_info(managed_agents)").all() as Array<{ name: string }>
   const added: Array<[string, string]> = [
     ["tmux_window_id", "TEXT"],
+    ["tmux_pane_id", "TEXT"],
     ["instance_id", "TEXT"],
     ["runtime_session_id", "TEXT"],
     ["probe_failures", "INTEGER"],
@@ -86,6 +89,7 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
     tmuxSession: row.tmux_session ?? undefined,
     tmuxWindow: row.tmux_window ?? undefined,
     tmuxWindowId: row.tmux_window_id ?? undefined,
+    tmuxPaneId: row.tmux_pane_id ?? undefined,
     scratchpadUrl: row.scratchpad_url ?? undefined,
     instanceId: row.instance_id ?? undefined,
     runtimeSessionId: row.runtime_session_id ?? undefined,
@@ -116,9 +120,9 @@ export function upsertAgent(agent: ManagedAgent): void {
       `
       INSERT INTO managed_agents (
         id, name, runtime, status, worktree, branch, tmux_session, tmux_window,
-        tmux_window_id, scratchpad_url, instance_id, runtime_session_id, command_json,
+        tmux_window_id, tmux_pane_id, scratchpad_url, instance_id, runtime_session_id, command_json,
         created_at, updated_at, last_output, probe_failures, probe_backoff_until
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         runtime = excluded.runtime,
@@ -128,6 +132,7 @@ export function upsertAgent(agent: ManagedAgent): void {
         tmux_session = excluded.tmux_session,
         tmux_window = excluded.tmux_window,
         tmux_window_id = excluded.tmux_window_id,
+        tmux_pane_id = excluded.tmux_pane_id,
         scratchpad_url = excluded.scratchpad_url,
         instance_id = excluded.instance_id,
         runtime_session_id = excluded.runtime_session_id,
@@ -147,6 +152,7 @@ export function upsertAgent(agent: ManagedAgent): void {
       agent.tmuxSession ?? null,
       agent.tmuxWindow ?? null,
       agent.tmuxWindowId ?? null,
+      agent.tmuxPaneId ?? null,
       agent.scratchpadUrl ?? null,
       agent.instanceId ?? null,
       agent.runtimeSessionId ?? null,
@@ -164,7 +170,15 @@ export function upsertAgent(agent: ManagedAgent): void {
 
 export function findAgent(ref: string): ManagedAgent {
   const agents = readInventory()
-  const matches = agents.filter((agent) => agent.id === ref || agent.name === ref)
+  const byId = agents.find((agent) => agent.id === ref)
+  if (byId) return byId
+
+  const byRuntimeSession = agents
+    .filter((agent) => agent.runtimeSessionId === ref)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  if (byRuntimeSession[0]) return byRuntimeSession[0]
+
+  const matches = agents.filter((agent) => agent.name === ref)
   if (matches.length === 0) die(`no agent found for ${ref}`)
   if (matches.length > 1) die(`multiple agents match ${ref}; use id`)
   return matches[0]

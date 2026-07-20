@@ -21,8 +21,21 @@ export function piLaunchArgs(piBin: string, runtimeSessionId: string): string[] 
   return [piBin, "--session-id", runtimeSessionId]
 }
 
+function harnessDaemonEnvironment(): string {
+  return `THREA_HARNESSD_ENTRYPOINT=${process.env.THREA_HARNESSD_ENTRYPOINT || join(import.meta.dir, "index.ts")}`
+}
+
+export function piLaunchCommand(piBin: string, runtimeSessionId: string): string {
+  return ["env", harnessDaemonEnvironment(), ...piLaunchArgs(piBin, runtimeSessionId)].map(shellQuote).join(" ")
+}
+
 export function piResumeCommand(piBin: string, runtimeSessionId: string, expectedRootStreamId: string): string {
-  return ["env", `THREA_EXPECTED_ROOT_STREAM_ID=${expectedRootStreamId}`, ...piLaunchArgs(piBin, runtimeSessionId)]
+  return [
+    "env",
+    harnessDaemonEnvironment(),
+    `THREA_EXPECTED_ROOT_STREAM_ID=${expectedRootStreamId}`,
+    ...piLaunchArgs(piBin, runtimeSessionId),
+  ]
     .map(shellQuote)
     .join(" ")
 }
@@ -147,22 +160,17 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     const partial: Partial<SpawnResult> = { worktree, branch, tmuxSession: session, runtimeSessionId }
     try {
       const window = pickTmuxWindow(session, options.name)
-      const windowId = createWindow(
-        session,
-        window,
-        worktree,
-        piLaunchArgs(piBin, runtimeSessionId).map(shellQuote).join(" ")
-      )
-      Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId })
+      const { windowId, paneId } = createWindow(session, window, worktree, piLaunchCommand(piBin, runtimeSessionId))
+      Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId, tmuxPaneId: paneId })
       console.log(`harnessd: launched Pi in tmux ${session}:${window} (${windowId})`)
 
       if (!options.noRemote) {
         await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
-        sendKeys(windowId, ["/remote-control", "Enter"])
+        sendKeys(paneId, ["/remote-control", "Enter"])
         await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_REMOTE_WAIT_MS ?? 6000))
       }
 
-      const outputText = capturePane(windowId)
+      const outputText = capturePane(paneId)
       const link = readPiRemoteSession(runtimeSessionId)
       return {
         worktree,
@@ -170,6 +178,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
         tmuxSession: session,
         tmuxWindow: window,
         tmuxWindowId: windowId,
+        tmuxPaneId: paneId,
         scratchpadUrl: link?.scratchpadUrl ?? firstScratchpadUrl(outputText),
         instanceId: link?.instanceId,
         runtimeSessionId,
@@ -190,7 +199,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "pi", name: agent.name })
     ensureTmuxSession(session, true)
     const window = pickTmuxWindow(session, agent.name)
-    const windowId = createWindow(
+    const { windowId, paneId } = createWindow(
       session,
       window,
       agent.worktree,
@@ -201,13 +210,14 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
       )
     )
     await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
-    const output = capturePane(windowId)
+    const output = capturePane(paneId)
     return {
       worktree: agent.worktree,
       branch: agent.branch ?? agent.name,
       tmuxSession: session,
       tmuxWindow: window,
       tmuxWindowId: windowId,
+      tmuxPaneId: paneId,
       scratchpadUrl: agent.scratchpadUrl,
       instanceId: agent.instanceId,
       runtimeSessionId: agent.runtimeSessionId,
@@ -278,19 +288,20 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       })
 
       const window = pickTmuxWindow(session, options.name)
-      const windowId = createWindow(session, window, worktree, claudeLaunchCommand(args, identity, config))
-      Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId })
+      const { windowId, paneId } = createWindow(session, window, worktree, claudeLaunchCommand(args, identity, config))
+      Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId, tmuxPaneId: paneId })
       console.log(`harnessd: launched Claude Code in tmux ${session}:${window} (${windowId})`)
 
-      if (!options.noAutoAccept) await this.acceptBootPrompts(windowId)
+      if (!options.noAutoAccept) await this.acceptBootPrompts(paneId)
 
-      const outputText = capturePane(windowId)
+      const outputText = capturePane(paneId)
       return {
         worktree,
         branch,
         tmuxSession: session,
         tmuxWindow: window,
         tmuxWindowId: windowId,
+        tmuxPaneId: paneId,
         scratchpadUrl: scratchpadUrl ?? firstScratchpadUrl(outputText),
         instanceId: identity.instanceId,
         runtimeSessionId: identity.runtimeSessionId,
@@ -322,7 +333,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     ensureTmuxSession(session, true)
     const noYolo = recordedNoYolo(agent)
     const window = pickTmuxWindow(session, agent.name)
-    const windowId = createWindow(
+    const { windowId, paneId } = createWindow(
       session,
       window,
       agent.worktree,
@@ -337,18 +348,19 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     )
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
     try {
-      await this.acceptBootPrompts(windowId)
-      sendKeys(windowId, ["/remote-control", "Enter"])
+      await this.acceptBootPrompts(paneId)
+      sendKeys(paneId, ["/remote-control", "Enter"])
       await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_REMOTE_WAIT_MS ?? 2000))
-      sendKeys(windowId, ["/rc", "Enter"])
+      sendKeys(paneId, ["/rc", "Enter"])
       await Bun.sleep(500)
-      const output = capturePane(windowId)
+      const output = capturePane(paneId)
       return {
         worktree: agent.worktree,
         branch: agent.branch ?? agent.name,
         tmuxSession: session,
         tmuxWindow: window,
         tmuxWindowId: windowId,
+        tmuxPaneId: paneId,
         scratchpadUrl: agent.scratchpadUrl,
         instanceId: identity.instanceId,
         runtimeSessionId: identity.runtimeSessionId,
@@ -400,12 +412,12 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
    * dialog still open (which left the channel half-wired often enough that the
    * old two-blind-Enters approach needed constant retuning).
    */
-  private async acceptBootPrompts(windowId: string): Promise<void> {
+  private async acceptBootPrompts(paneId: string): Promise<void> {
     const deadline = Date.now() + Number(process.env.THREA_HARNESSD_CLAUDE_BOOT_WAIT_MS ?? 45_000)
     while (Date.now() < deadline) {
-      const text = capturePane(windowId)
+      const text = capturePane(paneId)
       if (BOOT_DIALOG_RE.test(text)) {
-        sendKeys(windowId, ["Enter"])
+        sendKeys(paneId, ["Enter"])
         await Bun.sleep(1000)
         continue
       }
@@ -504,6 +516,7 @@ export function claudeLaunchCommand(
     THREA_RUNTIME_SESSION_ID: identity.runtimeSessionId,
     THREA_DISPLAY_NAME: process.env.THREA_DISPLAY_NAME || config.displayName || "Claude Code",
     THREA_DEFAULT_LABEL: process.env.THREA_DEFAULT_LABEL || config.defaultLabel || "coding",
+    THREA_HARNESSD_ENTRYPOINT: process.env.THREA_HARNESSD_ENTRYPOINT || join(import.meta.dir, "index.ts"),
     THREA_COLD_START_IF_ARCHIVED: coldStartIfArchived,
     THREA_COLD_START_IF_MISSING: coldStartIfMissing,
     ...(expectedRootStreamId ? { THREA_EXPECTED_ROOT_STREAM_ID: expectedRootStreamId } : {}),

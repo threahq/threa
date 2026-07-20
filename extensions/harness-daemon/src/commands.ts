@@ -89,6 +89,7 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
       tmuxSession: result.tmuxSession,
       tmuxWindow: result.tmuxWindow,
       tmuxWindowId: result.tmuxWindowId,
+      tmuxPaneId: result.tmuxPaneId,
       scratchpadUrl: result.scratchpadUrl,
       instanceId: result.instanceId,
       runtimeSessionId: result.runtimeSessionId,
@@ -460,6 +461,7 @@ export async function reviveAgent(
       tmuxSession: result.tmuxSession,
       tmuxWindow: result.tmuxWindow,
       tmuxWindowId: result.tmuxWindowId,
+      tmuxPaneId: result.tmuxPaneId,
       status: "online",
       updatedAt: now(),
       lastOutput: result.output.slice(-4000),
@@ -521,30 +523,45 @@ export function listAgents(): void {
 
 export function stopAgent(ref: string): void {
   const agent = findAgent(ref)
-  const target = tmuxTarget(agent)
+  const target = tmuxWindowTarget(agent)
   const result = output(["tmux", "kill-window", "-t", target], { allowFailure: true })
   if (result.exitCode !== 0) die(result.stderr.trim() || `tmux kill-window failed for ${target}`)
   upsertAgent({ ...agent, status: "stopped", updatedAt: now() })
   console.log(`harnessd: stopped ${agent.name} (${target})`)
 }
 
-/** Window id when recorded (durable across renames/collisions), else the legacy session:name target. */
-function tmuxTarget(agent: ManagedAgent): string {
+function tmuxWindowTarget(agent: ManagedAgent): string {
   if (agent.tmuxWindowId) return agent.tmuxWindowId
   if (agent.tmuxSession && agent.tmuxWindow) return `${agent.tmuxSession}:${agent.tmuxWindow}`
-  return die(`${agent.name} has no tmux target recorded`)
+  return die(`${agent.name} has no tmux window recorded`)
+}
+
+function tmuxKeyTarget(agent: ManagedAgent): string {
+  if (agent.tmuxPaneId) return agent.tmuxPaneId
+  const window = tmuxWindowTarget(agent)
+  const result = output(["tmux", "list-panes", "-t", window, "-F", "#{pane_id}"], { allowFailure: true })
+  const panes = result.stdout.split("\n").filter(Boolean)
+  if (result.exitCode === 0 && panes.length === 1) return panes[0]!
+  return die(`${agent.name} has no unambiguous tmux pane recorded; restart the managed session`)
+}
+
+/** Nudge the managed agent's TUI with Enter (e.g. accept a blocking prompt). */
+export function kickAgent(ref: string, send: typeof sendKeys = sendKeys): void {
+  const target = tmuxKeyTarget(findAgent(ref))
+  send(target, ["Enter"])
+  console.log(`harnessd: kicked ${target}`)
 }
 
 /** Send Esc to interrupt the agent's current turn (Claude Code / Pi) without killing the window. */
 export function interruptAgent(ref: string): void {
-  const target = tmuxTarget(findAgent(ref))
+  const target = tmuxKeyTarget(findAgent(ref))
   sendKeys(target, ["Escape"])
   console.log(`harnessd: interrupted ${target}`)
 }
 
 /** Interrupt the current turn, then (if given) type a follow-up and submit it. */
 export function steerAgent(ref: string, text: string): void {
-  const target = tmuxTarget(findAgent(ref))
+  const target = tmuxKeyTarget(findAgent(ref))
   sendKeys(target, ["Escape"])
   if (text) {
     // Esc restores the interrupted message into the input box; clear it (Ctrl-U)
@@ -557,10 +574,10 @@ export function steerAgent(ref: string, text: string): void {
   console.log(`harnessd: steered ${target}`)
 }
 
-/** Raw `tmux send-keys` passthrough to the agent's window (tokens follow tmux rules). */
+/** Raw `tmux send-keys` passthrough to the agent's pane (tokens follow tmux rules). */
 export function sendKeysToAgent(ref: string, keys: string[]): void {
   if (keys.length === 0) die("keys requires at least one key or token")
-  const target = tmuxTarget(findAgent(ref))
+  const target = tmuxKeyTarget(findAgent(ref))
   sendKeys(target, keys)
   console.log(`harnessd: sent keys to ${target}`)
 }
@@ -568,7 +585,7 @@ export function sendKeysToAgent(ref: string, keys: string[]): void {
 export function attachAgent(ref: string): void {
   const agent = findAgent(ref)
   if (!agent.tmuxSession) die(`${agent.name} has no tmux session recorded`)
-  const target = tmuxTarget(agent)
+  const target = tmuxWindowTarget(agent)
   if (process.env.TMUX) {
     const result = Bun.spawnSync(["tmux", "switch-client", "-t", target], { stdout: "inherit", stderr: "pipe" })
     if (result.exitCode !== 0) die(result.stderr.toString().trim() || `tmux switch-client failed for ${target}`)

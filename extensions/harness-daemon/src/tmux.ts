@@ -65,19 +65,23 @@ export function pickTmuxWindow(session: string, name: string): string {
 /**
  * Create a window at the session's first free index (the `session:` target —
  * no `-a`, which inserts relative to the *current* window and fails when the
- * next index is taken) and return its window id. The id is the durable handle
- * for steer/keys/stop: names can collide or be renamed, `@n` ids cannot.
+ * next index is taken) and return its stable window + initial pane ids.
  * Detached (`-d`) so spawning into the user's attached session never yanks
  * focus away from what they're doing.
  */
-export function createWindow(session: string, name: string, cwd: string, command: string): string {
+export function createWindow(
+  session: string,
+  name: string,
+  cwd: string,
+  command: string
+): { windowId: string; paneId: string } {
   const result = output([
     "tmux",
     "new-window",
     "-d",
     "-P",
     "-F",
-    "#{window_id}",
+    "#{window_id} #{pane_id}",
     "-t",
     `${session}:`,
     "-n",
@@ -86,9 +90,9 @@ export function createWindow(session: string, name: string, cwd: string, command
     cwd,
     command,
   ])
-  const windowId = result.stdout.trim()
-  if (!windowId) die("tmux new-window did not return a window id")
-  return windowId
+  const [windowId, paneId] = result.stdout.trim().split(/\s+/)
+  if (!windowId || !paneId) die("tmux new-window did not return window and pane ids")
+  return { windowId, paneId }
 }
 
 export function capturePane(target: string, lines = 30): string {

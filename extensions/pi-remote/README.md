@@ -35,6 +35,8 @@ bun run extensions/pi-remote/install-local.ts
 
 Then run `/reload` in Pi. Pass a different target dir as the first argument if needed.
 
+For harness-managed sessions, `/kick` in the linked scratchpad asks harnessd to send Enter to the session's recorded tmux pane, useful when Pi is waiting on a blocking prompt.
+
 The script rebuilds `~/.pi/agent/extensions/threa-remote` from scratch each time, so re-running it is the supported way to update.
 
 ### Why a script and not `cp -R` + `bun install`

@@ -33,7 +33,17 @@ describe("createClaudeSessionControl", () => {
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
       const actuator = createClaudeSessionControl()
       expect(actuator).toBeDefined()
-      expect(actuator!.commands).toEqual(["stop", "steer", "model", "thinking", "compact", "run", "reload", "carry-on"])
+      expect(actuator!.commands).toEqual([
+        "stop",
+        "steer",
+        "kick",
+        "model",
+        "thinking",
+        "compact",
+        "run",
+        "reload",
+        "carry-on",
+      ])
       expect(actuator!.thinkingLevels).toEqual(["low", "medium", "high", "xhigh", "max", "ultracode"])
       expect(actuator!.modelSuggestions!.map((suggestion) => suggestion.value)).toContain("opus")
       expect(actuator!.modelSuggestions!.every((suggestion) => suggestion.label)).toBe(true)
@@ -44,6 +54,10 @@ describe("createClaudeSessionControl", () => {
 })
 
 describe("runClaudeCommand validation (paths that never touch tmux)", () => {
+  it("fails loudly when /kick has no harness-managed runtime identity", async () => {
+    expect(runClaudeCommand("kick", "")).rejects.toThrow("Harness kick is unavailable for this session.")
+  })
+
   it("gives usage help for /model without an argument", async () => {
     const outcome = await runClaudeCommand("model", "")
     expect(outcome.ok).toBe(false)
