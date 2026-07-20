@@ -71,6 +71,7 @@ export async function failSessionWithLifecycle(
       await OutboxRepository.insert(tx, "agent_session:failed", {
         workspaceId: stream.workspaceId,
         streamId,
+        rootStreamId: stream.rootStreamId ?? stream.id,
         event: streamEvent,
       })
     }
@@ -78,7 +79,7 @@ export async function failSessionWithLifecycle(
   })
 
   // Live-update an open trace dialog (session room) the way the in-process
-  // `trace.notifyFailed()` does — the outbox only reaches the stream room.
+  // `trace.notifyFailed()` does — the outbox does not reach the session room.
   if (won && stream) {
     io.to(`ws:${stream.workspaceId}:agent_session:${sessionId}`).emit("agent_session:failed", { sessionId })
   }

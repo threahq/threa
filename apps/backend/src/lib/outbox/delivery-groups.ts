@@ -330,6 +330,21 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return groups
   }
 
+  if (
+    isOneOfOutboxEventType(event, [
+      "agent_session:started",
+      "agent_session:completed",
+      "agent_session:failed",
+      "agent_session:interrupted",
+      "agent_session:deleted",
+    ])
+  ) {
+    const { streamId, rootStreamId } = event.payload as { streamId: string; rootStreamId?: string }
+    return rootStreamId && rootStreamId !== streamId
+      ? [streamGroup(streamId), streamGroup(rootStreamId)]
+      : [streamGroup(streamId)]
+  }
+
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to
   // their scope's delivery group instead of the whole-workspace fallthrough.
   const permissionScopedGroup = PERMISSION_GROUP_BY_EVENT.get(event.eventType)

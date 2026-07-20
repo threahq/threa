@@ -728,6 +728,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           await OutboxRepository.insert(tx, "agent_session:completed", {
             workspaceId: stream.workspaceId,
             streamId: session.streamId,
+            rootStreamId: stream.rootStreamId ?? stream.id,
             event: completedEvent,
           })
         }
@@ -735,8 +736,8 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       })
 
       // Live-update an open trace dialog (session room) the way the in-process
-      // `trace.notifyCompleted()` does — the outbox broadcast only reaches the
-      // stream room, so the dialog wouldn't otherwise transition until a refetch.
+      // `trace.notifyCompleted()` does — the outbox broadcast does not reach the
+      // session room, so the dialog wouldn't otherwise transition until a refetch.
       if (committed && stream) {
         io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:completed", { sessionId: id })
       }

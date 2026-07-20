@@ -585,26 +585,16 @@ export interface CommandFailedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
-// Agent session event payloads (stream-scoped - visible to all stream members)
-export interface AgentSessionStartedOutboxPayload extends StreamScopedPayload {
+interface AgentSessionOutboxPayload extends StreamScopedPayload {
+  rootStreamId?: string
   event: StreamEvent
 }
 
-export interface AgentSessionCompletedOutboxPayload extends StreamScopedPayload {
-  event: StreamEvent
-}
-
-export interface AgentSessionFailedOutboxPayload extends StreamScopedPayload {
-  event: StreamEvent
-}
-
-export interface AgentSessionInterruptedOutboxPayload extends StreamScopedPayload {
-  event: StreamEvent
-}
-
-export interface AgentSessionDeletedOutboxPayload extends StreamScopedPayload {
-  event: StreamEvent
-}
+export type AgentSessionStartedOutboxPayload = AgentSessionOutboxPayload
+export type AgentSessionCompletedOutboxPayload = AgentSessionOutboxPayload
+export type AgentSessionFailedOutboxPayload = AgentSessionOutboxPayload
+export type AgentSessionInterruptedOutboxPayload = AgentSessionOutboxPayload
+export type AgentSessionDeletedOutboxPayload = AgentSessionOutboxPayload
 
 // Read state event payloads (author-scoped - only visible to the user marking as read)
 export interface StreamReadOutboxPayload extends WorkspaceScopedPayload {
