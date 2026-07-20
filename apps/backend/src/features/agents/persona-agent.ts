@@ -450,6 +450,7 @@ export class PersonaAgent {
         pool,
         triggerMessageId: messageId,
         streamId: sessionStreamId,
+        rootStreamId: stream.rootStreamId ?? stream.id,
         personaId: persona.id,
         personaName: persona.name,
         workspaceId,
