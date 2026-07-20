@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
 import type { EventService } from "./event-service"
 import type { StreamService } from "../streams"
@@ -22,6 +22,7 @@ import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror
 import { deriveContentMarkdown } from "./content"
 import type { JSONContent } from "@threa/types"
 import { messageMetadataSchema } from "./metadata-schema"
+import type { SteeredMessageService } from "./steered-message-service"
 
 // Fields shared by every create/update variant. Defining once keeps the
 // six schemas from drifting when a per-message option is added.
@@ -71,6 +72,7 @@ const contentJsonSchema = z.object({
 const createMessageJsonToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   contentJson: contentJsonSchema,
+  steer: z.literal(true).optional(),
   ...commonMessageOptionsSchema,
 })
 
@@ -78,6 +80,7 @@ const createMessageJsonToStreamSchema = z.object({
 const createMessageMarkdownToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   content: z.string().min(1, "content is required"),
+  steer: z.literal(true).optional(),
   ...commonMessageOptionsSchema,
 })
 
@@ -155,6 +158,7 @@ const createMessageE2eToStreamSchema = z.object({
   // the wire so the rows can be attached to the message.
   attachmentIds: z.array(z.string()).optional(),
   clientMessageId: z.string().min(1).optional(),
+  steer: z.literal(true).optional(),
 })
 
 // Plaintext-only union (used by `normalizeContent` and the post-E2E-gate
@@ -282,9 +286,16 @@ interface Dependencies {
   eventService: EventService
   streamService: StreamService
   commandRegistry: CommandRegistry
+  steeredMessageService: SteeredMessageService
 }
 
-export function createMessageHandlers({ pool, eventService, streamService, commandRegistry }: Dependencies) {
+export function createMessageHandlers({
+  pool,
+  eventService,
+  streamService,
+  commandRegistry,
+  steeredMessageService,
+}: Dependencies) {
   return {
     async create(req: Request, res: Response) {
       const userId = req.user!.id
@@ -298,6 +309,11 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
         target: "dmUserId" in data ? { dmUserId: data.dmUserId } : { streamId: data.streamId },
       })
       const streamId = stream.id
+      const insertSteeredInvocations =
+        "steer" in data && data.steer
+          ? (client: PoolClient, message: Message) =>
+              steeredMessageService.dispatchInTransaction(client, { workspaceId, streamId, userId, message })
+          : undefined
 
       // INV-E1: a plaintext request must not land in an E2E stream and an E2E
       // request must not land in a plaintext stream. Either direction would
@@ -323,19 +339,22 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
         // without crashing on null content. Attachments still bind: the rows are
         // `e2e_only` ciphertext (no real content to gate on), and the same
         // workspace + shareable check the plaintext path runs covers them.
-        const message = await eventService.createMessage({
-          workspaceId,
-          streamId,
-          authorId: userId,
-          authorType: "user",
-          contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-          contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-          ciphertext: Buffer.from(data.ciphertext, "base64"),
-          envelope: data.envelope,
-          e2eVersion: data.e2eVersion,
-          attachmentIds: data.attachmentIds && data.attachmentIds.length > 0 ? data.attachmentIds : undefined,
-          clientMessageId: data.clientMessageId,
-        })
+        const { message } = await eventService.createMessageReturningConversation(
+          {
+            workspaceId,
+            streamId,
+            authorId: userId,
+            authorType: "user",
+            contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+            contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+            ciphertext: Buffer.from(data.ciphertext, "base64"),
+            envelope: data.envelope,
+            e2eVersion: data.e2eVersion,
+            attachmentIds: data.attachmentIds && data.attachmentIds.length > 0 ? data.attachmentIds : undefined,
+            clientMessageId: data.clientMessageId,
+          },
+          insertSteeredInvocations
+        )
         return res.status(201).json({ message: serializeMessage(message) })
       }
 
@@ -402,19 +421,22 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       // `conversationId` is the id the declared directive assigned the message to
       // (a fresh mint for a board `new` post) — surfaced so the board composer can
       // slot an optimistic card keyed by the real id, reconciled by the echo.
-      const { message, conversationId } = await eventService.createMessageReturningConversation({
-        workspaceId,
-        streamId,
-        authorId: userId,
-        authorType: "user",
-        contentJson,
-        contentMarkdown,
-        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-        clientMessageId: data.clientMessageId,
-        metadata: data.metadata,
-        conversation: data.conversation,
-        confirmedPrivacyWarning: data.confirmedPrivacyWarning,
-      })
+      const { message, conversationId } = await eventService.createMessageReturningConversation(
+        {
+          workspaceId,
+          streamId,
+          authorId: userId,
+          authorType: "user",
+          contentJson,
+          contentMarkdown,
+          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+          clientMessageId: data.clientMessageId,
+          metadata: data.metadata,
+          conversation: data.conversation,
+          confirmedPrivacyWarning: data.confirmedPrivacyWarning,
+        },
+        insertSteeredInvocations
+      )
 
       res.status(201).json({ message: serializeMessage(message), ...(conversationId && { conversationId }) })
     },

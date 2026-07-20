@@ -466,12 +466,15 @@ export class EventService {
    * no directive was declared. The board composer surfaces it on the send
    * response so it can write an optimistic board card keyed by the real
    * conversation id (no temp-id swap), reconciled by the `conversation:*` echo.
+   * `onCreated` joins the same transaction and runs only for the winning insert.
    */
   async createMessageReturningConversation(
-    params: CreateMessageParams
+    params: CreateMessageParams,
+    onCreated?: (client: PoolClient, message: Message) => Promise<void>
   ): Promise<{ message: Message; conversationId?: string }> {
     try {
-      return await this._createMessageTxn(params)
+      const result = await this._createMessageTxn(params, onCreated)
+      return { message: result.message, ...(result.conversationId && { conversationId: result.conversationId }) }
     } catch (error) {
       // Concurrent duplicate: the txn rolled back (no orphaned stream_events/outbox),
       // and we return the already-committed message from the winning transaction.
@@ -485,13 +488,13 @@ export class EventService {
   async createMessageInTransaction(
     client: PoolClient,
     params: CreateMessageParams
-  ): Promise<{ message: Message; conversationId?: string }> {
+  ): Promise<{ message: Message; conversationId?: string; created: boolean }> {
     // Fast path for sequential retries: return the existing message without
     // writes. No conversation id — the first send already surfaced it; a retry
     // reconciles through the echo/refetch, not a fresh optimistic card.
     if (params.clientMessageId) {
       const existing = await MessageRepository.findByClientMessageId(client, params.streamId, params.clientMessageId)
-      if (existing) return { message: existing }
+      if (existing) return { message: existing, created: false }
     }
     // The enclave seals its E2E reply with the message AAD bound to a
     // server-minted id, so the caller can pass that same id here to keep the
@@ -836,11 +839,18 @@ export class EventService {
       })
     }
 
-    return { message, conversationId }
+    return { message, conversationId, created: true }
   }
 
-  private async _createMessageTxn(params: CreateMessageParams): Promise<{ message: Message; conversationId?: string }> {
-    return withTransaction(this.pool, (client) => this.createMessageInTransaction(client, params))
+  private async _createMessageTxn(
+    params: CreateMessageParams,
+    onCreated?: (client: PoolClient, message: Message) => Promise<void>
+  ): Promise<{ message: Message; conversationId?: string; created: boolean }> {
+    return withTransaction(this.pool, async (client) => {
+      const result = await this.createMessageInTransaction(client, params)
+      if (result.created) await onCreated?.(client, result.message)
+      return result
+    })
   }
 
   async editMessage(params: EditMessageParams): Promise<Message | null> {

@@ -1795,6 +1795,7 @@ function EditingMessageEvent({
         {!editingSurfaceTouch ? (
           <UnsentMessageEditForm
             messageId={event.id}
+            workspaceId={workspaceId}
             streamId={streamId}
             initialContentJson={payload.contentJson}
             onDone={stopEditing}
@@ -1804,6 +1805,7 @@ function EditingMessageEvent({
       {editingSurfaceTouch && (
         <UnsentMessageEditForm
           messageId={event.id}
+          workspaceId={workspaceId}
           streamId={streamId}
           initialContentJson={payload.contentJson}
           onDone={stopEditing}

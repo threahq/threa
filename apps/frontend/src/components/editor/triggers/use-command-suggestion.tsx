@@ -145,6 +145,7 @@ export function useCommandSuggestion({
         scope: cmd.scope,
         args: cmd.args,
         clientActionId: cmd.clientActionId,
+        ...(cmd.name === "steer" && { placement: "inline" as const }),
       }))
     return [
       ...(includeMemoSearch ? [MEMO_SLASH_ITEM] : []),

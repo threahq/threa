@@ -16,7 +16,7 @@ import { createWorkspaceHandlers, WorkspaceRepository } from "./features/workspa
 import { createWorkspaceMemberManagementHandlers } from "./features/workspace-members"
 import type { ControlPlaneClient } from "./lib/control-plane-client"
 import { createStreamHandlers, createStreamBriefHandlers, StreamBriefService } from "./features/streams"
-import { createMessageHandlers } from "./features/messaging"
+import { createMessageHandlers, SteeredMessageService } from "./features/messaging"
 import { createAttachmentHandlers } from "./features/attachments"
 import { createSearchHandlers } from "./features/search"
 import { createMemoHandlers } from "./features/memos"
@@ -280,6 +280,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const authHandlers = createAuthHandlers()
   const avatarUpload = createAvatarUploadMiddleware()
   const commandAvailabilityService = new CommandAvailabilityService({ pool, commandRegistry })
+  const steeredMessageService = new SteeredMessageService({ commandAvailabilityService, botRuntimeService })
   const boardViewService = new BoardViewService(pool)
   const workspace = createWorkspaceHandlers({
     workspaceService,
@@ -319,6 +320,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     eventService,
     streamService,
     commandRegistry,
+    steeredMessageService,
   })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
   const search = createSearchHandlers({ pool, searchService })

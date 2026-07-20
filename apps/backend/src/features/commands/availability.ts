@@ -3,6 +3,7 @@ import {
   BotInvocationCapabilities,
   BotRuntimeKinds,
   BotRuntimeStatuses,
+  BotTypes,
   CommandKinds,
   DISCUSS_WITH_ARIADNE_COMMAND,
   StreamTypes,
@@ -44,6 +45,8 @@ export interface RuntimeCommandTarget {
   responseStreamId: string
   targetInstanceId: string
   targetRuntimeSessionId: string
+  /** Whether this user may invoke the target through mention routing for dedupe. */
+  supportsMentionable: boolean
   /** Lowercased canonical names the runtime currently advertises. */
   advertisedCommandNames: ReadonlySet<string>
   /** Thinking levels the runtime supports for the current model. Empty = runtime did not advertise. */
@@ -75,7 +78,14 @@ export class CommandAvailabilityService {
     streamId: string
     name: string
   }): Promise<ResolvedCommand | null> {
-    const commands = await this.resolveStreamCommands(params)
+    return withClient(this.deps.pool, (db) => this.resolveCommandInTransaction(db, params))
+  }
+
+  async resolveCommandInTransaction(
+    db: Querier,
+    params: { workspaceId: string; userId: string; streamId: string; name: string }
+  ): Promise<ResolvedCommand | null> {
+    const commands = await this.resolveStreamCommandsInTransaction(db, params)
     const lower = params.name.toLowerCase()
     return commands.find((command) => command.info.name.toLowerCase() === lower) ?? null
   }
@@ -85,42 +95,47 @@ export class CommandAvailabilityService {
     userId: string
     streamId: string
   }): Promise<ResolvedCommand[]> {
-    return withClient(this.deps.pool, async (client) => {
-      const stream = await checkStreamAccess(client, params.streamId, params.workspaceId, params.userId)
-      if (!stream || stream.archivedAt) return []
+    return withClient(this.deps.pool, (db) => this.resolveStreamCommandsInTransaction(db, params))
+  }
 
-      const commands: ResolvedCommand[] = []
+  private async resolveStreamCommandsInTransaction(
+    db: Querier,
+    params: { workspaceId: string; userId: string; streamId: string }
+  ): Promise<ResolvedCommand[]> {
+    const stream = await checkStreamAccess(db, params.streamId, params.workspaceId, params.userId)
+    if (!stream || stream.archivedAt) return []
 
-      for (const info of listServerCommandInfos(this.deps.commandRegistry)) {
-        if (await isServerCommandAvailableInStream(info.name, stream, client)) {
-          commands.push({ info, executionKind: CommandKinds.SERVER })
-        }
+    const commands: ResolvedCommand[] = []
+
+    for (const info of listServerCommandInfos(this.deps.commandRegistry)) {
+      if (await isServerCommandAvailableInStream(info.name, stream, db)) {
+        commands.push({ info, executionKind: CommandKinds.SERVER })
       }
+    }
 
-      for (const info of listClientActionCommandInfos()) {
-        if (isClientActionAvailableInStream(info, stream)) {
-          commands.push({ info, executionKind: CommandKinds.CLIENT_ACTION })
-        }
+    for (const info of listClientActionCommandInfos()) {
+      if (isClientActionAvailableInStream(info, stream)) {
+        commands.push({ info, executionKind: CommandKinds.CLIENT_ACTION })
       }
+    }
 
-      const runtimeTarget = await resolveRuntimeCommandTarget(client, {
-        workspaceId: params.workspaceId,
-        userId: params.userId,
-        stream,
-      })
-      if (runtimeTarget) {
-        for (const info of listSessionControlCommandInfos()) {
-          if (!runtimeTarget.advertisedCommandNames.has(info.name.toLowerCase())) continue
-          commands.push({
-            info: applyAdvertisedSuggestions(info, runtimeTarget),
-            executionKind: CommandKinds.BOT_RUNTIME,
-            runtime: runtimeTarget,
-          })
-        }
-      }
-
-      return dedupeCommands(commands)
+    const runtimeTarget = await resolveRuntimeCommandTarget(db, {
+      workspaceId: params.workspaceId,
+      userId: params.userId,
+      stream,
     })
+    if (runtimeTarget) {
+      for (const info of listSessionControlCommandInfos()) {
+        if (!runtimeTarget.advertisedCommandNames.has(info.name.toLowerCase())) continue
+        commands.push({
+          info: applyAdvertisedSuggestions(info, runtimeTarget),
+          executionKind: CommandKinds.BOT_RUNTIME,
+          runtime: runtimeTarget,
+        })
+      }
+    }
+
+    return dedupeCommands(commands)
   }
 }
 
@@ -205,6 +220,11 @@ async function resolveRuntimeCommandTarget(
     responseStreamId: stream.id,
     targetInstanceId: link.instanceId,
     targetRuntimeSessionId: link.runtimeSessionId,
+    // Mirror BotRepository.findInvocableByIds: the composite must choose the
+    // same trigger as the later message outbox so their idempotency keys match.
+    supportsMentionable:
+      botHasCapability(bot, BotInvocationCapabilities.MENTIONABLE) &&
+      (bot.type === BotTypes.SHARED || bot.ownerUserId === params.userId),
     advertisedCommandNames,
     advertisedThinkingLevels: resolveAdvertisedThinkingLevels(presence),
     advertisedModelSuggestions: resolveAdvertisedModelSuggestions(presence),

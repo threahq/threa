@@ -1103,6 +1103,10 @@ export const ShareErrorCodes = {
   E2E_SHARING_NOT_ALLOWED: "SHARE_E2E_NOT_ALLOWED",
 } as const
 
+export const MessageErrorCodes = {
+  STEER_UNAVAILABLE: "STEER_UNAVAILABLE",
+} as const
+
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)
 export const INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key"
 

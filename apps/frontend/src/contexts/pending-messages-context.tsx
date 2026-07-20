@@ -3,6 +3,7 @@ import { db } from "@/db"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { ConversationIntents, type JSONContent } from "@threa/types"
 import { deleteOptimisticBoardPost } from "@/stores/board-store"
+import { extractSteerDirective } from "@/lib/commands"
 
 type MessageStatus = "pending" | "failed" | "editing"
 /** Status the message had before the user entered editing mode */
@@ -16,7 +17,7 @@ interface PendingMessagesContextValue {
   /** Put a pending/failed message into editing mode so the queue skips it */
   markEditing: (id: string) => Promise<void>
   /** Save edits to an unsent message, return it to pending, and kick the queue */
-  saveEditedMessage: (id: string, contentJson: JSONContent) => Promise<void>
+  saveEditedMessage: (id: string, contentJson: JSONContent, options?: { steerAvailable?: boolean }) => Promise<void>
   /** Cancel editing and return message to its previous queue state */
   cancelEditing: (id: string) => Promise<void>
   /**
@@ -204,8 +205,10 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   }, [])
 
   const saveEditedMessage = useCallback(
-    async (id: string, contentJson: JSONContent) => {
+    async (id: string, contentJson: JSONContent, options?: { steerAvailable?: boolean }) => {
       const contentMarkdown = serializeToMarkdown(contentJson).trim()
+      const steerDirective = options?.steerAvailable ? extractSteerDirective(contentJson) : null
+      const steer = steerDirective?.hasMessageContent === true ? true : undefined
 
       const updated = await db.transaction("rw", db.pendingMessages, db.events, async () => {
         const existing = await db.pendingMessages.get(id)
@@ -219,6 +222,8 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
           preEditStatus: undefined,
           retryCount: 0,
           retryAfter: 0,
+          terminalFailure: undefined,
+          steer,
         })
 
         // Update the optimistic event's payload so the timeline reflects the edit
@@ -290,7 +295,13 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       // Dexie's deep KeyPaths inference hits a circular type on JSONContent.
       // Cast through unknown to bypass the broken type inference.
       type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
-      await (db.pendingMessages.update as unknown as UpdateFn)(id, { retryCount: 0, retryAfter: 0, ...patch })
+      await (db.pendingMessages.update as unknown as UpdateFn)(id, {
+        retryCount: 0,
+        retryAfter: 0,
+        status: undefined,
+        terminalFailure: undefined,
+        ...patch,
+      })
       await db.events.update(id, { _status: "pending" })
       markPending(id)
       notifyQueue()

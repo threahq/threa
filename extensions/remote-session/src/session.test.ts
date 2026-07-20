@@ -927,6 +927,38 @@ describe("steer into the running turn (native steer support)", () => {
     ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
   })
 
+  test("an empty composite steer closes silently when its message is already running", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_message", sourceMessageId: "msg_composite" }))
+    ;(client as unknown as { claim: () => Promise<null> }).claim = async () => null
+    const composite = makeSteerInvocation("")
+    composite.sourceMessageId = "msg_composite"
+    composite.metadata = { ...composite.metadata, steeredMessage: true }
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(composite)
+
+    expect(steered).toEqual([])
+    const close = calls.complete.find((entry) => entry.id === "binv_steer")
+    expect(close?.body.noResponse).toBe(true)
+    expect(close?.body.finalMessageMarkdown).toBeUndefined()
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_message")
+  })
+
   test("empty steer still closes a swept foldless control command instead of stranding its claim", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()

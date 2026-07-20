@@ -27,7 +27,7 @@ import { STREAM_ICONS } from "@/lib/streams"
 import { useScheduleMessage, useStreamBootstrap } from "@/hooks"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { extractCommandNode, extractCommandFromRawText } from "@/lib/commands"
+import { extractCommandNode, extractCommandFromRawText, extractSteerDirective } from "@/lib/commands"
 import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
@@ -549,12 +549,34 @@ function MessageInputComponent({
       const liveContent = editorContent ?? composer.content
       const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
 
+      const steerDirective = availableCommandByName.has("steer") ? extractSteerDirective(normalizedContent) : null
+
+      // A bare `/steer` remains a command-only send. When any message content
+      // or attachment surrounds it, the authored content stays a normal message
+      // carrying `steer: true`; the backend writes the message and follow-up
+      // command in one transaction.
+      if (steerDirective && !steerDirective.hasMessageContent) {
+        composer.setContent(EMPTY_DOC)
+        composer.resolveDraft()
+        setExpanded(false)
+        try {
+          await queueCommand({ commandMarkdown: "/steer", commandName: "steer" })
+        } catch {
+          setError("Failed to queue command. Please try again.")
+        } finally {
+          composer.setIsSending(false)
+        }
+        return
+      }
+
       // Dispatch as a command when the editor produced a slashCommand node,
       // or when the message is raw text that matches an available slash command
       // (e.g. `/model ` with a trailing space that never became a node). Plain
       // text like "/s" that does not match a known command still sends normally.
-      const commandNode = extractCommandNode(normalizedContent)
-      const rawTextCommand = commandNode === null ? extractCommandFromRawText(normalizedContent) : null
+      // Embedded steer is the exception above: it stays on the message path.
+      const commandNode = steerDirective ? null : extractCommandNode(normalizedContent)
+      const rawTextCommand =
+        commandNode === null && !steerDirective ? extractCommandFromRawText(normalizedContent) : null
       const resolvedCommand =
         commandNode ?? (rawTextCommand ? (availableCommandByName.get(rawTextCommand.name) ?? null) : null)
       if (resolvedCommand !== null) {
@@ -615,7 +637,8 @@ function MessageInputComponent({
         return
       }
 
-      const attachments = extractUploadedAttachments(normalizedContent)
+      const messageContent = steerDirective?.content ?? normalizedContent
+      const attachments = extractUploadedAttachments(messageContent)
       const attachmentIds = attachments.map((attachment) => attachment.id)
 
       const contentJson = liveContent
@@ -629,9 +652,10 @@ function MessageInputComponent({
         setExpanded(false)
 
         const result = await sendMessage({
-          contentJson: normalizedContent,
+          contentJson: messageContent,
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
           attachments: attachments.length > 0 ? attachments : undefined,
+          ...(steerDirective && { steer: true as const }),
           // Armed by "Reply in conversation": file this send into the
           // conversation synchronously (Mechanism C). Cleared only on success —
           // a failed send keeps the filing armed alongside the restored content.

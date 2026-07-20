@@ -991,6 +991,35 @@ describe("EventService.createMessage metadata propagation", () => {
     const insertParams = (MessageRepository.insert as any).mock.calls[0][1]
     expect(insertParams.metadata).toBeUndefined()
   })
+
+  it("runs the transactional callback for a newly created message", async () => {
+    const service = new EventService({} as any)
+    const onCreated = mock(async () => undefined)
+
+    await service.createMessageReturningConversation(baseParams, onCreated)
+
+    expect(onCreated).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ contentMarkdown: "hello" }))
+  })
+
+  it("does not repeat the transactional callback for an idempotent message retry", async () => {
+    const service = new EventService({} as any)
+    const existing = {
+      id: "msg_existing",
+      streamId: "stream_1",
+      contentMarkdown: "hello",
+      ciphertext: null,
+    }
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(existing as any)
+    const onCreated = mock(async () => undefined)
+
+    const result = await service.createMessageReturningConversation(
+      { ...baseParams, clientMessageId: "temp_1" },
+      onCreated
+    )
+
+    expect(result.message.id).toBe("msg_existing")
+    expect(onCreated).not.toHaveBeenCalled()
+  })
 })
 
 describe("EventService.createMessage conversation declaration (Mechanism C)", () => {

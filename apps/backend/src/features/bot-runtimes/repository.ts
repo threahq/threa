@@ -845,6 +845,8 @@ export const BotInvocationRepository = {
       maxAttempts: number
     }
   ): Promise<BotInvocation | null> {
+    // A composite message + steer shares one transaction timestamp; put the
+    // message invocation first when both capabilities are claimable.
     const result = await db.query<BotInvocationRow>(composeSql`WITH candidate AS (
         SELECT i.id FROM bot_invocations i
         WHERE i.workspace_id = ${params.workspaceId}
@@ -863,7 +865,7 @@ export const BotInvocationRepository = {
           AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
           AND i.attempts < ${params.maxAttempts}
           AND ${sealedStreamClaimGateSql(params.instanceId)}
-        ORDER BY i.created_at ASC, i.id ASC
+        ORDER BY i.created_at ASC, CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC, i.id ASC
         FOR UPDATE OF i SKIP LOCKED
         LIMIT 1
       )
@@ -1002,6 +1004,7 @@ export const BotInvocationRepository = {
       maxAttempts: number
     }
   ): Promise<{ available: BotInvocation[]; ownedClaims: BotInvocation[] }> {
+    // Bootstrap order must match claimOne for same-timestamp message + steer rows.
     const [availableResult, ownedClaimsResult] = await Promise.all([
       db.query<BotInvocationRow>(composeSql`SELECT i.* FROM bot_invocations i
         WHERE i.workspace_id = ${params.workspaceId}
@@ -1014,7 +1017,7 @@ export const BotInvocationRepository = {
           AND i.attempts < ${params.maxAttempts}
           AND (${params.since}::timestamptz IS NULL OR i.created_at >= ${params.since})
           AND ${sealedStreamClaimGateSql(params.instanceId)}
-        ORDER BY i.created_at ASC, i.id ASC
+        ORDER BY i.created_at ASC, CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC, i.id ASC
         LIMIT 200`),
       db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
         WHERE workspace_id = ${params.workspaceId}

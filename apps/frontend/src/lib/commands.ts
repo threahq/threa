@@ -34,6 +34,43 @@ export interface RawTextCommand {
   args: string
 }
 
+export interface ExtractedSteerDirective {
+  content: JSONContent
+  hasMessageContent: boolean
+}
+
+const RAW_STEER_PATTERN = /(^|[^\p{L}\p{N}_/])\/steer(?=$|[^\p{L}\p{N}_/-])/iu
+const RAW_STEER_PATTERN_GLOBAL = new RegExp(RAW_STEER_PATTERN.source, "giu")
+const INLINE_CONTENT_PLACEHOLDER = "\uFFFC"
+const INLINE_CONTENT_CONTAINERS = new Set(["paragraph", "heading", "codeBlock"])
+
+function steerDetectionText(node: JSONContent): string {
+  if (node.type === "text") return node.text ?? ""
+  if (node.type === "slashCommand") return `/${String(node.attrs?.name ?? "")}`
+  if (node.type === "hardBreak") return "\n"
+  if (node.content) {
+    // Keep adjacent inline nodes contiguous so formatting-split tokens still
+    // match, but separate every block container so list/quote boundaries do
+    // not glue the preceding word to a following `/steer`.
+    const separator = INLINE_CONTENT_CONTAINERS.has(node.type ?? "") ? "" : "\n"
+    return node.content.map(steerDetectionText).join(separator)
+  }
+  return ["doc", "paragraph"].includes(node.type ?? "") ? "" : INLINE_CONTENT_PLACEHOLDER
+}
+
+/**
+ * Detect `/steer` wherever it appears in a message. The authored document is
+ * preserved as the normal message; a separate steer command follows it. A
+ * plain-text projection is used only to distinguish a bare command from a
+ * message and to match tokens split across formatting marks.
+ */
+export function extractSteerDirective(content: JSONContent): ExtractedSteerDirective | null {
+  const text = steerDetectionText(content)
+  if (!RAW_STEER_PATTERN.test(text)) return null
+  const withoutSteer = text.replace(RAW_STEER_PATTERN_GLOBAL, "$1")
+  return { content, hasMessageContent: withoutSteer.trim().length > 0 }
+}
+
 /**
  * Walk the content tree and return the first `slashCommand` node's attrs as
  * `{ name, clientActionId }`, or null when no command node is present.

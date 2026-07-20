@@ -11,11 +11,14 @@ import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
 import type { Editor } from "@tiptap/react"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { useStreamBootstrap } from "@/hooks/use-streams"
+import { useWorkspaceMetadata } from "@/stores/workspace-store"
 
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
 
 interface UnsentMessageEditFormProps {
   messageId: string
+  workspaceId: string
   /** The stream this message belongs to — scopes the `/memo` picker. */
   streamId: string
   initialContentJson?: JSONContent
@@ -25,12 +28,19 @@ interface UnsentMessageEditFormProps {
 
 export function UnsentMessageEditForm({
   messageId,
+  workspaceId,
   streamId,
   initialContentJson,
   onDone,
   authorName,
 }: UnsentMessageEditFormProps) {
   const { saveEditedMessage, cancelEditing, deleteMessage } = usePendingMessages()
+  const metadata = useWorkspaceMetadata(workspaceId)
+  const { data: streamBootstrap } = useStreamBootstrap(workspaceId, streamId, { enabled: false })
+  const steerAvailable = useMemo(
+    () => (streamBootstrap?.commands ?? metadata?.commands ?? []).some((command) => command.name === "steer"),
+    [streamBootstrap?.commands, metadata?.commands]
+  )
   // Latch the surface at mount: input mode is live, so reading it directly would
   // flip drawer<->inline mid-edit and remount the editor, dropping unsaved text.
   const [isTouch] = useState(useInputMode() === "touch")
@@ -87,12 +97,12 @@ export function UnsentMessageEditForm({
     }
     setIsSaving(true)
     try {
-      await saveEditedMessage(messageId, contentJson)
+      await saveEditedMessage(messageId, contentJson, { steerAvailable })
       onDone()
     } finally {
       setIsSaving(false)
     }
-  }, [contentJson, initialMarkdown, messageId, saveEditedMessage, cancelEditing, onDone])
+  }, [contentJson, initialMarkdown, messageId, saveEditedMessage, cancelEditing, onDone, steerAvailable])
 
   const handleDelete = useCallback(async () => {
     await deleteMessage(messageId)
@@ -112,13 +122,13 @@ export function UnsentMessageEditForm({
       setDocEditorOpen(false)
       setIsSaving(true)
       try {
-        await saveEditedMessage(messageId, parseMarkdown(trimmed))
+        await saveEditedMessage(messageId, parseMarkdown(trimmed), { steerAvailable })
         onDone()
       } finally {
         setIsSaving(false)
       }
     },
-    [initialMarkdown, messageId, saveEditedMessage, cancelEditing, onDone]
+    [initialMarkdown, messageId, saveEditedMessage, cancelEditing, onDone, steerAvailable]
   )
 
   const handleDocEditorDismiss = useCallback((markdown: string) => {

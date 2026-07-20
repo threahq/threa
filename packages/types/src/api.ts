@@ -406,6 +406,8 @@ export interface CreateMessageInputJson {
   attachmentIds?: string[]
   /** Client-generated idempotency key to prevent duplicate sends on retry */
   clientMessageId?: string
+  /** Persist this message first, then dispatch `/steer` in the same transaction. */
+  steer?: true
   /** External references as a flat string->string map. Keys under `threa.*` are reserved. */
   metadata?: Record<string, string>
   /** Declare the message's conversation (see {@link ConversationDirective}); omit to let the extractor infer. */
@@ -445,6 +447,8 @@ export interface CreateMessageInputMarkdown {
   attachmentIds?: string[]
   /** Client-generated idempotency key to prevent duplicate sends on retry */
   clientMessageId?: string
+  /** Persist this message first, then dispatch `/steer` in the same transaction. */
+  steer?: true
   /** External references as a flat string->string map. Keys under `threa.*` are reserved. */
   metadata?: Record<string, string>
 }
@@ -482,6 +486,8 @@ export interface CreateMessageInputE2e {
   attachmentIds?: string[]
   /** Client-generated idempotency key to prevent duplicate sends on retry */
   clientMessageId?: string
+  /** Persist this message first, then dispatch `/steer` in the same transaction. */
+  steer?: true
 }
 
 /**

@@ -10,7 +10,7 @@ import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
 import { reconcileOptimisticBoardPost } from "@/stores/board-store"
 import { rescopeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
-import { StreamTypes, ShareErrorCodes, draftStreamScope } from "@threa/types"
+import { MessageErrorCodes, ShareErrorCodes, StreamTypes, draftStreamScope } from "@threa/types"
 import type { PendingMessage } from "@/db"
 import type {
   AttachmentSummary,
@@ -204,6 +204,7 @@ export function useMessageQueue(): void {
           // (which clears the status); the drain loop must skip them so they
           // don't churn through retries the user hasn't authorized yet.
           m.status !== "blocked-privacy" &&
+          m.terminalFailure !== true &&
           (m.retryAfter ?? 0) <= now
       )
       if (!next) break
@@ -241,6 +242,7 @@ export function useMessageQueue(): void {
             e2eVersion: next.e2eVersion,
             attachmentIds: next.attachmentIds,
             clientMessageId: next.clientId,
+            ...(next.steer && { steer: true }),
           })
         } else {
           const contentJson = next.contentJson ?? parseMarkdown(next.content)
@@ -250,6 +252,7 @@ export function useMessageQueue(): void {
             attachmentIds: next.attachmentIds,
             clientMessageId: next.clientId,
             confirmedPrivacyWarning: next.confirmedPrivacyWarning,
+            ...(next.steer && { steer: true }),
             // A board reply declares its conversation so the send attaches it
             // synchronously (in the message's transaction) instead of waiting on
             // the async extractor; omitted on ordinary sends.
@@ -322,6 +325,20 @@ export function useMessageQueue(): void {
           ])
           markFailed(next.clientId)
           surfacePrivacyBlockToast(next.clientId, { retryMessage, deleteMessage })
+          skippedIds.add(next.clientId)
+          continue
+        }
+
+        if (ApiError.isApiError(err) && err.code === MessageErrorCodes.STEER_UNAVAILABLE) {
+          type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
+          await Promise.all([
+            (db.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
+              terminalFailure: true,
+              retryAfter: undefined,
+            }),
+            db.events.update(next.clientId, { _status: "failed" }),
+          ])
+          markFailed(next.clientId)
           skippedIds.add(next.clientId)
           continue
         }

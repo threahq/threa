@@ -243,6 +243,12 @@ describe("verdictCandidateText", () => {
     expect(verdictCandidateText(makeSteerInvocation("no abcde"))).toBe("no abcde")
   })
 
+  test("strips an embedded steer directive anywhere in an ordinary swept message", () => {
+    for (const promptMarkdown of ["/steer yes abcde", "yes /steer abcde", "yes abcde /steer"]) {
+      expect(verdictCandidateText(makeInvocation({ trigger: "active-scratchpad", promptMarkdown }))).toBe("yes abcde")
+    }
+  })
+
   test("other session-control commands never carry a verdict", () => {
     const model = makeInvocation({
       trigger: "session-control",

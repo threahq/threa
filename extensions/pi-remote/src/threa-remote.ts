@@ -88,7 +88,6 @@ const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
-const ACTIVE_SCRATCHPAD_CAPABILITY = "active-scratchpad"
 const SESSION_CONTROL_COMMANDS = [
   "compact",
   "model",
@@ -212,6 +211,8 @@ type ClaimedInvocation = {
   sealing?: SealingState
   /** Decrypted prior-message context, pre-formatted for the prompt (no plaintext fetch on E2E). */
   sealedContextText?: string
+  /** Decrypted attachment paths to include in a concise mid-turn steer. */
+  sealedSteerContextText?: string
   /** Present on a session-control claim on an E2E stream: SSK wraps to seal the command ack. */
   sealedAck?: unknown
 }
@@ -1642,6 +1643,25 @@ function formatInvocationContext(
   ].join("\n")
 }
 
+function formatSteerPrompt(promptMarkdown: string, attachmentContext = ""): string {
+  return [promptMarkdown.trim() || "(empty message)", attachmentContext].filter(Boolean).join("\n\n")
+}
+
+function formatSteerAttachmentContext(
+  messages: StreamMessage[],
+  sourceMessageId: string,
+  downloadedAttachments: Map<string, string>
+): string {
+  const source = messages.find((message) => message.id === sourceMessageId)
+  const lines = (source?.attachments ?? []).flatMap((attachment) => {
+    const path = downloadedAttachments.get(attachment.id)
+    return path ? [`- ${attachment.filename} (${attachment.mimeType}, ${attachment.sizeBytes} bytes) → ${path}`] : []
+  })
+  return lines.length > 0
+    ? ["Attachments saved into this session's working directory — read them from these paths:", ...lines].join("\n")
+    : ""
+}
+
 function safeFilename(filename: string): string {
   return filename.replace(/[\\/:*?"<>|]/g, "_").slice(0, 180) || "attachment"
 }
@@ -1701,9 +1721,10 @@ async function downloadSealedContextAttachments(
   historyRefs: readonly AttachmentRef[],
   invocation: ClaimedInvocation,
   cwd: string
-): Promise<string[]> {
+): Promise<{ contextLines: string[]; sourceLines: string[] }> {
   const seen = new Set<string>()
-  const lines: string[] = []
+  const contextLines: string[] = []
+  const sourceLines: string[] = []
   for (const { refs, isSource } of [
     { refs: promptRefs, isSource: true },
     { refs: historyRefs, isSource: false },
@@ -1713,14 +1734,15 @@ async function downloadSealedContextAttachments(
       seen.add(ref.attachmentId)
       try {
         const path = await downloadSealedAttachment(ref, invocation, cwd)
-        const marker = isSource ? " [attached to the source message]" : ""
-        lines.push(`- ${ref.filename} (${ref.mimeType}, ${ref.sizeBytes} bytes) → ${path}${marker}`)
+        const line = `- ${ref.filename} (${ref.mimeType}, ${ref.sizeBytes} bytes) → ${path}`
+        contextLines.push(isSource ? `${line} [attached to the source message]` : line)
+        if (isSource) sourceLines.push(line)
       } catch (error) {
         console.warn(`Failed to download sealed Threa attachment ${ref.attachmentId}: ${String(error)}`)
       }
     }
   }
-  return lines
+  return { contextLines, sourceLines }
 }
 
 async function downloadContextAttachments(
@@ -1745,8 +1767,8 @@ async function fetchInvocationContext(
   invocation: ClaimedInvocation,
   cwd: string,
   sessionLink: RuntimeSessionLink | undefined
-): Promise<{ context: string; cursor?: string }> {
-  if (!config) return { context: "" }
+): Promise<{ context: string; steerContext: string; cursor?: string }> {
+  if (!config) return { context: "", steerContext: "" }
   const cursor = sessionLink?.streamCursors?.[invocation.activeStreamId]
   const query = cursor ? `after=${encodeURIComponent(cursor)}&limit=50` : "limit=12"
   const body = await request<{ data: StreamMessage[] }>(
@@ -1767,6 +1789,7 @@ async function fetchInvocationContext(
 
   return {
     context: formatInvocationContext(orderedMessages, invocation.sourceMessageId, downloadedAttachments),
+    steerContext: formatSteerAttachmentContext(orderedMessages, invocation.sourceMessageId, downloadedAttachments),
     cursor: sourceIncluded ? orderedMessages.at(-1)?.sequence : undefined,
   }
 }
@@ -1862,10 +1885,10 @@ async function hydrateSealedClaim(
     )
     const contextBlocks = [
       historyLines.length > 0 ? ["Recent Threa stream context (oldest first):", ...historyLines].join("\n") : "",
-      attachmentLines.length > 0
+      attachmentLines.contextLines.length > 0
         ? [
             "Attachments saved into this session's working directory — read them from these paths:",
-            ...attachmentLines,
+            ...attachmentLines.contextLines,
           ].join("\n")
         : "",
     ].filter(Boolean)
@@ -1875,6 +1898,13 @@ async function hydrateSealedClaim(
       promptMarkdown: opened.promptMarkdown,
       sealing: opened.sealing,
       sealedContextText: contextBlocks.join("\n\n"),
+      sealedSteerContextText:
+        attachmentLines.sourceLines.length > 0
+          ? [
+              "Attachments saved into this session's working directory — read them from these paths:",
+              ...attachmentLines.sourceLines,
+            ].join("\n")
+          : "",
     }
   } catch (error) {
     return fail(scrubSealedError(error))
@@ -1940,12 +1970,15 @@ function parseSessionControlCommand(promptMarkdown: string): { name: string; arg
 function resolveSessionControlCommand(invocation: ClaimedInvocation): RuntimeCommandMetadata | null {
   const runtimeCommand = getRuntimeCommand(invocation)
   if (runtimeCommand) return runtimeCommand
-  const canParseFromPrompt =
-    invocation.requiredCapability === SESSION_CONTROL_CAPABILITY ||
-    invocation.requiredCapability === ACTIVE_SCRATCHPAD_CAPABILITY
-  if (!canParseFromPrompt) return null
   const parsed = parseSessionControlCommand(invocation.promptMarkdown)
   if (!parsed) return null
+  if (invocation.requiredCapability !== SESSION_CONTROL_CAPABILITY) {
+    // Legacy/API clients can still post bare session commands as normal
+    // scratchpad messages. Preserve that fallback for every command except
+    // steer: embedded steer deliberately creates a normal `/steer …` message
+    // plus a separate structured session-control invocation.
+    if (invocation.requiredCapability !== "active-scratchpad" || parsed.name === "steer") return null
+  }
   return {
     id: invocation.sourceMessageId,
     name: parsed.name,
@@ -2045,23 +2078,28 @@ async function completeInvocationWithMarkdown(
 async function buildInvocationPrompt(
   invocation: ClaimedInvocation,
   ctx: ExtensionContext
-): Promise<{ prompt: string; cursor?: string; context: string }> {
+): Promise<{ prompt: string; steerPrompt: string; cursor?: string; context: string }> {
   // A sealed turn never touches the plaintext messages API — its context is
   // what was already decrypted at claim time (the server would only return
   // ciphertext placeholders anyway; inbound files were decrypted from the
   // payload refs during hydration).
   const sealed = invocation.sealing !== undefined
-  const { context, cursor } = sealed
-    ? { context: invocation.sealedContextText ?? "", cursor: undefined }
+  const { context, steerContext, cursor } = sealed
+    ? {
+        context: invocation.sealedContextText ?? "",
+        steerContext: invocation.sealedSteerContextText ?? "",
+        cursor: undefined,
+      }
     : await fetchInvocationContext(invocation, ctx.cwd, getCurrentSessionLink(ctx)).catch(
-        (error): { context: string; cursor?: string } => {
+        (error): { context: string; steerContext: string; cursor?: string } => {
           ctx.ui.notify(`Threa remote context fetch failed: ${summarizeError(error)}`, "warning")
-          return { context: "" }
+          return { context: "", steerContext: "" }
         }
       )
   return {
     context,
     cursor,
+    steerPrompt: formatSteerPrompt(invocation.promptMarkdown, steerContext),
     prompt: [
       `Remote Threa invocation ${invocation.id}.`,
       `Source message: ${invocation.sourceMessageId}`,
@@ -2115,10 +2153,11 @@ async function injectInvocation(
   invocation: ClaimedInvocation,
   steer: boolean
 ): Promise<void> {
-  const { prompt, cursor, context } = await buildInvocationPrompt(invocation, ctx)
+  const { prompt, steerPrompt, cursor, context } = await buildInvocationPrompt(invocation, ctx)
+  const deliveredPrompt = steer ? steerPrompt : prompt
   if (!pending) {
     beginPendingInvocation(invocation, cursor)
-    pendingInvocationPrompt = prompt
+    pendingInvocationPrompt = deliveredPrompt
     await recordTraceStep("context_received", formatInvocationTrace(invocation, context), "Loaded context…")
   } else {
     steeredInvocations.push({ invocation, cursor })
@@ -2130,7 +2169,7 @@ async function injectInvocation(
     )
   }
   setRemoteStatus(ctx, `Threa remote: running ${pending.id}`)
-  pi.sendUserMessage(prompt, steer ? { deliverAs: "steer" } : undefined)
+  pi.sendUserMessage(deliveredPrompt, steer ? { deliverAs: "steer" } : undefined)
 }
 
 function compactSession(ctx: ExtensionContext, customInstructions?: string): Promise<void> {
@@ -2450,18 +2489,19 @@ async function runSteerCommand(
   }
 
   const steeredInvocation = { ...invocation, promptMarkdown: steerText }
-  const { prompt, cursor, context } = await buildInvocationPrompt(steeredInvocation, ctx)
+  const { prompt, steerPrompt, cursor, context } = await buildInvocationPrompt(steeredInvocation, ctx)
   const shouldSteer = pending !== undefined || !ctx.isIdle()
+  const deliveredPrompt = shouldSteer ? steerPrompt : prompt
   if (!pending) {
     beginPendingInvocation(invocation, cursor)
-    pendingInvocationPrompt = prompt
+    pendingInvocationPrompt = deliveredPrompt
     await recordTraceStep("context_received", formatInvocationTrace(steeredInvocation, context), "Loaded context…")
   } else {
     steeredInvocations.push({ invocation, cursor })
     await recordTraceStep("steer", formatInvocationTrace(steeredInvocation, context), "Steering…")
   }
   setRemoteStatus(ctx, `Threa remote: running ${pending?.id ?? invocation.id}`)
-  pi.sendUserMessage(prompt, shouldSteer ? { deliverAs: "steer" } : undefined)
+  pi.sendUserMessage(deliveredPrompt, shouldSteer ? { deliverAs: "steer" } : undefined)
 }
 
 /**
@@ -3319,6 +3359,7 @@ export const __testing = {
   buildRuntimeCapabilities,
   getRuntimeCommand,
   parseSessionControlCommand,
+  formatSteerPrompt,
   resolveSessionControlCommand,
   normalizeThinkingLevel,
   migrateSessionState,

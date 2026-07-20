@@ -404,6 +404,7 @@ describe("BotInvocationRepository.claimOne", () => {
     // Bounded re-claim: a wedged invocation can't be picked up forever.
     expect(captured.text).toContain("attempts < ")
     expect(captured.text).toContain("attempts = attempts + 1")
+    expect(captured.text).toContain("CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC")
     expect(captured.values).toContain(BOT_CLAIM_MAX_ATTEMPTS)
   })
 
@@ -501,6 +502,7 @@ describe("BotInvocationRepository.findBootstrapInvocations", () => {
     // advertised here is one a follow-up claim can actually win (no keyless
     // runtime is told sealed work is available it can't open).
     expect(availableQuery).toContain("w.recipient_key_id = ri.public_key_id")
+    expect(availableQuery).toContain("CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC")
     // The owned-claims query must NOT be attempt-bounded: a runtime keeps its
     // own in-flight claim regardless of how many times it's been re-dispatched,
     // and it is never re-gated on wrap coverage (the claim already succeeded).
