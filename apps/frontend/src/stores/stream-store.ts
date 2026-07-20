@@ -177,7 +177,8 @@ export function shareEventIdentities(prev: CachedEvent[] | null, next: CachedEve
       old._cachedAt === row._cachedAt &&
       old._patchedAt === row._patchedAt &&
       old._status === row._status &&
-      old.sequence === row.sequence
+      old.sequence === row.sequence &&
+      old._anchorSequenceNum === row._anchorSequenceNum
     ) {
       if (allSame && prev[i] !== old) allSame = false
       return old

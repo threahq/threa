@@ -87,12 +87,22 @@ export function toCachedStreamBootstrap(
   }
 }
 
-async function resolveUnknownOptimisticAnchors(streamId: string, anchorSequence: number): Promise<void> {
+async function resolveUnknownOptimisticAnchors(
+  streamId: string,
+  persistedEvents: Array<Pick<StreamEvent, "sequence" | "createdAt">>
+): Promise<void> {
   await db.events
     .where("_status")
     .anyOf(["pending", "failed", "editing"])
     .filter((event) => event.streamId === streamId && event._anchorSequenceNum == null)
-    .modify({ _anchorSequenceNum: anchorSequence })
+    .modify((event) => {
+      const optimisticCreatedAt = Date.parse(event.createdAt)
+      event._anchorSequenceNum = persistedEvents.reduce((anchor, persisted) => {
+        if (Date.parse(persisted.createdAt) > optimisticCreatedAt) return anchor
+        return Math.max(anchor, sequenceToNum(persisted.sequence))
+      }, 0)
+      event._cachedAt = Date.now()
+    })
 }
 
 export async function bumpLaterOptimisticAnchors(
@@ -109,7 +119,10 @@ export async function bumpLaterOptimisticAnchors(
         event._sequenceNum > confirmedOptimisticSequence &&
         (event._anchorSequenceNum ?? -1) < confirmedPersistedSequence
     )
-    .modify({ _anchorSequenceNum: confirmedPersistedSequence })
+    .modify((event) => {
+      event._anchorSequenceNum = confirmedPersistedSequence
+      event._cachedAt = Date.now()
+    })
 }
 
 export async function getLatestPersistedSequence(streamId: string): Promise<string | null> {
@@ -361,8 +374,7 @@ async function writeBootstrapEventsAndStream(
     if (toWrite.length > 0) {
       await db.events.bulkPut(toWrite)
     }
-    const bootstrapTail = bootstrap.events.reduce((max, event) => Math.max(max, sequenceToNum(event.sequence)), 0)
-    await resolveUnknownOptimisticAnchors(streamId, bootstrapTail)
+    await resolveUnknownOptimisticAnchors(streamId, bootstrap.events)
 
     // Real rows are in place (bulkPut above, or already present via a skipped
     // rewrite) — now drop the optimistic copies and their outbox entries so a
@@ -878,7 +890,7 @@ export function registerStreamSocketHandlers(
         carriedConversationId = (optimistic?.payload as { conversationId?: string } | undefined)?.conversationId
       }
 
-      await resolveUnknownOptimisticAnchors(streamId, Math.max(0, sequenceToNum(newEvent.sequence) - 1))
+      await resolveUnknownOptimisticAnchors(streamId, [newEvent])
 
       // Add the real event BEFORE deleting the optimistic one so that
       // Dexie live-query observers never see a frame with neither event.
@@ -1181,7 +1193,7 @@ export function registerStreamSocketHandlers(
       if (onSequenceGap) {
         gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), payload.event)
       }
-      await resolveUnknownOptimisticAnchors(streamId, Math.max(0, sequenceToNum(payload.event.sequence) - 1))
+      await resolveUnknownOptimisticAnchors(streamId, [payload.event])
       await db.events.put({
         ...payload.event,
         workspaceId,

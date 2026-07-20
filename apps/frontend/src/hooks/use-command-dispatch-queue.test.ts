@@ -80,6 +80,32 @@ describe("cancelCommandDispatch", () => {
     expect((await db.events.get(`${commandId}:failed`))?._anchorSequenceNum).toBe(4)
   })
 
+  it("allows cancellation between idempotent retries", async () => {
+    const dispatched = commandEvent(commandId, "command_dispatched")
+    dispatched._status = "pending"
+    await db.events.put(dispatched)
+    await db.pendingOperations.add({
+      id: "op_retry",
+      workspaceId: "ws_1",
+      type: "dispatch_command",
+      payload: { streamId, command: "/thinking low", optimisticEventId: commandId },
+      createdAt: 1,
+      retryCount: 0,
+    })
+    vi.spyOn(commandsApi, "dispatch").mockRejectedValue(new Error("offline"))
+
+    await processOperationQueue(
+      { update: vi.fn(), delete: vi.fn() },
+      { add: vi.fn(), remove: vi.fn() },
+      undefined,
+      undefined,
+      () => true
+    )
+
+    expect((await db.pendingOperations.get("op_retry"))?.startedAt).toBeUndefined()
+    expect(await cancelCommandDispatch(streamId, commandId)).toBe(true)
+  })
+
   it("refuses cancellation while a dispatch request is in flight", async () => {
     await db.events.put(commandEvent(commandId, "command_dispatched"))
     await db.pendingOperations.add({

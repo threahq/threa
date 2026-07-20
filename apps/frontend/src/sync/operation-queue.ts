@@ -145,6 +145,7 @@ export async function processOperationQueue(
           await db.pendingOperations.update(next.id, {
             retryCount,
             retryAfter: Date.now() + getRetryDelay(retryCount),
+            ...(next.type === "dispatch_command" && { startedAt: undefined }),
           })
           skipped.add(next.id)
         }

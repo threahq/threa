@@ -525,11 +525,48 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
       retryCount: 0,
     })
 
-    const bootstrap = makeBootstrap([makeEvent({ id: "evt_A", streamId, sequence: "100" })], streamId)
+    const bootstrap = makeBootstrap(
+      [makeEvent({ id: "evt_A", streamId, sequence: "100", createdAt: "2020-01-01T00:00:00.000Z" })],
+      streamId
+    )
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
     expect((await db.events.get("temp_pending"))?._anchorSequenceNum).toBe(100)
     expect(await db.events.get("evt_A")).toBeDefined()
+  })
+
+  it("anchors a legacy failed row by its chronology during bootstrap", async () => {
+    const streamId = "stream_legacy_failed"
+    await db.events.put({
+      id: "temp_legacy_failed",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "999",
+      _sequenceNum: 999,
+      eventType: "command_dispatched",
+      payload: { commandId: "temp_legacy_failed", name: "thinking", args: "low", status: "dispatched" },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: "2026-01-01T20:30:00.000Z",
+      _status: "failed",
+      _cachedAt: 1,
+    })
+    const before = makeEvent({
+      id: "evt_before",
+      streamId,
+      sequence: "100",
+      createdAt: "2026-01-01T20:00:00.000Z",
+    })
+    const after = makeEvent({
+      id: "evt_after",
+      streamId,
+      sequence: "101",
+      createdAt: "2026-01-01T21:00:00.000Z",
+    })
+
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([before, after], streamId))
+
+    expect((await db.events.get("temp_legacy_failed"))?._anchorSequenceNum).toBe(100)
   })
 
   it("collapses an optimistic row when the bootstrap carries its server copy (reload-during-send race)", async () => {

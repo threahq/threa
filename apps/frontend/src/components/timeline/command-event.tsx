@@ -64,7 +64,7 @@ export function CommandEvent({ events }: CommandEventProps) {
         {cancellation.canCancel && (
           <button
             type="button"
-            className="mr-1 rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="mr-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
             aria-label={status === "failed" ? "Remove failed command" : "Cancel pending command"}
             title={status === "failed" ? "Remove failed command" : "Cancel pending command"}
             onClick={() => void cancellation.cancel()}
