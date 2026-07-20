@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { toast } from "sonner"
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Settings, Signal } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Settings, Signal, SwitchCamera } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
+import { useIsMobile } from "@/hooks/use-mobile"
 import type { CallDeviceState, CallDiagnostics } from "@/stores/call-store"
 import { useCallManager } from "./call-manager-context"
 import { useCallCameraOn, useCallDevices, useCallDiagnostics, useCallMode, useCallMuted } from "./call-store-hooks"
@@ -21,15 +22,16 @@ import { useCallCameraOn, useCallDevices, useCallDiagnostics, useCallMode, useCa
 // speaker picker where the API is absent rather than showing a dead control.
 const OUTPUT_SELECTION_SUPPORTED = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype
 
-function deviceLabel(device: MediaDeviceInfo, index: number): string {
-  return device.label || `Device ${index + 1}`
+function deviceLabel(device: MediaDeviceInfo, index: number, fallbackPrefix = "Device"): string {
+  return device.label || `${fallbackPrefix} ${index + 1}`
 }
 
 export function DevicePickerMenu({ devices }: { devices: CallDeviceState }) {
   const manager = useCallManager()
+  const hasCameras = devices.cameras.length > 0
   const hasInputs = devices.inputs.length > 0
   const hasOutputs = OUTPUT_SELECTION_SUPPORTED && devices.outputs.length > 0
-  if (!hasInputs && !hasOutputs) return null
+  if (!hasCameras && !hasInputs && !hasOutputs) return null
 
   return (
     <DropdownMenu>
@@ -39,6 +41,24 @@ export function DevicePickerMenu({ devices }: { devices: CallDeviceState }) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="center" className="max-w-[280px]">
+        {hasCameras && (
+          <>
+            <DropdownMenuLabel>Camera</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={devices.selectedCameraId ?? undefined}
+              onValueChange={(id) =>
+                void manager.switchCameraDevice(id).catch(() => toast.error("Couldn't switch camera"))
+              }
+            >
+              {devices.cameras.map((d, i) => (
+                <DropdownMenuRadioItem key={d.deviceId} value={d.deviceId} className="truncate">
+                  {deviceLabel(d, i, "Camera")}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </>
+        )}
+        {hasCameras && (hasInputs || hasOutputs) && <DropdownMenuSeparator />}
         {hasInputs && (
           <>
             <DropdownMenuLabel>Microphone</DropdownMenuLabel>
@@ -138,10 +158,15 @@ export function CallControls() {
   const mode = useCallMode()
   const devices = useCallDevices()
   const diagnostics = useCallDiagnostics()
+  const isMobile = useIsMobile()
   const [leaving, setLeaving] = useState(false)
 
   const toggleCamera = () => {
     void manager.setCameraOn(!cameraOn).catch(() => toast.error("Couldn't switch the camera"))
+  }
+
+  const flipCamera = () => {
+    void manager.flipCamera().catch(() => toast.error("Couldn't flip the camera"))
   }
 
   const leave = () => {
@@ -174,6 +199,11 @@ export function CallControls() {
           onClick={toggleCamera}
         >
           {cameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+        </Button>
+      )}
+      {isMobile && mode !== "audio_only" && devices.cameras.length > 1 && (
+        <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Flip camera" onClick={flipCamera}>
+          <SwitchCamera className="h-4 w-4" />
         </Button>
       )}
       <DevicePickerMenu devices={devices} />

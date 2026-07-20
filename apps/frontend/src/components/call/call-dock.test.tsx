@@ -72,6 +72,8 @@ function makeManager(overrides: Partial<CallController> = {}): CallController {
     setMuted: vi.fn(),
     setCameraOn: vi.fn(async () => {}),
     switchInputDevice: vi.fn(async () => {}),
+    switchCameraDevice: vi.fn(async () => {}),
+    flipCamera: vi.fn(async () => {}),
     setOutputDevice: vi.fn(async () => {}),
     getVideoStream: vi.fn(() => null),
     ...overrides,
