@@ -1246,6 +1246,17 @@ export const PiToolTraceSectionLabels = {
   DETAILS: "Details",
 } as const satisfies Record<string, PiToolTraceSectionLabel>
 
+// Exact bodies the backend substitutes for redacted trace sections
+// (public-api sanitize). The frontend matches on these to collapse the
+// section into a one-line "hidden for safety" notice.
+export const PI_TOOL_TRACE_REDACTED_BODIES = {
+  ARGUMENTS: "Tool arguments omitted for safety.",
+  OUTPUT: "Tool output omitted for safety.",
+} as const
+export const PI_TOOL_TRACE_REDACTED_BODY_SET: ReadonlySet<string> = new Set(
+  Object.values(PI_TOOL_TRACE_REDACTED_BODIES)
+)
+
 // 'archived' is the recoverable end state written when the linked scratchpad is
 // archived — stream:unarchived revives exactly these links back to 'active'.
 // 'ended' is terminal (normal shutdown) and is never revived.

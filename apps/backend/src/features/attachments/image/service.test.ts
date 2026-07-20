@@ -133,8 +133,10 @@ describe("ImageThumbnailService.generateThumbnail", () => {
       width: 1600,
       height: 800,
     })
-  })
+  }, 30_000)
 
+  // Building + re-encoding an animated GIF through sharp routinely blows
+  // bun's 5s default timeout on slower machines.
   it("caps a high-framerate GIF, dropping frames while staying animated", async () => {
     // 12 frames at 25ms = 40fps → downsampled below the 15fps cap.
     const gif = await buildAnimatedGif(12, 25)
@@ -157,7 +159,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
     // Still animated, but with fewer frames than the 40fps source.
     expect(meta.pages ?? 1).toBeGreaterThan(1)
     expect(meta.pages ?? 1).toBeLessThan(12)
-  })
+  }, 30_000)
 
   it("swaps width/height for EXIF orientations that rotate 90°", async () => {
     const rotated = await sharp({

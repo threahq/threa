@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import {
   AgentReconsiderationDecisions,
   PI_TOOL_TRACE_FORMAT,
+  PI_TOOL_TRACE_REDACTED_BODIES,
   PiToolTraceSectionLabels,
   type AgentSessionStep,
 } from "@threa/types"
@@ -444,6 +445,31 @@ describe("TraceStep", () => {
     expect(screen.queryByText(/apps\/backend\/src\/foo\.ts/)).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: /Output/i }))
     expect(screen.getByText(/apps\/backend\/src\/foo\.ts/)).toBeInTheDocument()
+  })
+
+  it("renders redacted sections as a one-line notice instead of a disclosure", () => {
+    const content = JSON.stringify({
+      format: PI_TOOL_TRACE_FORMAT,
+      headline: "Editing file index.html",
+      sections: [
+        { label: PiToolTraceSectionLabels.ARGUMENTS, body: PI_TOOL_TRACE_REDACTED_BODIES.ARGUMENTS, lang: null },
+        { label: PiToolTraceSectionLabels.OUTPUT, body: PI_TOOL_TRACE_REDACTED_BODIES.OUTPUT, lang: null },
+      ],
+    })
+
+    render(
+      <MemoryRouter>
+        <TraceStep step={createStep({ stepType: "tool_call", content })} workspaceId="ws_1" streamId="stream_1" />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Editing file index.html")).toBeInTheDocument()
+    const notices = screen.getAllByText("hidden for safety").map((el) => el.parentElement?.textContent)
+    expect(notices).toEqual(["Arguments hidden for safety", "Output hidden for safety"])
+    expect(screen.queryByRole("button", { name: /Arguments/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Output/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(PI_TOOL_TRACE_REDACTED_BODIES.ARGUMENTS)).not.toBeInTheDocument()
+    expect(screen.queryByText(PI_TOOL_TRACE_REDACTED_BODIES.OUTPUT)).not.toBeInTheDocument()
   })
 
   it("renders truncated structured Pi tool traces as a collapsed fallback", async () => {
