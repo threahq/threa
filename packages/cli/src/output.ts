@@ -185,6 +185,39 @@ export function enumArrayFlag<T extends string>(
   return arr as T[]
 }
 
+/** ISO datetime → local `YYYY-MM-DD HH:mm` for human text output; "" when absent/invalid. */
+export function fmtTimestamp(iso: unknown): string {
+  if (typeof iso !== "string") return ""
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+interface RenderStreamRef {
+  id?: string
+  name?: string
+}
+
+/** `root › stream` scope label from enriched stream refs; falls back to ids, "" when unenriched. */
+export function streamLabel(row: {
+  stream?: RenderStreamRef
+  rootStream?: RenderStreamRef
+  streamId?: unknown
+}): string {
+  const name = row.stream?.name ?? row.stream?.id ?? (typeof row.streamId === "string" ? row.streamId : undefined)
+  if (!name) return ""
+  const root = row.rootStream?.name ?? row.rootStream?.id
+  return root && root !== name ? `${root} › ${name}` : name
+}
+
+/** Collapses whitespace and truncates for one-line previews. */
+export function snippet(text: unknown, max = 160): string {
+  if (typeof text !== "string") return ""
+  const collapsed = text.replace(/\s+/g, " ").trim()
+  return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed
+}
+
 export function cursorFooter(p: { hasMore?: boolean; cursor?: string | null }, flag: string): string[] {
   return p.hasMore && p.cursor ? [`… more (--${flag} ${p.cursor})`] : []
 }

@@ -445,7 +445,8 @@ export const AttachmentRepository = {
     opts: {
       workspaceId: string
       streamIds: string[]
-      query: string
+      /** Omitted = recent-first browse (no text filter). */
+      query?: string
       contentTypes?: ExtractionContentType[]
       safetyStatuses?: AttachmentSafetyStatus[]
       limit?: number
@@ -455,7 +456,8 @@ export const AttachmentRepository = {
 
     if (streamIds.length === 0) return []
 
-    const searchPattern = `%${query}%`
+    const hasQuery = query !== undefined
+    const searchPattern = `%${query ?? ""}%`
     const hasSafetyStatusFilter = Boolean(safetyStatuses?.length)
 
     // Use separate queries to avoid nested sql template issues
@@ -476,7 +478,8 @@ export const AttachmentRepository = {
           AND a.stream_id = ANY(${streamIds})
           AND (${!hasSafetyStatusFilter} OR a.safety_status = ANY(${safetyStatuses ?? []}))
           AND (
-            a.filename ILIKE ${searchPattern}
+            ${!hasQuery}
+            OR a.filename ILIKE ${searchPattern}
             OR e.summary ILIKE ${searchPattern}
             OR e.full_text ILIKE ${searchPattern}
           )
@@ -503,7 +506,8 @@ export const AttachmentRepository = {
         AND a.stream_id = ANY(${streamIds})
         AND (${!hasSafetyStatusFilter} OR a.safety_status = ANY(${safetyStatuses ?? []}))
         AND (
-          a.filename ILIKE ${searchPattern}
+          ${!hasQuery}
+          OR a.filename ILIKE ${searchPattern}
           OR e.summary ILIKE ${searchPattern}
           OR e.full_text ILIKE ${searchPattern}
         )

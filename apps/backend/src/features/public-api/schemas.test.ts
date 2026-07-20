@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { createRuntimeSessionSchema, upsertPresenceSchema } from "./schemas"
+import { createRuntimeSessionSchema, searchAttachmentsSchema, upsertPresenceSchema } from "./schemas"
 
 const BASE = {
   runtimeKind: "pi-local" as const,
@@ -94,5 +94,17 @@ describe("createRuntimeSessionSchema runtimeKind", () => {
     expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local", labelName: "   " }).success).toBe(
       false
     )
+  })
+})
+
+describe("searchAttachmentsSchema query", () => {
+  it("allows omitting query for a recent-first browse", () => {
+    const parsed = searchAttachmentsSchema.parse({})
+    expect(parsed.query).toBeUndefined()
+    expect(parsed.limit).toBe(20)
+  })
+
+  it("rejects an empty-string query", () => {
+    expect(searchAttachmentsSchema.safeParse({ query: "" }).success).toBe(false)
   })
 })

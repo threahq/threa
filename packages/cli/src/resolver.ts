@@ -15,6 +15,14 @@ interface ResolverStream {
   displayName?: string | null
 }
 
+export interface ResolverStreamInfo {
+  id: string
+  type?: string
+  displayName?: string
+  slug?: string
+  rootStreamId?: string
+}
+
 interface CacheEntry<T> {
   value: T
   expires: number
@@ -38,6 +46,7 @@ export class RefResolver {
   private readonly ttlMs: number
   private readonly now: () => number
   private readonly channelCache = new Map<string, CacheEntry<string>>()
+  private readonly streamInfoCache = new Map<string, CacheEntry<ResolverStreamInfo | null>>()
   private allUsersCache?: CacheEntry<ResolverUser[]>
   private allUsersInFlight?: Promise<ResolverUser[]>
 
@@ -80,6 +89,21 @@ export class RefResolver {
       })
     this.allUsersInFlight = inFlight
     return inFlight
+  }
+
+  /** A stream's display info by id, for additive enrichment. Non-fatal: null on any fetch error (cached too). */
+  async streamInfo(streamId: string): Promise<ResolverStreamInfo | null> {
+    const hit = this.streamInfoCache.get(streamId)
+    if (hit && hit.expires > this.now()) return hit.value
+    let value: ResolverStreamInfo | null = null
+    try {
+      const resp = await this.client.get<{ data: ResolverStreamInfo }>(`/streams/${encodeURIComponent(streamId)}`)
+      value = resp.data ?? null
+    } catch {
+      value = null
+    }
+    this.streamInfoCache.set(streamId, { value, expires: this.now() + this.ttlMs })
+    return value
   }
 
   private async resolveUserSlug(slug: string): Promise<string> {

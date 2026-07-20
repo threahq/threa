@@ -1,6 +1,6 @@
 import type { ThreaApiClient } from "./api-client"
 import type { ThreaConfig } from "./config"
-import { enrichConversation, enrichMessages } from "./enrich"
+import { enrichConversation, enrichMessages, enrichStreamContext } from "./enrich"
 import type { RefResolver } from "./resolver"
 import type { TokenStore } from "./token-store"
 import {
@@ -125,8 +125,8 @@ export async function listConversations(
   const response = await client.get<PagedEnvelope<unknown>>(
     `/conversations${buildQuery({ streamId, status: p.status, after: p.cursor, limit: p.limit })}`
   )
-  const data = await Promise.all(response.data.map((c) => enrichConversation(c, resolver)))
-  return { ...response, data }
+  const withParticipants = await Promise.all(response.data.map((c) => enrichConversation(c, resolver)))
+  return { ...response, data: await enrichStreamContext(withParticipants, resolver) }
 }
 
 export interface ReadConversationParams {
@@ -147,8 +147,12 @@ export async function readConversation(
       `/conversations/${id}/messages${buildQuery({ after: p.cursor, limit: p.limit })}`
     ),
   ])
+  const [conversation] = (await enrichStreamContext(
+    [await enrichConversation(conversationResp.data, resolver)],
+    resolver
+  )) as unknown[]
   return {
-    conversation: await enrichConversation(conversationResp.data, resolver),
+    conversation,
     messages: {
       data: await enrichMessages(messagesResp.data, resolver),
       hasMore: messagesResp.hasMore ?? false,
@@ -232,10 +236,17 @@ export async function search(client: ThreaApiClient, resolver: RefResolver, args
   }
 
   const query = args.query
-  if ((what === "messages" || what === "attachments") && (query === undefined || query.trim() === "")) {
+  if (what === "messages" && (query === undefined || query.trim() === "")) {
     throw new ToolInputError(
       "INVALID_ARGUMENT",
-      `search what="${what}" requires a non-empty query. Only what="memos" allows an empty query (recent-first browse).`
+      `search what="messages" requires a non-empty query. Omitting the query (recent-first browse) is only ` +
+        `supported for what="memos" and what="attachments".`
+    )
+  }
+  if (what === "attachments" && query !== undefined && query.trim() === "") {
+    throw new ToolInputError(
+      "INVALID_ARGUMENT",
+      `search what="attachments" got a blank query. Pass a non-empty query, or omit it entirely to browse the most recent attachments.`
     )
   }
 
@@ -258,7 +269,8 @@ export async function search(client: ThreaApiClient, resolver: RefResolver, args
       after: args.after,
       limit: args.limit,
     })
-    return { ...response, data: await enrichMessages(response.data, resolver) }
+    const data = await enrichStreamContext(await enrichMessages(response.data, resolver), resolver)
+    return { ...response, data }
   }
   if (what === "memos") {
     const streams = args.stream_ids ? await resolver.resolveStreams(args.stream_ids) : undefined
@@ -276,12 +288,13 @@ export async function search(client: ThreaApiClient, resolver: RefResolver, args
     })
   }
   const streams = args.stream_ids ? await resolver.resolveStreams(args.stream_ids) : undefined
-  return client.post("/attachments/search", {
+  const response = await client.post<PagedEnvelope<unknown>>("/attachments/search", {
     query,
     streams,
     contentTypes: args.content_types,
     limit: args.limit,
   })
+  return { ...response, data: await enrichStreamContext(response.data, resolver) }
 }
 
 export interface SendMessageParams {

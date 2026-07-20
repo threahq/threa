@@ -634,7 +634,7 @@
         "operationId": "searchAttachments",
         "summary": "Search attachments",
         "tags": ["Attachments"],
-        "description": "Search accessible attachments by filename or extracted content.",
+        "description": "Search accessible attachments by filename or extracted content. Omit query to browse the most recent attachments.",
         "security": [{ "apiKey": ["attachments:read"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -665,7 +665,7 @@
                   },
                   "limit": { "default": 20, "type": "integer", "minimum": 1, "maximum": 50 }
                 },
-                "required": ["query", "limit"],
+                "required": ["limit"],
                 "additionalProperties": false
               }
             }

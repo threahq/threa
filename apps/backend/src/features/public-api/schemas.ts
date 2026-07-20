@@ -56,7 +56,7 @@ export const searchMemosSchema = z.object({
 })
 
 export const searchAttachmentsSchema = z.object({
-  query: z.string().min(1, "query is required"),
+  query: z.string().min(1).optional(),
   streams: z.array(z.string()).optional(),
   contentTypes: z.array(z.enum(EXTRACTION_CONTENT_TYPES)).optional(),
   limit: z.coerce.number().int().min(1).max(PUBLIC_ATTACHMENT_SEARCH_MAX_LIMIT).optional().default(20),

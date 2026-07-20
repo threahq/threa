@@ -803,7 +803,8 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     path: "/api/v1/workspaces/{workspaceId}/attachments/search",
     operationId: "searchAttachments",
     summary: "Search attachments",
-    description: "Search accessible attachments by filename or extracted content.",
+    description:
+      "Search accessible attachments by filename or extracted content. Omit query to browse the most recent attachments.",
     tags: ["Attachments"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ],
     parameters: [workspaceIdParam],

@@ -72,8 +72,12 @@ threa search invoice --what attachments             # search attachments by name
 threa conversations list --stream #eng --status active
 threa conversations read conv_123 --limit 50
 threa messages find-by-metadata github.pr=org/repo#42 --stream #eng
+threa memos list --stream #eng                      # browse recent memos, newest first
 threa memos get memo_123
+threa attachments list --stream #eng                # browse recent attachments, newest first
 threa attachments get att_123 --url                 # --url returns a short-lived signed download URL
+threa attachments download att_123 ./               # download bytes; dir dest names it after the file
+threa skill print                                   # print the threa-cli agent skill to stdout
 
 # writes
 threa messages send #eng "Deploy is green"          # post markdown (content `-` reads stdin)
@@ -109,7 +113,7 @@ Claim tokens are persisted to `~/.threa/state.json` (mode 0600), keyed by worksp
 
 ### Agent skill
 
-`threa skill install` copies the `threa-cli` skill into `~/.claude/skills/threa-cli/`, so Claude Code sessions in any project on this machine load it on demand. The skill teaches ref forms, the JSON output and exit-code contract, search selection, and the delegation loop. Re-run after pulling a newer checkout. The in-repo copy at `.agents/skills/threa-cli/SKILL.md` is the source of truth.
+`threa skill install` copies the `threa-cli` skill into `~/.claude/skills/threa-cli/`, so Claude Code sessions in any project on this machine load it on demand. The skill teaches ref forms, the JSON output and exit-code contract, search selection, and the delegation loop. Re-run after pulling a newer checkout. The in-repo copy at `.agents/skills/threa-cli/SKILL.md` is the source of truth. `threa skill print` writes the same markdown to stdout for any other destination.
 
 ### The two Threa MCP servers (do not confuse the sends)
 
@@ -166,8 +170,8 @@ The scopes on the key decide which areas work. A key without a scope does not ge
 | `messages:read`     | `streams read` (messages leg), `conversations read`, `conversations list`, `messages find-by-metadata` |
 | `messages:search`   | `search --what messages`                                                                               |
 | `messages:write`    | `messages send`, `messages edit`, `messages delete`                                                    |
-| `memos:read`        | `search --what memos`, `memos get`                                                                     |
-| `attachments:read`  | `search --what attachments`, `attachments get`                                                         |
+| `memos:read`        | `search --what memos`, `memos list`, `memos get`                                                       |
+| `attachments:read`  | `search --what attachments`, `attachments list`, `attachments get`, `attachments download`             |
 | `labels:read`       | `labels list`                                                                                          |
 | `labels:write`      | `labels add`, `labels remove`                                                                          |
 | `delegations:read`  | `delegations list`                                                                                     |

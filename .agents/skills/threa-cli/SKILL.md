@@ -43,7 +43,7 @@ Two things you cannot do this way, by design of the API: an `@user-slug` will no
 
 ## Payloads name their authors
 
-Read results already carry author identity, so you seldom need a second call to name who said what. Message rows carry `author: { id, type, name, slug? }` (a bot or persona author has no slug and its name comes from `authorDisplayName`). Conversations carry a `participants` array parallel to `participantIds` with each participant's name and slug. Stream members carry name and slug. Use these fields directly instead of listing users per id.
+Read results already carry author identity, so you seldom need a second call to name who said what. Message rows carry `author: { id, type, name, slug? }` (a bot or persona author has no slug and its name comes from `authorDisplayName`). Conversations carry a `participants` array parallel to `participantIds` with each participant's name and slug. Stream members carry name and slug. Message search results, attachment rows, and conversations also carry `stream: { id, name?, type? }` — and `rootStream` when the stream is a thread — so you can name the scope without a `streams read`. Use these fields directly instead of listing users or streams per id.
 
 ## Search memory before asking a human
 
@@ -86,7 +86,8 @@ One `search` command covers all three kinds; pick with `--what`, and pass only t
 
 - **`--what messages`**, default full-text: you know the words that appear in the message. Add `--semantic` when you know the idea but not the wording, or `--exact` to match the query as a literal phrase. Query required.
 - **`--what memos`**: search workspace memory (see the memory section). Query optional and semantic; an empty query browses recent memos.
-- **`--what attachments`**: search files by filename or extracted content, then `threa attachments get <id>` (tool `get_attachment`) for the full extracted text, or `threa attachments get <id> --url` (tool `get_attachment_download_url`) only when you need the raw bytes. Query required.
+- **`--what attachments`**: search files by filename or extracted content, then `threa attachments get <id>` (tool `get_attachment`) for the full extracted text, or `threa attachments get <id> --url` (tool `get_attachment_download_url`) only when you need the raw bytes' URL. Query optional; omit it to browse the most recent attachments. `threa attachments download <id> [dest]` fetches the bytes to disk — a directory dest names the file after the attachment (`name (1).ext` on conflict), a file dest is written as given.
+- **Recent-first browsing**: `threa memos list` and `threa attachments list` (both take repeatable `--stream` and `--limit`) are shorthand for a query-less search — use them for "what's new here" instead of inventing a query.
 - **`messages find-by-metadata`**: you want messages by a reference you stamped at send time, not by text. It is exact key/value AND-containment, the right tool for dedup and external-id lookup.
 
 ## Paging
