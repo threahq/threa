@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import { ChevronDown, ChevronRight } from "lucide-react"
-import {
-  useWorkspaceDmPeers,
-  useWorkspacePersonas,
-  useWorkspaceStreams,
-  useWorkspaceUsers,
-} from "@/stores/workspace-store"
+import { Archive, ChevronDown, ChevronRight, Loader2 } from "lucide-react"
+import { useWorkspaceDmPeers, useWorkspaceStreams, useWorkspaceUsers } from "@/stores/workspace-store"
 import { resolveStreamName, type StreamNameCaches } from "@/lib/streams"
 import { RelativeTime } from "@/components/relative-time"
 import { cn } from "@/lib/utils"
+import { useActors } from "@/hooks/use-actors"
+import { useEnsureSearchStreams } from "@/hooks/use-ensure-search-streams"
 import type { SearchResultItem } from "@/api"
 import { buildSnippet, HighlightedText } from "./highlight"
 import { groupResultsByStream } from "./group-results"
@@ -55,9 +52,13 @@ function visibleAncestorCount(ancestorCount: number, containerWidth: number): nu
  */
 export function SearchResults({ workspaceId, results, terms, activeResultId, onResultSelect }: SearchResultsProps) {
   const users = useWorkspaceUsers(workspaceId)
-  const personas = useWorkspacePersonas(workspaceId)
   const streams = useWorkspaceStreams(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
+  const { getActorName } = useActors(workspaceId)
+  const resolvingStreamIds = useEnsureSearchStreams(
+    workspaceId,
+    useMemo(() => results.map((result) => result.streamId), [results])
+  )
 
   const [collapsedStreams, setCollapsedStreams] = useState<Set<string>>(new Set())
 
@@ -98,18 +99,6 @@ export function SearchResults({ workspaceId, results, terms, activeResultId, onR
     return (streamId: string) => resolveStreamName(streamId, caches, "breadcrumb") ?? "Unknown stream"
   }, [streams, users, dmPeers])
 
-  // Id → name maps so each row resolves its author in O(1) instead of
-  // scanning the user/persona arrays per result on every render.
-  const authorNamesById = useMemo(() => {
-    const names = new Map<string, string>()
-    for (const user of users) names.set(user.id, user.name)
-    for (const persona of personas) names.set(persona.id, persona.name)
-    return names
-  }, [users, personas])
-
-  const authorName = (result: SearchResultItem): string =>
-    authorNamesById.get(result.authorId) ?? (result.authorType === "persona" ? "Assistant" : "Unknown")
-
   const toggleGroup = useCallback((streamId: string) => {
     setCollapsedStreams((current) => {
       const next = new Set(current)
@@ -132,9 +121,14 @@ export function SearchResults({ workspaceId, results, terms, activeResultId, onR
         const shownCount = visibleAncestorCount(ancestors.length, containerWidth)
         const shownAncestors = shownCount > 0 ? ancestors.slice(ancestors.length - shownCount) : []
         const hasHidden = ancestors.length > shownCount
+        const isResolving = resolvingStreamIds.has(group.streamId)
+        const stream = streamsById.get(group.streamId)
+        const rootStreamId =
+          stream?.rootStreamId ?? (stream?.parentStreamId ? group.path[0] : (stream?.id ?? group.path[0]))
+        const isArchived = rootStreamId ? streamsById.get(rootStreamId)?.archivedAt != null : false
 
         return (
-          <section key={group.streamId}>
+          <section key={group.streamId} className={cn(isArchived && "opacity-60")}>
             <button
               type="button"
               onClick={() => toggleGroup(group.streamId)}
@@ -168,7 +162,17 @@ export function SearchResults({ workspaceId, results, terms, activeResultId, onR
                   <ChevronRight className="h-2.5 w-2.5 shrink-0 text-muted-foreground/50" aria-hidden="true" />
                 </span>
               ))}
-              <span className="min-w-0 truncate">{currentLabel}</span>
+              {isResolving ? (
+                <Loader2
+                  className="h-3 w-3 shrink-0 animate-spin text-muted-foreground/70"
+                  aria-label="Loading stream"
+                />
+              ) : (
+                <span className="min-w-0 truncate">{currentLabel}</span>
+              )}
+              <span className="h-3 w-3 shrink-0">
+                {isArchived && <Archive className="h-3 w-3" aria-label="Archived stream" role="img" />}
+              </span>
               <span className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-px text-[10px] font-medium tabular-nums text-muted-foreground">
                 {group.results.length}
               </span>
@@ -198,7 +202,7 @@ export function SearchResults({ workspaceId, results, terms, activeResultId, onR
                           <HighlightedText text={snippet.text} terms={terms} />
                         </p>
                         <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/70">
-                          <span className="min-w-0 truncate">{authorName(result)}</span>
+                          <span className="min-w-0 truncate">{getActorName(result.authorId, result.authorType)}</span>
                           <span aria-hidden="true">·</span>
                           <RelativeTime date={result.createdAt} className="shrink-0 tabular-nums" />
                         </p>

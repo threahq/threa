@@ -1,5 +1,5 @@
 import api from "./client"
-import type { StreamType } from "@threa/types"
+import type { AuthorType, StreamType } from "@threa/types"
 
 export type ArchiveStatus = "active" | "archived"
 
@@ -27,7 +27,7 @@ export interface SearchResultItem {
   streamId: string
   content: string
   authorId: string
-  authorType: "user" | "persona"
+  authorType: AuthorType
   createdAt: string
   rank: number
 }

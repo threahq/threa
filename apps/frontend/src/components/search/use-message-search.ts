@@ -111,6 +111,10 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
       }
     }
 
+    if (!parsedFilters.some((filter) => filter.type === "status")) {
+      filters.status = ["active", "archived"]
+    }
+
     return filters
   }, [parsedFilters, users, personas, bots, streams])
 
