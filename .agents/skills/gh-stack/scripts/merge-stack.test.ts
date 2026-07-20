@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { assertExpectedHeads, createMergePlan, parseArgs } from "./merge-stack"
+import { assertCompletedMerge, assertExpectedHeads, createMergePlan, parseArgs } from "./merge-stack"
 
 const stack = {
   number: 42,
@@ -13,23 +13,23 @@ const stack = {
   pull_requests: [
     {
       number: 101,
-      state: "open" as const,
+      state: "open" as "open" | "closed",
       draft: false,
-      merged_at: null,
+      merged_at: null as string | null,
       head: { ref: "layer-one", sha: "aaa111" },
     },
     {
       number: 102,
-      state: "open" as const,
+      state: "open" as "open" | "closed",
       draft: false,
-      merged_at: null,
+      merged_at: null as string | null,
       head: { ref: "layer-two", sha: "bbb222" },
     },
     {
       number: 103,
-      state: "open" as const,
+      state: "open" as "open" | "closed",
       draft: false,
-      merged_at: null,
+      merged_at: null as string | null,
       head: { ref: "layer-three", sha: "ccc333" },
     },
   ],
@@ -51,7 +51,7 @@ async function createSubprocessFixture(chrome: string): Promise<{
   await mkdir(bin, { recursive: true })
   await writeFile(join(root, "profile", "Local State"), "{}")
   const cookies = new Database(join(profile, "Cookies"), { create: true })
-  cookies.exec("CREATE TABLE cookies (name TEXT)")
+  cookies.exec("CREATE TABLE cookies (name TEXT, host_key TEXT)")
   cookies.close()
 
   const gh = join(bin, "gh")
@@ -107,13 +107,32 @@ describe("createMergePlan", () => {
       baseRef: "main",
       entries: stack.pull_requests.slice(0, 2),
       expectedHeads: { 101: "aaa111", 102: "bbb222" },
+      remainingEntries: [{ number: 103, state: "open", mergedAt: null }],
     })
   })
 
-  test("rejects a draft downstack pull request", () => {
-    const blocked = structuredClone(stack)
-    blocked.pull_requests[0]!.draft = true
-    expect(() => createMergePlan(blocked, 102)).toThrow("#101 is draft")
+  test("resumes above previously merged entries", () => {
+    const resumed = structuredClone(stack)
+    resumed.pull_requests[0]!.state = "closed"
+    resumed.pull_requests[0]!.merged_at = "2026-07-20T10:00:00Z"
+    expect(createMergePlan(resumed, 102).entries.map((entry) => entry.number)).toEqual([102])
+  })
+
+  test("rejects closed, draft, missing, and merged targets", () => {
+    const draft = structuredClone(stack)
+    draft.pull_requests[0]!.draft = true
+    expect(() => createMergePlan(draft, 102)).toThrow("#101 is draft")
+
+    const closed = structuredClone(stack)
+    closed.pull_requests[0]!.state = "closed"
+    expect(() => createMergePlan(closed, 102)).toThrow("#101 is closed")
+
+    expect(() => createMergePlan(stack, 999)).toThrow("not in stack")
+
+    const merged = structuredClone(stack)
+    merged.pull_requests[1]!.state = "closed"
+    merged.pull_requests[1]!.merged_at = "2026-07-20T10:00:00Z"
+    expect(() => createMergePlan(merged, 102)).toThrow("target pull request #102 is not open")
   })
 })
 
@@ -151,6 +170,36 @@ describe("assertExpectedHeads", () => {
   })
 })
 
+describe("assertCompletedMerge", () => {
+  const plan = createMergePlan(stack, 102)
+
+  test("accepts exactly the requested partial range", () => {
+    const completed = structuredClone(stack)
+    completed.pull_requests[0]!.state = "closed"
+    completed.pull_requests[0]!.merged_at = "2026-07-20T10:00:00Z"
+    completed.pull_requests[1]!.state = "closed"
+    completed.pull_requests[1]!.merged_at = "2026-07-20T10:00:01Z"
+    expect(() => assertCompletedMerge(plan, completed)).not.toThrow()
+  })
+
+  test("detects an over-merge and an unexpected selected head", () => {
+    const overMerged = structuredClone(stack)
+    for (const pull of overMerged.pull_requests) {
+      pull.state = "closed"
+      pull.merged_at = "2026-07-20T10:00:00Z"
+    }
+    expect(() => assertCompletedMerge(plan, overMerged)).toThrow("merged more than the requested range")
+
+    const wrongHead = structuredClone(stack)
+    wrongHead.pull_requests[0]!.state = "closed"
+    wrongHead.pull_requests[0]!.merged_at = "2026-07-20T10:00:00Z"
+    wrongHead.pull_requests[0]!.head.sha = "unexpected"
+    wrongHead.pull_requests[1]!.state = "closed"
+    wrongHead.pull_requests[1]!.merged_at = "2026-07-20T10:00:01Z"
+    expect(() => assertCompletedMerge(plan, wrongHead)).toThrow("used unexpected head")
+  })
+})
+
 describe("credential cleanup", () => {
   test("removes copied browser state when Chrome exits during startup", async () => {
     const fixture = await createSubprocessFixture("#!/bin/sh\nexit 1\n")
@@ -178,10 +227,10 @@ describe("credential cleanup", () => {
     }
   })
 
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    test(`removes copied browser state on ${signal}`, async () => {
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    test(`removes copied browser state on ${signal}${signal === "SIGINT" ? " repeated" : ""}`, async () => {
       const fixture = await createSubprocessFixture(`#!/bin/sh
-trap 'kill "$child" 2>/dev/null; exit' INT TERM
+trap 'kill "$child" 2>/dev/null; exit' INT TERM HUP
 sleep 60 & child=$!
 wait "$child"
 `)
@@ -204,6 +253,10 @@ wait "$child"
         )
         await waitForCopiedProfile(fixture.runtime)
         process.kill(signal)
+        if (signal === "SIGINT") {
+          await Bun.sleep(50)
+          process.kill(signal)
+        }
         await process.exited
         expect(await readdir(fixture.runtime)).toEqual([])
       } finally {
