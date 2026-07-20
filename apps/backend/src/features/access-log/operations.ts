@@ -251,6 +251,17 @@ export const ACCESS_LOG_OPERATIONS = [
   // Voice
   "voice.create_session",
   "voice.abort_session",
+  // Calls (voice/video)
+  "calls.start",
+  "calls.bootstrap",
+  "calls.leave",
+  "calls.decline_invitation",
+  "calls.cancel_invitation",
+  "calls.cf_session",
+  "calls.cf_renegotiate",
+  "calls.cf_publish_tracks",
+  "calls.cf_pull_tracks",
+  "calls.cf_close_tracks",
   // Bots
   "bot.hello_bootstrap",
   "bot.presence_update",

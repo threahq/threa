@@ -65,6 +65,7 @@ import {
 import { BotRuntimeService, type BotRuntimeWriteOps } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
 import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from "./features/voice-transcription"
+import { createCallHandlers, type CallService } from "./features/calls"
 import {
   createEnclaveRuntimesHandlers,
   createEnclaveSessionHandlers,
@@ -177,6 +178,9 @@ interface Dependencies {
   workosOrgService: WorkosOrgService
   userApiKeyService: UserApiKeyService
   voiceTranscriptionService: VoiceTranscriptionService
+  callService: CallService
+  /** True when the CF Realtime media plane is configured; when false, calls surfaces 503. */
+  callsCloudflareEnabled: boolean
   enclaveRuntimesService: EnclaveRuntimesService
   enclaveClaimService: EnclaveClaimService
   enclaveClaimNudge: EnclaveClaimWaiter | null
@@ -241,6 +245,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workosOrgService,
     userApiKeyService,
     voiceTranscriptionService,
+    callService,
+    callsCloudflareEnabled,
     enclaveRuntimesService,
     enclaveClaimService,
     enclaveClaimNudge,
@@ -1609,6 +1615,66 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     audit("voice.abort_session", "write"),
     voice.abortSession
+  )
+
+  // Calls (voice/video, flag-gated). HTTP starts/bootstraps a call and proxies
+  // the CF Realtime session/track operations (the app secret never reaches the
+  // client); the dedicated /calls socket namespace owns the control plane.
+  const calls = createCallHandlers({
+    pool,
+    io: deps.io,
+    callService,
+    workspaceSettingsService,
+    cloudflareEnabled: callsCloudflareEnabled,
+  })
+  app.post(
+    "/api/workspaces/:workspaceId/calls",
+    ...authed,
+    audit("calls.start", "write"),
+    rateLimits.calls,
+    calls.start
+  )
+  app.get(
+    "/api/workspaces/:workspaceId/calls/:callId",
+    ...authed,
+    audit("calls.bootstrap", "read"),
+    rateLimits.calls,
+    calls.bootstrap
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/session",
+    ...authed,
+    audit("calls.cf_session", "write"),
+    rateLimits.calls,
+    calls.createCfSession
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/renegotiate",
+    ...authed,
+    audit("calls.cf_renegotiate", "write"),
+    rateLimits.calls,
+    calls.renegotiate
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/tracks/publish",
+    ...authed,
+    audit("calls.cf_publish_tracks", "write"),
+    rateLimits.calls,
+    calls.publishTracks
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/tracks/pull",
+    ...authed,
+    audit("calls.cf_pull_tracks", "write"),
+    rateLimits.calls,
+    calls.pullTracks
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/tracks/close",
+    ...authed,
+    audit("calls.cf_close_tracks", "write"),
+    rateLimits.calls,
+    calls.closeTracks
   )
 
   // Bot management. Management routes (update, archive, keys, avatar, grants)

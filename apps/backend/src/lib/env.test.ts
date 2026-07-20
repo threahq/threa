@@ -21,6 +21,9 @@ function setBaseEnv() {
   delete process.env.ENCLAVE_INTERNAL_API_KEY
   delete process.env.CONTROL_PLANE_URL
   delete process.env.REGION
+  delete process.env.CLOUDFLARE_REALTIME_APP_ID
+  delete process.env.CLOUDFLARE_REALTIME_APP_SECRET
+  delete process.env.CLOUDFLARE_REALTIME_API_BASE
 }
 
 afterEach(() => {
@@ -322,6 +325,64 @@ describe("loadConfig MediaConvert configuration", () => {
     const config = loadConfig()
     expect(config.mediaConvert.enabled).toBe(true)
     expect(config.mediaConvert.roleArn).toBe("arn:aws:iam::123456789012:role/threa-mediaconvert-dev")
+  })
+})
+
+describe("loadConfig Cloudflare Realtime configuration", () => {
+  test("disables calls media when no CF Realtime env vars are set", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+
+    const config = loadConfig()
+    expect(config.cloudflareRealtime.enabled).toBe(false)
+  })
+
+  test("throws when only the app id is set", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.CLOUDFLARE_REALTIME_APP_ID = "app_123"
+
+    expect(() => loadConfig()).toThrow(
+      "CLOUDFLARE_REALTIME_APP_ID and CLOUDFLARE_REALTIME_APP_SECRET must both be set together"
+    )
+  })
+
+  test("throws when only the app secret is set", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.CLOUDFLARE_REALTIME_APP_SECRET = "secret_123"
+
+    expect(() => loadConfig()).toThrow(
+      "CLOUDFLARE_REALTIME_APP_ID and CLOUDFLARE_REALTIME_APP_SECRET must both be set together"
+    )
+  })
+
+  test("enables calls media when both the app id and secret are set", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.CLOUDFLARE_REALTIME_APP_ID = "app_123"
+    process.env.CLOUDFLARE_REALTIME_APP_SECRET = "secret_123"
+
+    const config = loadConfig()
+    expect(config.cloudflareRealtime.enabled).toBe(true)
+    expect(config.cloudflareRealtime.appId).toBe("app_123")
+    expect(config.cloudflareRealtime.appSecret).toBe("secret_123")
+  })
+
+  test("reads the optional API base override", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.CLOUDFLARE_REALTIME_APP_ID = "app_123"
+    process.env.CLOUDFLARE_REALTIME_APP_SECRET = "secret_123"
+    process.env.CLOUDFLARE_REALTIME_API_BASE = "https://cf.test/v1/apps"
+
+    const config = loadConfig()
+    expect(config.cloudflareRealtime.apiBase).toBe("https://cf.test/v1/apps")
   })
 })
 

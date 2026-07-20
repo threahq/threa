@@ -28,6 +28,7 @@ function fakeCall(overrides: Partial<Call> = {}): Call {
     mediaTransport: "sfu",
     chatStreamId: null,
     sharingEndpointId: null,
+    rosterVersion: 0,
     graceDeadline: null,
     endedReason: null,
     startedAt: NOW,
@@ -64,7 +65,12 @@ function fakeEndpoint(overrides: Partial<CallEndpoint> = {}): CallEndpoint {
     callId: "call_1",
     participantId: "callp_1",
     epoch: 1,
+    connectionSeq: 0,
     status: "connected",
+    cfSessionId: null,
+    mediaIncarnation: null,
+    mediaState: {},
+    publishedTracks: [],
     leaseExpiresAt: NOW,
     createdAt: NOW,
     statusChangedAt: NOW,
@@ -73,7 +79,11 @@ function fakeEndpoint(overrides: Partial<CallEndpoint> = {}): CallEndpoint {
 }
 
 function stubTransaction() {
-  spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+  // The client carries a no-op `query` so unspied same-tx statements (the roster
+  // bumps every membership/connection transition now runs) don't throw; each test
+  // that cares spies CallRepository.bumpRosterVersion(Batch) directly and asserts.
+  const client = { query: async () => ({ rows: [] }) } as unknown as PoolClient
+  spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn(client))
 }
 
 function makeService() {
@@ -245,11 +255,14 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
     spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
     stubCleanEndpointAdmission()
     const accept = spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
+    const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
 
     const result = await makeService().joinCall({ workspaceId: "ws_1", callId: "call_1", userId: "usr_b" })
 
     expect(revive).toHaveBeenCalledTimes(1)
     expect(accept).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ inviteeUserId: "usr_b" }))
+    // A join bumps the roster version in the same tx (INV-66) so peers don't drop the arrival.
+    expect(bump).toHaveBeenCalledWith(expect.anything(), "ws_1", "call_1")
     expect(result.endpoint.id).toBe("callep_1")
   })
 
@@ -374,6 +387,7 @@ describe("CallService.leaveCall", () => {
     )
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
     const grace = spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
     spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "empty_grace" }))
 
     const result = await makeService().leaveCall({
@@ -386,6 +400,8 @@ describe("CallService.leaveCall", () => {
     expect(close).toHaveBeenCalledWith(expect.anything(), "ws_1", "callep_1")
     expect(markLeft).toHaveBeenCalledTimes(1)
     expect(grace).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reason: "completed" }))
+    // A leave bumps the roster version in the same tx (INV-66) so the departed tile isn't a ghost.
+    expect(bump).toHaveBeenCalledWith(expect.anything(), "ws_1", "call_1")
     expect(result.call.status).toBe("empty_grace")
   })
 
@@ -464,6 +480,7 @@ describe("CallService.removeParticipant", () => {
     )
     const closeEp = spyOn(CallEndpointRepository, "closeByParticipant").mockResolvedValue([])
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
+    const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
 
     const result = await makeService().removeParticipant({
       workspaceId: "ws_1",
@@ -477,6 +494,8 @@ describe("CallService.removeParticipant", () => {
       expect.objectContaining({ targetUserId: "usr_target", removedBy: "usr_remover" })
     )
     expect(closeEp).toHaveBeenCalledWith(expect.anything(), "ws_1", "callp_target")
+    // Removal bumps the roster version in the same tx (INV-66).
+    expect(bump).toHaveBeenCalledWith(expect.anything(), "ws_1", "call_1")
     expect(result.status).toBe("removed")
   })
 
@@ -545,6 +564,7 @@ describe("CallService sweeps", () => {
     const grace = spyOn(CallRepository, "enterGraceIfEmptyBatch").mockResolvedValue([
       fakeCall({ status: "empty_grace" }),
     ])
+    const bumpBatch = spyOn(CallRepository, "bumpRosterVersionBatch").mockResolvedValue(undefined)
 
     const result = await makeService().reapLapsedEndpoints(NOW)
 
@@ -554,6 +574,8 @@ describe("CallService sweeps", () => {
     expect(lock).toHaveBeenCalledWith(expect.anything(), ["call_1"])
     expect(markLeft).toHaveBeenCalledWith(expect.anything(), ["callp_a", "callp_b"])
     expect(grace).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ callIds: ["call_1"] }))
+    // The reap cascade bumps the roster version of every touched call in the same tx (INV-66).
+    expect(bumpBatch).toHaveBeenCalledWith(expect.anything(), ["call_1"])
   })
 
   it("reapLapsedEndpoints short-circuits before locking when nothing lapsed", async () => {
@@ -578,5 +600,290 @@ describe("CallService sweeps", () => {
 
     expect(await makeService().expireStaleRings(NOW)).toEqual({ expired: 1 })
     expect(await makeService().endGraceExpiredCalls(NOW)).toEqual({ ended: 1 })
+  })
+
+  it("reapLapsedEndpoints closes the CF sessions of reaped endpoints AFTER commit", async () => {
+    stubTransaction()
+    spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue(["call_1"])
+    spyOn(CallRepository, "lockForUpdateInOrder").mockResolvedValue(undefined)
+    spyOn(CallEndpointRepository, "reapLapsed").mockResolvedValue([
+      fakeEndpoint({ id: "callep_a", cfSessionId: "sess_a", status: "closed" }),
+      fakeEndpoint({ id: "callep_b", cfSessionId: null, status: "closed" }),
+    ])
+    spyOn(CallParticipantRepository, "markLeftWhereNoLiveEndpoint").mockResolvedValue([])
+    spyOn(CallRepository, "enterGraceIfEmptyBatch").mockResolvedValue([])
+    const closeSession = mock(async () => {})
+
+    await makeServiceWithCf({ closeSession }).reapLapsedEndpoints(NOW)
+
+    // Only the endpoint that carried a CF session is torn down.
+    expect(closeSession).toHaveBeenCalledTimes(1)
+    expect(closeSession).toHaveBeenCalledWith("sess_a")
+  })
+})
+
+function fakeCloudflare(overrides: Record<string, unknown> = {}) {
+  return {
+    createSession: mock(async () => ({ sessionId: "sess_new", sessionDescription: { type: "answer", sdp: "a" } })),
+    renegotiateSession: mock(async () => ({})),
+    addLocalTracks: mock(async () => ({ requiresImmediateRenegotiation: true, tracks: [] })),
+    pullRemoteTracks: mock(async () => ({ requiresImmediateRenegotiation: false, tracks: [] })),
+    closeTracks: mock(async () => ({ tracks: [] })),
+    closeSession: mock(async () => {}),
+    ...overrides,
+  }
+}
+
+function makeServiceWithCf(cloudflare: Record<string, unknown>) {
+  return new CallService({ pool: {} as Pool, cloudflare: cloudflare as never })
+}
+
+function stubWithClient() {
+  spyOn(dbModule, "withClient").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+}
+
+/** Stub the fence reads (call, endpoint, participant) for a live, owned, incarnation-matched endpoint. */
+function stubFence(endpoint: CallEndpoint, call = fakeCall()) {
+  spyOn(CallRepository, "findById").mockResolvedValue(call)
+  spyOn(CallEndpointRepository, "findById").mockResolvedValue(endpoint)
+  spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant({ id: endpoint.participantId }))
+}
+
+describe("CallService.createEndpointCfSession", () => {
+  afterEach(() => mock.restore())
+
+  it("is idempotent per incarnation — an endpoint with a CF session returns it without a CF call", async () => {
+    stubWithClient()
+    stubFence(fakeEndpoint({ id: "callep_1", cfSessionId: "sess_existing", mediaIncarnation: "inc_1" }))
+    const cf = fakeCloudflare()
+
+    const result = await makeServiceWithCf(cf).createEndpointCfSession({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+    })
+
+    expect(result).toEqual({ cfSessionId: "sess_existing", idempotent: true })
+    expect(cf.createSession).not.toHaveBeenCalled()
+  })
+
+  it("creates the CF session first, then CAS-binds it onto the endpoint", async () => {
+    stubWithClient()
+    stubFence(fakeEndpoint({ id: "callep_1", cfSessionId: null, mediaIncarnation: "inc_1" }))
+    spyOn(CallEndpointRepository, "setCfSessionIfUnset").mockResolvedValue(
+      fakeEndpoint({ id: "callep_1", cfSessionId: "sess_new", mediaIncarnation: "inc_1" })
+    )
+    const cf = fakeCloudflare()
+
+    const result = await makeServiceWithCf(cf).createEndpointCfSession({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+    })
+
+    expect(cf.createSession).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({ cfSessionId: "sess_new", idempotent: false })
+  })
+
+  it("closes the just-created CF session and 409s when the CAS loses to a stale incarnation", async () => {
+    stubWithClient()
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant({ id: "callp_1" }))
+    // First findById is the fence read (live, matching incarnation); the second
+    // is the post-CAS re-read, by which point a different incarnation owns the row.
+    spyOn(CallEndpointRepository, "findById")
+      .mockResolvedValueOnce(
+        fakeEndpoint({ id: "callep_1", participantId: "callp_1", cfSessionId: null, mediaIncarnation: "inc_1" })
+      )
+      .mockResolvedValueOnce(
+        fakeEndpoint({ id: "callep_1", participantId: "callp_1", cfSessionId: "sess_other", mediaIncarnation: "inc_2" })
+      )
+    spyOn(CallEndpointRepository, "setCfSessionIfUnset").mockResolvedValue(null)
+    const cf = fakeCloudflare()
+
+    const promise = makeServiceWithCf(cf).createEndpointCfSession({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+    })
+
+    await expect(promise).rejects.toMatchObject({ status: 409, code: "CALL_STALE_INCARNATION" })
+    expect(cf.closeSession).toHaveBeenCalledWith("sess_new")
+  })
+})
+
+describe("CallService.setEndpointMediaState", () => {
+  afterEach(() => mock.restore())
+
+  it("bumps the roster version and returns the fresh snapshot", async () => {
+    stubTransaction()
+    stubFence(fakeEndpoint({ id: "callep_1", mediaIncarnation: "inc_1" }))
+    const setState = spyOn(CallEndpointRepository, "setMediaState").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(9)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+
+    const snapshot = await makeService().setEndpointMediaState({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      mediaState: { muted: true },
+    })
+
+    expect(snapshot.rosterVersion).toBe(9)
+    expect(setState).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ mediaState: { muted: true } }))
+  })
+
+  it("rejects camera-on on an audio-only call", async () => {
+    stubTransaction()
+    stubFence(fakeEndpoint({ id: "callep_1", mediaIncarnation: "inc_1" }), fakeCall({ mode: "audio_only" }))
+
+    const promise = makeService().setEndpointMediaState({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      mediaState: { cameraOn: true },
+    })
+
+    await expect(promise).rejects.toMatchObject({ status: 409, code: "CALL_CAMERA_NOT_ALLOWED" })
+  })
+})
+
+describe("CallService.publishTracks", () => {
+  afterEach(() => mock.restore())
+
+  it("publishes to CF, sets the registry, and bumps the roster version", async () => {
+    stubWithClient()
+    stubTransaction()
+    stubFence(fakeEndpoint({ id: "callep_1", cfSessionId: "sess_1", mediaIncarnation: "inc_1" }))
+    const setTracks = spyOn(CallEndpointRepository, "setPublishedTracks").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(4)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+    const cf = fakeCloudflare()
+
+    const result = await makeServiceWithCf(cf).publishTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      sdp: { type: "offer", sdp: "o" },
+      tracks: [{ kind: "mic", mid: "0", trackName: "mic0" }],
+    })
+
+    expect(cf.addLocalTracks).toHaveBeenCalledWith("sess_1", {
+      sdp: { type: "offer", sdp: "o" },
+      tracks: [{ location: "local", trackName: "mic0", mid: "0" }],
+    })
+    expect(setTracks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ publishedTracks: [{ kind: "mic", trackName: "mic0" }] })
+    )
+    expect(result.snapshot.rosterVersion).toBe(4)
+  })
+
+  it("503s when the media plane is unconfigured", async () => {
+    const promise = makeService().publishTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      sdp: { type: "offer", sdp: "o" },
+      tracks: [{ kind: "mic", mid: "0", trackName: "mic0" }],
+    })
+    await expect(promise).rejects.toMatchObject({ status: 503, code: "CALLS_UNAVAILABLE" })
+  })
+})
+
+describe("CallService.joinCall — incarnation rebind", () => {
+  afterEach(() => mock.restore())
+
+  it("re-binds a reconnecting endpoint to the same epoch on a reload (new incarnation)", async () => {
+    stubTransaction()
+    spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
+    spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
+    spyOn(CallEndpointRepository, "findLiveByParticipant").mockResolvedValue(
+      fakeEndpoint({ id: "callep_old", epoch: 5, status: "reconnecting", mediaIncarnation: "inc_old" })
+    )
+    // A reload mints a new incarnation, so rebind drops the previous incarnation's
+    // dead CF session (cfSessionId null) — createEndpointCfSession then mints fresh
+    // instead of short-circuiting on the stale id (INV-41).
+    const rebind = spyOn(CallEndpointRepository, "rebind").mockResolvedValue(
+      fakeEndpoint({
+        id: "callep_old",
+        epoch: 5,
+        connectionSeq: 6,
+        status: "connected",
+        mediaIncarnation: "inc_new",
+        cfSessionId: null,
+      })
+    )
+    const insert = spyOn(CallEndpointRepository, "insert").mockResolvedValue(fakeEndpoint())
+    spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
+
+    const result = await makeService().joinCall({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_a",
+      mediaIncarnation: "inc_new",
+    })
+
+    expect(rebind).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: "callep_old", mediaIncarnation: "inc_new" })
+    )
+    expect(insert).not.toHaveBeenCalled()
+    expect(result.endpoint).toMatchObject({ id: "callep_old", epoch: 5, cfSessionId: null })
+  })
+})
+
+describe("CallService.markEndpointReconnecting", () => {
+  afterEach(() => mock.restore())
+
+  it("demotes and bumps the roster version in the same tx", async () => {
+    stubTransaction()
+    spyOn(CallEndpointRepository, "markReconnecting").mockResolvedValue(
+      fakeEndpoint({ id: "callep_1", status: "reconnecting" })
+    )
+    const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(3)
+
+    const result = await makeService().markEndpointReconnecting({
+      workspaceId: "ws_1",
+      endpointId: "callep_1",
+      epoch: 2,
+      connectionSeq: 0,
+    })
+
+    expect(result?.status).toBe("reconnecting")
+    // The disconnect broadcast must be newer than what peers hold (INV-66).
+    expect(bump).toHaveBeenCalledWith(expect.anything(), "ws_1", "call_1")
+  })
+
+  it("skips the bump on a stale fence (a fast reconnect already re-bound the endpoint)", async () => {
+    stubTransaction()
+    spyOn(CallEndpointRepository, "markReconnecting").mockResolvedValue(null)
+    const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(3)
+
+    const result = await makeService().markEndpointReconnecting({
+      workspaceId: "ws_1",
+      endpointId: "callep_1",
+      epoch: 2,
+      connectionSeq: 0,
+    })
+
+    expect(result).toBeNull()
+    expect(bump).not.toHaveBeenCalled()
   })
 })

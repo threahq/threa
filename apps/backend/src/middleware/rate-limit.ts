@@ -10,6 +10,7 @@ export interface RateLimiterSet {
   messageCreate: RequestHandler
   commandDispatch: RequestHandler
   pushTest: RequestHandler
+  calls: RequestHandler
   publicApiWorkspace: RequestHandler
   publicApiKey: RequestHandler
 }
@@ -74,6 +75,15 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       name: "push-test",
       windowMs: 60_000,
       max: 6,
+      key: userScopeKey,
+    }),
+
+    // CF media-proxy pass-throughs: renegotiation + track pulls churn on a bad
+    // network, so the ceiling is generous; it only trips a runaway client.
+    calls: createRateLimit({
+      name: "calls",
+      windowMs: 60_000,
+      max: 240,
       key: userScopeKey,
     }),
 
