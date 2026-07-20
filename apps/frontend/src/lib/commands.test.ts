@@ -159,6 +159,70 @@ describe("extractSteerDirective", () => {
     expect(extractSteerDirective(doc)).toEqual({ content: doc, hasMessageContent: true })
   })
 
+  it("detects steer in later list items and nested block paragraphs", () => {
+    const listDoc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [{ type: "paragraph", content: [{ type: "text", text: "prep the release" }] }],
+            },
+            {
+              type: "listItem",
+              content: [{ type: "paragraph", content: [{ type: "text", text: "/steer start with tests" }] }],
+            },
+          ],
+        },
+      ],
+    }
+    const quoteDoc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "context" }] },
+            { type: "paragraph", content: [{ type: "text", text: "/steer use this" }] },
+          ],
+        },
+      ],
+    }
+
+    expect(extractSteerDirective(listDoc)).toEqual({ content: listDoc, hasMessageContent: true })
+    expect(extractSteerDirective(quoteDoc)).toEqual({ content: quoteDoc, hasMessageContent: true })
+  })
+
+  it("detects a structural steer node inside a list item", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [{ type: "paragraph", content: [{ type: "text", text: "context" }] }],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "slashCommand", attrs: { name: "steer", clientActionId: null } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(extractSteerDirective(doc)).toEqual({ content: doc, hasMessageContent: true })
+  })
+
   it("detects a steer token split across formatting marks", () => {
     const doc: JSONContent = {
       type: "doc",

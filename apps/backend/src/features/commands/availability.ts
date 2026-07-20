@@ -44,6 +44,8 @@ export interface RuntimeCommandTarget {
   responseStreamId: string
   targetInstanceId: string
   targetRuntimeSessionId: string
+  /** Whether a source-message invocation may use mention routing for dedupe. */
+  supportsMentionable: boolean
   /** Lowercased canonical names the runtime currently advertises. */
   advertisedCommandNames: ReadonlySet<string>
   /** Thinking levels the runtime supports for the current model. Empty = runtime did not advertise. */
@@ -217,6 +219,7 @@ async function resolveRuntimeCommandTarget(
     responseStreamId: stream.id,
     targetInstanceId: link.instanceId,
     targetRuntimeSessionId: link.runtimeSessionId,
+    supportsMentionable: botHasCapability(bot, BotInvocationCapabilities.MENTIONABLE),
     advertisedCommandNames,
     advertisedThinkingLevels: resolveAdvertisedThinkingLevels(presence),
     advertisedModelSuggestions: resolveAdvertisedModelSuggestions(presence),

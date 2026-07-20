@@ -98,8 +98,13 @@ export function parsePermissionVerdict(text: string): PermissionVerdict | null {
  */
 export function verdictCandidateText(invocation: ClaimedInvocation): string | null {
   const command = parseSessionControlCommand(invocation)
-  if (!command) return invocation.promptMarkdown
-  return command.name === "steer" ? command.args : null
+  if (command) return command.name === "steer" ? command.args : null
+
+  // Embedded steer is now persisted as an ordinary source message plus an
+  // empty structured steer invocation. When that source message is swept while
+  // busy, retain the old permission-reply behavior by testing its text without
+  // the leading directive.
+  return invocation.promptMarkdown.replace(/^\s*\/steer(?:\s+|$)/i, "").trim()
 }
 
 export function buildInstructions(permissionRelay: boolean, channelActive = true): string {

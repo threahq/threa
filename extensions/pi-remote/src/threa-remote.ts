@@ -1719,9 +1719,10 @@ async function downloadSealedContextAttachments(
   historyRefs: readonly AttachmentRef[],
   invocation: ClaimedInvocation,
   cwd: string
-): Promise<string[]> {
+): Promise<{ contextLines: string[]; sourceLines: string[] }> {
   const seen = new Set<string>()
-  const lines: string[] = []
+  const contextLines: string[] = []
+  const sourceLines: string[] = []
   for (const { refs, isSource } of [
     { refs: promptRefs, isSource: true },
     { refs: historyRefs, isSource: false },
@@ -1731,14 +1732,15 @@ async function downloadSealedContextAttachments(
       seen.add(ref.attachmentId)
       try {
         const path = await downloadSealedAttachment(ref, invocation, cwd)
-        const marker = isSource ? " [attached to the source message]" : ""
-        lines.push(`- ${ref.filename} (${ref.mimeType}, ${ref.sizeBytes} bytes) → ${path}${marker}`)
+        const line = `- ${ref.filename} (${ref.mimeType}, ${ref.sizeBytes} bytes) → ${path}`
+        contextLines.push(isSource ? `${line} [attached to the source message]` : line)
+        if (isSource) sourceLines.push(line)
       } catch (error) {
         console.warn(`Failed to download sealed Threa attachment ${ref.attachmentId}: ${String(error)}`)
       }
     }
   }
-  return lines
+  return { contextLines, sourceLines }
 }
 
 async function downloadContextAttachments(
@@ -1881,10 +1883,10 @@ async function hydrateSealedClaim(
     )
     const contextBlocks = [
       historyLines.length > 0 ? ["Recent Threa stream context (oldest first):", ...historyLines].join("\n") : "",
-      attachmentLines.length > 0
+      attachmentLines.contextLines.length > 0
         ? [
             "Attachments saved into this session's working directory — read them from these paths:",
-            ...attachmentLines,
+            ...attachmentLines.contextLines,
           ].join("\n")
         : "",
     ].filter(Boolean)
@@ -1895,10 +1897,10 @@ async function hydrateSealedClaim(
       sealing: opened.sealing,
       sealedContextText: contextBlocks.join("\n\n"),
       sealedSteerContextText:
-        attachmentLines.length > 0
+        attachmentLines.sourceLines.length > 0
           ? [
               "Attachments saved into this session's working directory — read them from these paths:",
-              ...attachmentLines,
+              ...attachmentLines.sourceLines,
             ].join("\n")
           : "",
     }
@@ -1966,9 +1968,15 @@ function parseSessionControlCommand(promptMarkdown: string): { name: string; arg
 function resolveSessionControlCommand(invocation: ClaimedInvocation): RuntimeCommandMetadata | null {
   const runtimeCommand = getRuntimeCommand(invocation)
   if (runtimeCommand) return runtimeCommand
-  if (invocation.requiredCapability !== SESSION_CONTROL_CAPABILITY) return null
   const parsed = parseSessionControlCommand(invocation.promptMarkdown)
   if (!parsed) return null
+  if (invocation.requiredCapability !== SESSION_CONTROL_CAPABILITY) {
+    // Legacy/API clients can still post bare session commands as normal
+    // scratchpad messages. Preserve that fallback for every command except
+    // steer: embedded steer deliberately creates a normal `/steer …` message
+    // plus a separate structured session-control invocation.
+    if (invocation.requiredCapability !== "active-scratchpad" || parsed.name === "steer") return null
+  }
   return {
     id: invocation.sourceMessageId,
     name: parsed.name,

@@ -213,16 +213,18 @@ describe("sealed attachments (inbound)", () => {
       throw new Error(`unexpected fetch: ${url}`)
     }) as typeof fetch)
 
-    let lines: string[]
+    let lines: { contextLines: string[]; sourceLines: string[] }
     try {
       lines = await __testing.downloadSealedContextAttachments([ref], [], invocation() as never, dir)
     } finally {
       fetchSpy.mockRestore()
     }
 
-    expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain("notes.md (text/markdown, 14 bytes)")
-    expect(lines[0]).toContain("[attached to the source message]")
+    expect(lines.contextLines).toHaveLength(1)
+    expect(lines.contextLines[0]).toContain("notes.md (text/markdown, 14 bytes)")
+    expect(lines.contextLines[0]).toContain("[attached to the source message]")
+    expect(lines.sourceLines).toHaveLength(1)
+    expect(lines.sourceLines[0]).not.toContain("[attached to the source message]")
     const localPath = join(dir, ".threa-attachments", "binv_1", "notes.md")
     expect(new TextDecoder().decode(readFileSync(localPath))).toBe("inbound secret")
   })
@@ -250,15 +252,48 @@ describe("sealed attachments (inbound)", () => {
       throw new Error(`unexpected fetch: ${url}`)
     }) as typeof fetch)
 
-    let lines: string[]
+    let lines: { contextLines: string[]; sourceLines: string[] }
     try {
       lines = await __testing.downloadSealedContextAttachments([ref], [ref], invocation() as never, dir)
     } finally {
       fetchSpy.mockRestore()
     }
 
-    expect(lines).toHaveLength(1)
+    expect(lines.contextLines).toHaveLength(1)
+    expect(lines.sourceLines).toHaveLength(1)
     expect(urlFetches).toBe(1)
+  })
+
+  test("keeps history-only attachments out of steer context", async () => {
+    __testing.setConfigForTesting(BASE_CONFIG)
+    const dir = tempDir()
+    const encrypted = await encryptAttachmentBytes(new Uint8Array([9]))
+    const ref: AttachmentRef = {
+      attachmentId: "att_history",
+      key: encrypted.key,
+      iv: encrypted.iv,
+      filename: "old.txt",
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    }
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes("/attachments/att_history/url")) {
+        return jsonResponse({ data: { url: "https://signed.example/att_history" } })
+      }
+      if (url.startsWith("https://signed.example/")) return new Response(encrypted.ciphertext)
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as typeof fetch)
+
+    let lines: { contextLines: string[]; sourceLines: string[] }
+    try {
+      lines = await __testing.downloadSealedContextAttachments([], [ref], invocation() as never, dir)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+
+    expect(lines.contextLines).toHaveLength(1)
+    expect(lines.sourceLines).toEqual([])
   })
 })
 

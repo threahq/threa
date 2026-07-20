@@ -42,13 +42,17 @@ export interface ExtractedSteerDirective {
 const RAW_STEER_PATTERN = /(^|[^\p{L}\p{N}_/])\/steer(?=$|[^\p{L}\p{N}_/-])/iu
 const RAW_STEER_PATTERN_GLOBAL = new RegExp(RAW_STEER_PATTERN.source, "giu")
 const INLINE_CONTENT_PLACEHOLDER = "\uFFFC"
+const INLINE_CONTENT_CONTAINERS = new Set(["paragraph", "heading", "codeBlock"])
 
 function steerDetectionText(node: JSONContent): string {
   if (node.type === "text") return node.text ?? ""
   if (node.type === "slashCommand") return `/${String(node.attrs?.name ?? "")}`
   if (node.type === "hardBreak") return "\n"
   if (node.content) {
-    const separator = node.type === "doc" ? "\n" : ""
+    // Keep adjacent inline nodes contiguous so formatting-split tokens still
+    // match, but separate every block container so list/quote boundaries do
+    // not glue the preceding word to a following `/steer`.
+    const separator = INLINE_CONTENT_CONTAINERS.has(node.type ?? "") ? "" : "\n"
     return node.content.map(steerDetectionText).join(separator)
   }
   return ["doc", "paragraph"].includes(node.type ?? "") ? "" : INLINE_CONTENT_PLACEHOLDER

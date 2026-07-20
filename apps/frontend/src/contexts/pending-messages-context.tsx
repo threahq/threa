@@ -219,6 +219,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
           preEditStatus: undefined,
           retryCount: 0,
           retryAfter: 0,
+          terminalFailure: undefined,
         })
 
         // Update the optimistic event's payload so the timeline reflects the edit

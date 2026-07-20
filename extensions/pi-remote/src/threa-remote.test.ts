@@ -168,6 +168,24 @@ describe("Pi remote trace safety", () => {
     expect(__testing.resolveSessionControlCommand(invocation)).toBeNull()
   })
 
+  test("preserves non-steer command fallback for active-scratchpad messages", () => {
+    const invocation = {
+      id: "binv_1",
+      activeStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+      promptMarkdown: "/model openai-codex/gpt-5.6-sol",
+      claimToken: "claim",
+      claimExpiresAt: null,
+      requiredCapability: "active-scratchpad",
+    }
+    expect(__testing.resolveSessionControlCommand(invocation)).toEqual({
+      id: "msg_1",
+      name: "model",
+      args: "openai-codex/gpt-5.6-sol",
+      executionKind: "bot-runtime",
+    })
+  })
+
   test("formats Pi mid-turn steers like normal user messages", () => {
     expect(__testing.formatSteerPrompt("I want option 2")).toBe("I want option 2")
     expect(

@@ -309,6 +309,7 @@ describe("PendingMessagesContext", () => {
           preEditStatus: undefined,
           retryCount: 0,
           retryAfter: 0,
+          terminalFailure: undefined,
         })
       )
     })
