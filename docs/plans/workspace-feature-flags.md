@@ -50,12 +50,18 @@ One shared resolver runs on both sides of the stack.
 
 ```ts
 export const FEATURE_FLAGS = {
-  calls: { values: ["off", "on"], scopes: ["workspace"] },
-  newComposer: { values: ["off", "on"], scopes: ["workspace", "user"] },
-} as const
+  calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
+  newComposer: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
+} as const satisfies FeatureFlagRegistry
 ```
 
-First value stays the default. Deleting a key still retires a flag with no migration.
+Default is an **explicit** field, not the first array element (ratified 2026-07-20 — implicit
+first-value-wins was rejected as a hidden coupling). `defineFlag` enforces `default ∈ values`
+at compile time. Deleting a key still retires a flag with no migration.
+
+`calls` defaults `on`: enabled for every workspace, opt out via a workspace `off` override.
+The env gate `cloudflareRealtime.enabled` still fronts it, so default-on only surfaces calls
+where Cloudflare Realtime is actually configured (see PR 5).
 
 ### Storage (both planes, same shape)
 

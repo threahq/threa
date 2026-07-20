@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test"
 import {
   defaultFeatureFlags,
+  defineFlag,
   isFeatureFlagKey,
   registryAllowsScope,
   resolveAgainstRegistry,
@@ -8,11 +9,14 @@ import {
   type FeatureFlagRegistry,
 } from "./feature-flags"
 
-/** Stand-in for a registry mid-rollout; the shipped one is empty between rollouts. */
+// Stand-in for a registry mid-rollout; the shipped one is empty between rollouts.
+// `defaultOn` defaults to "on", which is NOT its first value — the case that
+// distinguishes an explicit default from the old first-value-wins behaviour.
 const registry = {
-  wsOnly: { values: ["off", "on"], scopes: ["workspace"] },
-  userOnly: { values: ["off", "on"], scopes: ["user"] },
-  both: { values: ["off", "shadow", "active"], scopes: ["workspace", "user"] },
+  wsOnly: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "off" }),
+  userOnly: defineFlag({ values: ["off", "on"], scopes: ["user"], default: "off" }),
+  both: defineFlag({ values: ["off", "shadow", "active"], scopes: ["workspace", "user"], default: "off" }),
+  defaultOn: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
 } as const satisfies FeatureFlagRegistry
 
 /**
@@ -24,12 +28,23 @@ function polluted(): Record<string, string> {
 }
 
 describe("resolveAgainstRegistry", () => {
-  test("every flag falls back to its first declared value", () => {
+  test("every flag falls back to its explicit default", () => {
     expect(resolveAgainstRegistry(registry, { workspace: {}, user: {} })).toEqual({
       wsOnly: "off",
       userOnly: "off",
       both: "off",
+      defaultOn: "on",
     })
+  })
+
+  test("the default is the declared one, not the first value", () => {
+    // defaultOn declares values ["off","on"] with default "on"; an unset flag
+    // resolves to "on", which the old values[0] behaviour would have made "off".
+    expect(resolveAgainstRegistry(registry, { workspace: {}, user: {} }).defaultOn).toBe("on")
+  })
+
+  test("a workspace override beats the explicit default", () => {
+    expect(resolveAgainstRegistry(registry, { workspace: { defaultOn: "off" }, user: {} }).defaultOn).toBe("off")
   })
 
   test("workspace override applies to a flag declaring workspace scope", () => {
@@ -37,6 +52,7 @@ describe("resolveAgainstRegistry", () => {
       wsOnly: "on",
       userOnly: "off",
       both: "shadow",
+      defaultOn: "on",
     })
   })
 
@@ -45,6 +61,7 @@ describe("resolveAgainstRegistry", () => {
       wsOnly: "off",
       userOnly: "off",
       both: "active",
+      defaultOn: "on",
     })
   })
 
@@ -53,6 +70,7 @@ describe("resolveAgainstRegistry", () => {
       wsOnly: "off",
       userOnly: "off",
       both: "off",
+      defaultOn: "on",
     })
   })
 
@@ -61,6 +79,7 @@ describe("resolveAgainstRegistry", () => {
       wsOnly: "off",
       userOnly: "off",
       both: "off",
+      defaultOn: "on",
     })
   })
 
@@ -70,7 +89,7 @@ describe("resolveAgainstRegistry", () => {
         workspace: { retired: "on", wsOnly: "maybe" },
         user: { userOnly: "enabled" },
       })
-    ).toEqual({ wsOnly: "off", userOnly: "off", both: "off" })
+    ).toEqual({ wsOnly: "off", userOnly: "off", both: "off", defaultOn: "on" })
   })
 
   test("a user override still applies when the workspace layer dropped its own", () => {
@@ -78,6 +97,7 @@ describe("resolveAgainstRegistry", () => {
       wsOnly: "off",
       userOnly: "off",
       both: "active",
+      defaultOn: "on",
     })
   })
 })
@@ -121,6 +141,7 @@ describe("prototype-chain keys", () => {
       wsOnly: "off",
       userOnly: "off",
       both: "off",
+      defaultOn: "on",
     })
   })
 
@@ -138,5 +159,14 @@ describe("prototype-chain keys", () => {
       toString: isFeatureFlagKey("toString"),
       hasOwnProperty: isFeatureFlagKey("hasOwnProperty"),
     }).toEqual({ constructor: false, toString: false, hasOwnProperty: false })
+  })
+})
+
+describe("defineFlag", () => {
+  test("rejects a default outside the declared values at compile time", () => {
+    // @ts-expect-error — "maybe" is not one of values, so this must not compile.
+    defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "maybe" })
+    // A declared default compiles.
+    expect(defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }).default).toBe("on")
   })
 })
