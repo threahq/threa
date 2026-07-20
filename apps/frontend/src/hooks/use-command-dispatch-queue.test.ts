@@ -1,12 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { commandsApi } from "@/api"
 import { db, sequenceToNum, type CachedEvent } from "@/db"
-import { processOperationQueue, reclaimStaleCommandAttempts } from "@/sync/operation-queue"
+import { processOperationQueue } from "@/sync/operation-queue"
 import { cancelCommandDispatch } from "./use-command-dispatch-queue"
 
 const commandId = "temp_cmd_1"
 const streamId = "stream_1"
-const originalLocks = navigator.locks
 
 function commandEvent(id: string, eventType: "command_dispatched" | "command_failed"): CachedEvent {
   return {
@@ -36,10 +35,6 @@ describe("cancelCommandDispatch", () => {
     await db.pendingOperations.clear()
   })
 
-  afterEach(() => {
-    Object.defineProperty(navigator, "locks", { configurable: true, value: originalLocks })
-  })
-
   it("removes the local command lifecycle and queued dispatch", async () => {
     await db.events.bulkPut([
       commandEvent(commandId, "command_dispatched"),
@@ -58,24 +53,6 @@ describe("cancelCommandDispatch", () => {
 
     expect(await db.events.where("streamId").equals(streamId).toArray()).toEqual([])
     expect(await db.pendingOperations.toArray()).toEqual([])
-  })
-
-  it("reclaims a crashed dispatch attempt after its Web Lock is released", async () => {
-    await db.pendingOperations.add({
-      id: "op_stale",
-      workspaceId: "ws_1",
-      type: "dispatch_command",
-      payload: { streamId, command: "/thinking low", optimisticEventId: commandId },
-      createdAt: 1,
-      retryCount: 0,
-      attempting: true,
-    })
-    const request = vi.fn(async (_name: string, callback: (lock: Lock) => Promise<boolean>) => callback({} as Lock))
-    Object.defineProperty(navigator, "locks", { configurable: true, value: { request } })
-
-    expect(await reclaimStaleCommandAttempts()).toBe(true)
-
-    expect((await db.pendingOperations.get("op_stale"))?.attempting).toBe(false)
   })
 
   it("preserves the ordering anchor when a dispatch fails permanently", async () => {
@@ -128,6 +105,11 @@ describe("cancelCommandDispatch", () => {
       () => true
     )
     await vi.waitFor(() => expect(commandsApi.dispatch).toHaveBeenCalledOnce())
+    expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", {
+      streamId,
+      command: "/thinking low",
+      clientCommandId: commandId,
+    })
     expect(await cancelCommandDispatch(streamId, commandId)).toBe(false)
     resolveDispatch({
       success: true,

@@ -87,6 +87,23 @@ export function toCachedStreamBootstrap(
   }
 }
 
+export async function bumpLaterOptimisticAnchors(
+  streamId: string,
+  confirmedOptimisticSequence: number,
+  confirmedPersistedSequence: number
+): Promise<void> {
+  await db.events
+    .where("_status")
+    .anyOf(["pending", "failed", "editing"])
+    .filter(
+      (event) =>
+        event.streamId === streamId &&
+        event._sequenceNum > confirmedOptimisticSequence &&
+        (event._anchorSequenceNum ?? -1) < confirmedPersistedSequence
+    )
+    .modify({ _anchorSequenceNum: confirmedPersistedSequence })
+}
+
 export async function getLatestPersistedSequence(streamId: string): Promise<string | null> {
   const latestEvent = await db.events
     .where("[streamId+_sequenceNum]")
@@ -342,6 +359,7 @@ async function writeBootstrapEventsAndStream(
     // liveQuery frame never shows neither copy. Deleting the outbox row also
     // stops the queue from replaying a send the server already committed.
     for (const { realEvent, optimistic } of optimisticSwaps) {
+      await bumpLaterOptimisticAnchors(streamId, optimistic._sequenceNum, sequenceToNum(realEvent.sequence))
       await db.events.delete(optimistic.id)
       await db.pendingMessages.delete(optimistic.id)
       const plaintext = readPlaintextContent(optimistic.payload)
@@ -835,8 +853,9 @@ export function registerStreamSocketHandlers(
       // BEFORE writing the real event, so we can carry forward state the server
       // event doesn't itself carry.
       let carriedConversationId: string | undefined
+      let optimistic: CachedEvent | undefined
       if (newPayload.clientMessageId) {
-        const optimistic = await db.events.get(newPayload.clientMessageId)
+        optimistic = await db.events.get(newPayload.clientMessageId)
         optimisticPlaintext = readPlaintextContent(optimistic?.payload)
         // A board reply tags its optimistic event with the conversation it
         // attaches to; the server `message:created` does NOT carry that (the
@@ -865,6 +884,9 @@ export function registerStreamSocketHandlers(
       })
 
       if (newPayload.clientMessageId) {
+        if (optimistic) {
+          await bumpLaterOptimisticAnchors(streamId, optimistic._sequenceNum, sequenceToNum(newEvent.sequence))
+        }
         await db.events.delete(newPayload.clientMessageId).catch(() => {})
         await db.pendingMessages.delete(newPayload.clientMessageId).catch(() => {})
       }

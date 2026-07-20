@@ -54,7 +54,7 @@ export async function loadStreamEvents(streamId: string, fromSequenceNum: number
   // very top and are usually already in `base`). Drive this off the `_status`
   // index — Dexie only indexes rows where the value is present, so this is the
   // handful of unsent rows app-wide, not an O(history) scan of the stream.
-  const unsentForStream = (await db.events.where("_status").anyOf(["pending", "failed"]).toArray()).filter(
+  const unsentForStream = (await db.events.where("_status").anyOf(["pending", "failed", "editing"]).toArray()).filter(
     (e) => e.streamId === streamId && (!hasFloor || e._sequenceNum >= fromSequenceNum)
   )
   if (unsentForStream.length === 0) return base

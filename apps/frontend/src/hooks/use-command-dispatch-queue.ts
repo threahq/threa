@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo } from "react"
+import { useCallback, useMemo } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useUser } from "@/auth"
 import { db, sequenceToNum } from "@/db"
-import { enqueueOperation, reclaimStaleCommandAttempts } from "@/sync/operation-queue"
+import { enqueueOperation } from "@/sync/operation-queue"
 import { getLatestPersistedSequence } from "@/sync/stream-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
@@ -14,7 +14,7 @@ export async function cancelCommandDispatch(streamId: string, commandId: string)
     const operations = (await db.pendingOperations.where("type").equals("dispatch_command").toArray()).filter(
       (operation) => operation.payload.optimisticEventId === commandId
     )
-    if (operations.some((operation) => operation.attempting)) return false
+    if (operations.some((operation) => operation.startedAt != null)) return false
 
     const dispatched = await db.events.get(commandId)
     if (dispatched?.streamId !== streamId) return false
@@ -26,7 +26,6 @@ export async function cancelCommandDispatch(streamId: string, commandId: string)
 }
 
 export function useCommandDispatchCancellation(streamId: string, commandId: string, localStatus: string | undefined) {
-  const syncEngine = useOptionalSyncEngine()
   const operation = useLiveQuery(
     async () =>
       (await db.pendingOperations
@@ -37,19 +36,8 @@ export function useCommandDispatchCancellation(streamId: string, commandId: stri
     [commandId],
     undefined
   )
-  useEffect(() => {
-    if (!operation?.attempting) return
-    let active = true
-    void reclaimStaleCommandAttempts().then((reclaimed) => {
-      if (active && reclaimed) syncEngine?.kickOperationQueue()
-    })
-    return () => {
-      active = false
-    }
-  }, [operation?.attempting, syncEngine])
-
   const canCancel =
-    localStatus === "failed" || (localStatus === "pending" && operation != null && !operation.attempting)
+    localStatus === "failed" || (localStatus === "pending" && operation != null && operation.startedAt == null)
   const cancel = useCallback(() => cancelCommandDispatch(streamId, commandId), [commandId, streamId])
   return { canCancel, cancel }
 }
@@ -103,7 +91,7 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
           ...optimisticEvent,
           workspaceId,
           _sequenceNum: sequenceToNum(optimisticEvent.sequence),
-          _anchorSequenceNum: sequenceToNum(anchorSequence ?? "0"),
+          ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
           _status: "pending",
           _cachedAt: Date.now(),
         })

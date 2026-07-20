@@ -1861,6 +1861,7 @@ export interface MarkAllAsReadResponse {
 export interface DispatchCommandInput {
   command: string
   streamId: string
+  clientCommandId?: string
 }
 
 export interface DispatchCommandResponse {

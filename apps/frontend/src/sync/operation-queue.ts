@@ -4,6 +4,7 @@ import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView }
 import { ApiError, commandsApi, isPermanentApiError } from "@/api"
 import { persistScheduledRows, removeScheduledRow, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
 import { executeDraftDelete, executeDraftResolve, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
+import { bumpLaterOptimisticAnchors } from "./stream-sync"
 
 function getRetryDelay(retryCount: number): number {
   if (retryCount <= 3) return 0
@@ -104,19 +105,6 @@ export async function enqueueOperation(
  * Process pending operations from IDB. Called on socket connect/reconnect.
  * Uses Web Locks to prevent cross-tab double-processing.
  */
-export async function reclaimStaleCommandAttempts(): Promise<boolean> {
-  if (!navigator.locks) return false
-
-  return navigator.locks.request(OPERATION_QUEUE_LOCK, async () => {
-    await db.pendingOperations
-      .where("type")
-      .equals("dispatch_command")
-      .filter((operation) => operation.attempting === true)
-      .modify({ attempting: false })
-    return true
-  })
-}
-
 export async function processOperationQueue(
   messageService: MessageServiceLike,
   reactionService: ReactionServiceLike,
@@ -124,15 +112,7 @@ export async function processOperationQueue(
   draftsService: DraftsServiceLike | undefined,
   isOnline: () => boolean
 ): Promise<void> {
-  const processor = async (ownsLock: boolean) => {
-    if (ownsLock) {
-      await db.pendingOperations
-        .where("type")
-        .equals("dispatch_command")
-        .filter((operation) => operation.attempting === true)
-        .modify({ attempting: false })
-    }
-
+  const processor = async () => {
     const now = Date.now()
     const skipped = new Set<string>()
 
@@ -148,10 +128,7 @@ export async function processOperationQueue(
         // device, a coalescing replace of this op must carry its idempotency
         // lineage (writeId) forward instead of minting a fresh one — otherwise
         // a committed-but-unacked write reads as drift and splits server-side.
-        const claimed = await db.pendingOperations.update(next.id, {
-          startedAt: Date.now(),
-          ...(next.type === "dispatch_command" && { attempting: true }),
-        })
+        const claimed = await db.pendingOperations.update(next.id, { startedAt: Date.now() })
         if (claimed === 0) continue
         await executeOperation(next, messageService, reactionService, scheduledService, draftsService)
         await db.pendingOperations.delete(next.id)
@@ -168,7 +145,6 @@ export async function processOperationQueue(
           await db.pendingOperations.update(next.id, {
             retryCount,
             retryAfter: Date.now() + getRetryDelay(retryCount),
-            ...(next.type === "dispatch_command" && { attempting: false }),
           })
           skipped.add(next.id)
         }
@@ -179,10 +155,10 @@ export async function processOperationQueue(
   if (navigator.locks) {
     await navigator.locks.request(OPERATION_QUEUE_LOCK, { ifAvailable: true }, async (lock) => {
       if (!lock) return
-      await processor(true)
+      await processor()
     })
   } else {
-    await processor(false)
+    await processor()
   }
 }
 
@@ -252,10 +228,17 @@ async function executeOperation(
         const result = await commandsApi.dispatch(workspaceId, {
           streamId: payload.streamId as string,
           command: payload.command as string,
+          clientCommandId: optimisticEventId,
         })
         if (!result.success) throw new ApiError(400, "COMMAND_DISPATCH_FAILED", result.error)
         await db.transaction("rw", [db.events, db.pendingOperations], async () => {
-          if (await db.events.get(optimisticEventId)) {
+          const optimistic = await db.events.get(optimisticEventId)
+          if (optimistic) {
+            await bumpLaterOptimisticAnchors(
+              optimistic.streamId,
+              optimistic._sequenceNum,
+              sequenceToNum(result.event.sequence)
+            )
             await db.events.delete(optimisticEventId)
             await db.events.put({
               ...result.event,

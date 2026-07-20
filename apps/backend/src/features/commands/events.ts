@@ -59,13 +59,14 @@ export async function insertCommandDispatchedEvent(
     streamId: string
     userId: string
     commandId: string
+    eventId?: string
     name: string
     args: string
     executionKind?: "server" | "bot-runtime"
   }
 ): Promise<StreamEvent> {
   const evt = await StreamEventRepository.insert(db, {
-    id: eventId(),
+    id: params.eventId ?? eventId(),
     streamId: params.streamId,
     eventType: "command_dispatched",
     payload: {

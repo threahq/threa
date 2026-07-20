@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { db, sequenceToNum, type CachedEvent } from "@/db"
 import { loadStreamEvents, shareEventIdentities } from "./stream-store"
+import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -177,6 +178,27 @@ describe("loadStreamEvents", () => {
     expect(events[0].id).toBe("temp_old")
   })
 
+  it("keeps an editing optimistic row at its anchor", async () => {
+    const streamId = "stream_editing"
+    const editing = makeOptimisticEvent(streamId, "temp_editing", "1000", "2026-01-01T00:00:01.000Z", 1)
+    editing._status = "editing"
+    await db.events.bulkPut([
+      makeRealEvent(streamId, "1"),
+      makeRealEvent(streamId, "2"),
+      makeRealEvent(streamId, "3"),
+      editing,
+    ])
+
+    const events = await loadStreamEvents(streamId, 1)
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_editing_1",
+      "temp_editing",
+      "evt_stream_editing_2",
+      "evt_stream_editing_3",
+    ])
+  })
+
   it("preserves optimistic order when creation timestamps match", async () => {
     const streamId = "stream_same_millisecond"
     const createdAt = "2026-01-01T20:30:00.000Z"
@@ -207,6 +229,27 @@ describe("loadStreamEvents", () => {
       "evt_stream_slow_clock_2",
       "temp_slow",
       "evt_stream_slow_clock_3",
+    ])
+  })
+
+  it("keeps later optimistic sends after an earlier send confirms", async () => {
+    const streamId = "stream_partial_ack"
+    const first = makeOptimisticEvent(streamId, "temp_first", "1000", "2026-01-01T00:00:01.000Z", 1)
+    const second = makeOptimisticEvent(streamId, "temp_second", "1001", "2026-01-01T00:00:02.000Z", 1)
+    await db.events.bulkPut([makeRealEvent(streamId, "1"), first, second])
+
+    await db.transaction("rw", db.events, async () => {
+      await bumpLaterOptimisticAnchors(streamId, first._sequenceNum, 2)
+      await db.events.delete(first.id)
+      await db.events.put(makeRealEvent(streamId, "2"))
+    })
+
+    const events = await loadStreamEvents(streamId, 1)
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_partial_ack_1",
+      "evt_stream_partial_ack_2",
+      "temp_second",
     ])
   })
 

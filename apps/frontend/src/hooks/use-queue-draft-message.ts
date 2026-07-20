@@ -172,7 +172,7 @@ export function useQueueDraftMessage(workspaceId: string) {
           ...optimisticEvent,
           workspaceId: params.workspaceId,
           _sequenceNum: sequenceToNum(optimisticEvent.sequence),
-          _anchorSequenceNum: sequenceToNum(anchorSequence ?? "0"),
+          ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
           _clientId: clientId,
           _status: "pending",
           _cachedAt: Date.now(),

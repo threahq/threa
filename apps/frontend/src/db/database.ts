@@ -409,8 +409,6 @@ export interface PendingOperation {
    * `enqueueDraftUpsert`); an op that never started can be reused in place.
    */
   startedAt?: number
-  /** True only while a command dispatch request is actively in flight. */
-  attempting?: boolean
 }
 
 export interface SyncCursor {
