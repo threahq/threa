@@ -19,16 +19,18 @@ related: [architecture/outbox-pattern.md]
 
 ## The gist
 
-A feature flag is an enum value looked up by string key, scoped to one user in one
-workspace. Each flag declares its allowed values in code and the **first value is the
-default** — a plain on/off flag is just the two-value case (`["off", "on"]`), while a
-staged rollout can declare richer variants (e.g. `["active", "off", "shadow"]`) without
-resorting to flag combinations. The registry is currently empty — no rollout is in
-flight — and is meant to sit that way between rollouts. A platform admin
-sets a member's value from the backoffice and the change reaches that member's running
-frontend sessions within a second or two — no env vars, no redeploy. The backend
-resolves the same key through the same data, so a flag means the same thing on both
-sides of the stack.
+A feature flag is an enum value looked up by string key. Each flag declares its allowed
+values, an explicit `default`, and the scopes it may be overridden at (`["workspace"]`,
+`["user"]`, or both) in code — a plain on/off flag is just the two-value case
+(`["off", "on"]`), while a staged rollout can declare richer variants (e.g.
+`["off", "shadow", "active"]`) without resorting to flag combinations. The registry
+currently holds one flag, `calls` (`{ values: ["off", "on"], scopes: ["workspace"],
+default: "on" }`) — the worked example: it governs the voice/video calls surface,
+defaults on for every workspace, and a workspace opts out with a `subject_type='workspace'`
+override of `"off"`. The registry is meant to sit near-empty between rollouts. A platform
+admin sets a value from the backoffice and the change reaches running frontend sessions
+within a second or two — no env vars, no redeploy. The backend resolves the same key
+through the same data, so a flag means the same thing on both sides of the stack.
 
 Flags are deliberately temporary. The registry lives in code (`FEATURE_FLAGS` in
 `packages/types/src/feature-flags.ts`), and every read path filters stored rows
@@ -82,8 +84,8 @@ stop here.
 
 ## Details worth knowing
 
-- **Adding a flag** is one entry in `FEATURE_FLAGS` (key → declared values, first is
-  the default) plus the `getFlag` / `useFeatureFlag` call sites. **Removing one** is
+- **Adding a flag** is one entry in `FEATURE_FLAGS` (key → declared values, scopes, and
+  an explicit `default`) plus the `getFlag` / `useFeatureFlag` call sites. **Removing one** is
   deleting that entry and those call sites; stale rows on both planes are filtered out
   at read time by `resolveFeatureFlags`.
 - **Unknown keys and values are tolerated on the wire.** The regional internal

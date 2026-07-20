@@ -10,14 +10,14 @@ entry_points:
   - apps/backend/src/features/calls/
   - apps/frontend/src/calls/
   - apps/frontend/src/components/call/
-  - packages/types/src/workspace-settings.ts
+  - packages/types/src/feature-flags.ts
 public_site: false
 summary: >
   Slack-huddle-class 1:1 DM calls (M1): start from a DM header, ring the peer,
   audio/video in the browser with media routed through the Cloudflare Realtime
-  SFU — never through Threa's servers. Flag-gated behind the workspace
-  `callsEnabled` setting and the Cloudflare Realtime app credential; group calls,
-  screen share, call chat, and transcription are deferred to later milestones.
+  SFU — never through Threa's servers. Gated behind the `calls` feature flag
+  (workspace scope, default on) and the Cloudflare Realtime app credential; group
+  calls, screen share, call chat, and transcription are deferred to later milestones.
 related: [../plans/voice-video-calls.md, ../deployment.md]
 ---
 
@@ -127,13 +127,17 @@ Calls are gated by **two independent switches**, both required:
      boot loudly. Absent ⇒ the backend boots fine but every calls surface answers
      **503 `CALLS_UNAVAILABLE`**. Resolved in `apps/backend/src/lib/env.ts`
      (`config.cloudflareRealtime.enabled`), consumed only by the CF proxy.
-2. **`callsEnabled`** workspace setting (default **on**,
-   `packages/types/src/workspace-settings.ts`) — a per-workspace kill switch rather
-   than a rollout gate: an admin can shut calls off without a deploy, which matters
-   because the media plane is a third-party dependency. The frontend renders no
-   calls surface (`stream.tsx`, `user-profile-modal.tsx`) when off; the backend
-   handlers + gateway reject when off. There is no settings UI for it yet — it is
-   changed via `PATCH /api/workspaces/:id/workspace-settings` (WORKSPACE_ADMIN).
+2. **`calls`** feature flag (workspace scope, default **on**,
+   `packages/types/src/feature-flags.ts`) — a per-workspace kill switch, resolved
+   through the same registry as every other flag: the backend gates read
+   `featureFlagService.getWorkspaceFlag(workspaceId, "calls")` (handlers +
+   `/calls` gateway; the gateway also gates lease-renew so flipping off drains
+   live calls within one lease TTL), the frontend reads
+   `useFeatureFlag(workspaceId, "calls")` and renders no calls surface
+   (`stream.tsx`, `user-profile-modal.tsx`) when off. A workspace opts out with a
+   `subject_type='workspace'` override of `"off"`, written from the backoffice
+   (control-plane only — there is no in-app toggle). Default-on means calls
+   surface in every workspace where the env credential above is also present.
 
 ## Operational notes
 

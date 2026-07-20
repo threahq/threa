@@ -25,6 +25,14 @@ describe("updateWorkspaceSettingsSchema voiceSteeringWords", () => {
   })
 })
 
+describe("updateWorkspaceSettingsSchema retired keys", () => {
+  it("rejects the retired callsEnabled key instead of silently stripping it", () => {
+    // callsEnabled moved to the `calls` feature flag; a stale client PATCHing it
+    // must fail loud, not get an apparent success while the kill switch no-ops.
+    expect(updateWorkspaceSettingsSchema.safeParse({ callsEnabled: false }).success).toBe(false)
+  })
+})
+
 describe("updateWorkspaceSettingsSchema defaultCompanionPersonaId", () => {
   it("accepts a persona id", () => {
     expect(

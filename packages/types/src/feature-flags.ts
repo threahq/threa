@@ -53,7 +53,9 @@ export function defineFlag<
  * Every live feature flag. Add a flag while rolling a feature out; delete it
  * the moment the rollout is done. A flag that survives long here is a smell.
  */
-export const FEATURE_FLAGS = {} as const satisfies FeatureFlagRegistry
+export const FEATURE_FLAGS = {
+  calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
+} as const satisfies FeatureFlagRegistry
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS
 

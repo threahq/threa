@@ -6,7 +6,7 @@ import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
 import { UserRepository } from "../workspaces"
-import type { WorkspaceSettingsService } from "../workspace-settings"
+import type { FeatureFlagService } from "../feature-flags"
 import { checkCallAccess } from "./access"
 import type { CallService, CallRosterSnapshot } from "./service"
 import { ENDPOINT_LEASE_TTL_MS, CALL_SOCKET_RATE_BURST, CALL_SOCKET_RATE_REFILL_PER_SEC } from "./config"
@@ -53,7 +53,7 @@ const stateSchema = z.object({
 interface Dependencies {
   authService: AuthService
   callService: CallService
-  workspaceSettingsService: WorkspaceSettingsService
+  featureFlagService: FeatureFlagService
   pool: Pool
   /** False when the CF media plane is unconfigured — every join then acks CALLS_UNAVAILABLE. */
   cloudflareEnabled: boolean
@@ -102,7 +102,7 @@ function createTokenBucket() {
  * reordered update is dropped by version check, not trusted.
  */
 export function registerCallGateway(io: Server, deps: Dependencies) {
-  const { authService, callService, workspaceSettingsService, pool, cloudflareEnabled } = deps
+  const { authService, callService, featureFlagService, pool, cloudflareEnabled } = deps
   const namespace = io.of(CALLS_NAMESPACE)
 
   namespace.use(createSocketAuthMiddleware(authService))
@@ -112,8 +112,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
   // `call:lease:renew` — renewing on the flag lets a live call outlive the switch,
   // so flipping calls off starves every live call within one lease TTL.
   const assertWorkspaceCallsEnabled = async (workspaceId: string): Promise<void> => {
-    const settings = await workspaceSettingsService.getSettings(workspaceId)
-    if (!settings.callsEnabled) {
+    if ((await featureFlagService.getWorkspaceFlag(workspaceId, "calls")) !== "on") {
       throw new HttpError("Calls are not enabled for this workspace", { status: 404, code: "CALLS_DISABLED" })
     }
   }

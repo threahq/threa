@@ -76,14 +76,14 @@ function setup(overrides?: {
     ...overrides?.callService,
   }
 
-  const workspaceSettingsService = {
-    getSettings: mock(async () => ({ callsEnabled: overrides?.callsEnabled ?? true })),
+  const featureFlagService = {
+    getWorkspaceFlag: mock(async () => ((overrides?.callsEnabled ?? true) ? "on" : "off")),
   }
 
   registerCallGateway(io, {
     authService: {} as never,
     callService: callService as never,
-    workspaceSettingsService: workspaceSettingsService as never,
+    featureFlagService: featureFlagService as never,
     pool: {} as never,
     cloudflareEnabled: overrides?.cloudflareEnabled ?? true,
   })
@@ -91,7 +91,7 @@ function setup(overrides?: {
   const socket = fakeSocket()
   connectionHandler!(socket)
 
-  return { socket, callService, workspaceSettingsService, checkCallAccess, emit, to, namespace }
+  return { socket, callService, featureFlagService, checkCallAccess, emit, to, namespace }
 }
 
 const JOIN = { workspaceId: "ws_1", callId: "call_1", mediaIncarnation: "inc_1" }
@@ -365,13 +365,13 @@ describe("registerCallGateway call:lease:renew", () => {
   })
 
   it("rejects the renew with CALLS_DISABLED once the kill-switch is flipped off (drains live calls in one TTL)", async () => {
-    const { socket, callService, workspaceSettingsService } = setup()
+    const { socket, callService, featureFlagService } = setup()
     await socket.trigger(
       "call:join",
       JOIN,
       mock(() => {})
     )
-    workspaceSettingsService.getSettings.mockResolvedValue({ callsEnabled: false } as never)
+    featureFlagService.getWorkspaceFlag.mockResolvedValue("off" as never)
 
     const ack = mock(() => {})
     await socket.trigger("call:lease:renew", {}, ack)

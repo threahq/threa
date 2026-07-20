@@ -211,10 +211,15 @@ first load after a flag ships; unavoidable without blocking paint on the network
 - Update `tests/browser/calls.spec.ts` and `apps/backend/scripts/calls-spike/harness.ts`,
   which currently flip the setting via raw PATCH.
 
-**Ops precondition for PR 5:** confirm via read-only prod query that no workspace has
-`callsEnabled = true`. Flags live in the control-plane DB and settings in regional DBs,
-so no migration can carry a live value across; any enabled workspace must be re-enabled
-by hand in the backoffice.
+**Calls state (corrected):** #1454 already released calls with the `callsEnabled` setting
+defaulting **on** (2026-07-20), and CF Realtime is configured in prod. So this PR is a
+mechanism swap (setting → flag) that preserves the released default-on — not a new
+enablement, and there is no DPA/CF gate it must clear that #1454 did not. Since the setting
+default is on, a stored `callsEnabled = false` is a deliberate opt-out (true equals the
+default and is never stored). Ratified decision (2026-07-20): **everyone on** — the migration
+intentionally erases those opt-outs; calls is performative-on-for-all to dogfood the flag
+system. No per-workspace preservation. A read-only `SELECT ... WHERE key='callsEnabled'` is
+worth running post-merge purely to know the count, not as a gate.
 
 ## Known boundary — no per-user opt-out below a workspace override
 

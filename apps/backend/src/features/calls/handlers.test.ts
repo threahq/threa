@@ -31,14 +31,14 @@ function makeHandlers(opts: {
   callsEnabled?: boolean
   callService?: Record<string, unknown>
 }) {
-  const workspaceSettingsService = {
-    getSettings: mock(async () => ({ callsEnabled: opts.callsEnabled ?? true })),
+  const featureFlagService = {
+    getWorkspaceFlag: mock(async () => ((opts.callsEnabled ?? true) ? "on" : "off")),
   }
   return createCallHandlers({
     pool: {} as Pool,
     io: {} as Server,
     callService: (opts.callService ?? {}) as never,
-    workspaceSettingsService: workspaceSettingsService as never,
+    featureFlagService: featureFlagService as never,
     cloudflareEnabled: opts.cloudflareEnabled ?? true,
   })
 }

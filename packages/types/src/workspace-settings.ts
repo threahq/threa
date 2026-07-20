@@ -75,14 +75,6 @@ export interface WorkspaceSettings {
    * shared money boundary has to be a deliberate choice, not one member's laptop.
    */
   billingTimezone: string
-  /**
-   * Kill switch for voice/video calls, on by default. Off ⇒ the calls
-   * HTTP/socket surfaces answer as if the feature does not exist
-   * (`CALLS_DISABLED`, 404-style) per the house convention for gated features.
-   * Calls depend on a third-party SFU, so an admin needs a way to shut them off
-   * without a deploy; that is the only job this setting still has.
-   */
-  callsEnabled: boolean
   createdAt: string
   updatedAt: string
 }
@@ -96,7 +88,6 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
   defaultCompanionPersonaId: null,
   billingTimezone: "UTC",
-  callsEnabled: true,
 }
 
 /** Partial update — only provided fields are changed. */
@@ -108,7 +99,6 @@ export interface UpdateWorkspaceSettingsInput {
   maxPendingFollowUps?: number
   defaultCompanionPersonaId?: string | null
   billingTimezone?: string
-  callsEnabled?: boolean
 }
 
 /** Valid top-level settings keys that can be overridden. */
