@@ -1,6 +1,6 @@
 import { afterEach, expect, spyOn, test } from "bun:test"
 import { ThreaApiClient } from "./api-client"
-import { enrichConversation, enrichMessages } from "./enrich"
+import { enrichConversation, enrichMessages, enrichStreamContext } from "./enrich"
 import { RefResolver } from "./resolver"
 import { TEST_CONFIG, fetchByPath, jsonResponse } from "./test-support"
 
@@ -81,6 +81,54 @@ test("enrichConversation mirrors participantIds into a participants array with n
     { id: "bot_x" },
   ])
   expect(enriched.participantIds).toEqual(["usr_p", "usr_k", "bot_x"])
+})
+
+const STREAMS: Record<string, unknown> = {
+  stream_root: { id: "stream_root", type: "channel", displayName: "engineering" },
+  stream_thread: { id: "stream_thread", type: "thread", displayName: "deploy plan", rootStreamId: "stream_root" },
+}
+
+function streamFetch(path: string) {
+  const id = path.split("/").pop()!
+  const stream = STREAMS[id]
+  return stream ? jsonResponse(200, { data: stream }) : jsonResponse(404, { error: "nope", code: "NOT_FOUND" })
+}
+
+test("enrichStreamContext attaches stream and rootStream refs for thread rows", async () => {
+  fetchSpy.mockImplementation(fetchByPath(streamFetch))
+  const resolver = makeResolver()
+
+  const rows = [
+    { id: "msg_1", streamId: "stream_thread" },
+    { id: "msg_2", streamId: "stream_root" },
+  ]
+  const enriched = (await enrichStreamContext(rows, resolver)) as Array<Record<string, unknown>>
+
+  expect(enriched[0]!.stream).toEqual({ id: "stream_thread", name: "deploy plan", type: "thread" })
+  expect(enriched[0]!.rootStream).toEqual({ id: "stream_root", name: "engineering", type: "channel" })
+  expect(enriched[1]!.stream).toEqual({ id: "stream_root", name: "engineering", type: "channel" })
+  expect(enriched[1]!.rootStream).toBeUndefined()
+  // Deduped: stream_thread + stream_root fetched once each.
+  expect(fetchSpy.mock.calls.length).toBe(2)
+})
+
+test("enrichStreamContext uses a row's own rootStreamId (conversations) and degrades to bare ids on fetch failure", async () => {
+  fetchSpy.mockImplementation(fetchByPath(() => jsonResponse(500, { error: "boom", code: "INTERNAL" })))
+  const resolver = makeResolver()
+
+  const rows = [{ id: "conv_1", streamId: "stream_thread", rootStreamId: "stream_root" }]
+  const enriched = (await enrichStreamContext(rows, resolver)) as Array<Record<string, unknown>>
+
+  expect(enriched[0]!.stream).toEqual({ id: "stream_thread" })
+  expect(enriched[0]!.rootStream).toEqual({ id: "stream_root" })
+})
+
+test("enrichStreamContext passes rows without streamId through untouched", async () => {
+  const resolver = makeResolver()
+  const rows = [{ id: "memo_1" }]
+
+  expect(await enrichStreamContext(rows, resolver)).toEqual(rows)
+  expect(fetchSpy).not.toHaveBeenCalled()
 })
 
 test("enrichConversation degrades to the raw conversation when the users fetch fails", async () => {

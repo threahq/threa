@@ -1,5 +1,14 @@
 import { search, SEARCH_WHATS, type SearchArgs, type SearchWhat } from "../ops"
-import { arrayFlag, intFlag, stringFlag, UsageError, type CommandSpec } from "../output"
+import {
+  arrayFlag,
+  fmtTimestamp,
+  intFlag,
+  snippet,
+  streamLabel,
+  stringFlag,
+  UsageError,
+  type CommandSpec,
+} from "../output"
 import { EXTRACTION_CONTENT_TYPES, KNOWLEDGE_TYPES, MEMO_SCOPES, MEMO_TYPES, STREAM_TYPES } from "../tools/constants"
 
 export const searchCommand: CommandSpec = {
@@ -9,8 +18,8 @@ export const searchCommand: CommandSpec = {
   help:
     "threa search [query] --what messages|memos|attachments [flags]\n\n" +
     "One search routed by --what. Only the filters valid for the chosen --what are accepted; passing another " +
-    "is an error naming the offending flag. query is required for messages and attachments; for memos it is " +
-    "optional (omit it to browse the most recent memos).\n\n" +
+    "is an error naming the offending flag. query is required for messages; for memos and attachments it is " +
+    "optional (omit it to browse the most recent, newest first).\n\n" +
     "Common flags:\n" +
     "  --what w         messages | memos | attachments (required)\n" +
     "  --stream ref     limit to a source stream (stream_ id or #slug); repeatable\n" +
@@ -84,11 +93,56 @@ export const searchCommand: CommandSpec = {
     const p = payload as { data?: Array<Record<string, unknown>> }
     const rows = p.data ?? []
     if (rows.length === 0) return "(no results)"
-    return rows
-      .map((r) => {
-        const id = r.id ?? (r.memo as { id?: string } | undefined)?.id ?? "?"
-        return String(id)
-      })
-      .join("\n")
+    return rows.map(renderSearchResult).join("\n")
   },
+}
+
+function joinFields(fields: Array<string | undefined>): string {
+  return fields.filter(Boolean).join("  ")
+}
+
+export function renderSearchResult(r: Record<string, unknown>): string {
+  if (r.memo && typeof r.memo === "object") return renderMemoResult(r)
+  if (typeof r.filename === "string") return renderAttachmentResult(r)
+  return renderMessageResult(r)
+}
+
+function renderMessageResult(r: Record<string, unknown>): string {
+  const author = r.author as { name?: string; slug?: string } | undefined
+  const who = author?.name ?? (typeof r.authorDisplayName === "string" ? r.authorDisplayName : undefined)
+  const header = joinFields([
+    String(r.id ?? "?"),
+    fmtTimestamp(r.createdAt),
+    streamLabel(r as Parameters<typeof streamLabel>[0]),
+    who,
+  ])
+  return `${header}\n  ${snippet(r.content)}`
+}
+
+function renderMemoResult(r: Record<string, unknown>): string {
+  const memo = r.memo as Record<string, unknown>
+  const source = (r.sourceStream ?? null) as { name?: string | null } | null
+  const root = (r.rootStream ?? null) as { name?: string | null } | null
+  const scope = [root?.name, source?.name].filter((n): n is string => Boolean(n))
+  const scopeLabel = scope[0] === scope[1] ? scope[0] : scope.join(" › ")
+  const header = joinFields([
+    String(memo.id ?? "?"),
+    typeof memo.knowledgeType === "string" ? memo.knowledgeType : undefined,
+    fmtTimestamp(memo.createdAt),
+    scopeLabel || undefined,
+  ])
+  const title = typeof memo.title === "string" ? memo.title : ""
+  return `${header}\n  ${snippet(`${title}${title && memo.abstract ? " — " : ""}${String(memo.abstract ?? "")}`)}`
+}
+
+function renderAttachmentResult(r: Record<string, unknown>): string {
+  const header = joinFields([
+    String(r.id ?? "?"),
+    String(r.filename ?? "?"),
+    typeof r.mimeType === "string" ? r.mimeType : undefined,
+    fmtTimestamp(r.createdAt),
+    streamLabel(r as Parameters<typeof streamLabel>[0]),
+  ])
+  const summary = snippet(r.summary)
+  return summary ? `${header}\n  ${summary}` : header
 }

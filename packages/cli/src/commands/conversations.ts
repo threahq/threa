@@ -1,9 +1,11 @@
 import { listConversations, readConversation } from "../ops"
 import {
-  cursorFooter,
   enumFlag,
+  fmtTimestamp,
   intFlag,
   renderList,
+  snippet,
+  streamLabel,
   stringFlag,
   UsageError,
   type NounSpec,
@@ -41,11 +43,36 @@ const listVerb: VerbSpec = {
       limit: intFlag(values, "limit"),
     }),
   render: (payload) =>
-    renderList<{ id?: string; status?: string; title?: string; summary?: string }>(
-      payload,
-      (c) => `${c.id ?? "?"}  ${c.status ?? "?"}  ${c.title ?? c.summary ?? ""}`.trimEnd(),
-      { empty: "(no conversations)", cursorFlag: "cursor" }
-    ),
+    renderList<ConversationRow>(payload, renderConversationRow, {
+      empty: "(no conversations)",
+      cursorFlag: "cursor",
+    }),
+}
+
+interface ConversationRow {
+  id?: string
+  status?: string
+  topicSummary?: string | null
+  summary?: string | null
+  messageCount?: number
+  lastActivityAt?: string
+  stream?: { id?: string; name?: string }
+  rootStream?: { id?: string; name?: string }
+  streamId?: string
+}
+
+function renderConversationRow(c: ConversationRow): string {
+  const header = [
+    c.id ?? "?",
+    c.status ?? "?",
+    c.messageCount !== undefined ? `${c.messageCount} msgs` : undefined,
+    fmtTimestamp(c.lastActivityAt) || undefined,
+    streamLabel(c) || undefined,
+  ]
+    .filter(Boolean)
+    .join("  ")
+  const topic = snippet(c.topicSummary ?? c.summary ?? "")
+  return topic ? `${header}\n  ${topic}` : header
 }
 
 const readVerb: VerbSpec = {
@@ -75,22 +102,40 @@ const readVerb: VerbSpec = {
   },
   render: (payload) => {
     const p = payload as {
-      conversation?: { id?: string; status?: string; title?: string }
+      conversation?: ConversationRow & { createdAt?: string }
       messages?: {
-        data?: Array<{ author?: { name?: string }; contentMarkdown?: string; content?: string }>
+        data?: Array<{
+          author?: { name?: string }
+          authorDisplayName?: string
+          contentMarkdown?: string
+          content?: string
+          createdAt?: string
+        }>
         hasMore?: boolean
       }
     }
     const lines: string[] = []
-    if (p.conversation)
+    const c = p.conversation
+    if (c) {
       lines.push(
-        `conversation: ${p.conversation.id ?? "?"}  ${p.conversation.status ?? ""}  ${p.conversation.title ?? ""}`.trimEnd()
+        [c.id ?? "?", c.status ?? "?", streamLabel(c) || undefined].filter(Boolean).join("  "),
+        [
+          fmtTimestamp(c.createdAt) && `created ${fmtTimestamp(c.createdAt)}`,
+          fmtTimestamp(c.lastActivityAt) && `last activity ${fmtTimestamp(c.lastActivityAt)}`,
+          c.messageCount !== undefined && `${c.messageCount} messages`,
+        ]
+          .filter(Boolean)
+          .join(" · ")
       )
+      const topic = snippet(c.topicSummary ?? c.summary ?? "")
+      if (topic) lines.push(`topic: ${topic}`)
+    }
     const msgs = p.messages?.data ?? []
     lines.push(`messages: ${msgs.length}${p.messages?.hasMore ? " (more)" : ""}`)
     for (const m of msgs) {
-      const body = (m.contentMarkdown ?? m.content ?? "").replace(/\s+/g, " ").trim()
-      lines.push(`  ${m.author?.name ?? "?"}: ${body.slice(0, 120)}`)
+      const who = m.author?.name ?? m.authorDisplayName ?? "?"
+      const ts = fmtTimestamp(m.createdAt)
+      lines.push(`  ${ts ? `[${ts}] ` : ""}${who}: ${snippet(m.contentMarkdown ?? m.content ?? "", 120)}`)
     }
     return lines.join("\n")
   },
