@@ -16,6 +16,7 @@ Usage:
   threa-harnessd install-watch [--tmux <session>]
   threa-harnessd install-boot-resume [--tmux <session>]
   threa-harnessd stop <agent-id-or-name>
+  threa-harnessd kick <agent-id-or-name-or-runtime-session-id>
   threa-harnessd interrupt <agent-id-or-name>
   threa-harnessd steer <agent-id-or-name> [follow-up text]
   threa-harnessd keys <agent-id-or-name> <tmux send-keys tokens...>
@@ -29,6 +30,7 @@ Examples:
   threa-harnessd watch-unarchived --tmux threa-agents
   threa-harnessd install-watch
   threa-harnessd do spawn a pi agent for long chat performance
+  threa-harnessd kick fix-sidebar
   threa-harnessd interrupt fix-sidebar
   threa-harnessd steer fix-sidebar "also update the tests"
   threa-harnessd keys fix-sidebar /compact Enter

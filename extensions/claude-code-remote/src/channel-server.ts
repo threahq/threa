@@ -1,7 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
+import { runHarnessKick, type BotRuntimeTransport } from "@threa/bot-runtime-client"
 import {
   DelegationClient,
   DelegationRunner,
@@ -32,8 +32,19 @@ export const CHANNEL_SOURCE = "threa-channel"
 // to Claude Code's `/reload-skills` (pick up skills + custom commands added on
 // disk this session — `/reload-plugins` is reachable via `run` for the plugin
 // case); Threa's canonical `thinking` maps to Claude Code's `/effort`;
-// `carry-on` queues text for the quota carry-on resume (see carry-on.ts).
-const SESSION_CONTROL_COMMANDS = ["stop", "steer", "model", "thinking", "compact", "run", "reload", "carry-on"] as const
+// `carry-on` queues text for the quota carry-on resume (see carry-on.ts);
+// `kick` asks harnessd to press Enter in this managed session's pane.
+const SESSION_CONTROL_COMMANDS = [
+  "stop",
+  "steer",
+  "kick",
+  "model",
+  "thinking",
+  "compact",
+  "run",
+  "reload",
+  "carry-on",
+] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
 // whatever the local client's own picker cache discovers (see model-catalog).
 // Resolved once at startup — new models arrive with the next spawned session.
@@ -139,12 +150,19 @@ export function buildInstructions(permissionRelay: boolean, channelActive = true
 export async function runClaudeCommand(
   name: string,
   args: string,
-  carryOn?: CarryOnController
+  carryOn?: CarryOnController,
+  runtimeSessionId?: string
 ): Promise<{ ok: boolean; message: string }> {
   switch (name) {
     case "carry-on": {
       if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
       return carryOn.enqueue(args)
+    }
+    case "kick": {
+      if (!runtimeSessionId) throw new Error("Harness kick is unavailable for this session.")
+      const result = runHarnessKick(runtimeSessionId)
+      if (!result.ok) throw new Error(`Could not kick the session: ${result.error}`)
+      return { ok: true, message: "Kicked the linked Claude Code session." }
     }
     case "model": {
       const alias = args.trim()
@@ -196,11 +214,14 @@ async function runSlash(slash: string): Promise<{ ok: boolean; message: string }
  * controller needs the constructed session, which needs this actuator first.
  */
 export function createClaudeSessionControl(
-  carryOn: () => CarryOnController | undefined = () => undefined
+  carryOn: () => CarryOnController | undefined = () => undefined,
+  runtimeSessionId?: string
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
-    commands: [...SESSION_CONTROL_COMMANDS],
+    commands: runtimeSessionId
+      ? [...SESSION_CONTROL_COMMANDS]
+      : SESSION_CONTROL_COMMANDS.filter((command) => command !== "kick"),
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],
     interrupt: () => {
@@ -219,7 +240,7 @@ export function createClaudeSessionControl(
       if (absorbed !== undefined) return true
       return steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`)
     },
-    runCommand: (name, args) => runClaudeCommand(name, args, carryOn()),
+    runCommand: (name, args) => runClaudeCommand(name, args, carryOn(), runtimeSessionId),
   }
 }
 
@@ -299,7 +320,7 @@ export class ChannelServer {
       },
       delegate: {
         deliverTurn: (turn) => this.deliverToClaude(turn),
-        sessionControl: createClaudeSessionControl(() => this.carryOn),
+        sessionControl: createClaudeSessionControl(() => this.carryOn, config.runtimeSessionId),
         onArchived: () => this.windDownForArchive(),
         ...(config.permissionRelay
           ? { interceptClaimed: (invocation: ClaimedInvocation) => this.interceptVerdict(invocation) }

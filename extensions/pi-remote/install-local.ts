@@ -21,7 +21,16 @@ const extensionsDir = join(homedir(), ".pi", "agent", "extensions")
 const dest = process.argv[2] ?? join(extensionsDir, "threa-remote")
 
 // The runtime files of bot-runtime-client (its tests are not needed at runtime).
-const VENDOR_FILES = ["index.ts", "transport.ts", "types.ts", "ws-hint.ts", "crypto.ts", "sealed.ts"]
+const VENDOR_FILES = [
+  "index.ts",
+  "transport.ts",
+  "types.ts",
+  "ws-hint.ts",
+  "crypto.ts",
+  "sealed.ts",
+  "supervisor.ts",
+  "harness-kick.ts",
+]
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.
 rmSync(join(extensionsDir, "threa-remote.ts"), { force: true })

@@ -10,8 +10,10 @@ export interface ManagedAgent {
   branch?: string
   tmuxSession?: string
   tmuxWindow?: string
-  /** Stable tmux window id (`@n`) — the durable target for steer/keys/stop; names can collide or be renamed. */
+  /** Stable tmux window id (`@n`) for window lifecycle; names can collide or be renamed. */
   tmuxWindowId?: string
+  /** Stable tmux pane id (`%n`) for key injection; avoids whichever split is active in the window. */
+  tmuxPaneId?: string
   scratchpadUrl?: string
   instanceId?: string
   runtimeSessionId?: string
@@ -57,6 +59,7 @@ export interface SpawnResult {
   tmuxSession: string
   tmuxWindow: string
   tmuxWindowId: string
+  tmuxPaneId: string
   scratchpadUrl?: string
   instanceId?: string
   runtimeSessionId?: string

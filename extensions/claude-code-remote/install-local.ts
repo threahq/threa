@@ -26,13 +26,31 @@ const VENDORED = [
   {
     dep: "@threa/bot-runtime-client",
     src: resolve(here, "../bot-runtime-client"),
-    files: ["index.ts", "transport.ts", "types.ts", "ws-hint.ts", "crypto.ts", "sealed.ts"],
+    files: [
+      "index.ts",
+      "transport.ts",
+      "types.ts",
+      "ws-hint.ts",
+      "crypto.ts",
+      "sealed.ts",
+      "supervisor.ts",
+      "harness-kick.ts",
+    ],
     dir: "bot-runtime-client",
   },
   {
     dep: "@threa/remote-session",
     src: resolve(here, "../remote-session"),
-    files: ["index.ts", "session.ts", "client.ts", "identity.ts", "attachments.ts", "lifecycle.ts"],
+    files: [
+      "index.ts",
+      "session.ts",
+      "client.ts",
+      "identity.ts",
+      "attachments.ts",
+      "lifecycle.ts",
+      "delegation-client.ts",
+      "delegation-runner.ts",
+    ],
     dir: "remote-session",
   },
 ]

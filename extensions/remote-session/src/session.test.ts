@@ -44,6 +44,7 @@ function makeFakeClient() {
   const calls = {
     sendMessage: [] as Array<{ streamId: string; body: Record<string, unknown> }>,
     complete: [] as Array<{ id: string; body: Record<string, unknown> }>,
+    fail: [] as Array<{ id: string; body: Record<string, unknown> }>,
   }
   const client = {
     sendMessage: async (streamId: string, body: Record<string, unknown>) => {
@@ -51,6 +52,9 @@ function makeFakeClient() {
     },
     complete: async (id: string, body: Record<string, unknown>) => {
       calls.complete.push({ id, body })
+    },
+    fail: async (id: string, body: Record<string, unknown>) => {
+      calls.fail.push({ id, body })
     },
     uploadAttachment: async () => {
       throw new Error("unexpected upload in test")
@@ -728,6 +732,42 @@ describe("session control via the actuator", () => {
 
     expect(ran).toEqual([{ name: "model", args: "opus" }])
     expect(calls.complete[0]?.body.finalMessageMarkdown).toBe("Set model to `opus`.")
+  })
+
+  test("a failed actuator command fails the invocation instead of completing it", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["kick"],
+        interrupt: () => true,
+        runCommand: async () => {
+          throw new Error("harnessd could not find the runtime")
+        },
+      },
+    })
+    const invocation = makeInvocation({
+      id: "binv_kick",
+      trigger: "session-control",
+      promptMarkdown: "/kick",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_kick", name: "kick", args: "" } },
+    })
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(invocation)
+
+    expect(calls.complete).toEqual([])
+    expect(calls.fail).toEqual([
+      {
+        id: "binv_kick",
+        body: {
+          instanceId: "rt-test",
+          claimToken: "tok",
+          errorMessage: "harnessd could not find the runtime",
+        },
+      },
+    ])
   })
 
   test("steer without native steer support interrupts and posts a supersede note carrying the steer text", async () => {

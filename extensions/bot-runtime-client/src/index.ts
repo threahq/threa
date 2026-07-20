@@ -1,4 +1,5 @@
 export { BotRuntimeTransport } from "./transport"
+export { harnessDaemonEntrypoint, runHarnessKick, type HarnessKickResult } from "./harness-kick"
 export {
   BotSupervisorTransport,
   type BotSessionRestoredPayload,

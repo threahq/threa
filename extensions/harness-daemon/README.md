@@ -1,6 +1,6 @@
 # harness-daemon
 
-Local supervisor for Threa-linked agent sessions (Claude Code channel + Pi remote). `spawn` creates worktree + tmux window + harness and records the launch in `~/.threa/harnessd/inventory.sqlite`; `up` and the `watch-unarchived` LaunchAgent revive recorded sessions safely. Run `threa-harnessd help` for the full command list.
+Local supervisor for Threa-linked agent sessions (Claude Code channel + Pi remote). `spawn` creates worktree + tmux window + harness and records the launch in `~/.threa/harnessd/inventory.sqlite`; `up` and the `watch-unarchived` LaunchAgent revive recorded sessions safely. `kick <ref>` sends Enter to a managed session (the same nudge exposed as `/kick` in its linked scratchpad). Run `threa-harnessd help` for the full command list.
 
 ## `up` (alias `resume-active`)
 

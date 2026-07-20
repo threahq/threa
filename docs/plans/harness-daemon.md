@@ -47,7 +47,7 @@ Tracked fields:
 
 - id/name/runtime/status
 - worktree/branch
-- tmux session/window
+- tmux session/window plus stable pane id for key injection
 - scratchpad URL when available from Pi pane capture or Claude pre-link
 - command used to spawn
 - runtime instance/session IDs needed to reattach the same scratchpad

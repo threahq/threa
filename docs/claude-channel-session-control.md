@@ -2,7 +2,8 @@
 
 Status: **implemented + tmux mechanics live-verified** on `feat/harness-steer`, 2026-06-26.
 Author: agent session. Command set shipped: `stop`, `steer`, `model`, `compact`, `run`, `reload` —
-later joined by `thinking` and `carry-on` (quota carry-on; see `docs/quota-carry-on.md`). The
+later joined by `thinking`, `carry-on` (quota carry-on; see `docs/quota-carry-on.md`), and
+`kick` (an Enter nudge routed through harnessd). The
 genuinely-novel tmux paths ($TMUX_PANE inheritance, Esc interrupt, `/model`) are verified against
 Claude Code v2.1.193 (and live testing found + fixed two bugs — see the checklist); the full
 dispatch round-trip through a real scratchpad is still only unit-tested.
@@ -113,6 +114,7 @@ Notes:
 | Command             | Key sequence                                                                                                                             | Channel bookkeeping                                                                                                                                                                                                                                                                                                                                     |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **stop**            | `Escape`                                                                                                                                 | Complete every in-flight invocation (interrupted), ack the stop invocation: "Stopped Claude."                                                                                                                                                                                                                                                           |
+| **kick**            | `harnessd kick <runtime-session-id>` → `Enter`                                                                                           | Nudge a managed pane past a blocking prompt, then acknowledge the command.                                                                                                                                                                                                                                                                              |
 | **steer `<text>`**  | Turn in flight: `Ctrl-U` + bracketed paste + `Enter` (Claude's native mid-turn steering, **no Escape**). Idle: the interrupt path below. | Turn in flight: record a `steer` step on the RUNNING invocation's trace, fold queued msgs + steer text into the injected block, close swept msgs `noResponse`, complete /steer immediately — the running turn keeps its trace and its `reply` answers the steer. Idle: drain + one combined turn under the /steer invocation (original semantics below) |
 | **model `<alias>`** | `typeLine("/model <alias>")`                                                                                                             | Ack "Model set to `<alias>`." (best-effort)                                                                                                                                                                                                                                                                                                             |
 | **compact**         | `typeLine("/compact")`                                                                                                                   | Ack                                                                                                                                                                                                                                                                                                                                                     |
@@ -192,7 +194,7 @@ The channel advertises in its `bot:hello` / presence `capabilities` **only when 
   "supportsActiveScratchpad": true,
   "supportsPersistentSessions": true,
   "supportsSessionControlCommands": true,
-  "sessionControlCommands": ["stop", "steer", "model", "thinking", "compact", "run", "reload"],
+  "sessionControlCommands": ["stop", "steer", "kick", "model", "thinking", "compact", "run", "reload"],
   "modelSuggestions": [
     { "value": "opus", "label": "Opus", "description": "Opus 4.8 with 1M context · Best for everyday, complex tasks" },
     // …built-in aliases (default/opus/sonnet/haiku) plus models discovered from the
@@ -207,7 +209,9 @@ inside tmux (no pane), it advertises none of this, so the UI never shows a comma
 actuated — fail-safe. `resolveAdvertisedSessionControlCommandNames` (`availability.ts:257`)
 already intersects with the canonical name list, so only what the channel advertises shows up.
 
-Commands chosen for v1: **stop, steer, model, compact, run, reload**. `reload` maps to Claude
+Commands chosen for v1: **stop, steer, model, compact, run, reload**. `/kick` was added later for
+harness-managed Pi and Claude sessions; it sends `Enter` to the recorded tmux pane, matching the
+manual nudge used to accept blocking harness prompts. `reload` maps to Claude
 Code's `/reload-skills` (v2.1.152+) — picks up skills + custom commands added on disk mid-session;
 verified live ("16 skills available"). Newly `claude mcp add`'d MCP servers still can't hot-reload
 (Claude Code limitation — restart only); `/reload-plugins` is reachable via the generic `run`.
@@ -284,7 +288,6 @@ covered by their feature-folder suites.
 
 ## Bonus: harness CLI ergonomics (optional)
 
-To "improve the harness" for manual use, add `threa-harnessd stop|steer|keys <ref> [text]` verbs
-that reuse `tmux.ts` against an inventory agent's recorded `tmuxSession:tmuxWindow`. Not on the
-Threa-UI path (the channel sends keys directly via its own pane — no cross-process dependency at
-runtime), but handy from a terminal.
+To "improve the harness" for manual use, add `threa-harnessd stop|kick|steer|keys <ref> [text]` verbs
+that reuse `tmux.ts` against an inventory agent's recorded window/pane ids. `/kick` now
+uses that CLI path from both linked runtimes; the other verbs remain terminal-only helpers.

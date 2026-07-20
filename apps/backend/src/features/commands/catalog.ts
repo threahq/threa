@@ -5,7 +5,7 @@ import type { CommandRegistry } from "./registry"
 // long-lived linked session (Pi, the Claude Code channel). Each runtime sees only
 // the subset it advertises in `capabilities.sessionControlCommands`, so a command
 // it doesn't advertise never surfaces for it (e.g. `skill` is Pi-only; `run` is
-// Claude-channel-only; `compact`/`reload` are advertised by both).
+// Claude-channel-only; `compact`/`reload`/`kick` are advertised by both).
 export const SESSION_CONTROL_COMMAND_NAMES = [
   "compact",
   "model",
@@ -15,6 +15,7 @@ export const SESSION_CONTROL_COMMAND_NAMES = [
   "shell",
   "steer",
   "stop",
+  "kick",
   "run",
   "carry-on",
 ] as const
@@ -103,6 +104,12 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
     {
       name: "stop",
       description: "Stop the current turn in the linked session",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+    },
+    {
+      name: "kick",
+      description: "Nudge the linked session to continue",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
     },
