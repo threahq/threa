@@ -1,13 +1,15 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError } from "@threa/backend-common"
-import { FEATURE_FLAG_DEFINITIONS, FEATURE_FLAG_KEYS } from "@threa/types"
+import { FEATURE_FLAG_DEFINITIONS, FEATURE_FLAG_KEYS, FEATURE_FLAG_SCOPES } from "@threa/types"
 import type { ControlPlaneFeatureFlagService } from "./service"
 
 const setFlagSchema = z.object({
-  workosUserId: z.string().min(1),
+  subjectType: z.enum(FEATURE_FLAG_SCOPES),
+  /** Workspace id for workspace scope, workos_user_id for user scope. */
+  subjectId: z.string().min(1),
   flagKey: z.string().min(1),
-  /** Must be one of the flag's declared values; the default (first) value clears the override. */
+  /** Must be one of the flag's declared values; the flag's explicit default clears the override. */
   value: z.string().min(1),
 })
 
@@ -18,9 +20,9 @@ interface Dependencies {
 export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) {
   return {
     /**
-     * Registry (key + declared values, first value is the default) plus the
-     * stored per-user overrides. The backoffice renders the member × flag
-     * grid from these two lists.
+     * Registry (key + declared values + each flag's explicit default + declared
+     * scopes) plus the stored overrides. The backoffice renders the workspace
+     * row and the member × flag grid from these two lists.
      */
     async listWorkspaceFlags(req: Request, res: Response) {
       const id = req.params.id
@@ -29,9 +31,15 @@ export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) 
       }
       const overrides = await featureFlagService.listWorkspaceOverrides(id)
       res.json({
-        flags: FEATURE_FLAG_KEYS.map((key) => ({ key, values: FEATURE_FLAG_DEFINITIONS[key].values })),
+        flags: FEATURE_FLAG_KEYS.map((key) => ({
+          key,
+          values: FEATURE_FLAG_DEFINITIONS[key].values,
+          default: FEATURE_FLAG_DEFINITIONS[key].default,
+          scopes: FEATURE_FLAG_DEFINITIONS[key].scopes,
+        })),
         overrides: overrides.map((o) => ({
-          workosUserId: o.workosUserId,
+          subjectType: o.subjectType,
+          subjectId: o.subjectId,
           flagKey: o.flagKey,
           value: o.value,
           updatedAt: o.updatedAt.toISOString(),
@@ -50,7 +58,8 @@ export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) 
       }
       await featureFlagService.setFlag({
         workspaceId: id,
-        workosUserId: parsed.data.workosUserId,
+        subjectType: parsed.data.subjectType,
+        subjectId: parsed.data.subjectId,
         flagKey: parsed.data.flagKey,
         value: parsed.data.value,
       })
