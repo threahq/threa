@@ -31,7 +31,7 @@ describe("createClaudeSessionControl", () => {
 
   it("advertises the full command set with effort levels and display-labelled models inside tmux", () => {
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
-      const actuator = createClaudeSessionControl()
+      const actuator = createClaudeSessionControl(undefined, "ccs-one")
       expect(actuator).toBeDefined()
       expect(actuator!.commands).toEqual([
         "stop",
@@ -49,6 +49,21 @@ describe("createClaudeSessionControl", () => {
       expect(actuator!.modelSuggestions!.every((suggestion) => suggestion.label)).toBe(true)
       // Native mid-turn steering: without this the SDK falls back to interrupt+redeliver.
       expect(typeof actuator!.steer).toBe("function")
+    })
+  })
+
+  it("does not advertise /kick without a harness runtime identity", () => {
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
+      expect(createClaudeSessionControl()!.commands).toEqual([
+        "stop",
+        "steer",
+        "model",
+        "thinking",
+        "compact",
+        "run",
+        "reload",
+        "carry-on",
+      ])
     })
   })
 })

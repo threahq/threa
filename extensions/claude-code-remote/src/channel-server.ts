@@ -219,7 +219,9 @@ export function createClaudeSessionControl(
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
-    commands: [...SESSION_CONTROL_COMMANDS],
+    commands: runtimeSessionId
+      ? [...SESSION_CONTROL_COMMANDS]
+      : SESSION_CONTROL_COMMANDS.filter((command) => command !== "kick"),
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],
     interrupt: () => {
