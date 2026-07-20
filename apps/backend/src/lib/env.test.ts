@@ -13,6 +13,9 @@ function setBaseEnv() {
   delete process.env.GITHUB_APP_ID
   delete process.env.GITHUB_APP_SLUG
   delete process.env.GITHUB_APP_PRIVATE_KEY
+  delete process.env.LINEAR_OAUTH_CLIENT_ID
+  delete process.env.LINEAR_OAUTH_CLIENT_SECRET
+  delete process.env.LINEAR_OAUTH_REDIRECT_URI
   delete process.env.WORKSPACE_INTEGRATIONS_SECRET
   delete process.env.MEDIACONVERT_ENABLED
   delete process.env.MEDIACONVERT_ROLE_ARN

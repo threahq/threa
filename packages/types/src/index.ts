@@ -290,6 +290,8 @@ export {
   PI_TOOL_TRACE_SECTION_LABELS,
   type PiToolTraceSectionLabel,
   PiToolTraceSectionLabels,
+  PI_TOOL_TRACE_REDACTED_BODIES,
+  PI_TOOL_TRACE_REDACTED_BODY_SET,
   // Voice dictation draft-context cap (shared FE/gateway)
   VOICE_DRAFT_CONTEXT_MAX_CHARS,
   // Auth (social providers + magic auth)

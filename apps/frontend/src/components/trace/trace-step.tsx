@@ -2,6 +2,7 @@ import { Link } from "react-router-dom"
 import {
   AgentReconsiderationDecisions,
   PI_TOOL_TRACE_FORMAT,
+  PI_TOOL_TRACE_REDACTED_BODY_SET,
   PiToolTraceSectionLabels,
   type AgentSessionStep,
   type AgentStepType,
@@ -18,6 +19,7 @@ import {
   CircleSlash,
   Clock,
   ExternalLink,
+  EyeOff,
   Loader2,
   MessageSquareReply,
   type LucideIcon,
@@ -749,20 +751,35 @@ function ToolTraceContent({
       <div className="font-mono text-[12.5px] leading-snug break-words text-foreground/90">{headlineText}</div>
       {sections.length > 0 && (
         <div className="space-y-1.5">
-          {sections.map((section, i) => (
-            <ToolSectionDisclosure
-              key={`${section.label}-${i}`}
-              section={section}
-              defaultOpen={isError && section.label === PiToolTraceSectionLabels.ERROR_OUTPUT}
-              isError={
-                isError &&
-                (section.label === PiToolTraceSectionLabels.ERROR_OUTPUT ||
-                  section.label === PiToolTraceSectionLabels.DETAILS)
-              }
-            />
-          ))}
+          {sections.map((section, i) =>
+            PI_TOOL_TRACE_REDACTED_BODY_SET.has(section.body) ? (
+              <RedactedSectionNotice key={`${section.label}-${i}`} label={section.label} />
+            ) : (
+              <ToolSectionDisclosure
+                key={`${section.label}-${i}`}
+                section={section}
+                defaultOpen={isError && section.label === PiToolTraceSectionLabels.ERROR_OUTPUT}
+                isError={
+                  isError &&
+                  (section.label === PiToolTraceSectionLabels.ERROR_OUTPUT ||
+                    section.label === PiToolTraceSectionLabels.DETAILS)
+                }
+              />
+            )
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+function RedactedSectionNotice({ label }: { label: PiToolTraceSectionLabel }) {
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+      <EyeOff className="w-3 h-3 shrink-0" />
+      <span>
+        {label} <span className="italic">hidden for safety</span>
+      </span>
     </div>
   )
 }

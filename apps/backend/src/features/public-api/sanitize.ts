@@ -1,5 +1,6 @@
 import {
   PI_TOOL_TRACE_FORMAT,
+  PI_TOOL_TRACE_REDACTED_BODIES,
   PI_TOOL_TRACE_SECTION_LABELS,
   PiToolTraceSectionLabels,
   type PiToolTraceSectionLabel,
@@ -66,10 +67,10 @@ function sanitizeTraceSection(section: unknown): SafeTraceSection | null {
   if (!TRACE_SECTION_LABEL_SET.has(rawLabel)) return null
   const label = rawLabel as PiToolTraceSectionLabel
   if (label === PiToolTraceSectionLabels.ARGUMENTS) {
-    return { label, body: "Tool arguments omitted for safety.", lang: null }
+    return { label, body: PI_TOOL_TRACE_REDACTED_BODIES.ARGUMENTS, lang: null }
   }
   if (label === PiToolTraceSectionLabels.OUTPUT || label === PiToolTraceSectionLabels.ERROR_OUTPUT) {
-    return { label, body: "Tool output omitted for safety.", lang: null }
+    return { label, body: PI_TOOL_TRACE_REDACTED_BODIES.OUTPUT, lang: null }
   }
   const body = typeof item.body === "string" ? clampString(redactSensitiveText(item.body), TRACE_BODY_MAX_CHARS) : ""
   const lang = typeof item.lang === "string" ? clampString(item.lang, TRACE_LANG_MAX_CHARS) : null
