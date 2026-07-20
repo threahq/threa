@@ -15,6 +15,7 @@ export interface SearchFilters {
 
 export interface SearchRequest {
   query?: string
+  phrases?: string[]
   limit?: number
   filters?: SearchFilters
   /** Use exact substring matching (ILIKE) instead of full-text/semantic search */
@@ -38,6 +39,7 @@ export interface SearchResponse {
 export async function searchMessages(workspaceId: string, request: SearchRequest): Promise<SearchResponse> {
   const body = {
     query: request.query ?? "",
+    phrases: request.phrases,
     from: request.filters?.from,
     with: request.filters?.with,
     in: request.filters?.in,

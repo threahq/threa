@@ -270,6 +270,40 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(markTexts).toContain("hello")
     })
 
+    it("preserves phrase-only highlighting and snippet positioning", async () => {
+      mockSearchState.results = [
+        {
+          ...mockSearchResultsList[0]!,
+          content: `${"context ".repeat(8)}matched phrase at the end`,
+        },
+      ]
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, '"matched phrase"')
+
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenCalledWith("", {}, ["matched phrase"])
+      })
+      expect(screen.getByText("matched phrase", { selector: "mark" })).toBeInTheDocument()
+      expect(screen.getByText("…")).toBeInTheDocument()
+    })
+
+    it("does not send more than five quoted phrases", async () => {
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, '"one" "two" "three" "four" "five" "six"')
+
+      expect(screen.getByText("Search supports at most 5 quoted phrases.")).toBeInTheDocument()
+      expect(mockSearchState.search).not.toHaveBeenCalled()
+    })
+
     it("collapses and expands a stream group", async () => {
       mockSearchState.results = mockSearchResultsList
 

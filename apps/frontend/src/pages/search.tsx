@@ -60,10 +60,11 @@ export function SearchPage() {
     }
   }, [])
 
-  const { results, isLoading, error, parsedFilters, searchText, hasQuery } = useMessageSearch(
+  const { results, isLoading, error, validationError, parsedFilters, searchText, hasQuery } = useMessageSearch(
     workspaceId ?? "",
     localQuery
   )
+  const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
 
   if (!workspaceId) {
@@ -137,9 +138,9 @@ export function SearchPage() {
             </div>
           )}
 
-          {error && <p className="py-8 text-center text-sm text-destructive">Search failed. Try again.</p>}
+          {displayError && <p className="py-8 text-center text-sm text-destructive">{displayError}</p>}
 
-          {hasQuery && !error && results.length > 0 && (
+          {hasQuery && !displayError && results.length > 0 && (
             <SearchResults
               workspaceId={workspaceId}
               results={results}
@@ -149,7 +150,7 @@ export function SearchPage() {
             />
           )}
 
-          {hasQuery && !isLoading && !error && results.length === 0 && (
+          {hasQuery && !isLoading && !displayError && results.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <p className="text-sm font-medium text-muted-foreground/70">No messages found</p>
               <p className="mt-1 text-xs text-muted-foreground/50">Try different words or remove a filter</p>

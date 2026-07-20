@@ -6,12 +6,13 @@ import type { SearchResult } from "./repository"
 import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
 import { validateRequest } from "../../lib/validation"
 import { setAuditSubjects } from "../access-log"
-import { STREAM_TYPES } from "@threa/types"
+import { MAX_SEARCH_PHRASES, STREAM_TYPES } from "@threa/types"
 
 const ARCHIVE_STATUSES = ["active", "archived"] as const
 
-const searchQuerySchema = z.object({
+export const searchQuerySchema = z.object({
   query: z.string().optional().default(""),
+  phrases: z.array(z.string().min(1)).max(MAX_SEARCH_PHRASES).optional(),
   from: z.string().optional(), // Single author ID
   with: z.array(z.string()).optional(), // User or persona IDs (AND logic)
   in: z.array(z.string()).optional(), // Stream IDs
@@ -53,7 +54,19 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
 
       const data = validateRequest(searchQuerySchema, req.body)
 
-      const { query, from, with: withParticipants, in: inStreams, type, status, before, after, exact, limit } = data
+      const {
+        query,
+        phrases,
+        from,
+        with: withParticipants,
+        in: inStreams,
+        type,
+        status,
+        before,
+        after,
+        exact,
+        limit,
+      } = data
 
       // `in` mixes stream ids and user ids (in:@user = the DM with that user).
       // An unresolvable filter (e.g. no DM exists) must yield zero results, not
@@ -85,6 +98,7 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
         workspaceId,
         permissions: { accessibleStreamIds },
         query,
+        phrases,
         filters,
         exact,
         limit,

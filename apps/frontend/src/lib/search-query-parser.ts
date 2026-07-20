@@ -16,6 +16,8 @@ export interface ParsedFilter {
 export interface ParsedQuery {
   filters: ParsedFilter[]
   text: string
+  phrases: string[]
+  semanticText: string
 }
 
 /**
@@ -29,39 +31,55 @@ export interface ParsedQuery {
  */
 export function parseSearchQuery(query: string): ParsedQuery {
   const filters: ParsedFilter[] = []
-  const parts: string[] = []
-
-  // Filter grammar: from:@slug, with:@slug, in:#slug, in:@slug, is:/type:streamType, status:archiveStatus, after:date, before:date
+  const textParts: string[] = []
+  const semanticParts: string[] = []
   const filterRegex = /\b(from:@|with:@|in:#|in:@|type:|status:|is:|after:|before:)(\S*)/g
+  const phraseRegex = /["“]([^"“”]+)["”]/g
 
+  const parseSegment = (segment: string) => {
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+    filterRegex.lastIndex = 0
+
+    while ((match = filterRegex.exec(segment)) !== null) {
+      if (match.index > lastIndex) {
+        const plainText = segment.slice(lastIndex, match.index)
+        textParts.push(plainText)
+        semanticParts.push(plainText)
+      }
+
+      const [raw, prefix, value] = match
+      const type = extractFilterType(prefix)
+      if (type && value) {
+        filters.push({ type, value, raw })
+      } else {
+        textParts.push(raw)
+        semanticParts.push(raw)
+      }
+      lastIndex = match.index + raw.length
+    }
+
+    if (lastIndex < segment.length) {
+      const plainText = segment.slice(lastIndex)
+      textParts.push(plainText)
+      semanticParts.push(plainText)
+    }
+  }
+
+  const phrases: string[] = []
   let lastIndex = 0
-  let match: RegExpExecArray | null
-
-  while ((match = filterRegex.exec(query)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(query.slice(lastIndex, match.index))
-    }
-
-    const [raw, prefix, value] = match
-    const type = extractFilterType(prefix)
-
-    if (type && value) {
-      filters.push({ type, value, raw })
-    } else {
-      // Invalid filter syntax — keep it as plain search text.
-      parts.push(raw)
-    }
-
-    lastIndex = match.index + raw.length
+  let phraseMatch: RegExpExecArray | null
+  while ((phraseMatch = phraseRegex.exec(query)) !== null) {
+    parseSegment(query.slice(lastIndex, phraseMatch.index))
+    textParts.push(phraseMatch[0])
+    semanticParts.push(" ")
+    phrases.push(phraseMatch[1])
+    lastIndex = phraseMatch.index + phraseMatch[0].length
   }
+  parseSegment(query.slice(lastIndex))
 
-  if (lastIndex < query.length) {
-    parts.push(query.slice(lastIndex))
-  }
-
-  const text = parts.join("").trim().replace(/\s+/g, " ")
-
-  return { filters, text }
+  const normalize = (parts: string[]) => parts.join("").trim().replace(/\s+/g, " ")
+  return { filters, text: normalize(textParts), phrases, semanticText: normalize(semanticParts) }
 }
 
 function extractFilterType(prefix: string): FilterType | null {

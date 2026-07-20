@@ -10,7 +10,7 @@ import {
 import { parseSearchQuery, type ParsedFilter } from "@/lib/search-query-parser"
 import type { SearchFilters, SearchResultItem } from "@/api"
 import type { ArchiveStatus } from "@/api"
-import { STREAM_TYPES, type StreamType } from "@threa/types"
+import { MAX_SEARCH_PHRASES, STREAM_TYPES, type StreamType } from "@threa/types"
 
 export const SEARCH_DEBOUNCE_MS = 300
 const SEARCH_RESULT_LIMIT = 50
@@ -19,6 +19,7 @@ export interface MessageSearchState {
   results: SearchResultItem[]
   isLoading: boolean
   error: Error | null
+  validationError: string | null
   /** Structured filters parsed out of the query string (from:@…, in:#…, …). */
   parsedFilters: ParsedFilter[]
   /** Free-text part of the query with filters removed. */
@@ -40,7 +41,13 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   const streams = useWorkspaceStreams(workspaceId)
   const { results, isLoading, error, search, clear } = useSearch({ workspaceId, limit: SEARCH_RESULT_LIMIT })
 
-  const { filters: parsedFilters, text: searchText } = useMemo(() => parseSearchQuery(query), [query])
+  const {
+    filters: parsedFilters,
+    text: searchText,
+    semanticText,
+    phrases,
+  } = useMemo(() => parseSearchQuery(query), [query])
+  const hasTooManyPhrases = phrases.length > MAX_SEARCH_PHRASES
 
   // Resolve filter slugs (user/stream handles) to ids the API understands.
   const apiFilters = useMemo((): SearchFilters => {
@@ -107,7 +114,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     return filters
   }, [parsedFilters, users, personas, bots, streams])
 
-  const hasQuery = searchText.trim().length > 0 || parsedFilters.length > 0
+  const hasQuery = searchText.trim().length > 0 || phrases.length > 0 || parsedFilters.length > 0
 
   // `users`/`streams` come from live queries that produce a NEW array on every
   // workspace IndexedDB write (incoming messages, presence, …), which gives
@@ -118,19 +125,34 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   const filtersKey = JSON.stringify(apiFilters)
   const filtersRef = useRef(apiFilters)
   filtersRef.current = apiFilters
+  const phrasesKey = JSON.stringify(phrases)
+  const phrasesRef = useRef(phrases)
+  phrasesRef.current = phrases
 
   useEffect(() => {
-    if (!hasQuery) {
+    if (!hasQuery || hasTooManyPhrases) {
       clear()
       return
     }
 
     const timer = setTimeout(() => {
-      void search(searchText, filtersRef.current)
+      if (phrasesRef.current.length > 0) {
+        void search(semanticText, filtersRef.current, phrasesRef.current)
+      } else {
+        void search(semanticText, filtersRef.current)
+      }
     }, SEARCH_DEBOUNCE_MS)
 
     return () => clearTimeout(timer)
-  }, [hasQuery, searchText, filtersKey, search, clear])
+  }, [hasQuery, hasTooManyPhrases, semanticText, filtersKey, phrasesKey, search, clear])
 
-  return { results, isLoading, error, parsedFilters, searchText, hasQuery }
+  return {
+    results,
+    isLoading,
+    error,
+    validationError: hasTooManyPhrases ? `Search supports at most ${MAX_SEARCH_PHRASES} quoted phrases.` : null,
+    parsedFilters,
+    searchText,
+    hasQuery,
+  }
 }

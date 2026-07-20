@@ -8,7 +8,7 @@ import { stripMarkdownToInline } from "@/lib/markdown/strip"
  */
 export function extractSearchTerms(searchText: string): string[] {
   const terms: string[] = []
-  const phraseRegex = /"([^"]+)"|(\S+)/g
+  const phraseRegex = /["“]([^"“”]+)["”]|(\S+)/g
   let match: RegExpExecArray | null
   while ((match = phraseRegex.exec(searchText)) !== null) {
     const term = (match[1] ?? match[2]).trim()

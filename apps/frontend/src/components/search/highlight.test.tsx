@@ -11,6 +11,10 @@ describe("extractSearchTerms", () => {
     expect(extractSearchTerms('"chicken wingz" recipe')).toEqual(["chicken wingz", "recipe"])
   })
 
+  it("keeps smart-quoted phrases as a single term", () => {
+    expect(extractSearchTerms("“chicken wingz” recipe")).toEqual(["chicken wingz", "recipe"])
+  })
+
   it("drops single-character noise terms", () => {
     expect(extractSearchTerms("a deploy b")).toEqual(["deploy"])
   })
