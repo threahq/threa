@@ -2,10 +2,12 @@
 // fanned out to regional backends, where they ride WorkspaceBootstrap and a
 // socket event so both sides of the stack resolve the same value.
 //
-// Flags are enum-valued, not boolean: each flag declares its allowed values
-// and the FIRST value is the default. A plain on/off flag is just the
-// two-value case (["off", "on"]); staged rollouts get richer variants
-// (e.g. ["off", "shadow", "active"]) without inventing flag combinations.
+// Flags are enum-valued, not boolean: each flag declares its allowed values and
+// an explicit `default`. A plain on/off flag is just the two-value case
+// (["off", "on"]); staged rollouts get richer variants (e.g.
+// ["off", "shadow", "active"]) without inventing flag combinations. The default
+// is spelled out rather than inferred from value order — an unset flag's
+// resolved value should never depend on which element happens to be first.
 //
 // Flags are SCOPED: each declares which subjects may carry an override —
 // ["workspace"], ["user"], or both. Resolution layers registry default →
@@ -19,16 +21,33 @@
 // lingering DB override rows inert everywhere (they are filtered through the
 // registry at read time), so removing a finished flag is a one-line change.
 
-/** Which subject an override may be attached to. */
-export type FeatureFlagScope = "workspace" | "user"
+/** The subjects an override may be attached to — the single source for both the type and runtime validation. */
+export const FEATURE_FLAG_SCOPES = ["workspace", "user"] as const
 
-/** One registry entry: allowed values (first is the default) and the scopes that may override it. */
+/** Which subject an override may be attached to. */
+export type FeatureFlagScope = (typeof FEATURE_FLAG_SCOPES)[number]
+
+/** One registry entry: allowed values, the explicit default, and the scopes that may override it. */
 export interface FeatureFlagDefinition {
   readonly values: readonly [string, ...string[]]
   readonly scopes: readonly [FeatureFlagScope, ...FeatureFlagScope[]]
+  readonly default: string
 }
 
 export type FeatureFlagRegistry = Record<string, FeatureFlagDefinition>
+
+/**
+ * Declare one flag, enforcing at compile time that `default` is one of `values`
+ * while preserving the literal value/scope types the registry derives from —
+ * an annotated `FeatureFlagDefinition` would widen `values` to `string[]` and
+ * lose {@link FeatureFlagValue}'s narrowing.
+ */
+export function defineFlag<
+  const V extends readonly [string, ...string[]],
+  const S extends readonly [FeatureFlagScope, ...FeatureFlagScope[]],
+>(def: { values: V; scopes: S; default: V[number] }): { values: V; scopes: S; default: V[number] } {
+  return def
+}
 
 /**
  * Every live feature flag. Add a flag while rolling a feature out; delete it
@@ -74,12 +93,12 @@ export function flagAllowsScope(key: FeatureFlagKey, scope: FeatureFlagScope): b
   return registryAllowsScope(FEATURE_FLAG_DEFINITIONS, key, scope)
 }
 
-/** The default for a flag is the first declared value. */
+/** A flag's explicit default, resolved when no override applies. */
 export function defaultFeatureFlagValue<K extends FeatureFlagKey>(key: K): FeatureFlagValue<K> {
-  return FEATURE_FLAG_DEFINITIONS[key].values[0] as FeatureFlagValue<K>
+  return FEATURE_FLAG_DEFINITIONS[key].default as FeatureFlagValue<K>
 }
 
-/** Every flag at its default (first declared) value. */
+/** Every flag at its declared default. */
 export function defaultFeatureFlags(): FeatureFlags {
   return Object.fromEntries(FEATURE_FLAG_KEYS.map((key) => [key, defaultFeatureFlagValue(key)])) as FeatureFlags
 }
@@ -109,7 +128,7 @@ export function resolveAgainstRegistry(
 ): Record<string, string> {
   const flags: Record<string, string> = {}
   for (const [key, definition] of Object.entries(registry)) {
-    flags[key] = definition.values[0]
+    flags[key] = definition.default
   }
   applyLayer(registry, flags, "workspace", layers.workspace)
   applyLayer(registry, flags, "user", layers.user)
