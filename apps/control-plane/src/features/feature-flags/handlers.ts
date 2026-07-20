@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError } from "@threa/backend-common"
-import { FEATURE_FLAGS, FEATURE_FLAG_KEYS } from "@threa/types"
+import { FEATURE_FLAG_DEFINITIONS, FEATURE_FLAG_KEYS } from "@threa/types"
 import type { ControlPlaneFeatureFlagService } from "./service"
 
 const setFlagSchema = z.object({
@@ -29,7 +29,7 @@ export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) 
       }
       const overrides = await featureFlagService.listWorkspaceOverrides(id)
       res.json({
-        flags: FEATURE_FLAG_KEYS.map((key) => ({ key, values: FEATURE_FLAGS[key] })),
+        flags: FEATURE_FLAG_KEYS.map((key) => ({ key, values: FEATURE_FLAG_DEFINITIONS[key].values })),
         overrides: overrides.map((o) => ({
           workosUserId: o.workosUserId,
           flagKey: o.flagKey,

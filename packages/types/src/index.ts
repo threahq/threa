@@ -894,15 +894,22 @@ export {
   type PersonaAttachmentItem,
 } from "./persona-config"
 
-// Feature flags (per-user rollout switches, managed from the backoffice)
+// Feature flags (scoped rollout switches, managed from the backoffice)
 export {
   FEATURE_FLAGS,
+  FEATURE_FLAG_DEFINITIONS,
   FEATURE_FLAG_KEYS,
+  FEATURE_FLAG_SCOPES,
   type FeatureFlagKey,
   type FeatureFlagValue,
   type FeatureFlags,
+  type FeatureFlagScope,
+  type FeatureFlagDefinition,
+  type FeatureFlagLayers,
+  defineFlag,
   isFeatureFlagKey,
   isFeatureFlagValue,
+  flagAllowsScope,
   defaultFeatureFlagValue,
   defaultFeatureFlags,
   resolveFeatureFlags,
