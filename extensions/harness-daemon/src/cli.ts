@@ -9,8 +9,8 @@ Usage:
   threa-harnessd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
   threa-harnessd do <natural language command>
   threa-harnessd list
-  threa-harnessd revive-unarchived [--tmux <session>] [--dry-run]
-  threa-harnessd resume-active [--tmux <session>] [--dry-run]
+  threa-harnessd up [--tmux <session>] [--dry-run] [--recreate-worktree]
+  threa-harnessd resume-active                (alias of up; also revive-unarchived, restore-active)
   threa-harnessd watch-unarchived [--tmux <session>] [--dry-run]
   threa-harnessd boot-resume [--tmux <session>] [--dry-run]
   threa-harnessd install-watch [--tmux <session>]
@@ -25,7 +25,7 @@ Usage:
 Examples:
   threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
   threa-harnessd spawn claude --name fix-sidebar --branch fix/sidebar
-  threa-harnessd resume-active --dry-run
+  threa-harnessd up --dry-run
   threa-harnessd watch-unarchived --tmux threa-agents
   threa-harnessd install-watch
   threa-harnessd do spawn a pi agent for long chat performance
@@ -100,6 +100,7 @@ export function parseResume(args: string[]): ResumeOptions {
   return {
     tmux: stringFlag(flags, "tmux"),
     dryRun: boolFlag(flags, "dry-run"),
+    recreateWorktree: boolFlag(flags, "recreate-worktree"),
   }
 }
 

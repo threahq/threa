@@ -79,7 +79,7 @@ export interface PiRemoteSession {
   scratchpadUrl: string
 }
 
-interface PiRemoteConfig extends ThreaChannelConfig {
+export interface PiRemoteConfig extends ThreaChannelConfig {
   defaultDisplayName?: string
   linkedSessions?: Record<
     string,

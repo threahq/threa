@@ -12,7 +12,7 @@ import {
 } from "./resume"
 import { launchAgentPlist } from "./boot"
 import { parseResume, parseSpawn } from "./cli"
-import { restoredSessionMatches } from "./commands"
+import { restoredSessionMatches, reviveAgent, type ReviveDeps, type ReviveOutcome } from "./commands"
 import { readInventory, upsertAgent } from "./inventory"
 import {
   claudeLaunchArgs,
@@ -21,7 +21,7 @@ import {
   piLaunchArgs,
   piResumeCommand,
 } from "./spawners"
-import type { ManagedAgent } from "./types"
+import type { ManagedAgent, ResumeOptions } from "./types"
 import { runWatchLoop, unavailableBackoffMs, uniqueSupervisorTargets, watchIntervalMs } from "./watch"
 
 afterEach(() => mock.restore())
@@ -239,6 +239,21 @@ test("classifies active, archived, inaccessible, and unavailable scratchpads", a
   expect(await fetchScratchpadStatus(params)).toBe("unavailable")
 })
 
+test("scratchpad status rides out rate limiting but gives up after repeated 429s", async () => {
+  const fetchMock = spyOn(globalThis, "fetch")
+  fetchMock.mockResolvedValueOnce(new Response("slow down", { status: 429 }))
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: "stream_1" } }), { status: 200 }))
+  fetchMock.mockResolvedValue(new Response("slow down", { status: 429 }))
+  const params = { baseUrl: "https://app.threa.io", workspaceId: "ws_1", apiKey: "key", streamId: "stream_1" }
+  const sleeps: number[] = []
+  const sleep = async (ms: number) => {
+    sleeps.push(ms)
+  }
+  expect(await fetchScratchpadStatus(params, sleep)).toBe("active")
+  expect(await fetchScratchpadStatus(params, sleep)).toBe("unavailable")
+  expect(sleeps).toEqual([2_000, 2_000, 4_000])
+})
+
 test("preflights revival with ifArchived=wait and refuses a root mismatch", async () => {
   const fetchMock = spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(JSON.stringify({ data: { rootStreamId: "stream_other" } }), { status: 200 })
@@ -289,4 +304,177 @@ test("preflight refuses to create a scratchpad for a missing runtime link", asyn
     expectedRootStreamId: "stream_expected",
   })
   expect(result).toEqual({ status: "inaccessible", reason: "RUNTIME_SESSION_NOT_FOUND" })
+})
+
+const REVIVE_ENV_KEYS = [
+  "THREA_BASE_URL",
+  "THREA_WORKSPACE_ID",
+  "THREA_API_KEY",
+  "THREA_DISPLAY_NAME",
+  "THREA_DEFAULT_LABEL",
+  "THREA_INSTANCE_ID",
+  "THREA_RUNTIME_SESSION_ID",
+] as const
+
+function reviveDeps(overrides: Partial<ReviveDeps> = {}): ReviveDeps {
+  return {
+    claudeConfig: { workspaceId: "ws_1", apiKey: "key" },
+    piConfig: { workspaceId: "ws_1", apiKey: "key" },
+    windowExists: () => false,
+    pathExists: () => true,
+    scratchpadStatus: async () => "active",
+    preflight: async () => ({ status: "linked", rootStreamId: "stream_01ABCDEF" }),
+    restoreWorktree: () => {
+      throw new Error("restoreWorktree must not be called")
+    },
+    piLink: () => undefined,
+    resumeRuntime: async () => {
+      throw new Error("resumeRuntime must not be called")
+    },
+    persist: () => {},
+    ...overrides,
+  }
+}
+
+function linkedAgent(overrides: Partial<ManagedAgent> = {}): ManagedAgent {
+  return agent({
+    scratchpadUrl: "https://app.threa.io/w/ws_1/s/stream_01ABCDEF",
+    worktree: "/tmp/worktrees/repair",
+    instanceId: "cc-one",
+    runtimeSessionId: "ccs-one",
+    ...overrides,
+  })
+}
+
+async function runRevive(
+  managed: ManagedAgent,
+  options: ResumeOptions,
+  deps: ReviveDeps
+): Promise<ReviveOutcome | undefined> {
+  const saved = REVIVE_ENV_KEYS.map((key) => [key, process.env[key]] as const)
+  for (const key of REVIVE_ENV_KEYS) delete process.env[key]
+  try {
+    return await reviveAgent(managed, options, deps)
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+test("up skips archived and inaccessible scratchpads without launching", async () => {
+  expect(await runRevive(linkedAgent(), {}, reviveDeps({ scratchpadStatus: async () => "archived" }))).toEqual({
+    status: "skipped archived",
+  })
+  expect(await runRevive(linkedAgent(), {}, reviveDeps({ scratchpadStatus: async () => "inaccessible" }))).toEqual({
+    status: "skipped inaccessible",
+  })
+})
+
+test("up skips an already-running agent before touching the network", async () => {
+  const calls: string[] = []
+  const deps = reviveDeps({
+    windowExists: () => true,
+    scratchpadStatus: async () => {
+      calls.push("status")
+      return "active"
+    },
+  })
+  expect(await runRevive(linkedAgent(), {}, deps)).toEqual({ status: "already running" })
+  expect(calls).toEqual([])
+})
+
+test("up skips an active scratchpad whose worktree is missing unless --recreate-worktree", async () => {
+  expect(await runRevive(linkedAgent(), {}, reviveDeps({ pathExists: () => false }))).toEqual({
+    status: "skipped missing cwd",
+    detail: "/tmp/worktrees/repair",
+  })
+  expect(
+    await runRevive(linkedAgent(), { dryRun: true, recreateWorktree: true }, reviveDeps({ pathExists: () => false }))
+  ).toEqual({
+    status: "would start",
+    detail: "https://app.threa.io/w/ws_1/s/stream_01ABCDEF (recreates worktree)",
+  })
+})
+
+test("up refuses a preflight root stream mismatch", async () => {
+  const deps = reviveDeps({
+    preflight: async () => ({
+      status: "mismatch",
+      rootStreamId: "stream_other",
+      expectedRootStreamId: "stream_01ABCDEF",
+    }),
+  })
+  expect(await runRevive(linkedAgent(), {}, deps)).toEqual({
+    status: "skipped identity mismatch",
+    detail: "session link root mismatch: expected stream_01ABCDEF, got stream_other",
+  })
+})
+
+test("up skips a Pi agent with no recorded session id", async () => {
+  const pi = linkedAgent({ runtime: "pi", instanceId: undefined, runtimeSessionId: undefined })
+  expect(await runRevive(pi, {}, reviveDeps())).toEqual({
+    status: "skipped missing session id",
+    detail: "original Pi --session-id is not recorded",
+  })
+})
+
+test("dry-run reports the plan without preflighting, launching, or persisting", async () => {
+  const calls: string[] = []
+  const deps = reviveDeps({
+    preflight: async () => {
+      calls.push("preflight")
+      return { status: "linked", rootStreamId: "stream_01ABCDEF" }
+    },
+    resumeRuntime: async () => {
+      calls.push("resume")
+      throw new Error("unreachable")
+    },
+    persist: () => {
+      calls.push("persist")
+    },
+  })
+  expect(await runRevive(linkedAgent(), { dryRun: true }, deps)).toEqual({
+    status: "would start",
+    detail: "https://app.threa.io/w/ws_1/s/stream_01ABCDEF",
+  })
+  expect(calls).toEqual([])
+})
+
+test("up starts an eligible agent and records it online", async () => {
+  const persisted: ManagedAgent[] = []
+  const deps = reviveDeps({
+    resumeRuntime: async (managed) => ({
+      worktree: managed.worktree!,
+      branch: managed.branch ?? managed.name,
+      tmuxSession: "threa-agents",
+      tmuxWindow: "repair",
+      tmuxWindowId: "@7",
+      scratchpadUrl: managed.scratchpadUrl,
+      instanceId: managed.instanceId,
+      runtimeSessionId: managed.runtimeSessionId,
+      output: "ok",
+    }),
+    persist: (managed) => {
+      persisted.push(managed)
+    },
+  })
+  expect(await runRevive(linkedAgent(), {}, deps)).toEqual({ status: "started", detail: "bypass enabled" })
+  expect(persisted).toEqual([
+    expect.objectContaining({
+      status: "online",
+      tmuxWindowId: "@7",
+      instanceId: "cc-one",
+      runtimeSessionId: "ccs-one",
+    }),
+  ])
+})
+
+test("up accepts --recreate-worktree and --dry-run", () => {
+  expect(parseResume(["--dry-run", "--recreate-worktree"])).toEqual({
+    tmux: undefined,
+    dryRun: true,
+    recreateWorktree: true,
+  })
 })
