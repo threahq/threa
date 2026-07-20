@@ -28,6 +28,10 @@ interface Dependencies {
   regionalClient: RegionalClient
 }
 
+function toOverrideRecord(rows: { flagKey: string; value: string }[]): Record<string, string> {
+  return Object.fromEntries(rows.map((row) => [row.flagKey, row.value]))
+}
+
 /**
  * Source of truth for per-user feature flags. Backoffice admins set values
  * here; every write emits a durable outbox event that pushes the user's
@@ -115,6 +119,6 @@ export class ControlPlaneFeatureFlagService {
 
   private async resolveForUser(workspaceId: string, workosUserId: string): Promise<FeatureFlags> {
     const overrides = await FeatureFlagOverrideRepository.listForUser(this.pool, workspaceId, workosUserId)
-    return resolveFeatureFlags(overrides)
+    return resolveFeatureFlags({ workspace: {}, user: toOverrideRecord(overrides) })
   }
 }

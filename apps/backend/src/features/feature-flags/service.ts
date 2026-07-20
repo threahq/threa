@@ -6,6 +6,10 @@ import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { UserFeatureFlagRepository } from "./repository"
 
+function toOverrideRecord(rows: { flagKey: string; value: string }[]): Record<string, string> {
+  return Object.fromEntries(rows.map((row) => [row.flagKey, row.value]))
+}
+
 export interface ApplyFeatureFlagSyncInput {
   workspaceId: string
   workosUserId: string
@@ -27,7 +31,7 @@ export class FeatureFlagService {
   async getFlags(workspaceId: string, userId: string): Promise<FeatureFlags> {
     // Single query, INV-30
     const rows = await UserFeatureFlagRepository.findForUser(this.pool, workspaceId, userId)
-    return resolveFeatureFlags(rows)
+    return resolveFeatureFlags({ workspace: {}, user: toOverrideRecord(rows) })
   }
 
   /** Backend-side flag lookup — the counterpart of the frontend's `useFeatureFlag`. */
@@ -63,7 +67,7 @@ export class FeatureFlagService {
       await OutboxRepository.insert(client, "feature_flags:updated", {
         workspaceId: input.workspaceId,
         targetUserId: user.id,
-        featureFlags: resolveFeatureFlags(rows),
+        featureFlags: resolveFeatureFlags({ workspace: {}, user: toOverrideRecord(rows) }),
       })
     })
     return true
