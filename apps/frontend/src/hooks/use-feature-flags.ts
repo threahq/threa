@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   defaultFeatureFlagValue,
   FEATURE_FLAG_KEYS,
+  resolveFeatureFlags,
   type FeatureFlagKey,
   type FeatureFlags,
   type FeatureFlagValue,
@@ -11,11 +12,30 @@ import {
 import { workspaceKeys } from "@/hooks/use-workspaces"
 
 /**
+ * The viewer's resolved flag map, or null until the bootstrap (with its raw
+ * layers) is cached. Reads the bootstrap cache via the cache-only observer
+ * pattern and resolves the workspace + user layers through the shared registry
+ * resolver — the same one the backend runs — so a flag means the same thing on
+ * both sides. The resolve is memoized on the layers reference (kept stable by
+ * the query's structural sharing), so it runs on a real change, not per render.
+ */
+function useResolvedFeatureFlags(workspaceId: string): FeatureFlags | null {
+  const queryClient = useQueryClient()
+  const { data: layers } = useQuery({
+    queryKey: workspaceKeys.bootstrap(workspaceId),
+    queryFn: () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId)) ?? null,
+    enabled: false,
+    staleTime: Infinity,
+    select: (bootstrap) => bootstrap?.featureFlags ?? null,
+  })
+  return useMemo(() => (layers ? resolveFeatureFlags(layers) : null), [layers])
+}
+
+/**
  * The current viewer's value for a feature flag once it has actually been
  * delivered, or null while it is still unknown (no bootstrap cached yet).
- * Reads the bootstrap cache via the cache-only observer pattern; the
- * `feature_flags:updated` socket event keeps the value live, so a backoffice
- * change flips this hook without a reload.
+ * The `feature_flags:updated` / `feature_flags:workspace_updated` socket events
+ * keep the layers live, so a backoffice change flips this hook without a reload.
  *
  * Most callers want {@link useFeatureFlag} instead — reach for this variant
  * only when "not yet delivered" must be distinguished from "set to the
@@ -25,21 +45,14 @@ export function useFeatureFlagWhenKnown<K extends FeatureFlagKey>(
   workspaceId: string,
   key: K
 ): FeatureFlagValue<K> | null {
-  const queryClient = useQueryClient()
-  const { data } = useQuery({
-    queryKey: workspaceKeys.bootstrap(workspaceId),
-    queryFn: () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId)) ?? null,
-    enabled: false,
-    staleTime: Infinity,
-    select: (bootstrap) => bootstrap?.featureFlags?.[key] ?? null,
-  })
-  return data ?? null
+  const flags = useResolvedFeatureFlags(workspaceId)
+  return flags?.[key] ?? null
 }
 
 /**
- * The current viewer's value for a feature flag. Returns the flag's default
- * (first declared value) until the bootstrap is cached — "unknown yet" and
- * "default" render the same.
+ * The current viewer's value for a feature flag. Returns the flag's declared
+ * default until the bootstrap is cached — "unknown yet" and "default" render
+ * the same.
  */
 export function useFeatureFlag<K extends FeatureFlagKey>(workspaceId: string, key: K): FeatureFlagValue<K> {
   return useFeatureFlagWhenKnown(workspaceId, key) ?? defaultFeatureFlagValue(key)
@@ -58,15 +71,8 @@ export interface OverriddenFeatureFlag {
  * here means showing nothing rather than leaking flag state.
  */
 export function useOverriddenFeatureFlags(workspaceId: string): OverriddenFeatureFlag[] {
-  const queryClient = useQueryClient()
-  const { data } = useQuery({
-    queryKey: workspaceKeys.bootstrap(workspaceId),
-    queryFn: () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId)) ?? null,
-    enabled: false,
-    staleTime: Infinity,
-    select: (bootstrap) => bootstrap?.featureFlags ?? null,
-  })
-  return useMemo(() => listOverriddenFlags(data), [data])
+  const flags = useResolvedFeatureFlags(workspaceId)
+  return useMemo(() => listOverriddenFlags(flags), [flags])
 }
 
 function listOverriddenFlags(flags: FeatureFlags | null | undefined): OverriddenFeatureFlag[] {

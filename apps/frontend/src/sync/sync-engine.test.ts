@@ -11,7 +11,6 @@ import { db } from "@/db"
 import {
   DEFAULT_USER_PREFERENCES,
   DEFAULT_WORKSPACE_SETTINGS,
-  defaultFeatureFlags,
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
@@ -149,7 +148,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       createdAt: now,
       updatedAt: now,
     },
-    featureFlags: defaultFeatureFlags(),
+    featureFlags: { workspace: {}, user: {} },
     workspaceSettings: {
       ...DEFAULT_WORKSPACE_SETTINGS,
       workspaceId: "ws_1",

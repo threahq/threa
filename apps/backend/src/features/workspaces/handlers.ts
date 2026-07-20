@@ -191,7 +191,7 @@ export function createWorkspaceHandlers({
         workspaceService.getEmojiWeights(workspaceId, userId),
         userPreferencesService.getPreferences(workspaceId, userId),
         workspaceSettingsService.getSettings(workspaceId),
-        featureFlagService.getFlags(workspaceId, userId),
+        featureFlagService.getFlagLayers(workspaceId, req.user!.workosUserId),
         platformAdminService.hasAccess(workspaceId, req.user!.workosUserId),
         sidebarConfigService.getConfig(workspaceId, userId),
         boardViewService.list(workspaceId, userId),

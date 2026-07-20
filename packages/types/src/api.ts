@@ -41,7 +41,7 @@ import type {
 } from "./domain"
 import type { UserPreferences } from "./preferences"
 import type { WorkspaceSettings } from "./workspace-settings"
-import type { FeatureFlags } from "./feature-flags"
+import type { FeatureFlagLayers } from "./feature-flags"
 import type { SidebarConfig } from "./sidebar"
 import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "./tool-privacy"
 import type { WorkspacePermissionSlug } from "./workspace-permissions"
@@ -1616,10 +1616,14 @@ export interface WorkspaceBootstrap {
   /** Workspace-wide settings (e.g. the default working schedule members inherit). */
   workspaceSettings: WorkspaceSettings
   /**
-   * The viewer's resolved feature flags (defaults + backoffice-managed
-   * per-user overrides). Kept live by the `feature_flags:updated` socket event.
+   * The viewer's raw feature-flag layers (workspace + user overrides); the
+   * client resolves them against the code registry, so a flag means the same
+   * thing here as on the backend. Kept live by the `feature_flags:updated`
+   * (user layer) and `feature_flags:workspace_updated` (workspace layer) socket
+   * events. Optional per the post-v1 bootstrap convention — absent reads as all
+   * registry defaults.
    */
-  featureFlags: FeatureFlags
+  featureFlags?: FeatureFlagLayers
   /**
    * True when the viewer holds a control-plane platform-admin grant (synced
    * to the regional `platform_admin_access` mirror). Gates UI links into the

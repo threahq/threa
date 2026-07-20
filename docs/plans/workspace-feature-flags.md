@@ -21,9 +21,14 @@ Three distinct problems, one of which is the stated ask:
    starts paint fully while flags are still `undefined` and read as registry defaults.
    Default-off degrades politely; default-on paints wrong then flips.
 
-**Timing.** `FEATURE_FLAGS = {}` and the CP rejects unregistered keys on write, so
-both flag tables are provably empty in every environment. No backfill, no dual-read
-window. This is the cheapest this change will ever be.
+**Timing.** `FEATURE_FLAGS = {}` today, so there are no _live_ flag values to migrate.
+The tables are not empty in history — `board-view` and `sync-v2-cursor` were per-user
+rollouts, and retiring a flag only drops the registry entry, never the rows — but any
+surviving rows are overrides for keys no longer in the registry, hence inert (read paths
+filter through the registry). The CP table ALTERs in place (rows re-keyed to
+`subject_type='user'`); the regional table drops (its inert rows carry nothing forward and
+the region re-syncs). So no live value migrates and no dual-read window is needed. This is
+the cheapest this change will ever be.
 
 ## Ratified decisions
 

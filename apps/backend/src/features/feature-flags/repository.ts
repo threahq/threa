@@ -1,49 +1,76 @@
+import type { FeatureFlagLayers, FeatureFlagScope } from "@threa/types"
 import { sql, type Querier } from "../../db"
 
-interface UserFeatureFlagRow {
+interface OverrideRow {
+  subject_type: string
   flag_key: string
   value: string
 }
 
-export interface UserFeatureFlagRecord {
-  flagKey: string
-  value: string
-}
-
-export const UserFeatureFlagRepository = {
-  /** Stored flag rows for one user. Merge with registry defaults in the service. */
-  async findForUser(db: Querier, workspaceId: string, userId: string): Promise<UserFeatureFlagRecord[]> {
-    const result = await db.query<UserFeatureFlagRow>(sql`
-      SELECT flag_key, value
-      FROM user_feature_flags
-      WHERE workspace_id = ${workspaceId} AND user_id = ${userId}
+export const FeatureFlagOverrideRepository = {
+  /**
+   * The workspace layer and this user's layer in one query (INV-30/INV-56):
+   * the workspace's own rows (`subject_id = workspace_id`) plus the user's rows
+   * (`subject_id = workos_user_id`). Partitioned into the two records by
+   * subject_type; merge with registry defaults in the service.
+   */
+  async findLayers(db: Querier, workspaceId: string, workosUserId: string): Promise<FeatureFlagLayers> {
+    const result = await db.query<OverrideRow>(sql`
+      SELECT subject_type, flag_key, value
+      FROM feature_flag_overrides
+      WHERE workspace_id = ${workspaceId}
+        AND (
+          (subject_type = 'workspace' AND subject_id = ${workspaceId})
+          OR (subject_type = 'user' AND subject_id = ${workosUserId})
+        )
     `)
-    return result.rows.map((row) => ({ flagKey: row.flag_key, value: row.value }))
+    const layers: FeatureFlagLayers = { workspace: {}, user: {} }
+    for (const row of result.rows) {
+      if (row.subject_type === "workspace") layers.workspace[row.flag_key] = row.value
+      else if (row.subject_type === "user") layers.user[row.flag_key] = row.value
+    }
+    return layers
+  },
+
+  /** The workspace layer alone, for workspace-scoped reads that carry no user. */
+  async findWorkspaceOverrides(db: Querier, workspaceId: string): Promise<Record<string, string>> {
+    const result = await db.query<OverrideRow>(sql`
+      SELECT subject_type, flag_key, value
+      FROM feature_flag_overrides
+      WHERE workspace_id = ${workspaceId} AND subject_type = 'workspace' AND subject_id = ${workspaceId}
+    `)
+    return Object.fromEntries(result.rows.map((row) => [row.flag_key, row.value]))
   },
 
   /**
-   * Replace one user's flag rows with a control-plane snapshot: upsert every
+   * Replace one subject's flag rows with a control-plane snapshot: upsert every
    * key in the snapshot, delete the rest. Two set-based statements (INV-56),
    * race-safe via ON CONFLICT (INV-20) — concurrent syncs converge on the
    * last writer without check-then-act.
    */
-  async replaceForUser(db: Querier, workspaceId: string, userId: string, flags: Record<string, string>): Promise<void> {
-    const flagKeys = Object.keys(flags)
-    const values = flagKeys.map((key) => flags[key])
+  async replaceForSubject(
+    db: Querier,
+    workspaceId: string,
+    subjectType: FeatureFlagScope,
+    subjectId: string,
+    overrides: Record<string, string>
+  ): Promise<void> {
+    const flagKeys = Object.keys(overrides)
+    const values = flagKeys.map((key) => overrides[key])
 
     await db.query(
-      `DELETE FROM user_feature_flags
-       WHERE workspace_id = $1 AND user_id = $2 AND flag_key <> ALL($3::text[])`,
-      [workspaceId, userId, flagKeys]
+      `DELETE FROM feature_flag_overrides
+       WHERE workspace_id = $1 AND subject_type = $2 AND subject_id = $3 AND flag_key <> ALL($4::text[])`,
+      [workspaceId, subjectType, subjectId, flagKeys]
     )
     if (flagKeys.length === 0) return
     await db.query(
-      `INSERT INTO user_feature_flags (workspace_id, user_id, flag_key, value)
-       SELECT $1, $2, * FROM unnest($3::text[], $4::text[])
-       ON CONFLICT (workspace_id, user_id, flag_key) DO UPDATE SET
+      `INSERT INTO feature_flag_overrides (workspace_id, subject_type, subject_id, flag_key, value)
+       SELECT $1, $2, $3, * FROM unnest($4::text[], $5::text[])
+       ON CONFLICT (workspace_id, subject_type, subject_id, flag_key) DO UPDATE SET
          value = EXCLUDED.value,
          updated_at = NOW()`,
-      [workspaceId, userId, flagKeys, values]
+      [workspaceId, subjectType, subjectId, flagKeys, values]
     )
   },
 }
