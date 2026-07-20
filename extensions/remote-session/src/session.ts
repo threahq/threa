@@ -881,6 +881,17 @@ export class RemoteSession {
       // The sweep can still have claimed foldless invocations (a queued control
       // command in the double-command race) — close them or they hang to TTL.
       await Promise.all(swept.map((item) => this.completeNoResponse(item)))
+      if (invocation.metadata?.steeredMessage === true) {
+        // An embedded-steer pair carries its text on the normal message. If
+        // that companion is already running (or an interceptor consumed it),
+        // the empty control half is only a barrier — do not post a false
+        // "nothing to steer" acknowledgement.
+        await this.completeTurn(invocation, {
+          noResponse: true,
+          metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true", "remote.steered": "true" },
+        })
+        return
+      }
       // A sweep that only consumed intercepted replies did real work (a verdict
       // reached its pending prompt) — "nothing to steer with" would misread as
       // the reply having been lost.

@@ -132,6 +132,7 @@ describe("message + steer composite send", () => {
         promptMarkdown: "/steer",
         metadata: {
           command: expect.objectContaining({ name: "steer", args: "", executionKind: "bot-runtime" }),
+          steeredMessage: true,
         },
       }),
     ])

@@ -3,6 +3,7 @@ import { db } from "@/db"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { ConversationIntents, type JSONContent } from "@threa/types"
 import { deleteOptimisticBoardPost } from "@/stores/board-store"
+import { extractSteerDirective } from "@/lib/commands"
 
 type MessageStatus = "pending" | "failed" | "editing"
 /** Status the message had before the user entered editing mode */
@@ -206,6 +207,8 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   const saveEditedMessage = useCallback(
     async (id: string, contentJson: JSONContent) => {
       const contentMarkdown = serializeToMarkdown(contentJson).trim()
+      const steerDirective = extractSteerDirective(contentJson)
+      const steer = steerDirective?.hasMessageContent === true ? true : undefined
 
       const updated = await db.transaction("rw", db.pendingMessages, db.events, async () => {
         const existing = await db.pendingMessages.get(id)
@@ -220,6 +223,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
           retryCount: 0,
           retryAfter: 0,
           terminalFailure: undefined,
+          steer,
         })
 
         // Update the optimistic event's payload so the timeline reflects the edit

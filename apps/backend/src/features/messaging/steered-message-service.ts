@@ -110,6 +110,7 @@ export class SteeredMessageService {
           args: "",
           executionKind: CommandKinds.BOT_RUNTIME,
         },
+        steeredMessage: true,
       },
     })
   }

@@ -310,7 +310,55 @@ describe("PendingMessagesContext", () => {
           retryCount: 0,
           retryAfter: 0,
           terminalFailure: undefined,
+          steer: undefined,
         })
+      )
+    })
+
+    it.each([
+      {
+        name: "clears steer when the token is removed",
+        existingSteer: true,
+        contentJson: {
+          type: "doc" as const,
+          content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "plain edit" }] }],
+        },
+        expectedSteer: undefined,
+      },
+      {
+        name: "sets steer when mixed content adds the token",
+        existingSteer: undefined,
+        contentJson: {
+          type: "doc" as const,
+          content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "redirect this /steer" }] }],
+        },
+        expectedSteer: true,
+      },
+      {
+        name: "does not turn a bare steer edit into a composite message",
+        existingSteer: undefined,
+        contentJson: {
+          type: "doc" as const,
+          content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "/steer" }] }],
+        },
+        expectedSteer: undefined,
+      },
+    ])("$name", async ({ existingSteer, contentJson, expectedSteer }) => {
+      mockGet.mockResolvedValue({ clientId: "temp_steer_edit", steer: existingSteer })
+      mockEventsGet.mockResolvedValue({
+        id: "temp_steer_edit",
+        payload: { contentMarkdown: "old" },
+        _status: "editing",
+      })
+      const { result } = renderHook(() => usePendingMessages(), { wrapper })
+
+      await act(async () => {
+        await result.current.saveEditedMessage("temp_steer_edit", contentJson)
+      })
+
+      expect(mockUpdate).toHaveBeenCalledWith(
+        "temp_steer_edit",
+        expect.objectContaining({ steer: expectedSteer, terminalFailure: undefined })
       )
     })
   })

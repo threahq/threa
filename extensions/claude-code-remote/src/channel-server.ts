@@ -41,6 +41,7 @@ const MODEL_SUGGESTIONS = modelSuggestions()
 
 /** "y abcde" / "yes abcde" / "n abcde" / "no abcde". The id alphabet skips 'l' (Claude Code's convention). */
 export const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
+const EMBEDDED_STEER_RE = /(^|[^\p{L}\p{N}_/])\/steer(?=$|[^\p{L}\p{N}_/-])/giu
 
 // Delegation-queue backstop poll. The /bot socket pushes delegation:available,
 // so like WS_BACKSTOP_POLL_MS in the SDK this is only insurance against a
@@ -103,8 +104,11 @@ export function verdictCandidateText(invocation: ClaimedInvocation): string | nu
   // Embedded steer is now persisted as an ordinary source message plus an
   // empty structured steer invocation. When that source message is swept while
   // busy, retain the old permission-reply behavior by testing its text without
-  // the leading directive.
-  return invocation.promptMarkdown.replace(/^\s*\/steer(?:\s+|$)/i, "").trim()
+  // the embedded directive, regardless of where the user placed it.
+  return invocation.promptMarkdown
+    .replace(EMBEDDED_STEER_RE, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim()
 }
 
 export function buildInstructions(permissionRelay: boolean, channelActive = true): string {
