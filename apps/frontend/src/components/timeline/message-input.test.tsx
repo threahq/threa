@@ -458,6 +458,35 @@ describe("MessageInput", () => {
       })
     })
 
+    it("sends an inline steer as an unchanged message with its attachments", async () => {
+      const content = makeAttachmentDoc()
+      content.content![0].content![1].text = " I want option 2 /steer and also pizza"
+      mockComposerState.canSend = true
+      mockComposerState.content = content
+      vi.mocked(hooksModule.useStreamBootstrap).mockReturnValue({
+        data: {
+          commands: [{ name: "steer", description: "Steer", kind: "bot-runtime", scope: "stream" }],
+        },
+      } as unknown as ReturnType<typeof hooksModule.useStreamBootstrap>)
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(mockSendMessage).toHaveBeenCalledWith({
+        contentJson: content,
+        attachmentIds: ["attach_1"],
+        attachments: [
+          {
+            id: "attach_1",
+            filename: "pasted-image-1.png",
+            mimeType: "image/png",
+            sizeBytes: 1234,
+          },
+        ],
+        steer: true,
+      })
+    })
+
     it("should resolve the draft and clear attachments after sending", async () => {
       mockComposerState.canSend = true
       mockComposerState.content = makeDoc("Hello world")

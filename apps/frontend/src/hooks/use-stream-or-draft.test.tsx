@@ -231,6 +231,26 @@ describe("useStreamOrDraft real stream send", () => {
     })
   })
 
+  it("keeps steer on the same durable message queue item", async () => {
+    const { result } = await mountRealStreamSend()
+
+    await act(async () => {
+      await result.current.sendMessage({
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "I want option 2" }] }],
+        },
+        steer: true,
+      })
+    })
+
+    expect((await db.pendingMessages.toArray()).find((message) => message.content === "I want option 2")).toMatchObject(
+      {
+        steer: true,
+      }
+    )
+  })
+
   it("forwards a conversation directive to the pending row and tags the optimistic payload (reply in conversation)", async () => {
     const { result } = await mountRealStreamSend()
 
@@ -471,8 +491,29 @@ describe("useStreamOrDraft draft DM send", () => {
 describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
   const CREATED_AT = "2026-03-31T10:00:00Z"
 
-  function seedScratchpad(streamOverrides: Record<string, unknown>): string {
+  async function seedScratchpad(streamOverrides: Record<string, unknown>): Promise<string> {
     const streamId = "stream_pad_1"
+    const stream = {
+      id: streamId,
+      workspaceId: "ws_1",
+      type: "scratchpad" as const,
+      displayName: null,
+      slug: null,
+      description: null,
+      visibility: "private" as const,
+      parentStreamId: null,
+      parentMessageId: null,
+      rootStreamId: null,
+      companionMode: "on" as const,
+      companionPersonaId: null,
+      createdBy: "member_1",
+      createdAt: CREATED_AT,
+      updatedAt: CREATED_AT,
+      archivedAt: null,
+      lastMessagePreview: null,
+      _cachedAt: Date.now(),
+      ...streamOverrides,
+    }
     seedWorkspaceCache("ws_1", {
       workspace: {
         id: "ws_1",
@@ -509,29 +550,7 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
           _cachedAt: Date.now(),
         },
       ],
-      streams: [
-        {
-          id: streamId,
-          workspaceId: "ws_1",
-          type: "scratchpad" as const,
-          displayName: null,
-          slug: null,
-          description: null,
-          visibility: "private" as const,
-          parentStreamId: null,
-          parentMessageId: null,
-          rootStreamId: null,
-          companionMode: "on" as const,
-          companionPersonaId: null,
-          createdBy: "member_1",
-          createdAt: CREATED_AT,
-          updatedAt: CREATED_AT,
-          archivedAt: null,
-          lastMessagePreview: null,
-          _cachedAt: Date.now(),
-          ...streamOverrides,
-        },
-      ],
+      streams: [stream],
       memberships: [
         {
           id: `ws_1:${streamId}`,
@@ -569,6 +588,7 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
       },
       metadata: { id: "ws_1", workspaceId: "ws_1", emojis: [], emojiWeights: {}, commands: [], _cachedAt: Date.now() },
     })
+    await db.streams.put(stream)
     return streamId
   }
 
@@ -596,7 +616,11 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
     } as never)
     vi.spyOn(messageEnvelope, "sealStreamName").mockResolvedValue({ ciphertext: "Y3Q=", envelope: { v: 1 } as never })
 
-    const streamId = seedScratchpad({ e2eEnabled: true, sealedNameCiphertext: "old_ct", sealedNameEnvelope: { v: 0 } })
+    const streamId = await seedScratchpad({
+      e2eEnabled: true,
+      sealedNameCiphertext: "old_ct",
+      sealedNameEnvelope: { v: 0 },
+    })
     const update = vi.fn().mockImplementation(async (_ws: string, id: string, data: Record<string, unknown>) => ({
       id,
       workspaceId: "ws_1",
@@ -646,7 +670,7 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
 
   it("renames a plaintext scratchpad by writing displayName directly (no sealing)", async () => {
     const sealSpy = vi.spyOn(messageEnvelope, "sealStreamName")
-    const streamId = seedScratchpad({ e2eEnabled: false })
+    const streamId = await seedScratchpad({ e2eEnabled: false })
     const update = vi.fn().mockImplementation(async (_ws: string, id: string, data: Record<string, unknown>) => ({
       id,
       workspaceId: "ws_1",

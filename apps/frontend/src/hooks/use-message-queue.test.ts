@@ -11,6 +11,8 @@ import * as draftStoreModule from "@/stores/draft-store"
 import * as boardStoreModule from "@/stores/board-store"
 import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { MessageErrorCodes } from "@threa/types"
+import { ApiError } from "@/api/client"
 import { createElement, type ReactNode } from "react"
 
 const mockCreate = vi.fn()
@@ -33,6 +35,9 @@ interface MockPendingMessage {
   contentFormat: string
   contentJson?: { type: string; content: Array<{ type: string; content?: Array<{ type: string; text: string }> }> }
   attachmentIds?: string[]
+  steer?: true
+  status?: "editing" | "blocked-privacy"
+  terminalFailure?: boolean
   createdAt: number
   retryCount: number
   retryAfter?: number
@@ -188,6 +193,32 @@ describe("useMessageQueue", () => {
     expect(mockMarkSent).toHaveBeenCalledWith("temp_abc")
   })
 
+  it("forwards atomic steer on the message request", async () => {
+    mockPendingMessages = [
+      {
+        clientId: "temp_steer",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "I want option 2",
+        contentFormat: "markdown",
+        steer: true,
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      "ws_1",
+      "stream_1",
+      expect.objectContaining({ clientMessageId: "temp_steer", steer: true })
+    )
+  })
+
   it("should mark message as failed and increment retryCount when API call fails", async () => {
     mockCreate.mockRejectedValue(new Error("Network error"))
     mockPendingMessages = [
@@ -214,6 +245,59 @@ describe("useMessageQueue", () => {
     })
     expect(mockEventsUpdate).toHaveBeenCalledWith("temp_fail", { _status: "failed" })
     expect(mockMarkFailed).toHaveBeenCalledWith("temp_fail")
+  })
+
+  it("parks a message when its atomic steer is no longer available", async () => {
+    mockCreate.mockRejectedValue(
+      new ApiError(409, MessageErrorCodes.STEER_UNAVAILABLE, "Steer is not available in this stream")
+    )
+    mockPendingMessages = [
+      {
+        clientId: "temp_steer_gone",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Please handle this /steer",
+        contentFormat: "markdown",
+        steer: true,
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(mockUpdate).toHaveBeenCalledWith("temp_steer_gone", {
+      terminalFailure: true,
+      retryAfter: undefined,
+    })
+    expect(mockEventsUpdate).toHaveBeenCalledWith("temp_steer_gone", { _status: "failed" })
+    expect(mockMarkFailed).toHaveBeenCalledWith("temp_steer_gone")
+  })
+
+  it("does not auto-retry a permanently failed send", async () => {
+    mockPendingMessages = [
+      {
+        clientId: "temp_permanent",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Please handle this /steer",
+        contentFormat: "markdown",
+        steer: true,
+        terminalFailure: true,
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(mockCreate).not.toHaveBeenCalled()
   })
 
   it("should retry high-retry-count messages (no max retry cap) with backoff", async () => {

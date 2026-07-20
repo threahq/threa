@@ -290,7 +290,13 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       // Dexie's deep KeyPaths inference hits a circular type on JSONContent.
       // Cast through unknown to bypass the broken type inference.
       type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
-      await (db.pendingMessages.update as unknown as UpdateFn)(id, { retryCount: 0, retryAfter: 0, ...patch })
+      await (db.pendingMessages.update as unknown as UpdateFn)(id, {
+        retryCount: 0,
+        retryAfter: 0,
+        status: undefined,
+        terminalFailure: undefined,
+        ...patch,
+      })
       await db.events.update(id, { _status: "pending" })
       markPending(id)
       notifyQueue()

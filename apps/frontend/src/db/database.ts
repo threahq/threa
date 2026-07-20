@@ -288,6 +288,8 @@ export interface PendingMessage {
   contentJson?: JSONContent
   /** Attachment IDs to include with the message */
   attachmentIds?: string[]
+  /** Persist this message and dispatch `/steer` atomically on the server. */
+  steer?: true
   createdAt: number // timestamp for ordering
   retryCount: number
   /** Timestamp before which this message should not be retried (exponential backoff) */
@@ -303,6 +305,8 @@ export interface PendingMessage {
    *   `status` and sets `confirmedPrivacyWarning: true`.
    */
   status?: "editing" | "blocked-privacy"
+  /** Permanent rejection: keep the failed row for manual Retry, but do not auto-replay it. */
+  terminalFailure?: boolean
   /** Original queue state before entering editing mode; used to cancel stale edits on startup. */
   preEditStatus?: "pending" | "failed"
   /**

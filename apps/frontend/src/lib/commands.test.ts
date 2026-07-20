@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import type { JSONContent } from "@threa/types"
-import { extractCommandNode, extractCommandFromRawText } from "./commands"
+import { extractCommandNode, extractCommandFromRawText, extractSteerDirective } from "./commands"
 
 describe("extractCommandNode", () => {
   it("extracts name + clientActionId from the first slashCommand node", () => {
@@ -126,6 +126,97 @@ describe("extractCommandNode", () => {
       ],
     }
     expect(extractCommandNode(doc)?.name).toBe("help")
+  })
+})
+
+describe("extractSteerDirective", () => {
+  it("detects a structural steer command at the start of a message without changing it", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "slashCommand", attrs: { name: "steer", clientActionId: null } },
+            { type: "text", text: " I want option 2" },
+          ],
+        },
+      ],
+    }
+
+    expect(extractSteerDirective(doc)).toEqual({ content: doc, hasMessageContent: true })
+  })
+
+  it("finds standalone raw steer tokens at the end, middle, and across paragraphs", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "I want option 2 /steer" }] },
+        { type: "paragraph", content: [{ type: "text", text: "Yes./steer and also pizza" }] },
+      ],
+    }
+
+    expect(extractSteerDirective(doc)).toEqual({ content: doc, hasMessageContent: true })
+  })
+
+  it("detects a steer token split across formatting marks", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "/ste", marks: [{ type: "bold" }] },
+            { type: "text", text: "er" },
+            { type: "text", text: " keep the attachment" },
+          ],
+        },
+      ],
+    }
+
+    expect(extractSteerDirective(doc)).toEqual({ content: doc, hasMessageContent: true })
+  })
+
+  it("treats a trailing-newline steer as a command with no message", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "/steer" }] }, { type: "paragraph" }],
+    }
+
+    expect(extractSteerDirective(doc)?.hasMessageContent).toBe(false)
+  })
+
+  it("keeps attachments as normal message content", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "attachmentReference", attrs: { id: "att_1", filename: "image.png" } },
+            { type: "text", text: " /steer" },
+          ],
+        },
+      ],
+    }
+
+    const extracted = extractSteerDirective(doc)
+    expect(extracted?.hasMessageContent).toBe(true)
+    expect(extracted?.content.content?.[0].content?.[0].type).toBe("attachmentReference")
+  })
+
+  it("does not match paths, URLs, or longer command names", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "https://example.com/steer /steer-more foo/steer" }],
+        },
+      ],
+    }
+
+    expect(extractSteerDirective(doc)).toBeNull()
   })
 })
 

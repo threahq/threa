@@ -247,6 +247,7 @@ export {
   type ShareFlavor,
   ShareFlavors,
   ShareErrorCodes,
+  MessageErrorCodes,
   // Inter-service authentication
   INTERNAL_API_KEY_HEADER,
   ENCLAVE_CALLBACK_TOKEN_HEADER,

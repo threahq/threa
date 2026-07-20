@@ -139,6 +139,8 @@ export interface SendMessageInput {
   attachmentIds?: string[]
   /** Full attachment info for optimistic UI - required when attachmentIds is provided */
   attachments?: AttachmentSummary[]
+  /** Persist the message first, then dispatch `/steer` in the same server transaction. */
+  steer?: true
   /**
    * Files the send into a conversation synchronously ("Reply in conversation",
    * Mechanism C). Only meaningful on real streams — draft paths ignore it, since
@@ -658,29 +660,33 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       markPending(clientId)
 
-      // Durable enqueue: the background message queue (useMessageQueue) picks
-      // this up and sends it.
-      await db.pendingMessages.add({
-        clientId,
-        workspaceId,
-        streamId,
-        content: contentMarkdown,
-        contentFormat: "markdown",
-        contentJson: input.contentJson,
-        attachmentIds: input.attachmentIds,
-        conversation: input.conversation,
-        createdAt: Date.now(),
-        retryCount: 0,
-        ...(e2eFields ?? {}),
-      })
+      // The durable send and its optimistic row appear together. A steered
+      // message stays one queue item so replay cannot dispatch the command
+      // before the message reaches the server.
+      await db.transaction("rw", [db.pendingMessages, db.events], async () => {
+        await db.pendingMessages.add({
+          clientId,
+          workspaceId,
+          streamId,
+          content: contentMarkdown,
+          contentFormat: "markdown",
+          contentJson: input.contentJson,
+          attachmentIds: input.attachmentIds,
+          conversation: input.conversation,
+          steer: input.steer,
+          createdAt: Date.now(),
+          retryCount: 0,
+          ...(e2eFields ?? {}),
+        })
 
-      await db.events.add({
-        ...optimisticEvent,
-        workspaceId,
-        _sequenceNum: sequenceToNum(optimisticEvent.sequence),
-        _clientId: clientId,
-        _status: "pending",
-        _cachedAt: Date.now(),
+        await db.events.add({
+          ...optimisticEvent,
+          workspaceId,
+          _sequenceNum: sequenceToNum(optimisticEvent.sequence),
+          _clientId: clientId,
+          _status: "pending",
+          _cachedAt: Date.now(),
+        })
       })
 
       notifyQueue()

@@ -155,22 +155,29 @@ describe("Pi remote trace safety", () => {
     })
   })
 
-  test("falls back to parsing prompt for active-scratchpad invocations", () => {
+  test("does not mistake an active-scratchpad message for a session-control command", () => {
     const invocation = {
       id: "binv_1",
       activeStreamId: "stream_1",
       sourceMessageId: "msg_1",
-      promptMarkdown: "/model ",
+      promptMarkdown: "/steer I want option 2",
       claimToken: "claim",
       claimExpiresAt: null,
       requiredCapability: "active-scratchpad",
     }
-    expect(__testing.resolveSessionControlCommand(invocation)).toEqual({
-      id: "msg_1",
-      name: "model",
-      args: "",
-      executionKind: "bot-runtime",
-    })
+    expect(__testing.resolveSessionControlCommand(invocation)).toBeNull()
+  })
+
+  test("formats Pi mid-turn steers like normal user messages", () => {
+    expect(__testing.formatSteerPrompt("I want option 2")).toBe("I want option 2")
+    expect(
+      __testing.formatSteerPrompt(
+        "Look at this image",
+        "Attachments saved into this session's working directory — read them from these paths:\n- image.png → /tmp/image.png"
+      )
+    ).toBe(
+      "Look at this image\n\nAttachments saved into this session's working directory — read them from these paths:\n- image.png → /tmp/image.png"
+    )
   })
 
   test("does not treat mention invocations as session-control commands", () => {
