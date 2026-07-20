@@ -127,11 +127,13 @@ Calls are gated by **two independent switches**, both required:
      boot loudly. Absent ⇒ the backend boots fine but every calls surface answers
      **503 `CALLS_UNAVAILABLE`**. Resolved in `apps/backend/src/lib/env.ts`
      (`config.cloudflareRealtime.enabled`), consumed only by the CF proxy.
-2. **`callsEnabled`** workspace setting (default **off**,
-   `packages/types/src/workspace-settings.ts`) — even with the CF app configured,
-   calls stay dark per-workspace until an admin flips it. The frontend renders no
+2. **`callsEnabled`** workspace setting (default **on**,
+   `packages/types/src/workspace-settings.ts`) — a per-workspace kill switch rather
+   than a rollout gate: an admin can shut calls off without a deploy, which matters
+   because the media plane is a third-party dependency. The frontend renders no
    calls surface (`stream.tsx`, `user-profile-modal.tsx`) when off; the backend
-   handlers + gateway reject when off.
+   handlers + gateway reject when off. There is no settings UI for it yet — it is
+   changed via `PATCH /api/workspaces/:id/workspace-settings` (WORKSPACE_ADMIN).
 
 ## Operational notes
 
@@ -219,10 +221,12 @@ and STT ship with transcription).
   by construction (there is no server-side audio path) and by the `RealtimeMediaApi`
   seam being the only media boundary.
 
-## Flag-flip checklist
+## Release state
 
-Preconditions to turn `callsEnabled` on in an environment. Most are **unchecked** —
-this is the honest M1-exit state, not a claim of readiness.
+Calls were **released on by default** on 2026-07-20 by an explicit pre-launch product
+decision, ahead of the items below. The list is kept because the unchecked entries are
+still genuinely outstanding — it is the honest state of the feature, not a gate that
+was satisfied.
 
 - [x] Schema + state machines + CF proxy + `/calls` gateway shipped (PRs 0.1–0.2).
 - [x] 1:1 DM lifecycle: ring, dock, mute/camera, timeline card, rejoin bar, sweeper
@@ -262,5 +266,5 @@ this is the honest M1-exit state, not a claim of readiness.
       media both directions; what remains is the same flow driven by the shipped
       frontend transport in a real session (dev stack + dev app, two browsers).
 
-Until the CF-app, live-spike, and DPA-register items are checked, `callsEnabled`
-stays off everywhere.
+The DPA-register entry is the one that still carries real weight: it must land before
+the product carries external users.

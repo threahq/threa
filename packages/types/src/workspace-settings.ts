@@ -76,11 +76,11 @@ export interface WorkspaceSettings {
    */
   billingTimezone: string
   /**
-   * Feature flag for voice/video calls (dark feature, default OFF). Off ⇒ the
-   * calls HTTP/socket surfaces answer as if the feature does not exist
+   * Kill switch for voice/video calls, on by default. Off ⇒ the calls
+   * HTTP/socket surfaces answer as if the feature does not exist
    * (`CALLS_DISABLED`, 404-style) per the house convention for gated features.
-   * Flipped on per-workspace during rollout; the M1 exit gate requires the
-   * Cloudflare DPA/processor-register entry before enabling it in prod.
+   * Calls depend on a third-party SFU, so an admin needs a way to shut them off
+   * without a deploy; that is the only job this setting still has.
    */
   callsEnabled: boolean
   createdAt: string
@@ -96,7 +96,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
   defaultCompanionPersonaId: null,
   billingTimezone: "UTC",
-  callsEnabled: false,
+  callsEnabled: true,
 }
 
 /** Partial update — only provided fields are changed. */

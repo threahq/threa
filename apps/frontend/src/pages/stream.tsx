@@ -61,7 +61,13 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
-import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threa/types"
+import {
+  BotRuntimeStatuses,
+  CompanionModes,
+  DEFAULT_WORKSPACE_SETTINGS,
+  LabelableResourceTypes,
+  StreamTypes,
+} from "@threa/types"
 import { getStreamName, getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { StreamContextSurface, StreamContextGallery, useStreamGallery } from "@/components/stream-context"
@@ -225,7 +231,7 @@ export function StreamPage() {
   const activeBotPresence = useActiveBotPresence(workspaceId, streamId)
 
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
-  const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? false
+  const callsEnabled = bootstrap?.workspaceSettings?.callsEnabled ?? DEFAULT_WORKSPACE_SETTINGS.callsEnabled
   const { launch: launchCall, callActive } = useCallLaunch()
 
   const isThread = stream?.type === StreamTypes.THREAD
@@ -718,8 +724,7 @@ export function StreamPage() {
           </div>
           <div className="flex items-center gap-1 ml-1">
             {stream && !isDraft && (isChannel || isDm) && callsEnabled && (
-              // Dark feature: rendered only when the workspace `callsEnabled`
-              // setting is on, so an off workspace shows no calls surface at all.
+              // A workspace that has switched calls off shows no calls surface at all.
               <Button
                 variant="ghost"
                 size="icon"
