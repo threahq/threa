@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback } from "react"
+import { type ReactNode, useCallback, useEffect } from "react"
 import { RefreshCw } from "lucide-react"
 import { useSidebar, useCoordinatedLoading, type UrgencyBlock } from "@/contexts"
 import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh, useTouchCapable } from "@/hooks"
@@ -207,6 +207,13 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     collapse()
   }, [collapse])
 
+  // Publish the content region's left offset (the sidebar column width) so the
+  // app-mounted desktop call dock can pin itself to the content area — over the
+  // main region, never the sidebar. Mirrors the `--composer-height` var pattern.
+  useEffect(() => {
+    document.documentElement.style.setProperty("--app-content-left", wrapperWidth)
+  }, [wrapperWidth])
+
   // Derive mobile sidebar/backdrop classes outside JSX to avoid nested ternaries (INV-47)
   let backdropVisibility: string | undefined
   if (!isSwiping) {
@@ -400,10 +407,17 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             </aside>
           </div>
 
-          {/* Main content area — safe-area padding for notched devices when keyboard is closed */}
+          {/* Main content area — safe-area padding for notched devices when keyboard is
+               closed; the call dock reserves its resting size here so it pushes the
+               conversation aside instead of overlaying it (0 when no desktop dock /
+               fullscreen). */}
           <main
             className="relative flex flex-1 flex-col overflow-hidden"
-            style={!isKeyboardOpen ? { paddingBottom: "env(safe-area-inset-bottom)" } : undefined}
+            style={{
+              paddingRight: "var(--call-dock-inset-right, 0px)",
+              paddingTop: "var(--call-dock-inset-top, 0px)",
+              ...(!isKeyboardOpen ? { paddingBottom: "env(safe-area-inset-bottom)" } : {}),
+            }}
           >
             <ConnectionStatus />
             {children}

@@ -17,6 +17,7 @@ import {
   bumpCallMediaEpoch,
   type CallRosterParticipant,
 } from "@/stores/call-store"
+import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
 import { CallCaptureError, type CallController } from "@/calls/call-manager"
 import { CallDock } from "./call-dock"
 import { CallManagerProvider } from "./call-manager-context"
@@ -133,6 +134,8 @@ function enterConnectedCall(roster: CallRosterParticipant[]) {
 beforeEach(() => {
   clearCallState()
   resetWorkspaceStoreCache()
+  localStorage.clear()
+  __resetCallPrefsForTests()
   seedUsers()
   vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_self" } as ReturnType<typeof authModule.useUser>)
 })
@@ -264,16 +267,16 @@ describe("CallDock — pre-join permission taxonomy", () => {
     expect(manager.startCall).not.toHaveBeenCalled()
   })
 
-  it("re-expands the pre-join gate on a fresh launch after a collapse", async () => {
+  it("shows the pre-join gate on a fresh launch after the prior call was minimized", async () => {
     const startCall = vi.fn(() => new Promise<void>(() => {}))
     renderDock(makeManager({ startCall }))
+    // Enter a connected call, then minimize the desktop dock to its Rail.
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
-    await userEvent.click(screen.getByLabelText("Collapse call"))
+    await userEvent.click(screen.getByLabelText("Minimize call"))
     expect(screen.getByLabelText("Expand call")).toBeInTheDocument()
+    // Call ends; a fresh launch must surface the pre-join gate, not stay hidden.
     act(() => setCallPhase("idle"))
     await userEvent.click(screen.getByText("launch"))
-    // Without resetting `collapsed` on the launch, the gate stays hidden behind
-    // the pill and this spinner never appears.
     expect(await screen.findByText("Joining…")).toBeInTheDocument()
   })
 })
@@ -299,8 +302,9 @@ describe("CallDock — mobile drawer vs desktop dock", () => {
     renderDock(makeManager())
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
     expect(screen.queryByTestId("mobile-call-drawer")).toBeNull()
+    expect(screen.getByTestId("desktop-call-dock")).toBeInTheDocument()
     expect(screen.getByTestId("call-tile")).toBeInTheDocument()
-    expect(screen.getByLabelText("Collapse call")).toBeInTheDocument()
+    expect(screen.getByLabelText("Minimize call")).toBeInTheDocument()
   })
 
   it("opens the drawer's compact controls when the Tab pill is tapped", async () => {
