@@ -3,7 +3,6 @@ import { Settings, Signal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
@@ -11,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { resolveSelfMirror, setCallSelfMirror, useCallPrefs } from "@/stores/call-prefs-store"
+import { setCallSelfMirror, useCallPrefs, type CallSelfMirror } from "@/stores/call-prefs-store"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { CallDeviceState, CallDiagnostics } from "@/stores/call-store"
@@ -35,12 +34,11 @@ export function DevicePickerMenu({ devices }: { devices: CallDeviceState }) {
   // (wide/ultrawide/tele) and picking a specific one by exact deviceId can reject
   // the capture (freezes the feed, then errors). Front/back is the Flip button.
   const hasCameras = !isMobile && devices.cameras.length > 0
-  // The mirror toggle shows on any surface with a camera (front/back on mobile too).
+  // The mirror control shows on any surface with a camera (front/back on mobile too).
   const hasVideo = devices.cameras.length > 0
   const hasInputs = devices.inputs.length > 0
   const hasOutputs = OUTPUT_SELECTION_SUPPORTED && devices.outputs.length > 0
-  if (!hasCameras && !hasVideo && !hasInputs && !hasOutputs) return null
-  const mirrorOn = resolveSelfMirror(selfMirror, { isMobile, facingMode: devices.facingMode })
+  if (!hasVideo && !hasInputs && !hasOutputs) return null
 
   return (
     <DropdownMenu>
@@ -52,12 +50,17 @@ export function DevicePickerMenu({ devices }: { devices: CallDeviceState }) {
       <DropdownMenuContent align="center" className="max-w-[280px]">
         {hasVideo && (
           <>
-            <DropdownMenuCheckboxItem
-              checked={mirrorOn}
-              onCheckedChange={(checked) => setCallSelfMirror(checked ? "on" : "off")}
+            {/* Tri-state (matches the Calls settings tab): a boolean toggle would
+                silently drop `auto`, and disagree with the settings radio on a back camera. */}
+            <DropdownMenuLabel>Mirror my video</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={selfMirror}
+              onValueChange={(value) => setCallSelfMirror(value as CallSelfMirror)}
             >
-              Mirror my video
-            </DropdownMenuCheckboxItem>
+              <DropdownMenuRadioItem value="auto">Automatic</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="on">On</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="off">Off</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
             {(hasCameras || hasInputs || hasOutputs) && <DropdownMenuSeparator />}
           </>
         )}

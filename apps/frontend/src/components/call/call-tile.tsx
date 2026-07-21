@@ -6,10 +6,10 @@ import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
-import type { CallRosterParticipant } from "@/stores/call-store"
+import { getCallState, type CallRosterParticipant } from "@/stores/call-store"
 import { resolveSelfMirror, useCallPrefs } from "@/stores/call-prefs-store"
 import { useCallManager } from "./call-manager-context"
-import { useCallDevices, useCallMediaEpoch, useCallMuted, useSpeakingLevelRef } from "./call-store-hooks"
+import { useCallMediaEpoch, useCallMuted, useSpeakingLevelRef } from "./call-store-hooks"
 
 interface CallTileProps {
   participant: CallRosterParticipant
@@ -38,6 +38,12 @@ export function CallTile({ participant, workspaceId, isSelf, stage = false, fill
   const manager = useCallManager()
   const videoRef = useRef<HTMLVideoElement>(null)
   const [hasVideo, setHasVideo] = useState(false)
+  // The facing that the currently-DISPLAYED self frames were captured with. Synced on
+  // `mediaEpoch` (when the video re-binds after a flip's recapture), NOT on the immediate
+  // pref change — so the mirror flips exactly when the camera does, never before it.
+  const [displayedFacing, setDisplayedFacing] = useState<"user" | "environment" | null>(
+    () => getCallState().local.devices.facingMode
+  )
   const endpointId = participant.endpointId
 
   useEffect(() => {
@@ -45,13 +51,15 @@ export function CallTile({ participant, workspaceId, isSelf, stage = false, fill
     const stream = endpointId ? manager.getVideoStream(endpointId) : null
     if (el) el.srcObject = stream
     setHasVideo(!!stream)
-    // mediaEpoch bumps whenever the manager's video ref-map changes.
+    // mediaEpoch bumps whenever the manager's video ref-map changes — the moment the
+    // fresh camera frames re-bind, snapshot their facing for the mirror.
+    if (isSelf) setDisplayedFacing(getCallState().local.devices.facingMode)
     return () => {
       // Null the binding on unmount (symmetric with detachRemoteAudio); the manager
       // owns the MediaStream lifecycle, so this only drops the element's reference.
       if (el) el.srcObject = null
     }
-  }, [manager, endpointId, mediaEpoch])
+  }, [manager, endpointId, mediaEpoch, isSelf])
 
   // Only the local participant carries a live speaking level; remote peers have
   // none in v1, so the ring is self-only.
@@ -62,11 +70,10 @@ export function CallTile({ participant, workspaceId, isSelf, stage = false, fill
 
   // Mirror ONLY the local self-view (peers always see the un-mirrored feed). A
   // mirrored self-view feels natural like a bathroom mirror; `auto` follows the
-  // camera facing (front/desktop mirror, mobile back normal).
+  // displayed camera's facing (front/desktop mirror, mobile back normal).
   const { selfMirror } = useCallPrefs()
-  const { facingMode } = useCallDevices()
   const isMobile = useIsMobile()
-  const mirror = isSelf && resolveSelfMirror(selfMirror, { isMobile, facingMode })
+  const mirror = isSelf && resolveSelfMirror(selfMirror, { isMobile, facingMode: displayedFacing })
 
   return (
     <div

@@ -8,12 +8,14 @@ import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace
 type CachedWorkspaceUser = Parameters<typeof seedWorkspaceCache>[1]["users"][number]
 import {
   clearCallState,
+  getCallState,
   setCallSession,
   setCallPhase,
   setCallRoster,
   patchCallLocal,
   setCallActiveElsewhere,
   setCallCaptureError,
+  setCallSurfaceMode,
   bumpCallMediaEpoch,
   type CallRosterParticipant,
 } from "@/stores/call-store"
@@ -220,6 +222,22 @@ describe("CallDock — connected roster", () => {
     // Desktop default (auto → mirror any camera); peers always see the un-mirrored feed.
     expect(container.querySelector('[data-user-id="usr_self"] video')?.className).toContain("-scale-x-100")
     expect(container.querySelector('[data-user-id="usr_peer"] video')?.className).not.toContain("-scale-x-100")
+  })
+
+  it("keeps the self-mirror until the frames re-bind on flip (no premature mirror-flip)", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    const { container } = renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    act(() => setCallSurfaceMode("standard")) // tiles render in the gallery, not the compact bar
+    const selfVideo = () => container.querySelector('[data-user-id="usr_self"] video')
+    // Mobile front (facingMode null) → mirrored.
+    expect(selfVideo()?.className).toContain("-scale-x-100")
+    // A flip sets facingMode synchronously, but the still-displayed old frames must NOT
+    // mirror-flip until the recapture re-binds the video (a mediaEpoch bump).
+    act(() => patchCallLocal({ devices: { ...getCallState().local.devices, facingMode: "environment" } }))
+    expect(selfVideo()?.className).toContain("-scale-x-100")
+    act(() => bumpCallMediaEpoch())
+    expect(selfVideo()?.className).not.toContain("-scale-x-100")
   })
 
   it("reflects a local mute toggle in the control label without a toast", () => {
