@@ -956,6 +956,49 @@ describe("handleBeforeInputKeyboardPaste (Gboard suggestion-bar paste)", () => {
     }
   )
 
+  it("ignores insertReplacementText with a non-collapsed target range (Android spellcheck replacement)", () => {
+    const editor = createTestEditor("helo world")
+    editor.commands.setTextSelection(3)
+
+    const event = {
+      inputType: "insertReplacementText",
+      data: "hello",
+      dataTransfer: null,
+      getTargetRanges: () => [{ collapsed: false }],
+      prevented: false,
+      preventDefault() {
+        this.prevented = true
+      },
+    }
+    const handled = handleBeforeInputKeyboardPaste(editor, event)
+
+    expect(handled).toBe(false)
+    expect(event.prevented).toBe(false)
+    editor.destroy()
+  })
+
+  it("still intercepts insertReplacementText with collapsed target ranges (IME clipboard commit at caret)", () => {
+    const editor = createTestEditor("")
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+
+    const event = {
+      inputType: "insertReplacementText",
+      data: "pasted text",
+      dataTransfer: null,
+      getTargetRanges: () => [{ collapsed: true }],
+      prevented: false,
+      preventDefault() {
+        this.prevented = true
+      },
+    }
+    const handled = handleBeforeInputKeyboardPaste(editor, event)
+
+    expect(handled).toBe(true)
+    expect(event.prevented).toBe(true)
+    expect(serializeToMarkdown(editor.getJSON())).toBe("pasted text")
+    editor.destroy()
+  })
+
   it("falls back to a plain-text insert when markdown parsing throws (payload never lost)", () => {
     const editor = createTestEditor("")
     editor.commands.setTextSelection(editor.state.doc.content.size)
