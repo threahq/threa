@@ -82,8 +82,8 @@ function makeManager(overrides: Partial<CallController> = {}): CallController {
   }
 }
 
-function device(deviceId: string, label: string): MediaDeviceInfo {
-  return { deviceId, label, kind: "videoinput", groupId: "grp", toJSON: () => ({}) } as MediaDeviceInfo
+function device(deviceId: string, label: string, kind: MediaDeviceKind = "videoinput"): MediaDeviceInfo {
+  return { deviceId, label, kind, groupId: "grp", toJSON: () => ({}) } as MediaDeviceInfo
 }
 
 function makeDevices(overrides: Partial<CallDeviceState> = {}): CallDeviceState {
@@ -184,7 +184,16 @@ describe("MobileCallDrawer — mode rendering", () => {
       participant({ userId: "usr_self" }),
       participant({ userId: "usr_peer", endpointId: "callep_peer" }),
     ])
-    act(() => setCallDevices(makeDevices({ cameras: [device("c1", "Front"), device("c2", "Back")] })))
+    // A live call always has a mic; the device menu keeps mic/speaker on mobile
+    // (per-camera selection is hidden there — flip is the only camera control).
+    act(() =>
+      setCallDevices(
+        makeDevices({
+          cameras: [device("c1", "Front"), device("c2", "Back")],
+          inputs: [device("m1", "Mic", "audioinput")],
+        })
+      )
+    )
     setMode("standard")
     expect(screen.getAllByTestId("call-tile")).toHaveLength(2)
     expect(screen.getByLabelText("Flip camera")).toBeInTheDocument()

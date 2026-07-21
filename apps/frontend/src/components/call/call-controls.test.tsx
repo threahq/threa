@@ -107,6 +107,21 @@ describe("DevicePickerMenu — camera group", () => {
     expect(await screen.findByText("Microphone")).toBeInTheDocument()
     expect(screen.queryByText("Camera")).toBeNull()
   })
+
+  it("hides the camera group on mobile even with cameras (flip is the only camera control there)", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    renderPicker(
+      makeManager(),
+      makeDevices({
+        cameras: [device("cam-front", "Front camera", "videoinput"), device("cam-back", "Back camera", "videoinput")],
+        inputs: [device("m1", "Mic 1", "audioinput")],
+      })
+    )
+
+    await userEvent.click(screen.getByLabelText("Devices"))
+    expect(await screen.findByText("Microphone")).toBeInTheDocument()
+    expect(screen.queryByText("Camera")).toBeNull()
+  })
 })
 
 describe("CallControls — mobile flip", () => {
