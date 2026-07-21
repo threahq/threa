@@ -59,6 +59,7 @@ export async function insertCommandDispatchedEvent(
     streamId: string
     userId: string
     commandId: string
+    clientCommandId?: string
     eventId?: string
     name: string
     args: string
@@ -71,6 +72,7 @@ export async function insertCommandDispatchedEvent(
     eventType: "command_dispatched",
     payload: {
       commandId: params.commandId,
+      ...(params.clientCommandId && { clientCommandId: params.clientCommandId }),
       name: params.name,
       args: params.args,
       status: "dispatched",

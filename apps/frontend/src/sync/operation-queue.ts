@@ -145,7 +145,6 @@ export async function processOperationQueue(
           await db.pendingOperations.update(next.id, {
             retryCount,
             retryAfter: Date.now() + getRetryDelay(retryCount),
-            ...(next.type === "dispatch_command" && { startedAt: undefined }),
           })
           skipped.add(next.id)
         }
@@ -238,7 +237,8 @@ async function executeOperation(
             await bumpLaterOptimisticAnchors(
               optimistic.streamId,
               optimistic._sequenceNum,
-              sequenceToNum(result.event.sequence)
+              sequenceToNum(result.event.sequence),
+              optimistic.id
             )
             await db.events.delete(optimisticEventId)
             await db.events.put({

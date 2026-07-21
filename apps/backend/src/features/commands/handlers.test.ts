@@ -5,6 +5,7 @@ import { CommandKinds } from "@threa/types"
 import { createCommandHandlers } from "./handlers"
 import { CommandDispatchRepository } from "./repository"
 import { StreamEventRepository } from "../streams"
+import * as streamsModule from "../streams"
 
 function makePool(): Pool {
   const client = {
@@ -54,6 +55,7 @@ describe("command dispatch idempotency", () => {
   }
 
   it("replays a committed dispatch before rechecking runtime availability", async () => {
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1" } as never)
     spyOn(CommandDispatchRepository, "findByClientId").mockResolvedValue({
       commandId: "cmd_existing",
       eventId: event.id,
@@ -91,7 +93,32 @@ describe("command dispatch idempotency", () => {
     })
   })
 
+  it("refuses replay after stream access is revoked", async () => {
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue(null)
+    const findReplay = spyOn(CommandDispatchRepository, "findByClientId")
+    const handlers = createCommandHandlers({
+      pool: makePool(),
+      commandAvailabilityService: {} as never,
+      botRuntimeService: {} as never,
+    })
+    const req = {
+      user: { id: "usr_1" },
+      workspaceId: "ws_1",
+      body: { streamId: "stream_1", command: "/stop", clientCommandId: "temp_cmd_1" },
+    } as Request
+    const res = makeResponse()
+
+    await handlers.dispatch(req, res)
+
+    expect({ status: res.statusCode, body: res.body, replayReads: findReplay.mock.calls.length }).toEqual({
+      status: 404,
+      body: { success: false, error: "Stream not found" },
+      replayReads: 0,
+    })
+  })
+
   it("replays the winner when a concurrent request wins the idempotency claim", async () => {
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1" } as never)
     spyOn(CommandDispatchRepository, "findByClientId")
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ commandId: "cmd_existing", eventId: event.id })

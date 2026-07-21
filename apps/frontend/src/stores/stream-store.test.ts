@@ -261,7 +261,7 @@ describe("loadStreamEvents", () => {
     await db.events.bulkPut([makeRealEvent(streamId, "1"), first, second])
 
     await db.transaction("rw", db.events, async () => {
-      await bumpLaterOptimisticAnchors(streamId, first._sequenceNum, 2)
+      await bumpLaterOptimisticAnchors(streamId, first._sequenceNum, 2, first.id)
       await db.events.delete(first.id)
       await db.events.put(makeRealEvent(streamId, "2"))
     })
@@ -273,6 +273,17 @@ describe("loadStreamEvents", () => {
       "evt_stream_partial_ack_2",
       "temp_second",
     ])
+  })
+
+  it("bumps a deterministic later row when cross-tab optimistic sequences tie", async () => {
+    const streamId = "stream_cross_tab_tie"
+    const confirmed = makeOptimisticEvent(streamId, "temp_a", "1000", "2026-01-01T00:00:01.000Z", 1)
+    const later = makeOptimisticEvent(streamId, "temp_z", "1000", "2026-01-01T00:00:01.000Z", 1)
+    await db.events.bulkPut([confirmed, later])
+
+    await bumpLaterOptimisticAnchors(streamId, confirmed._sequenceNum, 2, confirmed.id)
+
+    expect((await db.events.get(later.id))?._anchorSequenceNum).toBe(2)
   })
 
   it("lets a failed optimistic command move above newer persisted events", async () => {

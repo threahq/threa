@@ -1880,6 +1880,7 @@ export interface DispatchCommandError {
 
 export interface CommandDispatchedPayload {
   commandId: string
+  clientCommandId?: string
   name: string
   args: string
   status: "dispatched"

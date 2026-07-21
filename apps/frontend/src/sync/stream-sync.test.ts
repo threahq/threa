@@ -569,6 +569,51 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     expect((await db.events.get("temp_legacy_failed"))?._anchorSequenceNum).toBe(100)
   })
 
+  it("collapses an optimistic command when bootstrap carries its idempotent server copy", async () => {
+    const streamId = "stream_command_reload"
+    await db.events.put({
+      id: "temp_command",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "999",
+      _sequenceNum: 999,
+      _anchorSequenceNum: 10,
+      eventType: "command_dispatched",
+      payload: { commandId: "temp_command", name: "stop", args: "", status: "dispatched" },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: "2026-01-01T20:30:00.000Z",
+      _status: "pending",
+      _cachedAt: 1,
+    })
+    await db.pendingOperations.add({
+      id: "op_command",
+      workspaceId: "ws_1",
+      type: "dispatch_command",
+      payload: { streamId, command: "/stop", optimisticEventId: "temp_command" },
+      createdAt: 1,
+      retryCount: 0,
+      startedAt: 2,
+    })
+    const serverCopy = makeEvent({ id: "evt_command", streamId, sequence: "11" })
+    serverCopy.eventType = "command_dispatched"
+    serverCopy.payload = {
+      commandId: "cmd_1",
+      clientCommandId: "temp_command",
+      name: "stop",
+      args: "",
+      status: "dispatched",
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([serverCopy], streamId))
+
+    expect({
+      server: (await db.events.get("evt_command"))?.id,
+      optimistic: await db.events.get("temp_command"),
+      operation: await db.pendingOperations.get("op_command"),
+    }).toEqual({ server: "evt_command", optimistic: undefined, operation: undefined })
+  })
+
   it("collapses an optimistic row when the bootstrap carries its server copy (reload-during-send race)", async () => {
     const streamId = "stream_reload_race"
 

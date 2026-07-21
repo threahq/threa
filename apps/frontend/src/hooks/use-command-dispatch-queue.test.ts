@@ -80,7 +80,7 @@ describe("cancelCommandDispatch", () => {
     expect((await db.events.get(`${commandId}:failed`))?._anchorSequenceNum).toBe(4)
   })
 
-  it("allows cancellation between idempotent retries", async () => {
+  it("refuses cancellation after an ambiguous transient failure", async () => {
     const dispatched = commandEvent(commandId, "command_dispatched")
     dispatched._status = "pending"
     await db.events.put(dispatched)
@@ -102,8 +102,8 @@ describe("cancelCommandDispatch", () => {
       () => true
     )
 
-    expect((await db.pendingOperations.get("op_retry"))?.startedAt).toBeUndefined()
-    expect(await cancelCommandDispatch(streamId, commandId)).toBe(true)
+    expect((await db.pendingOperations.get("op_retry"))?.startedAt).toBeDefined()
+    expect(await cancelCommandDispatch(streamId, commandId)).toBe(false)
   })
 
   it("refuses cancellation while a dispatch request is in flight", async () => {

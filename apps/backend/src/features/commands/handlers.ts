@@ -11,7 +11,7 @@ import type { CommandAvailabilityService } from "./availability"
 import type { BotRuntimeService } from "../bot-runtimes"
 import { buildRuntimeCommandInvocationMetadata, insertCommandDispatchedEvent } from "./events"
 import { CommandDispatchRepository } from "./repository"
-import { StreamEventRepository, type StreamEvent } from "../streams"
+import { checkStreamAccess, StreamEventRepository, type StreamEvent } from "../streams"
 
 const dispatchCommandSchema = z.object({
   command: z.string().min(1, "command is required"),
@@ -138,14 +138,23 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
       }
 
       if (clientCommandId) {
-        const replay = await withClient(pool, (client) =>
-          findCommandDispatchReplay(client, { workspaceId, userId, streamId, clientCommandId })
-        )
-        if (replay) {
+        const replayCheck = await withClient(pool, async (client) => {
+          const accessible = (await checkStreamAccess(client, streamId, workspaceId, userId)) != null
+          return {
+            accessible,
+            replay: accessible
+              ? await findCommandDispatchReplay(client, { workspaceId, userId, streamId, clientCommandId })
+              : null,
+          }
+        })
+        if (!replayCheck.accessible) {
+          return res.status(404).json({ success: false, error: "Stream not found" })
+        }
+        if (replayCheck.replay) {
           return res.status(202).json({
             success: true,
-            ...replay,
-            event: serializeBigInt(replay.event),
+            ...replayCheck.replay,
+            event: serializeBigInt(replayCheck.replay.event),
           })
         }
       }
@@ -193,6 +202,7 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
             streamId,
             userId,
             commandId: cmdId,
+            clientCommandId,
             eventId: evtId,
             name: parsed.name,
             args: parsed.args,
@@ -224,6 +234,7 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           streamId,
           userId,
           commandId: cmdId,
+          clientCommandId,
           eventId: evtId,
           name: parsed.name,
           args: parsed.args,
