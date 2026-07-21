@@ -141,7 +141,7 @@ afterEach(() => {
 })
 
 describe("DesktopCallDock — side dock presentations", () => {
-  it("min renders the Rail: restore chevron + timer, no controls", () => {
+  it("min renders the Rail: restore chevron + timer + collapsed controls", () => {
     renderDock()
     enterConnected([participant({ userId: "usr_self" })])
     setMode("min")
@@ -150,7 +150,8 @@ describe("DesktopCallDock — side dock presentations", () => {
     expect(dock).toHaveAttribute("data-position", "side")
     expect(screen.getByRole("button", { name: "Expand call" })).toBeInTheDocument()
     expect(screen.getByLabelText("Call duration")).toBeInTheDocument()
-    expect(screen.queryByLabelText("Mute")).toBeNull()
+    expect(screen.getByLabelText("Mute")).toBeInTheDocument()
+    expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
   })
 
   it("compact renders the Panel: tile grid, controls, minimize", () => {
@@ -218,7 +219,7 @@ describe("DesktopCallDock — content push var", () => {
     renderDock()
     enterConnected([participant({ userId: "usr_self" })])
     setMode("compact")
-    expect(insetRight()).toBe("320px")
+    expect(insetRight()).toBe("360px")
     setMode("standard")
     expect(insetRight()).toBe("520px")
   })
@@ -234,7 +235,7 @@ describe("DesktopCallDock — content push var", () => {
     const { unmount } = renderDock()
     enterConnected([participant({ userId: "usr_self" })])
     setMode("compact")
-    expect(insetRight()).toBe("320px")
+    expect(insetRight()).toBe("360px")
     unmount()
     expect(insetRight()).toBe("0px")
   })
@@ -295,5 +296,70 @@ describe("DesktopCallDock — drag settles (no wedge)", () => {
     fireEvent.pointerCancel(handle, { clientX: 100, pointerId: 1 })
     // The cancel must settle (onPointerUp ran): surfaceMode moved off "compact".
     expect(["standard", "full"]).toContain(getCallState().surfaceMode)
+  })
+
+  it("a mid-range drop persists the freeform width (not a detent) and keeps the open mode", () => {
+    renderDock()
+    enterConnected(TWO_PEERS)
+    setMode("standard")
+    const dock = screen.getByTestId("desktop-call-dock")
+    stubRect(dock, { width: 520 })
+    stubRect(dock.parentElement as HTMLElement, { width: 900 })
+    const handle = screen.getByTestId("call-dock-handle")
+    handle.setPointerCapture = vi.fn()
+    // Shrink to 480px: below 0.75*900=675 (no fullscreen) and above MIN_OPEN(280).
+    fireEvent.pointerDown(handle, { clientX: 500, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientX: 540, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientX: 540, pointerId: 1 })
+    expect(getCallPrefs().sideDockWidth).toBe(480)
+    expect(getCallState().surfaceMode).toBe("standard")
+  })
+})
+
+describe("DesktopCallDock — minimized hover overlay", () => {
+  function insetRight() {
+    return document.documentElement.style.getPropertyValue("--call-dock-inset-right")
+  }
+
+  it("hovering the rail overlays the open panel without pushing content", () => {
+    renderDock()
+    enterConnected(TWO_PEERS)
+    setMode("min")
+    const dock = screen.getByTestId("desktop-call-dock")
+    expect(dock).toHaveAttribute("data-hovering", "false")
+    expect(insetRight()).toBe("56px")
+    fireEvent.mouseEnter(dock)
+    expect(dock).toHaveAttribute("data-hovering", "true")
+    // Overlay: the open tiles render but the inset stays at the rail width (no reflow).
+    expect(screen.getAllByTestId("call-tile")).toHaveLength(2)
+    expect(insetRight()).toBe("56px")
+  })
+
+  it("the peek's pin commits it to a pinned-open dock that pushes content", () => {
+    renderDock()
+    enterConnected(TWO_PEERS)
+    setMode("min")
+    const dock = screen.getByTestId("desktop-call-dock")
+    // The un-hovered rail has no pin — it's a peek-only affordance.
+    expect(screen.queryByLabelText("Keep call open")).toBeNull()
+    fireEvent.mouseEnter(dock)
+    act(() => fireEvent.click(screen.getByLabelText("Keep call open")))
+    expect(getCallState().surfaceMode).toBe("standard")
+    // Pinned: the inset reflows to the open width instead of the 56px rail overlay.
+    expect(insetRight()).toBe("520px")
+  })
+
+  it("clicking the collapsed rail's Leave dispatches to the manager", async () => {
+    const manager = makeManager()
+    renderDock(manager)
+    enterConnected([participant({ userId: "usr_self" })])
+    setMode("min")
+    // fireEvent (no synthetic pointer move) so the click lands on the rail control
+    // itself rather than first arming the hover-overlay; the async flush lets the
+    // control's per-instance action settle.
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Leave call"))
+    })
+    expect(manager.leaveCall).toHaveBeenCalled()
   })
 })

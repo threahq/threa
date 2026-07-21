@@ -4,12 +4,13 @@ import {
   setCallLayout,
   setCallFilmstripSide,
   setCallSelfMirror,
+  setCallSideDockWidth,
   resolveSelfMirror,
   __resetCallPrefsForTests,
 } from "./call-prefs-store"
 
 const STORAGE_KEY = "threa:callPrefs:v1"
-const DEFAULTS = { layout: "speaker", filmstripSide: "bottom", selfMirror: "auto" }
+const DEFAULTS = { layout: "speaker", filmstripSide: "bottom", selfMirror: "auto", sideDockWidth: null }
 
 beforeEach(() => {
   localStorage.clear()
@@ -25,11 +26,11 @@ describe("call-prefs-store", () => {
     setCallLayout("grid")
     setCallFilmstripSide("side")
 
-    expect(getCallPrefs()).toEqual({ layout: "grid", filmstripSide: "side", selfMirror: "auto" })
+    expect(getCallPrefs()).toEqual({ layout: "grid", filmstripSide: "side", selfMirror: "auto", sideDockWidth: null })
 
     // Re-read from storage (not a hand-crafted fixture) — proves the write round-trips.
     __resetCallPrefsForTests()
-    expect(getCallPrefs()).toEqual({ layout: "grid", filmstripSide: "side", selfMirror: "auto" })
+    expect(getCallPrefs()).toEqual({ layout: "grid", filmstripSide: "side", selfMirror: "auto", sideDockWidth: null })
   })
 
   it("falls back to defaults on malformed JSON", () => {
@@ -41,13 +42,33 @@ describe("call-prefs-store", () => {
   it("falls back per-field on an out-of-range persisted value", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ layout: "diagonal", filmstripSide: "side" }))
     __resetCallPrefsForTests()
-    expect(getCallPrefs()).toEqual({ layout: "speaker", filmstripSide: "side", selfMirror: "auto" })
+    expect(getCallPrefs()).toEqual({
+      layout: "speaker",
+      filmstripSide: "side",
+      selfMirror: "auto",
+      sideDockWidth: null,
+    })
   })
 
   it("persists an explicit selfMirror override", () => {
     setCallSelfMirror("off")
     __resetCallPrefsForTests()
     expect(getCallPrefs().selfMirror).toBe("off")
+  })
+
+  it("round-trips a sideDockWidth through the store", () => {
+    setCallSideDockWidth(480)
+    expect(getCallPrefs().sideDockWidth).toBe(480)
+    __resetCallPrefsForTests()
+    expect(getCallPrefs().sideDockWidth).toBe(480)
+  })
+
+  it("falls back to null on an invalid persisted sideDockWidth", () => {
+    for (const bad of ["wide", -5, 0]) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ sideDockWidth: bad }))
+      __resetCallPrefsForTests()
+      expect(getCallPrefs().sideDockWidth).toBeNull()
+    }
   })
 })
 

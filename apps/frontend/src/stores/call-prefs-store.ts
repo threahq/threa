@@ -21,14 +21,18 @@ export interface CallPrefs {
   layout: CallLayout
   filmstripSide: CallFilmstripSide
   selfMirror: CallSelfMirror
+  /** Last resting open width (px) of the desktop side dock; `null` = never resized. */
+  sideDockWidth: number | null
 }
 
-const DEFAULT_PREFS: CallPrefs = { layout: "speaker", filmstripSide: "bottom", selfMirror: "auto" }
+const DEFAULT_PREFS: CallPrefs = { layout: "speaker", filmstripSide: "bottom", selfMirror: "auto", sideDockWidth: null }
 const STORAGE_KEY = "threa:callPrefs:v1"
 
 const isLayout = (v: unknown): v is CallLayout => v === "speaker" || v === "grid"
 const isFilmstripSide = (v: unknown): v is CallFilmstripSide => v === "bottom" || v === "side"
 const isSelfMirror = (v: unknown): v is CallSelfMirror => v === "auto" || v === "on" || v === "off"
+const parseSideDockWidth = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null
 
 /**
  * Resolve the effective self-view mirror. `auto` mirrors a front-facing view (any
@@ -58,6 +62,7 @@ function readPersisted(): CallPrefs {
       layout: isLayout(p.layout) ? p.layout : DEFAULT_PREFS.layout,
       filmstripSide: isFilmstripSide(p.filmstripSide) ? p.filmstripSide : DEFAULT_PREFS.filmstripSide,
       selfMirror: isSelfMirror(p.selfMirror) ? p.selfMirror : DEFAULT_PREFS.selfMirror,
+      sideDockWidth: parseSideDockWidth(p.sideDockWidth),
     }
   } catch {
     return { ...DEFAULT_PREFS }
@@ -85,7 +90,8 @@ function update(patch: Partial<CallPrefs>): void {
   if (
     next.layout === prefs.layout &&
     next.filmstripSide === prefs.filmstripSide &&
-    next.selfMirror === prefs.selfMirror
+    next.selfMirror === prefs.selfMirror &&
+    next.sideDockWidth === prefs.sideDockWidth
   ) {
     return
   }
@@ -108,6 +114,10 @@ export function setCallFilmstripSide(filmstripSide: CallFilmstripSide): void {
 
 export function setCallSelfMirror(selfMirror: CallSelfMirror): void {
   update({ selfMirror })
+}
+
+export function setCallSideDockWidth(px: number): void {
+  update({ sideDockWidth: px })
 }
 
 function subscribe(listener: () => void): () => void {
