@@ -36,21 +36,21 @@ beforeEach(() => clearCallState())
 afterEach(() => vi.restoreAllMocks())
 
 describe("CallStartMenu", () => {
-  it("starts a mic-only call on 'Start call'", async () => {
+  it("starts a mic-only call on 'Start voice call'", async () => {
     const manager = makeManager()
     renderMenu(manager)
     await userEvent.click(screen.getByRole("button", { name: "Start call" }))
-    await userEvent.click(await screen.findByRole("menuitem", { name: /^Start call$/ }))
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Start voice call" }))
     expect(manager.startCall).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", cameraOn: false })
     )
   })
 
-  it("starts with the camera on 'Start with camera'", async () => {
+  it("starts with the camera on 'Start video call'", async () => {
     const manager = makeManager()
     renderMenu(manager)
     await userEvent.click(screen.getByRole("button", { name: "Start call" }))
-    await userEvent.click(await screen.findByRole("menuitem", { name: /Start with camera/ }))
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Start video call" }))
     expect(manager.startCall).toHaveBeenCalledWith(expect.objectContaining({ cameraOn: true }))
   })
 
