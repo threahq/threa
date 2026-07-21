@@ -955,7 +955,7 @@ export function handleBeforeInputKeyboardPaste(
   // `insertReplacementText`, distinguished by a non-collapsed target range over
   // the word being replaced; intercepting would insert at the caret and keep the
   // misspelled word. Fall through so the native replacement applies.
-  if (event.inputType === "insertReplacementText" && event.getTargetRanges?.().some((r) => !r.collapsed)) {
+  if (event.inputType === "insertReplacementText" && event.getTargetRanges?.().some((range) => !range.collapsed)) {
     return false
   }
   if (editor.view.composing) return false
