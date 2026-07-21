@@ -118,6 +118,18 @@ describe("CloudflareRealtimeApi tracks", () => {
     expect(body).toEqual({ tracks: [{ mid: "0" }, { mid: "1" }], force: true })
   })
 
+  it("closeTracks forwards the offer and returns CF's answer (unpublish reneg)", async () => {
+    const answer = { type: "answer", sdp: "a" } as const
+    const f = stubFetch(async () => jsonResponse({ tracks: [], sessionDescription: answer }))
+    const api = new CloudflareRealtimeApi(CONFIG)
+
+    const result = await api.closeTracks("sess_1", { mids: ["0"], sdp: { type: "offer", sdp: "o" } })
+
+    const { body } = lastCall(f)
+    expect(body).toEqual({ tracks: [{ mid: "0" }], force: false, sessionDescription: { type: "offer", sdp: "o" } })
+    expect(result).toEqual({ tracks: [], sessionDescription: answer })
+  })
+
   it("closeSession enumerates the session's tracks via state GET, then force-closes them by mid", async () => {
     const f = stubFetch(async (url, init) => {
       if (init.method === "GET") {

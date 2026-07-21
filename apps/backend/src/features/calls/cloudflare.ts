@@ -66,6 +66,8 @@ export interface RenegotiateResult {
 
 export interface CloseTracksResult {
   tracks: TrackResult[]
+  /** CF's answer when the close carried an offer (unpublishing a local track); the caller must apply it. */
+  sessionDescription?: SessionDescription
 }
 
 /**
@@ -196,7 +198,7 @@ export class CloudflareRealtimeApi implements RealtimeMediaApi {
     sessionId: string,
     params: { mids: string[]; force?: boolean; sdp?: SessionDescription }
   ): Promise<CloseTracksResult> {
-    const body = await this.request<{ tracks?: TrackResult[] }>(
+    const body = await this.request<{ tracks?: TrackResult[]; sessionDescription?: SessionDescription }>(
       "PUT",
       `/${this.appId}/sessions/${encodeURIComponent(sessionId)}/tracks/close`,
       {
@@ -205,7 +207,7 @@ export class CloudflareRealtimeApi implements RealtimeMediaApi {
         ...(params.sdp ? { sessionDescription: params.sdp } : {}),
       }
     )
-    return { tracks: body.tracks ?? [] }
+    return { tracks: body.tracks ?? [], sessionDescription: body.sessionDescription }
   }
 
   async closeSession(sessionId: string): Promise<void> {
