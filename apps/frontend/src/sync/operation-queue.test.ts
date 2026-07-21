@@ -108,6 +108,7 @@ describe("processOperationQueue permanent-4xx handling", () => {
       operation: { type: "send_scheduled_now", retryCount: 1 },
       retryAt: expect.any(Number),
     })
+    expect(retryAt).toBe(op?.retryAfter)
   })
 
   it("retains the op for retry on 429", async () => {
