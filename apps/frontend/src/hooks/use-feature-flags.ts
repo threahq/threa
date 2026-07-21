@@ -40,7 +40,28 @@ function useFeatureFlagLayers(workspaceId: string): FeatureFlagLayers | null {
   // A cached bootstrap wins even when its layers are null — an authoritative
   // server snapshot with no overrides must not be shadowed by a stale IDB row.
   // Fall back to the persisted row only when no bootstrap is cached at all.
-  return cached ? cached.layers : persistedLayers
+  const layers = cached ? cached.layers : persistedLayers
+  return useMemo(() => coerceLayers(layers), [layers])
+}
+
+// Pre-#1455 clients stored `featureFlags` as the flat resolved map (typically
+// `{}`); read as layers, `layers.workspace`/`layers.user` are undefined and the
+// resolver throws on Object.entries — killing the first render until the row is
+// rewritten. Coerce any value missing a layer record to well-formed layers
+// (dropping the unlayerable flat keys — the next bootstrap re-persists the real
+// shape); a well-formed value passes through by reference so downstream memos hold.
+function coerceLayers(layers: FeatureFlagLayers | null): FeatureFlagLayers | null {
+  if (!layers) return null
+  if (isLayerRecord(layers.workspace) && isLayerRecord(layers.user)) return layers
+  return {
+    workspace: isLayerRecord(layers.workspace) ? layers.workspace : {},
+    user: isLayerRecord(layers.user) ? layers.user : {},
+  }
+}
+
+function isLayerRecord(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  return Object.values(value).every((entry) => typeof entry === "string")
 }
 
 /**

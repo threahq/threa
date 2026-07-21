@@ -121,6 +121,64 @@ describe("feature flags — first render off persisted layers", () => {
     await waitFor(() => expect(result.current).toBe("on"))
   })
 
+  it("survives a legacy flat featureFlags map persisted before the layered shape", async () => {
+    // Pre-#1455 clients persisted the flat resolved map (empty registry → `{}`).
+    // Reading it as layers crashed the first render (Object.entries(undefined))
+    // before any bootstrap could rewrite the row — the app must instead render
+    // registry defaults.
+    const queryClient = new QueryClient()
+    await persistMetadataLayers("ws_1", {} as FeatureFlagLayers)
+
+    const { result } = renderHook(() => useFeatureFlag("ws_1", "warmStart" as FeatureFlagKey), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => expect(result.current).toBe("on"))
+  })
+
+  it("survives a legacy flat featureFlags map in the cached bootstrap", async () => {
+    const queryClient = new QueryClient()
+    cacheBootstrapLayers(queryClient, "ws_1", { warmStart: "off" } as unknown as FeatureFlagLayers)
+
+    const { result } = renderHook(() => useOverriddenFeatureFlags("ws_1"), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    // The flat keys are unlayerable and dropped — no overrides, no crash.
+    expect(result.current).toEqual([])
+  })
+
+  it("coerces malformed layer records per key, keeping the valid sibling layer", async () => {
+    // Corrupted persistence: an array where a layer record should be, next to a
+    // valid user layer. The malformed layer coerces to {}; the valid override
+    // still applies.
+    const queryClient = new QueryClient()
+    await persistMetadataLayers("ws_1", {
+      workspace: ["not", "a", "record"],
+      user: { warmStart: "off" },
+    } as unknown as FeatureFlagLayers)
+
+    const { result } = renderHook(() => useFeatureFlag("ws_1", "warmStart" as FeatureFlagKey), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => expect(result.current).toBe("off"))
+  })
+
+  it("discards a layer record carrying non-string values", async () => {
+    const queryClient = new QueryClient()
+    await persistMetadataLayers("ws_1", {
+      workspace: { warmStart: 123 },
+      user: {},
+    } as unknown as FeatureFlagLayers)
+
+    const { result } = renderHook(() => useFeatureFlag("ws_1", "warmStart" as FeatureFlagKey), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => expect(result.current).toBe("on"))
+  })
+
   it("treats a cached bootstrap with no layers as authoritative, not a fall-through to stale IDB", async () => {
     // A bootstrap is cached but carries no featureFlags (older server / no
     // overrides = all defaults). IDB still holds a stale "off". The present
