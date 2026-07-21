@@ -6,7 +6,9 @@ interface PanelResizeHandleProps {
   panelWidth: number
   minWidth: number
   maxWidth: number
-  onMouseDown: (e: React.MouseEvent) => void
+  onPointerDown: (e: React.PointerEvent) => void
+  onPointerMove: (e: React.PointerEvent) => void
+  onPointerEnd: (e: React.PointerEvent) => void
   onKeyDown: (e: React.KeyboardEvent) => void
   ariaLabel?: string
 }
@@ -16,20 +18,26 @@ export function PanelResizeHandle({
   panelWidth,
   minWidth,
   maxWidth,
-  onMouseDown,
+  onPointerDown,
+  onPointerMove,
+  onPointerEnd,
   onKeyDown,
   ariaLabel = "Resize thread panel",
 }: PanelResizeHandleProps) {
   return (
     <div
       className={cn(
-        "relative flex w-px flex-shrink-0 items-center justify-center bg-border cursor-col-resize",
+        "relative flex w-px flex-shrink-0 touch-none items-center justify-center bg-border cursor-col-resize",
         "after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2",
         "focus-visible:bg-primary/30 focus-visible:outline-none",
         !isResizing && "transition-colors duration-150",
         isResizing && "bg-primary/30"
       )}
-      onMouseDown={onMouseDown}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd}
+      onPointerCancel={onPointerEnd}
+      onLostPointerCapture={onPointerEnd}
       onKeyDown={onKeyDown}
       tabIndex={0}
       role="separator"

@@ -65,7 +65,7 @@ export function usePanelLayout(isPanelOpen: boolean) {
     [containerWidth, maxWidth]
   )
 
-  const { isResizing, handleResizeStart } = useResizeDrag({
+  const { isResizing, handleResizeStart, handleResizeMove, handleResizeEnd } = useResizeDrag({
     width: effectiveWidth,
     onWidthChange: handleWidthChange,
     direction: "left",
@@ -105,6 +105,8 @@ export function usePanelLayout(isPanelOpen: boolean) {
     isResizing,
     showContent,
     handleResizeStart,
+    handleResizeMove,
+    handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
   }

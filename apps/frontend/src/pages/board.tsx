@@ -309,6 +309,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     isResizing,
     showContent,
     handleResizeStart,
+    handleResizeMove,
+    handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
   } = usePanelLayout(isPanelOpen)
@@ -822,6 +824,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         minWidth={minWidth}
         onTransitionEnd={handleTransitionEnd}
         onResizeStart={handleResizeStart}
+        onResizeMove={handleResizeMove}
+        onResizeEnd={handleResizeEnd}
         onResizeKeyDown={handleResizeKeyDown}
       >
         <PanelHost workspaceId={workspaceId} onClose={closePanel} />

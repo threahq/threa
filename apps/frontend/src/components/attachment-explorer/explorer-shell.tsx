@@ -176,7 +176,7 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
     setPreviewWidth(Math.max(MIN_PREVIEW_WIDTH, Math.min(max, next)))
   }, [])
 
-  const { isResizing, handleResizeStart } = useResizeDrag({
+  const { isResizing, handleResizeStart, handleResizeMove, handleResizeEnd } = useResizeDrag({
     width: previewWidth,
     onWidthChange: handlePreviewWidthChange,
     direction: "left",
@@ -272,7 +272,9 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
             panelWidth={previewWidth}
             minWidth={MIN_PREVIEW_WIDTH}
             maxWidth={maxPreviewWidth}
-            onMouseDown={handleResizeStart}
+            onPointerDown={handleResizeStart}
+            onPointerMove={handleResizeMove}
+            onPointerEnd={handleResizeEnd}
             onKeyDown={handleResizeKeyDown}
             ariaLabel="Resize preview pane"
           />

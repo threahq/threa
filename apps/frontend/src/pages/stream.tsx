@@ -87,6 +87,8 @@ export function StreamPage() {
     isResizing,
     showContent,
     handleResizeStart,
+    handleResizeMove,
+    handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
   } = usePanelLayout(isPanelOpen)
@@ -948,6 +950,8 @@ export function StreamPage() {
           minWidth={minWidth}
           onTransitionEnd={handleTransitionEnd}
           onResizeStart={handleResizeStart}
+          onResizeMove={handleResizeMove}
+          onResizeEnd={handleResizeEnd}
           onResizeKeyDown={handleResizeKeyDown}
         >
           <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />

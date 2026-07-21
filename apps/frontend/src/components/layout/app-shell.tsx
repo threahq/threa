@@ -1,6 +1,6 @@
-import { type ReactNode, useCallback, useEffect } from "react"
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef } from "react"
 import { RefreshCw } from "lucide-react"
-import { useSidebar, useCoordinatedLoading, type UrgencyBlock } from "@/contexts"
+import { useSidebar, useCoordinatedLoading, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, type UrgencyBlock } from "@/contexts"
 import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh, useTouchCapable } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useSyncEngine } from "@/sync/sync-engine"
@@ -131,12 +131,28 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   const touchCapable = useTouchCapable()
   const inputMode = useInputMode()
 
-  const { handleResizeStart } = useResizeDrag({
+  const shellRef = useRef<HTMLDivElement>(null)
+  const handleSidebarWidthChange = useCallback(
+    (nextWidth: number) => {
+      const clampedWidth = `clamp(${MIN_SIDEBAR_WIDTH}px, ${nextWidth}px, ${MAX_SIDEBAR_WIDTH}px)`
+      shellRef.current?.style.setProperty("--nav-sidebar-width", clampedWidth)
+      if (state === "pinned") document.documentElement.style.setProperty("--app-content-left", clampedWidth)
+    },
+    [state]
+  )
+  const handleSidebarResizeEnd = useCallback(
+    (finalWidth: number) => {
+      setWidth(finalWidth)
+      stopResizing()
+    },
+    [setWidth, stopResizing]
+  )
+  const { handleResizeStart, handleResizeMove, handleResizeEnd } = useResizeDrag({
     width,
-    onWidthChange: setWidth,
+    onWidthChange: handleSidebarWidthChange,
     direction: "right",
     onResizeStart: startResizing,
-    onResizeEnd: stopResizing,
+    onResizeEnd: handleSidebarResizeEnd,
   })
 
   const isKeyboardOpen = useVisualViewport(isMobile)
@@ -166,14 +182,14 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   const isCollapsed = state === "collapsed"
   const isPreview = state === "preview"
   const isOpen = state === "pinned" || isPreview
-  let wrapperWidth = `${width}px`
+  let wrapperWidth = "var(--nav-sidebar-width)"
   if (isMobile) {
     wrapperWidth = "0px"
   } else if (isCollapsed || isPreview) {
     wrapperWidth = "6px"
   }
 
-  let sidebarWidth = `${width}px`
+  let sidebarWidth = "var(--nav-sidebar-width)"
   if (isMobile) {
     sidebarWidth = "min(85vw, 320px)"
   } else if (isCollapsed) {
@@ -211,8 +227,11 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   // app-mounted desktop call dock can pin itself to the content area — over the
   // main region, never the sidebar. Mirrors the `--composer-height` var pattern.
   useEffect(() => {
-    document.documentElement.style.setProperty("--app-content-left", wrapperWidth)
-  }, [wrapperWidth])
+    let appContentLeft = "6px"
+    if (isMobile) appContentLeft = "0px"
+    else if (state === "pinned") appContentLeft = `${width}px`
+    document.documentElement.style.setProperty("--app-content-left", appContentLeft)
+  }, [isMobile, state, width])
 
   // Derive mobile sidebar/backdrop classes outside JSX to avoid nested ternaries (INV-47)
   let backdropVisibility: string | undefined
@@ -234,7 +253,16 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   // layer forced a full re-raster of the whole app on every keyboard snap,
   // which blacked the screen out for hundreds of ms on mobile GPUs.
   return (
-    <div className="flex w-screen flex-col overflow-hidden" style={{ height: "var(--viewport-height, 100dvh)" }}>
+    <div
+      ref={shellRef}
+      className="flex w-screen flex-col overflow-hidden"
+      style={
+        {
+          "--nav-sidebar-width": `${width}px`,
+          height: "var(--viewport-height, 100dvh)",
+        } as CSSProperties
+      }
+    >
       {/* On mobile the sidebar is an overlay, so the OS back gesture should
            dismiss it instead of navigating to the previous stream */}
       {isMobile && <HistoryBackClose open={isOpen} onClose={collapse} />}
@@ -334,7 +362,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             {isPreview && !isMobile && (
               <div
                 className="absolute top-0 z-50 h-full w-[30px]"
-                style={{ left: `${width}px` }}
+                style={{ left: "var(--nav-sidebar-width)" }}
                 onMouseEnter={handleMouseEnter}
                 onMouseLeave={handleMouseLeave}
                 aria-hidden="true"
@@ -368,8 +396,8 @@ export function AppShell({ sidebar, children }: AppShellProps) {
               <div
                 className="h-full flex-1 flex flex-col overflow-hidden"
                 style={{
-                  width: isMobile ? "min(85vw, 320px)" : `${width}px`,
-                  minWidth: isMobile ? undefined : `${width}px`,
+                  width: isMobile ? "min(85vw, 320px)" : "var(--nav-sidebar-width)",
+                  minWidth: isMobile ? undefined : "var(--nav-sidebar-width)",
                 }}
               >
                 {sidebar}
@@ -378,13 +406,17 @@ export function AppShell({ sidebar, children }: AppShellProps) {
               {!isCollapsed && !isMobile && (
                 <div
                   className={cn(
-                    "absolute right-0 top-0 h-full w-1 cursor-col-resize",
+                    "absolute right-0 top-0 h-full w-1 touch-none cursor-col-resize",
                     "hover:bg-primary/20 active:bg-primary/30",
                     "transition-colors duration-150",
                     "focus-visible:bg-primary/30 focus-visible:outline-none",
                     isResizing && "bg-primary/30"
                   )}
-                  onMouseDown={handleResizeStart}
+                  onPointerDown={handleResizeStart}
+                  onPointerMove={handleResizeMove}
+                  onPointerUp={handleResizeEnd}
+                  onPointerCancel={handleResizeEnd}
+                  onLostPointerCapture={handleResizeEnd}
                   onKeyDown={(e) => {
                     const step = e.shiftKey ? 50 : 10
                     if (e.key === "ArrowLeft") {
@@ -399,8 +431,8 @@ export function AppShell({ sidebar, children }: AppShellProps) {
                   role="separator"
                   aria-orientation="vertical"
                   aria-valuenow={width}
-                  aria-valuemin={200}
-                  aria-valuemax={400}
+                  aria-valuemin={MIN_SIDEBAR_WIDTH}
+                  aria-valuemax={MAX_SIDEBAR_WIDTH}
                   aria-label="Resize sidebar"
                 />
               )}

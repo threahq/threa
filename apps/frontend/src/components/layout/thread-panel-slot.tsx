@@ -10,7 +10,9 @@ interface ThreadPanelSlotProps {
   minWidth: number
   maxWidth: number
   onTransitionEnd: (e: React.TransitionEvent) => void
-  onResizeStart: (e: React.MouseEvent) => void
+  onResizeStart: (e: React.PointerEvent) => void
+  onResizeMove: (e: React.PointerEvent) => void
+  onResizeEnd: (e: React.PointerEvent) => void
   onResizeKeyDown: (e: React.KeyboardEvent) => void
   children: React.ReactNode
 }
@@ -25,6 +27,8 @@ export function ThreadPanelSlot({
   maxWidth,
   onTransitionEnd,
   onResizeStart,
+  onResizeMove,
+  onResizeEnd,
   onResizeKeyDown,
   children,
 }: ThreadPanelSlotProps) {
@@ -42,7 +46,9 @@ export function ThreadPanelSlot({
             panelWidth={panelWidth}
             minWidth={minWidth}
             maxWidth={maxWidth}
-            onMouseDown={onResizeStart}
+            onPointerDown={onResizeStart}
+            onPointerMove={onResizeMove}
+            onPointerEnd={onResizeEnd}
             onKeyDown={onResizeKeyDown}
           />
           <div className="flex-1 min-w-0 overflow-hidden">{children}</div>

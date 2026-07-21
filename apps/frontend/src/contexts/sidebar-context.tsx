@@ -40,8 +40,8 @@ interface SidebarPersistedState {
   sectionStates: Record<string, CollapseState>
 }
 
-const MIN_SIDEBAR_WIDTH = 200
-const MAX_SIDEBAR_WIDTH = 400
+export const MIN_SIDEBAR_WIDTH = 200
+export const MAX_SIDEBAR_WIDTH = 400
 const DEFAULT_SIDEBAR_WIDTH = 260
 const SIDEBAR_STATE_KEY = "threa-sidebar-state"
 
@@ -374,9 +374,8 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
         return currentState
       })
 
-      // Update width if above minimum
-      if (newWidth >= MIN_SIDEBAR_WIDTH) {
-        const clampedWidth = Math.min(MAX_SIDEBAR_WIDTH, newWidth)
+      if (newWidth >= collapseThreshold) {
+        const clampedWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, newWidth))
         updatePersistedState({ width: clampedWidth })
       }
     },
