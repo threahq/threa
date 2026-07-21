@@ -1,9 +1,8 @@
-import { useState } from "react"
-import { toast } from "sonner"
-import { Mic, MicOff, PhoneOff, SwitchCamera, Video, VideoOff } from "lucide-react"
+import { Loader2, Mic, MicOff, PhoneOff, SwitchCamera, Video, VideoOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useAsyncAction } from "@/hooks/use-async-action"
 import { useCallManager } from "./call-manager-context"
 import { useCallCameraOn, useCallDevices, useCallMode, useCallMuted } from "./call-store-hooks"
 
@@ -30,21 +29,39 @@ export function MuteButton({ className }: { className?: string }) {
   )
 }
 
+// Async camera controls disable themselves + swap to an in-place spinner while their
+// OWN recapture runs (via useAsyncAction), so a slow toggle can't register a second
+// state-reversing tap — and a sibling control (flip, a device menu item) is untouched.
+
 export function CameraButton({ className }: { className?: string }) {
   const manager = useCallManager()
   const cameraOn = useCallCameraOn()
   const mode = useCallMode()
+  const { pending, run } = useAsyncAction(() => manager.setCameraOn(!cameraOn), {
+    errorMessage: "Couldn't switch the camera",
+  })
   if (mode === "audio_only") return null
+  let icon = <VideoOff className="h-4 w-4" />
+  let label = "Turn camera on"
+  if (pending) {
+    icon = <Loader2 className="h-4 w-4 animate-spin" />
+    label = "Switching camera…"
+  } else if (cameraOn) {
+    icon = <Video className="h-4 w-4" />
+    label = "Turn camera off"
+  }
   return (
     <Button
       variant="ghost"
       size="icon"
       className={cn("h-9 w-9", className)}
-      aria-label={cameraOn ? "Turn camera off" : "Turn camera on"}
+      aria-label={label}
       aria-pressed={cameraOn}
-      onClick={() => void manager.setCameraOn(!cameraOn).catch(() => toast.error("Couldn't switch the camera"))}
+      aria-busy={pending}
+      disabled={pending}
+      onClick={run}
     >
-      {cameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+      {icon}
     </Button>
   )
 }
@@ -55,39 +72,37 @@ export function FlipButton({ className }: { className?: string }) {
   const mode = useCallMode()
   const devices = useCallDevices()
   const isMobile = useIsMobile()
+  const { pending, run } = useAsyncAction(() => manager.flipCamera(), { errorMessage: "Couldn't flip the camera" })
   if (mode === "audio_only" || !isMobile || devices.cameras.length <= 1) return null
   return (
     <Button
       variant="ghost"
       size="icon"
       className={cn("h-9 w-9", className)}
-      aria-label="Flip camera"
-      onClick={() => void manager.flipCamera().catch(() => toast.error("Couldn't flip the camera"))}
+      aria-label={pending ? "Flipping camera…" : "Flip camera"}
+      aria-busy={pending}
+      disabled={pending}
+      onClick={run}
     >
-      <SwitchCamera className="h-4 w-4" />
+      {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <SwitchCamera className="h-4 w-4" />}
     </Button>
   )
 }
 
 export function LeaveButton({ className }: { className?: string }) {
   const manager = useCallManager()
-  const [leaving, setLeaving] = useState(false)
+  const { pending, run } = useAsyncAction(() => manager.leaveCall(), { errorMessage: "Couldn't leave the call" })
   return (
     <Button
       variant="destructive"
       size="icon"
       className={cn("h-9 w-9", className)}
       aria-label="Leave call"
-      disabled={leaving}
-      onClick={() => {
-        setLeaving(true)
-        void manager.leaveCall().catch(() => {
-          setLeaving(false)
-          toast.error("Couldn't leave the call")
-        })
-      }}
+      aria-busy={pending}
+      disabled={pending}
+      onClick={run}
     >
-      <PhoneOff className="h-4 w-4" />
+      {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />}
     </Button>
   )
 }

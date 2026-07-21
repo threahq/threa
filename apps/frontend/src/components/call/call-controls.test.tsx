@@ -155,3 +155,28 @@ describe("CallControls — mobile flip", () => {
     expect(screen.queryByLabelText("Flip camera")).toBeNull()
   })
 })
+
+describe("CallControls — async controls disable in-flight", () => {
+  it("camera toggle disables + spins in place while running, ignoring a second tap", async () => {
+    let resolveToggle!: () => void
+    const setCameraOn = vi.fn(() => new Promise<void>((r) => (resolveToggle = r)))
+    const manager = makeManager({ setCameraOn })
+    renderControls(manager)
+    enterVideoCall()
+
+    await userEvent.click(screen.getByLabelText("Turn camera on"))
+    // In flight: label switches to the busy phase and the control is disabled.
+    const busy = screen.getByLabelText("Switching camera…")
+    expect(busy).toBeDisabled()
+    expect(setCameraOn).toHaveBeenCalledTimes(1)
+
+    // A second tap while it's running is a no-op — this is the double-tap guard.
+    await userEvent.click(busy)
+    expect(setCameraOn).toHaveBeenCalledTimes(1)
+
+    // Settles → re-enabled (the fake manager doesn't flip the store, so it returns
+    // to the off label, but crucially it's interactive again).
+    await act(async () => resolveToggle())
+    expect(screen.getByLabelText("Turn camera on")).not.toBeDisabled()
+  })
+})
