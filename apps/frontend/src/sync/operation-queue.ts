@@ -111,7 +111,7 @@ export async function processOperationQueue(
   scheduledService: ScheduledServiceLike | undefined,
   draftsService: DraftsServiceLike | undefined,
   isOnline: () => boolean
-): Promise<void> {
+): Promise<number | null> {
   const processor = async () => {
     const now = Date.now()
     const skipped = new Set<string>()
@@ -160,6 +160,11 @@ export async function processOperationQueue(
   } else {
     await processor()
   }
+
+  if (!isOnline()) return null
+  const remaining = await db.pendingOperations.toArray()
+  if (remaining.length === 0) return null
+  return remaining.reduce((next, operation) => Math.min(next, operation.retryAfter ?? Date.now()), Infinity)
 }
 
 async function executeOperation(

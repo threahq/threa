@@ -95,10 +95,19 @@ describe("processOperationQueue permanent-4xx handling", () => {
   it("retains the op for retry on a network error", async () => {
     await enqueueOperation(workspaceId, "send_scheduled_now", { id: schedId })
 
-    await process(scheduledServiceRejectingWith(new TypeError("Failed to fetch")))
+    const retryAt = await processOperationQueue(
+      messageService,
+      reactionService,
+      scheduledServiceRejectingWith(new TypeError("Failed to fetch")),
+      undefined,
+      () => true
+    )
 
     const [op] = await db.pendingOperations.toArray()
-    expect(op).toMatchObject({ type: "send_scheduled_now", retryCount: 1 })
+    expect({ operation: op, retryAt }).toMatchObject({
+      operation: { type: "send_scheduled_now", retryCount: 1 },
+      retryAt: expect.any(Number),
+    })
   })
 
   it("retains the op for retry on 429", async () => {

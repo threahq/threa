@@ -74,12 +74,11 @@ export function useQueueDraftMessage(workspaceId: string) {
       const clientId = generateClientId()
       const now = new Date().toISOString()
       const contentMarkdown = serializeToMarkdown(input.contentJson)
-      const optimisticSequence = "0"
 
       const optimisticEvent: StreamEvent = {
         id: clientId,
         streamId: params.streamId,
-        sequence: optimisticSequence,
+        sequence: "0",
         eventType: "message_created",
         payload: {
           messageId: clientId,

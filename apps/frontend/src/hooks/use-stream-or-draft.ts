@@ -588,14 +588,10 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       const contentMarkdown = serializeToMarkdown(input.contentJson)
 
-      // Use timestamp as sequence to ensure optimistic events sort after real events
-      // Real events have low sequence numbers (1, 2, 3...), timestamps are ~13 digits
-      const optimisticSequence = "0"
-
       const optimisticEvent: StreamEvent = {
         id: clientId,
         streamId,
-        sequence: optimisticSequence,
+        sequence: "0",
         eventType: "message_created",
         payload: {
           messageId: clientId,

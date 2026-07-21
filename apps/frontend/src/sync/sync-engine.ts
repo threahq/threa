@@ -185,6 +185,7 @@ export class SyncEngine {
   /** Max behind-head among heartbeats received while the grace timer is armed. */
   private pendingHeartbeatHead: bigint | null = null
   private heartbeatCleanup: (() => void) | null = null
+  private operationQueueRetryTimer: ReturnType<typeof setTimeout> | null = null
 
   // Ref-like state updated by the React layer
   private currentStreamId: string | undefined = undefined
@@ -478,13 +479,25 @@ export class SyncEngine {
    */
   kickOperationQueue(): void {
     if (!this.deps.messageService) return
+    if (this.operationQueueRetryTimer) {
+      clearTimeout(this.operationQueueRetryTimer)
+      this.operationQueueRetryTimer = null
+    }
     void processOperationQueue(
       this.deps.messageService,
       this.deps.reactionService ?? { add: async () => {}, remove: async () => {} },
       this.deps.scheduledService,
       this.deps.draftsService,
       () => this.socket !== null && !this.isDestroyed
-    )
+    ).then((retryAt) => {
+      if (retryAt === null || this.isDestroyed || !this.socket) return
+      if (this.operationQueueRetryTimer) clearTimeout(this.operationQueueRetryTimer)
+      const delay = Math.max(0, retryAt - Date.now())
+      this.operationQueueRetryTimer = setTimeout(() => {
+        this.operationQueueRetryTimer = null
+        this.kickOperationQueue()
+      }, delay)
+    })
   }
 
   /**
@@ -605,6 +618,8 @@ export class SyncEngine {
     this.isDestroyed = true
     this.cleanupAllHandlers()
     this.subscribedStreams.clear()
+    if (this.operationQueueRetryTimer) clearTimeout(this.operationQueueRetryTimer)
+    this.operationQueueRetryTimer = null
     this.socket = null
     // Dispose without flushing or splicing — destroy can be an account switch
     // that repoints the shared db proxy, and neither the cursor nor buffered

@@ -1,7 +1,6 @@
 export { createCommandHandlers, resolveRuntimeInvocationRouting } from "./handlers"
 
 export { CommandRegistry, parseCommand, isCommand } from "./registry"
-export { CommandDispatchRepository } from "./repository"
 export type { Command, CommandContext, CommandResult } from "./registry"
 export { CommandAvailabilityService } from "./availability"
 export type { ResolvedCommand, RuntimeCommandTarget } from "./availability"
