@@ -206,6 +206,17 @@ describe("CallManager", () => {
     expect(getCallState().local.cameraOn).toBe(true)
   })
 
+  it("joins with the camera publishing when cameraOn is requested (Start with camera)", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const manager = new CallManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", cameraOn: true })
+    // Camera is up at join, not deferred to a setCameraOn tap.
+    expect(transport._events).toContain("publish:mic")
+    expect(transport._events).toContain("publish:camera")
+    expect(getCallState().local.cameraOn).toBe(true)
+  })
+
   it("adopts the server-returned mode over the requested mode (join-existing audio_only)", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
