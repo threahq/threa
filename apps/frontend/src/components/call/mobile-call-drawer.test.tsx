@@ -177,6 +177,16 @@ describe("MobileCallDrawer — mode rendering", () => {
     expect(screen.queryByLabelText("Connection diagnostics")).toBeNull()
   })
 
+  it("Bar (compact): shows the flip control on mobile with more than one camera", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    renderDrawer()
+    enterConnected([participant({ userId: "usr_self" })])
+    act(() => setCallDevices(makeDevices({ cameras: [device("c1", "Front"), device("c2", "Back")] })))
+    setMode("compact")
+    expect(screen.getByLabelText("Flip camera")).toBeInTheDocument()
+    expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
+  })
+
   it("Tiny gallery (standard): adds a tile grid, flip, and the device menu", () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
     renderDrawer()
