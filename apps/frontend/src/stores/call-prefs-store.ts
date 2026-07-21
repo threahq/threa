@@ -13,28 +13,20 @@ import { useSyncExternalStore } from "react"
  */
 
 export type CallLayout = "speaker" | "grid"
-export type CallDockPosition = "top" | "side"
 export type CallFilmstripSide = "bottom" | "side"
 /** Local self-view mirroring. `auto` = mirror a front/desktop camera, not a mobile back camera. */
 export type CallSelfMirror = "auto" | "on" | "off"
 
 export interface CallPrefs {
   layout: CallLayout
-  dockPosition: CallDockPosition
   filmstripSide: CallFilmstripSide
   selfMirror: CallSelfMirror
 }
 
-const DEFAULT_PREFS: CallPrefs = {
-  layout: "speaker",
-  dockPosition: "side",
-  filmstripSide: "bottom",
-  selfMirror: "auto",
-}
+const DEFAULT_PREFS: CallPrefs = { layout: "speaker", filmstripSide: "bottom", selfMirror: "auto" }
 const STORAGE_KEY = "threa:callPrefs:v1"
 
 const isLayout = (v: unknown): v is CallLayout => v === "speaker" || v === "grid"
-const isDockPosition = (v: unknown): v is CallDockPosition => v === "top" || v === "side"
 const isFilmstripSide = (v: unknown): v is CallFilmstripSide => v === "bottom" || v === "side"
 const isSelfMirror = (v: unknown): v is CallSelfMirror => v === "auto" || v === "on" || v === "off"
 
@@ -64,7 +56,6 @@ function readPersisted(): CallPrefs {
     const p = parsed as Record<string, unknown>
     return {
       layout: isLayout(p.layout) ? p.layout : DEFAULT_PREFS.layout,
-      dockPosition: isDockPosition(p.dockPosition) ? p.dockPosition : DEFAULT_PREFS.dockPosition,
       filmstripSide: isFilmstripSide(p.filmstripSide) ? p.filmstripSide : DEFAULT_PREFS.filmstripSide,
       selfMirror: isSelfMirror(p.selfMirror) ? p.selfMirror : DEFAULT_PREFS.selfMirror,
     }
@@ -93,7 +84,6 @@ function update(patch: Partial<CallPrefs>): void {
   const next = { ...prefs, ...patch }
   if (
     next.layout === prefs.layout &&
-    next.dockPosition === prefs.dockPosition &&
     next.filmstripSide === prefs.filmstripSide &&
     next.selfMirror === prefs.selfMirror
   ) {
@@ -110,10 +100,6 @@ export function getCallPrefs(): CallPrefs {
 
 export function setCallLayout(layout: CallLayout): void {
   update({ layout })
-}
-
-export function setCallDockPosition(dockPosition: CallDockPosition): void {
-  update({ dockPosition })
 }
 
 export function setCallFilmstripSide(filmstripSide: CallFilmstripSide): void {

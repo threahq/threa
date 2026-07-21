@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from "vitest"
 import {
   getCallPrefs,
   setCallLayout,
-  setCallDockPosition,
   setCallFilmstripSide,
   setCallSelfMirror,
   resolveSelfMirror,
@@ -10,7 +9,7 @@ import {
 } from "./call-prefs-store"
 
 const STORAGE_KEY = "threa:callPrefs:v1"
-const DEFAULTS = { layout: "speaker", dockPosition: "side", filmstripSide: "bottom", selfMirror: "auto" }
+const DEFAULTS = { layout: "speaker", filmstripSide: "bottom", selfMirror: "auto" }
 
 beforeEach(() => {
   localStorage.clear()
@@ -24,14 +23,13 @@ describe("call-prefs-store", () => {
 
   it("a set persists to localStorage and reads back through the store", () => {
     setCallLayout("grid")
-    setCallDockPosition("top")
     setCallFilmstripSide("side")
 
-    expect(getCallPrefs()).toEqual({ layout: "grid", dockPosition: "top", filmstripSide: "side", selfMirror: "auto" })
+    expect(getCallPrefs()).toEqual({ layout: "grid", filmstripSide: "side", selfMirror: "auto" })
 
     // Re-read from storage (not a hand-crafted fixture) — proves the write round-trips.
     __resetCallPrefsForTests()
-    expect(getCallPrefs()).toEqual({ layout: "grid", dockPosition: "top", filmstripSide: "side", selfMirror: "auto" })
+    expect(getCallPrefs()).toEqual({ layout: "grid", filmstripSide: "side", selfMirror: "auto" })
   })
 
   it("falls back to defaults on malformed JSON", () => {
@@ -41,14 +39,9 @@ describe("call-prefs-store", () => {
   })
 
   it("falls back per-field on an out-of-range persisted value", () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ layout: "grid", dockPosition: "diagonal" }))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ layout: "diagonal", filmstripSide: "side" }))
     __resetCallPrefsForTests()
-    expect(getCallPrefs()).toEqual({
-      layout: "grid",
-      dockPosition: "side",
-      filmstripSide: "bottom",
-      selfMirror: "auto",
-    })
+    expect(getCallPrefs()).toEqual({ layout: "speaker", filmstripSide: "side", selfMirror: "auto" })
   })
 
   it("persists an explicit selfMirror override", () => {
