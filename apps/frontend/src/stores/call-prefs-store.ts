@@ -15,19 +15,44 @@ import { useSyncExternalStore } from "react"
 export type CallLayout = "speaker" | "grid"
 export type CallDockPosition = "top" | "side"
 export type CallFilmstripSide = "bottom" | "side"
+/** Local self-view mirroring. `auto` = mirror a front/desktop camera, not a mobile back camera. */
+export type CallSelfMirror = "auto" | "on" | "off"
 
 export interface CallPrefs {
   layout: CallLayout
   dockPosition: CallDockPosition
   filmstripSide: CallFilmstripSide
+  selfMirror: CallSelfMirror
 }
 
-const DEFAULT_PREFS: CallPrefs = { layout: "speaker", dockPosition: "side", filmstripSide: "bottom" }
+const DEFAULT_PREFS: CallPrefs = {
+  layout: "speaker",
+  dockPosition: "side",
+  filmstripSide: "bottom",
+  selfMirror: "auto",
+}
 const STORAGE_KEY = "threa:callPrefs:v1"
 
 const isLayout = (v: unknown): v is CallLayout => v === "speaker" || v === "grid"
 const isDockPosition = (v: unknown): v is CallDockPosition => v === "top" || v === "side"
 const isFilmstripSide = (v: unknown): v is CallFilmstripSide => v === "bottom" || v === "side"
+const isSelfMirror = (v: unknown): v is CallSelfMirror => v === "auto" || v === "on" || v === "off"
+
+/**
+ * Resolve the effective self-view mirror. `auto` mirrors a front-facing view (any
+ * desktop camera, a mobile front/default camera) and leaves a mobile back camera
+ * un-mirrored — matching Messenger. An explicit `on`/`off` overrides. Local preview
+ * only; peers always see the un-mirrored feed.
+ */
+export function resolveSelfMirror(
+  pref: CallSelfMirror,
+  { isMobile, facingMode }: { isMobile: boolean; facingMode: "user" | "environment" | null }
+): boolean {
+  if (pref === "on") return true
+  if (pref === "off") return false
+  if (!isMobile) return true
+  return facingMode !== "environment"
+}
 
 function readPersisted(): CallPrefs {
   if (typeof localStorage === "undefined") return { ...DEFAULT_PREFS }
@@ -41,6 +66,7 @@ function readPersisted(): CallPrefs {
       layout: isLayout(p.layout) ? p.layout : DEFAULT_PREFS.layout,
       dockPosition: isDockPosition(p.dockPosition) ? p.dockPosition : DEFAULT_PREFS.dockPosition,
       filmstripSide: isFilmstripSide(p.filmstripSide) ? p.filmstripSide : DEFAULT_PREFS.filmstripSide,
+      selfMirror: isSelfMirror(p.selfMirror) ? p.selfMirror : DEFAULT_PREFS.selfMirror,
     }
   } catch {
     return { ...DEFAULT_PREFS }
@@ -68,7 +94,8 @@ function update(patch: Partial<CallPrefs>): void {
   if (
     next.layout === prefs.layout &&
     next.dockPosition === prefs.dockPosition &&
-    next.filmstripSide === prefs.filmstripSide
+    next.filmstripSide === prefs.filmstripSide &&
+    next.selfMirror === prefs.selfMirror
   ) {
     return
   }
@@ -91,6 +118,10 @@ export function setCallDockPosition(dockPosition: CallDockPosition): void {
 
 export function setCallFilmstripSide(filmstripSide: CallFilmstripSide): void {
   update({ filmstripSide })
+}
+
+export function setCallSelfMirror(selfMirror: CallSelfMirror): void {
+  update({ selfMirror })
 }
 
 function subscribe(listener: () => void): () => void {

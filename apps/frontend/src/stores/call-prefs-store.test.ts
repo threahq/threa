@@ -4,11 +4,13 @@ import {
   setCallLayout,
   setCallDockPosition,
   setCallFilmstripSide,
+  setCallSelfMirror,
+  resolveSelfMirror,
   __resetCallPrefsForTests,
 } from "./call-prefs-store"
 
 const STORAGE_KEY = "threa:callPrefs:v1"
-const DEFAULTS = { layout: "speaker", dockPosition: "side", filmstripSide: "bottom" }
+const DEFAULTS = { layout: "speaker", dockPosition: "side", filmstripSide: "bottom", selfMirror: "auto" }
 
 beforeEach(() => {
   localStorage.clear()
@@ -25,11 +27,11 @@ describe("call-prefs-store", () => {
     setCallDockPosition("top")
     setCallFilmstripSide("side")
 
-    expect(getCallPrefs()).toEqual({ layout: "grid", dockPosition: "top", filmstripSide: "side" })
+    expect(getCallPrefs()).toEqual({ layout: "grid", dockPosition: "top", filmstripSide: "side", selfMirror: "auto" })
 
     // Re-read from storage (not a hand-crafted fixture) — proves the write round-trips.
     __resetCallPrefsForTests()
-    expect(getCallPrefs()).toEqual({ layout: "grid", dockPosition: "top", filmstripSide: "side" })
+    expect(getCallPrefs()).toEqual({ layout: "grid", dockPosition: "top", filmstripSide: "side", selfMirror: "auto" })
   })
 
   it("falls back to defaults on malformed JSON", () => {
@@ -41,6 +43,32 @@ describe("call-prefs-store", () => {
   it("falls back per-field on an out-of-range persisted value", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ layout: "grid", dockPosition: "diagonal" }))
     __resetCallPrefsForTests()
-    expect(getCallPrefs()).toEqual({ layout: "grid", dockPosition: "side", filmstripSide: "bottom" })
+    expect(getCallPrefs()).toEqual({
+      layout: "grid",
+      dockPosition: "side",
+      filmstripSide: "bottom",
+      selfMirror: "auto",
+    })
+  })
+
+  it("persists an explicit selfMirror override", () => {
+    setCallSelfMirror("off")
+    __resetCallPrefsForTests()
+    expect(getCallPrefs().selfMirror).toBe("off")
+  })
+})
+
+describe("resolveSelfMirror", () => {
+  it("auto mirrors desktop (any camera) and mobile front, not mobile back", () => {
+    expect(resolveSelfMirror("auto", { isMobile: false, facingMode: null })).toBe(true)
+    expect(resolveSelfMirror("auto", { isMobile: false, facingMode: "environment" })).toBe(true)
+    expect(resolveSelfMirror("auto", { isMobile: true, facingMode: "user" })).toBe(true)
+    expect(resolveSelfMirror("auto", { isMobile: true, facingMode: null })).toBe(true)
+    expect(resolveSelfMirror("auto", { isMobile: true, facingMode: "environment" })).toBe(false)
+  })
+
+  it("explicit on/off overrides the facing default", () => {
+    expect(resolveSelfMirror("on", { isMobile: true, facingMode: "environment" })).toBe(true)
+    expect(resolveSelfMirror("off", { isMobile: false, facingMode: null })).toBe(false)
   })
 })
