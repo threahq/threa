@@ -67,6 +67,11 @@ export default {
         activity: {
           people: "hsl(var(--activity-people))",
         },
+        "call-stage": {
+          DEFAULT: "hsl(var(--call-stage))",
+          2: "hsl(var(--call-stage-2))",
+          border: "hsl(var(--call-stage-border))",
+        },
       },
       borderRadius: {
         modal: "16px",
