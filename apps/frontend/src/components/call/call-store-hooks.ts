@@ -49,6 +49,10 @@ export function useCallStreamId(): string | null {
   return useCallSelector((s) => s.streamId)
 }
 
+export function useCallConnectedAt(): number | null {
+  return useCallSelector((s) => s.connectedAt)
+}
+
 export function useCallMode(): CallMode | null {
   return useCallSelector((s) => s.mode)
 }

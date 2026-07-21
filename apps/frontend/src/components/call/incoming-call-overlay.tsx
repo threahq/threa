@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/api/client"
 import { cn } from "@/lib/utils"
 import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { useCallSurfaceMode } from "./call-store-hooks"
 import { useWorkspaceUserPreferences } from "@/stores/workspace-store"
 import { useIncomingCalls, settleIncomingCall, type IncomingCall } from "@/stores/incoming-call-store"
 import { installRingAudioWarmup, startRing, stopRing } from "@/calls/ring-tone"
@@ -50,6 +52,8 @@ function fireLocalRingNotification(call: IncomingCall): void {
 export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
   const calls = useIncomingCalls()
   const { launch, callActive } = useCallLaunch()
+  const isMobile = useIsMobile()
+  const surfaceMode = useCallSurfaceMode()
   const [searchParams, setSearchParams] = useSearchParams()
   const notifiedRef = useRef<Set<string>>(new Set())
   // Per-attempt mute (INV-... scoped so a fresh ring rings again). State, not a
@@ -153,11 +157,16 @@ export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
 
   if (calls.length === 0) return null
 
+  // The `callActive` lift clears the desktop bottom dock. On mobile the in-call
+  // surface is the TOP drawer, so the bottom is free — lift only in mobile
+  // fullscreen (where the drawer's bottom control bar would otherwise be covered).
+  const liftAboveDock = callActive && (!isMobile || surfaceMode === "full")
+
   return (
     <div
       className={cn(
         "pointer-events-none fixed right-4 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2",
-        callActive ? RING_ABOVE_DOCK_BOTTOM : DOCK_BOTTOM
+        liftAboveDock ? RING_ABOVE_DOCK_BOTTOM : DOCK_BOTTOM
       )}
     >
       {calls.map((call) => (

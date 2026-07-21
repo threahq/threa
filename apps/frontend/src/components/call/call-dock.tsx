@@ -37,6 +37,7 @@ export const RING_ABOVE_DOCK_BOTTOM =
   "bottom-[calc(var(--composer-height,5rem)_+_5.5rem)] sm:bottom-[calc(max(1rem,env(safe-area-inset-bottom))_+_4.5rem)]"
 import { CallTile } from "./call-tile"
 import { CallControls } from "./call-controls"
+import { MobileCallDrawer } from "./mobile-call-drawer"
 import { PreJoinGate } from "./pre-join-gate"
 import { ActiveElsewhereChip } from "./active-elsewhere-chip"
 
@@ -97,8 +98,9 @@ export function CallDock() {
     if (launching || joining) setCollapsed(false)
   }, [launching, joining])
 
-  // On connect, reset the sticky flag: desktop opens the full dock; a phone
-  // auto-collapses to a pill so the panel never covers the composer.
+  // On connect, reset the sticky flag so the desktop dock opens full. Mobile
+  // renders the top drawer (driven by `surfaceMode`, not this flag), so the value
+  // is inert there — kept only to govern the desktop dock's collapse.
   useEffect(() => {
     if (inCall) setCollapsed(isMobile)
   }, [inCall, isMobile])
@@ -119,6 +121,8 @@ export function CallDock() {
   const streamIdForLabel = storeStreamId ?? (launch.status !== "idle" ? launch.request.streamId : null)
 
   if (inCall) {
+    // Mobile gets the 4-mode global top drawer; desktop keeps the dock (chunk 6).
+    if (isMobile) return <MobileCallDrawer workspaceId={workspaceId} streamId={streamIdForLabel} />
     return (
       <ActiveCallDock
         workspaceId={workspaceId}
