@@ -5,7 +5,7 @@ import type { ProcessResult } from "@threa/backend-common"
 import * as cursorLockModule from "@threa/backend-common"
 import { OutboxRepository } from "../../lib/outbox"
 import { MessageVersionRepository } from "../messaging"
-import { StreamEventRepository } from "../streams"
+import { StreamEventRepository, StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { AgentMessageMutationHandler } from "./message-mutation-outbox-handler"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
@@ -913,6 +913,10 @@ describe("AgentMessageMutationHandler", () => {
   })
 
   it("deletes invoking sessions and cascades deletion for stored and event-sourced session messages", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_thread_1",
+      rootStreamId: "stream_root_1",
+    } as any)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
       {
         id: 1n,
@@ -1057,6 +1061,7 @@ describe("AgentMessageMutationHandler", () => {
       expect.objectContaining({
         workspaceId: "ws_1",
         streamId: "stream_thread_1",
+        rootStreamId: "stream_root_1",
       })
     )
     expect(eventService.deleteMessage).toHaveBeenCalledTimes(2)

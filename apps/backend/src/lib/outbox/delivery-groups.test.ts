@@ -60,6 +60,34 @@ describe("resolveDeliveryGroups — enclave re-wrap nudges", () => {
   })
 })
 
+describe("resolveDeliveryGroups — agent sessions", () => {
+  it("routes thread lifecycle events to the thread and its access root", () => {
+    expect(
+      resolveDeliveryGroups(
+        event("agent_session:started", {
+          workspaceId: "ws_1",
+          streamId: "stream_thread",
+          rootStreamId: "stream_root",
+          event: {},
+        })
+      )
+    ).toEqual([streamGroup("stream_thread"), streamGroup("stream_root")])
+  })
+
+  it("does not duplicate a root session's delivery group", () => {
+    expect(
+      resolveDeliveryGroups(
+        event("agent_session:completed", {
+          workspaceId: "ws_1",
+          streamId: "stream_root",
+          rootStreamId: "stream_root",
+          event: {},
+        })
+      )
+    ).toEqual([streamGroup("stream_root")])
+  })
+})
+
 describe("resolveDeliveryGroups — agent_config:updated (user-scoped-personas)", () => {
   it("routes a personal persona's update to its owner's room only, never the workspace", () => {
     const groups = resolveDeliveryGroups(

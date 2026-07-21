@@ -306,7 +306,7 @@ describe("per-stream session concurrency (roadmap 3.2)", () => {
     )
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
     spyOn(StreamEventRepository, "insert").mockResolvedValue({} as any)
-    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
     const base = {
       pool: {} as any,
@@ -323,7 +323,12 @@ describe("per-stream session concurrency (roadmap 3.2)", () => {
       work
     )
     const threadResult = await withCompanionSession(
-      { ...base, triggerMessageId: "msg_thread", streamId: "stream_thread_under_channel" },
+      {
+        ...base,
+        triggerMessageId: "msg_thread",
+        streamId: "stream_thread_under_channel",
+        rootStreamId: "stream_channel",
+      },
       work
     )
 
@@ -333,6 +338,16 @@ describe("per-stream session concurrency (roadmap 3.2)", () => {
     expect(insertSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ streamId: "stream_thread_under_channel" })
+    )
+    expect(outboxSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      "agent_session:started",
+      expect.objectContaining({ streamId: "stream_thread_under_channel", rootStreamId: "stream_channel" })
+    )
+    expect(outboxSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      "agent_session:completed",
+      expect.objectContaining({ streamId: "stream_thread_under_channel", rootStreamId: "stream_channel" })
     )
   })
 

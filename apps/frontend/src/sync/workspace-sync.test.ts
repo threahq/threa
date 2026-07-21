@@ -2324,7 +2324,7 @@ describe("agent-activity sidebar socket handlers", () => {
   it("upserts on started (wrapped outbox shape), resolving the channel root, and removes on the flat session-room completed shape", async () => {
     await putStream("stream_ch", null)
     const queryClient = new QueryClient()
-    const { socket, emit, emitAsync } = createTestSocket()
+    const { socket, emitAsync } = createTestSocket()
     const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
     await emitAsync("agent_session:started", {
@@ -2335,14 +2335,14 @@ describe("agent-activity sidebar socket handlers", () => {
 
     expect(getAgentActivityForStream("ws_1", "stream_ch").map((s) => s.sessionId)).toEqual(["sess_1"])
 
-    // Flat session-room shape (trace dialog open on the shared socket) — must not throw.
-    expect(() => emit("agent_session:completed", { sessionId: "sess_1" })).not.toThrow()
+    // Flat session-room shape (trace dialog open on the shared socket).
+    await emitAsync("agent_session:completed", { sessionId: "sess_1" })
     expect(getAgentActivityForStream("ws_1", "stream_ch")).toEqual([])
 
     cleanup()
   })
 
-  it("resolves a thread session to its channel root and honors the cross-workspace guard", async () => {
+  it("keeps a thread session on the thread and honors the cross-workspace guard", async () => {
     await putStream("stream_ch", null)
     await putStream("stream_thr", "stream_ch")
     const queryClient = new QueryClient()
@@ -2354,7 +2354,8 @@ describe("agent-activity sidebar socket handlers", () => {
       streamId: "stream_thr",
       event: { payload: { sessionId: "sess_thr", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
     })
-    expect(getAgentActivityForStream("ws_1", "stream_ch").map((s) => s.sessionId)).toEqual(["sess_thr"])
+    expect(getAgentActivityForStream("ws_1", "stream_ch")).toEqual([])
+    expect(getAgentActivityForStream("ws_1", "stream_thr").map((s) => s.sessionId)).toEqual(["sess_thr"])
 
     // Different workspace — ignored.
     await emitAsync("agent_session:started", {
@@ -2362,8 +2363,30 @@ describe("agent-activity sidebar socket handlers", () => {
       streamId: "stream_ch",
       event: { payload: { sessionId: "sess_other", personaName: "X", startedAt: "2026-07-16T00:00:00.000Z" } },
     })
-    expect(getAgentActivityForStream("ws_1", "stream_ch").map((s) => s.sessionId)).toEqual(["sess_thr"])
+    expect(getAgentActivityForStream("ws_1", "stream_ch")).toEqual([])
+    expect(getAgentActivityForStream("ws_1", "stream_thr").map((s) => s.sessionId)).toEqual(["sess_thr"])
 
+    cleanup()
+  })
+
+  it("preserves lifecycle order when a terminal event arrives during started root resolution", async () => {
+    await putStream("stream_ch", null)
+    const queryClient = new QueryClient()
+    const { socket, emit, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      event: { payload: { sessionId: "sess_race", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+    await emitAsync("agent_session:completed", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      event: { payload: { sessionId: "sess_race" } },
+    })
+
+    expect(getAgentActivityForStream("ws_1", "stream_ch")).toEqual([])
     cleanup()
   })
 

@@ -1348,6 +1348,7 @@ export function createPublicApiHandlers({
           await OutboxRepository.insert(client, "agent_session:started", {
             workspaceId: req.workspaceId!,
             streamId: invocation.responseStreamId,
+            rootStreamId: invocation.rootStreamId,
             event: streamEvent,
           })
         })
@@ -1602,13 +1603,14 @@ export function createPublicApiHandlers({
         await OutboxRepository.insert(client, "agent_session:completed", {
           workspaceId: stream.workspaceId,
           streamId: session.streamId,
+          rootStreamId: stream.rootStreamId ?? stream.id,
           event: streamEvent,
         })
         return { message, sessionFinalized: true }
       })
 
       // Live-update an open trace dialog (session room) the way the enclave/in-process
-      // completes do — the outbox broadcast only reaches the stream room, so the
+      // completes do — the outbox broadcast does not reach the session room, so the
       // dialog wouldn't otherwise transition until a refetch.
       if (sessionFinalized) {
         io.to(`ws:${stream.workspaceId}:agent_session:${session.id}`).emit("agent_session:completed", {
@@ -1783,6 +1785,7 @@ export function createPublicApiHandlers({
             await OutboxRepository.insert(client, "agent_session:completed", {
               workspaceId: req.workspaceId!,
               streamId: completed.responseStreamId,
+              rootStreamId: completed.rootStreamId,
               event: streamEvent,
             })
             return { completed, message, sessionFinalized: true, synthesizedSteps }

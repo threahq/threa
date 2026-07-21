@@ -497,7 +497,12 @@ export class EnclaveClaimService {
         actorId: ARIADNE_AGENT_ID,
         actorType: "persona",
       })
-      await OutboxRepository.insert(tx, "agent_session:started", { workspaceId, streamId, event: startedEvent })
+      await OutboxRepository.insert(tx, "agent_session:started", {
+        workspaceId,
+        streamId,
+        rootStreamId: triggerStream.rootStreamId ?? triggerStream.id,
+        event: startedEvent,
+      })
       return created
     })
     if (!session) return completeAsNoOp("another session is running for this stream")

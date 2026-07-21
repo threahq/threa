@@ -9,7 +9,7 @@ import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxE
 import { JobQueues, type QueueManager } from "../../lib/queue"
 import type { EventService } from "../messaging"
 import { MessageVersionRepository } from "../messaging"
-import { StreamEventRepository } from "../streams"
+import { StreamEventRepository, StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 
@@ -379,9 +379,11 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
         actorType: AuthorTypes.PERSONA,
       })
 
+      const stream = await StreamRepository.findById(db, updated.streamId)
       await OutboxRepository.insert(db, "agent_session:deleted", {
         workspaceId,
         streamId: updated.streamId,
+        rootStreamId: stream?.rootStreamId ?? stream?.id,
         event: serializeBigInt(streamEvent),
       })
 

@@ -30,6 +30,7 @@ export async function withCompanionSession(
     pool: Pool
     triggerMessageId: string
     streamId: string
+    rootStreamId?: string
     personaId: string
     personaName: string
     workspaceId: string
@@ -57,6 +58,7 @@ export async function withCompanionSession(
     pool,
     triggerMessageId,
     streamId,
+    rootStreamId = streamId,
     personaId,
     personaName,
     workspaceId,
@@ -129,6 +131,7 @@ export async function withCompanionSession(
     await OutboxRepository.insert(db, "agent_session:started", {
       workspaceId,
       streamId,
+      rootStreamId,
       event: streamEvent,
     })
 
@@ -191,6 +194,7 @@ export async function withCompanionSession(
         await OutboxRepository.insert(db, "agent_session:completed", {
           workspaceId,
           streamId,
+          rootStreamId,
           event: streamEvent,
         })
         completionCommitted = true
@@ -272,6 +276,7 @@ export async function withCompanionSession(
           await OutboxRepository.insert(db, "agent_session:interrupted", {
             workspaceId,
             streamId,
+            rootStreamId,
             event: streamEvent,
           })
         } else {
@@ -292,6 +297,7 @@ export async function withCompanionSession(
           await OutboxRepository.insert(db, "agent_session:failed", {
             workspaceId,
             streamId,
+            rootStreamId,
             event: streamEvent,
           })
         }

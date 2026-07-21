@@ -397,16 +397,13 @@ export function StreamItem({
   const hasUnread = unreadCount > 0
   const preview = stream.lastMessagePreview
   const isVirtualDraft = isDraftId(stream.id)
-  // Activity is keyed by sidebar root (a thread session projects to its channel),
-  // so a thread row must look up its root, not its own id, or it never lights.
-  const agentActivityStreamId =
-    stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
-  const agentSessions = useAgentActivityForStream(workspaceId, agentActivityStreamId)
+  const agentSessions = useAgentActivityForStream(workspaceId, stream.id)
   const agentActive = agentSessions.length > 0
-  // A live call keys on the sidebar root too (a call is anchored to a channel/DM
+  // A live call keys on the sidebar root (a call is anchored to a channel/DM
   // root; threads carry no calls in v1). The call dot wins the slot over the
   // agent dot (roadmap 1.4).
-  const callActive = useActiveCallsForStream(workspaceId, agentActivityStreamId).length > 0
+  const callStreamId = stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
+  const callActive = useActiveCallsForStream(workspaceId, callStreamId).length > 0
 
   useUrgencyTracking(itemRef, stream.id, stream.urgency, scrollContainerRef)
 
