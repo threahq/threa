@@ -400,6 +400,21 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect(stored?.featureFlags).toBeUndefined()
   })
 
+  it("applies stream bootstraps inside the reconnect batch transaction", async () => {
+    const streamId = "stream_reconnect_batch"
+
+    await applyReconnectBootstrapBatch(
+      "ws_1",
+      makeBootstrap({ streams: [{ ...makeStreamBootstrap(streamId).stream, lastMessagePreview: null }] }),
+      new Map([[streamId, makeStreamBootstrap(streamId)]]),
+      new Set(),
+      new Set(),
+      Date.now()
+    )
+
+    expect((await db.streams.get(streamId))?.id).toBe(streamId)
+  })
+
   it("persists feature-flag layers on the reconnect apply path too", async () => {
     await applyReconnectBootstrapBatch(
       "ws_1",

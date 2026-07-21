@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { db, sequenceToNum, type CachedEvent } from "@/db"
-import { loadStreamEvents, shareEventIdentities } from "./stream-store"
+import { loadStreamEvents, orderStreamEvents, shareEventIdentities } from "./stream-store"
+import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -21,7 +22,13 @@ function makeRealEvent(streamId: string, sequence: string): CachedEvent {
   }
 }
 
-function makeOptimisticEvent(streamId: string, clientId: string, placeholderSeq: string): CachedEvent {
+function makeOptimisticEvent(
+  streamId: string,
+  clientId: string,
+  placeholderSeq: string,
+  createdAt = new Date(2026, 0, 2).toISOString(),
+  anchorSequenceNum?: number
+): CachedEvent {
   const sequenceNum = sequenceToNum(placeholderSeq)
   return {
     id: clientId,
@@ -33,9 +40,10 @@ function makeOptimisticEvent(streamId: string, clientId: string, placeholderSeq:
     payload: { messageId: clientId, contentMarkdown: clientId },
     actorId: "user_1",
     actorType: "user",
-    createdAt: new Date().toISOString(),
+    createdAt,
     _clientId: clientId,
     _status: "pending",
+    _anchorSequenceNum: anchorSequenceNum,
     _cachedAt: Date.now(),
   }
 }
@@ -156,32 +164,158 @@ describe("loadStreamEvents", () => {
     ])
   })
 
-  it("merges pending events that fell outside the count-capped window in ASC order", async () => {
-    // Defensive: if a pending event's _sequenceNum is somehow lower than the
-    // window of latest events, the merge step must still place it correctly
-    // by _sequenceNum rather than appending at the end.
+  it("merges optimistic events outside the count-capped window by createdAt", async () => {
     const streamId = "stream_fallback"
-
-    // Stuff the stream with > DEFAULT_IDB_EVENT_LIMIT (150) real events so the
-    // window cap matters. Insert one pending event with a deliberately low
-    // _sequenceNum (simulating a hypothetical alternative scheme).
     const reals: CachedEvent[] = []
     for (let i = 1; i <= 200; i++) {
       reals.push(makeRealEvent(streamId, String(i)))
     }
-    const lowPending = makeOptimisticEvent(streamId, "temp_low", "10")
-    await db.events.bulkPut([...reals, lowPending])
+    const oldPending = makeOptimisticEvent(streamId, "temp_old", "10", new Date(2026, 0, 1, 0, 0, 10).toISOString(), 10)
+    await db.events.bulkPut([...reals, oldPending])
 
     const events = await loadStreamEvents(streamId, null)
 
-    // Pending event must appear before the events with seq=11..200, between
-    // seq=10 and seq=51 (the floor of the latest 150 real events).
-    const ids = events.map((e) => e.id)
-    const lowIdx = ids.indexOf("temp_low")
-    expect(lowIdx).toBeGreaterThanOrEqual(0)
-    // It sorts by _sequenceNum=10, which falls before all reals in the window
-    // (seqs 51..200 — 200 reals capped to latest 150 = seqs 51..200).
-    expect(ids[0]).toBe("temp_low")
+    expect(events[0].id).toBe("temp_old")
+  })
+
+  it("keeps an editing optimistic row at its anchor", async () => {
+    const streamId = "stream_editing"
+    const editing = makeOptimisticEvent(streamId, "temp_editing", "1000", "2026-01-01T00:00:01.000Z", 1)
+    editing._status = "editing"
+    await db.events.bulkPut([
+      makeRealEvent(streamId, "1"),
+      makeRealEvent(streamId, "2"),
+      makeRealEvent(streamId, "3"),
+      editing,
+    ])
+
+    const events = await loadStreamEvents(streamId, 1)
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_editing_1",
+      "temp_editing",
+      "evt_stream_editing_2",
+      "evt_stream_editing_3",
+    ])
+  })
+
+  it("preserves optimistic order when creation timestamps match", async () => {
+    const streamId = "stream_same_millisecond"
+    const createdAt = "2026-01-01T20:30:00.000Z"
+    await db.events.bulkPut([
+      makeOptimisticEvent(streamId, "temp_z", "1000", createdAt, 0),
+      makeOptimisticEvent(streamId, "temp_a", "1001", createdAt, 0),
+    ])
+
+    const events = await loadStreamEvents(streamId, null)
+
+    expect(events.map((event) => event.id)).toEqual(["temp_z", "temp_a"])
+  })
+
+  it("places a legacy row older than all loaded history before that history", () => {
+    const streamId = "stream_legacy_oldest"
+    const legacy = makeOptimisticEvent(streamId, "temp_legacy", "1000", "1990-01-01T00:00:00.000Z")
+
+    const events = orderStreamEvents([makeRealEvent(streamId, "1"), makeRealEvent(streamId, "2"), legacy])
+
+    expect(events.map((event) => event.id)).toEqual([
+      "temp_legacy",
+      "evt_stream_legacy_oldest_1",
+      "evt_stream_legacy_oldest_2",
+    ])
+  })
+
+  it("starts a clock-skewed optimistic row after its observed persisted tail", async () => {
+    const streamId = "stream_slow_clock"
+    const optimistic = makeOptimisticEvent(streamId, "temp_slow", "1714428000000", "1990-01-01T00:00:00.000Z", 2)
+    await db.events.bulkPut([
+      makeRealEvent(streamId, "1"),
+      makeRealEvent(streamId, "2"),
+      makeRealEvent(streamId, "3"),
+      optimistic,
+    ])
+
+    const events = await loadStreamEvents(streamId, 1)
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_slow_clock_1",
+      "evt_stream_slow_clock_2",
+      "temp_slow",
+      "evt_stream_slow_clock_3",
+    ])
+  })
+
+  it("preserves thread chronology while anchoring optimistic rows", () => {
+    const streamId = "stream_thread"
+    const first = makeRealEvent(streamId, "1")
+    first.createdAt = "2026-01-02T00:00:00.000Z"
+    const movedOlder = makeRealEvent(streamId, "2")
+    movedOlder.createdAt = "2026-01-01T00:00:00.000Z"
+    const future = makeRealEvent(streamId, "3")
+    future.createdAt = "2026-01-03T00:00:00.000Z"
+    const optimistic = makeOptimisticEvent(streamId, "temp_thread", "1000", "1990-01-01T00:00:00.000Z", 1)
+
+    const events = orderStreamEvents([first, movedOlder, future, optimistic], (a, b) =>
+      a.createdAt.localeCompare(b.createdAt)
+    )
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_thread_2",
+      "evt_stream_thread_1",
+      "temp_thread",
+      "evt_stream_thread_3",
+    ])
+  })
+
+  it("keeps later optimistic sends after an earlier send confirms", async () => {
+    const streamId = "stream_partial_ack"
+    const first = makeOptimisticEvent(streamId, "temp_first", "1000", "2026-01-01T00:00:01.000Z", 1)
+    const second = makeOptimisticEvent(streamId, "temp_second", "1001", "2026-01-01T00:00:02.000Z", 1)
+    await db.events.bulkPut([makeRealEvent(streamId, "1"), first, second])
+
+    await db.transaction("rw", db.events, async () => {
+      await bumpLaterOptimisticAnchors(streamId, first._sequenceNum, 2, first.id)
+      await db.events.delete(first.id)
+      await db.events.put(makeRealEvent(streamId, "2"))
+    })
+
+    const events = await loadStreamEvents(streamId, 1)
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_partial_ack_1",
+      "evt_stream_partial_ack_2",
+      "temp_second",
+    ])
+  })
+
+  it("bumps a deterministic later row when cross-tab optimistic sequences tie", async () => {
+    const streamId = "stream_cross_tab_tie"
+    const confirmed = makeOptimisticEvent(streamId, "temp_a", "1000", "2026-01-01T00:00:01.000Z", 1)
+    const later = makeOptimisticEvent(streamId, "temp_z", "1000", "2026-01-01T00:00:01.000Z", 1)
+    await db.events.bulkPut([confirmed, later])
+
+    await bumpLaterOptimisticAnchors(streamId, confirmed._sequenceNum, 2, confirmed.id)
+
+    expect((await db.events.get(later.id))?._anchorSequenceNum).toBe(2)
+  })
+
+  it("lets a failed optimistic command move above newer persisted events", async () => {
+    const streamId = "stream_failed_command"
+    const failed = makeOptimisticEvent(streamId, "temp_cmd", "1714428000000", "2036-01-01T20:30:00.000Z", 1)
+    failed.eventType = "command_dispatched"
+    failed._status = "failed"
+    failed.payload = { commandId: failed.id, name: "thinking", args: "low", status: "dispatched" }
+    const newer = makeRealEvent(streamId, "2")
+    newer.createdAt = "2026-01-01T21:13:00.000Z"
+    await db.events.bulkPut([makeRealEvent(streamId, "1"), failed, newer])
+
+    const events = await loadStreamEvents(streamId, 1)
+
+    expect(events.map((event) => event.id)).toEqual([
+      "evt_stream_failed_command_1",
+      "temp_cmd",
+      "evt_stream_failed_command_2",
+    ])
   })
 
   it("returns a large floored window fully ASC without an unsent merge", async () => {

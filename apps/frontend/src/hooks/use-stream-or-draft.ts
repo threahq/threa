@@ -14,6 +14,7 @@ import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage, conversationTag } from "./use-queue-draft-message"
 import { useWorkspaceUsers, useWorkspaceStreams, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useSyncEngine } from "@/sync/sync-engine"
+import { getLatestPersistedSequence } from "@/sync/stream-sync"
 import { hasSeededDraftCache } from "@/stores/draft-store"
 import { getDraftMessageKey, purgeScopeDrafts, upsertLoadedDraft } from "./use-draft-message"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
@@ -34,6 +35,7 @@ import type {
   ToolPrivacyPolicy,
 } from "@threa/types"
 import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
+import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
 
 const DM_DRAFT_PREFIX = "draft_dm_"
 
@@ -586,14 +588,10 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       const contentMarkdown = serializeToMarkdown(input.contentJson)
 
-      // Use timestamp as sequence to ensure optimistic events sort after real events
-      // Real events have low sequence numbers (1, 2, 3...), timestamps are ~13 digits
-      const optimisticSequence = Date.now().toString()
-
       const optimisticEvent: StreamEvent = {
         id: clientId,
         streamId,
-        sequence: optimisticSequence,
+        sequence: "0",
         eventType: "message_created",
         payload: {
           messageId: clientId,
@@ -664,6 +662,10 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       // message stays one queue item so replay cannot dispatch the command
       // before the message reaches the server.
       await db.transaction("rw", [db.pendingMessages, db.events], async () => {
+        const [anchorSequence, allocatedSequence] = await Promise.all([
+          getLatestPersistedSequence(streamId),
+          nextOptimisticSequence(streamId),
+        ])
         await db.pendingMessages.add({
           clientId,
           workspaceId,
@@ -682,7 +684,9 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         await db.events.add({
           ...optimisticEvent,
           workspaceId,
-          _sequenceNum: sequenceToNum(optimisticEvent.sequence),
+          sequence: allocatedSequence,
+          _sequenceNum: sequenceToNum(allocatedSequence),
+          ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
           _clientId: clientId,
           _status: "pending",
           _cachedAt: Date.now(),

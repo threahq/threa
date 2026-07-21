@@ -1,7 +1,7 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useRef } from "react"
-import { db, type CachedEvent, type CachedStream } from "@/db"
+import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 
 /**
  * Cap the number of events loaded from IDB per stream when no sequence floor
@@ -21,9 +21,10 @@ export function resetStreamStoreCache(): void {}
  *   - Without a floor: same range, but capped to the latest N events as a
  *     memory bound on initial pre-bootstrap load.
  *
- * Pending and failed optimistic events with placeholder sequences are merged
- * in and the full list re-sorted, so they always land in their natural slot
- * by `_sequenceNum` rather than being appended at the end of the array.
+ * Pending and failed optimistic events use the persisted sequence visible at
+ * creation as their anchor. A pending send starts at the tail, then moves
+ * upward naturally when newer server events arrive, without comparing client
+ * and server clocks.
  */
 export async function loadStreamEvents(streamId: string, fromSequenceNum: number | null): Promise<CachedEvent[]> {
   const hasFloor = fromSequenceNum != null
@@ -53,22 +54,84 @@ export async function loadStreamEvents(streamId: string, fromSequenceNum: number
   // very top and are usually already in `base`). Drive this off the `_status`
   // index — Dexie only indexes rows where the value is present, so this is the
   // handful of unsent rows app-wide, not an O(history) scan of the stream.
-  const unsentForStream = (await db.events.where("_status").anyOf(["pending", "failed"]).toArray()).filter(
+  const unsentForStream = (await db.events.where("_status").anyOf(["pending", "failed", "editing"]).toArray()).filter(
     (e) => e.streamId === streamId && (!hasFloor || e._sequenceNum >= fromSequenceNum)
   )
   if (unsentForStream.length === 0) return base
 
-  // Only now pay for de-duplication: a pending row inside the scanned range is
-  // already present in `base`, so drop those before merging.
   const loadedIds = new Set(base.map((e) => e.id))
   const extra = unsentForStream.filter((e) => !loadedIds.has(e.id))
-  if (extra.length === 0) return base
+  return orderStreamEvents([...base, ...extra])
+}
 
-  // Re-sort the spliced list so order is determined solely by `_sequenceNum`,
-  // not by which path a row arrived on.
-  const merged = [...base, ...extra]
-  merged.sort((a, b) => a._sequenceNum - b._sequenceNum)
-  return merged
+type OrderableStreamEvent = Pick<CachedEvent, "id" | "sequence" | "createdAt"> &
+  Partial<Pick<CachedEvent, "_sequenceNum" | "_anchorSequenceNum" | "_status">>
+
+function eventSequence(event: OrderableStreamEvent): number {
+  return event._sequenceNum ?? sequenceToNum(event.sequence)
+}
+
+/**
+ * Interleaves optimistic stream events at their persisted sequence anchors.
+ *
+ * @param events - Persisted and optimistic events to order.
+ * @param persistedComparator - Optional chronology for persisted events, such as thread ordering.
+ * @returns A newly ordered event array.
+ * @example
+ * const ordered = orderStreamEvents(cachedEvents)
+ */
+export function orderStreamEvents<T extends OrderableStreamEvent>(
+  events: T[],
+  persistedComparator: (leftEvent: T, rightEvent: T) => number = (leftEvent, rightEvent) =>
+    eventSequence(leftEvent) - eventSequence(rightEvent)
+): T[] {
+  const optimistic: T[] = []
+  const persisted: T[] = []
+
+  for (const event of events) {
+    if (event._status != null) optimistic.push(event)
+    else persisted.push(event)
+  }
+
+  const inferredAnchors = new Map<string, number>()
+  for (const optimisticEvent of optimistic) {
+    if (optimisticEvent._anchorSequenceNum != null || persisted.length === 0) continue
+    const optimisticCreatedAt = Date.parse(optimisticEvent.createdAt)
+    const inferred = persisted.reduce<number | null>((current, persistedEvent) => {
+      if (Date.parse(persistedEvent.createdAt) > optimisticCreatedAt) return current
+      return Math.max(current ?? 0, eventSequence(persistedEvent))
+    }, null)
+    inferredAnchors.set(
+      optimisticEvent.id,
+      inferred ?? Math.max(0, Math.min(...persisted.map((persistedEvent) => eventSequence(persistedEvent))) - 1)
+    )
+  }
+  const anchor = (event: OrderableStreamEvent) =>
+    event._anchorSequenceNum ?? inferredAnchors.get(event.id) ?? Number.POSITIVE_INFINITY
+  persisted.sort(persistedComparator)
+  optimistic.sort(
+    (leftEvent, rightEvent) =>
+      anchor(leftEvent) - anchor(rightEvent) ||
+      eventSequence(leftEvent) - eventSequence(rightEvent) ||
+      leftEvent.id.localeCompare(rightEvent.id)
+  )
+
+  const optimisticAfterPersistedIndex = new Map<number, T[]>()
+  for (const optimisticEvent of optimistic) {
+    let afterIndex = -1
+    for (let i = 0; i < persisted.length; i++) {
+      if (eventSequence(persisted[i]) <= anchor(optimisticEvent)) afterIndex = i
+    }
+    const slot = optimisticAfterPersistedIndex.get(afterIndex) ?? []
+    slot.push(optimisticEvent)
+    optimisticAfterPersistedIndex.set(afterIndex, slot)
+  }
+
+  const ordered = [...(optimisticAfterPersistedIndex.get(-1) ?? [])]
+  for (let i = 0; i < persisted.length; i++) {
+    ordered.push(persisted[i], ...(optimisticAfterPersistedIndex.get(i) ?? []))
+  }
+  return ordered
 }
 
 /**
@@ -143,7 +206,8 @@ export function shareEventIdentities(prev: CachedEvent[] | null, next: CachedEve
       old._cachedAt === row._cachedAt &&
       old._patchedAt === row._patchedAt &&
       old._status === row._status &&
-      old.sequence === row.sequence
+      old.sequence === row.sequence &&
+      old._anchorSequenceNum === row._anchorSequenceNum
     ) {
       if (allSame && prev[i] !== old) allSame = false
       return old

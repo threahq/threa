@@ -87,12 +87,61 @@ export function toCachedStreamBootstrap(
   }
 }
 
+async function resolveUnknownOptimisticAnchors(streamId: string): Promise<void> {
+  const unresolved = (await db.events.where("_status").anyOf(["pending", "failed", "editing"]).toArray()).filter(
+    (event) => event.streamId === streamId && event._anchorSequenceNum == null
+  )
+  if (unresolved.length === 0) return
+
+  const persistedEvents = await db.events
+    .where("[streamId+_sequenceNum]")
+    .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
+    .filter((event) => event._status == null)
+    .toArray()
+  if (persistedEvents.length === 0) return
+
+  const now = Date.now()
+  const resolved = unresolved.flatMap((event) => {
+    const optimisticCreatedAt = Date.parse(event.createdAt)
+    const anchor = persistedEvents.reduce<number | null>((current, persisted) => {
+      if (Date.parse(persisted.createdAt) > optimisticCreatedAt) return current
+      return Math.max(current ?? 0, persisted._sequenceNum)
+    }, null)
+    const resolvedAnchor =
+      anchor ?? Math.max(0, Math.min(...persistedEvents.map((persisted) => persisted._sequenceNum)) - 1)
+    return [{ ...event, _anchorSequenceNum: resolvedAnchor, _cachedAt: now }]
+  })
+  if (resolved.length > 0) await db.events.bulkPut(resolved)
+}
+
+export async function bumpLaterOptimisticAnchors(
+  streamId: string,
+  confirmedOptimisticSequence: number,
+  confirmedPersistedSequence: number,
+  confirmedOptimisticId: string
+): Promise<void> {
+  await db.events
+    .where("_status")
+    .anyOf(["pending", "failed", "editing"])
+    .filter(
+      (event) =>
+        event.streamId === streamId &&
+        (event._sequenceNum > confirmedOptimisticSequence ||
+          (event._sequenceNum === confirmedOptimisticSequence && event.id.localeCompare(confirmedOptimisticId) > 0)) &&
+        (event._anchorSequenceNum ?? -1) < confirmedPersistedSequence
+    )
+    .modify((event) => {
+      event._anchorSequenceNum = confirmedPersistedSequence
+      event._cachedAt = Date.now()
+    })
+}
+
 export async function getLatestPersistedSequence(streamId: string): Promise<string | null> {
   const latestEvent = await db.events
     .where("[streamId+_sequenceNum]")
     .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
     .reverse()
-    .filter((event) => event._status !== "pending" && event._status !== "failed")
+    .filter((event) => event._status == null)
     .first()
 
   return latestEvent?.sequence ?? null
@@ -121,7 +170,7 @@ export async function getPersistedTail(streamId: string): Promise<PersistedTail>
     .where("[streamId+_sequenceNum]")
     .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
     .reverse()
-    .filter((event) => event._status !== "pending" && event._status !== "failed")
+    .filter((event) => event._status == null)
     .limit(TAIL_SCAN_LIMIT)
     .toArray()
 
@@ -285,6 +334,20 @@ async function writeBootstrapEventsAndStream(
       return optimistic ? [{ realEvent, optimistic }] : []
     })
     const optimisticByRealEventId = new Map(optimisticSwaps.map((s) => [s.realEvent.id, s.optimistic] as const))
+    const commandDispatchedWithClientId = bootstrap.events
+      .filter((event) => event.eventType === "command_dispatched")
+      .map((event) => ({
+        realEvent: event,
+        clientCommandId: (event.payload as { clientCommandId?: string }).clientCommandId,
+      }))
+      .filter((pair): pair is { realEvent: StreamEvent; clientCommandId: string } => !!pair.clientCommandId)
+    const optimisticCommandRows = await db.events.bulkGet(
+      commandDispatchedWithClientId.map((pair) => pair.clientCommandId)
+    )
+    const optimisticCommandSwaps = commandDispatchedWithClientId.flatMap(({ realEvent }, index) => {
+      const optimistic = optimisticCommandRows[index]
+      return optimistic?._status != null ? [{ realEvent, optimistic }] : []
+    })
 
     const toWrite: CachedEvent[] = []
     for (const e of bootstrap.events) {
@@ -336,18 +399,40 @@ async function writeBootstrapEventsAndStream(
     if (toWrite.length > 0) {
       await db.events.bulkPut(toWrite)
     }
+    await resolveUnknownOptimisticAnchors(streamId)
 
     // Real rows are in place (bulkPut above, or already present via a skipped
     // rewrite) — now drop the optimistic copies and their outbox entries so a
     // liveQuery frame never shows neither copy. Deleting the outbox row also
     // stops the queue from replaying a send the server already committed.
     for (const { realEvent, optimistic } of optimisticSwaps) {
+      await bumpLaterOptimisticAnchors(
+        streamId,
+        optimistic._sequenceNum,
+        sequenceToNum(realEvent.sequence),
+        optimistic.id
+      )
       await db.events.delete(optimistic.id)
       await db.pendingMessages.delete(optimistic.id)
       const plaintext = readPlaintextContent(optimistic.payload)
       if (plaintext && isEncryptedPayload(realEvent.payload)) {
         seedDecryption(realEvent.id, plaintext)
       }
+    }
+    for (const { realEvent, optimistic } of optimisticCommandSwaps) {
+      await bumpLaterOptimisticAnchors(
+        streamId,
+        optimistic._sequenceNum,
+        sequenceToNum(realEvent.sequence),
+        optimistic.id
+      )
+      await db.events.bulkDelete([optimistic.id, `${optimistic.id}:failed`])
+      const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
+      await db.pendingOperations.bulkDelete(
+        operations
+          .filter((operation) => operation.payload.optimisticEventId === optimistic.id)
+          .map((operation) => operation.id)
+      )
     }
   }
 
@@ -835,8 +920,9 @@ export function registerStreamSocketHandlers(
       // BEFORE writing the real event, so we can carry forward state the server
       // event doesn't itself carry.
       let carriedConversationId: string | undefined
+      let optimistic: CachedEvent | undefined
       if (newPayload.clientMessageId) {
-        const optimistic = await db.events.get(newPayload.clientMessageId)
+        optimistic = await db.events.get(newPayload.clientMessageId)
         optimisticPlaintext = readPlaintextContent(optimistic?.payload)
         // A board reply tags its optimistic event with the conversation it
         // attaches to; the server `message:created` does NOT carry that (the
@@ -863,8 +949,17 @@ export function registerStreamSocketHandlers(
         _sequenceNum: sequenceToNum(newEvent.sequence),
         _cachedAt: now,
       })
+      await resolveUnknownOptimisticAnchors(streamId)
 
       if (newPayload.clientMessageId) {
+        if (optimistic) {
+          await bumpLaterOptimisticAnchors(
+            streamId,
+            optimistic._sequenceNum,
+            sequenceToNum(newEvent.sequence),
+            optimistic.id
+          )
+        }
         await db.events.delete(newPayload.clientMessageId).catch(() => {})
         await db.pendingMessages.delete(newPayload.clientMessageId).catch(() => {})
       }
@@ -1140,19 +1235,41 @@ export function registerStreamSocketHandlers(
     // Same transactional shape as handleMessageCreated: dedupe, gap-read, and
     // put must be atomic, or a concurrent append can land between the gap read
     // and this write and make the cursor lie in either direction.
-    await db.transaction("rw", [db.events], async () => {
+    await db.transaction("rw", [db.events, db.pendingOperations], async () => {
       const existing = await db.events.get(payload.event.id)
       if (existing) return
       // Tail-gap check must read the latest BEFORE this write advances it.
       if (onSequenceGap) {
         gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), payload.event)
       }
+      const commandClientId =
+        payload.event.eventType === "command_dispatched"
+          ? (payload.event.payload as { clientCommandId?: string }).clientCommandId
+          : undefined
+      const commandCandidate = commandClientId ? await db.events.get(commandClientId) : undefined
+      const optimisticCommand = commandCandidate?._status != null ? commandCandidate : undefined
       await db.events.put({
         ...payload.event,
         workspaceId,
         _sequenceNum: sequenceToNum(payload.event.sequence),
         _cachedAt: now,
       })
+      await resolveUnknownOptimisticAnchors(streamId)
+      if (commandClientId && optimisticCommand) {
+        await bumpLaterOptimisticAnchors(
+          streamId,
+          optimisticCommand._sequenceNum,
+          sequenceToNum(payload.event.sequence),
+          optimisticCommand.id
+        )
+        await db.events.bulkDelete([commandClientId, `${commandClientId}:failed`])
+        const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
+        await db.pendingOperations.bulkDelete(
+          operations
+            .filter((operation) => operation.payload.optimisticEventId === commandClientId)
+            .map((operation) => operation.id)
+        )
+      }
     })
     if (gapAfterSequence !== null) {
       onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })

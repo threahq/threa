@@ -4,6 +4,7 @@ import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView }
 import { ApiError, commandsApi, isPermanentApiError } from "@/api"
 import { persistScheduledRows, removeScheduledRow, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
 import { executeDraftDelete, executeDraftResolve, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
+import { bumpLaterOptimisticAnchors } from "./stream-sync"
 
 function getRetryDelay(retryCount: number): number {
   if (retryCount <= 3) return 0
@@ -11,6 +12,8 @@ function getRetryDelay(retryCount: number): number {
   if (retryCount <= 10) return 30_000
   return 120_000
 }
+
+const OPERATION_QUEUE_LOCK = "threa-operation-queue"
 
 function generateId(): string {
   return `op_${Date.now()}_${Math.random().toString(36).slice(2)}`
@@ -51,26 +54,28 @@ async function reconcileRejectedOperation(op: PendingOperation): Promise<void> {
 }
 
 async function markCommandDispatchFailed(workspaceId: string, optimisticEventId: string, error: Error): Promise<void> {
-  const dispatched = await db.events.get(optimisticEventId)
-  if (!dispatched) return
-  const failedEvent: CachedEvent = {
-    id: `${optimisticEventId}:failed`,
-    workspaceId,
-    streamId: dispatched.streamId,
-    sequence: (Number(dispatched.sequence) + 1).toString(),
-    eventType: "command_failed",
-    payload: {
-      commandId: optimisticEventId,
-      error: error.message,
-    } satisfies CommandFailedPayload,
-    actorId: dispatched.actorId,
-    actorType: dispatched.actorType,
-    createdAt: new Date().toISOString(),
-    _sequenceNum: sequenceToNum((Number(dispatched.sequence) + 1).toString()),
-    _status: "failed",
-    _cachedAt: Date.now(),
-  }
   await db.transaction("rw", db.events, async () => {
+    const dispatched = await db.events.get(optimisticEventId)
+    if (!dispatched) return
+    const failedSequence = (Number(dispatched.sequence) + 1).toString()
+    const failedEvent: CachedEvent = {
+      id: `${optimisticEventId}:failed`,
+      workspaceId,
+      streamId: dispatched.streamId,
+      sequence: failedSequence,
+      eventType: "command_failed",
+      payload: {
+        commandId: optimisticEventId,
+        error: error.message,
+      } satisfies CommandFailedPayload,
+      actorId: dispatched.actorId,
+      actorType: dispatched.actorType,
+      createdAt: new Date().toISOString(),
+      _sequenceNum: sequenceToNum(failedSequence),
+      _anchorSequenceNum: dispatched._anchorSequenceNum,
+      _status: "failed",
+      _cachedAt: Date.now(),
+    }
     await db.events.update(optimisticEventId, { _status: "failed" })
     await db.events.put(failedEvent)
   })
@@ -106,7 +111,7 @@ export async function processOperationQueue(
   scheduledService: ScheduledServiceLike | undefined,
   draftsService: DraftsServiceLike | undefined,
   isOnline: () => boolean
-): Promise<void> {
+): Promise<number | null> {
   const processor = async () => {
     const now = Date.now()
     const skipped = new Set<string>()
@@ -123,7 +128,8 @@ export async function processOperationQueue(
         // device, a coalescing replace of this op must carry its idempotency
         // lineage (writeId) forward instead of minting a fresh one — otherwise
         // a committed-but-unacked write reads as drift and splits server-side.
-        await db.pendingOperations.update(next.id, { startedAt: Date.now() })
+        const claimed = await db.pendingOperations.update(next.id, { startedAt: Date.now() })
+        if (claimed === 0) continue
         await executeOperation(next, messageService, reactionService, scheduledService, draftsService)
         await db.pendingOperations.delete(next.id)
       } catch (error) {
@@ -147,13 +153,18 @@ export async function processOperationQueue(
   }
 
   if (navigator.locks) {
-    await navigator.locks.request("threa-operation-queue", { ifAvailable: true }, async (lock) => {
+    await navigator.locks.request(OPERATION_QUEUE_LOCK, { ifAvailable: true }, async (lock) => {
       if (!lock) return
       await processor()
     })
   } else {
     await processor()
   }
+
+  if (!isOnline()) return null
+  const remaining = await db.pendingOperations.toArray()
+  if (remaining.length === 0) return null
+  return remaining.reduce((next, operation) => Math.min(next, operation.retryAfter ?? Date.now()), Infinity)
 }
 
 async function executeOperation(
@@ -222,16 +233,27 @@ async function executeOperation(
         const result = await commandsApi.dispatch(workspaceId, {
           streamId: payload.streamId as string,
           command: payload.command as string,
+          clientCommandId: optimisticEventId,
         })
         if (!result.success) throw new ApiError(400, "COMMAND_DISPATCH_FAILED", result.error)
-        await db.transaction("rw", db.events, async () => {
-          await db.events.delete(optimisticEventId).catch(() => undefined)
-          await db.events.put({
-            ...result.event,
-            workspaceId,
-            _sequenceNum: sequenceToNum(result.event.sequence),
-            _cachedAt: Date.now(),
-          })
+        await db.transaction("rw", [db.events, db.pendingOperations], async () => {
+          const optimistic = await db.events.get(optimisticEventId)
+          if (optimistic) {
+            await bumpLaterOptimisticAnchors(
+              optimistic.streamId,
+              optimistic._sequenceNum,
+              sequenceToNum(result.event.sequence),
+              optimistic.id
+            )
+            await db.events.delete(optimisticEventId)
+            await db.events.put({
+              ...result.event,
+              workspaceId,
+              _sequenceNum: sequenceToNum(result.event.sequence),
+              _cachedAt: Date.now(),
+            })
+          }
+          await db.pendingOperations.delete(op.id)
         })
       } catch (error) {
         if (!isPermanentApiError(error)) throw error

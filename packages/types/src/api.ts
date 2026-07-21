@@ -1861,6 +1861,7 @@ export interface MarkAllAsReadResponse {
 export interface DispatchCommandInput {
   command: string
   streamId: string
+  clientCommandId?: string
 }
 
 export interface DispatchCommandResponse {
@@ -1879,6 +1880,7 @@ export interface DispatchCommandError {
 
 export interface CommandDispatchedPayload {
   commandId: string
+  clientCommandId?: string
   name: string
   args: string
   status: "dispatched"
