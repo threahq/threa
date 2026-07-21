@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -15,6 +15,8 @@ import { CallTile } from "./call-tile"
 import { CallStageLayout } from "./call-stage-layout"
 import { CallControls } from "./call-controls"
 import { CameraButton, LeaveButton, MuteButton } from "./call-control-buttons"
+import { CallTimer } from "./call-timer"
+import { CaptureErrorBanner } from "./call-capture-error"
 import { LayoutToggle } from "./layout-toggle"
 import { useCallCaptureError, useCallConnectedAt, useCallRoster, useCallSurfaceMode } from "./call-store-hooks"
 import { DRAWER_MIN_HEIGHT, nearestMode } from "./mobile-call-drawer-snap"
@@ -41,49 +43,6 @@ const RESTING_HEIGHT: Record<CallSurfaceMode, string> = {
 function viewportHeight(): number {
   if (typeof window === "undefined") return DRAWER_MIN_HEIGHT
   return window.visualViewport?.height ?? window.innerHeight
-}
-
-/** mm:ss, or h:mm:ss past an hour. */
-function formatElapsed(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000))
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  const mm = h > 0 ? String(m).padStart(2, "0") : String(m)
-  const ss = String(s).padStart(2, "0")
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
-}
-
-function CallTimer({ connectedAt, className }: { connectedAt: number | null; className?: string }) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  const elapsed = connectedAt == null ? 0 : now - connectedAt
-  return (
-    <span className={cn("font-mono text-sm tabular-nums", className)} aria-label="Call duration">
-      {formatElapsed(elapsed)}
-    </span>
-  )
-}
-
-function captureErrorText(code: CallCaptureErrorInfo["code"]): string {
-  return code === "capture_rollback_failed"
-    ? "Your microphone stopped working and couldn't be restored. Try leaving and rejoining."
-    : "Couldn't switch your microphone or camera. Your previous device is still active."
-}
-
-function CaptureErrorBanner({ error }: { error: CallCaptureErrorInfo }) {
-  return (
-    <p
-      className="mx-3 mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
-      role="alert"
-      data-testid="call-capture-error"
-    >
-      {captureErrorText(error.code)}
-    </p>
-  )
 }
 
 function GrabHandle({
@@ -320,7 +279,7 @@ export function MobileCallDrawer({ workspaceId, streamId }: { workspaceId: strin
         )}
         style={{ height: dragging && dragHeight != null ? `${dragHeight}px` : RESTING_HEIGHT[contentMode] }}
       >
-        {contentMode !== "min" && captureError && <CaptureErrorBanner error={captureError} />}
+        {contentMode !== "min" && captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
         <div className="min-h-0 flex-1 overflow-hidden">
           {contentMode === "min" && <TabView connectedAt={connectedAt} captureError={captureError} />}
           {contentMode === "compact" && <BarView {...viewProps} />}

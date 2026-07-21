@@ -1,5 +1,47 @@
 import { describe, it, expect } from "vitest"
-import { nearestMode } from "./mobile-call-drawer-snap"
+import { nearestMode, nearestStep } from "./mobile-call-drawer-snap"
+
+describe("nearestStep — generic detent index", () => {
+  // The desktop dock's side widths: rail 56, panel 320, wide 520, full (content) 900.
+  const steps = [56, 320, 520, 900]
+
+  it("returns the index of the detent at each resting size", () => {
+    expect(nearestStep(56, 0, steps)).toBe(0)
+    expect(nearestStep(320, 0, steps)).toBe(1)
+    expect(nearestStep(520, 0, steps)).toBe(2)
+    expect(nearestStep(900, 0, steps)).toBe(3)
+  })
+
+  it("resolves each midpoint to the nearer detent", () => {
+    // Midpoints: 56|320 = 188, 320|520 = 420, 520|900 = 710.
+    expect(nearestStep(187, 0, steps)).toBe(0)
+    expect(nearestStep(189, 0, steps)).toBe(1)
+    expect(nearestStep(419, 0, steps)).toBe(1)
+    expect(nearestStep(421, 0, steps)).toBe(2)
+    expect(nearestStep(709, 0, steps)).toBe(2)
+    expect(nearestStep(711, 0, steps)).toBe(3)
+  })
+
+  it("a fast grow flick advances one detent past nearest", () => {
+    expect(nearestStep(70, 1, steps)).toBe(1)
+    expect(nearestStep(520, 1, steps)).toBe(3)
+  })
+
+  it("a fast shrink flick drops one detent below nearest", () => {
+    expect(nearestStep(500, -1, steps)).toBe(1)
+    expect(nearestStep(320, -1, steps)).toBe(0)
+  })
+
+  it("clamps at the ends (no flick past the last/first detent)", () => {
+    expect(nearestStep(900, 1, steps)).toBe(3)
+    expect(nearestStep(56, -1, steps)).toBe(0)
+  })
+
+  it("sub-threshold velocity falls back to nearest", () => {
+    expect(nearestStep(500, -0.2, steps)).toBe(2)
+    expect(nearestStep(120, 0.2, steps)).toBe(0)
+  })
+})
 
 // Detents (px): min 44, compact 80, standard 248, full-snap 420.
 // Midpoints: min|compact 62, compact|standard 164, standard|full 334.
