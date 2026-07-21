@@ -212,6 +212,19 @@ describe("loadStreamEvents", () => {
     expect(events.map((event) => event.id)).toEqual(["temp_z", "temp_a"])
   })
 
+  it("places a legacy row older than all loaded history before that history", () => {
+    const streamId = "stream_legacy_oldest"
+    const legacy = makeOptimisticEvent(streamId, "temp_legacy", "1000", "1990-01-01T00:00:00.000Z")
+
+    const events = orderStreamEvents([makeRealEvent(streamId, "1"), makeRealEvent(streamId, "2"), legacy])
+
+    expect(events.map((event) => event.id)).toEqual([
+      "temp_legacy",
+      "evt_stream_legacy_oldest_1",
+      "evt_stream_legacy_oldest_2",
+    ])
+  })
+
   it("starts a clock-skewed optimistic row after its observed persisted tail", async () => {
     const streamId = "stream_slow_clock"
     const optimistic = makeOptimisticEvent(streamId, "temp_slow", "1714428000000", "1990-01-01T00:00:00.000Z", 2)

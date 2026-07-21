@@ -107,7 +107,9 @@ async function resolveUnknownOptimisticAnchors(streamId: string): Promise<void> 
       if (Date.parse(persisted.createdAt) > optimisticCreatedAt) return current
       return Math.max(current ?? 0, persisted._sequenceNum)
     }, null)
-    return anchor == null ? [] : [{ ...event, _anchorSequenceNum: anchor, _cachedAt: now }]
+    const resolvedAnchor =
+      anchor ?? Math.max(0, Math.min(...persistedEvents.map((persisted) => persisted._sequenceNum)) - 1)
+    return [{ ...event, _anchorSequenceNum: resolvedAnchor, _cachedAt: now }]
   })
   if (resolved.length > 0) await db.events.bulkPut(resolved)
 }
