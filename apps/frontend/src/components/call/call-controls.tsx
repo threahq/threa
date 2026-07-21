@@ -1,6 +1,5 @@
-import { useState } from "react"
 import { toast } from "sonner"
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Settings, Signal, SwitchCamera } from "lucide-react"
+import { Settings, Signal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -12,11 +11,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { CallDeviceState, CallDiagnostics } from "@/stores/call-store"
 import { useCallManager } from "./call-manager-context"
-import { useCallCameraOn, useCallDevices, useCallDiagnostics, useCallMode, useCallMuted } from "./call-store-hooks"
+import { CameraButton, FlipButton, LeaveButton, MuteButton } from "./call-control-buttons"
+import { useCallDevices, useCallDiagnostics } from "./call-store-hooks"
 
 // setSinkId (output device selection) is unsupported on Safari/Firefox; hide the
 // speaker picker where the API is absent rather than showing a dead control.
@@ -156,72 +155,20 @@ export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagno
 }
 
 export function CallControls() {
-  const manager = useCallManager()
-  const muted = useCallMuted()
-  const cameraOn = useCallCameraOn()
-  const mode = useCallMode()
   const devices = useCallDevices()
   const diagnostics = useCallDiagnostics()
-  const isMobile = useIsMobile()
-  const [leaving, setLeaving] = useState(false)
 
-  const toggleCamera = () => {
-    void manager.setCameraOn(!cameraOn).catch(() => toast.error("Couldn't switch the camera"))
-  }
-
-  const flipCamera = () => {
-    void manager.flipCamera().catch(() => toast.error("Couldn't flip the camera"))
-  }
-
-  const leave = () => {
-    setLeaving(true)
-    void manager.leaveCall().catch(() => {
-      setLeaving(false)
-      toast.error("Couldn't leave the call")
-    })
-  }
-
+  // Mute/Camera/Flip/Leave are the shared, async-aware controls (call-control-buttons):
+  // Camera hides itself on audio_only, Flip on desktop / single-camera — so the row
+  // gates itself without CallControls re-deciding.
   return (
     <div className="flex items-center justify-center gap-1.5">
-      <Button
-        variant="ghost"
-        size="icon"
-        className={cn("h-9 w-9", muted && "text-destructive")}
-        aria-label={muted ? "Unmute" : "Mute"}
-        aria-pressed={muted}
-        onClick={() => manager.setMuted(!muted)}
-      >
-        {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-      </Button>
-      {mode !== "audio_only" && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-9 w-9"
-          aria-label={cameraOn ? "Turn camera off" : "Turn camera on"}
-          aria-pressed={cameraOn}
-          onClick={toggleCamera}
-        >
-          {cameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-        </Button>
-      )}
-      {isMobile && mode !== "audio_only" && devices.cameras.length > 1 && (
-        <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Flip camera" onClick={flipCamera}>
-          <SwitchCamera className="h-4 w-4" />
-        </Button>
-      )}
+      <MuteButton />
+      <CameraButton />
+      <FlipButton />
       <DevicePickerMenu devices={devices} />
       <ConnectionDiagnostics diagnostics={diagnostics} />
-      <Button
-        variant="destructive"
-        size="icon"
-        className="h-9 w-9"
-        aria-label="Leave call"
-        disabled={leaving}
-        onClick={leave}
-      >
-        <PhoneOff className="h-4 w-4" />
-      </Button>
+      <LeaveButton />
     </div>
   )
 }
