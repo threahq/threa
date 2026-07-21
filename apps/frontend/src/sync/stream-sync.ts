@@ -88,6 +88,11 @@ export function toCachedStreamBootstrap(
 }
 
 async function resolveUnknownOptimisticAnchors(streamId: string): Promise<void> {
+  const unresolved = (await db.events.where("_status").anyOf(["pending", "failed", "editing"]).toArray()).filter(
+    (event) => event.streamId === streamId && event._anchorSequenceNum == null
+  )
+  if (unresolved.length === 0) return
+
   const persistedEvents = await db.events
     .where("[streamId+_sequenceNum]")
     .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
@@ -95,20 +100,16 @@ async function resolveUnknownOptimisticAnchors(streamId: string): Promise<void> 
     .toArray()
   if (persistedEvents.length === 0) return
 
-  await db.events
-    .where("_status")
-    .anyOf(["pending", "failed", "editing"])
-    .filter((event) => event.streamId === streamId && event._anchorSequenceNum == null)
-    .modify((event) => {
-      const optimisticCreatedAt = Date.parse(event.createdAt)
-      const anchor = persistedEvents.reduce<number | null>((current, persisted) => {
-        if (Date.parse(persisted.createdAt) > optimisticCreatedAt) return current
-        return Math.max(current ?? 0, persisted._sequenceNum)
-      }, null)
-      if (anchor == null) return
-      event._anchorSequenceNum = anchor
-      event._cachedAt = Date.now()
-    })
+  const now = Date.now()
+  const resolved = unresolved.flatMap((event) => {
+    const optimisticCreatedAt = Date.parse(event.createdAt)
+    const anchor = persistedEvents.reduce<number | null>((current, persisted) => {
+      if (Date.parse(persisted.createdAt) > optimisticCreatedAt) return current
+      return Math.max(current ?? 0, persisted._sequenceNum)
+    }, null)
+    return anchor == null ? [] : [{ ...event, _anchorSequenceNum: anchor, _cachedAt: now }]
+  })
+  if (resolved.length > 0) await db.events.bulkPut(resolved)
 }
 
 export async function bumpLaterOptimisticAnchors(
@@ -343,7 +344,7 @@ async function writeBootstrapEventsAndStream(
     )
     const optimisticCommandSwaps = commandDispatchedWithClientId.flatMap(({ realEvent }, index) => {
       const optimistic = optimisticCommandRows[index]
-      return optimistic ? [{ realEvent, optimistic }] : []
+      return optimistic?._status != null ? [{ realEvent, optimistic }] : []
     })
 
     const toWrite: CachedEvent[] = []
@@ -1243,7 +1244,8 @@ export function registerStreamSocketHandlers(
         payload.event.eventType === "command_dispatched"
           ? (payload.event.payload as { clientCommandId?: string }).clientCommandId
           : undefined
-      const optimisticCommand = commandClientId ? await db.events.get(commandClientId) : undefined
+      const commandCandidate = commandClientId ? await db.events.get(commandClientId) : undefined
+      const optimisticCommand = commandCandidate?._status != null ? commandCandidate : undefined
       await db.events.put({
         ...payload.event,
         workspaceId,
@@ -1251,15 +1253,13 @@ export function registerStreamSocketHandlers(
         _cachedAt: now,
       })
       await resolveUnknownOptimisticAnchors(streamId)
-      if (commandClientId) {
-        if (optimisticCommand) {
-          await bumpLaterOptimisticAnchors(
-            streamId,
-            optimisticCommand._sequenceNum,
-            sequenceToNum(payload.event.sequence),
-            optimisticCommand.id
-          )
-        }
+      if (commandClientId && optimisticCommand) {
+        await bumpLaterOptimisticAnchors(
+          streamId,
+          optimisticCommand._sequenceNum,
+          sequenceToNum(payload.event.sequence),
+          optimisticCommand.id
+        )
         await db.events.delete(commandClientId)
         const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
         await db.pendingOperations.bulkDelete(

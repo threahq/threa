@@ -65,32 +65,34 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
         throw new Error("Cannot dispatch command: user identity not resolved yet")
       }
 
-      const optimisticSequence = nextOptimisticSequence()
-      const optimisticEventId = `temp_cmd_${optimisticSequence}_${Math.random().toString(36).slice(2)}`
+      const optimisticEventId = `temp_cmd_${Date.now()}_${Math.random().toString(36).slice(2)}`
       const now = new Date().toISOString()
-      const optimisticEvent: StreamEvent = {
-        id: optimisticEventId,
-        streamId,
-        sequence: optimisticSequence,
-        eventType: "command_dispatched",
-        payload: {
-          commandId: optimisticEventId,
-          name: params.commandName,
-          args: parseCommandArgs(params.commandMarkdown),
-          status: "dispatched",
-          executionKind: CommandKinds.BOT_RUNTIME,
-        },
-        actorId: currentUserId,
-        actorType: AuthorTypes.USER,
-        createdAt: now,
-      }
 
       await db.transaction("rw", [db.events, db.pendingOperations], async () => {
-        const anchorSequence = await getLatestPersistedSequence(streamId)
+        const [anchorSequence, optimisticSequence] = await Promise.all([
+          getLatestPersistedSequence(streamId),
+          nextOptimisticSequence(streamId),
+        ])
+        const optimisticEvent: StreamEvent = {
+          id: optimisticEventId,
+          streamId,
+          sequence: optimisticSequence,
+          eventType: "command_dispatched",
+          payload: {
+            commandId: optimisticEventId,
+            name: params.commandName,
+            args: parseCommandArgs(params.commandMarkdown),
+            status: "dispatched",
+            executionKind: CommandKinds.BOT_RUNTIME,
+          },
+          actorId: currentUserId,
+          actorType: AuthorTypes.USER,
+          createdAt: now,
+        }
         await db.events.add({
           ...optimisticEvent,
           workspaceId,
-          _sequenceNum: sequenceToNum(optimisticEvent.sequence),
+          _sequenceNum: sequenceToNum(optimisticSequence),
           ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
           _status: "pending",
           _cachedAt: Date.now(),

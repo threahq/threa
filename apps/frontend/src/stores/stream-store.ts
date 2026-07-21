@@ -83,7 +83,18 @@ export function orderStreamEvents<T extends OrderableStreamEvent>(
     else persisted.push(event)
   }
 
-  const anchor = (event: OrderableStreamEvent) => event._anchorSequenceNum ?? Number.POSITIVE_INFINITY
+  const inferredAnchors = new Map<string, number>()
+  for (const optimisticEvent of optimistic) {
+    if (optimisticEvent._anchorSequenceNum != null) continue
+    const optimisticCreatedAt = Date.parse(optimisticEvent.createdAt)
+    const inferred = persisted.reduce<number | null>((current, persistedEvent) => {
+      if (Date.parse(persistedEvent.createdAt) > optimisticCreatedAt) return current
+      return Math.max(current ?? 0, eventSequence(persistedEvent))
+    }, null)
+    if (inferred != null) inferredAnchors.set(optimisticEvent.id, inferred)
+  }
+  const anchor = (event: OrderableStreamEvent) =>
+    event._anchorSequenceNum ?? inferredAnchors.get(event.id) ?? Number.POSITIVE_INFINITY
   persisted.sort(persistedComparator)
   optimistic.sort((a, b) => anchor(a) - anchor(b) || eventSequence(a) - eventSequence(b) || a.id.localeCompare(b.id))
 

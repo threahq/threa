@@ -44,9 +44,9 @@ export function CommandEvent({ events }: CommandEventProps) {
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <div className="flex items-center rounded hover:bg-muted/50">
+      <div className="flex min-h-10 items-center rounded hover:bg-muted/50">
         <CollapsibleTrigger asChild>
-          <button className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-3 pr-1 text-sm text-muted-foreground transition-colors">
+          <button className="flex min-h-10 min-w-0 flex-1 items-center gap-2 py-1.5 pl-3 pr-1 text-sm text-muted-foreground transition-colors">
             <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} />
             <StatusIcon status={status} />
             <span className="min-w-0 flex-1 text-left">

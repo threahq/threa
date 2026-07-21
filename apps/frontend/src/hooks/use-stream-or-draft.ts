@@ -590,7 +590,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       // Use timestamp as sequence to ensure optimistic events sort after real events
       // Real events have low sequence numbers (1, 2, 3...), timestamps are ~13 digits
-      const optimisticSequence = nextOptimisticSequence()
+      const optimisticSequence = "0"
 
       const optimisticEvent: StreamEvent = {
         id: clientId,
@@ -666,7 +666,10 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       // message stays one queue item so replay cannot dispatch the command
       // before the message reaches the server.
       await db.transaction("rw", [db.pendingMessages, db.events], async () => {
-        const anchorSequence = await getLatestPersistedSequence(streamId)
+        const [anchorSequence, allocatedSequence] = await Promise.all([
+          getLatestPersistedSequence(streamId),
+          nextOptimisticSequence(streamId),
+        ])
         await db.pendingMessages.add({
           clientId,
           workspaceId,
@@ -685,7 +688,8 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         await db.events.add({
           ...optimisticEvent,
           workspaceId,
-          _sequenceNum: sequenceToNum(optimisticEvent.sequence),
+          sequence: allocatedSequence,
+          _sequenceNum: sequenceToNum(allocatedSequence),
           ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
           _clientId: clientId,
           _status: "pending",

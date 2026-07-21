@@ -2528,6 +2528,7 @@ export async function applyReconnectBootstrapBatch(
       db.workspaceMetadata,
       db.events,
       db.pendingMessages,
+      db.pendingOperations,
     ],
     async () => {
       await Promise.all([

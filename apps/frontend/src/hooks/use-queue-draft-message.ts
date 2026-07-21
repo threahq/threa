@@ -74,7 +74,7 @@ export function useQueueDraftMessage(workspaceId: string) {
       const clientId = generateClientId()
       const now = new Date().toISOString()
       const contentMarkdown = serializeToMarkdown(input.contentJson)
-      const optimisticSequence = nextOptimisticSequence()
+      const optimisticSequence = "0"
 
       const optimisticEvent: StreamEvent = {
         id: clientId,
@@ -149,7 +149,10 @@ export function useQueueDraftMessage(workspaceId: string) {
       markPending(clientId)
 
       await db.transaction("rw", [db.pendingMessages, db.events], async () => {
-        const anchorSequence = await getLatestPersistedSequence(params.streamId)
+        const [anchorSequence, allocatedSequence] = await Promise.all([
+          getLatestPersistedSequence(params.streamId),
+          nextOptimisticSequence(params.streamId),
+        ])
         await db.pendingMessages.add({
           clientId,
           workspaceId: params.workspaceId,
@@ -171,7 +174,8 @@ export function useQueueDraftMessage(workspaceId: string) {
         await db.events.add({
           ...optimisticEvent,
           workspaceId: params.workspaceId,
-          _sequenceNum: sequenceToNum(optimisticEvent.sequence),
+          sequence: allocatedSequence,
+          _sequenceNum: sequenceToNum(allocatedSequence),
           ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
           _clientId: clientId,
           _status: "pending",
