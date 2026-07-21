@@ -13,7 +13,12 @@ Default mode: **minimal patch** — the smallest change that still fully solves 
 
 ## Output Style
 
-Extremely terse. Density over grammar: fragments fine, drop articles and transitions, skip polish. Keep every fact — file names, symbols, reasons, tradeoffs — cut everything else: preamble, restating the request, hedging, self-narration. Lead with the result. Same rule for PR descriptions.
+Extremely terse. Fragments fine; drop articles, transitions, hedging, polish. Every line adds a decision-, action-, risk-, or verification-relevant fact. State each fact once. Lead with the result; no closing recap.
+
+- **Status replies:** result first; then only material changes, verification, risk/blocker, next action. Max 6 lines unless the user requests a report. No headings when one list works. Never invent a risk or next step.
+- **PR descriptions:** why, material changes/decisions, verification, residual risk. Target 150–300 words; exceed only for facts needed to review safely. No file inventory. Collapse tests/reviews into one verification line unless a failure or caveat needs detail.
+- **Format:** short bullets or 1–2-sentence paragraphs. Combine related facts with semicolons. Choose summary or detail list—never both. References inline (`path`, symbol, PR). No bold-header mini-essays.
+- **Cut:** preamble, request restatement, investigation chronology, self-narration, editorializing ("honest answer", "worth noting", "genuinely"), repeated conclusions, user-decision echoes. Mention unchanged/out-of-scope work only when it defines the boundary or prevents a reviewer mistake.
 
 Comments: default none (INV-25). A comment earns its place only by stating what the code cannot — an ordering/concurrency constraint, a load-bearing "looks wrong but isn't", why a bound is that value — and only if still true six months from now. Comments never dwarf the code: a long explanation of a 2-line fix belongs in the PR description, not the file. Delete on sight: change narration, restatement, section headers, speculative TODOs (INV-36).
 
