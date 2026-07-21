@@ -125,9 +125,10 @@ function TabView({
 }
 
 function BarView({ connectedAt }: ViewProps) {
-  // Ghost buttons live on the dark island: white icon, white-wash hover (Leave
-  // keeps its red). One class, passed through so the manager wiring isn't re-inlined.
-  const darkBtn = "text-white hover:bg-white/10 hover:text-white"
+  // Ghost buttons live on the dark island: they inherit the island's white text,
+  // so this overrides only the (light) ghost hover — NOT the base color, which
+  // would clobber MuteButton's `text-destructive` muted tint. Leave keeps its red.
+  const darkBtn = "hover:bg-white/10 hover:text-white"
   return (
     <div className="flex items-center gap-1 px-2">
       <span
@@ -305,12 +306,12 @@ export function MobileCallDrawer({ workspaceId, streamId }: { workspaceId: strin
           {contentMode === "standard" && <TinyGalleryView {...viewProps} />}
           {contentMode === "full" && <FullscreenView {...viewProps} />}
         </div>
-        {/* Handle drives drag-to-video from `compact`/`standard`. Hidden on the
-            resting `min` pill (tap it to expand) and on `full`. Kept mounted while
-            dragging even once content crosses into `full`: it holds the pointer
-            capture + the pointerup/cancel settle, so unmounting it mid-drag would
-            strand `dragging` true and wedge the drawer. */}
-        {(dragging || (contentMode !== "full" && contentMode !== "min")) && (
+        {/* The handle is the drag affordance AND the "this pill is interactive /
+            expandable" cue on the collapsed island; shown on every mode but `full`.
+            Kept mounted while dragging even once content crosses into `full`: it
+            holds the pointer capture + the pointerup/cancel settle, so unmounting it
+            mid-drag would strand `dragging` true and wedge the drawer. */}
+        {(dragging || contentMode !== "full") && (
           <GrabHandle
             onDark={contentMode === "min" || contentMode === "compact"}
             onPointerDown={onPointerDown}

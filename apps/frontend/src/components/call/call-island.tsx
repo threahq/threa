@@ -29,8 +29,10 @@ export function MobileCallJoining() {
   return (
     <div className={ISLAND_WRAP} style={{ paddingTop: "env(safe-area-inset-top)" }}>
       {isError ? (
-        <div className="pointer-events-auto mt-2 w-[min(20rem,calc(100vw-1.5rem))] rounded-2xl border bg-popover px-4 text-popover-foreground shadow-xl">
-          <PreJoinGate />
+        <div
+          className={cn("pointer-events-auto mt-2 w-[min(20rem,calc(100vw-1.5rem))] rounded-2xl px-4", ISLAND_SURFACE)}
+        >
+          <PreJoinGate onDark />
         </div>
       ) : (
         <div
@@ -46,7 +48,7 @@ export function MobileCallJoining() {
             type="button"
             aria-label="Cancel joining"
             onClick={cancel}
-            className="flex h-7 w-7 items-center justify-center rounded-full text-white/70 hover:bg-white/10 hover:text-white"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-white/70 hover:bg-white/10 hover:text-white"
           >
             <X className="h-4 w-4" />
           </button>
