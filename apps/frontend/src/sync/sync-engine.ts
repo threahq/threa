@@ -783,8 +783,9 @@ export class SyncEngine {
         // bootstrap lands in the newly-active account's IDB and cache.
         if (this.isDestroyed) return
 
-        // Write to IDB (source of truth)
-        await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
+        // Write to IDB (source of truth); the returned bootstrap carries the
+        // per-stream-merged counter fields so the cache write below matches IDB.
+        bootstrap = await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
 
         // Write to TanStack cache (bridge for coordinated-loading, sidebar loading/error)
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)

@@ -3,7 +3,7 @@ import type { LastMessagePreview, WorkspaceBootstrap } from "@threa/types"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { activityKeys } from "@/hooks/use-activity"
-import { toCounterState, withCounterState, type UnreadCounterState } from "./unread-counters"
+import { diffCounterStreams, toCounterState, withCounterState, type UnreadCounterState } from "./unread-counters"
 
 /** One absolute (or relative) counter mutation, expressed as pure state math. */
 export type CounterMutator = (state: UnreadCounterState) => UnreadCounterState
@@ -61,7 +61,13 @@ export async function putCountersIdb(workspaceId: string, mutators: CounterMutat
   // Normalize the held set before folding: a row cached before `unreadActivities`
   // shipped lacks it, and the mutators read it directly.
   const seed = { ...state, unreadActivities: state.unreadActivities ?? [] }
-  await db.unreadState.put({ ...seed, ...fold(mutators, seed), _cachedAt: Date.now() })
+  const folded = fold(mutators, seed)
+  const now = Date.now()
+  // Stamp per-stream touch times so bootstrap merges know which streams' local
+  // state postdates the fetch window (mergeBootstrapUnreadFields).
+  const counterTouchedAt = { ...state.counterTouchedAt }
+  for (const streamId of diffCounterStreams(seed, folded)) counterTouchedAt[streamId] = now
+  await db.unreadState.put({ ...seed, ...folded, counterTouchedAt, _cachedAt: now })
 }
 
 /** Write the latest preview per stream to IDB. Must run inside an open `rw`

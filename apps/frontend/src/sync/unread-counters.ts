@@ -379,6 +379,139 @@ export function bootstrapActivityCacheFields(bootstrap: WorkspaceBootstrap): {
   return { unreadActivities: rows, ...deriveActivityCounts(rows) }
 }
 
+/** Streams whose counter state (unread/ordinal/overlay/activity rows) differs between two states. */
+export function diffCounterStreams(prev: UnreadCounterState, next: UnreadCounterState): Set<string> {
+  const out = new Set<string>()
+  if (prev === next) return out
+  for (const record of [
+    [prev.unreadCounts, next.unreadCounts],
+    [prev.latestOrdinals ?? {}, next.latestOrdinals ?? {}],
+  ] as const) {
+    const [a, b] = record
+    for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      if ((a[id] ?? 0) !== (b[id] ?? 0)) out.add(id)
+    }
+  }
+  const overlayIds = new Set([...Object.keys(prev.readMessageIds ?? {}), ...Object.keys(next.readMessageIds ?? {})])
+  for (const id of overlayIds) {
+    const a = prev.readMessageIds?.[id] ?? []
+    const b = next.readMessageIds?.[id] ?? []
+    if (a.length !== b.length || a.some((v, i) => v !== b[i])) out.add(id)
+  }
+  const sig = (rows: Activity[]): Map<string, string> => {
+    const byStream = new Map<string, string[]>()
+    for (const row of rows) {
+      if (row.streamId === null) continue
+      const ids = byStream.get(row.streamId) ?? []
+      ids.push(row.id)
+      byStream.set(row.streamId, ids)
+    }
+    return new Map([...byStream].map(([id, ids]) => [id, ids.sort().join(" ")]))
+  }
+  const prevSig = sig(prev.unreadActivities)
+  const nextSig = sig(next.unreadActivities)
+  for (const id of new Set([...prevSig.keys(), ...nextSig.keys()])) {
+    if (prevSig.get(id) !== nextSig.get(id)) out.add(id)
+  }
+  return out
+}
+
+/**
+ * Keep only touch stamps at or after `since`. Older entries are dead weight:
+ * every future bootstrap's `fetchStartedAt` is later, so they can never win a
+ * merge again.
+ */
+export function pruneCounterTouches(
+  touches: Record<string, number> | undefined,
+  since: number | undefined
+): Record<string, number> {
+  if (!touches || since === undefined) return {}
+  const out: Record<string, number> = {}
+  for (const [streamId, touchedAt] of Object.entries(touches)) {
+    if (touchedAt >= since) out[streamId] = touchedAt
+  }
+  return out
+}
+
+/** The local counter cache slice the bootstrap merge reads (structural subset of `CachedUnreadState`). */
+export interface LocalCounterCache {
+  unreadCounts: Record<string, number>
+  unreadActivities?: Activity[]
+  latestOrdinals?: Record<string, number>
+  readMessageIds?: Record<string, string[]>
+  mutedStreamIds: string[]
+  /** Per-stream timestamp of the last local counter write — see `diffCounterStreams` stamping in `putCountersIdb`. */
+  counterTouchedAt?: Record<string, number>
+}
+
+/**
+ * Merge a workspace bootstrap's counter fields with the local cache,
+ * PER STREAM: the server snapshot wins except for streams whose local counter
+ * state was touched during the fetch window (a socket event or optimistic read
+ * landed after `fetchStartedAt` — the snapshot may predate it, INV-20). The
+ * old row-level `_cachedAt` skip let one busy stream veto the server's truth
+ * for every stream, so a drifted local count could survive bootstraps for days.
+ */
+export function mergeBootstrapUnreadFields(
+  bootstrap: WorkspaceBootstrap,
+  local: LocalCounterCache | undefined,
+  fetchStartedAt: number | undefined
+): {
+  unreadCounts: Record<string, number>
+  unreadActivities: Activity[]
+  activityCounts: Record<string, number>
+  mentionCounts: Record<string, number>
+  unreadActivityCount: number
+  latestOrdinals: Record<string, number>
+  readMessageIds: Record<string, string[]>
+  mutedStreamIds: string[]
+  counterTouchedAt: Record<string, number>
+} {
+  const counterTouchedAt = pruneCounterTouches(local?.counterTouchedAt, fetchStartedAt)
+  const touched = new Set(Object.keys(counterTouchedAt))
+  if (!local || touched.size === 0) {
+    return {
+      unreadCounts: bootstrap.unreadCounts,
+      ...bootstrapActivityCacheFields(bootstrap),
+      latestOrdinals: bootstrap.messageCounts ?? {},
+      readMessageIds: bootstrap.readMessageIds ?? {},
+      mutedStreamIds: bootstrap.mutedStreamIds,
+      counterTouchedAt,
+    }
+  }
+  const unreadCounts = { ...bootstrap.unreadCounts }
+  const latestOrdinals = { ...bootstrap.messageCounts }
+  const readMessageIds = { ...bootstrap.readMessageIds }
+  const mutedStreamIds = new Set(bootstrap.mutedStreamIds)
+  for (const streamId of touched) {
+    unreadCounts[streamId] = local.unreadCounts[streamId] ?? 0
+    // The triple stays paired: a stream keeping its local unread keeps its
+    // local ordinal and overlay too — mixing sources shifts the implied read.
+    const localOrdinal = local.latestOrdinals?.[streamId]
+    if (localOrdinal !== undefined) latestOrdinals[streamId] = localOrdinal
+    else delete latestOrdinals[streamId]
+    const localOverlay = local.readMessageIds?.[streamId]
+    if (localOverlay !== undefined) readMessageIds[streamId] = localOverlay
+    else delete readMessageIds[streamId]
+    if (local.mutedStreamIds.includes(streamId)) mutedStreamIds.add(streamId)
+    else mutedStreamIds.delete(streamId)
+  }
+  // Rows without a streamId can't be stream-touched — they stay server-sourced.
+  const rows = [
+    ...(bootstrap.unreadActivities ?? []).filter((a) => !a.isSelf && !(a.streamId !== null && touched.has(a.streamId))),
+    ...(local.unreadActivities ?? []).filter((a) => a.streamId !== null && touched.has(a.streamId)),
+  ]
+  return {
+    unreadCounts,
+    unreadActivities: rows,
+    ...deriveActivityCounts(rows),
+    latestOrdinals,
+    readMessageIds,
+    mutedStreamIds: Array.from(mutedStreamIds),
+    counterTouchedAt,
+  }
+}
+
 /** The counter slice of a workspace bootstrap (`messageCounts` are the latest ordinals). */
 export function toCounterState(bootstrap: WorkspaceBootstrap): UnreadCounterState {
   // `unreadActivities` is the activity source of truth; the count fields are

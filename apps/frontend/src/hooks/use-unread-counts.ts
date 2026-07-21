@@ -147,6 +147,9 @@ export function useUnreadCounts(workspaceId: string) {
                   unreadCounts: { ...state.unreadCounts, [streamId]: 0 },
                   readMessageIds: withoutOverlay(state.readMessageIds, streamId),
                 }),
+            // Touch stamp: an in-flight bootstrap's per-stream merge must not
+            // resurrect the pre-read snapshot (mergeBootstrapUnreadFields).
+            counterTouchedAt: { ...state.counterTouchedAt, [streamId]: now },
             _cachedAt: now,
           })
         }
@@ -257,11 +260,14 @@ export function useUnreadCounts(workspaceId: string) {
       db.transaction("rw", [db.unreadState], async () => {
         const state = await db.unreadState.get(workspaceId)
         if (!state) return
+        const now = Date.now()
         const newUnread = { ...state.unreadCounts }
         const newReadMessageIds = { ...state.readMessageIds }
+        const counterTouchedAt = { ...state.counterTouchedAt }
         for (const streamId of updatedStreamIds) {
           newUnread[streamId] = 0
           delete newReadMessageIds[streamId]
+          counterTouchedAt[streamId] = now
         }
         await db.unreadState.put({
           ...state,
@@ -269,7 +275,8 @@ export function useUnreadCounts(workspaceId: string) {
           readMessageIds: newReadMessageIds,
           unreadActivities: [],
           ...deriveActivityCounts([]),
-          _cachedAt: Date.now(),
+          counterTouchedAt,
+          _cachedAt: now,
         })
       })
     },

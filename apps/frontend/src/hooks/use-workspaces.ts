@@ -108,10 +108,10 @@ export function useWorkspaceBootstrap(workspaceId: string) {
         streamCount: bootstrap.streams.length,
         userCount: bootstrap.users.length,
       })
-      // Shred bootstrap into individual IDB tables (including unreadState + userPreferences)
-      await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
-
-      return bootstrap
+      // Shred bootstrap into individual IDB tables (including unreadState +
+      // userPreferences); cache the returned merged bootstrap so the query
+      // cache carries the same counter values as IDB.
+      return await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
     },
     // Keep terminal auth/not-found errors disabled to avoid loops.
     // Non-terminal errors can recover automatically on future attempts.
