@@ -5,10 +5,10 @@ import { cn } from "@/lib/utils"
 import { useCallLaunch } from "./call-launch-context"
 
 /**
- * The call-start affordance: a small menu offering "Start call" (mic only, opens
- * to the compact bar) and "Start with camera" (camera publishing at join, opens to
- * the gallery). The camera decision is explicit — like the "Copy as markdown" menu
- * — rather than a hidden default. The launch runs inside the item click's user
+ * The call-start affordance: a small menu offering "Start voice call" (mic only,
+ * opens to the compact bar) and "Start video call" (camera publishing at join, opens
+ * to the gallery). The voice/video decision is explicit — like the "Copy as markdown"
+ * menu — rather than a hidden default. The launch runs inside the item click's user
  * gesture so iOS honors the AudioContext (INV via CallLaunch). Disabled (and the
  * menu unopenable) while a call is already active.
  */
@@ -46,11 +46,11 @@ export function CallStartMenu({
       <DropdownMenuContent align="end">
         <DropdownMenuItem onClick={() => start(false)}>
           <Phone className="mr-2 h-4 w-4" />
-          {startLabel}
+          Start voice call
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => start(true)}>
           <Video className="mr-2 h-4 w-4" />
-          Start with camera
+          Start video call
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
