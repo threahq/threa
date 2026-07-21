@@ -211,6 +211,17 @@ describe("CallDock — connected roster", () => {
     expect(video.srcObject).toBe(fakeStream)
   })
 
+  it("mirrors the self tile's video (desktop default) but not a peer's", () => {
+    const { container } = renderDock(makeManager())
+    enterConnectedCall([
+      participant({ userId: "usr_self", endpointId: "callep_self" }),
+      participant({ userId: "usr_peer", endpointId: "callep_peer" }),
+    ])
+    // Desktop default (auto → mirror any camera); peers always see the un-mirrored feed.
+    expect(container.querySelector('[data-user-id="usr_self"] video')?.className).toContain("-scale-x-100")
+    expect(container.querySelector('[data-user-id="usr_peer"] video')?.className).not.toContain("-scale-x-100")
+  })
+
   it("reflects a local mute toggle in the control label without a toast", () => {
     renderDock(makeManager())
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])

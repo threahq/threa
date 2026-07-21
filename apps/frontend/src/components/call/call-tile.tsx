@@ -4,10 +4,12 @@ import { getAvatarUrl } from "@threa/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import type { CallRosterParticipant } from "@/stores/call-store"
+import { resolveSelfMirror, useCallPrefs } from "@/stores/call-prefs-store"
 import { useCallManager } from "./call-manager-context"
-import { useCallMediaEpoch, useCallMuted, useSpeakingLevelRef } from "./call-store-hooks"
+import { useCallDevices, useCallMediaEpoch, useCallMuted, useSpeakingLevelRef } from "./call-store-hooks"
 
 interface CallTileProps {
   participant: CallRosterParticipant
@@ -58,6 +60,14 @@ export function CallTile({ participant, workspaceId, isSelf, stage = false, fill
   const muted = isSelf ? selfMuted : participant.mediaState.muted === true
   const reconnecting = participant.connectionStatus === "reconnecting"
 
+  // Mirror ONLY the local self-view (peers always see the un-mirrored feed). A
+  // mirrored self-view feels natural like a bathroom mirror; `auto` follows the
+  // camera facing (front/desktop mirror, mobile back normal).
+  const { selfMirror } = useCallPrefs()
+  const { facingMode } = useCallDevices()
+  const isMobile = useIsMobile()
+  const mirror = isSelf && resolveSelfMirror(selfMirror, { isMobile, facingMode })
+
   return (
     <div
       className={cn(
@@ -83,7 +93,7 @@ export function CallTile({ participant, workspaceId, isSelf, stage = false, fill
         autoPlay
         playsInline
         muted
-        className={cn("h-full w-full object-cover", !hasVideo && "hidden")}
+        className={cn("h-full w-full object-cover", mirror && "-scale-x-100", !hasVideo && "hidden")}
         data-testid="call-tile-video"
       />
       {!hasVideo && (
