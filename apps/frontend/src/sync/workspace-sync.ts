@@ -402,6 +402,36 @@ export function mergeReconnectWorkspaceBootstrap({
   const localStreamById = new Map(localStreams.map((stream) => [stream.id, stream]))
   const localMembershipByStreamId = new Map(localMemberships.map((membership) => [membership.streamId, membership]))
 
+  // One override per stream, shared by the touched loop and the stale loop so
+  // the two field lists can't drift apart. Counters and mute membership merge
+  // on SEPARATE freshness (counterTouchedAt vs mutedTouchedAt): a mute-only
+  // write must not freeze that stream's counter triple against a fresher
+  // server snapshot — the stream-scoped recurrence of the row-level bug.
+  const applyLocalCounterOverride = (streamId: string): void => {
+    if (!localUnreadState) return
+    unreadCounts[streamId] = localUnreadState.unreadCounts[streamId] ?? 0
+    const localOrdinal = localUnreadState.latestOrdinals?.[streamId]
+    if (localOrdinal !== undefined) {
+      messageCounts[streamId] = localOrdinal
+    } else {
+      delete messageCounts[streamId]
+    }
+    const localOverlay = localUnreadState.readMessageIds?.[streamId]
+    if (localOverlay !== undefined) {
+      readMessageIds[streamId] = localOverlay
+    } else {
+      delete readMessageIds[streamId]
+    }
+  }
+  const applyLocalMuteOverride = (streamId: string): void => {
+    if (!localUnreadState) return
+    if (localUnreadState.mutedStreamIds.includes(streamId)) {
+      mutedStreamIds.add(streamId)
+    } else {
+      mutedStreamIds.delete(streamId)
+    }
+  }
+
   if (fetchStartedAt !== undefined) {
     for (const stream of localStreams) {
       if (stream._cachedAt < fetchStartedAt) continue
@@ -427,24 +457,12 @@ export function mergeReconnectWorkspaceBootstrap({
       for (const [streamId, touchedAt] of Object.entries(localUnreadState.counterTouchedAt ?? {})) {
         if (touchedAt < fetchStartedAt) continue
         if (successfulStreamIds.has(streamId)) continue
-        unreadCounts[streamId] = localUnreadState.unreadCounts[streamId] ?? 0
-        const localOrdinal = localUnreadState.latestOrdinals?.[streamId]
-        if (localOrdinal !== undefined) {
-          messageCounts[streamId] = localOrdinal
-        } else {
-          delete messageCounts[streamId]
-        }
-        const localOverlay = localUnreadState.readMessageIds?.[streamId]
-        if (localOverlay !== undefined) {
-          readMessageIds[streamId] = localOverlay
-        } else {
-          delete readMessageIds[streamId]
-        }
-        if (localUnreadState.mutedStreamIds.includes(streamId)) {
-          mutedStreamIds.add(streamId)
-        } else {
-          mutedStreamIds.delete(streamId)
-        }
+        applyLocalCounterOverride(streamId)
+      }
+      for (const [streamId, touchedAt] of Object.entries(localUnreadState.mutedTouchedAt ?? {})) {
+        if (touchedAt < fetchStartedAt) continue
+        if (successfulStreamIds.has(streamId)) continue
+        applyLocalMuteOverride(streamId)
       }
     }
   }
@@ -463,24 +481,8 @@ export function mergeReconnectWorkspaceBootstrap({
     }
 
     if (localUnreadState) {
-      unreadCounts[streamId] = localUnreadState.unreadCounts[streamId] ?? 0
-      const localOrdinal = localUnreadState.latestOrdinals?.[streamId]
-      if (localOrdinal !== undefined) {
-        messageCounts[streamId] = localOrdinal
-      } else {
-        delete messageCounts[streamId]
-      }
-      const localOverlay = localUnreadState.readMessageIds?.[streamId]
-      if (localOverlay !== undefined) {
-        readMessageIds[streamId] = localOverlay
-      } else {
-        delete readMessageIds[streamId]
-      }
-      if (localUnreadState.mutedStreamIds.includes(streamId)) {
-        mutedStreamIds.add(streamId)
-      } else {
-        mutedStreamIds.delete(streamId)
-      }
+      applyLocalCounterOverride(streamId)
+      applyLocalMuteOverride(streamId)
     }
   }
 
@@ -1141,9 +1143,11 @@ export function registerWorkspaceSocketHandlers(
         await db.unreadState.put({
           ...unread,
           mutedStreamIds: Array.from(mutedStreamIds),
-          // Touch stamp so an in-flight bootstrap's per-stream merge keeps this
-          // stream's local mute membership (mergeBootstrapUnreadFields).
-          counterTouchedAt: { ...unread.counterTouchedAt, [payload.streamId]: now },
+          // Mute-specific stamp so an in-flight bootstrap's merge keeps this
+          // stream's local mute membership WITHOUT freezing its counter triple
+          // (counterTouchedAt would make the merge prefer possibly-stale local
+          // counts for an unrelated mute toggle).
+          mutedTouchedAt: { ...unread.mutedTouchedAt, [payload.streamId]: now },
           _cachedAt: now,
         })
       }
@@ -2608,6 +2612,7 @@ export async function applyReconnectBootstrapBatch(
           readMessageIds: finalBootstrap.readMessageIds,
           mutedStreamIds: finalBootstrap.mutedStreamIds,
           counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
+          mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
           _cachedAt: now,
         }),
         db.workspaceMetadata.put({
@@ -2707,6 +2712,7 @@ export async function applyReconnectBootstrapBatch(
       readMessageIds: finalBootstrap.readMessageIds,
       mutedStreamIds: finalBootstrap.mutedStreamIds,
       counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
+      mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
       _cachedAt: now,
     },
     userPreferences: {

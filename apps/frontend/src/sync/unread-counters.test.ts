@@ -664,18 +664,49 @@ describe("mergeBootstrapUnreadFields", () => {
     expect(merged.counterTouchedAt).toEqual({ s1: touchedAt })
   })
 
-  it("keeps local mute membership for touched streams only", () => {
+  it("keeps local mute membership for mute-touched streams only", () => {
     const fetchStartedAt = Date.now() - 1000
     const merged = mergeBootstrapUnreadFields(
       bootstrap,
       {
         unreadCounts: {},
         mutedStreamIds: ["s1"],
-        counterTouchedAt: { s1: fetchStartedAt + 100 },
+        mutedTouchedAt: { s1: fetchStartedAt + 100 },
       },
       fetchStartedAt
     )
     expect(merged.mutedStreamIds.sort()).toEqual(["s1", "s9"])
+  })
+
+  it("a mute-only touch does not freeze that stream's counters (and vice versa)", () => {
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeBootstrapUnreadFields(
+      bootstrap,
+      {
+        // s1: drifted local zero + a mute toggle during the fetch. The mute
+        // must survive; the counters must still heal from the server.
+        unreadCounts: { s1: 0 },
+        latestOrdinals: { s1: 10 },
+        mutedStreamIds: ["s1"],
+        mutedTouchedAt: { s1: fetchStartedAt + 100 },
+      },
+      fetchStartedAt
+    )
+    expect(merged.unreadCounts).toEqual({ s1: 4, s2: 2 })
+    expect(merged.mutedStreamIds.sort()).toEqual(["s1", "s9"])
+    // Counter-touched stream keeps counters but takes server mute membership.
+    const counterOnly = mergeBootstrapUnreadFields(
+      bootstrap,
+      {
+        unreadCounts: { s9: 1 },
+        latestOrdinals: { s9: 3 },
+        mutedStreamIds: [],
+        counterTouchedAt: { s9: fetchStartedAt + 100 },
+      },
+      fetchStartedAt
+    )
+    expect(counterOnly.unreadCounts.s9).toBe(1)
+    expect(counterOnly.mutedStreamIds).toEqual(["s9"])
   })
 
   it("without a local row or fetch timestamp the server snapshot wins", () => {

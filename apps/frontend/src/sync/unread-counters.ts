@@ -442,6 +442,8 @@ export interface LocalCounterCache {
   mutedStreamIds: string[]
   /** Per-stream timestamp of the last local counter write — see `diffCounterStreams` stamping in `putCountersIdb`. */
   counterTouchedAt?: Record<string, number>
+  /** Per-stream timestamp of the last local mute toggle — merged separately so a mute can't freeze counters. */
+  mutedTouchedAt?: Record<string, number>
 }
 
 /**
@@ -466,10 +468,13 @@ export function mergeBootstrapUnreadFields(
   readMessageIds: Record<string, string[]>
   mutedStreamIds: string[]
   counterTouchedAt: Record<string, number>
+  mutedTouchedAt: Record<string, number>
 } {
   const counterTouchedAt = pruneCounterTouches(local?.counterTouchedAt, fetchStartedAt)
+  const mutedTouchedAt = pruneCounterTouches(local?.mutedTouchedAt, fetchStartedAt)
   const touched = new Set(Object.keys(counterTouchedAt))
-  if (!local || touched.size === 0) {
+  const muteTouched = new Set(Object.keys(mutedTouchedAt))
+  if (!local || (touched.size === 0 && muteTouched.size === 0)) {
     return {
       unreadCounts: bootstrap.unreadCounts,
       ...bootstrapActivityCacheFields(bootstrap),
@@ -477,12 +482,12 @@ export function mergeBootstrapUnreadFields(
       readMessageIds: bootstrap.readMessageIds ?? {},
       mutedStreamIds: bootstrap.mutedStreamIds,
       counterTouchedAt,
+      mutedTouchedAt,
     }
   }
   const unreadCounts = { ...bootstrap.unreadCounts }
   const latestOrdinals = { ...bootstrap.messageCounts }
   const readMessageIds = { ...bootstrap.readMessageIds }
-  const mutedStreamIds = new Set(bootstrap.mutedStreamIds)
   for (const streamId of touched) {
     unreadCounts[streamId] = local.unreadCounts[streamId] ?? 0
     // The triple stays paired: a stream keeping its local unread keeps its
@@ -493,6 +498,12 @@ export function mergeBootstrapUnreadFields(
     const localOverlay = local.readMessageIds?.[streamId]
     if (localOverlay !== undefined) readMessageIds[streamId] = localOverlay
     else delete readMessageIds[streamId]
+  }
+  // Mute membership merges on its OWN freshness — a mute-only toggle must not
+  // freeze the stream's counter triple, and counter writes must not carry a
+  // stale local mute membership over the server's.
+  const mutedStreamIds = new Set(bootstrap.mutedStreamIds)
+  for (const streamId of muteTouched) {
     if (local.mutedStreamIds.includes(streamId)) mutedStreamIds.add(streamId)
     else mutedStreamIds.delete(streamId)
   }
@@ -509,6 +520,7 @@ export function mergeBootstrapUnreadFields(
     readMessageIds,
     mutedStreamIds: Array.from(mutedStreamIds),
     counterTouchedAt,
+    mutedTouchedAt,
   }
 }
 

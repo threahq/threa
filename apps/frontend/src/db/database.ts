@@ -554,6 +554,12 @@ export interface CachedUnreadState {
    * before the field shipped.
    */
   counterTouchedAt?: Record<string, number>
+  /**
+   * Mute-membership sibling of `counterTouchedAt`, stamped by the
+   * notification-level handler. Separate so a mute-only toggle doesn't make
+   * the bootstrap merge prefer that stream's possibly-stale local counters.
+   */
+  mutedTouchedAt?: Record<string, number>
   _cachedAt: number
 }
 
