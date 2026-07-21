@@ -94,6 +94,12 @@ interface CfRenegotiateResult {
   sessionDescription?: CfSessionDescription
 }
 
+interface CfCloseTracksResult {
+  tracks?: CfTrackResult[]
+  /** CF's answer when the close carried an offer (unpublishing a local track); apply it to finish the reneg. */
+  sessionDescription?: CfSessionDescription
+}
+
 type PostJson = <T>(path: string, body: unknown) => Promise<T>
 
 /**
@@ -113,7 +119,7 @@ export interface CallProxyClient {
     mids: string[]
     unpublishKinds?: PublishedTrackKind[]
     sdp?: CfSessionDescription
-  }): Promise<unknown>
+  }): Promise<CfCloseTracksResult>
 }
 
 export function createCallProxyClient(args: {
@@ -323,11 +329,17 @@ export class CloudflareSfuTransport implements MediaTransport {
       const pc = this.requirePc()
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
-      await this.proxy!.closeTracks({
+      const result = await this.proxy!.closeTracks({
         mids: [mid],
         unpublishKinds: [kind],
         sdp: { type: "offer", sdp: offer.sdp ?? "" },
       })
+      // The close carried an offer (removing our m-line), so CF answers it. Apply
+      // it — leaving the PC in `have-local-offer` corrupts the next negotiation and
+      // the following publish (re-enabling the camera) fails.
+      if (result.sessionDescription?.type === "answer") {
+        await pc.setRemoteDescription(result.sessionDescription)
+      }
     })
   }
 

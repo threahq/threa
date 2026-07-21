@@ -168,6 +168,31 @@ describe("CloudflareSfuTransport", () => {
     expect(closeCall?.body.mids).toEqual(["remote-0"])
   })
 
+  it("unpublish applies CF's close answer so the PC leaves have-local-offer and re-publish works", async () => {
+    const closeAnswer = { type: "answer", sdp: "close-answer-sdp" }
+    const pc = makeFakePc()
+    const { transport } = makeTransport({
+      pc,
+      post: async (path: string, body: unknown) => {
+        void body
+        if (path.endsWith("/session")) return { cfSessionId: "cf", idempotent: false }
+        if (path.endsWith("/tracks/publish")) return { requiresImmediateRenegotiation: false, tracks: [] }
+        if (path.endsWith("/tracks/close")) return { tracks: [], sessionDescription: closeAnswer }
+        return {}
+      },
+    })
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    await transport.publish("camera", makeTrack("video"))
+    await transport.unpublish("camera")
+
+    // The close carried an offer → CF answers it; without applying the answer the PC
+    // stays in have-local-offer and the re-publish below fails (the camera on→off→on bug).
+    expect(pc.setRemoteDescription).toHaveBeenCalledWith(closeAnswer)
+
+    await expect(transport.publish("camera", makeTrack("video"))).resolves.toBeUndefined()
+    expect(pc.addTransceiver).toHaveBeenCalledTimes(2)
+  })
+
   it("keeps the queue alive after a failed job", async () => {
     let call = 0
     const { transport } = makeTransport({
