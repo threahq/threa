@@ -28,7 +28,11 @@ function deviceLabel(device: MediaDeviceInfo, index: number, fallbackPrefix = "D
 
 export function DevicePickerMenu({ devices }: { devices: CallDeviceState }) {
   const manager = useCallManager()
-  const hasCameras = devices.cameras.length > 0
+  const isMobile = useIsMobile()
+  // Mobile hides per-camera selection: phones enumerate several back cameras
+  // (wide/ultrawide/tele) and picking a specific one by exact deviceId can reject
+  // the capture (freezes the feed, then errors). Front/back is the Flip button.
+  const hasCameras = !isMobile && devices.cameras.length > 0
   const hasInputs = devices.inputs.length > 0
   const hasOutputs = OUTPUT_SELECTION_SUPPORTED && devices.outputs.length > 0
   if (!hasCameras && !hasInputs && !hasOutputs) return null
