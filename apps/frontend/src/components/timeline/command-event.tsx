@@ -27,6 +27,7 @@ export function CommandEvent({ events }: CommandEventProps) {
   const failedEvent = events.find((e) => e.eventType === "command_failed")
   const localStatus = (dispatchedEvent as (StreamEvent & { _status?: string }) | undefined)?._status
   const cancellation = useCommandDispatchCancellation(
+    (dispatchedEvent as (StreamEvent & { workspaceId?: string }) | undefined)?.workspaceId ?? "",
     dispatchedEvent?.streamId ?? "",
     (dispatchedEvent?.payload as CommandDispatchedPayload | undefined)?.commandId ?? "",
     localStatus

@@ -4,6 +4,7 @@ import { db, sequenceToNum, type CachedEvent } from "@/db"
 import { processOperationQueue } from "@/sync/operation-queue"
 import { cancelCommandDispatch } from "./use-command-dispatch-queue"
 
+const workspaceId = "ws_1"
 const commandId = "temp_cmd_1"
 const streamId = "stream_1"
 
@@ -49,10 +50,26 @@ describe("cancelCommandDispatch", () => {
       retryCount: 0,
     })
 
-    await cancelCommandDispatch(streamId, commandId)
+    await cancelCommandDispatch(workspaceId, streamId, commandId)
 
     expect(await db.events.where("streamId").equals(streamId).toArray()).toEqual([])
     expect(await db.pendingOperations.toArray()).toEqual([])
+  })
+
+  it("does not cancel a command from another workspace", async () => {
+    await db.events.put(commandEvent(commandId, "command_dispatched"))
+    await db.pendingOperations.add({
+      id: "op_other_workspace",
+      workspaceId,
+      type: "dispatch_command",
+      payload: { streamId, command: "/thinking low", optimisticEventId: commandId },
+      createdAt: 1,
+      retryCount: 0,
+    })
+
+    expect(await cancelCommandDispatch("ws_other", streamId, commandId)).toBe(false)
+    expect(await db.events.get(commandId)).toBeDefined()
+    expect(await db.pendingOperations.get("op_other_workspace")).toBeDefined()
   })
 
   it("preserves the ordering anchor when a dispatch fails permanently", async () => {
@@ -103,7 +120,7 @@ describe("cancelCommandDispatch", () => {
     )
 
     expect((await db.pendingOperations.get("op_retry"))?.startedAt).toBeDefined()
-    expect(await cancelCommandDispatch(streamId, commandId)).toBe(false)
+    expect(await cancelCommandDispatch(workspaceId, streamId, commandId)).toBe(false)
   })
 
   it("refuses cancellation while a dispatch request is in flight", async () => {
@@ -136,7 +153,7 @@ describe("cancelCommandDispatch", () => {
       command: "/thinking low",
       clientCommandId: commandId,
     })
-    expect(await cancelCommandDispatch(streamId, commandId)).toBe(false)
+    expect(await cancelCommandDispatch(workspaceId, streamId, commandId)).toBe(false)
     resolveDispatch({
       success: true,
       commandId: "cmd_confirmed",

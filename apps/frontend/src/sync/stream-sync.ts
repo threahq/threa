@@ -426,7 +426,7 @@ async function writeBootstrapEventsAndStream(
         sequenceToNum(realEvent.sequence),
         optimistic.id
       )
-      await db.events.delete(optimistic.id)
+      await db.events.bulkDelete([optimistic.id, `${optimistic.id}:failed`])
       const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
       await db.pendingOperations.bulkDelete(
         operations
@@ -1262,7 +1262,7 @@ export function registerStreamSocketHandlers(
           sequenceToNum(payload.event.sequence),
           optimisticCommand.id
         )
-        await db.events.delete(commandClientId)
+        await db.events.bulkDelete([commandClientId, `${commandClientId}:failed`])
         const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
         await db.pendingOperations.bulkDelete(
           operations

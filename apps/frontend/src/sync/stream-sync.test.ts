@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { QueryClient } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
-import { db } from "@/db"
+import { db, type CachedEvent } from "@/db"
 import {
   applyStreamBootstrap,
   detectSequenceGap,
@@ -586,6 +586,13 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
       _status: "pending",
       _cachedAt: 1,
     })
+    await db.events.put({
+      ...((await db.events.get("temp_command")) as CachedEvent),
+      id: "temp_command:failed",
+      eventType: "command_failed",
+      payload: { commandId: "temp_command", error: "Timed out" },
+      _status: "failed",
+    })
     await db.pendingOperations.add({
       id: "op_command",
       workspaceId: "ws_1",
@@ -610,8 +617,9 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     expect({
       server: (await db.events.get("evt_command"))?.id,
       optimistic: await db.events.get("temp_command"),
+      failed: await db.events.get("temp_command:failed"),
       operation: await db.pendingOperations.get("op_command"),
-    }).toEqual({ server: "evt_command", optimistic: undefined, operation: undefined })
+    }).toEqual({ server: "evt_command", optimistic: undefined, failed: undefined, operation: undefined })
   })
 
   it("collapses an optimistic row when the bootstrap carries its server copy (reload-during-send race)", async () => {
@@ -1298,6 +1306,7 @@ describe("registerStreamSocketHandlers — E2E send reconciliation seeds the dec
     await db.events.clear()
     await db.streams.clear()
     await db.pendingMessages.clear()
+    await db.pendingOperations.clear()
     clearDecryptCache()
   })
 
@@ -1365,6 +1374,63 @@ describe("registerStreamSocketHandlers — E2E send reconciliation seeds the dec
     expect(cached?.status).toBe("decrypted")
     expect(cached?.value?.contentMarkdown).toBe("secret")
     expect(cached?.value?.contentJson).toEqual(plaintextJson)
+
+    cleanup()
+  })
+
+  it("removes a failed command sidecar when the live server event confirms the command", async () => {
+    const streamId = "stream_command_echo"
+    const optimistic = {
+      id: "temp_command_echo",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "999",
+      _sequenceNum: 999,
+      eventType: "command_dispatched" as const,
+      payload: { commandId: "temp_command_echo", name: "stop", args: "", status: "dispatched" },
+      actorId: "user_1",
+      actorType: "user" as const,
+      createdAt: new Date().toISOString(),
+      _status: "failed" as const,
+      _cachedAt: Date.now(),
+    }
+    await db.events.bulkPut([
+      optimistic,
+      {
+        ...optimistic,
+        id: "temp_command_echo:failed",
+        eventType: "command_failed",
+        payload: { commandId: "temp_command_echo", error: "Timed out" },
+      },
+    ])
+
+    const { socket, emit } = createTestSocket()
+    const queryClient = new QueryClient()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("command:dispatched", {
+      workspaceId: "ws_1",
+      streamId,
+      event: {
+        id: "evt_command_echo",
+        streamId,
+        sequence: "1000",
+        eventType: "command_dispatched",
+        payload: {
+          commandId: "cmd_echo",
+          clientCommandId: "temp_command_echo",
+          name: "stop",
+          args: "",
+          status: "dispatched",
+        },
+        actorId: "user_1",
+        actorType: "user",
+        createdAt: new Date().toISOString(),
+      },
+    })
+
+    expect(await db.events.bulkGet(["temp_command_echo", "temp_command_echo:failed"])).toEqual([undefined, undefined])
+    expect(await db.events.get("evt_command_echo")).toBeDefined()
 
     cleanup()
   })

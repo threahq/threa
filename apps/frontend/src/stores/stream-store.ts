@@ -71,9 +71,19 @@ function eventSequence(event: OrderableStreamEvent): number {
   return event._sequenceNum ?? sequenceToNum(event.sequence)
 }
 
+/**
+ * Interleaves optimistic stream events at their persisted sequence anchors.
+ *
+ * @param events - Persisted and optimistic events to order.
+ * @param persistedComparator - Optional chronology for persisted events, such as thread ordering.
+ * @returns A newly ordered event array.
+ * @example
+ * const ordered = orderStreamEvents(cachedEvents)
+ */
 export function orderStreamEvents<T extends OrderableStreamEvent>(
   events: T[],
-  persistedComparator: (a: T, b: T) => number = (a, b) => eventSequence(a) - eventSequence(b)
+  persistedComparator: (leftEvent: T, rightEvent: T) => number = (leftEvent, rightEvent) =>
+    eventSequence(leftEvent) - eventSequence(rightEvent)
 ): T[] {
   const optimistic: T[] = []
   const persisted: T[] = []
@@ -99,7 +109,12 @@ export function orderStreamEvents<T extends OrderableStreamEvent>(
   const anchor = (event: OrderableStreamEvent) =>
     event._anchorSequenceNum ?? inferredAnchors.get(event.id) ?? Number.POSITIVE_INFINITY
   persisted.sort(persistedComparator)
-  optimistic.sort((a, b) => anchor(a) - anchor(b) || eventSequence(a) - eventSequence(b) || a.id.localeCompare(b.id))
+  optimistic.sort(
+    (leftEvent, rightEvent) =>
+      anchor(leftEvent) - anchor(rightEvent) ||
+      eventSequence(leftEvent) - eventSequence(rightEvent) ||
+      leftEvent.id.localeCompare(rightEvent.id)
+  )
 
   const optimisticAfterPersistedIndex = new Map<number, T[]>()
   for (const optimisticEvent of optimistic) {
