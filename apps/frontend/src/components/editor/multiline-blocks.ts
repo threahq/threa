@@ -7,6 +7,7 @@ export interface BeforeInputEventLike {
   inputType: string
   data?: string | null
   dataTransfer?: { getData(format: string): string } | null
+  getTargetRanges?(): readonly { collapsed: boolean }[]
   preventDefault(): void
 }
 
@@ -950,6 +951,13 @@ export function handleBeforeInputKeyboardPaste(
   // heuristic below is skipped for them.
   const isPasteLike = event.inputType === "insertFromPaste" || event.inputType === "insertReplacementText"
   if (event.inputType !== "insertText" && !isPasteLike) return false
+  // Android spellcheck (tap squiggled word → pick suggestion) also arrives as
+  // `insertReplacementText`, distinguished by a non-collapsed target range over
+  // the word being replaced; intercepting would insert at the caret and keep the
+  // misspelled word. Fall through so the native replacement applies.
+  if (event.inputType === "insertReplacementText" && event.getTargetRanges?.().some((r) => !r.collapsed)) {
+    return false
+  }
   if (editor.view.composing) return false
   // Chromium on Android delivers large IME clipboard payloads with `data`
   // null and the text on `dataTransfer` instead.
