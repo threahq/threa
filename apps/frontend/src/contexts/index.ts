@@ -61,6 +61,7 @@ export {
   useSidebar,
   MIN_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
+  SIDEBAR_COLLAPSE_THRESHOLD,
   type UrgencyBlock,
   type CollapseState,
 } from "./sidebar-context"

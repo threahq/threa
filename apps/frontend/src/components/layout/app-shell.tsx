@@ -1,6 +1,13 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef } from "react"
 import { RefreshCw } from "lucide-react"
-import { useSidebar, useCoordinatedLoading, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, type UrgencyBlock } from "@/contexts"
+import {
+  useSidebar,
+  useCoordinatedLoading,
+  MIN_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  SIDEBAR_COLLAPSE_THRESHOLD,
+  type UrgencyBlock,
+} from "@/contexts"
 import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh, useTouchCapable } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useSyncEngine } from "@/sync/sync-engine"
@@ -132,16 +139,24 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   const inputMode = useInputMode()
 
   const shellRef = useRef<HTMLDivElement>(null)
+  const resizeHandleRef = useRef<HTMLDivElement>(null)
   const handleSidebarWidthChange = useCallback(
     (nextWidth: number) => {
-      const clampedWidth = `clamp(${MIN_SIDEBAR_WIDTH}px, ${nextWidth}px, ${MAX_SIDEBAR_WIDTH}px)`
-      shellRef.current?.style.setProperty("--nav-sidebar-width", clampedWidth)
-      if (state === "pinned") document.documentElement.style.setProperty("--app-content-left", clampedWidth)
+      const willCollapse = nextWidth < SIDEBAR_COLLAPSE_THRESHOLD
+      const clampedWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, nextWidth))
+      const liveWidth = willCollapse ? "6px" : `${clampedWidth}px`
+      shellRef.current?.style.setProperty("--nav-sidebar-width", liveWidth)
+      if (state === "pinned") document.documentElement.style.setProperty("--app-content-left", liveWidth)
+
+      resizeHandleRef.current?.setAttribute("aria-valuenow", String(clampedWidth))
+      if (willCollapse) resizeHandleRef.current?.setAttribute("aria-valuetext", "Release to collapse")
+      else resizeHandleRef.current?.removeAttribute("aria-valuetext")
     },
     [state]
   )
   const handleSidebarResizeEnd = useCallback(
     (finalWidth: number) => {
+      resizeHandleRef.current?.removeAttribute("aria-valuetext")
       setWidth(finalWidth)
       stopResizing()
     },
@@ -405,8 +420,10 @@ export function AppShell({ sidebar, children }: AppShellProps) {
 
               {!isCollapsed && !isMobile && (
                 <div
+                  ref={resizeHandleRef}
                   className={cn(
                     "absolute right-0 top-0 h-full w-1 touch-none cursor-col-resize",
+                    "after:absolute after:inset-y-0 after:right-0 [@media(any-pointer:coarse)]:after:w-11",
                     "hover:bg-primary/20 active:bg-primary/30",
                     "transition-colors duration-150",
                     "focus-visible:bg-primary/30 focus-visible:outline-none",
