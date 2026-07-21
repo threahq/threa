@@ -14,7 +14,8 @@ import { useCallPrefs } from "@/stores/call-prefs-store"
 import { CallTile } from "./call-tile"
 import { CallStageLayout } from "./call-stage-layout"
 import { CallControls } from "./call-controls"
-import { CameraButton, LeaveButton, MuteButton } from "./call-control-buttons"
+import { CameraButton, FlipButton, LeaveButton, MuteButton } from "./call-control-buttons"
+import { ISLAND_SURFACE } from "./call-island"
 import { CallTimer } from "./call-timer"
 import { CaptureErrorBanner } from "./call-capture-error"
 import { LayoutToggle } from "./layout-toggle"
@@ -24,18 +25,27 @@ import { DRAWER_MIN_HEIGHT, nearestMode } from "./mobile-call-drawer-snap"
 const REDUCED_MOTION =
   typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
 
-/** Per-mode frame classes (width/border/radius); `min` is the floating pill, the rest are full-width. */
+/**
+ * Per-mode frame classes. `min`/`compact` are floating dark "island" capsules
+ * (pairing with the Dynamic Island); `standard`/`full` are full-width panels on
+ * the app background. bg/shadow live here (not the base) so each mode owns its
+ * surface.
+ */
 const FRAME_CLASS: Record<CallSurfaceMode, string> = {
-  min: "w-fit rounded-b-2xl border border-t-0",
-  compact: "w-full border-b",
-  standard: "w-full border-b",
-  full: "w-full",
+  min: cn("mt-1.5 w-fit rounded-full", ISLAND_SURFACE),
+  compact: cn("mt-1.5 w-fit rounded-[26px]", ISLAND_SURFACE),
+  standard: "w-full border-b bg-background text-foreground shadow-lg",
+  full: "w-full bg-background text-foreground",
 }
 
-/** Resting CSS height per mode; `min` is the intrinsic pill, `full` fills below the status bar. */
+/**
+ * Resting CSS height per mode. `min` is the intrinsic pill; `compact` is fixed so
+ * the drag detents stay stable (see mobile-call-drawer-snap); `full` fills below
+ * the status bar.
+ */
 const RESTING_HEIGHT: Record<CallSurfaceMode, string> = {
   min: "auto",
-  compact: "80px",
+  compact: "72px",
   standard: "248px",
   full: "calc(100dvh - env(safe-area-inset-top))",
 }
@@ -46,10 +56,12 @@ function viewportHeight(): number {
 }
 
 function GrabHandle({
+  onDark,
   onPointerDown,
   onPointerMove,
   onPointerUp,
 }: {
+  onDark: boolean
   onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void
   onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => void
   onPointerUp: (e: ReactPointerEvent<HTMLDivElement>) => void
@@ -60,13 +72,13 @@ function GrabHandle({
       aria-orientation="horizontal"
       aria-label="Resize call"
       data-testid="call-drawer-handle"
-      className="flex shrink-0 touch-none cursor-grab items-center justify-center py-2 active:cursor-grabbing"
+      className="flex shrink-0 touch-none cursor-grab items-center justify-center py-1.5 active:cursor-grabbing"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
-      <span className="h-1 w-10 rounded-full bg-muted-foreground/40" aria-hidden />
+      <span className={cn("h-1 w-10 rounded-full", onDark ? "bg-white/40" : "bg-muted-foreground/40")} aria-hidden />
     </div>
   )
 }
@@ -112,18 +124,22 @@ function TabView({
   )
 }
 
-function BarView({ connectedAt, speakerName }: ViewProps) {
+function BarView({ connectedAt }: ViewProps) {
+  // Ghost buttons live on the dark island: they inherit the island's white text,
+  // so this overrides only the (light) ghost hover — NOT the base color, which
+  // would clobber MuteButton's `text-destructive` muted tint. Leave keeps its red.
+  const darkBtn = "hover:bg-white/10 hover:text-white"
   return (
-    <div className="flex items-center gap-3 px-4 py-3">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <CallTimer connectedAt={connectedAt} />
-        {speakerName && <span className="truncate text-xs text-muted-foreground">{speakerName}</span>}
-      </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <MuteButton />
-        <CameraButton />
-        <LeaveButton />
-      </div>
+    <div className="flex items-center gap-1 px-2">
+      <span
+        className={cn("ml-2 mr-0.5 h-2 w-2 shrink-0 rounded-full bg-primary", !REDUCED_MOTION && "animate-pulse")}
+        aria-hidden
+      />
+      <CallTimer connectedAt={connectedAt} className="mr-1 text-white" />
+      <MuteButton className={darkBtn} />
+      <CameraButton className={darkBtn} />
+      <FlipButton className={darkBtn} />
+      <LeaveButton />
     </div>
   )
 }
@@ -277,7 +293,7 @@ export function MobileCallDrawer({ workspaceId, streamId }: { workspaceId: strin
         data-testid="mobile-call-drawer"
         data-mode={contentMode}
         className={cn(
-          "pointer-events-auto mx-auto flex flex-col overflow-hidden bg-background shadow-lg",
+          "pointer-events-auto mx-auto flex flex-col overflow-hidden",
           FRAME_CLASS[contentMode],
           !dragging && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
         )}
@@ -290,11 +306,18 @@ export function MobileCallDrawer({ workspaceId, streamId }: { workspaceId: strin
           {contentMode === "standard" && <TinyGalleryView {...viewProps} />}
           {contentMode === "full" && <FullscreenView {...viewProps} />}
         </div>
-        {/* Keep the handle mounted while dragging even once the content crosses into
-            `full`: it holds the pointer capture + the pointerup/cancel settle, so
-            unmounting it mid-drag would strand `dragging` true and wedge the drawer. */}
+        {/* The handle is the drag affordance AND the "this pill is interactive /
+            expandable" cue on the collapsed island; shown on every mode but `full`.
+            Kept mounted while dragging even once content crosses into `full`: it
+            holds the pointer capture + the pointerup/cancel settle, so unmounting it
+            mid-drag would strand `dragging` true and wedge the drawer. */}
         {(dragging || contentMode !== "full") && (
-          <GrabHandle onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
+          <GrabHandle
+            onDark={contentMode === "min" || contentMode === "compact"}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+          />
         )}
       </div>
     </div>

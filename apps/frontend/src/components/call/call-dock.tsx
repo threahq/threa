@@ -23,6 +23,7 @@ export const DOCK_BOTTOM =
 export const RING_ABOVE_DOCK_BOTTOM =
   "bottom-[calc(var(--composer-height,5rem)_+_5.5rem)] sm:bottom-[calc(max(1rem,env(safe-area-inset-bottom))_+_4.5rem)]"
 import { MobileCallDrawer } from "./mobile-call-drawer"
+import { MobileCallJoining } from "./call-island"
 import { DesktopCallDock } from "./desktop-call-dock"
 import { PreJoinGate } from "./pre-join-gate"
 import { ActiveElsewhereChip } from "./active-elsewhere-chip"
@@ -112,7 +113,9 @@ export function CallDock() {
     return <DesktopCallDock workspaceId={workspaceId} streamId={streamIdForLabel} />
   }
 
-  // Joining / permission gate.
+  // Joining / permission gate. Mobile renders the same top island as the connected
+  // call (one surface, no bottom→top jump); desktop keeps the docked panel.
+  if (isMobile) return <MobileCallJoining />
   return (
     <DockFrame>
       <DockHeader title="Call" collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />

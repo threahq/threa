@@ -1,5 +1,6 @@
 import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { useCallLaunch } from "./call-launch-context"
 import type { MediaPermissionErrorKind } from "./media-permissions"
 
@@ -45,15 +46,19 @@ const PERMISSION_COPY: Record<MediaPermissionErrorKind, { title: string; body: s
  * capture failure. Rendered by the dock whenever a launch is in flight or has
  * failed pre-connection.
  */
-export function PreJoinGate() {
+export function PreJoinGate({ onDark = false }: { onDark?: boolean } = {}) {
   const { state, retry, cancel } = useCallLaunch()
+  // On the mobile island the gate sits on the dark call surface, so subdue text to
+  // white-wash and give the ghost Cancel a dark hover — keeps joining → error one shape.
+  const subtle = onDark ? "text-white/70" : "text-muted-foreground"
+  const cancelClass = onDark ? "text-white hover:bg-white/10 hover:text-white" : undefined
 
   if (state.status === "requesting") {
     return (
       <div className="flex flex-col items-center gap-3 py-6 text-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
-        <p className="text-sm text-muted-foreground">Joining…</p>
-        <Button variant="ghost" size="sm" onClick={cancel}>
+        <Loader2 className={cn("h-6 w-6 animate-spin", subtle)} aria-hidden />
+        <p className={cn("text-sm", subtle)}>Joining…</p>
+        <Button variant="ghost" size="sm" className={cancelClass} onClick={cancel}>
           Cancel
         </Button>
       </div>
@@ -64,9 +69,9 @@ export function PreJoinGate() {
     return (
       <div className="flex flex-col items-center gap-3 py-6 text-center">
         <p className="text-sm font-medium">Couldn't start the call</p>
-        <p className="text-xs text-muted-foreground">The call service didn't respond. Try again in a moment.</p>
+        <p className={cn("text-xs", subtle)}>The call service didn't respond. Try again in a moment.</p>
         <div className="flex gap-2">
-          <Button variant="ghost" size="sm" onClick={cancel}>
+          <Button variant="ghost" size="sm" className={cancelClass} onClick={cancel}>
             Cancel
           </Button>
           <Button size="sm" onClick={retry}>
@@ -82,9 +87,9 @@ export function PreJoinGate() {
     return (
       <div className="flex flex-col items-center gap-3 py-6 text-center" data-error-kind={state.error.kind}>
         <p className="text-sm font-medium">{copy.title}</p>
-        <p className="text-xs text-muted-foreground">{copy.body}</p>
+        <p className={cn("text-xs", subtle)}>{copy.body}</p>
         <div className="flex gap-2">
-          <Button variant="ghost" size="sm" onClick={cancel}>
+          <Button variant="ghost" size="sm" className={cancelClass} onClick={cancel}>
             Cancel
           </Button>
           <Button size="sm" onClick={retry}>

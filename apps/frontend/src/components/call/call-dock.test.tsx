@@ -324,4 +324,29 @@ describe("CallDock — mobile drawer vs desktop dock", () => {
     act(() => setCallCaptureError({ code: "capture_rollback_failed", message: "boom" }))
     expect(screen.getByTestId("call-capture-error")).toBeInTheDocument()
   })
+
+  it("renders the joining state as the top island pill, not the desktop dock", async () => {
+    forceMobile(true)
+    // startCall never settles → the launch stays in the requesting/joining state.
+    renderDock(makeManager({ startCall: vi.fn(() => new Promise<void>(() => {})) }))
+    await userEvent.click(screen.getByText("launch"))
+    expect(await screen.findByText("Joining…")).toBeInTheDocument()
+    // The island's cancel is icon-only (aria-label); the desktop gate uses a text
+    // "Cancel" button, so this label uniquely proves the mobile island rendered.
+    expect(screen.getByLabelText("Cancel joining")).toBeInTheDocument()
+  })
+
+  it("still surfaces the permission taxonomy on mobile (top card, reachable + retryable)", async () => {
+    forceMobile(true)
+    const startCall = vi.fn(async () => {
+      throw new CallCaptureError(
+        "capture_failed",
+        Object.assign(new Error("Permission denied"), { name: "NotAllowedError" })
+      )
+    })
+    renderDock(makeManager({ startCall }))
+    await userEvent.click(screen.getByText("launch"))
+    expect(await screen.findByText(/Microphone access denied/i)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Try again/i })).toBeInTheDocument()
+  })
 })
