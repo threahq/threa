@@ -43,19 +43,27 @@ const REDUCED_MOTION =
   typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
 
 const MODES: readonly CallSurfaceMode[] = ["min", "compact", "standard", "full"]
+const MODE_INDEX: Record<CallSurfaceMode, number> = { min: 0, compact: 1, standard: 2, full: 3 }
 
-/** Resting sizes (px) of the min/compact/standard steps; `full` is the content dimension, measured per drag. */
+/** The 3 pushing step sizes (px) — min/compact/standard; `full` = the whole content region. */
 const SIDE_STEP_SIZES: readonly number[] = [56, 320, 520]
 const TOP_STEP_SIZES: readonly number[] = [44, 72, 220]
 
-// Resting size (px) per mode for the dock panel AND the content-push inset it
-// reserves. `full` overlays (inset 0). Both are clamped to the measured content
-// region at render so a narrow window / wide sidebar can't push the panel over the
-// sidebar or collapse the timeline to nothing (the content region is the ceiling).
-const SIDE_RESTING: Record<CallSurfaceMode, number> = { min: 56, compact: 320, standard: 520, full: 0 }
-const TOP_RESTING: Record<CallSurfaceMode, number> = { min: 44, compact: 72, standard: 220, full: 0 }
-const SIDE_INSET: Record<CallSurfaceMode, number> = { min: 56, compact: 320, standard: 520, full: 0 }
-const TOP_INSET: Record<CallSurfaceMode, number> = { min: 44, compact: 72, standard: 220, full: 0 }
+// Always leave this much of the conversation beside/below a pushing dock, so a
+// narrow window / wide sidebar can't collapse the timeline to nothing.
+const MIN_CONTENT = 320
+
+/**
+ * The 4 snap detents [min, compact, standard, full] for a given axis ceiling (the
+ * measured content region). The pushing steps are capped to `ceil - MIN_CONTENT`
+ * (leaving timeline) and `full` is the whole ceiling — guaranteeing a NON-DECREASING
+ * list even on a tiny window (so the snap never sees an unsorted/duplicate-final
+ * detent), and the inset a pushing mode reserves never exceeds `ceil - MIN_CONTENT`.
+ */
+function dockDetents(steps: readonly number[], ceil: number): number[] {
+  const cap = Math.max(steps[0], ceil - MIN_CONTENT)
+  return [steps[0], Math.min(steps[1], cap), Math.min(steps[2], cap), ceil]
+}
 
 interface DockViewProps {
   workspaceId: string | null
@@ -313,7 +321,7 @@ function TopGalleryView({ workspaceId, currentUserId, roster, captureError, titl
 }
 
 /** Fullscreen (both orientations): the ch5 stage with a permanent header of call controls/toggles. */
-function DockFullscreenView({ workspaceId, connectedAt, currentUserId, roster, title }: DockViewProps) {
+function DockFullscreenView({ workspaceId, connectedAt, currentUserId, roster, title, captureError }: DockViewProps) {
   const { layout, filmstripSide } = useCallPrefs()
   const joined = roster.filter((p) => p.participantStatus === "joined")
   // View-only pin (not the store): overrides the default speaker until the call ends.
@@ -321,6 +329,7 @@ function DockFullscreenView({ workspaceId, connectedAt, currentUserId, roster, t
 
   return (
     <div className="flex h-full w-full flex-col bg-call-stage text-white">
+      {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
       <div className="flex items-center gap-2 px-3 py-2">
         <button
           type="button"
@@ -472,10 +481,13 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
   const ceilW = content.w || Infinity
   const ceilH = content.h || Infinity
 
-  // Content push: reserve the resting size (clamped to the content region) on :root
-  // so the main content region (AppShell's <main>) reflows. Fullscreen overlays → 0.
-  const insetRight = isSide ? Math.min(SIDE_INSET[surfaceMode], ceilW) : 0
-  const insetTop = isSide ? 0 : Math.min(TOP_INSET[surfaceMode], ceilH)
+  const detentsW = dockDetents(SIDE_STEP_SIZES, ceilW)
+  const detentsH = dockDetents(TOP_STEP_SIZES, ceilH)
+
+  // Content push: reserve the pushing mode's detent (which already leaves MIN_CONTENT)
+  // on :root so the main content region (AppShell's <main>) reflows. Fullscreen → 0.
+  const insetRight = isSide && surfaceMode !== "full" ? detentsW[MODE_INDEX[surfaceMode]] : 0
+  const insetTop = !isSide && surfaceMode !== "full" ? detentsH[MODE_INDEX[surfaceMode]] : 0
   useEffect(() => {
     const root = document.documentElement
     root.style.setProperty("--call-dock-inset-right", `${insetRight}px`)
@@ -535,17 +547,26 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
     drag.current = null
     setDragging(false)
     setDragSize(null)
-    if (d) setCallSurfaceMode(MODES[nearestStep(d.size, d.velocity, [...stepSizes, d.full])])
+    if (d) {
+      // A pause before release means the drag stopped — don't flick on stale velocity.
+      const vel = performance.now() - d.lastT > 120 ? 0 : d.velocity
+      setCallSurfaceMode(MODES[nearestStep(d.size, vel, dockDetents(stepSizes, d.full))])
+    }
   }
 
   const speaker = roster.find((p) => p.participantStatus === "joined" && p.userId !== currentUserId) ?? null
   const speakerName = speaker ? (users.find((u) => u.id === speaker.userId)?.name ?? null) : null
 
   const dragFull = drag.current?.full ?? stepSizes[stepSizes.length - 1]
-  const contentMode: CallSurfaceMode =
-    dragging && dragSize != null ? MODES[nearestStep(dragSize, 0, [...stepSizes, dragFull])] : surfaceMode
+  const dragMode =
+    dragging && dragSize != null ? MODES[nearestStep(dragSize, 0, dockDetents(stepSizes, dragFull))] : null
+  // While dragging, don't MOUNT the fullscreen stage (its heavy per-frame re-render
+  // thrashes the drag) — the preview caps at `standard`; fullscreen mounts on release.
+  const cappedDragMode = dragMode === "full" ? "standard" : dragMode
+  const contentMode: CallSurfaceMode = cappedDragMode ?? surfaceMode
+  const detents = isSide ? detentsW : detentsH
 
-  const restingFull = !dragging && contentMode === "full"
+  const restingFull = !dragging && surfaceMode === "full"
   let positionClass: string
   let sizeStyle: CSSProperties
   if (restingFull) {
@@ -553,11 +574,11 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
     sizeStyle = {}
   } else if (isSide) {
     positionClass = "inset-y-0 right-0"
-    const w = dragging && dragSize != null ? dragSize : Math.min(SIDE_RESTING[contentMode], ceilW)
+    const w = dragging && dragSize != null ? dragSize : detents[MODE_INDEX[contentMode]]
     sizeStyle = { width: `${w}px` }
   } else {
     positionClass = "inset-x-0 top-0"
-    const h = dragging && dragSize != null ? dragSize : Math.min(TOP_RESTING[contentMode], ceilH)
+    const h = dragging && dragSize != null ? dragSize : detents[MODE_INDEX[contentMode]]
     sizeStyle = { height: `${h}px` }
   }
 
@@ -592,17 +613,15 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
         style={sizeStyle}
       >
         <DockBody dockPosition={dockPosition} mode={contentMode} view={view} />
-        {/* Keep the handle mounted while dragging even after the content crosses into
-            `full`: it holds the pointer capture + the pointerup/cancel settle, so
-            unmounting it mid-drag would strand `dragging` true and wedge the dock. */}
-        {(dragging || contentMode !== "full") && (
-          <DockResizeHandle
-            orientation={dockPosition}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-          />
-        )}
+        {/* Always mounted — including at rest-fullscreen — so it holds the pointer
+            capture/settle through a drag into full AND lets you drag back OUT of
+            fullscreen (a thin edge strip over the stage); collapse via chevron still works. */}
+        <DockResizeHandle
+          orientation={dockPosition}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        />
       </div>
     </div>
   )

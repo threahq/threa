@@ -348,7 +348,7 @@ describe("DesktopCallDock — drag settles (no wedge)", () => {
       ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}), ...box }) as DOMRect
   }
 
-  it("dragging the side handle past the wide→full threshold keeps the handle mounted and settles to full", () => {
+  it("dragging the side handle past the wide→full threshold caps the preview at standard and settles to full", () => {
     renderDock()
     enterConnected(TWO_PEERS)
     setPosition("side")
@@ -358,14 +358,18 @@ describe("DesktopCallDock — drag settles (no wedge)", () => {
     stubRect(dock.parentElement as HTMLElement, { width: 900 })
     const handle = screen.getByTestId("call-dock-handle")
     handle.setPointerCapture = vi.fn()
-    // Drag the left edge leftward ~300px → width ~820 (> the 520↔900 midpoint 710)
-    // → crosses into fullscreen mid-drag; the handle must stay mounted.
+    // Drag the left edge leftward ~300px → width ~820 (past the full threshold).
     fireEvent.pointerDown(handle, { clientX: 500, pointerId: 1 })
     fireEvent.pointerMove(handle, { clientX: 200, pointerId: 1 })
-    expect(screen.getByTestId("desktop-call-dock")).toHaveAttribute("data-mode", "full")
+    // Mid-drag the preview caps at `standard` (the fullscreen stage never mounts
+    // during a drag — that thrash is what hung the capture harness), and the handle
+    // stays mounted so the settle can fire.
+    expect(screen.getByTestId("desktop-call-dock")).toHaveAttribute("data-mode", "standard")
     expect(screen.getByTestId("call-dock-handle")).toBeInTheDocument()
     fireEvent.pointerUp(handle, { clientX: 200, pointerId: 1 })
     expect(getCallState().surfaceMode).toBe("full")
+    // The handle is still mounted at rest-fullscreen (drag back out of fullscreen).
+    expect(screen.getByTestId("call-dock-handle")).toBeInTheDocument()
   })
 
   it("a pointercancel mid-drag settles instead of wedging", () => {

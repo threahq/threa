@@ -261,7 +261,11 @@ export function MobileCallDrawer({ workspaceId, streamId }: { workspaceId: strin
     drag.current = null
     setDragging(false)
     setDragHeight(null)
-    if (d) setCallSurfaceMode(nearestMode(d.height, d.velocity))
+    if (d) {
+      // A pause before release means the drag stopped — don't flick on stale velocity.
+      const vel = performance.now() - d.lastT > 120 ? 0 : d.velocity
+      setCallSurfaceMode(nearestMode(d.height, vel))
+    }
   }
 
   const viewProps: ViewProps = { workspaceId, connectedAt, currentUserId, roster, speakerName, title }

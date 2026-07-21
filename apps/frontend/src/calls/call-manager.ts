@@ -543,7 +543,16 @@ export class CallManager implements CallController {
     // Recapture the whole stream (mic + camera if live) so iOS single-active-
     // capture never mutes the surviving track; serialized on the capture chain.
     await this.serializeCapture(session, async () => {
-      await this.doCaptureAndPublish(session, { camera: session.cameraTrack != null, inputDeviceId: deviceId })
+      // Thread the CURRENT camera selection through the recapture — a mic change
+      // that re-acquires the live video track must keep the chosen camera, not
+      // silently revert to the browser default.
+      const devices = getCallState().local.devices
+      await this.doCaptureAndPublish(session, {
+        camera: session.cameraTrack != null,
+        inputDeviceId: deviceId,
+        cameraDeviceId: devices.selectedCameraId,
+        facingMode: devices.facingMode,
+      })
       patchCallLocal({ devices: { ...getCallState().local.devices, selectedInputId: deviceId } })
     })
     await this.refreshDevices()

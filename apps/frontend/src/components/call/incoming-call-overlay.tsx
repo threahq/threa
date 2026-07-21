@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/api/client"
 import { cn } from "@/lib/utils"
 import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
-import { useIsMobile } from "@/hooks/use-mobile"
 import { useCallSurfaceMode } from "./call-store-hooks"
 import { useWorkspaceUserPreferences } from "@/stores/workspace-store"
 import { useIncomingCalls, settleIncomingCall, type IncomingCall } from "@/stores/incoming-call-store"
@@ -52,7 +51,6 @@ function fireLocalRingNotification(call: IncomingCall): void {
 export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
   const calls = useIncomingCalls()
   const { launch, callActive } = useCallLaunch()
-  const isMobile = useIsMobile()
   const surfaceMode = useCallSurfaceMode()
   const [searchParams, setSearchParams] = useSearchParams()
   const notifiedRef = useRef<Set<string>>(new Set())
@@ -157,17 +155,20 @@ export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
 
   if (calls.length === 0) return null
 
-  // The `callActive` lift clears the desktop bottom dock. On mobile the in-call
-  // surface is the TOP drawer, so the bottom is free — lift only in mobile
-  // fullscreen (where the drawer's bottom control bar would otherwise be covered).
-  const liftAboveDock = callActive && (!isMobile || surfaceMode === "full")
+  // Horizontal: clear a desktop SIDE dock via its inset var (0 with no side dock /
+  // in fullscreen / on mobile, so the ring stays at the edge otherwise). Vertical:
+  // lift above the bottom only when a call surface covers it — mobile or desktop
+  // fullscreen (both put their control bar at the bottom). Non-fullscreen docks leave
+  // the bottom free (mobile drawer is at the top; a side dock is cleared horizontally).
+  const liftAboveDock = callActive && surfaceMode === "full"
 
   return (
     <div
       className={cn(
-        "pointer-events-none fixed right-4 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2",
+        "pointer-events-none fixed z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2",
         liftAboveDock ? RING_ABOVE_DOCK_BOTTOM : DOCK_BOTTOM
       )}
+      style={{ right: "calc(1rem + var(--call-dock-inset-right, 0px))" }}
     >
       {calls.map((call) => (
         <div
