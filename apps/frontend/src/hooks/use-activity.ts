@@ -68,11 +68,19 @@ export function useMarkActivityRead(workspaceId: string) {
 
       const previousUnreadState = await db.unreadState.get(workspaceId)
       if (previousUnreadState) {
-        const rows = (previousUnreadState.unreadActivities ?? []).filter((a) => a.id !== activityId)
+        const held = previousUnreadState.unreadActivities ?? []
+        const removed = held.find((a) => a.id === activityId)
+        const rows = held.filter((a) => a.id !== activityId)
         await db.unreadState.put({
           ...previousUnreadState,
           unreadActivities: rows,
           ...deriveActivityCounts(rows),
+          // Touch stamp: an in-flight bootstrap's per-stream merge must not
+          // resurrect the just-read row from its pre-read snapshot
+          // (mergeBootstrapUnreadFields). Null-streamId rows can't be covered.
+          counterTouchedAt: removed?.streamId
+            ? { ...previousUnreadState.counterTouchedAt, [removed.streamId]: Date.now() }
+            : previousUnreadState.counterTouchedAt,
           _cachedAt: Date.now(),
         })
       }
@@ -108,11 +116,19 @@ export function useMarkAllActivityRead(workspaceId: string) {
       void db.transaction("rw", [db.unreadState], async () => {
         const state = await db.unreadState.get(workspaceId)
         if (!state) return
+        const now = Date.now()
+        // Touch every stream that had a held row so an in-flight bootstrap's
+        // per-stream merge can't resurrect the cleared set from its snapshot.
+        const counterTouchedAt = { ...state.counterTouchedAt }
+        for (const a of state.unreadActivities ?? []) {
+          if (a.streamId) counterTouchedAt[a.streamId] = now
+        }
         await db.unreadState.put({
           ...state,
           unreadActivities: [],
           ...deriveActivityCounts([]),
-          _cachedAt: Date.now(),
+          counterTouchedAt,
+          _cachedAt: now,
         })
       })
     },
