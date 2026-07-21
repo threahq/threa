@@ -17,6 +17,8 @@ export interface CallLaunchRequest {
    * ring-to-call binding). A fresh start-or-join (header/profile) omits it.
    */
   expectedCallId?: string
+  /** Join with the camera already publishing (the "Start with camera" choice). */
+  cameraOn?: boolean
 }
 
 /**

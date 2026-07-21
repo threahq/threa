@@ -307,14 +307,27 @@ describe("CallDock — mobile drawer vs desktop dock", () => {
     expect(screen.getByLabelText("Minimize call")).toBeInTheDocument()
   })
 
-  it("opens the drawer's compact controls when the Tab pill is tapped", async () => {
+  it("opens the drawer to the compact bar on connect (no camera), controls live", async () => {
     forceMobile(true)
     const manager = makeManager()
     renderDock(manager)
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
-    await userEvent.click(screen.getByRole("button", { name: "Expand call" }))
+    // Mobile now opens into the first open state (compact bar), not the min Tab.
+    expect(screen.getByTestId("mobile-call-drawer")).toHaveAttribute("data-mode", "compact")
     await userEvent.click(screen.getByLabelText("Leave call"))
     expect(manager.leaveCall).toHaveBeenCalled()
+  })
+
+  it("opens to the gallery (standard) when joining with the camera on", () => {
+    forceMobile(true)
+    renderDock(makeManager())
+    act(() => {
+      setCallSession({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" })
+      patchCallLocal({ cameraOn: true })
+      setCallPhase("connected")
+      setCallRoster([participant({ userId: "usr_self", endpointId: "callep_self" })], 1)
+    })
+    expect(screen.getByTestId("mobile-call-drawer")).toHaveAttribute("data-mode", "standard")
   })
 
   it("keeps the capture error visible on the mobile Tab", () => {

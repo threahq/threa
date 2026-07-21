@@ -94,7 +94,10 @@ async function setUpDmPair(browser: Browser): Promise<DmPair> {
 }
 
 async function startCallFromHeader(page: Page): Promise<void> {
+  // The header call button is a menu (Start call / Start with camera); open it and
+  // pick the mic-only start.
   await page.getByRole("button", { name: "Start a call" }).click()
+  await page.getByRole("menuitem", { name: "Start a call" }).click()
   // The dock renders once the connected phase lands — self tile present.
   await expect(page.locator(CALL_TILE)).toHaveCount(1, { timeout: 20000 })
 }

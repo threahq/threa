@@ -85,12 +85,16 @@ export function CallDock() {
     if (launching || joining) setCollapsed(false)
   }, [launching, joining])
 
-  // On connect, open the desktop dock to a visible size — `min` (the Rail/Tab) is
-  // too minimal a default. Mobile keeps its Tab (min). `surfaceMode` is shared but
-  // only one surface renders per session, so this doesn't fight the drawer.
+  // On connect, open to a visible size — `min` (the Tab/Rail) is too minimal a
+  // default. Open to the first open state (compact) normally, and the second
+  // (standard/gallery) when joining with the camera on, so a video join lands on
+  // tiles. Guarded on the initial `min` so it runs once and later drags win;
+  // `surfaceMode` is shared but only one surface renders per session.
   useEffect(() => {
-    if (inCall && !isMobile && getCallState().surfaceMode === "min") setCallSurfaceMode("compact")
-  }, [inCall, isMobile])
+    if (inCall && getCallState().surfaceMode === "min") {
+      setCallSurfaceMode(getCallState().local.cameraOn ? "standard" : "compact")
+    }
+  }, [inCall])
 
   // Nothing to show: idle with no launch in flight. Surface the cross-tab chip if
   // another tab holds the call, otherwise render nothing.

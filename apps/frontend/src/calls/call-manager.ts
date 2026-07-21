@@ -223,7 +223,13 @@ interface CaptureOpts {
  * from here — this is action-only, plus the video ref-map accessor.
  */
 export interface CallController {
-  startCall(params: { workspaceId: string; streamId: string; mode: CallMode; expectedCallId?: string }): Promise<void>
+  startCall(params: {
+    workspaceId: string
+    streamId: string
+    mode: CallMode
+    expectedCallId?: string
+    cameraOn?: boolean
+  }): Promise<void>
   leaveCall(): Promise<void>
   setMuted(muted: boolean): void
   setCameraOn(on: boolean): Promise<void>
@@ -284,7 +290,13 @@ export class CallManager implements CallController {
    * settles throws here, in the caller's stack, rather than passing a post-await
    * check and leaking a whole second session.
    */
-  startCall(params: { workspaceId: string; streamId: string; mode: CallMode; expectedCallId?: string }): Promise<void> {
+  startCall(params: {
+    workspaceId: string
+    streamId: string
+    mode: CallMode
+    expectedCallId?: string
+    cameraOn?: boolean
+  }): Promise<void> {
     if (this.session || this.starting) throw new Error("A call is already active")
     this.starting = true
     this.cancelStart = false
@@ -294,7 +306,7 @@ export class CallManager implements CallController {
 
   private async runStart(
     gen: number,
-    params: { workspaceId: string; streamId: string; mode: CallMode; expectedCallId?: string }
+    params: { workspaceId: string; streamId: string; mode: CallMode; expectedCallId?: string; cameraOn?: boolean }
   ): Promise<void> {
     const mediaIncarnation = this.deps.mintIncarnation()
     // Synchronous, in-gesture (see startCall doc). Held on a temp until the session exists.
@@ -379,11 +391,20 @@ export class CallManager implements CallController {
 
       await transport.connect({ endpointId: join.endpointId, mediaIncarnation })
       this.assertStartLive(gen)
-      // Join default is mic-on / camera-off (plan §In-call features) regardless of
-      // mode — `mode: "video"` is a capability, not "camera on now". Acquiring only
-      // the mic keeps the camera dark on join and lets a camera-less device join a
-      // video call; the camera is acquired later via setCameraOn.
-      await this.captureAndPublish(session, { camera: false })
+      // Join is mic-on; the camera comes up only when the launch asked for it
+      // ("Start with camera") and the server's mode allows it — `mode: "video"` is
+      // a capability, not "camera on now", and an audio_only call never publishes
+      // one. A mic-only join keeps the camera dark and lets a camera-less device
+      // join a video call; the camera is toggled later via setCameraOn.
+      const joinWithCamera = !!params.cameraOn && mode !== "audio_only"
+      // Set cameraOn BEFORE the capture: the transport's own connectionState handler
+      // can flip phase→"connected" while captureAndPublish is still awaiting (mic
+      // publish → ICE connects → camera publish still pending), and the surface's
+      // open-state effect reads local.cameraOn on that transition — so it must
+      // already be true or a camera-join opens to the bar instead of the gallery. A
+      // failed capture rolls back via clearCallState, which resets cameraOn.
+      if (joinWithCamera) patchCallLocal({ cameraOn: true })
+      await this.captureAndPublish(session, { camera: joinWithCamera })
       this.assertStartLive(gen)
 
       this.applyRoster(session, join.rosterVersion, join.roster)
