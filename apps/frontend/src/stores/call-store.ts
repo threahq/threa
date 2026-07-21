@@ -37,6 +37,15 @@ export interface CallDeviceState {
   selectedInputId: string | null
   selectedOutputId: string | null
   selectedCameraId: string | null
+  /**
+   * Mobile front/back flip preference. A flip sets this and clears
+   * `selectedCameraId`; picking an explicit device sets that and clears this. They
+   * are not permanently exclusive, though: once a facingMode capture lands,
+   * `refreshDevices` reflects the resulting device back into `selectedCameraId`
+   * (so the picker highlights it), leaving both set. Capture precedence is
+   * deviceId → facingMode → default, so an explicit device always wins next.
+   */
+  facingMode: "user" | "environment" | null
 }
 
 export interface CallLocalState {
@@ -99,6 +108,7 @@ const EMPTY_DEVICES: CallDeviceState = {
   selectedInputId: null,
   selectedOutputId: null,
   selectedCameraId: null,
+  facingMode: null,
 }
 
 function idleState(): CallState {

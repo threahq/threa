@@ -7,6 +7,7 @@ import {
   type CallSocket,
 } from "./call-manager"
 import type { MediaTransport } from "./media-transport"
+import { AUDIO_CAPTURE_CONSTRAINTS, VIDEO_CAPTURE_CONSTRAINTS } from "./config"
 import { ApiError } from "@/api/client"
 import { getCallState, clearCallState, resetCallStoreCache, type CallRosterParticipant } from "@/stores/call-store"
 import { isDictationExternalHeld, setDictationExternalHold } from "@/contexts/dictation-coordinator-context"
@@ -488,6 +489,82 @@ describe("CallManager", () => {
     expect(getCallState().local.devices.selectedInputId).toBe("dev-b")
   })
 
+  // ── camera selection + mobile flip ──────────────────────────────────────────
+
+  it("switchCameraDevice writes selectedCameraId and recaptures video with the exact deviceId", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const manager = new CallManager(deps, null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+    await manager.setCameraOn(true)
+
+    await manager.switchCameraDevice("cam-2")
+
+    expect(getCallState().local.devices.selectedCameraId).toBe("cam-2")
+    expect(getCallState().local.devices.facingMode).toBeNull()
+    // Recaptures mic+camera in one stream (iOS rule) with the chosen camera; the
+    // whole constraints object is asserted in one comparison (INV-24).
+    expect(lastAcquireConstraints(deps)).toEqual({
+      audio: AUDIO_CAPTURE_CONSTRAINTS,
+      video: { ...VIDEO_CAPTURE_CONSTRAINTS, deviceId: { exact: "cam-2" } },
+    })
+    // The video track was republished (not dropped) and the call stays up.
+    expect(transport._events.filter((e) => e === "publish:camera").length).toBeGreaterThanOrEqual(2)
+    expect(manager.isActive()).toBe(true)
+  })
+
+  it("switchCameraDevice with the camera off stores the pref and applies it on the next setCameraOn", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const manager = new CallManager(deps, null)
+    // Join defaults to camera-off, so the switch only records the preference.
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    await manager.switchCameraDevice("cam-9")
+
+    expect(getCallState().local.devices.selectedCameraId).toBe("cam-9")
+    // No recapture while the camera is off — only the join's mic acquisition ran.
+    expect(deps.acquireUserMedia).toHaveBeenCalledTimes(1)
+    expect(transport._events).not.toContain("publish:camera")
+
+    await manager.setCameraOn(true)
+    expect(lastAcquireConstraints(deps)).toEqual({
+      audio: AUDIO_CAPTURE_CONSTRAINTS,
+      video: { ...VIDEO_CAPTURE_CONSTRAINTS, deviceId: { exact: "cam-9" } },
+    })
+  })
+
+  it("flipCamera toggles facingMode, clears the deviceId pref, and recaptures video", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const manager = new CallManager(deps, null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+    // Seed an explicit device pref, then turn the camera on with it.
+    await manager.switchCameraDevice("cam-1")
+    await manager.setCameraOn(true)
+
+    await manager.flipCamera()
+
+    // First flip goes to the back camera and clears the explicit deviceId.
+    expect(getCallState().local.devices.facingMode).toBe("environment")
+    expect(getCallState().local.devices.selectedCameraId).toBeNull()
+    expect(lastAcquireConstraints(deps)).toEqual({
+      audio: AUDIO_CAPTURE_CONSTRAINTS,
+      video: { ...VIDEO_CAPTURE_CONSTRAINTS, facingMode: "environment" },
+    })
+
+    // A second flip toggles back to the front camera.
+    await manager.flipCamera()
+    expect(getCallState().local.devices.facingMode).toBe("user")
+    expect(lastAcquireConstraints(deps)).toEqual({
+      audio: AUDIO_CAPTURE_CONSTRAINTS,
+      video: { ...VIDEO_CAPTURE_CONSTRAINTS, facingMode: "user" },
+    })
+  })
+
   it("iOS mid-call recapture failure rolls back to the prior capture with a typed error", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
@@ -731,4 +808,10 @@ function getMicTrack(transport: MediaTransport): MediaStreamTrack {
   const publish = transport.publish as unknown as ReturnType<typeof vi.fn>
   const micCall = publish.mock.calls.find((c: unknown[]) => c[0] === "mic")
   return micCall?.[1] as MediaStreamTrack
+}
+
+/** The constraints of the most recent getUserMedia acquisition. */
+function lastAcquireConstraints(deps: CallManagerDeps): MediaStreamConstraints {
+  const acquire = deps.acquireUserMedia as unknown as ReturnType<typeof vi.fn>
+  return acquire.mock.calls.at(-1)?.[0] as MediaStreamConstraints
 }

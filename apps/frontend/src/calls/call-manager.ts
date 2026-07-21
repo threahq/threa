@@ -204,6 +204,19 @@ function refKey(ref: PeerTrackRef): string {
 }
 
 /**
+ * A capture+publish request: the mic is always captured, the camera optionally.
+ * `inputDeviceId` selects the mic; `cameraDeviceId`/`facingMode` select the
+ * camera (deviceId wins when both are present, and the two are mutually
+ * exclusive by construction — see {@link CallDeviceState.facingMode}).
+ */
+interface CaptureOpts {
+  camera: boolean
+  inputDeviceId?: string | null
+  cameraDeviceId?: string | null
+  facingMode?: "user" | "environment" | null
+}
+
+/**
  * The command surface UI components drive (INV-15: components never touch
  * `MediaTransport` or sockets). `CallManager` implements it; tests inject a fake
  * through the `CallManagerProvider`. State is read from the call-store, never
@@ -215,6 +228,8 @@ export interface CallController {
   setMuted(muted: boolean): void
   setCameraOn(on: boolean): Promise<void>
   switchInputDevice(deviceId: string): Promise<void>
+  switchCameraDevice(deviceId: string): Promise<void>
+  flipCamera(): Promise<void>
   setOutputDevice(deviceId: string): Promise<void>
   getVideoStream(endpointId: string): MediaStream | null
 }
@@ -501,9 +516,13 @@ export class CallManager implements CallController {
       if (on) {
         // Turning the camera on re-acquires mic+camera as ONE stream (iOS single-
         // active-capture): a camera-only gUM while the mic is live would mute it.
+        // Apply the stored camera selection (desktop deviceId or mobile facingMode).
+        const devices = getCallState().local.devices
         await this.doCaptureAndPublish(session, {
           camera: true,
-          inputDeviceId: getCallState().local.devices.selectedInputId,
+          inputDeviceId: devices.selectedInputId,
+          cameraDeviceId: devices.selectedCameraId,
+          facingMode: devices.facingMode,
         })
       } else if (session.cameraTrack) {
         // Camera off fully stops the track (kills the LED) and unpublishes; the
@@ -527,6 +546,82 @@ export class CallManager implements CallController {
       await this.doCaptureAndPublish(session, { camera: session.cameraTrack != null, inputDeviceId: deviceId })
       patchCallLocal({ devices: { ...getCallState().local.devices, selectedInputId: deviceId } })
     })
+    await this.refreshDevices()
+  }
+
+  /**
+   * Switch which camera the call publishes. Stores the selection regardless (a
+   * camera-off call applies it on the next {@link setCameraOn}); when the camera
+   * is live, recaptures mic+camera as ONE stream (iOS single-active-capture) on
+   * the new device and republishes video — audio and the call stay up. Clears any
+   * facingMode flip pref, since an explicit device wins over front/back.
+   */
+  async switchCameraDevice(deviceId: string): Promise<void> {
+    const session = this.session
+    if (!session) return
+    if (session.mode === "audio_only") return
+    const prev = getCallState().local.devices
+    patchCallLocal({
+      devices: { ...prev, selectedCameraId: deviceId, facingMode: null },
+    })
+    if (!session.cameraTrack) return
+    try {
+      await this.serializeCapture(session, async () => {
+        await this.doCaptureAndPublish(session, {
+          camera: true,
+          inputDeviceId: getCallState().local.devices.selectedInputId,
+          cameraDeviceId: deviceId,
+        })
+      })
+    } catch (err) {
+      // Capture failed (e.g. camera in use); the old feed is still live, so
+      // restore the pref that reflects it rather than leaving the tried device highlighted.
+      patchCallLocal({
+        devices: {
+          ...getCallState().local.devices,
+          selectedCameraId: prev.selectedCameraId,
+          facingMode: prev.facingMode,
+        },
+      })
+      throw err
+    }
+    await this.refreshDevices()
+  }
+
+  /**
+   * Mobile front/back flip: toggle `facingMode` (defaulting the first flip to the
+   * back camera) and clear the explicit deviceId. Recaptures+republishes video
+   * when the camera is live; otherwise the pref applies on the next
+   * {@link setCameraOn}.
+   */
+  async flipCamera(): Promise<void> {
+    const session = this.session
+    if (!session) return
+    if (session.mode === "audio_only") return
+    const prev = getCallState().local.devices
+    const facingMode: "user" | "environment" = prev.facingMode === "environment" ? "user" : "environment"
+    patchCallLocal({
+      devices: { ...prev, facingMode, selectedCameraId: null },
+    })
+    if (!session.cameraTrack) return
+    try {
+      await this.serializeCapture(session, async () => {
+        await this.doCaptureAndPublish(session, {
+          camera: true,
+          inputDeviceId: getCallState().local.devices.selectedInputId,
+          facingMode,
+        })
+      })
+    } catch (err) {
+      patchCallLocal({
+        devices: {
+          ...getCallState().local.devices,
+          facingMode: prev.facingMode,
+          selectedCameraId: prev.selectedCameraId,
+        },
+      })
+      throw err
+    }
     await this.refreshDevices()
   }
 
@@ -686,18 +781,27 @@ export class CallManager implements CallController {
     return run
   }
 
-  private captureAndPublish(
-    session: CallSession,
-    opts: { camera: boolean; inputDeviceId?: string | null }
-  ): Promise<void> {
+  private captureAndPublish(session: CallSession, opts: CaptureOpts): Promise<void> {
     return this.serializeCapture(session, () => this.doCaptureAndPublish(session, opts))
   }
 
-  private buildCaptureConstraints(opts: { camera: boolean; inputDeviceId?: string | null }): MediaStreamConstraints {
+  private buildCaptureConstraints(opts: CaptureOpts): MediaStreamConstraints {
     const audio: MediaTrackConstraints = opts.inputDeviceId
       ? { ...AUDIO_CAPTURE_CONSTRAINTS, deviceId: { exact: opts.inputDeviceId } }
       : AUDIO_CAPTURE_CONSTRAINTS
-    return opts.camera ? { audio, video: VIDEO_CAPTURE_CONSTRAINTS } : { audio }
+    if (!opts.camera) return { audio }
+    return { audio, video: this.buildVideoConstraints(opts) }
+  }
+
+  /**
+   * Camera constraints with the caller's selection applied. An explicit
+   * `cameraDeviceId` (desktop picker) wins over `facingMode` (mobile flip); with
+   * neither, the unmodified capture defaults let the browser pick a camera.
+   */
+  private buildVideoConstraints(opts: CaptureOpts): MediaTrackConstraints {
+    if (opts.cameraDeviceId) return { ...VIDEO_CAPTURE_CONSTRAINTS, deviceId: { exact: opts.cameraDeviceId } }
+    if (opts.facingMode) return { ...VIDEO_CAPTURE_CONSTRAINTS, facingMode: opts.facingMode }
+    return VIDEO_CAPTURE_CONSTRAINTS
   }
 
   /**
@@ -714,10 +818,7 @@ export class CallManager implements CallController {
    *
    * Always run through {@link serializeCapture}, never called directly.
    */
-  private async doCaptureAndPublish(
-    session: CallSession,
-    opts: { camera: boolean; inputDeviceId?: string | null }
-  ): Promise<void> {
+  private async doCaptureAndPublish(session: CallSession, opts: CaptureOpts): Promise<void> {
     const constraints = this.buildCaptureConstraints(opts)
     const prev = session.captureConstraints
 
@@ -1093,13 +1194,20 @@ export class CallManager implements CallController {
     if (!session) return
     const devices = await this.deps.enumerateDevices().catch(() => [] as MediaDeviceInfo[])
     const current = getCallState().local.devices
+    // A live camera resolves a bare deviceId/facingMode capture to a concrete
+    // device only its track knows; reflect that so the picker highlights the
+    // actual active camera. Falls back to the prior value when no camera is live.
+    // `|| null` not `?? null`: a granted track can report deviceId "" (permission
+    // quirk) — treat empty as "unknown" so it can't clobber a real selection.
+    const liveCameraId = session.cameraTrack?.getSettings?.().deviceId || null
     const next: CallDeviceState = {
       inputs: devices.filter((d) => d.kind === "audioinput"),
       outputs: devices.filter((d) => d.kind === "audiooutput"),
       cameras: devices.filter((d) => d.kind === "videoinput"),
       selectedInputId: current.selectedInputId,
       selectedOutputId: current.selectedOutputId,
-      selectedCameraId: current.selectedCameraId,
+      selectedCameraId: liveCameraId ?? current.selectedCameraId,
+      facingMode: current.facingMode,
     }
     setCallDevices(next)
   }
