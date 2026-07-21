@@ -1,4 +1,4 @@
-import { Phone, Video } from "lucide-react"
+import { ChevronDown, Phone, Video } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
@@ -32,13 +32,15 @@ export function CallStartMenu({
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          size="icon"
-          className={cn("h-8 w-8", className)}
+          size="sm"
+          className={cn("h-8 gap-1 px-2", className)}
           disabled={callActive}
           title={callActive ? "You're already in a call" : startLabel}
           aria-label={callActive ? "You're already in a call" : startLabel}
         >
           <Phone className="h-4 w-4" />
+          {/* Caret so the icon reads as a menu (start-call vs start-with-camera), not a one-tap button. */}
+          <ChevronDown className="h-3 w-3 opacity-60" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">

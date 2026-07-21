@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { act } from "@testing-library/react"
 import { render, screen, userEvent } from "@/test"
-import { clearCallState } from "@/stores/call-store"
+import { clearCallState, setCallSession, setCallPhase } from "@/stores/call-store"
 import type { CallController } from "@/calls/call-manager"
 import { CallStartMenu } from "./call-start-menu"
 import { CallManagerProvider } from "./call-manager-context"
@@ -53,16 +54,15 @@ describe("CallStartMenu", () => {
     expect(manager.startCall).toHaveBeenCalledWith(expect.objectContaining({ cameraOn: true }))
   })
 
-  it("disables the trigger while a call is already active", () => {
-    const manager = makeManager()
-    render(
-      <CallManagerProvider manager={manager}>
-        <CallLaunchProvider>
-          <CallStartMenu workspaceId="ws_1" streamId="stream_1" />
-        </CallLaunchProvider>
-      </CallManagerProvider>
-    )
-    // Idle: enabled.
+  it("disables the trigger while a call is already active (no second start)", () => {
+    renderMenu(makeManager())
+    // Idle → enabled.
     expect(screen.getByRole("button", { name: "Start call" })).not.toBeDisabled()
+    // A live call → the trigger disables, so a second concurrent start can't launch.
+    act(() => {
+      setCallSession({ callId: "call_1", workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+      setCallPhase("connected")
+    })
+    expect(screen.getByRole("button", { name: "You're already in a call" })).toBeDisabled()
   })
 })

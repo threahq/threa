@@ -397,8 +397,14 @@ export class CallManager implements CallController {
       // one. A mic-only join keeps the camera dark and lets a camera-less device
       // join a video call; the camera is toggled later via setCameraOn.
       const joinWithCamera = !!params.cameraOn && mode !== "audio_only"
-      await this.captureAndPublish(session, { camera: joinWithCamera })
+      // Set cameraOn BEFORE the capture: the transport's own connectionState handler
+      // can flip phase→"connected" while captureAndPublish is still awaiting (mic
+      // publish → ICE connects → camera publish still pending), and the surface's
+      // open-state effect reads local.cameraOn on that transition — so it must
+      // already be true or a camera-join opens to the bar instead of the gallery. A
+      // failed capture rolls back via clearCallState, which resets cameraOn.
       if (joinWithCamera) patchCallLocal({ cameraOn: true })
+      await this.captureAndPublish(session, { camera: joinWithCamera })
       this.assertStartLive(gen)
 
       this.applyRoster(session, join.rosterVersion, join.roster)
