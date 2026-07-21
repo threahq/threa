@@ -93,8 +93,9 @@ const webServerTimeout = isCI ? 120000 : 60000
 // failures — e.g. virtualized-list scroll position differing from the dev server
 // — are otherwise impossible to reproduce on a dev machine.
 const useProdFrontend = isCI || !!process.env.PLAYWRIGHT_PROD_FRONTEND
+const usePrebuiltFrontend = !!process.env.PLAYWRIGHT_FRONTEND_PREBUILT
 const frontendCommand = useProdFrontend
-  ? "bun run --cwd apps/frontend build:e2e && bun run --cwd apps/frontend preview"
+  ? `${usePrebuiltFrontend ? "" : "bun run --cwd apps/frontend build:e2e && "}bun run --cwd apps/frontend preview`
   : "bun run test:browser:frontend"
 // The prod build needs more headroom than a dev-server boot.
 const frontendServerTimeout = useProdFrontend ? 180000 : webServerTimeout
