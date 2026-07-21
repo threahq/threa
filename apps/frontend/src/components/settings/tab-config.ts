@@ -28,6 +28,11 @@ export const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     description: "Voice model, polish, and steering words",
     keywords: ["voice", "dictation", "transcription", "polish", "steering", "speech", "mic"],
   },
+  calls: {
+    label: "Calls",
+    description: "Self-view mirror and default layout",
+    keywords: ["call", "video", "camera", "mirror", "self-view", "layout", "speaker", "grid"],
+  },
   appearance: {
     label: "Appearance",
     description: "Theme and message density",

@@ -1,0 +1,89 @@
+import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Separator } from "@/components/ui/separator"
+import {
+  setCallLayout,
+  setCallSelfMirror,
+  useCallPrefs,
+  type CallLayout,
+  type CallSelfMirror,
+} from "@/stores/call-prefs-store"
+
+const MIRROR_OPTIONS: { value: CallSelfMirror; label: string; description: string }[] = [
+  {
+    value: "auto",
+    label: "Automatic",
+    description: "Mirror a front-facing or desktop camera; leave a phone's back camera normal.",
+  },
+  { value: "on", label: "Always mirror", description: "Always show your self-view mirrored." },
+  { value: "off", label: "Never mirror", description: "Always show your self-view the normal way." },
+]
+
+const LAYOUT_OPTIONS: { value: CallLayout; label: string; description: string }[] = [
+  {
+    value: "speaker",
+    label: "Speaker",
+    description: "One large tile for the active speaker, the rest in a filmstrip.",
+  },
+  { value: "grid", label: "Grid", description: "Equal-sized tiles for everyone." },
+]
+
+/**
+ * Call preferences (the persisted {@link import("@/stores/call-prefs-store").CallPrefs}).
+ * The in-call device menu carries a quick mirror toggle; this is the canonical home.
+ */
+export function CallSettings() {
+  const { selfMirror, layout } = useCallPrefs()
+  return (
+    <div className="space-y-6">
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Mirror my video</h3>
+          <p className="text-sm text-muted-foreground">
+            Flips your own self-view like a mirror. Only you see it mirrored — everyone else always sees you the normal
+            way.
+          </p>
+        </div>
+        <RadioGroup
+          value={selfMirror}
+          onValueChange={(value) => setCallSelfMirror(value as CallSelfMirror)}
+          className="space-y-3"
+        >
+          {MIRROR_OPTIONS.map((option) => (
+            <div key={option.value} className="flex items-start space-x-3">
+              <RadioGroupItem value={option.value} id={`mirror-${option.value}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`mirror-${option.value}`} className="cursor-pointer">
+                  {option.label}
+                </Label>
+                <p className="text-sm text-muted-foreground">{option.description}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Default layout</h3>
+          <p className="text-sm text-muted-foreground">How a call opens; you can still switch layouts mid-call.</p>
+        </div>
+        <RadioGroup value={layout} onValueChange={(value) => setCallLayout(value as CallLayout)} className="space-y-3">
+          {LAYOUT_OPTIONS.map((option) => (
+            <div key={option.value} className="flex items-start space-x-3">
+              <RadioGroupItem value={option.value} id={`layout-${option.value}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`layout-${option.value}`} className="cursor-pointer">
+                  {option.label}
+                </Label>
+                <p className="text-sm text-muted-foreground">{option.description}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
+      </section>
+    </div>
+  )
+}

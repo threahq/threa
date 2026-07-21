@@ -221,6 +221,7 @@ export const SETTINGS_TAB_OPTIONS = [
   "profile",
   "ai",
   "dictation",
+  "calls",
   "appearance",
   "datetime",
   "schedule",
