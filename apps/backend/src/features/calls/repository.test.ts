@@ -74,6 +74,23 @@ describe("CallRepository — active-call glare + grace re-verification", () => {
     expect(sql).toContain("p.workspace_id = c.workspace_id")
   })
 
+  it("endActiveIfEmpty CASes active → ended only when no joined participant remains (explicit last-leave)", async () => {
+    const captured: Captured = { text: "" }
+    await CallRepository.endActiveIfEmpty(createQuerier(captured), {
+      workspaceId: "ws_1",
+      id: "call_1",
+      reason: "completed",
+    })
+    const sql = normalize(captured.text)
+    expect(sql).toContain("status = 'ended'")
+    expect(sql).toContain("ended_at = NOW()")
+    // Same CAS guard as enterGraceIfEmpty — a status flag AND a live-roster
+    // predicate (INV-20), so a concurrent join / double last-leave ends once.
+    expect(sql).toContain("c.status = 'active'")
+    expect(sql).toMatch(/NOT EXISTS \([^)]*call_participants p[\s\S]*status = 'joined'/)
+    expect(sql).toContain("p.workspace_id = c.workspace_id")
+  })
+
   it("enterGraceIfEmptyBatch cascades reaped emptiness with a workspace-correlated anti-join", async () => {
     const captured: Captured = { text: "" }
     await CallRepository.enterGraceIfEmptyBatch(createQuerier(captured), {

@@ -446,7 +446,7 @@ describe("CallService.joinCall — second endpoint / takeover", () => {
 describe("CallService.leaveCall", () => {
   afterEach(() => mock.restore())
 
-  it("closes the endpoint, lefts the participant, and graces an emptied call", async () => {
+  it("ends an emptied call IN-TX on an explicit last-leave (skips grace) and appends stream:call_ended", async () => {
     stubTransaction()
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallEndpointRepository, "findById").mockResolvedValue(fakeEndpoint())
@@ -456,9 +456,17 @@ describe("CallService.leaveCall", () => {
       fakeParticipant({ status: "left" })
     )
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
-    const grace = spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    const grace = spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(null)
+    const end = spyOn(CallRepository, "endActiveIfEmpty").mockResolvedValue(
+      fakeCall({ status: "ended", endedReason: "completed", endedAt: NOW })
+    )
+    // appendCallEndedForLeave's ctx reads (stream visibility + ever-participant set).
+    spyOn(streamsModule.StreamRepository, "findById").mockResolvedValue({ visibility: "public" } as never)
+    spyOn(CallParticipantRepository, "listUserIdsByCall").mockResolvedValue(new Map([["call_1", ["usr_a"]]]))
+    spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([])
     const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
-    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "ended", endedReason: "completed" }))
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
 
     const result = await makeService().leaveCall({
       workspaceId: "ws_1",
@@ -469,13 +477,47 @@ describe("CallService.leaveCall", () => {
 
     expect(close).toHaveBeenCalledWith(expect.anything(), "ws_1", "callep_1")
     expect(markLeft).toHaveBeenCalledTimes(1)
-    expect(grace).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reason: "completed" }))
+    // The explicit last-leave ends the call directly — grace is only for the reaper path.
+    expect(end).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reason: "completed" }))
+    expect(grace).not.toHaveBeenCalled()
+    // The end summary rides the outbox in the same tx (INV-4/7) so peers see the ended card.
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "stream:call_ended",
+      expect.objectContaining({ callId: "call_1", streamId: "stream_1" })
+    )
     // A leave bumps the roster version in the same tx (INV-66) so the departed tile isn't a ghost.
     expect(bump).toHaveBeenCalledWith(expect.anything(), "ws_1", "call_1")
-    expect(result.call.status).toBe("empty_grace")
+    expect(result.call.status).toBe("ended")
   })
 
-  it("does not grace a call that still has joined participants", async () => {
+  it("a lost end CAS (concurrent join / double last-leave) appends no call_ended and does not throw", async () => {
+    stubTransaction()
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallEndpointRepository, "findById").mockResolvedValue(fakeEndpoint())
+    spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant())
+    spyOn(CallEndpointRepository, "close").mockResolvedValue(fakeEndpoint({ status: "closed" }))
+    spyOn(CallParticipantRepository, "markLeftIfNoLiveEndpoint").mockResolvedValue(fakeParticipant({ status: "left" }))
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
+    // The CAS loses the row (a concurrent join revived it, or a sibling leave ended it first).
+    const end = spyOn(CallRepository, "endActiveIfEmpty").mockResolvedValue(null)
+    const streamRead = spyOn(streamsModule.StreamRepository, "findById").mockResolvedValue({
+      visibility: "public",
+    } as never)
+    spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([])
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall())
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().leaveCall({ workspaceId: "ws_1", callId: "call_1", userId: "usr_a", endpointId: "callep_1" })
+
+    expect(end).toHaveBeenCalledTimes(1)
+    // No ended row → no summary read, no call_ended emit (the winner already emitted it).
+    expect(streamRead).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalledWith(expect.anything(), "stream:call_ended", expect.anything())
+  })
+
+  it("does not end a call that still has joined participants", async () => {
     stubTransaction()
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallEndpointRepository, "findById").mockResolvedValue(fakeEndpoint())
@@ -483,12 +525,14 @@ describe("CallService.leaveCall", () => {
     spyOn(CallEndpointRepository, "close").mockResolvedValue(fakeEndpoint({ status: "closed" }))
     spyOn(CallParticipantRepository, "markLeftIfNoLiveEndpoint").mockResolvedValue(fakeParticipant({ status: "left" }))
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(2)
-    const grace = spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(null)
+    const end = spyOn(CallRepository, "endActiveIfEmpty").mockResolvedValue(null)
+    spyOn(CallInvitationRepository, "cancelRingingByInviter").mockResolvedValue([])
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
     spyOn(CallRepository, "findById").mockResolvedValue(fakeCall())
 
     await makeService().leaveCall({ workspaceId: "ws_1", callId: "call_1", userId: "usr_a", endpointId: "callep_1" })
 
-    expect(grace).not.toHaveBeenCalled()
+    expect(end).not.toHaveBeenCalled()
   })
 
   it("rejects closing an endpoint owned by another participant", async () => {
@@ -524,9 +568,11 @@ describe("CallService.leaveCall", () => {
     spyOn(CallEndpointRepository, "close").mockResolvedValue(fakeEndpoint({ status: "closed" }))
     spyOn(CallParticipantRepository, "markLeftIfNoLiveEndpoint").mockResolvedValue(fakeParticipant({ status: "left" }))
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
-    spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    spyOn(CallRepository, "endActiveIfEmpty").mockResolvedValue(fakeCall({ status: "ended", endedReason: "completed" }))
+    spyOn(streamsModule.StreamRepository, "findById").mockResolvedValue({ visibility: "public" } as never)
+    spyOn(CallParticipantRepository, "listUserIdsByCall").mockResolvedValue(new Map([["call_1", ["usr_a"]]]))
     spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
-    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "ended", endedReason: "completed" }))
     const cancelAll = spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([
       { id: "callinv_1", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_peer", inviterUserId: "usr_a" },
     ] as never)
@@ -556,7 +602,7 @@ describe("CallService.leaveCall", () => {
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(2)
     spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
     spyOn(CallRepository, "findById").mockResolvedValue(fakeCall())
-    const grace = spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(null)
+    const end = spyOn(CallRepository, "endActiveIfEmpty").mockResolvedValue(null)
     const cancelByInviter = spyOn(CallInvitationRepository, "cancelRingingByInviter").mockResolvedValue([
       { id: "callinv_2", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_peer", inviterUserId: "usr_a" },
     ] as never)
@@ -564,8 +610,8 @@ describe("CallService.leaveCall", () => {
 
     await makeService().leaveCall({ workspaceId: "ws_1", callId: "call_1", userId: "usr_a", endpointId: "callep_1" })
 
-    // The call lives on (others remain) — only the leaver's own ring is retracted.
-    expect(grace).not.toHaveBeenCalled()
+    // The call lives on (others remain) — only the leaver's own ring is retracted, never ended.
+    expect(end).not.toHaveBeenCalled()
     expect(cancelByInviter).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ callId: "call_1", inviterUserId: "usr_a" })
@@ -630,23 +676,35 @@ describe("CallService.leaveCallAsUser", () => {
     expect(emit).not.toHaveBeenCalled()
   })
 
-  it("closes the user's endpoints and emits participants_changed on a live call", async () => {
+  it("ends the emptied call in-tx on an explicit last-leave and emits stream:call_ended + participants_changed", async () => {
     stubTransaction()
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant())
     const closeByParticipant = spyOn(CallEndpointRepository, "closeByParticipant").mockResolvedValue([])
     spyOn(CallParticipantRepository, "markLeftIfNoLiveEndpoint").mockResolvedValue(fakeParticipant({ status: "left" }))
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
-    spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    const grace = spyOn(CallRepository, "enterGraceIfEmpty").mockResolvedValue(null)
+    const end = spyOn(CallRepository, "endActiveIfEmpty").mockResolvedValue(
+      fakeCall({ status: "ended", endedReason: "completed", endedAt: NOW })
+    )
+    spyOn(streamsModule.StreamRepository, "findById").mockResolvedValue({ visibility: "public" } as never)
+    spyOn(CallParticipantRepository, "listUserIdsByCall").mockResolvedValue(new Map([["call_1", ["usr_a"]]]))
     spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([])
     spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
     spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
-    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "empty_grace" }))
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "ended", endedReason: "completed" }))
     const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
 
     await makeService().leaveCallAsUser({ workspaceId: "ws_1", callId: "call_1", userId: "usr_a" })
 
     expect(closeByParticipant).toHaveBeenCalledWith(expect.anything(), "ws_1", "callp_1")
+    expect(end).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reason: "completed" }))
+    expect(grace).not.toHaveBeenCalled()
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "stream:call_ended",
+      expect.objectContaining({ callId: "call_1", streamId: "stream_1" })
+    )
     expect(emit).toHaveBeenCalledWith(
       expect.anything(),
       "call:participants_changed",
@@ -940,6 +998,8 @@ describe("CallService sweeps", () => {
     const grace = spyOn(CallRepository, "enterGraceIfEmptyBatch").mockResolvedValue([
       fakeCall({ status: "empty_grace" }),
     ])
+    // Disconnect-driven emptiness must NOT take the explicit-leave immediate-end path.
+    const end = spyOn(CallRepository, "endActiveIfEmpty").mockResolvedValue(null)
     const bumpBatch = spyOn(CallRepository, "bumpRosterVersionBatch").mockResolvedValue(undefined)
 
     const result = await makeService().reapLapsedEndpoints(NOW)
@@ -950,6 +1010,8 @@ describe("CallService sweeps", () => {
     expect(lock).toHaveBeenCalledWith(expect.anything(), ["call_1"])
     expect(markLeft).toHaveBeenCalledWith(expect.anything(), ["callp_a", "callp_b"])
     expect(grace).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ callIds: ["call_1"] }))
+    // The reaper keeps the grace window (its reconnect buffer) — never ends in-tx.
+    expect(end).not.toHaveBeenCalled()
     // The reap cascade bumps the roster version of every touched call in the same tx (INV-66).
     expect(bumpBatch).toHaveBeenCalledWith(expect.anything(), ["call_1"])
   })

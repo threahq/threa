@@ -230,6 +230,35 @@ export const CallRepository = {
   },
 
   /**
+   * CAS `active → ended` on an explicit last-leave: end the call in the same tx
+   * as the leave instead of parking it in `empty_grace` for the 15s sweeper. The
+   * guard mirrors {@link enterGraceIfEmpty} — `status = 'active'` AND no joined
+   * participant (INV-20), a roster predicate not a bare flag — so a concurrent
+   * join wins the row and a double last-leave ends it exactly once (the loser
+   * gets `null`, not an error). Records `ended_reason` + `ended_at` so the
+   * caller's `appendCallEnded` reads the same summary the grace-end sweep
+   * produces. Grace is retained for disconnect-driven emptiness (the reaper);
+   * this is only the explicit-leave path.
+   */
+  async endActiveIfEmpty(
+    db: Querier,
+    params: { workspaceId: string; id: string; reason: CallEndedReason }
+  ): Promise<Call | null> {
+    const result = await db.query<CallRow>(sql`
+      UPDATE calls c SET
+        status = 'ended', ended_reason = ${params.reason}, ended_at = NOW(),
+        status_changed_at = NOW(), updated_at = NOW()
+      WHERE c.workspace_id = ${params.workspaceId} AND c.id = ${params.id} AND c.status = 'active'
+        AND NOT EXISTS (
+          SELECT 1 FROM call_participants p
+          WHERE p.workspace_id = c.workspace_id AND p.call_id = c.id AND p.status = 'joined'
+        )
+      RETURNING ${sql.raw(CALL_COLUMNS)}
+    `)
+    return result.rows[0] ? mapCall(result.rows[0]) : null
+  },
+
+  /**
    * Batch cascade for the endpoint reaper (INV-56): flip the named calls to
    * `empty_grace` (reason `reaped`) when their last joined participant just went
    * away. The `NOT EXISTS` re-verifies emptiness against the current
