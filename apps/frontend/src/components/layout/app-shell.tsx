@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef } from "react"
+import { type ReactNode, useCallback, useEffect, useRef } from "react"
 import { RefreshCw } from "lucide-react"
 import {
   useSidebar,
@@ -14,6 +14,7 @@ import { useSyncEngine } from "@/sync/sync-engine"
 import { HistoryBackClose } from "@/components/ui/history-back-close"
 import { TopbarLoadingIndicator } from "./topbar-loading-indicator"
 import { ConnectionStatus } from "./connection-status"
+import { useCommittedSidebarWidth } from "./use-committed-sidebar-width"
 import { cn } from "@/lib/utils"
 
 // Pull indicator styling per mode — INV-47
@@ -140,13 +141,15 @@ export function AppShell({ sidebar, children }: AppShellProps) {
 
   const shellRef = useRef<HTMLDivElement>(null)
   const resizeHandleRef = useRef<HTMLDivElement>(null)
+  useCommittedSidebarWidth(shellRef, width, state)
   const handleSidebarWidthChange = useCallback(
     (nextWidth: number) => {
       const willCollapse = nextWidth < SIDEBAR_COLLAPSE_THRESHOLD
       const clampedWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, nextWidth))
-      const liveWidth = willCollapse ? "6px" : `${clampedWidth}px`
-      shellRef.current?.style.setProperty("--nav-sidebar-width", liveWidth)
-      if (state === "pinned") document.documentElement.style.setProperty("--app-content-left", liveWidth)
+      const shellWidth = willCollapse ? "6px" : `${clampedWidth}px`
+      shellRef.current?.style.setProperty("--nav-sidebar-width", `${clampedWidth}px`)
+      shellRef.current?.style.setProperty("--nav-sidebar-shell-width", shellWidth)
+      if (state === "pinned") document.documentElement.style.setProperty("--app-content-left", shellWidth)
 
       resizeHandleRef.current?.setAttribute("aria-valuenow", String(clampedWidth))
       if (willCollapse) resizeHandleRef.current?.setAttribute("aria-valuetext", "Release to collapse")
@@ -197,14 +200,14 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   const isCollapsed = state === "collapsed"
   const isPreview = state === "preview"
   const isOpen = state === "pinned" || isPreview
-  let wrapperWidth = "var(--nav-sidebar-width)"
+  let wrapperWidth = "var(--nav-sidebar-shell-width)"
   if (isMobile) {
     wrapperWidth = "0px"
   } else if (isCollapsed || isPreview) {
     wrapperWidth = "6px"
   }
 
-  let sidebarWidth = "var(--nav-sidebar-width)"
+  let sidebarWidth = "var(--nav-sidebar-shell-width)"
   if (isMobile) {
     sidebarWidth = "min(85vw, 320px)"
   } else if (isCollapsed) {
@@ -271,12 +274,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     <div
       ref={shellRef}
       className="flex w-screen flex-col overflow-hidden"
-      style={
-        {
-          "--nav-sidebar-width": `${width}px`,
-          height: "var(--viewport-height, 100dvh)",
-        } as CSSProperties
-      }
+      style={{ height: "var(--viewport-height, 100dvh)" }}
     >
       {/* On mobile the sidebar is an overlay, so the OS back gesture should
            dismiss it instead of navigating to the previous stream */}
@@ -377,7 +375,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             {isPreview && !isMobile && (
               <div
                 className="absolute top-0 z-50 h-full w-[30px]"
-                style={{ left: "var(--nav-sidebar-width)" }}
+                style={{ left: "var(--nav-sidebar-shell-width)" }}
                 onMouseEnter={handleMouseEnter}
                 onMouseLeave={handleMouseLeave}
                 aria-hidden="true"
@@ -418,12 +416,11 @@ export function AppShell({ sidebar, children }: AppShellProps) {
                 {sidebar}
               </div>
 
-              {!isCollapsed && !isMobile && (
+              {(!isCollapsed || isResizing) && !isMobile && (
                 <div
                   ref={resizeHandleRef}
                   className={cn(
-                    "absolute right-0 top-0 h-full w-1 touch-none cursor-col-resize",
-                    "after:absolute after:inset-y-0 after:right-0 [@media(any-pointer:coarse)]:after:w-11",
+                    "absolute right-0 top-0 h-full w-1 touch-pan-y cursor-col-resize",
                     "hover:bg-primary/20 active:bg-primary/30",
                     "transition-colors duration-150",
                     "focus-visible:bg-primary/30 focus-visible:outline-none",

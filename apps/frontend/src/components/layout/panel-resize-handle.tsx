@@ -27,9 +27,8 @@ export function PanelResizeHandle({
   return (
     <div
       className={cn(
-        "relative flex w-px flex-shrink-0 touch-none items-center justify-center bg-border cursor-col-resize",
-        "after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2",
-        "[@media(any-pointer:coarse)]:after:w-11",
+        "resize-handle-touch-target relative flex w-px flex-shrink-0 touch-pan-y items-center justify-center bg-border cursor-col-resize",
+        "after:absolute after:left-1/2 after:-translate-x-1/2",
         "focus-visible:bg-primary/30 focus-visible:outline-none",
         !isResizing && "transition-colors duration-150",
         isResizing && "bg-primary/30"

@@ -119,6 +119,22 @@
     opacity: 1;
     pointer-events: auto;
   }
+
+  .resize-handle-touch-target::after {
+    content: "";
+    top: 0;
+    bottom: 0;
+    width: 4px;
+  }
+  @media (pointer: coarse) {
+    .resize-handle-touch-target::after {
+      top: 50%;
+      bottom: auto;
+      width: 44px;
+      height: 44px;
+      translate: 0 -50%;
+    }
+  }
 }
 
 /* Per-message hover wash (Slack-style row highlight) — GATED to mouse input via

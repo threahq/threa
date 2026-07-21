@@ -50,6 +50,7 @@ export function useResizeDrag({
 
   const handleResizeStart = useCallback(
     (e: React.PointerEvent) => {
+      if (!e.isPrimary || e.button !== 0 || resizeRef.current) return
       e.preventDefault()
       e.stopPropagation()
       resizeRef.current = {
@@ -88,6 +89,8 @@ export function useResizeDrag({
         const rawDelta = e.clientX - resize.startX
         const delta = direction === "right" ? rawDelta : -rawDelta
         resize.latestWidth = resize.startWidth + delta
+      } else {
+        resize.latestWidth = resize.startWidth
       }
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current)

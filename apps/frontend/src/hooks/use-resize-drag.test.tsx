@@ -60,7 +60,7 @@ describe("useResizeDrag", () => {
     render(<ResizeHarness onWidthChange={onWidthChange} onResizeEnd={onResizeEnd} />)
     const handle = screen.getByTestId("handle")
 
-    fireEvent.pointerDown(handle, { pointerId: 7, clientX: 100 })
+    fireEvent.pointerDown(handle, { pointerId: 7, clientX: 100, isPrimary: true, button: 0 })
     expect(setPointerCapture).toHaveBeenCalledWith(7)
     expect(handle).toHaveAttribute("data-resizing", "true")
 
@@ -80,13 +80,41 @@ describe("useResizeDrag", () => {
     expect(handle).toHaveAttribute("data-resizing", "false")
   })
 
+  it("restores the starting width when the pointer is cancelled", () => {
+    const onWidthChange = vi.fn()
+    const onResizeEnd = vi.fn()
+    render(<ResizeHarness onWidthChange={onWidthChange} onResizeEnd={onResizeEnd} />)
+    const handle = screen.getByTestId("handle")
+
+    fireEvent.pointerDown(handle, { pointerId: 5, clientX: 100, isPrimary: true, button: 0 })
+    fireEvent.pointerMove(handle, { pointerId: 5, clientX: 140 })
+    act(() => frames.values().next().value?.(0))
+    fireEvent.pointerCancel(handle, { pointerId: 5, clientX: 140 })
+
+    expect(onWidthChange).toHaveBeenLastCalledWith(250)
+    expect(onResizeEnd).toHaveBeenCalledWith(250)
+  })
+
+  it("ignores secondary pointers and non-primary mouse buttons", () => {
+    const onWidthChange = vi.fn()
+    const onResizeEnd = vi.fn()
+    render(<ResizeHarness onWidthChange={onWidthChange} onResizeEnd={onResizeEnd} />)
+    const handle = screen.getByTestId("handle")
+
+    fireEvent.pointerDown(handle, { pointerId: 8, clientX: 100, isPrimary: false, button: 0 })
+    fireEvent.pointerDown(handle, { pointerId: 9, clientX: 100, isPrimary: true, button: 2 })
+
+    expect(setPointerCapture).not.toHaveBeenCalled()
+    expect(handle).toHaveAttribute("data-resizing", "false")
+  })
+
   it("reverses the drag delta for a right-side panel", () => {
     const onWidthChange = vi.fn()
     const onResizeEnd = vi.fn()
     render(<ResizeHarness direction="left" onWidthChange={onWidthChange} onResizeEnd={onResizeEnd} />)
     const handle = screen.getByTestId("handle")
 
-    fireEvent.pointerDown(handle, { pointerId: 3, clientX: 300 })
+    fireEvent.pointerDown(handle, { pointerId: 3, clientX: 300, isPrimary: true, button: 0 })
     fireEvent.pointerMove(handle, { pointerId: 3, clientX: 260 })
     fireEvent.pointerUp(handle, { pointerId: 3, clientX: 260 })
 
