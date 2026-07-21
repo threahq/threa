@@ -37,10 +37,11 @@ export function CallTile({ participant, workspaceId, isSelf, stage = false, fill
   const mediaEpoch = useCallMediaEpoch()
   const manager = useCallManager()
   const videoRef = useRef<HTMLVideoElement>(null)
+  const lastStreamRef = useRef<MediaStream | null>(null)
   const [hasVideo, setHasVideo] = useState(false)
-  // The facing that the currently-DISPLAYED self frames were captured with. Synced on
-  // `mediaEpoch` (when the video re-binds after a flip's recapture), NOT on the immediate
-  // pref change — so the mirror flips exactly when the camera does, never before it.
+  // The facing that the currently-DISPLAYED self frames were captured with. Synced when
+  // the SELF stream re-binds (after a flip's recapture), NOT on the immediate pref change
+  // — so the mirror flips exactly when the camera does, never before it.
   const [displayedFacing, setDisplayedFacing] = useState<"user" | "environment" | null>(
     () => getCallState().local.devices.facingMode
   )
@@ -51,9 +52,11 @@ export function CallTile({ participant, workspaceId, isSelf, stage = false, fill
     const stream = endpointId ? manager.getVideoStream(endpointId) : null
     if (el) el.srcObject = stream
     setHasVideo(!!stream)
-    // mediaEpoch bumps whenever the manager's video ref-map changes — the moment the
-    // fresh camera frames re-bind, snapshot their facing for the mirror.
-    if (isSelf) setDisplayedFacing(getCallState().local.devices.facingMode)
+    // Snapshot facing ONLY when the SELF stream itself changes (a flip/toggle republish),
+    // not on every mediaEpoch — which also bumps for remote peers, and a peer's video
+    // change mid-flip would otherwise resnapshot the new facing before the self frames land.
+    if (isSelf && stream !== lastStreamRef.current) setDisplayedFacing(getCallState().local.devices.facingMode)
+    lastStreamRef.current = stream
     return () => {
       // Null the binding on unmount (symmetric with detachRemoteAudio); the manager
       // owns the MediaStream lifecycle, so this only drops the element's reference.

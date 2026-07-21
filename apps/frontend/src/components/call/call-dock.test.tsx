@@ -224,19 +224,27 @@ describe("CallDock — connected roster", () => {
     expect(container.querySelector('[data-user-id="usr_peer"] video')?.className).not.toContain("-scale-x-100")
   })
 
-  it("keeps the self-mirror until the frames re-bind on flip (no premature mirror-flip)", () => {
+  it("flips the self-mirror only when the SELF stream re-binds, not on any mediaEpoch", () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
-    const { container } = renderDock(makeManager())
+    let selfStream = { id: "s1" } as unknown as MediaStream
+    const manager = makeManager({ getVideoStream: (ep: string) => (ep === "callep_self" ? selfStream : null) })
+    const { container } = renderDock(manager)
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
     act(() => setCallSurfaceMode("standard")) // tiles render in the gallery, not the compact bar
     const selfVideo = () => container.querySelector('[data-user-id="usr_self"] video')
     // Mobile front (facingMode null) → mirrored.
     expect(selfVideo()?.className).toContain("-scale-x-100")
-    // A flip sets facingMode synchronously, but the still-displayed old frames must NOT
-    // mirror-flip until the recapture re-binds the video (a mediaEpoch bump).
+    // Flip sets facingMode synchronously — but the still-displayed old frames must NOT flip.
     act(() => patchCallLocal({ devices: { ...getCallState().local.devices, facingMode: "environment" } }))
     expect(selfVideo()?.className).toContain("-scale-x-100")
+    // A REMOTE video change bumps mediaEpoch but the self stream is unchanged → still no flip.
     act(() => bumpCallMediaEpoch())
+    expect(selfVideo()?.className).toContain("-scale-x-100")
+    // The self camera republishes a NEW stream → now the mirror follows the new facing.
+    act(() => {
+      selfStream = { id: "s2" } as unknown as MediaStream
+      bumpCallMediaEpoch()
+    })
     expect(selfVideo()?.className).not.toContain("-scale-x-100")
   })
 
