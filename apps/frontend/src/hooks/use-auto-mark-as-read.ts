@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import { useUnreadCounts } from "./use-unread-counts"
 import { useActivityCounts } from "./use-activity-counts"
 import { usePageActivity } from "./use-page-activity"
+import { computeAutoReadAttention } from "@/lib/auto-read-attention"
 import { useIsMobile } from "./use-mobile"
 import { useCoarsePointer } from "./use-pointer"
 
@@ -21,23 +22,18 @@ interface UseAutoMarkAsReadOptions {
 /**
  * Whether the viewer's attention is plausibly on this page — the shared gate for
  * every auto-read surface (stream timeline here, conversation surfaces via
- * `useConversationAutoRead`). Focus tells you which of several overlapping
- * windows the user is working in — a fine-pointer, multi-window (desktop)
- * signal. On a phone-like device (coarse pointer AND a phone-width viewport)
- * `document.hasFocus()` is an unreliable proxy for attention: mobile browsers
- * and installed PWAs routinely report no focus while the page is the
- * foreground, and the resume `focus` event often never fires — so there a
- * visible page is "active". A coarse-but-wide device (tablet, iPad split view)
- * keeps the focus gate, so working in the adjacent pane does not auto-read this
- * one. This relaxation is deliberately local to auto-read;
- * `usePageActivity().isActive` stays the strict visible-and-focused signal its
- * other consumers (socket, connection status, app-update) rely on.
+ * `useConversationAutoRead`) AND the optimistic viewing pin in the
+ * `stream:activity` counter apply (via `isAutoReadAttentiveNow`). The formula
+ * and its rationale live in `lib/auto-read-attention.ts`. This relaxation is
+ * deliberately local to auto-read; `usePageActivity().isActive` stays the
+ * strict visible-and-focused signal its other consumers (socket, connection
+ * status, app-update) rely on.
  */
 export function useAutoReadAttention(): boolean {
   const { isVisible, isFocused } = usePageActivity()
   const isMobile = useIsMobile()
   const isCoarsePointer = useCoarsePointer()
-  return isVisible && (isFocused || (isMobile && isCoarsePointer))
+  return computeAutoReadAttention({ isVisible, isFocused, isMobile, isCoarsePointer })
 }
 
 /**

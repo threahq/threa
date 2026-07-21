@@ -81,8 +81,11 @@ import {
   applyStreamReadSet,
   applyStreamsReadAllOrdinals,
   bootstrapActivityCacheFields,
+  mergeBootstrapUnreadFields,
+  pruneCounterTouches,
   upsertActivity,
 } from "./unread-counters"
+import { isAutoReadAttentiveNow } from "@/lib/auto-read-attention"
 import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
 import { commitReadStateSnapshot } from "./read-state"
 
@@ -399,6 +402,36 @@ export function mergeReconnectWorkspaceBootstrap({
   const localStreamById = new Map(localStreams.map((stream) => [stream.id, stream]))
   const localMembershipByStreamId = new Map(localMemberships.map((membership) => [membership.streamId, membership]))
 
+  // One override per stream, shared by the touched loop and the stale loop so
+  // the two field lists can't drift apart. Counters and mute membership merge
+  // on SEPARATE freshness (counterTouchedAt vs mutedTouchedAt): a mute-only
+  // write must not freeze that stream's counter triple against a fresher
+  // server snapshot — the stream-scoped recurrence of the row-level bug.
+  const applyLocalCounterOverride = (streamId: string): void => {
+    if (!localUnreadState) return
+    unreadCounts[streamId] = localUnreadState.unreadCounts[streamId] ?? 0
+    const localOrdinal = localUnreadState.latestOrdinals?.[streamId]
+    if (localOrdinal !== undefined) {
+      messageCounts[streamId] = localOrdinal
+    } else {
+      delete messageCounts[streamId]
+    }
+    const localOverlay = localUnreadState.readMessageIds?.[streamId]
+    if (localOverlay !== undefined) {
+      readMessageIds[streamId] = localOverlay
+    } else {
+      delete readMessageIds[streamId]
+    }
+  }
+  const applyLocalMuteOverride = (streamId: string): void => {
+    if (!localUnreadState) return
+    if (localUnreadState.mutedStreamIds.includes(streamId)) {
+      mutedStreamIds.add(streamId)
+    } else {
+      mutedStreamIds.delete(streamId)
+    }
+  }
+
   if (fetchStartedAt !== undefined) {
     for (const stream of localStreams) {
       if (stream._cachedAt < fetchStartedAt) continue
@@ -416,26 +449,20 @@ export function mergeReconnectWorkspaceBootstrap({
       membershipsByStreamId.set(membership.streamId, toWorkspaceBootstrapMembership(membership))
     }
 
-    if (localUnreadState && localUnreadState._cachedAt >= fetchStartedAt) {
-      for (const [streamId, count] of Object.entries(localUnreadState.unreadCounts)) {
+    // Per-stream: local counter state wins only for streams actually touched
+    // during the fetch window (see `counterTouchedAt`). The previous row-level
+    // `_cachedAt` check let any one stream's write keep EVERY stream's local
+    // count, so a drifted count survived reconnects indefinitely.
+    if (localUnreadState) {
+      for (const [streamId, touchedAt] of Object.entries(localUnreadState.counterTouchedAt ?? {})) {
+        if (touchedAt < fetchStartedAt) continue
         if (successfulStreamIds.has(streamId)) continue
-        unreadCounts[streamId] = count
-        const localOrdinal = localUnreadState.latestOrdinals?.[streamId]
-        if (localOrdinal !== undefined) {
-          messageCounts[streamId] = localOrdinal
-        } else {
-          delete messageCounts[streamId]
-        }
-        const localOverlay = localUnreadState.readMessageIds?.[streamId]
-        if (localOverlay !== undefined) {
-          readMessageIds[streamId] = localOverlay
-        } else {
-          delete readMessageIds[streamId]
-        }
+        applyLocalCounterOverride(streamId)
       }
-      for (const streamId of localUnreadState.mutedStreamIds) {
+      for (const [streamId, touchedAt] of Object.entries(localUnreadState.mutedTouchedAt ?? {})) {
+        if (touchedAt < fetchStartedAt) continue
         if (successfulStreamIds.has(streamId)) continue
-        mutedStreamIds.add(streamId)
+        applyLocalMuteOverride(streamId)
       }
     }
   }
@@ -454,24 +481,8 @@ export function mergeReconnectWorkspaceBootstrap({
     }
 
     if (localUnreadState) {
-      unreadCounts[streamId] = localUnreadState.unreadCounts[streamId] ?? 0
-      const localOrdinal = localUnreadState.latestOrdinals?.[streamId]
-      if (localOrdinal !== undefined) {
-        messageCounts[streamId] = localOrdinal
-      } else {
-        delete messageCounts[streamId]
-      }
-      const localOverlay = localUnreadState.readMessageIds?.[streamId]
-      if (localOverlay !== undefined) {
-        readMessageIds[streamId] = localOverlay
-      } else {
-        delete readMessageIds[streamId]
-      }
-      if (localUnreadState.mutedStreamIds.includes(streamId)) {
-        mutedStreamIds.add(streamId)
-      } else {
-        mutedStreamIds.delete(streamId)
-      }
+      applyLocalCounterOverride(streamId)
+      applyLocalMuteOverride(streamId)
     }
   }
 
@@ -1132,6 +1143,11 @@ export function registerWorkspaceSocketHandlers(
         await db.unreadState.put({
           ...unread,
           mutedStreamIds: Array.from(mutedStreamIds),
+          // Mute-specific stamp so an in-flight bootstrap's merge keeps this
+          // stream's local mute membership WITHOUT freezing its counter triple
+          // (counterTouchedAt would make the merge prefer possibly-stale local
+          // counts for an unrelated mute toggle).
+          mutedTouchedAt: { ...unread.mutedTouchedAt, [payload.streamId]: now },
           _cachedAt: now,
         })
       }
@@ -1167,7 +1183,12 @@ export function registerWorkspaceSocketHandlers(
     // the absolute ordinal apply folds through commitCounter. Own messages never
     // raise unread (authorId is a userId — match via user.workosUserId): the
     // server auto-advances the author's read pointer in the send transaction
-    // without emitting stream:read. Viewing pins the read position to latest.
+    // without emitting stream:read. Viewing pins the read position to latest —
+    // gated on the SAME attention signal `useAutoMarkAsRead` uses: the pin is
+    // optimistic against the auto-read confirm, so pinning while unattentive
+    // (stream open in a blurred window, reconnect catch-up replays) zeroes the
+    // local count with no server confirm ever coming, and the stream vanishes
+    // from the sidebar's Unread section while genuinely unread.
     const old = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
     if (!old) return
     const isMember = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
@@ -1179,7 +1200,7 @@ export function registerWorkspaceSocketHandlers(
     commitCounter((state) =>
       applyStreamActivityOrdinal(state, payload.streamId, payload.messageOrdinal, {
         isOwnMessage,
-        isViewing: isViewingStream,
+        isViewing: isViewingStream && isAutoReadAttentiveNow(),
       })
     )
   }
@@ -2245,7 +2266,7 @@ export async function applyWorkspaceBootstrap(
   workspaceId: string,
   bootstrap: WorkspaceBootstrap,
   fetchStartedAt?: number
-): Promise<void> {
+): Promise<WorkspaceBootstrap> {
   const now = Date.now()
 
   // Build membership lookup for O(1) access when merging onto streams
@@ -2265,6 +2286,11 @@ export async function applyWorkspaceBootstrap(
   // row (the IDB write is skipped) and must seed that value, not the older
   // snapshot, so the in-memory cache doesn't briefly regress to the old preset.
   let effectiveSidebarConfig = bootstrap.sidebarConfig
+
+  // The merged (server ⊕ fresh-local) counter fields, assigned inside the
+  // transaction; seeded into the in-memory cache and returned so the query
+  // cache carries the same values as IDB.
+  let effectiveUnread = mergeBootstrapUnreadFields(bootstrap, undefined, fetchStartedAt)
 
   // One transaction over every table so they commit together and each table's
   // `useLiveQuery` fires once — one settle, not a per-table trickle. Parallel
@@ -2347,22 +2373,14 @@ export async function applyWorkspaceBootstrap(
         }),
       ])
 
-      // Only write unreadState if no concurrent socket handler updated it since
-      // the fetch started — stream:activity / activity:created may have bumped
-      // counts during the fetch window (INV-20).
+      // Per-stream merge with concurrent socket writes (INV-20): the server
+      // snapshot wins except for streams whose local counter state was touched
+      // during the fetch window. The previous row-level `_cachedAt` skip let
+      // one busy stream veto the whole server snapshot, so a drifted local
+      // count never healed.
       const existingUnread = await db.unreadState.get(workspaceId)
-      if (!existingUnread || !fetchStartedAt || existingUnread._cachedAt < fetchStartedAt) {
-        await db.unreadState.put({
-          id: workspaceId,
-          workspaceId,
-          unreadCounts: bootstrap.unreadCounts,
-          ...bootstrapActivityCacheFields(bootstrap),
-          latestOrdinals: bootstrap.messageCounts,
-          readMessageIds: bootstrap.readMessageIds,
-          mutedStreamIds: bootstrap.mutedStreamIds,
-          _cachedAt: now,
-        })
-      }
+      effectiveUnread = mergeBootstrapUnreadFields(bootstrap, existingUnread, fetchStartedAt)
+      await db.unreadState.put({ id: workspaceId, workspaceId, ...effectiveUnread, _cachedAt: now })
 
       const existingPrefs = await db.userPreferences.get(workspaceId)
       if (!existingPrefs || !fetchStartedAt || existingPrefs._cachedAt < fetchStartedAt) {
@@ -2437,11 +2455,7 @@ export async function applyWorkspaceBootstrap(
     unreadState: {
       id: workspaceId,
       workspaceId,
-      unreadCounts: bootstrap.unreadCounts,
-      ...bootstrapActivityCacheFields(bootstrap),
-      latestOrdinals: bootstrap.messageCounts,
-      readMessageIds: bootstrap.readMessageIds,
-      mutedStreamIds: bootstrap.mutedStreamIds,
+      ...effectiveUnread,
       _cachedAt: now,
     },
     userPreferences: {
@@ -2473,6 +2487,20 @@ export async function applyWorkspaceBootstrap(
   seedAgentActivity(workspaceId, bootstrap.activeAgentSessions ?? [])
   // Same for the sidebar live-call dot (roadmap 1.4).
   seedActiveCalls(workspaceId, bootstrap.activeCalls ?? [])
+
+  // The caller writes the returned bootstrap to the query cache — reflect the
+  // merged counter fields so cache and IDB never disagree on unread state.
+  return {
+    ...bootstrap,
+    unreadCounts: effectiveUnread.unreadCounts,
+    unreadActivities: effectiveUnread.unreadActivities,
+    activityCounts: effectiveUnread.activityCounts,
+    mentionCounts: effectiveUnread.mentionCounts,
+    unreadActivityCount: effectiveUnread.unreadActivityCount,
+    messageCounts: effectiveUnread.latestOrdinals,
+    readMessageIds: effectiveUnread.readMessageIds,
+    mutedStreamIds: effectiveUnread.mutedStreamIds,
+  }
 }
 
 export async function applyReconnectBootstrapBatch(
@@ -2584,6 +2612,8 @@ export async function applyReconnectBootstrapBatch(
           latestOrdinals: finalBootstrap.messageCounts,
           readMessageIds: finalBootstrap.readMessageIds,
           mutedStreamIds: finalBootstrap.mutedStreamIds,
+          counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
+          mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
           _cachedAt: now,
         }),
         db.workspaceMetadata.put({
@@ -2682,6 +2712,8 @@ export async function applyReconnectBootstrapBatch(
       latestOrdinals: finalBootstrap.messageCounts,
       readMessageIds: finalBootstrap.readMessageIds,
       mutedStreamIds: finalBootstrap.mutedStreamIds,
+      counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
+      mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
       _cachedAt: now,
     },
     userPreferences: {

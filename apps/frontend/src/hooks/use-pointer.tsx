@@ -28,6 +28,11 @@ function getServerSnapshot() {
   return false
 }
 
+/** Imperative snapshot of the coarse-primary-pointer media query, for non-React callers. */
+export function isCoarsePointerDevice() {
+  return getSnapshot()
+}
+
 export function useCoarsePointer() {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }

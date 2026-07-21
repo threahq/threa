@@ -547,6 +547,21 @@ export interface CachedUnreadState {
    */
   readMessageIds?: Record<string, string[]>
   mutedStreamIds: string[]
+  /**
+   * Per-stream timestamp of the last local counter write (stamped by
+   * `putCountersIdb` via `diffCounterStreams`, plus the optimistic read paths).
+   * Bootstrap merges are per-stream: the server snapshot wins except for
+   * streams touched during the fetch window (`mergeBootstrapUnreadFields`).
+   * Pruned to the fetch window on every bootstrap. Absent for rows cached
+   * before the field shipped.
+   */
+  counterTouchedAt?: Record<string, number>
+  /**
+   * Mute-membership sibling of `counterTouchedAt`, stamped by the
+   * notification-level handler. Separate so a mute-only toggle doesn't make
+   * the bootstrap merge prefer that stream's possibly-stale local counters.
+   */
+  mutedTouchedAt?: Record<string, number>
   _cachedAt: number
 }
 

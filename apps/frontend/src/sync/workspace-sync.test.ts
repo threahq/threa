@@ -2105,7 +2105,8 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     cleanup()
   })
 
-  it("pins the read position to latest while viewing the stream", async () => {
+  it("pins the read position to latest while viewing the stream attentively", async () => {
+    const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true)
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)
     const { emit, cleanup } = register(queryClient, "stream_1")
@@ -2125,6 +2126,34 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     })
 
     cleanup()
+    focusSpy.mockRestore()
+  })
+
+  it("does NOT pin while the viewed stream's window is unfocused — unread rises like any other stream", async () => {
+    // The pin is optimistic against the auto-read confirm, which only fires
+    // when attentive (useAutoReadAttention). Pinning here would zero the local
+    // count with no server confirm coming — the sticky-zero divergence bug.
+    const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(false)
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient, "stream_1")
+
+    emit("stream:activity", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "member_2",
+      sequence: "9",
+      messageOrdinal: 6,
+      lastMessagePreview: preview,
+    })
+
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts.stream_1).toBe(2)
+    await vi.waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(2)
+    })
+
+    cleanup()
+    focusSpy.mockRestore()
   })
 
   it("applies stream:read absolute positions — newer messages stay unread", async () => {
@@ -2267,6 +2296,42 @@ describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
     expect((await db.unreadState.get("ws_1"))?.latestOrdinals).toEqual({ stream_1: 7 })
   })
 
+  it("applyWorkspaceBootstrap heals a drifted stream even when another stream keeps the local row fresh", async () => {
+    const fetchStartedAt = Date.now() - 1000
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      // stream_drifted: stale local zero (server says 3 unread). stream_busy:
+      // touched during the fetch window, its local count must survive.
+      unreadCounts: { stream_drifted: 0, stream_busy: 5 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { stream_drifted: 8, stream_busy: 12 },
+      mutedStreamIds: [],
+      counterTouchedAt: { stream_busy: fetchStartedAt + 200 },
+      _cachedAt: fetchStartedAt + 200,
+    })
+
+    const effective = await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        unreadCounts: { stream_drifted: 3, stream_busy: 9 },
+        messageCounts: { stream_drifted: 8, stream_busy: 9 },
+      }),
+      fetchStartedAt
+    )
+
+    const row = await db.unreadState.get("ws_1")
+    expect(row?.unreadCounts).toEqual({ stream_drifted: 3, stream_busy: 5 })
+    expect(row?.latestOrdinals).toEqual({ stream_drifted: 8, stream_busy: 12 })
+    // The returned bootstrap (written to the query cache by callers) carries
+    // the same merged counters as IDB.
+    expect(effective.unreadCounts).toEqual({ stream_drifted: 3, stream_busy: 5 })
+    expect(effective.messageCounts).toEqual({ stream_drifted: 8, stream_busy: 12 })
+  })
+
   it("mergeReconnectWorkspaceBootstrap keeps each stream's ordinal paired with its winning unread source", () => {
     const fetchStartedAt = Date.now() - 1000
     const merged = mergeReconnectWorkspaceBootstrap({
@@ -2282,8 +2347,9 @@ describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
       localUnreadState: {
         id: "ws_1",
         workspaceId: "ws_1",
-        // Fresher than the fetch: stream_fresh's local pair wins; stream_stale
-        // has a local unread but NO local ordinal — its baseline must drop
+        // stream_fresh was TOUCHED during the fetch window, so its local pair
+        // wins; stream_stale rides the failed-catch-up branch and keeps its
+        // local unread but has NO local ordinal — its baseline must drop
         // rather than pair the server ordinal with the local unread.
         unreadCounts: { stream_fresh: 2, stream_stale: 1 },
         mentionCounts: {},
@@ -2292,6 +2358,7 @@ describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
         unreadActivities: [],
         latestOrdinals: { stream_fresh: 11 },
         mutedStreamIds: [],
+        counterTouchedAt: { stream_fresh: fetchStartedAt + 500 },
         _cachedAt: fetchStartedAt + 500,
       },
       fetchStartedAt,
@@ -2299,6 +2366,41 @@ describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
 
     expect(merged.unreadCounts).toEqual({ stream_fresh: 2, stream_stale: 1 })
     expect(merged.messageCounts).toEqual({ stream_fresh: 11 })
+  })
+
+  it("mergeReconnectWorkspaceBootstrap lets the server heal a stream the local row did not touch during the fetch", () => {
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeReconnectWorkspaceBootstrap({
+      workspaceBootstrap: makeBootstrap({
+        unreadCounts: { stream_drifted: 4, stream_busy: 9 },
+        messageCounts: { stream_drifted: 10, stream_busy: 9 },
+      }),
+      successfulStreamBootstraps: new Map(),
+      staleStreamIds: new Set(),
+      terminalStreamIds: new Set(),
+      localStreams: [],
+      localMemberships: [],
+      localUnreadState: {
+        id: "ws_1",
+        workspaceId: "ws_1",
+        // The row is "fresh" (stream_busy was touched during the fetch), but
+        // stream_drifted was NOT — its stale local zero must lose to the
+        // server's count instead of riding the row-level freshness.
+        unreadCounts: { stream_drifted: 0, stream_busy: 3 },
+        mentionCounts: {},
+        activityCounts: {},
+        unreadActivityCount: 0,
+        unreadActivities: [],
+        latestOrdinals: { stream_drifted: 10, stream_busy: 12 },
+        mutedStreamIds: [],
+        counterTouchedAt: { stream_busy: fetchStartedAt + 200 },
+        _cachedAt: fetchStartedAt + 200,
+      },
+      fetchStartedAt,
+    })
+
+    expect(merged.unreadCounts).toEqual({ stream_drifted: 4, stream_busy: 3 })
+    expect(merged.messageCounts).toEqual({ stream_drifted: 10, stream_busy: 12 })
   })
 })
 

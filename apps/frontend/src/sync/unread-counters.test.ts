@@ -15,6 +15,9 @@ import {
   reconcileActivities,
   rehomeActivities,
   clearActivities,
+  diffCounterStreams,
+  mergeBootstrapUnreadFields,
+  pruneCounterTouches,
   type UnreadCounterState,
 } from "./unread-counters"
 
@@ -585,5 +588,138 @@ describe("reconcileActivities", () => {
     const next = reconcileActivities(state, [])
     expect(next.unreadActivities).toEqual([])
     expect(next.unreadActivityCount).toBe(0)
+  })
+})
+
+describe("diffCounterStreams", () => {
+  it("collects streams whose unread, ordinal, overlay, or held rows changed", () => {
+    const prev = makeState({
+      unreadCounts: { s1: 1, s2: 0, s5: 2 },
+      latestOrdinals: { s1: 5, s2: 3, s5: 9 },
+      readMessageIds: { s3: ["m1"] },
+      unreadActivities: [act("a1", "s4")],
+    })
+    const next = makeState({
+      unreadCounts: { s1: 2, s2: 0, s5: 2 },
+      latestOrdinals: { s1: 6, s2: 3, s5: 9 },
+      readMessageIds: { s3: ["m1", "m2"] },
+      unreadActivities: [act("a1", "s4"), act("a2", "s6")],
+    })
+    expect(diffCounterStreams(prev, next)).toEqual(new Set(["s1", "s3", "s6"]))
+  })
+
+  it("returns empty for identical states", () => {
+    const state = makeState({ unreadCounts: { s1: 1 }, unreadActivities: [act("a1", "s1")] })
+    expect(diffCounterStreams(state, state)).toEqual(new Set())
+  })
+})
+
+describe("mergeBootstrapUnreadFields", () => {
+  const bootstrap = {
+    unreadCounts: { s1: 4, s2: 2 },
+    messageCounts: { s1: 10, s2: 8 },
+    readMessageIds: { s2: ["m1"] },
+    mutedStreamIds: ["s9"],
+    unreadActivities: [act("a1", "s1"), act("a2", "s2")],
+  } as unknown as import("@threa/types").WorkspaceBootstrap
+
+  it("takes the server snapshot wholesale when nothing local was touched during the fetch", () => {
+    const merged = mergeBootstrapUnreadFields(
+      bootstrap,
+      {
+        // Drifted local zero from before the fetch — must lose to the server.
+        unreadCounts: { s1: 0 },
+        latestOrdinals: { s1: 10 },
+        mutedStreamIds: [],
+        counterTouchedAt: { s1: Date.now() - 60_000 },
+      },
+      Date.now() - 1000
+    )
+    expect(merged.unreadCounts).toEqual({ s1: 4, s2: 2 })
+    expect(merged.latestOrdinals).toEqual({ s1: 10, s2: 8 })
+    expect(merged.counterTouchedAt).toEqual({})
+    expect(merged.unreadActivities.map((a) => a.id).sort()).toEqual(["a1", "a2"])
+  })
+
+  it("keeps the local triple (and held rows) only for streams touched during the fetch window", () => {
+    const fetchStartedAt = Date.now() - 1000
+    const touchedAt = fetchStartedAt + 500
+    const merged = mergeBootstrapUnreadFields(
+      bootstrap,
+      {
+        unreadCounts: { s1: 5, s2: 0 },
+        latestOrdinals: { s1: 11, s2: 8 },
+        readMessageIds: {},
+        mutedStreamIds: [],
+        unreadActivities: [act("a1", "s1"), act("a3", "s1")],
+        counterTouchedAt: { s1: touchedAt, s2: fetchStartedAt - 500 },
+      },
+      fetchStartedAt
+    )
+    expect(merged.unreadCounts).toEqual({ s1: 5, s2: 2 })
+    expect(merged.latestOrdinals).toEqual({ s1: 11, s2: 8 })
+    expect(merged.readMessageIds).toEqual({ s2: ["m1"] })
+    expect(merged.unreadActivities.map((a) => a.id).sort()).toEqual(["a1", "a2", "a3"])
+    expect(merged.activityCounts).toEqual({ s1: 2, s2: 1 })
+    expect(merged.counterTouchedAt).toEqual({ s1: touchedAt })
+  })
+
+  it("keeps local mute membership for mute-touched streams only", () => {
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeBootstrapUnreadFields(
+      bootstrap,
+      {
+        unreadCounts: {},
+        mutedStreamIds: ["s1"],
+        mutedTouchedAt: { s1: fetchStartedAt + 100 },
+      },
+      fetchStartedAt
+    )
+    expect(merged.mutedStreamIds.sort()).toEqual(["s1", "s9"])
+  })
+
+  it("a mute-only touch does not freeze that stream's counters (and vice versa)", () => {
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeBootstrapUnreadFields(
+      bootstrap,
+      {
+        // s1: drifted local zero + a mute toggle during the fetch. The mute
+        // must survive; the counters must still heal from the server.
+        unreadCounts: { s1: 0 },
+        latestOrdinals: { s1: 10 },
+        mutedStreamIds: ["s1"],
+        mutedTouchedAt: { s1: fetchStartedAt + 100 },
+      },
+      fetchStartedAt
+    )
+    expect(merged.unreadCounts).toEqual({ s1: 4, s2: 2 })
+    expect(merged.mutedStreamIds.sort()).toEqual(["s1", "s9"])
+    // Counter-touched stream keeps counters but takes server mute membership.
+    const counterOnly = mergeBootstrapUnreadFields(
+      bootstrap,
+      {
+        unreadCounts: { s9: 1 },
+        latestOrdinals: { s9: 3 },
+        mutedStreamIds: [],
+        counterTouchedAt: { s9: fetchStartedAt + 100 },
+      },
+      fetchStartedAt
+    )
+    expect(counterOnly.unreadCounts.s9).toBe(1)
+    expect(counterOnly.mutedStreamIds).toEqual(["s9"])
+  })
+
+  it("without a local row or fetch timestamp the server snapshot wins", () => {
+    const merged = mergeBootstrapUnreadFields(bootstrap, undefined, undefined)
+    expect(merged.unreadCounts).toEqual({ s1: 4, s2: 2 })
+    expect(merged.mutedStreamIds).toEqual(["s9"])
+  })
+})
+
+describe("pruneCounterTouches", () => {
+  it("keeps stamps at or after the cutoff and drops the rest", () => {
+    expect(pruneCounterTouches({ s1: 100, s2: 200, s3: 300 }, 200)).toEqual({ s2: 200, s3: 300 })
+    expect(pruneCounterTouches(undefined, 200)).toEqual({})
+    expect(pruneCounterTouches({ s1: 100 }, undefined)).toEqual({})
   })
 })

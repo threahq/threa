@@ -17,6 +17,11 @@ function getSnapshot() {
   return mql?.matches ?? false
 }
 
+/** Imperative snapshot of the phone-width media query, for non-React callers. */
+export function isMobileViewport() {
+  return getSnapshot()
+}
+
 export function useIsMobile() {
   return useSyncExternalStore(subscribe, getSnapshot)
 }
