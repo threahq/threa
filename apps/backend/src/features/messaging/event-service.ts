@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
-import { StreamRepository } from "../streams"
+import { StreamRepository, type Stream } from "../streams"
 import { StreamMemberRepository, SparseReadRepository } from "../streams"
 import { checkStreamAccess, resolveEffectiveAccessStream } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
@@ -845,10 +845,17 @@ export class EventService {
     if (stream?.parentStreamId && (stream.parentAnchorId || stream.parentMessageId)) {
       // Legacy shadow: keep messages.reply_count dual-written for msg_ anchors
       // (grace). Authoritative count lives on the thread stream row.
+      let updatedThread: Stream | null
       if (stream.parentMessageId) {
+        // The rolling-deploy trigger mirrors this legacy write into the canonical
+        // stream projection. Do not also delta-bump the stream row: predecessor
+        // replicas may have changed the shadow, and taking both locks in opposite
+        // order can deadlock mixed-version transactions.
         await MessageRepository.incrementReplyCount(client, stream.parentMessageId)
+        updatedThread = await StreamRepository.findById(client, stream.id)
+      } else {
+        updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, 1)
       }
-      const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, 1)
       await this.emitThreadUpdate(client, updatedThread ?? stream)
     }
 
@@ -1132,10 +1139,13 @@ export class EventService {
 
         const stream = await StreamRepository.findById(client, params.streamId)
         if (stream?.parentStreamId && (stream.parentAnchorId || stream.parentMessageId)) {
+          let updatedThread: Stream | null
           if (stream.parentMessageId) {
             await MessageRepository.decrementReplyCount(client, stream.parentMessageId)
+            updatedThread = await StreamRepository.findById(client, stream.id)
+          } else {
+            updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, -1)
           }
-          const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, -1)
           await this.emitThreadUpdate(client, updatedThread ?? stream)
         }
       }
@@ -1417,12 +1427,8 @@ export class EventService {
       })
 
       await MessageRepository.incrementReplyCountBy(client, params.targetMessageId, uniqueMessageIds.length)
-      const updatedDestThread = await StreamRepository.bumpThreadReplyCount(
-        client,
-        destinationThread.id,
-        uniqueMessageIds.length
-      )
-      const projectedDestinationThread = updatedDestThread ?? destinationThread
+      const projectedDestinationThread =
+        (await StreamRepository.findById(client, destinationThread.id)) ?? destinationThread
       await this.emitThreadUpdate(client, projectedDestinationThread)
 
       // Snapshot the post-increment reply count + thread summary so we can
@@ -1439,14 +1445,17 @@ export class EventService {
       )
 
       if (sourceStream.parentStreamId && (sourceStream.parentAnchorId || sourceStream.parentMessageId)) {
+        let updatedSourceThread: Stream | null
         if (sourceStream.parentMessageId) {
           await MessageRepository.decrementReplyCountBy(client, sourceStream.parentMessageId, uniqueMessageIds.length)
+          updatedSourceThread = await StreamRepository.findById(client, sourceStream.id)
+        } else {
+          updatedSourceThread = await StreamRepository.bumpThreadReplyCount(
+            client,
+            sourceStream.id,
+            -uniqueMessageIds.length
+          )
         }
-        const updatedSourceThread = await StreamRepository.bumpThreadReplyCount(
-          client,
-          sourceStream.id,
-          -uniqueMessageIds.length
-        )
         await this.emitThreadUpdate(client, updatedSourceThread ?? sourceStream)
       }
 

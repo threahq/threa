@@ -1281,9 +1281,12 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
       callback({})) as any)
     spyOn(StreamRepository, "findById").mockResolvedValue({
       id: "stream_thread",
+      workspaceId: "ws_1",
       type: "thread",
       parentStreamId: "stream_root",
+      parentAnchorId: "msg_parent",
       parentMessageId: "msg_parent",
+      replyCount: 5,
     } as any)
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
@@ -1357,14 +1360,15 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
     )
   })
 
-  it("increments the thread stream's reply_count and dual-emits thread:updated for a msg_ anchor", async () => {
+  it("uses the grace bridge projection and dual-emits thread:updated for a msg_ anchor", async () => {
     const service = new EventService({} as any)
 
     await service.createMessage(baseParams)
 
-    // Reply-count maintenance lives on the thread stream row (INV-20 atomic +1).
-    expect(StreamRepository.bumpThreadReplyCount).toHaveBeenCalledWith(expect.anything(), "stream_thread", 1)
-    // New anchor-agnostic patch, replyCount read off the thread stream row.
+    // The legacy parent write synchronously projects through the rolling-deploy
+    // trigger; a second delta bump would double-count and invert mixed-version lock order.
+    expect(StreamRepository.bumpThreadReplyCount).not.toHaveBeenCalled()
+    // New anchor-agnostic patch reads the post-trigger thread stream row.
     expect(OutboxRepository.insert).toHaveBeenCalledWith(
       expect.anything(),
       "thread:updated",

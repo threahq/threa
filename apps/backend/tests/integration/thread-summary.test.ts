@@ -311,34 +311,31 @@ describe("Thread Summary", () => {
       })
     })
 
-    test("message anchors honor predecessor-replica reply-count writes during grace", async () => {
+    test("predecessor-replica writes keep the thread projection synchronized during grace", async () => {
       const fixture = await seedThread(1, 1)
 
       await pool.query("UPDATE streams SET reply_count = 0 WHERE id = $1", [fixture.threadId])
-      await pool.query("UPDATE messages SET reply_count = 1 WHERE id = $1", [fixture.parentMessageId])
+      await pool.query("UPDATE messages SET reply_count = 2 WHERE id = $1", [fixture.parentMessageId])
 
       let counts = await StreamRepository.findThreadsWithReplyCounts(pool, fixture.channelId, [fixture.parentMessageId])
       let anchors = await StreamRepository.findAnchorsWithReplies(pool, fixture.channelId, [fixture.parentMessageId])
+      const projectedAfterIncrement = await StreamRepository.findById(pool, fixture.threadId)
       expect({
         count: counts.get(fixture.parentMessageId)?.replyCount,
+        projectedCount: projectedAfterIncrement?.replyCount,
         included: anchors.has(fixture.parentMessageId),
-      }).toEqual({
-        count: 1,
-        included: true,
-      })
+      }).toEqual({ count: 2, projectedCount: 2, included: true })
 
-      await pool.query("UPDATE streams SET reply_count = 1 WHERE id = $1", [fixture.threadId])
       await pool.query("UPDATE messages SET reply_count = 0 WHERE id = $1", [fixture.parentMessageId])
 
       counts = await StreamRepository.findThreadsWithReplyCounts(pool, fixture.channelId, [fixture.parentMessageId])
       anchors = await StreamRepository.findAnchorsWithReplies(pool, fixture.channelId, [fixture.parentMessageId])
+      const projectedAfterDecrement = await StreamRepository.findById(pool, fixture.threadId)
       expect({
         count: counts.get(fixture.parentMessageId)?.replyCount,
+        projectedCount: projectedAfterDecrement?.replyCount,
         included: anchors.has(fixture.parentMessageId),
-      }).toEqual({
-        count: 0,
-        included: false,
-      })
+      }).toEqual({ count: 0, projectedCount: 0, included: false })
     })
   })
 
