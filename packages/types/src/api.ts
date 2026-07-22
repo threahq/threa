@@ -61,6 +61,13 @@ interface CreateStreamInputBase {
   companionMode?: CompanionMode
   companionPersonaId?: string
   parentStreamId?: string
+  /**
+   * Canonical id of the timeline item to anchor a thread on: `msg_…` (message)
+   * or `event_…` (card). The one anchor track. Exactly one of `parentAnchorId`
+   * / `parentMessageId` is required for `type: "thread"`.
+   */
+  parentAnchorId?: string
+  /** Legacy message anchor, accepted as an alias for `parentAnchorId` during the grace period. */
   parentMessageId?: string
   memberIds?: string[]
   /** Context bag attached to a new scratchpad (triggers summary pre-compute). */

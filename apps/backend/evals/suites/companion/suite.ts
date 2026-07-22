@@ -384,7 +384,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
         companionMode: "off",
         createdBy: params.createdBy,
         parentStreamId: params.parentStreamId,
-        parentMessageId: params.parentMessageId,
+        parentAnchorId: params.parentAnchorId,
       })
       createdThreadId = threadId
       return { id: threadId }

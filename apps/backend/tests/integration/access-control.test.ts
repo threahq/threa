@@ -447,7 +447,7 @@ describe("Access Control", () => {
       const thread = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -457,6 +457,55 @@ describe("Access Control", () => {
 
       // Member of workspace (who can see public channel) should be able to access thread
       // via root stream membership check
+      const access = await streamService.validateStreamAccess(thread.id, wsId, workspaceUserId)
+      expect(access.id).toBe(thread.id)
+    })
+
+    test("INV-62: a thread anchored on an EVENT in a public channel is accessible via the root (access is anchor-agnostic)", async () => {
+      const ownerId = userId()
+      const workspaceUserId = userId() // workspace member, NOT a stream member of the thread
+      const wsId = workspaceId()
+
+      await withTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "Event Anchor Visibility Workspace",
+          slug: `event-vis-ws-${wsId}`,
+          createdBy: ownerId,
+        })
+        await addTestMember(client, wsId, workspaceUserId)
+      })
+
+      const channel = await streamService.createChannel({
+        workspaceId: wsId,
+        slug: `event-vis-channel-${Date.now()}`,
+        createdBy: ownerId,
+        visibility: Visibilities.PUBLIC,
+      })
+
+      // A threadable card (delegation:created) in the public channel — no message anchor.
+      const event = await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: channel.id,
+        eventType: "delegation:created",
+        payload: {},
+        actorId: ownerId,
+        actorType: "user",
+      })
+
+      const thread = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channel.id,
+        parentAnchorId: event.id,
+        createdBy: ownerId,
+      })
+
+      expect(thread.parentAnchorId).toBe(event.id)
+      expect(thread.parentMessageId).toBeNull()
+      expect(thread.visibility).toBe(Visibilities.PUBLIC)
+
+      // The workspace member (never a member of the event-anchored thread) resolves
+      // access through the public root — exactly as for a message-anchored thread.
       const access = await streamService.validateStreamAccess(thread.id, wsId, workspaceUserId)
       expect(access.id).toBe(thread.id)
     })
@@ -497,7 +546,7 @@ describe("Access Control", () => {
       const thread1 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: msg1.id,
+        parentAnchorId: msg1.id,
         createdBy: ownerId,
       })
 
@@ -512,7 +561,7 @@ describe("Access Control", () => {
       const thread2 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: thread1.id,
-        parentMessageId: msg2.id,
+        parentAnchorId: msg2.id,
         createdBy: ownerId,
       })
 
@@ -527,7 +576,7 @@ describe("Access Control", () => {
       const thread3 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: thread2.id,
-        parentMessageId: msg3.id,
+        parentAnchorId: msg3.id,
         createdBy: ownerId,
       })
 
@@ -579,7 +628,7 @@ describe("Access Control", () => {
       const thread = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -634,7 +683,7 @@ describe("Access Control", () => {
       const thread = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: threadCreatorId,
       })
 
@@ -681,7 +730,7 @@ describe("Access Control", () => {
       const thread = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -947,7 +996,7 @@ describe("Access Control", () => {
       const memberThread = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: memberPrivateChannel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 

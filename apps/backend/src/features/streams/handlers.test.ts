@@ -318,6 +318,64 @@ describe("createStreamHandlers.create — allowedToolCategories", () => {
     expect(create.mock.calls[0]![0].allowedToolCategories).toEqual(["web"])
   })
 
+  it("normalizes a parentMessageId-only thread body to parentAnchorId (grace alias)", async () => {
+    const create = mock(async (_params: { parentAnchorId?: string }) => ({ id: "stream_thread" }))
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res, captured } = makeRes()
+
+    await handlers.create(
+      makeCreateReq({ type: "thread", parentStreamId: "stream_channel", parentMessageId: "msg_1" }),
+      res
+    )
+
+    expect(captured.status).toBe(201)
+    expect(create.mock.calls[0]![0].parentAnchorId).toBe("msg_1")
+  })
+
+  it("passes an event anchor through as parentAnchorId", async () => {
+    const create = mock(async (_params: { parentAnchorId?: string }) => ({ id: "stream_thread" }))
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res, captured } = makeRes()
+
+    await handlers.create(
+      makeCreateReq({ type: "thread", parentStreamId: "stream_channel", parentAnchorId: "event_1" }),
+      res
+    )
+
+    expect(captured.status).toBe(201)
+    expect(create.mock.calls[0]![0].parentAnchorId).toBe("event_1")
+  })
+
+  it("rejects a thread body with BOTH parentAnchorId and parentMessageId and never creates", async () => {
+    const create = mock(async () => ({ id: "stream_thread" }))
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res } = makeRes()
+
+    await expect(
+      handlers.create(
+        makeCreateReq({
+          type: "thread",
+          parentStreamId: "stream_channel",
+          parentAnchorId: "event_1",
+          parentMessageId: "msg_1",
+        }),
+        res
+      )
+    ).rejects.toMatchObject({ status: 400 })
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it("rejects a thread body with NEITHER anchor and never creates", async () => {
+    const create = mock(async () => ({ id: "stream_thread" }))
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res } = makeRes()
+
+    await expect(
+      handlers.create(makeCreateReq({ type: "thread", parentStreamId: "stream_channel" }), res)
+    ).rejects.toMatchObject({ status: 400 })
+    expect(create).not.toHaveBeenCalled()
+  })
+
   it("rejects allowedToolCategories on a non-scratchpad and never creates", async () => {
     const create = mock(async () => ({ id: "stream_ch" }))
     const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })

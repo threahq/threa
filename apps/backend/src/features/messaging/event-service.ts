@@ -1208,7 +1208,7 @@ export class EventService {
         workspaceId: params.workspaceId,
         type: StreamTypes.THREAD,
         parentStreamId: params.sourceStreamId,
-        parentMessageId: params.targetMessageId,
+        parentAnchorId: params.targetMessageId,
         rootStreamId,
         visibility: inheritedVisibility,
         companionMode: inheritedCompanionMode,

@@ -394,7 +394,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
         companionMode: "off",
         createdBy: params.createdBy,
         parentStreamId: params.parentStreamId,
-        parentMessageId: params.parentMessageId,
+        parentAnchorId: params.parentAnchorId,
       })
       return { id: threadId }
     }

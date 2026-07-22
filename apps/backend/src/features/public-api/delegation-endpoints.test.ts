@@ -351,7 +351,7 @@ describe("completeDelegation", () => {
     // The thread hangs under the anchor, created by the same identity.
     expect((createThreadOn as ReturnType<typeof mock>).mock.calls[0][1]).toMatchObject({
       parentStreamId: "stream_1",
-      parentMessageId: "msg_anchor",
+      parentAnchorId: "msg_anchor",
       createdBy: "usr_1",
       createdByType: "user",
     })

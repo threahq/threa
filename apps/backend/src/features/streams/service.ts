@@ -32,6 +32,7 @@ import {
   Visibilities,
   CompanionModes,
   MemoryModes,
+  THREAD_ANCHORABLE_EVENT_TYPES,
   E2eKeyWrapRecipientKinds,
   type E2eActorKind,
   type StreamType,
@@ -138,7 +139,8 @@ export type CreateChannelParams = z.infer<typeof createChannelParamsSchema>
 const createThreadParamsSchema = z.object({
   workspaceId: z.string(),
   parentStreamId: z.string(),
-  parentMessageId: z.string(),
+  /** Canonical anchor id (`msg_…` message / `event_…` card) the thread hangs under. */
+  parentAnchorId: z.string(),
   createdBy: z.string(),
   /**
    * Bots are never stream_members (their access resolves via the root grant),
@@ -161,6 +163,9 @@ const createStreamParamsSchema = z.object({
   companionPersonaId: z.string().optional(),
   memoryMode: memoryModeSchema.optional(),
   parentStreamId: z.string().optional(),
+  /** Canonical thread anchor (`msg_…` / `event_…`). */
+  parentAnchorId: z.string().optional(),
+  /** Legacy message anchor, normalized to `parentAnchorId` during grace. */
   parentMessageId: z.string().optional(),
   memberIds: z.array(z.string()).optional(),
   createdBy: z.string(),
@@ -445,16 +450,18 @@ export class StreamService {
           createdBy: params.createdBy,
           memberIds: params.memberIds,
         })
-      case StreamTypes.THREAD:
-        if (!params.parentStreamId || !params.parentMessageId) {
-          throw new Error("parentStreamId and parentMessageId are required for threads")
+      case StreamTypes.THREAD: {
+        const parentAnchorId = params.parentAnchorId ?? params.parentMessageId
+        if (!params.parentStreamId || !parentAnchorId) {
+          throw new Error("parentStreamId and parentAnchorId are required for threads")
         }
         return this.createThread({
           workspaceId: params.workspaceId,
           parentStreamId: params.parentStreamId,
-          parentMessageId: params.parentMessageId,
+          parentAnchorId,
           createdBy: params.createdBy,
         })
+      }
       default:
         throw new Error(`Unsupported stream type for create: ${params.type}`)
     }
@@ -647,9 +654,37 @@ export class StreamService {
       throw new StreamNotFoundError()
     }
 
-    const parentMessage = await MessageRepository.findById(client, params.parentMessageId)
-    if (!parentMessage || parentMessage.streamId !== params.parentStreamId) {
-      throw new MessageNotFoundError()
+    // Prefix-route the anchor to prove it exists on this stream (INV-2: the ULID
+    // prefix is the discriminator, exactly like `?m=` deep-link routing). The
+    // anchor actor becomes a thread member so it surfaces the discussion. Only
+    // this step branches per kind; everything downstream is anchor-agnostic.
+    const anchorId = params.parentAnchorId
+    let anchorActorId: string | null = null
+    let anchorActorType: AuthorType | null = null
+    if (anchorId.startsWith("msg_")) {
+      const parentMessage = await MessageRepository.findById(client, anchorId)
+      if (!parentMessage || parentMessage.streamId !== params.parentStreamId) {
+        throw new MessageNotFoundError()
+      }
+      anchorActorId = parentMessage.authorId
+      anchorActorType = parentMessage.authorType
+    } else if (anchorId.startsWith("event_")) {
+      const anchorEvent = await StreamEventRepository.findById(client, anchorId)
+      if (!anchorEvent || anchorEvent.streamId !== params.parentStreamId) {
+        throw new HttpError("Thread anchor event not found", { status: 404, code: "ANCHOR_NOT_FOUND" })
+      }
+      if (!THREAD_ANCHORABLE_EVENT_TYPES.includes(anchorEvent.eventType)) {
+        throw new HttpError("This timeline item cannot be threaded", {
+          status: 400,
+          code: "ANCHOR_NOT_THREADABLE",
+        })
+      }
+      if (anchorEvent.actorType === "user") {
+        anchorActorId = anchorEvent.actorId
+        anchorActorType = anchorEvent.actorType
+      }
+    } else {
+      throw new HttpError("Unrecognized thread anchor id", { status: 400, code: "ANCHOR_INVALID" })
     }
 
     // Root is either the parent's root (if parent is a thread) or the parent itself
@@ -676,7 +711,7 @@ export class StreamService {
       workspaceId: params.workspaceId,
       type: StreamTypes.THREAD,
       parentStreamId: params.parentStreamId,
-      parentMessageId: params.parentMessageId,
+      parentAnchorId: anchorId,
       rootStreamId,
       visibility: inheritedVisibility,
       companionMode: inheritedCompanionMode,
@@ -732,11 +767,12 @@ export class StreamService {
       }
     }
 
-    // Add parent message author as member and emit stream:member_added so they
-    // discover the thread in real-time (the stream:created event only surfaces
-    // private streams for the creator, not for other members).
-    if (parentMessage.authorType === "user" && parentMessage.authorId !== params.createdBy) {
-      await this.addToStream(client, stream, parentMessage.authorId, params.createdBy)
+    // Add the anchor actor (message author / event user-actor) as member and
+    // emit stream:member_added so they discover the thread in real-time (the
+    // stream:created event only surfaces private streams for the creator, not
+    // for other members).
+    if (anchorActorType === "user" && anchorActorId !== null && anchorActorId !== params.createdBy) {
+      await this.addToStream(client, stream, anchorActorId, params.createdBy)
     }
 
     if (created) {
