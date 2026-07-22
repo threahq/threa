@@ -370,6 +370,27 @@ describe("DelegatedTaskRepository.findByIdWithEvent", () => {
   })
 })
 
+describe("DelegatedTaskRepository.findCreatedEventId", () => {
+  afterEach(() => mock.restore())
+
+  it("returns the delegation:created event id, scoped to id + workspace", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [{ id: "event_1" }])
+
+    const eventId = await DelegatedTaskRepository.findCreatedEventId(db, "ws_1", "dlg_1")
+
+    expect(captured.text).toContain("event_type = 'delegation:created'")
+    expect(captured.text).toContain("payload->>'delegationId'")
+    expect(captured.values).toEqual(["dlg_1", "ws_1", "dlg_1"])
+    expect(eventId).toBe("event_1")
+  })
+
+  it("returns null when the card event is absent", async () => {
+    const db = createQuerier({ text: null, values: null }, [])
+    expect(await DelegatedTaskRepository.findCreatedEventId(db, "ws_1", "dlg_missing")).toBeNull()
+  })
+})
+
 describe("DelegatedTaskRepository.expireLapsedClaims", () => {
   afterEach(() => mock.restore())
 

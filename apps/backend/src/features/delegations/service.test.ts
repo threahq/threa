@@ -303,7 +303,7 @@ describe("DelegationService.heartbeat", () => {
 describe("DelegationService.complete / fail / markRunning", () => {
   afterEach(() => mock.restore())
 
-  it("complete appends the completed patch carrying the result message id", async () => {
+  it("complete appends the completed patch carrying the result message id and thread stream id", async () => {
     stubTransaction()
     spyOn(DelegatedTaskRepository, "complete").mockResolvedValue(
       fakeDelegation({ status: DelegationStatuses.COMPLETED, resultMessageId: "msg_result" })
@@ -315,12 +315,17 @@ describe("DelegationService.complete / fail / markRunning", () => {
       id: "dlg_1",
       claimToken: "tok_1",
       resultMessageId: "msg_result",
+      threadStreamId: "stream_thread",
     })
 
     expect(insertEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        payload: expect.objectContaining({ status: DelegationStatuses.COMPLETED, resultMessageId: "msg_result" }),
+        payload: expect.objectContaining({
+          status: DelegationStatuses.COMPLETED,
+          resultMessageId: "msg_result",
+          threadStreamId: "stream_thread",
+        }),
       })
     )
   })

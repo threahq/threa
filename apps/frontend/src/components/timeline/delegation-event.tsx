@@ -1,19 +1,32 @@
 import { useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
-import { Check, ChevronDown, ChevronRight, Copy, Link2, Loader2, TerminalSquare } from "lucide-react"
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Link2,
+  Loader2,
+  MessageSquareReply,
+  TerminalSquare,
+} from "lucide-react"
 import {
   DelegationStatuses,
   type DelegationCreatedEventPayload,
   type DelegationStatus,
   type DelegationStatusChangedEventPayload,
   type StreamEvent,
+  type ThreadSummary,
 } from "@threa/types"
 import { delegationsApi } from "@/api"
+import { usePanel } from "@/contexts"
 import { useActors } from "@/hooks"
 import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL } from "@/lib/delegation-display"
 import { buildDelegationLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
+import { ThreadSlot } from "./thread-slot"
+import { useThreadAnchor } from "./use-thread-anchor"
 
 interface DelegationEventProps {
   event: StreamEvent
@@ -88,7 +101,16 @@ export function buildDelegationPrompt(
  */
 export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: DelegationEventProps) {
   const { getActorName } = useActors(workspaceId)
-  const payload = event.payload as DelegationCreatedEventPayload | undefined
+  const { getPanelUrl } = usePanel()
+  // Healing (chunk-2) lands thread stats on the card's own payload once a thread
+  // exists, keyed on this event's id — the same anchor the thread was created on.
+  const payload = event.payload as
+    | (DelegationCreatedEventPayload & { threadId?: string; replyCount?: number; threadSummary?: ThreadSummary })
+    | undefined
+  // Shared thread affordance, keyed on the card's canonical id (its event id) —
+  // the anchor delegation completion threads on. `replyUrl` points at the real
+  // thread when one exists, else the draft panel for starting one.
+  const { threadHref, replyUrl } = useThreadAnchor(streamId, event.id, { threadId: payload?.threadId })
   const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false)
   const [optimisticallyDone, setOptimisticallyDone] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -111,8 +133,19 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
   const metaParts = [`${actorName} · ${DELEGATION_STATUS_LABEL[status]}`]
   if (statusPatch?.claimedByLabel && !optimisticFlip) metaParts.push(statusPatch.claimedByLabel)
   const statusNote = !optimisticFlip ? statusPatch?.statusNote : null
-  const resultMessageId =
-    status === DelegationStatuses.COMPLETED ? (statusPatch?.resultMessageId ?? undefined) : undefined
+
+  // "View result" target. New completions carry `threadStreamId` — the result
+  // lives in a thread anchored on this card, so open that thread panel. Legacy
+  // completions have only `resultMessageId` (a synthetic anchor message), which
+  // still deep-links via `?m=`. Both are navigation (INV-40).
+  const completed = status === DelegationStatuses.COMPLETED
+  const threadStreamId = completed ? (statusPatch?.threadStreamId ?? undefined) : undefined
+  const legacyResultMessageId = completed && !threadStreamId ? (statusPatch?.resultMessageId ?? undefined) : undefined
+  let viewResultHref: string | null = null
+  if (threadStreamId) viewResultHref = getPanelUrl(threadStreamId)
+  else if (legacyResultMessageId) viewResultHref = `/w/${workspaceId}/s/${streamId}?m=${legacyResultMessageId}`
+
+  const replyCount = payload.replyCount ?? 0
 
   const promptText = () => buildDelegationPrompt(payload, { workspaceId, origin: window.location.origin })
 
@@ -231,12 +264,27 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
-            {resultMessageId && (
+            {viewResultHref && (
               <Link
-                to={`/w/${workspaceId}/s/${streamId}?m=${resultMessageId}`}
+                to={viewResultHref}
                 className="inline-flex items-center rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 View result
+              </Link>
+            )}
+            {/* Discuss the card: start (or open) a thread anchored on this
+                event. Shown while the delegation is live — a completed card's
+                thread is reached via "View result". Navigation, so a <Link>
+                to the draft/thread panel (INV-40). */}
+            {!terminal && (
+              <Link
+                to={replyUrl}
+                aria-label="Discuss this delegation"
+                title="Discuss this delegation in a thread"
+                className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <MessageSquareReply className="h-3 w-3" aria-hidden="true" />
+                <span className="hidden sm:inline">Discuss</span>
               </Link>
             )}
             <button
@@ -335,6 +383,16 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
           </div>
         )}
       </div>
+
+      {/* Thread anchored on this card — surfaces the discussion (and a completed
+          delegation's result) as a footer chip once replies land. Keyed on the
+          card's event id via `useThreadAnchor`; healed payload drives the count. */}
+      <ThreadSlot
+        replyCount={replyCount}
+        threadHref={threadHref}
+        summary={payload.threadSummary}
+        workspaceId={workspaceId}
+      />
     </div>
   )
 }
