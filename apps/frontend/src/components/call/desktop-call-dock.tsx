@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react"
 import {
   AlertTriangle,
   ChevronDown,
@@ -32,6 +39,7 @@ import { CameraButton, LeaveButton, MuteButton } from "./call-control-buttons"
 import { CallStageLayout } from "./call-stage-layout"
 import { CallTimer } from "./call-timer"
 import { CaptureErrorBanner } from "./call-capture-error"
+import { CallJoiningBody } from "./pre-join-gate"
 import { LayoutToggle } from "./layout-toggle"
 import { useCallCaptureError, useCallConnectedAt, useCallRoster, useCallSurfaceMode } from "./call-store-hooks"
 
@@ -160,7 +168,17 @@ function PinButton() {
  * dock shows Minimize (collapse) — a peek is dismissed by moving the mouse away, so
  * Minimize there would be a redundant no-op.
  */
-function DockHeaderBar({ title, peeking, onFloat }: { title: string; peeking?: boolean; onFloat?: () => void }) {
+function DockHeaderBar({
+  title,
+  peeking,
+  onFloat,
+  canMinimize = true,
+}: {
+  title: string
+  peeking?: boolean
+  onFloat?: () => void
+  canMinimize?: boolean
+}) {
   return (
     <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
@@ -169,7 +187,7 @@ function DockHeaderBar({ title, peeking, onFloat }: { title: string; peeking?: b
       ) : (
         <>
           {onFloat && <FloatButton onFloat={onFloat} />}
-          <MinimizeButton />
+          {canMinimize && <MinimizeButton />}
         </>
       )}
     </div>
@@ -252,6 +270,15 @@ function SideTilesView({ workspaceId, currentUserId, roster, captureError, title
       <div className="shrink-0 border-t p-2">
         <CallControls />
       </div>
+    </div>
+  )
+}
+
+function SideJoiningView({ title, onFloat }: Pick<DockViewProps, "title" | "onFloat">) {
+  return (
+    <div className="flex h-full w-full flex-col border-l bg-background">
+      <DockHeaderBar title={title} onFloat={onFloat} canMinimize={false} />
+      <CallJoiningBody />
     </div>
   )
 }
@@ -353,20 +380,27 @@ interface DragState {
  * {@link FULLSCREEN_FRACTION} of the content region; dragging past that cap goes
  * Fullscreen. It pushes the conversation aside via `--call-dock-inset-right` (the
  * main content region reserves the inset) rather than overlaying it, until
- * Fullscreen. Rendered by {@link import("./call-dock").CallDock} on desktop for
- * the connected phase; reads the call store, not the route, so it survives
- * stream navigation.
+ * Fullscreen. Rendered by {@link import("./call-dock").CallDock} on desktop and
+ * reads the call store, not the route, so it survives stream navigation. During
+ * launch/joining it keeps the same full-height dock mounted and renders the
+ * pre-join gate in the content region, then swaps that body for tiles and
+ * controls when connected.
  */
 export function DesktopCallDock({
   workspaceId,
   streamId,
   onFloat,
+  joining = false,
+  joiningMode = "compact",
 }: {
   workspaceId: string | null
   streamId: string | null
   onFloat?: () => void
+  joining?: boolean
+  joiningMode?: Extract<CallSurfaceMode, "compact" | "standard">
 }) {
   const surfaceMode = useCallSurfaceMode()
+  const displaySurfaceMode = joining ? joiningMode : surfaceMode
   const { sideDockWidth } = useCallPrefs()
   const inputMode = useInputMode()
   const roster = useCallRoster()
@@ -409,16 +443,16 @@ export function DesktopCallDock({
 
   // The resting open width: the saved freeform width (or the mode's first-open
   // default), clamped to ≤75% and always leaving MIN_CONTENT.
-  const openWidth = clampOpen(sideDockWidth ?? defaultOpen(surfaceMode), ceilW)
+  const openWidth = clampOpen(sideDockWidth ?? defaultOpen(displaySurfaceMode), ceilW)
 
   // Content push: rail → RAIL_WIDTH, open → openWidth (already ≤ ceil−MIN_CONTENT),
   // fullscreen → 0. Hovering the rail is an overlay, so the inset tracks surfaceMode
   // (still `min`) and never reflows the timeline.
   let insetRight: number
-  if (surfaceMode === "full") insetRight = 0
-  else if (surfaceMode === "min") insetRight = RAIL_WIDTH
+  if (displaySurfaceMode === "full") insetRight = 0
+  else if (displaySurfaceMode === "min") insetRight = RAIL_WIDTH
   else insetRight = openWidth
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.style.setProperty("--call-dock-inset-right", `${insetRight}px`)
   }, [insetRight])
   useEffect(
@@ -470,18 +504,19 @@ export function DesktopCallDock({
   // thrashes the drag) — the preview stays on the open tiles; fullscreen mounts on release.
   // Minimized + mouse hover = a transient peek (overlay, no push); it renders the open
   // tiles and shows a pin affordance to commit to a pushing, persisted open dock.
-  const peeking = surfaceMode === "min" && hovering
+  const peeking = !joining && surfaceMode === "min" && hovering
   let cappedDragMode: CallSurfaceMode | null = null
-  if (dragging) cappedDragMode = surfaceMode === "compact" ? "compact" : "standard"
+  if (dragging) cappedDragMode = displaySurfaceMode === "compact" ? "compact" : "standard"
   let contentMode: CallSurfaceMode
   if (cappedDragMode) contentMode = cappedDragMode
   else if (peeking) contentMode = "standard"
-  else contentMode = surfaceMode
+  else contentMode = displaySurfaceMode
 
   const dragCeil = drag.current?.full ?? ceilW
   // No cue while already fullscreen (a drag there is an EXIT — the cue would misread as "go full"),
   // and none when the region is too narrow to have a freeform band below the fullscreen line.
   const showFullscreenCue =
+    !joining &&
     dragging &&
     surfaceMode !== "full" &&
     dragSize != null &&
@@ -490,10 +525,10 @@ export function DesktopCallDock({
 
   let panelWidth: number
   if (dragging && dragSize != null) panelWidth = dragSize
-  else if (surfaceMode === "min") panelWidth = hovering ? openWidth : RAIL_WIDTH
+  else if (displaySurfaceMode === "min") panelWidth = hovering ? openWidth : RAIL_WIDTH
   else panelWidth = openWidth
 
-  const restingFull = !dragging && surfaceMode === "full"
+  const restingFull = !joining && !dragging && surfaceMode === "full"
   let positionClass: string
   let sizeStyle: CSSProperties
   if (restingFull) {
@@ -527,6 +562,7 @@ export function DesktopCallDock({
         data-testid="desktop-call-dock"
         data-mode={contentMode}
         data-position="side"
+        data-phase={joining ? "joining" : "connected"}
         data-hovering={hovering ? "true" : "false"}
         onMouseEnter={() => {
           // Preview only arms from the rail (mirrors the nav-sidebar collapsed→preview);
@@ -542,7 +578,7 @@ export function DesktopCallDock({
         )}
         style={sizeStyle}
       >
-        <DockBody mode={contentMode} view={view} />
+        {joining ? <SideJoiningView title={title} onFloat={onFloat} /> : <DockBody mode={contentMode} view={view} />}
         {showFullscreenCue && (
           <div
             data-testid="call-dock-fullscreen-cue"
@@ -556,7 +592,9 @@ export function DesktopCallDock({
         {/* Always mounted — including at rest-fullscreen — so it holds the pointer
             capture/settle through a drag into full AND lets you drag back OUT of
             fullscreen (a thin edge strip over the stage); collapse via chevron still works. */}
-        <DockResizeHandle onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
+        {!joining && (
+          <DockResizeHandle onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
+        )}
       </div>
     </div>
   )

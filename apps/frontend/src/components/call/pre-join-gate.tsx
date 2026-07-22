@@ -39,6 +39,22 @@ const PERMISSION_COPY: Record<MediaPermissionErrorKind, { title: string; body: s
   },
 }
 
+/** Shared desktop joining body so floating and sidebar surfaces keep one phase UI. */
+export function CallJoiningBody() {
+  const { state } = useCallLaunch()
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+      {state.status === "idle" ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Connecting…
+        </p>
+      ) : (
+        <PreJoinGate />
+      )}
+    </div>
+  )
+}
+
 /**
  * The joining phase of the dock: a spinner while the join runs, or the
  * taxonomy-specific permission error with retry/cancel. There is no separate

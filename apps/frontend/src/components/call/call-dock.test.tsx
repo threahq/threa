@@ -92,11 +92,14 @@ function LaunchButton({ request }: { request: CallLaunchRequest }) {
   )
 }
 
-function renderDock(manager: CallController) {
+function renderDock(
+  manager: CallController,
+  request: CallLaunchRequest = { workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }
+) {
   return render(
     <CallManagerProvider manager={manager}>
       <CallLaunchProvider>
-        <LaunchButton request={{ workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }} />
+        <LaunchButton request={request} />
         <CallDock />
       </CallLaunchProvider>
     </CallManagerProvider>
@@ -318,6 +321,7 @@ describe("CallDock — pre-join permission taxonomy", () => {
     act(() => setCallPhase("idle"))
     await userEvent.click(screen.getByText("launch"))
     expect(await screen.findByText("Joining…")).toBeInTheDocument()
+    expect(screen.getByTestId("desktop-call-dock")).toHaveAttribute("data-phase", "joining")
   })
 })
 
@@ -421,19 +425,45 @@ describe("CallDock — desktop surface routing", () => {
     expect(screen.queryByTestId("desktop-call-dock")).toBeNull()
   })
 
-  it("sidebar pref renders the DockFrame while joining and the dock in-call", () => {
+  it("keeps a camera-on joining dock at its final width through async cancel", async () => {
+    const manager = makeManager({ startCall: vi.fn(() => new Promise<void>(() => {})) })
+    renderDock(manager, {
+      workspaceId: WORKSPACE_ID,
+      streamId: "stream_1",
+      mode: "video",
+      cameraOn: true,
+    })
+    await userEvent.click(screen.getByText("launch"))
+
+    expect(getCallState().local.cameraOn).toBe(false)
+    const dock = screen.getByTestId("desktop-call-dock")
+    expect(dock).toHaveAttribute("data-mode", "standard")
+
+    act(() => setCallPhase("joining"))
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(manager.leaveCall).toHaveBeenCalled()
+    expect(dock).toHaveAttribute("data-mode", "standard")
+  })
+
+  it("sidebar pref keeps the actual dock mounted from joining through connected", () => {
     // beforeEach pins sidebar.
     renderDock(makeManager())
     act(() => setCallSession({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
-    // The docked joining panel (not the square); it has no collapse toggle — the gate stays visible.
+
+    const joiningDock = screen.getByTestId("desktop-call-dock")
+    expect(joiningDock).toHaveAttribute("data-phase", "joining")
+    expect(joiningDock).toHaveAttribute("data-mode", "compact")
     expect(screen.getByText("Connecting…")).toBeInTheDocument()
-    expect(screen.queryByLabelText("Collapse call")).toBeNull()
+    expect(screen.queryByLabelText("Minimize call")).toBeNull()
     expect(screen.queryByTestId("floating-call-square")).toBeNull()
+
     act(() => {
       setCallPhase("connected")
       setCallRoster([participant({ userId: "usr_self", endpointId: "callep_self" })], 1)
     })
-    expect(screen.getByTestId("desktop-call-dock")).toBeInTheDocument()
+    expect(screen.getByTestId("desktop-call-dock")).toBe(joiningDock)
+    expect(joiningDock).toHaveAttribute("data-phase", "connected")
+    expect(screen.getByTestId("call-tile")).toBeInTheDocument()
     expect(screen.queryByTestId("floating-call-square")).toBeNull()
   })
 

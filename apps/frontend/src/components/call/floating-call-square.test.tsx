@@ -294,13 +294,22 @@ describe("FloatingCallSquare — minimize / restore", () => {
 })
 
 describe("FloatingCallSquare — joining", () => {
-  it("renders the Connecting indicator (no tiles) when joining with an idle launch", () => {
+  it("keeps the full floating surface mounted from connecting through connected", () => {
     renderSquare()
     act(() => setCallPhase("joining"))
+
+    const joiningSquare = screen.getByTestId("floating-call-square")
+    expect(joiningSquare).toHaveClass("min-h-[260px]")
     expect(screen.getByText("Connecting…")).toBeInTheDocument()
-    expect(screen.queryAllByTestId("call-tile")).toHaveLength(0)
+    expect(screen.queryByText("Ada (you)")).toBeNull()
+    expect(screen.queryByText("Grace")).toBeNull()
     // The old mobile-island pill (icon-only Cancel) must not render on the desktop square.
     expect(screen.queryByLabelText("Cancel joining")).toBeNull()
+
+    enterConnected(TWO_PEERS)
+    expect(screen.getByTestId("floating-call-square")).toBe(joiningSquare)
+    expect(screen.getByText("Ada (you)")).toBeVisible()
+    expect(screen.getByText("Grace")).toBeVisible()
   })
 
   it("renders the PreJoinGate permission taxonomy during an active launch, not a plain pill", async () => {
