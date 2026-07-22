@@ -761,4 +761,181 @@ describe("Thread Graph", () => {
       expect(second.createdBy).toBe(first.createdBy)
     })
   })
+
+  describe("Projections: streams.reply_count maintenance + thread:updated", () => {
+    async function seedChannel(name: string) {
+      const ownerId = userId()
+      const actorId = userId()
+      const wsId = workspaceId()
+      await withTestTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: `${name} Workspace`,
+          slug: `${name}-ws-${wsId}`,
+          createdBy: ownerId,
+        })
+        await addTestMember(client, wsId, ownerId)
+        await addTestMember(client, wsId, actorId)
+      })
+      const channel = await streamService.createChannel({
+        workspaceId: wsId,
+        slug: `${name}-channel-${Date.now()}`,
+        createdBy: ownerId,
+        visibility: Visibilities.PUBLIC,
+      })
+      return { wsId, ownerId, actorId, channelId: channel.id }
+    }
+
+    async function outboxByAnchor(anchorId: string) {
+      const rows = await pool.query<{ event_type: string; payload: Record<string, unknown> }>(
+        `SELECT event_type, payload FROM outbox
+         WHERE (event_type = 'thread:updated' AND payload->>'anchorId' = $1)
+            OR (event_type = 'message:updated' AND payload->>'messageId' = $1 AND payload->>'updateType' = 'reply_count')
+         ORDER BY id ASC`,
+        [anchorId]
+      )
+      return rows.rows
+    }
+
+    test("message-anchored reply bumps streams.reply_count and dual-emits thread:updated + legacy message:updated", async () => {
+      const { wsId, ownerId, channelId } = await seedChannel("proj-msg")
+      const parent = await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: channelId,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("parent"),
+      })
+      const thread = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channelId,
+        parentAnchorId: parent.id,
+        createdBy: ownerId,
+      })
+
+      const reply = await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: thread.id,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("reply one"),
+      })
+
+      const afterReply = await StreamRepository.findById(pool, thread.id)
+      expect(afterReply?.replyCount).toBe(1)
+      expect(afterReply?.lastReplyAt).not.toBeNull()
+
+      const emitted = await outboxByAnchor(parent.id)
+      const threadUpdated = emitted.find((r) => r.event_type === "thread:updated")
+      expect(threadUpdated?.payload).toMatchObject({
+        parentStreamId: channelId,
+        anchorId: parent.id,
+        threadId: thread.id,
+        replyCount: 1,
+      })
+      // GRACE: legacy patch dual-emitted for the msg_ anchor.
+      expect(emitted.some((r) => r.event_type === "message:updated")).toBe(true)
+
+      // Deleting the reply settles the count back to 0.
+      await eventService.deleteMessage({
+        workspaceId: wsId,
+        streamId: thread.id,
+        messageId: reply.id,
+        actorId: ownerId,
+      })
+      const afterDelete = await StreamRepository.findById(pool, thread.id)
+      expect(afterDelete?.replyCount).toBe(0)
+    })
+
+    test("event-anchored reply bumps reply_count and emits thread:updated with the event anchor and NO legacy message:updated", async () => {
+      const { wsId, ownerId, actorId, channelId } = await seedChannel("proj-event")
+      const cardEvent = await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: channelId,
+        eventType: "delegation:created",
+        payload: {},
+        actorId,
+        actorType: "user",
+      })
+      const thread = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channelId,
+        parentAnchorId: cardEvent.id,
+        createdBy: ownerId,
+      })
+
+      await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: thread.id,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("reply on the card"),
+      })
+
+      const afterReply = await StreamRepository.findById(pool, thread.id)
+      expect(afterReply?.replyCount).toBe(1)
+
+      const emitted = await outboxByAnchor(cardEvent.id)
+      expect(emitted.map((r) => r.event_type)).toContain("thread:updated")
+      expect(emitted.map((r) => r.event_type)).not.toContain("message:updated")
+      const threadUpdated = emitted.find((r) => r.event_type === "thread:updated")
+      expect(threadUpdated?.payload).toMatchObject({
+        parentStreamId: channelId,
+        anchorId: cardEvent.id,
+        threadId: thread.id,
+        replyCount: 1,
+      })
+    })
+
+    test("bootstrap threadStates carries anchorId for both message and card anchors, counts from streams columns", async () => {
+      const { wsId, ownerId, actorId, channelId } = await seedChannel("proj-bootstrap")
+      // Message-anchored thread with one reply.
+      const parent = await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: channelId,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("parent msg"),
+      })
+      const msgThread = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channelId,
+        parentAnchorId: parent.id,
+        createdBy: ownerId,
+      })
+      await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: msgThread.id,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("reply"),
+      })
+      // Event-anchored thread with one reply.
+      const cardEvent = await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: channelId,
+        eventType: "delegation:created",
+        payload: {},
+        actorId,
+        actorType: "user",
+      })
+      const cardThread = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channelId,
+        parentAnchorId: cardEvent.id,
+        createdBy: ownerId,
+      })
+      await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: cardThread.id,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("reply on card"),
+      })
+
+      const dataMap = await streamService.getThreadsWithReplyCounts(channelId, [parent.id, cardEvent.id])
+      expect(dataMap.get(parent.id)).toEqual({ threadId: msgThread.id, replyCount: 1 })
+      expect(dataMap.get(cardEvent.id)).toEqual({ threadId: cardThread.id, replyCount: 1 })
+    })
+  })
 })

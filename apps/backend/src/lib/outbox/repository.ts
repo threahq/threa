@@ -34,6 +34,7 @@ export type OutboxEventType =
   | "message:deleted"
   | "messages:moved"
   | "message:updated"
+  | "thread:updated"
   | "reaction:added"
   | "reaction:removed"
   | "stream:created"
@@ -136,6 +137,7 @@ export type StreamScopedEventType =
   | "message:deleted"
   | "messages:moved"
   | "message:updated"
+  | "thread:updated"
   | "reaction:added"
   | "reaction:removed"
   | "stream:display_name_updated"
@@ -271,6 +273,24 @@ export interface MessageUpdatedOutboxPayload extends StreamScopedPayload {
    * each patch self-sufficient.
    */
   threadId?: string | null
+}
+
+/**
+ * A thread's reply stats changed. Stream-scoped ONLY (no timeline row, no
+ * EVENT_TYPES entry — same delivery class as `call:participants_changed`):
+ * `streamId` is the PARENT stream, so the generic stream-scoped router fans it
+ * to the parent room. Replaces `message:updated {updateType:"reply_count"}` for
+ * every anchor kind; the legacy patch is dual-emitted for `msg_` anchors through
+ * the grace period. `anchorId` is the canonical id of the anchored timeline item
+ * (`msg_…` / `event_…`); `replyCount` is the post-mutation value read off the
+ * thread stream row; `threadSummary` is `null` when the thread has no live reply.
+ */
+export interface ThreadUpdatedOutboxPayload extends StreamScopedPayload {
+  parentStreamId: string
+  anchorId: string
+  threadId: string
+  replyCount: number
+  threadSummary: import("@threa/types").ThreadSummary | null
 }
 
 export interface ReactionOutboxPayload extends StreamScopedPayload {
@@ -1110,6 +1130,7 @@ export interface OutboxEventPayloadMap {
   "message:deleted": MessageDeletedOutboxPayload
   "messages:moved": MessagesMovedOutboxPayload
   "message:updated": MessageUpdatedOutboxPayload
+  "thread:updated": ThreadUpdatedOutboxPayload
   "reaction:added": ReactionOutboxPayload
   "reaction:removed": ReactionOutboxPayload
   "stream:created": StreamCreatedOutboxPayload
@@ -1241,6 +1262,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "message:deleted",
   "messages:moved",
   "message:updated",
+  "thread:updated",
   "reaction:added",
   "reaction:removed",
   "stream:display_name_updated",

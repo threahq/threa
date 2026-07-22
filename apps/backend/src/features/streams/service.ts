@@ -2075,19 +2075,20 @@ export class StreamService {
   }
 
   /**
-   * Fetches threads and reply counts in a single query.
-   * Pass `parentMessageIds` to scope the scan to a specific bootstrap window.
+   * Fetches threads and reply counts in a single query, keyed by anchor id
+   * (`msg_…` / `event_…`). Pass `anchorIds` to scope the scan to a bootstrap
+   * window.
    */
   async getThreadsWithReplyCounts(
     streamId: string,
-    parentMessageIds?: string[]
+    anchorIds?: string[]
   ): Promise<Map<string, { threadId: string; replyCount: number }>> {
-    return StreamRepository.findThreadsWithReplyCounts(this.pool, streamId, parentMessageIds)
+    return StreamRepository.findThreadsWithReplyCounts(this.pool, streamId, anchorIds)
   }
 
   /**
-   * Get a map of parent messageId -> ThreadSummary for all messages in a stream
-   * whose thread has at least one non-deleted reply. See
+   * Get a map of anchorId -> ThreadSummary for every thread in a stream whose
+   * anchor has at least one non-deleted reply. See
    * {@link StreamRepository.findThreadSummaries}.
    *
    * The single-parent counterpart (`findThreadSummaryByParentMessage`) is
@@ -2096,9 +2097,9 @@ export class StreamService {
    * either break out of its existing `client` transaction or duplicate the
    * pool accessor, so it stays as a repository call.
    *
-   * Pass `parentMessageIds` to scope the scan to a specific bootstrap window.
+   * Pass `anchorIds` to scope the scan to a specific bootstrap window.
    */
-  async getThreadSummaries(streamId: string, parentMessageIds?: string[]): Promise<Map<string, ThreadSummary>> {
-    return StreamRepository.findThreadSummaries(this.pool, streamId, parentMessageIds)
+  async getThreadSummaries(streamId: string, anchorIds?: string[]): Promise<Map<string, ThreadSummary>> {
+    return StreamRepository.findThreadSummaries(this.pool, streamId, anchorIds)
   }
 }

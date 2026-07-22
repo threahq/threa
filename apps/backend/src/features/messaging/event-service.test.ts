@@ -1321,6 +1321,14 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
     spyOn(MessageRepository, "findById").mockResolvedValue({ id: "msg_parent", replyCount: 4 } as any)
     spyOn(StreamRepository, "findThreadSummaryByParentMessage").mockResolvedValue(null)
     spyOn(StreamRepository, "findByParentMessage").mockResolvedValue({ id: "stream_thread" } as any)
+    spyOn(StreamRepository, "bumpThreadReplyCount").mockResolvedValue({
+      id: "stream_thread",
+      workspaceId: "ws_1",
+      parentStreamId: "stream_root",
+      parentAnchorId: "msg_parent",
+      parentMessageId: "msg_parent",
+      replyCount: 5,
+    } as any)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
@@ -1347,5 +1355,67 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
         threadId: "stream_thread",
       })
     )
+  })
+
+  it("increments the thread stream's reply_count and dual-emits thread:updated for a msg_ anchor", async () => {
+    const service = new EventService({} as any)
+
+    await service.createMessage(baseParams)
+
+    // Reply-count maintenance lives on the thread stream row (INV-20 atomic +1).
+    expect(StreamRepository.bumpThreadReplyCount).toHaveBeenCalledWith(expect.anything(), "stream_thread", 1)
+    // New anchor-agnostic patch, replyCount read off the thread stream row.
+    expect(OutboxRepository.insert).toHaveBeenCalledWith(
+      expect.anything(),
+      "thread:updated",
+      expect.objectContaining({
+        parentStreamId: "stream_root",
+        anchorId: "msg_parent",
+        threadId: "stream_thread",
+        replyCount: 5,
+        threadSummary: null,
+      })
+    )
+    // GRACE: the legacy patch is still dual-emitted for the msg_ anchor.
+    const emitted = (OutboxRepository.insert as any).mock.calls.map((c: unknown[]) => c[1])
+    expect(emitted).toContain("thread:updated")
+    expect(emitted).toContain("message:updated")
+  })
+
+  it("event-anchored thread reply emits thread:updated with the event-id anchor and NO legacy message:updated", async () => {
+    // A thread hung under a card: anchor is an event_ id, no parent message.
+    ;(StreamRepository.findById as any).mockResolvedValue({
+      id: "stream_thread",
+      type: "thread",
+      parentStreamId: "stream_root",
+      parentAnchorId: "event_card1",
+      parentMessageId: null,
+    })
+    ;(StreamRepository.bumpThreadReplyCount as any).mockResolvedValue({
+      id: "stream_thread",
+      workspaceId: "ws_1",
+      parentStreamId: "stream_root",
+      parentAnchorId: "event_card1",
+      parentMessageId: null,
+      replyCount: 1,
+    })
+
+    const service = new EventService({} as any)
+    await service.createMessage(baseParams)
+
+    expect(OutboxRepository.insert).toHaveBeenCalledWith(
+      expect.anything(),
+      "thread:updated",
+      expect.objectContaining({
+        parentStreamId: "stream_root",
+        anchorId: "event_card1",
+        threadId: "stream_thread",
+        replyCount: 1,
+      })
+    )
+    // No message-shadow write and no legacy patch for a card anchor.
+    expect(MessageRepository.incrementReplyCount).not.toHaveBeenCalled()
+    const emitted = (OutboxRepository.insert as any).mock.calls.map((c: unknown[]) => c[1])
+    expect(emitted).not.toContain("message:updated")
   })
 })

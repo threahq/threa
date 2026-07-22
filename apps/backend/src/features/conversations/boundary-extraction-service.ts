@@ -164,7 +164,15 @@ export class BoundaryExtractionService {
         MESSAGES_AFTER
       )
 
-      const threadRootIds = surroundingMessages.filter((m) => m.replyCount > 0).map((m) => m.id)
+      // Which surrounding messages actually anchor a thread with live replies is
+      // read from the thread stream rows (streams.reply_count, the maintained
+      // source of truth), not the message's own shadow count (plan §Projections).
+      const anchorsWithReplies = await StreamRepository.findAnchorsWithReplies(
+        client,
+        stream.id,
+        surroundingMessages.map((m) => m.id)
+      )
+      const threadRootIds = surroundingMessages.filter((m) => anchorsWithReplies.has(m.id)).map((m) => m.id)
       const threadMessagesByParent = await MessageRepository.findThreadMessages(client, threadRootIds)
       const allThreadMessages = Array.from(threadMessagesByParent.values()).flat()
 
