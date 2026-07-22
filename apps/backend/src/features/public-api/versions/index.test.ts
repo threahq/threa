@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   API_VERSIONS,
   CURRENT_API_VERSION,
+  VERSION_CHANGES,
   assertChangesAscending,
   changesAfter,
   deriveVersionSpec,
@@ -132,5 +133,96 @@ describe("deriveVersionSpec", () => {
     }
     deriveVersionSpec(canonical(), "2026-07-12" as never, [older, newer])
     expect(order).toEqual(["newer", "older"])
+  })
+})
+
+describe("VERSION_CHANGES: the anchorId stream change (first real entry)", () => {
+  const anchorChange = VERSION_CHANGES.find((c) => c.operations.has("listStreams"))!
+  const ctx = { operationId: "getStream" } as const
+
+  test("registry is ascending and the entry is dated at the current version, scoped to the stream-embedding operations", () => {
+    expect(() => assertChangesAscending(VERSION_CHANGES)).not.toThrow()
+    expect(anchorChange.version).toBe(CURRENT_API_VERSION)
+    expect([...anchorChange.operations].sort()).toEqual(["getStream", "listStreams", "updateStream"])
+  })
+
+  test("an older pin is behind on it; a caller at the current version is not", () => {
+    expect(changesAfter("2026-07-12" as never)).toContain(anchorChange)
+    expect(changesAfter(CURRENT_API_VERSION)).not.toContain(anchorChange)
+  })
+
+  test("downgradeResponse lowers a message-anchored stream to parentMessageId (single-object envelope)", () => {
+    const out = anchorChange.downgradeResponse!({ data: { id: "stream_t", type: "thread", anchorId: "msg_abc" } }, ctx)
+    expect(out).toEqual({ data: { id: "stream_t", type: "thread", parentMessageId: "msg_abc" } })
+  })
+
+  test("downgradeResponse drops an event anchor entirely — old clients never knew that shape", () => {
+    const out = anchorChange.downgradeResponse!(
+      { data: { id: "stream_t", type: "thread", anchorId: "event_xyz" } },
+      ctx
+    )
+    expect(out).toEqual({ data: { id: "stream_t", type: "thread" } })
+  })
+
+  test("downgradeResponse transforms every item of a paginated envelope, preserving page metadata", () => {
+    const out = anchorChange.downgradeResponse!(
+      {
+        data: [{ id: "s1", anchorId: "msg_1" }, { id: "s2", anchorId: "event_2" }, { id: "s3" }],
+        hasMore: true,
+        cursor: "cur_1",
+      },
+      ctx
+    )
+    expect(out).toEqual({
+      data: [{ id: "s1", parentMessageId: "msg_1" }, { id: "s2" }, { id: "s3" }],
+      hasMore: true,
+      cursor: "cur_1",
+    })
+  })
+
+  test("downgradeSpec restores an optional parentMessageId and removes anchorId from a stream schema node", () => {
+    const spec: OpenApiSpec = {
+      paths: {
+        "/streams/{id}": {
+          get: {
+            responses: {
+              "200": {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {
+                        data: {
+                          type: "object",
+                          properties: {
+                            id: { type: "string" },
+                            type: { type: "string" },
+                            displayName: { type: "string" },
+                            visibility: { type: "string" },
+                            anchorId: { type: "string", description: "…" },
+                          },
+                          required: ["id", "type", "displayName", "visibility"],
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }
+    const streamNode = (spec2: OpenApiSpec) =>
+      (spec2 as any).paths["/streams/{id}"].get.responses["200"].content["application/json"].schema.properties.data
+    const out = anchorChange.downgradeSpec!(spec)
+    const props = streamNode(out).properties
+    expect(props.anchorId).toBeUndefined()
+    expect(props.parentMessageId).toEqual({ type: "string" })
+    // required is untouched (both fields were always optional)
+    expect(streamNode(out).required).toEqual(["id", "type", "displayName", "visibility"])
+    // pure — the input spec is not mutated
+    expect(streamNode(spec).properties.anchorId).toBeDefined()
+    expect(streamNode(spec).properties.parentMessageId).toBeUndefined()
   })
 })

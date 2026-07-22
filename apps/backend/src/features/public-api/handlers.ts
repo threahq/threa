@@ -164,6 +164,7 @@ const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {
 function serializeStream(stream: Stream, context?: DisplayNameContext): WireStream {
   const effective = getEffectiveDisplayName(stream, context)
   const displayName = stream.type === "channel" ? `#${effective.displayName}` : effective.displayName
+  const anchorId = stream.parentAnchorId ?? stream.parentMessageId
 
   return {
     id: stream.id,
@@ -175,7 +176,7 @@ function serializeStream(stream: Stream, context?: DisplayNameContext): WireStre
     memoryMode: stream.memoryMode ?? MemoryModes.AUTO,
     ...(stream.parentStreamId != null && { parentStreamId: stream.parentStreamId }),
     ...(stream.rootStreamId != null && { rootStreamId: stream.rootStreamId }),
-    ...(stream.parentMessageId != null && { parentMessageId: stream.parentMessageId }),
+    ...(anchorId != null && { anchorId }),
     createdAt: stream.createdAt.toISOString(),
     ...(stream.archivedAt != null && { archivedAt: stream.archivedAt.toISOString() }),
   }

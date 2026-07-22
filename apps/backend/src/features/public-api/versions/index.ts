@@ -1,9 +1,68 @@
 import { HttpError } from "@threa/backend-common"
+import type { OperationId } from "../routes"
 import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion, type OpenApiSpec, type VersionChange } from "./types"
+
+/**
+ * Streams whose wire shape carries the thread anchor: every operation whose
+ * response embeds `streamSchema`. `listStreams` (paginated), `getStream` and
+ * `updateStream` (data envelope) are the only ones — conversation/search
+ * responses carry stream *ids*, not stream objects.
+ */
+const STREAM_ANCHOR_OPERATIONS = new Set<OperationId>(["listStreams", "getStream", "updateStream"])
+
+/** Lower one serialized stream object from the anchorId shape to the legacy parentMessageId shape. */
+function downgradeStreamAnchor(stream: Record<string, unknown>): Record<string, unknown> {
+  const { anchorId, ...rest } = stream
+  // Only message anchors had a `parentMessageId` before; event-anchored threads
+  // keep the field absent (older clients never knew that shape).
+  if (typeof anchorId === "string" && anchorId.startsWith("msg_")) {
+    return { ...rest, parentMessageId: anchorId }
+  }
+  return rest
+}
+
+/** Recursively rewrite the OpenAPI stream schema: drop `anchorId`, restore optional `parentMessageId`. */
+function restoreParentMessageIdInSpec(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(restoreParentMessageIdInSpec)
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>
+    const props = obj.properties as Record<string, unknown> | undefined
+    if (props && "anchorId" in props) {
+      const { anchorId: _anchorId, ...restProps } = props
+      return {
+        ...obj,
+        properties: {
+          ...Object.fromEntries(Object.entries(restProps).map(([k, v]) => [k, restoreParentMessageIdInSpec(v)])),
+          parentMessageId: { type: "string" },
+        },
+      }
+    }
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, restoreParentMessageIdInSpec(v)]))
+  }
+  return node
+}
 
 /** Ascending by version. Startup assertion enforces ordering + known dates. */
 export const VERSION_CHANGES: VersionChange[] = [
-  // Populated when the first real breaking change ships (see design doc §8).
+  {
+    version: "2026-07-22",
+    description:
+      "Streams: `parentMessageId` replaced by `anchorId` (`msg_…` / `event_…` — threads can now anchor on cards).",
+    operations: STREAM_ANCHOR_OPERATIONS,
+    downgradeResponse: (payload) => {
+      if (payload === null || typeof payload !== "object") return payload
+      const envelope = payload as Record<string, unknown>
+      const data = envelope.data
+      if (Array.isArray(data)) {
+        return { ...envelope, data: data.map((s) => downgradeStreamAnchor(s as Record<string, unknown>)) }
+      }
+      if (data && typeof data === "object") {
+        return { ...envelope, data: downgradeStreamAnchor(data as Record<string, unknown>) }
+      }
+      return payload
+    },
+    downgradeSpec: (spec) => restoreParentMessageIdInSpec(spec) as OpenApiSpec,
+  },
 ]
 
 /** Throws unless every change is strictly newer than the one before it. */

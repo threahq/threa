@@ -84,7 +84,12 @@ const streamSchema = z.object({
   memoryMode: z.enum(MEMORY_MODES).describe("GAM memory automation gate: 'auto' extracts memos, 'off' disables it"),
   parentStreamId: z.string().optional(),
   rootStreamId: z.string().optional(),
-  parentMessageId: z.string().optional(),
+  anchorId: z
+    .string()
+    .optional()
+    .describe(
+      "Canonical id of the timeline item a thread anchors on. The prefix is the kind: 'msg_…' for a message, 'event_…' for a card. Present on threads only."
+    ),
   createdAt: z.string().datetime(),
   archivedAt: z.string().datetime().optional(),
 })

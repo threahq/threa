@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
 import { TestClient, createWorkspace, loginAs } from "../client"
 import { createTestPool } from "../integration/setup"
-import { CURRENT_API_VERSION } from "../../src/features/public-api/versions"
+import { API_VERSIONS, CURRENT_API_VERSION } from "../../src/features/public-api/versions"
 
 const testRunId = Math.random().toString(36).substring(7)
 const baseUrl = () => process.env.TEST_BASE_URL || "http://localhost:3001"
@@ -153,7 +153,7 @@ describe("Public API header versioning", () => {
       pinned: CURRENT_API_VERSION,
       resolved: CURRENT_API_VERSION,
       current: CURRENT_API_VERSION,
-      supported: [CURRENT_API_VERSION],
+      supported: [...API_VERSIONS],
     })
   })
 
