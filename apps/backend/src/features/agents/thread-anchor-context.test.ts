@@ -39,7 +39,7 @@ describe("findThreadAnchorContext", () => {
     const result = await findThreadAnchorContext(querier, makeStream({ parentAnchorId: "msg_root" }))
 
     expect(result).toBe(rootMessage)
-    expect(findThreadRoot).toHaveBeenCalled()
+    expect(findThreadRoot).toHaveBeenCalledWith(querier, { parentMessageId: "msg_root" })
     findThreadRoot.mockRestore()
   })
 

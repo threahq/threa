@@ -32,7 +32,6 @@ interface DelegationEventProps {
   event: StreamEvent
   workspaceId: string
   streamId: string
-  isThreadParent?: boolean
   /**
    * The latest `delegation:status_changed` patch for this delegation within
    * the loaded window — the authoritative live status, so every viewer (not
