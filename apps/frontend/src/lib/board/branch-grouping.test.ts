@@ -18,9 +18,9 @@ function msg(id: string, streamId: string, minute: number, authorId = "u1"): Ren
 function stream(
   parentStreamId: string | null,
   rootStreamId: string | null,
-  parentMessageId: string | null
+  parentAnchorId: string | null
 ): BranchStreamNode {
-  return { parentStreamId, rootStreamId, parentMessageId }
+  return { parentStreamId, rootStreamId, parentAnchorId }
 }
 
 describe("groupBranches", () => {

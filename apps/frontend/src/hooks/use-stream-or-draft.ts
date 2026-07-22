@@ -101,7 +101,7 @@ export interface VirtualStream {
   companionMode: CompanionMode
   isDraft: boolean
   parentStreamId: string | null
-  parentMessageId: string | null
+  parentAnchorId: string | null
   rootStreamId: string | null
   archivedAt: string | null
   /**
@@ -181,7 +181,7 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
         companionMode: draft.companionMode,
         isDraft: true,
         parentStreamId: null,
-        parentMessageId: null,
+        parentAnchorId: null,
         rootStreamId: null,
         archivedAt: null,
         allowedToolCategories: draft.allowedToolCategories,
@@ -317,7 +317,7 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
           companionMode: "off",
           isDraft: true,
           parentStreamId: null,
-          parentMessageId: null,
+          parentAnchorId: null,
           rootStreamId: null,
           archivedAt: null,
         }
@@ -352,7 +352,7 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
         description: null,
         visibility: Visibilities.PRIVATE,
         parentStreamId: null,
-        parentMessageId: null,
+        parentAnchorId: null,
         rootStreamId: null,
         companionMode: CompanionModes.OFF,
         companionPersonaId: null,
@@ -493,7 +493,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         companionMode: baseStream.companionMode,
         isDraft: false,
         parentStreamId: baseStream.parentStreamId,
-        parentMessageId: baseStream.parentMessageId,
+        parentAnchorId: baseStream.parentAnchorId ?? idbStream?.parentMessageId ?? null,
         rootStreamId: baseStream.rootStreamId,
         archivedAt: baseStream.archivedAt,
         e2eEnabled: baseStream.e2eEnabled,

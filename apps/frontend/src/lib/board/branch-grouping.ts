@@ -9,8 +9,14 @@ import type { RenderableMessage } from "@/components/message/message-item"
 export interface BranchStreamNode {
   parentStreamId: string | null
   rootStreamId: string | null
-  /** The message this stream (a thread) forks off — its fork point in the parent stream. */
-  parentMessageId: string | null
+  /** The anchor this stream (a thread) forks off — its fork point in the parent
+   *  stream. Board branches are message-anchored (event-anchored board rendering
+   *  is deferred), so this carries the `msg_` fork id. */
+  parentAnchorId?: string | null
+  /** Legacy IDB cached rows (pre anchor unification) carry the fork id here
+   *  instead of `parentAnchorId`; read both so an offline-first startup keeps
+   *  the fork point until the next online bootstrap rewrites the row. */
+  parentMessageId?: string | null
 }
 
 /**
@@ -157,7 +163,7 @@ export function groupBranches(messages: RenderableMessage[], ctx: BranchGrouping
       depth,
       displayDepth: Math.min(rel, 2),
       overflow: rel > 2,
-      forkMessageId: streams.get(streamId)?.parentMessageId ?? null,
+      forkMessageId: streams.get(streamId)?.parentAnchorId ?? streams.get(streamId)?.parentMessageId ?? null,
       messages: messagesByStream.get(streamId) ?? [],
       children: [],
     })

@@ -75,7 +75,7 @@ describe("Thread Graph", () => {
 
       expect(thread.type).toBe(StreamTypes.THREAD)
       expect(thread.parentStreamId).toBe(channel.id)
-      expect(thread.parentMessageId).toBe(parentMessage.id)
+      expect(thread.parentAnchorId).toBe(parentMessage.id)
       expect(thread.rootStreamId).toBe(channel.id)
       expect(thread.visibility).toBe(Visibilities.PUBLIC)
     })
@@ -599,7 +599,7 @@ describe("Thread Graph", () => {
       return { wsId, ownerId, actorId, channelId: channel.id }
     }
 
-    test("threading a threadable event anchors on the event, leaves the legacy column null, adds the event actor", async () => {
+    test("threading a threadable event anchors on the event and adds the event actor", async () => {
       const { wsId, ownerId, actorId, channelId } = await seedChannel("event-anchor")
 
       const event = await StreamEventRepository.insert(pool, {
@@ -619,8 +619,6 @@ describe("Thread Graph", () => {
       })
 
       expect(thread.parentAnchorId).toBe(event.id)
-      // Event anchors never touch the legacy message column.
-      expect(thread.parentMessageId).toBeNull()
       expect(thread.rootStreamId).toBe(channelId)
       // Members: the creator plus the event's user actor.
       expect(await streamService.isMember(thread.id, ownerId)).toBe(true)
@@ -675,14 +673,14 @@ describe("Thread Graph", () => {
       ).rejects.toMatchObject({ code: "ANCHOR_NOT_FOUND" })
     })
 
-    test("message-anchored create dual-writes both the anchor and the legacy column", async () => {
-      const { wsId, ownerId, channelId } = await seedChannel("msg-dualwrite")
+    test("message-anchored create writes the anchor column", async () => {
+      const { wsId, ownerId, channelId } = await seedChannel("msg-anchor")
       const parentMessage = await eventService.createMessage({
         workspaceId: wsId,
         streamId: channelId,
         authorId: ownerId,
         authorType: "user",
-        ...testMessageContent("Dual-write parent"),
+        ...testMessageContent("Anchor parent"),
       })
 
       const thread = await streamService.createThread({
@@ -692,44 +690,8 @@ describe("Thread Graph", () => {
         createdBy: ownerId,
       })
 
-      // Re-read the persisted row: both columns carry the message id during grace.
       const persisted = await StreamRepository.findById(pool, thread.id)
       expect(persisted?.parentAnchorId).toBe(parentMessage.id)
-      expect(persisted?.parentMessageId).toBe(parentMessage.id)
-    })
-
-    test("a legacy message thread (parent_anchor_id null) resolves idempotently for new code", async () => {
-      // Deploy grace window: an OLD replica created the message thread writing only
-      // the legacy parent_message_id, leaving parent_anchor_id null. NEW code then
-      // re-creates on the same message; the arbiter-less ON CONFLICT must suppress
-      // BOTH indexes (the new row conflicts on the legacy index, not the anchor one)
-      // so findByAnchor's COALESCE fallback returns the existing row, not a 500.
-      const { wsId, ownerId, channelId } = await seedChannel("legacy-msg-thread")
-      const parentMessage = await eventService.createMessage({
-        workspaceId: wsId,
-        streamId: channelId,
-        authorId: ownerId,
-        authorType: "user",
-        ...testMessageContent("Legacy grace-window parent"),
-      })
-
-      const legacyThreadId = streamId()
-      await pool.query(
-        `INSERT INTO streams (
-          id, workspace_id, type, visibility, parent_stream_id,
-          parent_anchor_id, parent_message_id, root_stream_id, created_by
-        ) VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8)`,
-        [legacyThreadId, wsId, StreamTypes.THREAD, Visibilities.PUBLIC, channelId, parentMessage.id, channelId, ownerId]
-      )
-
-      const resolved = await streamService.createThread({
-        workspaceId: wsId,
-        parentStreamId: channelId,
-        parentAnchorId: parentMessage.id,
-        createdBy: ownerId,
-      })
-
-      expect(resolved.id).toBe(legacyThreadId)
     })
 
     test("double-create on the same event anchor is idempotent", async () => {
@@ -789,15 +751,15 @@ describe("Thread Graph", () => {
     async function outboxByAnchor(anchorId: string) {
       const rows = await pool.query<{ event_type: string; payload: Record<string, unknown> }>(
         `SELECT event_type, payload FROM outbox
-         WHERE (event_type = 'thread:updated' AND payload->>'anchorId' = $1)
-            OR (event_type = 'message:updated' AND payload->>'messageId' = $1 AND payload->>'updateType' = 'reply_count')
+         WHERE event_type IN ('thread:updated', 'message:updated')
+           AND (payload->>'anchorId' = $1 OR payload->>'messageId' = $1)
          ORDER BY id ASC`,
         [anchorId]
       )
       return rows.rows
     }
 
-    test("message-anchored reply bumps streams.reply_count and dual-emits thread:updated + legacy message:updated", async () => {
+    test("message-anchored reply bumps streams.reply_count and emits thread:updated (no legacy message:updated)", async () => {
       const { wsId, ownerId, channelId } = await seedChannel("proj-msg")
       const parent = await eventService.createMessage({
         workspaceId: wsId,
@@ -833,8 +795,8 @@ describe("Thread Graph", () => {
         threadId: thread.id,
         replyCount: 1,
       })
-      // GRACE: legacy patch dual-emitted for the msg_ anchor.
-      expect(emitted.some((r) => r.event_type === "message:updated")).toBe(true)
+      // The legacy message:updated reply_count patch is gone.
+      expect(emitted.some((r) => r.event_type === "message:updated")).toBe(false)
 
       // Deleting the reply settles the count back to 0.
       await eventService.deleteMessage({

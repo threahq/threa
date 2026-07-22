@@ -130,7 +130,7 @@ describe("useBoardCardMessages", () => {
       id: THREAD,
       workspaceId: WS,
       type: "thread",
-      parentMessageId: "m1",
+      parentAnchorId: "m1",
       rootStreamId: STREAM,
       parentStreamId: STREAM,
     } as never)
@@ -152,7 +152,7 @@ describe("useBoardCardMessages", () => {
       id: THREAD,
       workspaceId: WS,
       type: "thread",
-      parentMessageId: "m1",
+      parentAnchorId: "m1",
       rootStreamId: STREAM,
       parentStreamId: STREAM,
     } as never)
@@ -455,7 +455,7 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
       id: THREAD,
       workspaceId: WS,
       type: "thread",
-      parentMessageId: "m1",
+      parentAnchorId: "m1",
       rootStreamId: STREAM,
       parentStreamId: STREAM,
     } as never)
@@ -514,7 +514,7 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
       id: THREAD,
       workspaceId: WS,
       type: "thread",
-      parentMessageId: "m1",
+      parentAnchorId: "m1",
       rootStreamId: STREAM,
       parentStreamId: STREAM,
     } as never)

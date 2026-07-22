@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
-import { StreamRepository, type Stream } from "../streams"
+import { StreamRepository } from "../streams"
 import { StreamMemberRepository, SparseReadRepository } from "../streams"
 import { checkStreamAccess, resolveEffectiveAccessStream } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
@@ -127,11 +127,6 @@ export interface ReactionPayload {
   messageId: string
   emoji: string
   userId: string
-}
-
-export interface ThreadCreatedPayload {
-  threadId: string
-  parentMessageId: string
 }
 
 export interface CreateMessageParams {
@@ -405,7 +400,6 @@ interface ThreadStreamStats {
   workspaceId: string
   parentStreamId: string | null
   parentAnchorId?: string | null
-  parentMessageId: string | null
   replyCount?: number
 }
 
@@ -426,10 +420,6 @@ export class EventService {
    * the authoritative post-mutation count on that payload; the edit path passes
    * false so it refreshes only `threadSummary` and never republishes an unlocked
    * thread-stream count a concurrent create/delete already advanced (INV-20).
-   * GRACE: for `msg_` anchors it also dual-emits the legacy `message:updated
-   * {updateType:"reply_count"}` patch (carrying the message's own shadow count) so
-   * a client that hasn't upgraded still heals the anchor message; removed in the
-   * cleanup chunk.
    */
   private async emitThreadUpdate(
     client: PoolClient,
@@ -437,7 +427,7 @@ export class EventService {
     options: { includeReplyCount?: boolean } = {}
   ): Promise<void> {
     if (!threadStream?.parentStreamId) return
-    const anchorId = threadStream.parentAnchorId ?? threadStream.parentMessageId
+    const anchorId = threadStream.parentAnchorId
     if (!anchorId) return
     const includeReplyCount = options.includeReplyCount ?? true
 
@@ -455,21 +445,6 @@ export class EventService {
       ...(includeReplyCount ? { replyCount: threadStream.replyCount ?? 0 } : {}),
       threadSummary,
     })
-
-    if (anchorId.startsWith("msg_")) {
-      const parentMessage = await MessageRepository.findById(client, anchorId)
-      if (parentMessage) {
-        await OutboxRepository.insert(client, "message:updated", {
-          workspaceId: threadStream.workspaceId,
-          streamId: threadStream.parentStreamId,
-          messageId: anchorId,
-          updateType: "reply_count",
-          replyCount: parentMessage.replyCount,
-          threadSummary,
-          threadId: threadStream.id,
-        })
-      }
-    }
   }
 
   private async resolveActorType(
@@ -856,20 +831,8 @@ export class EventService {
       },
     })
 
-    if (stream?.parentStreamId && (stream.parentAnchorId || stream.parentMessageId)) {
-      // Legacy shadow: keep messages.reply_count dual-written for msg_ anchors
-      // (grace). Authoritative count lives on the thread stream row.
-      let updatedThread: Stream | null
-      if (stream.parentMessageId) {
-        // The rolling-deploy trigger mirrors this legacy write into the canonical
-        // stream projection. Do not also delta-bump the stream row: predecessor
-        // replicas may have changed the shadow, and taking both locks in opposite
-        // order can deadlock mixed-version transactions.
-        await MessageRepository.incrementReplyCount(client, stream.parentMessageId)
-        updatedThread = await StreamRepository.findById(client, stream.id)
-      } else {
-        updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, 1)
-      }
+    if (stream?.parentStreamId && stream.parentAnchorId) {
+      const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, 1)
       await this.emitThreadUpdate(client, updatedThread ?? stream)
     }
 
@@ -1024,7 +987,7 @@ export class EventService {
         })
 
         const stream = await StreamRepository.findById(client, params.streamId)
-        if (stream?.parentStreamId && (stream.parentAnchorId || stream.parentMessageId)) {
+        if (stream?.parentStreamId && stream.parentAnchorId) {
           // No count change on edit — refresh only the thread summary; omit
           // replyCount so a stale unlocked read can't clobber a concurrent
           // create/delete's authoritative count (INV-20).
@@ -1153,14 +1116,8 @@ export class EventService {
         })
 
         const stream = await StreamRepository.findById(client, params.streamId)
-        if (stream?.parentStreamId && (stream.parentAnchorId || stream.parentMessageId)) {
-          let updatedThread: Stream | null
-          if (stream.parentMessageId) {
-            await MessageRepository.decrementReplyCount(client, stream.parentMessageId)
-            updatedThread = await StreamRepository.findById(client, stream.id)
-          } else {
-            updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, -1)
-          }
+        if (stream?.parentStreamId && stream.parentAnchorId) {
+          const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, -1)
           await this.emitThreadUpdate(client, updatedThread ?? stream)
         }
       }
@@ -1441,37 +1398,33 @@ export class EventService {
         parentMessageIds: uniqueMessageIds,
       })
 
-      await MessageRepository.incrementReplyCountBy(client, params.targetMessageId, uniqueMessageIds.length)
-      const projectedDestinationThread =
-        (await StreamRepository.findById(client, destinationThread.id)) ?? destinationThread
+      const updatedDestThread = await StreamRepository.bumpThreadReplyCount(
+        client,
+        destinationThread.id,
+        uniqueMessageIds.length
+      )
+      const projectedDestinationThread = updatedDestThread ?? destinationThread
       await this.emitThreadUpdate(client, projectedDestinationThread)
 
-      // Snapshot the post-increment reply count + thread summary so we can
-      // ship them inside `messages:moved` itself. Without this, source
-      // clients depend on the sibling `message:updated` event arriving
-      // before the card is rendered — and any delay there produces a
-      // visible regression where the new thread doesn't appear until the
-      // next bootstrap.
-      const updatedTargetMessage = await MessageRepository.findById(client, params.targetMessageId)
-      const parentReplyCount = updatedTargetMessage?.replyCount ?? uniqueMessageIds.length
+      // Snapshot the post-move reply count + thread summary so we can ship them
+      // inside `messages:moved` itself. Without this, source clients depend on
+      // the sibling `thread:updated` event arriving before the card is
+      // rendered — and any delay there produces a visible regression where the
+      // new thread doesn't appear until the next bootstrap. The count lives on
+      // the destination thread row (the target message's anchor).
+      const parentReplyCount = updatedDestThread?.replyCount ?? uniqueMessageIds.length
       const parentThreadSummary = await StreamRepository.findThreadSummaryByParentMessage(
         client,
         destinationThread.parentStreamId ?? params.sourceStreamId,
         params.targetMessageId
       )
 
-      if (sourceStream.parentStreamId && (sourceStream.parentAnchorId || sourceStream.parentMessageId)) {
-        let updatedSourceThread: Stream | null
-        if (sourceStream.parentMessageId) {
-          await MessageRepository.decrementReplyCountBy(client, sourceStream.parentMessageId, uniqueMessageIds.length)
-          updatedSourceThread = await StreamRepository.findById(client, sourceStream.id)
-        } else {
-          updatedSourceThread = await StreamRepository.bumpThreadReplyCount(
-            client,
-            sourceStream.id,
-            -uniqueMessageIds.length
-          )
-        }
+      if (sourceStream.parentStreamId && sourceStream.parentAnchorId) {
+        const updatedSourceThread = await StreamRepository.bumpThreadReplyCount(
+          client,
+          sourceStream.id,
+          -uniqueMessageIds.length
+        )
         await this.emitThreadUpdate(client, updatedSourceThread ?? sourceStream)
       }
 
@@ -1655,11 +1608,7 @@ export class EventService {
         })
       }
 
-      const existingThread = await StreamRepository.findByParentMessage(
-        client,
-        params.sourceStreamId,
-        params.targetMessageId
-      )
+      const existingThread = await StreamRepository.findByAnchor(client, params.sourceStreamId, params.targetMessageId)
       // Mirror the moveMessagesToThread guard so validate doesn't hand out
       // leases the move endpoint will reject — keeps the two-step contract
       // honest about what's actually movable.
@@ -1824,10 +1773,6 @@ export class EventService {
       const anchorMessageId = (anchor.payload as { messageId?: string })?.messageId ?? null
       return { ...around, anchorMessageId }
     })
-  }
-
-  async getReplyCountsBatch(messageIds: string[]): Promise<Map<string, number>> {
-    return MessageRepository.getReplyCountsBatch(this.pool, messageIds)
   }
 
   /** Count message_created events per stream, used to derive thread reply counts. */

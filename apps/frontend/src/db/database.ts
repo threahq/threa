@@ -88,7 +88,13 @@ export interface CachedStream {
    * rows cached before this shipped — fall back to `parentMessageId`.
    */
   parentAnchorId?: string | null
-  parentMessageId: string | null
+  /**
+   * Legacy message anchor. New writes no longer set it — but IDB rows persisted by
+   * a PREVIOUS bundle still carry only this, and IDB survives deploys
+   * indefinitely, so the cached-row read path keeps it as a fallback. Optional so
+   * fresh writes omit it.
+   */
+  parentMessageId?: string | null
   rootStreamId: string | null
   /**
    * Live reply count on a thread stream (0 for non-threads). Absent on rows cached

@@ -158,7 +158,7 @@ describe("Sparse read overlay", () => {
     // thread membership row.
     const threadId = streamId()
     await pool.query(
-      `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_message_id, root_stream_id)
+      `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_anchor_id, root_stream_id)
        VALUES ($1, $2, 'thread', 'private', $3, $4, $5, $4)`,
       [threadId, wid, authorId, sid, parentMsg]
     )

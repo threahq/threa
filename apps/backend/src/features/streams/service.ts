@@ -165,8 +165,6 @@ const createStreamParamsSchema = z.object({
   parentStreamId: z.string().optional(),
   /** Canonical thread anchor (`msg_…` / `event_…`). */
   parentAnchorId: z.string().optional(),
-  /** Legacy message anchor, normalized to `parentAnchorId` during grace. */
-  parentMessageId: z.string().optional(),
   memberIds: z.array(z.string()).optional(),
   createdBy: z.string(),
 })
@@ -451,7 +449,7 @@ export class StreamService {
           memberIds: params.memberIds,
         })
       case StreamTypes.THREAD: {
-        const parentAnchorId = params.parentAnchorId ?? params.parentMessageId
+        const parentAnchorId = params.parentAnchorId
         if (!params.parentStreamId || !parentAnchorId) {
           throw new Error("parentStreamId and parentAnchorId are required for threads")
         }

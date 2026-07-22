@@ -481,10 +481,10 @@ export function useAllDrafts(workspaceId: string) {
         branchPosts.length > 0 ? await db.streams.bulkGet(branchPosts.map((row) => row.conversation.streamId)) : []
       const forkByBranchConversationId = new Map<string, string>()
       branchPosts.forEach((row, i) => {
-        const parentMessageId = threadRows[i]?.parentMessageId
-        if (parentMessageId) {
-          forkByBranchConversationId.set(row.id, parentMessageId)
-          forkMessageIds.add(parentMessageId)
+        const forkAnchorId = threadRows[i]?.parentAnchorId ?? threadRows[i]?.parentMessageId
+        if (forkAnchorId) {
+          forkByBranchConversationId.set(row.id, forkAnchorId)
+          forkMessageIds.add(forkAnchorId)
         }
       })
 

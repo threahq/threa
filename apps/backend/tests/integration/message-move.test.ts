@@ -156,7 +156,7 @@ describe("message move integration", () => {
     })
 
     expect(result.thread.parentStreamId).toBe(sourceStreamId)
-    expect(result.thread.parentMessageId).toBe(target.id)
+    expect(result.thread.parentAnchorId).toBe(target.id)
     expect(result.thread.rootStreamId).toBe(sourceStreamId)
     expect(result.thread.companionMode).toBe("on")
     expect(result.thread.replyCount).toBe(2)

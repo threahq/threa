@@ -37,7 +37,6 @@ function fakeStream(overrides: Partial<Stream> = {}): Stream {
     visibility: Visibilities.PUBLIC,
     parentStreamId: null,
     parentAnchorId: null,
-    parentMessageId: null,
     rootStreamId: null,
     replyCount: 0,
     lastReplyAt: null,

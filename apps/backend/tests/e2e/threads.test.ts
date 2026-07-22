@@ -50,7 +50,7 @@ describe("Thread E2E Tests", () => {
       expect(thread.id).toMatch(/^stream_/)
       expect(thread.type).toBe("thread")
       expect(thread.parentStreamId).toBe(scratchpad.id)
-      expect(thread.parentMessageId).toBe(message.id)
+      expect(thread.parentAnchorId).toBe(message.id)
     })
 
     test("should return existing thread when creating duplicate", async () => {
@@ -242,7 +242,7 @@ describe("Thread E2E Tests", () => {
 
       expect(result.thread.type).toBe("thread")
       expect(result.thread.parentStreamId).toBe(scratchpad.id)
-      expect(result.thread.parentMessageId).toBe(target.id)
+      expect(result.thread.parentAnchorId).toBe(target.id)
       expect(result.destinationStreamId).toBe(result.thread.id)
       expect(new Set(result.movedMessageIds)).toEqual(new Set([movedA.id, movedB.id]))
 

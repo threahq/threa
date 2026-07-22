@@ -19,11 +19,7 @@ import { withTestTransaction, addTestMember, setupTestDatabase, testMessageConte
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
-import {
-  OutboxRepository,
-  type MessageUpdatedOutboxPayload,
-  type ThreadUpdatedOutboxPayload,
-} from "../../src/lib/outbox"
+import { OutboxRepository, type ThreadUpdatedOutboxPayload } from "../../src/lib/outbox"
 import { userId, workspaceId } from "../../src/lib/id"
 import { Visibilities } from "@threa/types"
 
@@ -361,16 +357,15 @@ describe("Thread Summary", () => {
       })
 
       const outboxEvents = await OutboxRepository.fetchAfterId(pool, baselineId)
-      const refreshEvent = outboxEvents.find((event) => event.eventType === "message:updated")
+      const refreshEvent = outboxEvents.find((event) => event.eventType === "thread:updated")
 
       expect(refreshEvent).toBeDefined()
-      const payload = refreshEvent!.payload as MessageUpdatedOutboxPayload
+      const payload = refreshEvent!.payload as ThreadUpdatedOutboxPayload
       expect(payload).toMatchObject({
         workspaceId: f.wsId,
         streamId: f.channelId,
-        messageId: f.parentMessageId,
-        updateType: "reply_count",
-        replyCount: 1,
+        parentStreamId: f.channelId,
+        anchorId: f.parentMessageId,
       })
       expect(payload.threadSummary).not.toBeNull()
       expect(payload.threadSummary!.latestReply).toMatchObject({

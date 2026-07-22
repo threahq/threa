@@ -17,7 +17,7 @@ export {
 
 export { deriveContentMarkdown } from "./content"
 
-export { MessageRepository } from "./repository"
+export { MessageRepository, REPLY_COUNT_SUBQUERY } from "./repository"
 export type { Message, InsertMessageParams } from "./repository"
 
 export { MessageVersionRepository } from "./version-repository"
@@ -30,7 +30,6 @@ export type {
   MessageEditedPayload,
   MessageDeletedPayload,
   ReactionPayload,
-  ThreadCreatedPayload,
   CreateMessageParams,
   EditMessageParams,
   DeleteMessageParams,

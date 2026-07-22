@@ -15,15 +15,15 @@ const ACTOR_ID = "usr_1"
 // `chan_1` is the root; `thr_1` hangs off `msg_open`; `thr_2` is a deeper
 // sub-topic under `thr_1` (a descendant thread whose members move with it).
 const STREAMS: Record<string, unknown> = {
-  chan_1: { id: "chan_1", type: "channel", parentStreamId: null, parentMessageId: null, rootStreamId: null },
-  thr_1: { id: "thr_1", type: "thread", parentStreamId: "chan_1", parentMessageId: "msg_open", rootStreamId: "chan_1" },
-  thr_2: { id: "thr_2", type: "thread", parentStreamId: "thr_1", parentMessageId: "msg_t1", rootStreamId: "chan_1" },
+  chan_1: { id: "chan_1", type: "channel", parentStreamId: null, parentAnchorId: null, rootStreamId: null },
+  thr_1: { id: "thr_1", type: "thread", parentStreamId: "chan_1", parentAnchorId: "msg_open", rootStreamId: "chan_1" },
+  thr_2: { id: "thr_2", type: "thread", parentStreamId: "thr_1", parentAnchorId: "msg_t1", rootStreamId: "chan_1" },
   // A thread under a DIFFERENT root — the same-root guard's negative case.
   thr_foreign: {
     id: "thr_foreign",
     type: "thread",
     parentStreamId: "chan_2",
-    parentMessageId: "msg_x",
+    parentAnchorId: "msg_x",
     rootStreamId: "chan_2",
   },
 }

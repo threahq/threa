@@ -20,7 +20,6 @@ function makeStream(overrides: Partial<Stream> = {}): Stream {
     description: null,
     visibility: "public",
     parentStreamId: null,
-    parentMessageId: null,
     rootStreamId: null,
     companionMode: "off",
     companionPersonaId: null,

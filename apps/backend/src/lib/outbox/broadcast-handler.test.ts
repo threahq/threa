@@ -231,7 +231,7 @@ describe("BroadcastHandler", () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
       streamId: "stream_parent",
-      stream: { id: "stream_thread", parentMessageId: "msg_1" },
+      stream: { id: "stream_thread", parentAnchorId: "msg_1" },
     })
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
@@ -271,7 +271,7 @@ describe("BroadcastHandler", () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
       streamId: "stream_new",
-      stream: { id: "stream_new", parentMessageId: null, type: "channel", visibility: "public" },
+      stream: { id: "stream_new", parentAnchorId: null, type: "channel", visibility: "public" },
     })
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
@@ -293,7 +293,7 @@ describe("BroadcastHandler", () => {
       streamId: "stream_sp",
       stream: {
         id: "stream_sp",
-        parentMessageId: null,
+        parentAnchorId: null,
         type: "scratchpad",
         visibility: "private",
         createdBy: "usr_alice",
@@ -320,7 +320,7 @@ describe("BroadcastHandler", () => {
       streamId: "stream_priv_ch",
       stream: {
         id: "stream_priv_ch",
-        parentMessageId: null,
+        parentAnchorId: null,
         type: "channel",
         visibility: "private",
         createdBy: "usr_bob",
@@ -345,7 +345,7 @@ describe("BroadcastHandler", () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
       streamId: "stream_dm",
-      stream: { id: "stream_dm", parentMessageId: null, type: "dm" },
+      stream: { id: "stream_dm", parentAnchorId: null, type: "dm" },
       dmUserIds: ["usr_alice", "usr_bob"],
     })
 

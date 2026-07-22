@@ -439,7 +439,7 @@ export class PersonaAgent {
     } else if (
       stream.type === StreamTypes.THREAD &&
       stream.parentStreamId &&
-      (stream.parentAnchorId ?? stream.parentMessageId)
+      stream.parentAnchorId
     ) {
       // Session in an existing thread: viewers of the parent timeline watch it
       // through the thread slot on the anchor (message or card), so the inline
@@ -447,7 +447,7 @@ export class PersonaAgent {
       // wiring channel mentions get via their eagerly created thread. The anchor
       // is the coalesced id (`event_` for card threads, `msg_` otherwise).
       parentStreamId = stream.parentStreamId
-      parentMessageId = stream.parentAnchorId ?? stream.parentMessageId ?? undefined
+      parentMessageId = stream.parentAnchorId ?? undefined
     }
 
     const result = await withCompanionSession(

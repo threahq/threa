@@ -95,7 +95,7 @@ describe("ConversationService read/unread", () => {
     // Thread under root; reader has root access but no thread membership row.
     const thread = streamId()
     await pool.query(
-      `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_message_id, root_stream_id)
+      `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_anchor_id, root_stream_id)
        VALUES ($1, $2, 'thread', 'private', $3, $4, $5, $4)`,
       [thread, wid, author, root, msg1]
     )
@@ -209,7 +209,7 @@ describe("ConversationService read/unread", () => {
     const msg1 = await send(wid, root, author, "root 1")
     const thread = streamId()
     await pool.query(
-      `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_message_id, root_stream_id)
+      `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_anchor_id, root_stream_id)
        VALUES ($1, $2, 'thread', 'private', $3, $4, $5, $4)`,
       [thread, wid, author, root, msg1]
     )

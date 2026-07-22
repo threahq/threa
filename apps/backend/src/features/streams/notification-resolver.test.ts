@@ -16,7 +16,6 @@ function makeStream(overrides: Partial<Stream> = {}): Stream {
     visibility: "private",
     parentStreamId: "stream_channel",
     parentAnchorId: "msg_1",
-    parentMessageId: "msg_1",
     rootStreamId: "stream_channel",
     replyCount: 0,
     lastReplyAt: null,

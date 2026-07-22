@@ -567,7 +567,7 @@ describe("ConversationRepository", () => {
           workspaceId: testWorkspaceId,
           type: "thread",
           parentStreamId: scopedChannelId,
-          parentMessageId: parentMsgId,
+          parentAnchorId: parentMsgId,
           rootStreamId: scopedChannelId,
           companionMode: "off",
           createdBy: testUserId,

@@ -63,12 +63,9 @@ interface CreateStreamInputBase {
   parentStreamId?: string
   /**
    * Canonical id of the timeline item to anchor a thread on: `msg_…` (message)
-   * or `event_…` (card). The one anchor track. Exactly one of `parentAnchorId`
-   * / `parentMessageId` is required for `type: "thread"`.
+   * or `event_…` (card). The one anchor track. Required for `type: "thread"`.
    */
   parentAnchorId?: string
-  /** Legacy message anchor, accepted as an alias for `parentAnchorId` during the grace period. */
-  parentMessageId?: string
   memberIds?: string[]
   /** Context bag attached to a new scratchpad (triggers summary pre-compute). */
   contextBag?: ContextBag
@@ -218,12 +215,11 @@ export interface StreamBootstrap {
   /**
    * Present on append-mode responses only: current thread state for every
    * thread parented in this stream. An append response carries only events
-   * past the client's cursor, but thread patches (`message:updated`
-   * reply_count) mutate parent rows BEHIND the cursor and carry no broadcast
-   * sequence — a patch missed live is invisible to gap detection and never
-   * re-fetched, so opening the stream applies this map to heal stale thread
-   * cards. `threadSummary: null` = thread exists but has no non-deleted
-   * replies.
+   * past the client's cursor, but thread patches (`thread:updated`) mutate
+   * parent rows BEHIND the cursor and carry no broadcast sequence — a patch
+   * missed live is invisible to gap detection and never re-fetched, so opening
+   * the stream applies this map to heal stale thread cards. `threadSummary:
+   * null` = thread exists but has no non-deleted replies.
    */
   threadStates?: Array<{
     /**
@@ -232,12 +228,6 @@ export interface StreamBootstrap {
      * row to patch by this id (INV-2 prefix is the discriminator).
      */
     anchorId: string
-    /**
-     * Legacy message anchor. Populated (== `anchorId`) for `msg_` anchors during
-     * the grace period so old-deploy clients keying on it stay correct; `null`
-     * for event-anchored threads.
-     */
-    parentMessageId: string | null
     threadId: string
     replyCount: number
     threadSummary: ThreadSummary | null

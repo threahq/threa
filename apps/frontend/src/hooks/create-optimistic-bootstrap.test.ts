@@ -13,7 +13,6 @@ const mockStream: Stream = {
   companionMode: "on",
   companionPersonaId: null,
   parentStreamId: null,
-  parentMessageId: null,
   rootStreamId: null,
   createdBy: "member_01TEST",
   createdAt: "2024-01-01T00:00:00Z",

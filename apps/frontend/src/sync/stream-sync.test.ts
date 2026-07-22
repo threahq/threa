@@ -43,7 +43,6 @@ function makeBootstrap(events: StreamEvent[], streamId: string): StreamBootstrap
       description: null,
       visibility: "public",
       parentStreamId: null,
-      parentMessageId: null,
       rootStreamId: null,
       companionMode: "off",
       companionPersonaId: null,
@@ -182,7 +181,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     // Backend bootstrap takes getThreadsWithReplyCounts and getThreadSummaries
     // as separate non-transactional snapshots. If a reply commits between
     // them, the bootstrap can include threadId+replyCount but omit
-    // threadSummary. Meanwhile the message:updated socket handler has already
+    // threadSummary. Meanwhile the thread:updated socket handler has already
     // written the full threadSummary into IDB. Per-field merge must keep the
     // socket-written threadSummary in place.
     const streamId = "stream_merge_omit"
@@ -933,7 +932,7 @@ describe("updateMessageEvent", () => {
     })
 
     // Simulate the race that happens when messages:moved, stream:created and
-    // message:updated socket handlers all update the same parent message
+    // thread:updated socket handlers all update the same parent message
     // concurrently. With the old read-then-update implementation the last
     // write would overwrite earlier ones and lose fields.
     await Promise.all([
@@ -2189,104 +2188,6 @@ describe("registerStreamSocketHandlers — read-state counter wiring", () => {
   })
 })
 
-describe("registerStreamSocketHandlers — message:updated reply_count patch", () => {
-  function createTestSocket() {
-    const handlers = new Map<string, Set<(payload: unknown) => void>>()
-    const socket = {
-      on(event: string, handler: (payload: unknown) => void) {
-        const set = handlers.get(event) ?? new Set()
-        set.add(handler)
-        handlers.set(event, set)
-        return this
-      },
-      off(event: string, handler: (payload: unknown) => void) {
-        handlers.get(event)?.delete(handler)
-        return this
-      },
-    } as unknown as Socket
-    return {
-      socket,
-      async emit(event: string, payload: unknown) {
-        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
-      },
-    }
-  }
-
-  beforeEach(async () => {
-    await db.events.clear()
-  })
-
-  it("sets threadId from the patch so the card renders without a prior stream:created", async () => {
-    const streamId = "stream_patch_threadid"
-
-    // Parent row as a viewer who never saw stream:created holds it: no threadId.
-    await db.events.put({
-      ...makeEvent({ id: "evt_parent", streamId, sequence: "10" }),
-      payload: { messageId: "msg_parent", contentMarkdown: "parent" },
-      workspaceId: "ws_1",
-      _sequenceNum: 10,
-      _cachedAt: Date.now(),
-    })
-
-    const { socket, emit } = createTestSocket()
-    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
-
-    const threadSummary = {
-      lastReplyAt: new Date().toISOString(),
-      participants: [{ id: "user_2", type: "user" }],
-      latestReply: { messageId: "msg_r1", actorId: "user_2", actorType: "user", contentMarkdown: "a reply" },
-    }
-    await emit("message:updated", {
-      workspaceId: "ws_1",
-      streamId,
-      messageId: "msg_parent",
-      updateType: "reply_count",
-      replyCount: 1,
-      threadSummary,
-      threadId: "stream_thread_9",
-    })
-
-    const row = await db.events.get("evt_parent")
-    expect(row?.payload).toMatchObject({
-      messageId: "msg_parent",
-      replyCount: 1,
-      threadId: "stream_thread_9",
-      threadSummary,
-    })
-
-    cleanup()
-  })
-
-  it("does not clear an existing threadId when the patch carries threadId: null", async () => {
-    const streamId = "stream_patch_null_threadid"
-
-    await db.events.put({
-      ...makeEvent({ id: "evt_parent2", streamId, sequence: "11" }),
-      payload: { messageId: "msg_parent2", contentMarkdown: "parent", threadId: "stream_thread_kept", replyCount: 3 },
-      workspaceId: "ws_1",
-      _sequenceNum: 11,
-      _cachedAt: Date.now(),
-    })
-
-    const { socket, emit } = createTestSocket()
-    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
-
-    await emit("message:updated", {
-      workspaceId: "ws_1",
-      streamId,
-      messageId: "msg_parent2",
-      updateType: "reply_count",
-      replyCount: 2,
-      threadId: null,
-    })
-
-    const row = await db.events.get("evt_parent2")
-    expect(row?.payload).toMatchObject({ replyCount: 2, threadId: "stream_thread_kept" })
-
-    cleanup()
-  })
-})
-
 describe("registerStreamSocketHandlers — thread:updated patch (anchor-agnostic)", () => {
   function createTestSocket() {
     const handlers = new Map<string, Set<(payload: unknown) => void>>()
@@ -2387,7 +2288,7 @@ describe("registerStreamSocketHandlers — thread:updated patch (anchor-agnostic
     cleanup()
   })
 
-  it("double delivery (both thread:updated and legacy message:updated) converges — no double count", async () => {
+  it("thread:updated writes the parent card's reply stats (absolute count, last-write-wins)", async () => {
     const streamId = "stream_tu_double"
     await db.events.put({
       ...makeEvent({ id: "evt_double_parent", streamId, sequence: "10" }),
@@ -2400,7 +2301,7 @@ describe("registerStreamSocketHandlers — thread:updated patch (anchor-agnostic
     const { socket, emit } = createTestSocket()
     const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
 
-    // Both patches carry the same ABSOLUTE count — last-write-wins is idempotent.
+    // The patch carries an ABSOLUTE count — re-delivery is idempotent (last-write-wins).
     await emit("thread:updated", {
       workspaceId: "ws_1",
       streamId,
@@ -2410,14 +2311,14 @@ describe("registerStreamSocketHandlers — thread:updated patch (anchor-agnostic
       replyCount: 4,
       threadSummary: summary,
     })
-    await emit("message:updated", {
+    await emit("thread:updated", {
       workspaceId: "ws_1",
       streamId,
-      messageId: "msg_double",
-      updateType: "reply_count",
+      parentStreamId: streamId,
+      anchorId: "msg_double",
+      threadId: "stream_thread_d",
       replyCount: 4,
       threadSummary: summary,
-      threadId: "stream_thread_d",
     })
 
     const row = await db.events.get("evt_double_parent")
@@ -2459,7 +2360,6 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
       threadStates: [
         {
           anchorId: "msg_stale_parent",
-          parentMessageId: "msg_stale_parent",
           threadId: "stream_thread_1",
           replyCount: 6,
           threadSummary: healSummary,
@@ -2501,7 +2401,6 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
       threadStates: [
         {
           anchorId: "msg_fresh_parent",
-          parentMessageId: "msg_fresh_parent",
           threadId: "stream_thread_2",
           replyCount: 6,
           threadSummary: null,
@@ -2540,7 +2439,6 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
       threadStates: [
         {
           anchorId: "msg_noop_parent",
-          parentMessageId: "msg_noop_parent",
           threadId: "stream_thread_3",
           replyCount: 2,
           threadSummary: null,
@@ -2573,7 +2471,6 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
       threadStates: [
         {
           anchorId: "event_card_stale",
-          parentMessageId: null,
           threadId: "stream_thread_card",
           replyCount: 4,
           threadSummary: healSummary,
@@ -2591,43 +2488,5 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
       threadSummary: healSummary,
     })
     expect(row?._patchedAt).toBeUndefined()
-  })
-
-  it("heals from a legacy threadState with no anchorId (old-backend deploy skew)", async () => {
-    const streamId = "stream_heal_legacy"
-
-    await db.events.put({
-      ...makeEvent({ id: "evt_legacy_parent", streamId, sequence: "10" }),
-      payload: { messageId: "msg_legacy_parent", contentMarkdown: "parent" },
-      workspaceId: "ws_1",
-      _sequenceNum: 10,
-      _cachedAt: Date.now() - 60_000,
-    })
-
-    // Old-backend append response: legacy shape, keyed on parentMessageId only,
-    // anchorId absent at runtime (required in the type, unfilled on the wire).
-    const bootstrap: StreamBootstrap = {
-      ...makeBootstrap([makeEvent({ id: "evt_new", streamId, sequence: "20" })], streamId),
-      syncMode: "append",
-      snapshotAt: new Date().toISOString(),
-      threadStates: [
-        {
-          parentMessageId: "msg_legacy_parent",
-          threadId: "stream_thread_legacy",
-          replyCount: 6,
-          threadSummary: healSummary,
-        } as unknown as NonNullable<StreamBootstrap["threadStates"]>[number],
-      ],
-    }
-
-    await applyStreamBootstrap("ws_1", streamId, bootstrap)
-
-    const row = await db.events.get("evt_legacy_parent")
-    expect(row?.payload).toMatchObject({
-      messageId: "msg_legacy_parent",
-      threadId: "stream_thread_legacy",
-      replyCount: 6,
-      threadSummary: healSummary,
-    })
   })
 })

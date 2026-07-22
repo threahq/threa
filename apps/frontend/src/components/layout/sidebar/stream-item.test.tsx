@@ -42,7 +42,6 @@ function createStream(overrides: Partial<StreamItemData> = {}): StreamItemData {
     description: null,
     visibility: Visibilities.PUBLIC,
     parentStreamId: null,
-    parentMessageId: null,
     rootStreamId: null,
     companionMode: "off",
     companionPersonaId: null,

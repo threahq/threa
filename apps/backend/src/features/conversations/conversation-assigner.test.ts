@@ -13,9 +13,9 @@ const WORKSPACE_ID = "ws_1"
 // The thread (`thr_1`) hangs off `msg_open` in `chan_1`; `chan_1`/`chan_2` are
 // top-level roots; `thr_1`'s effective root is `chan_1`.
 const STREAMS: Record<string, unknown> = {
-  thr_1: { id: "thr_1", parentStreamId: "chan_1", parentMessageId: "msg_open", rootStreamId: "chan_1" },
-  chan_1: { id: "chan_1", parentStreamId: null, parentMessageId: null, rootStreamId: null },
-  chan_2: { id: "chan_2", parentStreamId: null, parentMessageId: null, rootStreamId: null },
+  thr_1: { id: "thr_1", parentStreamId: "chan_1", parentAnchorId: "msg_open", rootStreamId: "chan_1" },
+  chan_1: { id: "chan_1", parentStreamId: null, parentAnchorId: null, rootStreamId: null },
+  chan_2: { id: "chan_2", parentStreamId: null, parentAnchorId: null, rootStreamId: null },
 }
 
 function makeReply(streamId = "thr_1"): Message {
@@ -186,9 +186,9 @@ describe("conversationAssigner — newSubtopic (declared branch, stream-locked m
     // the stub because thr_1's `parentMessageId` (msg_open) is a member message of
     // the parent conversation — the graph link the PR1 renderer derives.
     const mintedAnchor = insert.mock.calls[0][1].streamId as string
-    const thread = STREAMS[mintedAnchor] as { parentMessageId: string }
+    const thread = STREAMS[mintedAnchor] as { parentAnchorId: string }
     const parentConversation = makeSource() // messageIds: ["msg_open"]
-    expect(parentConversation.messageIds).toContain(thread.parentMessageId)
+    expect(parentConversation.messageIds).toContain(thread.parentAnchorId)
   })
 
   test("a second newSubtopic into the same thread attaches to the existing conversation (no double-mint)", async () => {

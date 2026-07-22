@@ -33,7 +33,6 @@ export {
   type MessageCreatedOutboxPayload,
   type MessageEditedOutboxPayload,
   type MessageDeletedOutboxPayload,
-  type MessageUpdatedOutboxPayload,
   type ReactionOutboxPayload,
   type StreamDisplayNameUpdatedPayload,
   type StreamCreatedOutboxPayload,

@@ -3,6 +3,7 @@ import { sql, composeSql } from "../../db"
 import { DM_PARTICIPANT_COUNT, Visibilities, type AuthorType, type StreamType } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 import { streamAccessPredicateSql } from "../streams"
+import { REPLY_COUNT_SUBQUERY } from "../messaging"
 import type { AgentAccessSpec } from "../agents"
 
 export interface GetAccessibleStreamsParams {
@@ -206,7 +207,7 @@ export const SearchRepository = {
           m.author_id,
           m.author_type,
           m.sequence,
-          m.reply_count,
+          ${sql`${sql.raw(REPLY_COUNT_SUBQUERY("m"))}`},
           m.metadata,
           m.edited_at,
           m.created_at,
@@ -234,7 +235,7 @@ export const SearchRepository = {
         m.author_id,
         m.author_type,
         m.sequence,
-        m.reply_count,
+        ${sql`${sql.raw(REPLY_COUNT_SUBQUERY("m"))}`},
         m.metadata,
         m.edited_at,
         m.created_at,
@@ -295,7 +296,7 @@ export const SearchRepository = {
           m.author_id,
           m.author_type,
           m.sequence,
-          m.reply_count,
+          ${sql`${sql.raw(REPLY_COUNT_SUBQUERY("m"))}`},
           m.metadata,
           m.edited_at,
           m.created_at,
@@ -320,7 +321,7 @@ export const SearchRepository = {
           m.author_id,
           m.author_type,
           m.sequence,
-          m.reply_count,
+          ${sql`${sql.raw(REPLY_COUNT_SUBQUERY("m"))}`},
           m.metadata,
           m.edited_at,
           m.created_at,
@@ -390,7 +391,7 @@ export const SearchRepository = {
         m.author_id,
         m.author_type,
         m.sequence,
-        m.reply_count,
+        ${sql`${sql.raw(REPLY_COUNT_SUBQUERY("m"))}`},
         m.metadata,
         m.edited_at,
         m.created_at,

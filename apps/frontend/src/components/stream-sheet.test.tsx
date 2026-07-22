@@ -29,7 +29,7 @@ function makeStream(overrides: Partial<VirtualStream> = {}): VirtualStream {
     companionMode: CompanionModes.ON,
     isDraft: false,
     parentStreamId: null,
-    parentMessageId: null,
+    parentAnchorId: null,
     rootStreamId: null,
     archivedAt: null,
     ...overrides,

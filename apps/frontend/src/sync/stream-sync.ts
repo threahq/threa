@@ -494,7 +494,7 @@ async function writeBootstrapEventsAndStream(
 
 /**
  * Heal thread state on already-persisted parent rows from the bootstrap's
- * `threadStates` map (append-mode responses). Thread patches (`message:updated`
+ * `threadStates` map (append-mode responses). Thread patches (`thread:updated`
  * reply_count) have no broadcast sequence and mutate rows behind the append
  * cursor, so one missed live patch would otherwise stay stale until a hard
  * refresh — this makes every stream open converge on the server's state.
@@ -533,7 +533,7 @@ async function applyBootstrapThreadStates(streamId: string, bootstrap: StreamBoo
   // Message anchors: located by payload.messageId over the indexed
   // message_created rows. Event anchors (card threads): located by event id
   // (the anchor id IS the event's primary key).
-  const anchorIdOf = (s: BootstrapThreadState): string | null => s.anchorId ?? s.parentMessageId
+  const anchorIdOf = (s: BootstrapThreadState): string | null => s.anchorId
   const messageStateByAnchor = new Map<string, BootstrapThreadState>()
   const eventAnchorStates: BootstrapThreadState[] = []
   for (const s of bootstrap.threadStates) {
@@ -663,7 +663,7 @@ interface MessagesMovedPayload {
   sourceTombstoneEvent: StreamEvent
   /** Authoritative replyCount for the drop-target after the move (see backend payload doc). */
   parentReplyCount: number
-  /** Recomputed thread summary for the drop-target — same shape as `message:updated` ships. */
+  /** Recomputed thread summary for the drop-target — same shape as `thread:updated` ships. */
   parentThreadSummary: ThreadSummary | null
   /** Source stream's post-move `message_created` count. Fix A1: SET onto the
    *  source `latestOrdinals` so the count that dropped when rows relocated heals
@@ -684,28 +684,6 @@ interface StreamCreatedPayload {
   workspaceId: string
   streamId: string
   stream: Stream
-}
-
-interface MessageUpdatedPayload {
-  workspaceId: string
-  streamId: string
-  messageId: string
-  updateType: "reply_count" | "content"
-  replyCount?: number
-  contentMarkdown?: string
-  /**
-   * For reply_count updates, the backend recomputes the thread summary and
-   * sends it alongside so ThreadCard can refresh its preview/participants
-   * without waiting for the next bootstrap. `null` = last reply was deleted.
-   */
-  threadSummary?: ThreadSummary | null
-  /**
-   * For reply_count updates, the thread stream's id. The card needs a
-   * navigable thread id, and `stream:created` (its usual source) reaches only
-   * clients in the parent's room at creation time — carrying the id on every
-   * reply patch makes each patch self-sufficient for rendering the card.
-   */
-  threadId?: string | null
 }
 
 interface ThreadUpdatedPayload {
@@ -799,7 +777,7 @@ export async function updateMessageEvent(
   // then filter by messageId in the payload (not indexed but over a small set).
   // modify() runs the callback inside a readwrite cursor so the read and write
   // are atomic. This prevents lost updates when multiple socket handlers
-  // (messages:moved, stream:created, message:updated) update the same parent
+  // (messages:moved, stream:created, thread:updated) update the same parent
   // message concurrently — the second transaction sees the first's writes.
   await db.events
     .where("[streamId+eventType]")
@@ -851,7 +829,7 @@ export async function updateEventByAnchor(
  *
  * Called after draft thread submission so the reply count appears instantly
  * when the user navigates back via breadcrumb. The socket handler for
- * message:updated may miss this event because the panel navigated away
+ * thread:updated may miss this event because the panel navigated away
  * from the parent stream (handlers were cleaned up on unmount). Keyed by the
  * anchor's canonical id so event-anchored (card) threads bump too.
  */
@@ -1158,11 +1136,11 @@ export function registerStreamSocketHandlers(
         })
         // SET replyCount + threadSummary directly from the payload (not
         // additive) so the patch is idempotent against the sibling
-        // `message:updated` event — they carry the same authoritative
+        // `thread:updated` event — they carry the same authoritative
         // values, and whichever arrives second just overwrites with the
         // identical result. This makes `messages:moved` self-sufficient:
         // the thread card surfaces with the right count even if
-        // `message:updated` is delayed or lost.
+        // `thread:updated` is delayed or lost.
         await updateMessageEvent(streamId, payload.targetMessageId, (p) => ({
           ...p,
           threadId: payload.thread.id,
@@ -1259,7 +1237,7 @@ export function registerStreamSocketHandlers(
   const handleStreamCreated = async (payload: StreamCreatedPayload) => {
     if (payload.streamId !== streamId) return
     const stream = payload.stream
-    const anchorId = stream.parentAnchorId ?? stream.parentMessageId
+    const anchorId = stream.parentAnchorId
     if (!anchorId) return
 
     await updateEventByAnchor(streamId, anchorId, (p) => ({
@@ -1285,38 +1263,9 @@ export function registerStreamSocketHandlers(
     })
   }
 
-  const handleMessageUpdated = async (payload: MessageUpdatedPayload) => {
-    if (payload.streamId !== streamId) return
-    await updateMessageEvent(streamId, payload.messageId, (p) => {
-      if (payload.updateType === "reply_count" && payload.replyCount !== undefined) {
-        // threadSummary is only present when the backend recomputed one; leave
-        // the previous value untouched if the field is absent (older servers).
-        // `null` is a meaningful value (last reply was deleted) so we only
-        // skip the patch when the field is `undefined`.
-        const next: Record<string, unknown> = { ...p, replyCount: payload.replyCount }
-        if (payload.threadSummary !== undefined) {
-          next.threadSummary = payload.threadSummary
-        }
-        // A truthy threadId makes the patch self-sufficient for the thread
-        // card when stream:created was missed. `null` (thread gone) is left
-        // alone — replyCount 0 already hides the card.
-        if (payload.threadId) {
-          next.threadId = payload.threadId
-        }
-        return next
-      }
-      if (payload.updateType === "content" && payload.contentMarkdown !== undefined) {
-        return { ...p, contentMarkdown: payload.contentMarkdown }
-      }
-      return p
-    })
-  }
-
   // Live thread reply-stat patch for EVERY anchor kind. Heals the anchored row
   // (message or card) by canonical id. Payloads carry ABSOLUTE counts, so this
-  // is idempotent last-write-wins — for `msg_` anchors the legacy
-  // `message:updated` patch (below) also arrives during the grace period and
-  // converges on the identical values (no double-increment, no flicker).
+  // is idempotent last-write-wins (no double-increment, no flicker).
   const handleThreadUpdated = async (payload: ThreadUpdatedPayload) => {
     if (payload.streamId !== streamId) return
     // Heal only the fields the patch carries: the edit path omits replyCount
@@ -1521,7 +1470,6 @@ export function registerStreamSocketHandlers(
   socket.on("reaction:added", handleReactionAdded)
   socket.on("reaction:removed", handleReactionRemoved)
   socket.on("stream:created", handleStreamCreated)
-  socket.on("message:updated", handleMessageUpdated)
   socket.on("thread:updated", handleThreadUpdated)
   socket.on("stream:member_joined", handleAppendEvent)
   socket.on("stream:member_added", handleAppendEvent)
@@ -1564,7 +1512,6 @@ export function registerStreamSocketHandlers(
     socket.off("reaction:added", handleReactionAdded)
     socket.off("reaction:removed", handleReactionRemoved)
     socket.off("stream:created", handleStreamCreated)
-    socket.off("message:updated", handleMessageUpdated)
     socket.off("thread:updated", handleThreadUpdated)
     socket.off("stream:member_joined", handleAppendEvent)
     socket.off("stream:member_added", handleAppendEvent)

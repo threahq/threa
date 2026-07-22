@@ -164,7 +164,7 @@ const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {
 function serializeStream(stream: Stream, context?: DisplayNameContext): WireStream {
   const effective = getEffectiveDisplayName(stream, context)
   const displayName = stream.type === "channel" ? `#${effective.displayName}` : effective.displayName
-  const anchorId = stream.parentAnchorId ?? stream.parentMessageId
+  const anchorId = stream.parentAnchorId
 
   return {
     id: stream.id,
@@ -2524,7 +2524,7 @@ export function createPublicApiHandlers({
         throw new HttpError("Message not found or was deleted", { status: 404, code: "NOT_FOUND" })
       }
 
-      const thread = await StreamRepository.findByParentMessage(pool, existing.streamId, messageId)
+      const thread = await StreamRepository.findByAnchor(pool, existing.streamId, messageId)
       res.json({
         data: serializeMessage(updated, {
           authorDisplayName: displayName,

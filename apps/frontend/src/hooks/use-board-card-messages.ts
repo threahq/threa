@@ -342,7 +342,10 @@ function subscribeChildThreadIndex(workspaceId: string, listener: () => void): (
       const live = threadIndexRegistry.get(workspaceId)
       if (!live) return
       const byParent = new Map<string, string>()
-      for (const thread of threads) if (thread.parentMessageId) byParent.set(thread.parentMessageId, thread.id)
+      for (const thread of threads) {
+        const anchor = thread.parentAnchorId ?? thread.parentMessageId
+        if (anchor) byParent.set(anchor, thread.id)
+      }
       live.byParent = byParent
       for (const notify of live.listeners) notify()
     })

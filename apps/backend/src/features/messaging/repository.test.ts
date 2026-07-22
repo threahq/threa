@@ -38,12 +38,23 @@ function makeMessage(overrides: Record<string, any> = {}): any {
 describe("MessageRepository.findThreadRoot", () => {
   afterEach(() => mock.restore())
 
-  it("returns null when the stream has no parentMessageId", async () => {
+  it("returns null when the stream has no anchor", async () => {
     // Non-thread streams (channels, scratchpads, DMs) short-circuit before
     // any DB round-trip — findById must not even be consulted.
     const findById = spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage())
 
-    const result = await MessageRepository.findThreadRoot({} as any, { parentMessageId: null })
+    const result = await MessageRepository.findThreadRoot({} as any, { parentAnchorId: null })
+
+    expect(result).toBeNull()
+    expect(findById).not.toHaveBeenCalled()
+  })
+
+  it("returns null for an event-anchored thread (no root message)", async () => {
+    // Event-anchored threads hang off a card, not a message — there is no root
+    // message to fetch, so the helper short-circuits before any DB round-trip.
+    const findById = spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage())
+
+    const result = await MessageRepository.findThreadRoot({} as any, { parentAnchorId: "event_1" })
 
     expect(result).toBeNull()
     expect(findById).not.toHaveBeenCalled()
@@ -52,7 +63,7 @@ describe("MessageRepository.findThreadRoot", () => {
   it("returns the parent message for a thread with a live root", async () => {
     spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage({ id: "msg_root" }))
 
-    const result = await MessageRepository.findThreadRoot({} as any, { parentMessageId: "msg_root" })
+    const result = await MessageRepository.findThreadRoot({} as any, { parentAnchorId: "msg_root" })
 
     expect(result?.id).toBe("msg_root")
   })
@@ -60,7 +71,7 @@ describe("MessageRepository.findThreadRoot", () => {
   it("returns null for hard-deleted roots (findById returns null)", async () => {
     spyOn(MessageRepository, "findById").mockResolvedValue(null)
 
-    const result = await MessageRepository.findThreadRoot({} as any, { parentMessageId: "msg_gone" })
+    const result = await MessageRepository.findThreadRoot({} as any, { parentAnchorId: "msg_gone" })
 
     expect(result).toBeNull()
   })
@@ -75,7 +86,7 @@ describe("MessageRepository.findThreadRoot", () => {
       makeMessage({ id: "msg_deleted", deletedAt: new Date("2026-04-20T10:00:00Z") })
     )
 
-    const result = await MessageRepository.findThreadRoot({} as any, { parentMessageId: "msg_deleted" })
+    const result = await MessageRepository.findThreadRoot({} as any, { parentAnchorId: "msg_deleted" })
 
     expect(result).toBeNull()
   })

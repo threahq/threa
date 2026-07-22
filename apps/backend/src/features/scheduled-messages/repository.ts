@@ -12,7 +12,7 @@ interface ScheduledMessageRow {
   workspace_id: string
   user_id: string
   stream_id: string
-  parent_message_id: string | null
+  parent_anchor_id: string | null
   content_json: JSONContent
   content_markdown: string
   attachment_ids: string[]
@@ -100,7 +100,7 @@ export interface ListScheduledOpts {
 }
 
 const COLUMNS =
-  "id, workspace_id, user_id, stream_id, parent_message_id, content_json, content_markdown, attachment_ids, metadata, conversation_directive, scheduled_for, status, sent_message_id, last_error, queue_message_id, edit_active_until, client_message_id, retry_count, version, created_at, updated_at, status_changed_at"
+  "id, workspace_id, user_id, stream_id, parent_anchor_id, content_json, content_markdown, attachment_ids, metadata, conversation_directive, scheduled_for, status, sent_message_id, last_error, queue_message_id, edit_active_until, client_message_id, retry_count, version, created_at, updated_at, status_changed_at"
 
 function mapRow(row: ScheduledMessageRow): ScheduledMessage {
   return {
@@ -108,7 +108,7 @@ function mapRow(row: ScheduledMessageRow): ScheduledMessage {
     workspaceId: row.workspace_id,
     userId: row.user_id,
     streamId: row.stream_id,
-    parentMessageId: row.parent_message_id,
+    parentMessageId: row.parent_anchor_id,
     contentJson: row.content_json,
     contentMarkdown: row.content_markdown,
     attachmentIds: Array.isArray(row.attachment_ids) ? row.attachment_ids : [],
@@ -140,7 +140,7 @@ export const ScheduledMessagesRepository = {
   async insert(db: Querier, params: InsertScheduledMessageParams): Promise<ScheduledMessage> {
     const result = await db.query<ScheduledMessageRow>(sql`
       INSERT INTO scheduled_messages (
-        id, workspace_id, user_id, stream_id, parent_message_id,
+        id, workspace_id, user_id, stream_id, parent_anchor_id,
         content_json, content_markdown, attachment_ids, metadata,
         conversation_directive, scheduled_for, status, client_message_id
       )

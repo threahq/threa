@@ -33,7 +33,6 @@ export type OutboxEventType =
   | "message:edited"
   | "message:deleted"
   | "messages:moved"
-  | "message:updated"
   | "thread:updated"
   | "reaction:added"
   | "reaction:removed"
@@ -136,7 +135,6 @@ export type StreamScopedEventType =
   | "message:edited"
   | "message:deleted"
   | "messages:moved"
-  | "message:updated"
   | "thread:updated"
   | "reaction:added"
   | "reaction:removed"
@@ -228,17 +226,17 @@ export interface MessagesMovedOutboxPayload extends StreamScopedPayload {
    */
   sourceTombstoneEvent: WireStreamEvent
   /**
-   * Authoritative `replyCount` for the drop-target message (the thread
-   * parent), recomputed AFTER the move's `incrementReplyCountBy`. Frontend
-   * sets this directly on the parent message in the source stream. Including
-   * it in `messages:moved` makes this event self-sufficient: ThreadCard
-   * surfaces with the right count even if the sibling `message:updated`
-   * outbox event is delayed, dropped, or processed out of order.
+   * Authoritative `replyCount` for the drop-target message (the thread parent),
+   * read off the destination thread row AFTER the move. Frontend sets this
+   * directly on the parent message in the source stream. Including it in
+   * `messages:moved` makes this event self-sufficient: ThreadCard surfaces with
+   * the right count even if the sibling `thread:updated` outbox event is delayed,
+   * dropped, or processed out of order.
    */
   parentReplyCount: number
   /**
    * Recomputed thread summary for the drop-target — same field shape
-   * `message:updated` ships, included here so the card preview/participants
+   * `thread:updated` ships, included here so the card preview/participants
    * land alongside the move without waiting for a second event.
    */
   parentThreadSummary: import("@threa/types").ThreadSummary | null
@@ -253,37 +251,14 @@ export interface MessagesMovedOutboxPayload extends StreamScopedPayload {
   sourceMessageOrdinal: number
 }
 
-export interface MessageUpdatedOutboxPayload extends StreamScopedPayload {
-  messageId: string
-  updateType: "reply_count" | "content"
-  replyCount?: number
-  content?: string
-  /**
-   * When `updateType === "reply_count"`, carries the recomputed thread summary
-   * (or `null` when the last remaining reply was deleted). Lets the frontend
-   * refresh ThreadCard content alongside `replyCount` instead of waiting for
-   * the next bootstrap.
-   */
-  threadSummary?: import("@threa/types").ThreadSummary | null
-  /**
-   * When `updateType === "reply_count"`, the thread stream's id. A viewer who
-   * missed `stream:created` (delivered only to clients in the parent's room at
-   * creation time) cannot render the thread card from `replyCount` alone — the
-   * card needs a navigable thread id — so every reply patch carries it, making
-   * each patch self-sufficient.
-   */
-  threadId?: string | null
-}
-
 /**
  * A thread's reply stats changed. Stream-scoped ONLY (no timeline row, no
  * EVENT_TYPES entry — same delivery class as `call:participants_changed`):
  * `streamId` is the PARENT stream, so the generic stream-scoped router fans it
- * to the parent room. Replaces `message:updated {updateType:"reply_count"}` for
- * every anchor kind; the legacy patch is dual-emitted for `msg_` anchors through
- * the grace period. `anchorId` is the canonical id of the anchored timeline item
- * (`msg_…` / `event_…`); `replyCount` is the post-mutation value read off the
- * thread stream row; `threadSummary` is `null` when the thread has no live reply.
+ * to the parent room. The sole reply-stat projection for every anchor kind.
+ * `anchorId` is the canonical id of the anchored timeline item (`msg_…` /
+ * `event_…`); `replyCount` is the post-mutation value read off the thread stream
+ * row; `threadSummary` is `null` when the thread has no live reply.
  * Both stat fields are optional: the edit path re-emits only a refreshed
  * `threadSummary` (no count change) and omits `replyCount` so it can never
  * republish a count read without a lock (a concurrent create/delete owns the
@@ -1133,7 +1108,6 @@ export interface OutboxEventPayloadMap {
   "message:edited": MessageEditedOutboxPayload
   "message:deleted": MessageDeletedOutboxPayload
   "messages:moved": MessagesMovedOutboxPayload
-  "message:updated": MessageUpdatedOutboxPayload
   "thread:updated": ThreadUpdatedOutboxPayload
   "reaction:added": ReactionOutboxPayload
   "reaction:removed": ReactionOutboxPayload
@@ -1265,7 +1239,6 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "message:edited",
   "message:deleted",
   "messages:moved",
-  "message:updated",
   "thread:updated",
   "reaction:added",
   "reaction:removed",

@@ -497,7 +497,7 @@ describe("StreamService.createThread (via create)", () => {
     type: "thread",
     visibility: "private",
     parentStreamId: "stream_channel",
-    parentMessageId: "msg_1",
+    parentAnchorId: "msg_1",
     rootStreamId: "stream_channel",
     createdBy: "member_creator",
     createdAt: new Date().toISOString(),
@@ -551,7 +551,7 @@ describe("StreamService.createThread (via create)", () => {
       workspaceId: "ws_1",
       type: "thread",
       parentStreamId: "stream_channel",
-      parentMessageId: "msg_1",
+      parentAnchorId: "msg_1",
       createdBy: "member_creator",
     })
 
@@ -579,7 +579,7 @@ describe("StreamService.createThread (via create)", () => {
       workspaceId: "ws_1",
       type: "thread",
       parentStreamId: "stream_channel",
-      parentMessageId: "msg_1",
+      parentAnchorId: "msg_1",
       createdBy: "member_creator",
     })
 
@@ -598,7 +598,7 @@ describe("StreamService.createThread (via create)", () => {
       workspaceId: "ws_1",
       type: "thread",
       parentStreamId: "stream_channel",
-      parentMessageId: "msg_1",
+      parentAnchorId: "msg_1",
       createdBy: "member_creator",
     })
 
@@ -618,7 +618,7 @@ describe("StreamService.createThread (via create)", () => {
       workspaceId: "ws_1",
       type: "thread",
       parentStreamId: "stream_channel",
-      parentMessageId: "msg_1",
+      parentAnchorId: "msg_1",
       createdBy: "member_creator",
     })
 
@@ -638,7 +638,7 @@ describe("StreamService.createThread (via create)", () => {
       workspaceId: "ws_1",
       type: "thread",
       parentStreamId: "stream_channel",
-      parentMessageId: "msg_1",
+      parentAnchorId: "msg_1",
       createdBy: "member_creator",
     })
 
@@ -696,7 +696,7 @@ describe("StreamService.createThread (via create)", () => {
       workspaceId: "ws_1",
       type: "thread",
       parentStreamId: "stream_root",
-      parentMessageId: "msg_1",
+      parentAnchorId: "msg_1",
       createdBy: "member_creator",
     })
 

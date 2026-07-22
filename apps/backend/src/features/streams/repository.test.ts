@@ -24,7 +24,7 @@ function streamRow(overrides: Record<string, unknown> = {}) {
     description_json: null,
     visibility: "private",
     parent_stream_id: null,
-    parent_message_id: null,
+    parent_anchor_id: null,
     root_stream_id: null,
     companion_mode: "on",
     companion_persona_id: "persona_system_ariadne",

@@ -501,7 +501,6 @@ describe("Access Control", () => {
       })
 
       expect(thread.parentAnchorId).toBe(event.id)
-      expect(thread.parentMessageId).toBeNull()
       expect(thread.visibility).toBe(Visibilities.PUBLIC)
 
       // The workspace member (never a member of the event-anchored thread) resolves

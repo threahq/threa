@@ -176,12 +176,13 @@ async function attachThreadReplyToSource(
 ): Promise<string | null> {
   const thread = await StreamRepository.findById(client, message.streamId)
   const source = await ConversationRepository.findByIdForUpdate(client, workspaceId, sourceConversationId)
+  const anchorMessageId = thread?.parentAnchorId?.startsWith("msg_") ? thread.parentAnchorId : null
   if (
     !thread?.parentStreamId ||
-    !thread.parentMessageId ||
+    !anchorMessageId ||
     !source ||
     source.streamId !== thread.parentStreamId ||
-    !source.messageIds.includes(thread.parentMessageId) ||
+    !source.messageIds.includes(anchorMessageId) ||
     !(await checkStreamAccess(client, source.streamId, workspaceId, message.authorId))
   ) {
     return null

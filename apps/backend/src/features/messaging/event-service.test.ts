@@ -1285,8 +1285,6 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
       type: "thread",
       parentStreamId: "stream_root",
       parentAnchorId: "msg_parent",
-      parentMessageId: "msg_parent",
-      replyCount: 5,
     } as any)
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
@@ -1320,16 +1318,13 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
       deletedAt: null,
       createdAt: new Date(),
     })) as any)
-    spyOn(MessageRepository, "incrementReplyCount").mockResolvedValue(undefined as any)
     spyOn(MessageRepository, "findById").mockResolvedValue({ id: "msg_parent", replyCount: 4 } as any)
     spyOn(StreamRepository, "findThreadSummaryByParentMessage").mockResolvedValue(null)
-    spyOn(StreamRepository, "findByParentMessage").mockResolvedValue({ id: "stream_thread" } as any)
     spyOn(StreamRepository, "bumpThreadReplyCount").mockResolvedValue({
       id: "stream_thread",
       workspaceId: "ws_1",
       parentStreamId: "stream_root",
       parentAnchorId: "msg_parent",
-      parentMessageId: "msg_parent",
       replyCount: 5,
     } as any)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
@@ -1342,33 +1337,14 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
     mock.restore()
   })
 
-  it("publishes message:updated carrying threadId so one patch suffices to render the thread card", async () => {
+  it("increments the thread stream's reply_count and emits thread:updated for a msg_ anchor", async () => {
     const service = new EventService({} as any)
 
     await service.createMessage(baseParams)
 
-    expect(OutboxRepository.insert).toHaveBeenCalledWith(
-      expect.anything(),
-      "message:updated",
-      expect.objectContaining({
-        streamId: "stream_root",
-        messageId: "msg_parent",
-        updateType: "reply_count",
-        replyCount: 4,
-        threadId: "stream_thread",
-      })
-    )
-  })
-
-  it("uses the grace bridge projection and dual-emits thread:updated for a msg_ anchor", async () => {
-    const service = new EventService({} as any)
-
-    await service.createMessage(baseParams)
-
-    // The legacy parent write synchronously projects through the rolling-deploy
-    // trigger; a second delta bump would double-count and invert mixed-version lock order.
-    expect(StreamRepository.bumpThreadReplyCount).not.toHaveBeenCalled()
-    // New anchor-agnostic patch reads the post-trigger thread stream row.
+    // Reply-count maintenance lives on the thread stream row (INV-20 atomic +1).
+    expect(StreamRepository.bumpThreadReplyCount).toHaveBeenCalledWith(expect.anything(), "stream_thread", 1)
+    // Anchor-agnostic patch, replyCount read off the thread stream row.
     expect(OutboxRepository.insert).toHaveBeenCalledWith(
       expect.anything(),
       "thread:updated",
@@ -1380,10 +1356,11 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
         threadSummary: null,
       })
     )
-    // GRACE: the legacy patch is still dual-emitted for the msg_ anchor.
+    // The legacy message:updated reply_count patch is gone — thread:updated is
+    // the sole projection for every anchor kind.
     const emitted = (OutboxRepository.insert as any).mock.calls.map((c: unknown[]) => c[1])
     expect(emitted).toContain("thread:updated")
-    expect(emitted).toContain("message:updated")
+    expect(emitted).not.toContain("message:updated")
   })
 
   it("event-anchored thread reply emits thread:updated with the event-id anchor and NO legacy message:updated", async () => {
@@ -1393,14 +1370,12 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
       type: "thread",
       parentStreamId: "stream_root",
       parentAnchorId: "event_card1",
-      parentMessageId: null,
     })
     ;(StreamRepository.bumpThreadReplyCount as any).mockResolvedValue({
       id: "stream_thread",
       workspaceId: "ws_1",
       parentStreamId: "stream_root",
       parentAnchorId: "event_card1",
-      parentMessageId: null,
       replyCount: 1,
     })
 
@@ -1417,8 +1392,7 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
         replyCount: 1,
       })
     )
-    // No message-shadow write and no legacy patch for a card anchor.
-    expect(MessageRepository.incrementReplyCount).not.toHaveBeenCalled()
+    // No legacy patch for a card anchor.
     const emitted = (OutboxRepository.insert as any).mock.calls.map((c: unknown[]) => c[1])
     expect(emitted).not.toContain("message:updated")
   })
