@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { act, fireEvent } from "@testing-library/react"
-import { render, screen } from "@/test"
+import { render, screen, userEvent } from "@/test"
 import * as authModule from "@/auth"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import {
@@ -11,10 +11,10 @@ import {
   type CallRosterParticipant,
 } from "@/stores/call-store"
 import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
-import type { CallController } from "@/calls/call-manager"
+import { CallCaptureError, type CallController } from "@/calls/call-manager"
 import { FloatingCallSquare, clampSquareToViewport } from "./floating-call-square"
 import { CallManagerProvider } from "./call-manager-context"
-import { CallLaunchProvider } from "./call-launch-context"
+import { CallLaunchProvider, useCallLaunch } from "./call-launch-context"
 
 type CachedWorkspaceUser = Parameters<typeof seedWorkspaceCache>[1]["users"][number]
 
@@ -103,6 +103,26 @@ function renderSquare(manager: CallController = makeManager(), onDockToSide: () 
     <CallManagerProvider manager={manager}>
       <CallLaunchProvider>
         <FloatingCallSquare workspaceId={WORKSPACE_ID} streamId="stream_1" onDockToSide={onDockToSide} />
+      </CallLaunchProvider>
+    </CallManagerProvider>
+  )
+}
+
+function LaunchButton() {
+  const { launch } = useCallLaunch()
+  return (
+    <button type="button" onClick={() => launch({ workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" })}>
+      launch
+    </button>
+  )
+}
+
+function renderSquareWithLaunch(manager: CallController) {
+  return render(
+    <CallManagerProvider manager={manager}>
+      <CallLaunchProvider>
+        <LaunchButton />
+        <FloatingCallSquare workspaceId={WORKSPACE_ID} streamId="stream_1" onDockToSide={vi.fn()} />
       </CallLaunchProvider>
     </CallManagerProvider>
   )
@@ -215,12 +235,27 @@ describe("FloatingCallSquare — minimize / restore", () => {
 })
 
 describe("FloatingCallSquare — joining", () => {
-  it("renders the joining body (no tiles) when the phase is joining and the launch is idle", () => {
+  it("renders the Connecting indicator (no tiles) when joining with an idle launch", () => {
     renderSquare()
     act(() => setCallPhase("joining"))
-    expect(screen.getByText("Joining…")).toBeInTheDocument()
+    expect(screen.getByText("Connecting…")).toBeInTheDocument()
     expect(screen.queryAllByTestId("call-tile")).toHaveLength(0)
-    expect(screen.getByLabelText("Cancel joining")).toBeInTheDocument()
+    // The old mobile-island pill (icon-only Cancel) must not render on the desktop square.
+    expect(screen.queryByLabelText("Cancel joining")).toBeNull()
+  })
+
+  it("renders the PreJoinGate permission taxonomy during an active launch, not a plain pill", async () => {
+    const startCall = vi.fn(async () => {
+      throw new CallCaptureError(
+        "capture_failed",
+        Object.assign(new Error("Permission denied"), { name: "NotAllowedError" })
+      )
+    })
+    renderSquareWithLaunch(makeManager({ startCall }))
+    await userEvent.click(screen.getByText("launch"))
+    expect(await screen.findByText(/Microphone access denied/i)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Try again/i })).toBeInTheDocument()
+    expect(screen.queryByLabelText("Cancel joining")).toBeNull()
   })
 
   it("offers no Minimize while joining — a bubble would hide the PreJoinGate", () => {
@@ -237,7 +272,7 @@ describe("FloatingCallSquare — joining", () => {
     // Dropping out of connected (e.g. back to joining) must expand — never a stale bubble.
     act(() => setCallPhase("joining"))
     expect(screen.getByTestId("floating-call-square")).toHaveAttribute("data-minimized", "false")
-    expect(screen.getByText("Joining…")).toBeInTheDocument()
+    expect(screen.getByText("Connecting…")).toBeInTheDocument()
   })
 })
 

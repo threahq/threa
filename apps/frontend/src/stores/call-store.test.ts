@@ -8,6 +8,7 @@ import {
   setCallPhase,
   setCallRoster,
   setCallSurfaceMode,
+  setDesktopSurfaceOverride,
   registerCallHangup,
   resetCallStoreCache,
   clearCallState,
@@ -79,6 +80,20 @@ describe("call-store", () => {
 
     resetCallStoreCache()
     expect(getCallState().surfaceMode).toBe("min")
+  })
+
+  it("desktopSurfaceOverride: defaults null, sets, survives a rejoin, and clears on teardown", () => {
+    expect(getCallState().desktopSurfaceOverride).toBeNull()
+
+    setDesktopSurfaceOverride("sidebar")
+    expect(getCallState().desktopSurfaceOverride).toBe("sidebar")
+
+    // A rejoin (new session) keeps "this call"'s override — only teardown clears it.
+    setCallSession({ callId: "call_2", workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+    expect(getCallState().desktopSurfaceOverride).toBe("sidebar")
+
+    clearCallState()
+    expect(getCallState().desktopSurfaceOverride).toBeNull()
   })
 
   it("connectedAt: stamped once on connect, preserved across reconnects, cleared on teardown", () => {

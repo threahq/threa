@@ -27,4 +27,16 @@ describe("CallSettings", () => {
     expect(screen.getByRole("radio", { name: "Grid" })).toBeChecked()
     expect(getCallPrefs().layout).toBe("grid")
   })
+
+  it("sets the desktop call surface from the radio", async () => {
+    render(<CallSettings />)
+    expect(getCallPrefs().desktopCallSurface).toBe("keep_last")
+    expect(screen.getByRole("radio", { name: "Keep last" })).toBeChecked()
+    await userEvent.click(screen.getByLabelText("Floating window"))
+    expect(screen.getByRole("radio", { name: "Floating window" })).toBeChecked()
+    expect(getCallPrefs().desktopCallSurface).toBe("floating")
+    await userEvent.click(screen.getByLabelText("Sidebar"))
+    expect(screen.getByRole("radio", { name: "Sidebar" })).toBeChecked()
+    expect(getCallPrefs().desktopCallSurface).toBe("sidebar")
+  })
 })

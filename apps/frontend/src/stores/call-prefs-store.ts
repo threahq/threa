@@ -16,6 +16,10 @@ export type CallLayout = "speaker" | "grid"
 export type CallFilmstripSide = "bottom" | "side"
 /** Local self-view mirroring. `auto` = mirror a front/desktop camera, not a mobile back camera. */
 export type CallSelfMirror = "auto" | "on" | "off"
+/** A concrete desktop call surface. */
+export type DesktopSurface = "sidebar" | "floating"
+/** The desktop-surface preference: `keep_last` reopens wherever the last call was. */
+export type DesktopCallSurface = "keep_last" | DesktopSurface
 
 export interface CallPrefs {
   layout: CallLayout
@@ -23,16 +27,43 @@ export interface CallPrefs {
   selfMirror: CallSelfMirror
   /** Last resting open width (px) of the desktop side dock; `null` = never resized. */
   sideDockWidth: number | null
+  /** Which desktop surface a call opens on. */
+  desktopCallSurface: DesktopCallSurface
+  /** The surface the last desktop call resolved to — the target of `keep_last`. */
+  lastDesktopSurface: DesktopSurface
 }
 
-const DEFAULT_PREFS: CallPrefs = { layout: "speaker", filmstripSide: "bottom", selfMirror: "auto", sideDockWidth: null }
+const DEFAULT_PREFS: CallPrefs = {
+  layout: "speaker",
+  filmstripSide: "bottom",
+  selfMirror: "auto",
+  sideDockWidth: null,
+  desktopCallSurface: "keep_last",
+  lastDesktopSurface: "floating",
+}
 const STORAGE_KEY = "threa:callPrefs:v1"
 
 const isLayout = (v: unknown): v is CallLayout => v === "speaker" || v === "grid"
 const isFilmstripSide = (v: unknown): v is CallFilmstripSide => v === "bottom" || v === "side"
 const isSelfMirror = (v: unknown): v is CallSelfMirror => v === "auto" || v === "on" || v === "off"
+const isDesktopSurface = (v: unknown): v is DesktopSurface => v === "sidebar" || v === "floating"
+const isDesktopCallSurface = (v: unknown): v is DesktopCallSurface => v === "keep_last" || isDesktopSurface(v)
 const parseSideDockWidth = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null
+
+/**
+ * Resolve the effective desktop surface. An in-call session override wins; else
+ * `keep_last` follows the last-used surface and an explicit pin returns as-is.
+ */
+export function resolveDesktopSurface(
+  pref: DesktopCallSurface,
+  last: DesktopSurface,
+  override: DesktopSurface | null
+): DesktopSurface {
+  if (override) return override
+  if (pref === "keep_last") return last
+  return pref
+}
 
 /**
  * Resolve the effective self-view mirror. `auto` mirrors a front-facing view (any
@@ -63,6 +94,12 @@ function readPersisted(): CallPrefs {
       filmstripSide: isFilmstripSide(p.filmstripSide) ? p.filmstripSide : DEFAULT_PREFS.filmstripSide,
       selfMirror: isSelfMirror(p.selfMirror) ? p.selfMirror : DEFAULT_PREFS.selfMirror,
       sideDockWidth: parseSideDockWidth(p.sideDockWidth),
+      desktopCallSurface: isDesktopCallSurface(p.desktopCallSurface)
+        ? p.desktopCallSurface
+        : DEFAULT_PREFS.desktopCallSurface,
+      lastDesktopSurface: isDesktopSurface(p.lastDesktopSurface)
+        ? p.lastDesktopSurface
+        : DEFAULT_PREFS.lastDesktopSurface,
     }
   } catch {
     return { ...DEFAULT_PREFS }
@@ -91,7 +128,9 @@ function update(patch: Partial<CallPrefs>): void {
     next.layout === prefs.layout &&
     next.filmstripSide === prefs.filmstripSide &&
     next.selfMirror === prefs.selfMirror &&
-    next.sideDockWidth === prefs.sideDockWidth
+    next.sideDockWidth === prefs.sideDockWidth &&
+    next.desktopCallSurface === prefs.desktopCallSurface &&
+    next.lastDesktopSurface === prefs.lastDesktopSurface
   ) {
     return
   }
@@ -118,6 +157,14 @@ export function setCallSelfMirror(selfMirror: CallSelfMirror): void {
 
 export function setCallSideDockWidth(px: number): void {
   update({ sideDockWidth: px })
+}
+
+export function setDesktopCallSurface(desktopCallSurface: DesktopCallSurface): void {
+  update({ desktopCallSurface })
+}
+
+export function setLastDesktopSurface(lastDesktopSurface: DesktopSurface): void {
+  update({ lastDesktopSurface })
 }
 
 function subscribe(listener: () => void): () => void {

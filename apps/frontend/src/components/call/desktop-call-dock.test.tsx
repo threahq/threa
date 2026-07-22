@@ -109,6 +109,14 @@ function renderDock(manager: CallController = makeManager()) {
   )
 }
 
+function renderDockWithFloat(onFloat: () => void, manager: CallController = makeManager()) {
+  return render(
+    <CallManagerProvider manager={manager}>
+      <DesktopCallDock workspaceId={WORKSPACE_ID} streamId="stream_1" onFloat={onFloat} />
+    </CallManagerProvider>
+  )
+}
+
 function enterConnected(roster: CallRosterParticipant[]) {
   act(() => {
     setCallSession({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" })
@@ -172,6 +180,38 @@ describe("DesktopCallDock — side dock presentations", () => {
     expect(screen.getByTestId("desktop-call-dock")).toHaveAttribute("data-mode", "standard")
     expect(screen.getAllByTestId("call-tile")).toHaveLength(2)
     expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
+  })
+})
+
+describe("DesktopCallDock — Float action", () => {
+  it("shows the Float button in the open panel and dispatches onFloat", async () => {
+    const onFloat = vi.fn()
+    renderDockWithFloat(onFloat)
+    enterConnected(TWO_PEERS)
+    setMode("compact")
+    const float = screen.getByLabelText("Pop out to a floating window")
+    expect(float).toBeInTheDocument()
+    await userEvent.click(float)
+    expect(onFloat).toHaveBeenCalled()
+  })
+
+  it("renders no Float button when onFloat is absent", () => {
+    renderDock()
+    enterConnected(TWO_PEERS)
+    setMode("compact")
+    expect(screen.queryByLabelText("Pop out to a floating window")).toBeNull()
+    expect(screen.getByLabelText("Minimize call")).toBeInTheDocument()
+  })
+
+  it("keeps the peek header on Pin, not Float", () => {
+    const onFloat = vi.fn()
+    renderDockWithFloat(onFloat)
+    enterConnected(TWO_PEERS)
+    setMode("min")
+    const dock = screen.getByTestId("desktop-call-dock")
+    fireEvent.mouseEnter(dock)
+    expect(screen.getByLabelText("Keep call open")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Pop out to a floating window")).toBeNull()
   })
 })
 

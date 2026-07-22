@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
-import { GripHorizontal, Loader2, Minimize2, PanelRight, X } from "lucide-react"
+import { GripHorizontal, Minimize2, PanelRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -157,31 +157,22 @@ function ConnectedBody({
   )
 }
 
-/** Joining/pre-join body — mirrors {@link import("./call-island").MobileCallJoining} inside the square frame. */
+/**
+ * Joining/pre-join body — the desktop joining surface, mirroring
+ * {@link import("./call-dock").CallDock}'s DockFrame: an active launch (permission
+ * request / device pick / error) shows the {@link PreJoinGate}; once the launch is
+ * idle and the call is connecting, a plain "Connecting…" indicator.
+ */
 function JoiningBody() {
-  const { state, cancel } = useCallLaunch()
-  const isError = state.status === "permission_error" || state.status === "join_error"
-  if (isError) {
+  const { state } = useCallLaunch()
+  if (state.status !== "idle") {
     return (
       <div className="p-3">
         <PreJoinGate />
       </div>
     )
   }
-  return (
-    <div className="flex items-center gap-2.5 px-3 py-4" role="status">
-      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
-      <span className="flex-1 text-sm font-medium">Joining…</span>
-      <button
-        type="button"
-        aria-label="Cancel joining"
-        onClick={cancel}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-      >
-        <X className="h-4 w-4" />
-      </button>
-    </div>
-  )
+  return <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">Connecting…</div>
 }
 
 function MinimizedBubble({
@@ -215,7 +206,7 @@ function MinimizedBubble({
 /**
  * A draggable, minimizable floating desktop call surface: header (drag / dock-to-
  * side / minimize) plus the phase body — connected tiles + {@link CallControls}, or
- * the joining spinner / {@link PreJoinGate}. A LIGHT panel (not the dark mobile
+ * the "Connecting…" indicator / {@link PreJoinGate}. A LIGHT panel (not the dark mobile
  * island). Position lives in local state, committed through {@link clampSquareToViewport}
  * on drag and reclamped on window resize so it never leaves the viewport. Minimize is
  * connected-only, so a bubble never hides the joining gate.

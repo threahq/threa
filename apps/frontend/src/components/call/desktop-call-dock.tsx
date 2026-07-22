@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
-import { AlertTriangle, ChevronDown, ChevronLeft, Minimize2, PanelBottom, PanelRight, Pin, Users } from "lucide-react"
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronLeft,
+  Minimize2,
+  PanelBottom,
+  PanelRight,
+  PictureInPicture2,
+  Pin,
+  Users,
+} from "lucide-react"
 import { getAvatarUrl } from "@threa/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -64,6 +74,8 @@ interface DockViewProps {
   // Rendered from the minimized hover-overlay (a transient peek) rather than a
   // pinned-open dock — shows the pin affordance to commit the peek.
   peeking?: boolean
+  // Pop the call out to the floating square. Absent in tests / when floating is unreachable.
+  onFloat?: () => void
 }
 
 function FilmstripSideToggle() {
@@ -114,6 +126,19 @@ function MinimizeButton() {
   )
 }
 
+function FloatButton({ onFloat }: { onFloat: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Pop out to a floating window"
+      onClick={onFloat}
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+    >
+      <PictureInPicture2 className="h-4 w-4" />
+    </button>
+  )
+}
+
 /** Keeps a hover-peek open (mouse pre-empts the rail's expand chevron, so the peek needs its own pin). */
 function PinButton() {
   return (
@@ -133,11 +158,18 @@ function PinButton() {
  * dock shows Minimize (collapse) — a peek is dismissed by moving the mouse away, so
  * Minimize there would be a redundant no-op.
  */
-function DockHeaderBar({ title, peeking }: { title: string; peeking?: boolean }) {
+function DockHeaderBar({ title, peeking, onFloat }: { title: string; peeking?: boolean; onFloat?: () => void }) {
   return (
     <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
-      {peeking ? <PinButton /> : <MinimizeButton />}
+      {peeking ? (
+        <PinButton />
+      ) : (
+        <>
+          {onFloat && <FloatButton onFloat={onFloat} />}
+          <MinimizeButton />
+        </>
+      )}
     </div>
   )
 }
@@ -199,11 +231,11 @@ function SideRailView({ roster, users, workspaceId, connectedAt, captureError }:
 }
 
 /** Side `compact`/`standard`: header + tile grid + controls (the panel width does the sizing). */
-function SideTilesView({ workspaceId, currentUserId, roster, captureError, title, peeking }: DockViewProps) {
+function SideTilesView({ workspaceId, currentUserId, roster, captureError, title, peeking, onFloat }: DockViewProps) {
   const joined = roster.filter((p) => p.participantStatus === "joined")
   return (
     <div className="flex h-full w-full flex-col border-l bg-background">
-      <DockHeaderBar title={title} peeking={peeking} />
+      <DockHeaderBar title={title} peeking={peeking} onFloat={onFloat} />
       {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
       <div className={cn("grid flex-1 gap-2 overflow-y-auto p-3", joined.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
         {joined.map((p) => (
@@ -323,7 +355,15 @@ interface DragState {
  * the connected phase; reads the call store, not the route, so it survives
  * stream navigation.
  */
-export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string | null; streamId: string | null }) {
+export function DesktopCallDock({
+  workspaceId,
+  streamId,
+  onFloat,
+}: {
+  workspaceId: string | null
+  streamId: string | null
+  onFloat?: () => void
+}) {
   const surfaceMode = useCallSurfaceMode()
   const { sideDockWidth } = useCallPrefs()
   const inputMode = useInputMode()
@@ -458,6 +498,7 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
     captureError,
     title,
     peeking,
+    onFloat,
   }
 
   return (
