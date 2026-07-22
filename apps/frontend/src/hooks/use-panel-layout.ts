@@ -25,6 +25,7 @@ export function usePanelLayout(isPanelOpen: boolean) {
   const [enableTransition, setEnableTransition] = useState(false)
   const [showContent, setShowContent] = useState(isPanelOpen)
   const containerRef = useRef<HTMLDivElement>(null)
+  const closedDuringResizeRef = useRef(false)
 
   // Live-clamped panel width: opening a panel — or a smaller window / sidebar
   // collapse — re-caps the stored width so the default 480 can't crush the main
@@ -65,7 +66,7 @@ export function usePanelLayout(isPanelOpen: boolean) {
     [containerWidth, maxWidth]
   )
 
-  const { isResizing, handleResizeStart } = useResizeDrag({
+  const { isResizing, handleResizeStart, handleResizeMove, handleResizeEnd } = useResizeDrag({
     width: effectiveWidth,
     onWidthChange: handleWidthChange,
     direction: "left",
@@ -74,9 +75,12 @@ export function usePanelLayout(isPanelOpen: boolean) {
   // Content mount/unmount lifecycle — keep content mounted during close animation
   useEffect(() => {
     if (isPanelOpen) {
+      closedDuringResizeRef.current = false
       setShowContent(true)
-    } else if (!enableTransition || isResizing) {
-      // No transition will fire — unmount immediately
+    } else if (isResizing) {
+      closedDuringResizeRef.current = true
+    } else if (!enableTransition || closedDuringResizeRef.current) {
+      closedDuringResizeRef.current = false
       setShowContent(false)
     }
   }, [isPanelOpen, enableTransition, isResizing])
@@ -105,6 +109,8 @@ export function usePanelLayout(isPanelOpen: boolean) {
     isResizing,
     showContent,
     handleResizeStart,
+    handleResizeMove,
+    handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
   }

@@ -40,8 +40,9 @@ interface SidebarPersistedState {
   sectionStates: Record<string, CollapseState>
 }
 
-const MIN_SIDEBAR_WIDTH = 200
-const MAX_SIDEBAR_WIDTH = 400
+export const MIN_SIDEBAR_WIDTH = 200
+export const MAX_SIDEBAR_WIDTH = 400
+export const SIDEBAR_COLLAPSE_THRESHOLD = MIN_SIDEBAR_WIDTH - 50
 const DEFAULT_SIDEBAR_WIDTH = 260
 const SIDEBAR_STATE_KEY = "threa-sidebar-state"
 
@@ -358,25 +359,21 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
 
   const setWidth = useCallback(
     (newWidth: number) => {
-      // Resize-to-minimize: if dragged small enough, collapse instead
-      const collapseThreshold = MIN_SIDEBAR_WIDTH - 50
-
       // If dragging back up from collapsed state, re-expand
       setState((currentState) => {
         if (currentState === "collapsed" && newWidth >= MIN_SIDEBAR_WIDTH) {
           updatePersistedState({ openState: "open" })
           return "pinned"
         }
-        if (currentState !== "collapsed" && newWidth < collapseThreshold) {
+        if (currentState !== "collapsed" && newWidth < SIDEBAR_COLLAPSE_THRESHOLD) {
           updatePersistedState({ openState: "collapsed" })
           return "collapsed"
         }
         return currentState
       })
 
-      // Update width if above minimum
-      if (newWidth >= MIN_SIDEBAR_WIDTH) {
-        const clampedWidth = Math.min(MAX_SIDEBAR_WIDTH, newWidth)
+      if (newWidth >= SIDEBAR_COLLAPSE_THRESHOLD) {
+        const clampedWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, newWidth))
         updatePersistedState({ width: clampedWidth })
       }
     },

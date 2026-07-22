@@ -3,25 +3,31 @@ import { useState, useEffect, useRef, useCallback } from "react"
 interface UseResizeDragOptions {
   /** Current width of the resizable element */
   width: number
-  /** Called on each mousemove with the computed new width */
+  /** Called at most once per animation frame with the live drag width */
   onWidthChange: (newWidth: number) => void
   /** "right" = dragging right increases width (sidebar), "left" = dragging left increases width (right-side panel) */
   direction?: "right" | "left"
   /** Called when drag starts */
   onResizeStart?: () => void
-  /** Called when drag ends (mouseup or focus loss) */
-  onResizeEnd?: () => void
+  /** Called once with the final width when the pointer is released or cancelled */
+  onResizeEnd?: (finalWidth: number) => void
 }
 
 interface UseResizeDragReturn {
   isResizing: boolean
-  handleResizeStart: (e: React.MouseEvent) => void
+  handleResizeStart: (e: React.PointerEvent) => void
+  handleResizeMove: (e: React.PointerEvent) => void
+  handleResizeEnd: (e: React.PointerEvent) => void
 }
 
-/**
- * Shared drag-resize primitive. Handles mousedown → mousemove → mouseup lifecycle
- * with document-level listeners and blur escape hatch for stuck state prevention.
- */
+interface ResizeState {
+  pointerId: number
+  startX: number
+  startWidth: number
+  latestWidth: number
+  emittedWidth: number
+}
+
 export function useResizeDrag({
   width,
   onWidthChange,
@@ -30,45 +36,80 @@ export function useResizeDrag({
   onResizeEnd,
 }: UseResizeDragOptions): UseResizeDragReturn {
   const [isResizing, setIsResizing] = useState(false)
-  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const resizeRef = useRef<ResizeState | null>(null)
+  const frameRef = useRef<number | null>(null)
+
+  const flushWidthChange = useCallback(() => {
+    frameRef.current = null
+    const resize = resizeRef.current
+    if (resize) {
+      resize.emittedWidth = resize.latestWidth
+      onWidthChange(resize.latestWidth)
+    }
+  }, [onWidthChange])
 
   const handleResizeStart = useCallback(
-    (e: React.MouseEvent) => {
+    (e: React.PointerEvent) => {
+      if (!e.isPrimary || e.button !== 0 || resizeRef.current) return
       e.preventDefault()
       e.stopPropagation()
-      resizeRef.current = { startX: e.clientX, startWidth: width }
+      resizeRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startWidth: width,
+        latestWidth: width,
+        emittedWidth: width,
+      }
+      e.currentTarget.setPointerCapture(e.pointerId)
       setIsResizing(true)
       onResizeStart?.()
     },
     [width, onResizeStart]
   )
 
-  useEffect(() => {
-    if (!isResizing) return
+  const handleResizeMove = useCallback(
+    (e: React.PointerEvent) => {
+      const resize = resizeRef.current
+      if (!resize || resize.pointerId !== e.pointerId) return
 
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!resizeRef.current) return
-      const rawDelta = e.clientX - resizeRef.current.startX
+      const rawDelta = e.clientX - resize.startX
       const delta = direction === "right" ? rawDelta : -rawDelta
-      onWidthChange(resizeRef.current.startWidth + delta)
-    }
+      resize.latestWidth = resize.startWidth + delta
+      if (frameRef.current === null) frameRef.current = requestAnimationFrame(flushWidthChange)
+    },
+    [direction, flushWidthChange]
+  )
 
-    const handleMouseUp = () => {
+  const handleResizeEnd = useCallback(
+    (e: React.PointerEvent) => {
+      const resize = resizeRef.current
+      if (!resize || resize.pointerId !== e.pointerId) return
+
+      if (e.type === "pointerup") {
+        const rawDelta = e.clientX - resize.startX
+        const delta = direction === "right" ? rawDelta : -rawDelta
+        resize.latestWidth = resize.startWidth + delta
+      } else {
+        resize.latestWidth = resize.startWidth
+      }
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current)
+        frameRef.current = null
+      }
+      if (resize.latestWidth !== resize.emittedWidth) onWidthChange(resize.latestWidth)
       resizeRef.current = null
       setIsResizing(false)
-      onResizeEnd?.()
-    }
+      onResizeEnd?.(resize.latestWidth)
+    },
+    [direction, onWidthChange, onResizeEnd]
+  )
 
-    document.addEventListener("mousemove", handleMouseMove)
-    document.addEventListener("mouseup", handleMouseUp)
-    window.addEventListener("blur", handleMouseUp)
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
+    },
+    []
+  )
 
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove)
-      document.removeEventListener("mouseup", handleMouseUp)
-      window.removeEventListener("blur", handleMouseUp)
-    }
-  }, [isResizing, direction, onWidthChange, onResizeEnd])
-
-  return { isResizing, handleResizeStart }
+  return { isResizing, handleResizeStart, handleResizeMove, handleResizeEnd }
 }

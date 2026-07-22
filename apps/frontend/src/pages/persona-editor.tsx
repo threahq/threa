@@ -67,6 +67,8 @@ export function PersonaEditorPage() {
     isResizing,
     showContent,
     handleResizeStart,
+    handleResizeMove,
+    handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
   } = usePanelLayout(showTestPane)
@@ -152,6 +154,8 @@ export function PersonaEditorPage() {
             minWidth={minWidth}
             onTransitionEnd={handleTransitionEnd}
             onResizeStart={handleResizeStart}
+            onResizeMove={handleResizeMove}
+            onResizeEnd={handleResizeEnd}
             onResizeKeyDown={handleResizeKeyDown}
           >
             <PersonaTestChatPane

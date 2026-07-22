@@ -56,7 +56,15 @@ export {
   type CoordinatedPhase,
   type StreamState,
 } from "./coordinated-loading-context"
-export { SidebarProvider, useSidebar, type UrgencyBlock, type CollapseState } from "./sidebar-context"
+export {
+  SidebarProvider,
+  useSidebar,
+  MIN_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  SIDEBAR_COLLAPSE_THRESHOLD,
+  type UrgencyBlock,
+  type CollapseState,
+} from "./sidebar-context"
 export { TraceProvider, useTrace } from "./trace-context"
 export { MediaGalleryProvider, useMediaGallery } from "./media-gallery-context"
 export {

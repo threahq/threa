@@ -48,6 +48,31 @@ describe("SidebarContext.togglePinned (desktop)", () => {
   })
 })
 
+describe("SidebarContext.setWidth", () => {
+  beforeEach(() => {
+    localStorage.removeItem(SIDEBAR_STATE_KEY)
+  })
+
+  it("clamps a non-collapsing resize to the minimum width", () => {
+    const { result } = renderHook(() => useSidebar(), { wrapper })
+
+    act(() => result.current.setWidth(175))
+
+    expect({ state: result.current.state, width: result.current.width }).toEqual({
+      state: "pinned",
+      width: 200,
+    })
+  })
+
+  it("collapses below the resize-to-minimize threshold", () => {
+    const { result } = renderHook(() => useSidebar(), { wrapper })
+
+    act(() => result.current.setWidth(149))
+
+    expect(result.current.state).toBe("collapsed")
+  })
+})
+
 describe("SidebarContext.toggleSectionState", () => {
   beforeEach(() => {
     localStorage.removeItem(SIDEBAR_STATE_KEY)
