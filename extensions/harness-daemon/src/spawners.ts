@@ -492,17 +492,27 @@ export function readThreaChannelConfig(): ThreaChannelConfig {
   }
 }
 
-export function claudeRuntimeIdentity(
+export function deriveClaudeRuntimeIdentity(
   worktree: string,
   config: ThreaChannelConfig = {},
   host = hostname()
 ): { instanceId: string; runtimeSessionId: string } {
   const seed = `${host}:${worktree}`
   return {
-    instanceId: sanitizeId(process.env.THREA_INSTANCE_ID || config.instanceId || stableId("cc", seed)).slice(0, 64),
-    runtimeSessionId: sanitizeId(
-      process.env.THREA_RUNTIME_SESSION_ID || config.runtimeSessionId || stableId("ccs", seed)
-    ).slice(0, 64),
+    instanceId: sanitizeId(config.instanceId || stableId("cc", seed)).slice(0, 64),
+    runtimeSessionId: sanitizeId(config.runtimeSessionId || stableId("ccs", seed)).slice(0, 64),
+  }
+}
+
+export function claudeRuntimeIdentity(
+  worktree: string,
+  config: ThreaChannelConfig = {},
+  host = hostname()
+): { instanceId: string; runtimeSessionId: string } {
+  const derived = deriveClaudeRuntimeIdentity(worktree, config, host)
+  return {
+    instanceId: sanitizeId(process.env.THREA_INSTANCE_ID || derived.instanceId).slice(0, 64),
+    runtimeSessionId: sanitizeId(process.env.THREA_RUNTIME_SESSION_ID || derived.runtimeSessionId).slice(0, 64),
   }
 }
 
@@ -530,7 +540,7 @@ export function claudeLaunchCommand(
     .join(" ")
 }
 
-function sanitizeId(value: string): string {
+export function sanitizeId(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")
 }
 

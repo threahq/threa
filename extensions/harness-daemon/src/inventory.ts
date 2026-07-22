@@ -168,7 +168,7 @@ export function upsertAgent(agent: ManagedAgent): void {
   }
 }
 
-export function findAgent(ref: string): ManagedAgent {
+export function findAgentOrUndefined(ref: string): ManagedAgent | undefined {
   const agents = readInventory()
   const byId = agents.find((agent) => agent.id === ref)
   if (byId) return byId
@@ -179,7 +179,10 @@ export function findAgent(ref: string): ManagedAgent {
   if (byRuntimeSession[0]) return byRuntimeSession[0]
 
   const matches = agents.filter((agent) => agent.name === ref)
-  if (matches.length === 0) die(`no agent found for ${ref}`)
   if (matches.length > 1) die(`multiple agents match ${ref}; use id`)
   return matches[0]
+}
+
+export function findAgent(ref: string): ManagedAgent {
+  return findAgentOrUndefined(ref) ?? die(`no agent found for ${ref}`)
 }

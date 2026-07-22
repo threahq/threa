@@ -4,8 +4,9 @@ import { existsSync } from "node:fs"
 import { basename, dirname, join } from "node:path"
 import { installBootResume } from "./boot"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
+import { findLocalClaudeChannelPane, type LocalTmuxPane } from "./discovery"
 import { die } from "./errors"
-import { findAgent, inventoryPath, readInventory, upsertAgent } from "./inventory"
+import { findAgent, findAgentOrUndefined, inventoryPath, readInventory, upsertAgent } from "./inventory"
 import { acquireProcessLock } from "./lock"
 import { commandExists, commandPath, output } from "./shell"
 import {
@@ -545,11 +546,28 @@ function tmuxKeyTarget(agent: ManagedAgent): string {
   return die(`${agent.name} has no unambiguous tmux pane recorded; restart the managed session`)
 }
 
-/** Nudge the managed agent's TUI with Enter (e.g. accept a blocking prompt). */
-export function kickAgent(ref: string, send: typeof sendKeys = sendKeys): void {
-  const target = tmuxKeyTarget(findAgent(ref))
-  send(target, ["Enter"])
-  console.log(`harnessd: kicked ${target}`)
+/** Nudge the linked agent's TUI with Enter (e.g. accept a blocking prompt). */
+export function kickAgent(
+  ref: string,
+  send: typeof sendKeys = sendKeys,
+  discover: (runtimeSessionId: string) => LocalTmuxPane | undefined = findLocalClaudeChannelPane
+): void {
+  const managed = findAgentOrUndefined(ref)
+  if (managed) {
+    const target = tmuxKeyTarget(managed)
+    send(target, ["Enter"])
+    console.log(`harnessd: kicked ${target}`)
+    return
+  }
+
+  const pane = discover(ref)
+  if (!pane) {
+    die(`no managed agent found for ${ref}; no live local Claude channel pane matched that runtime session`)
+  }
+  send(pane.paneId, ["Enter"])
+  console.log(
+    `harnessd: kicked unmanaged Claude channel pane ${pane.paneId} (PID ${pane.panePid}, ${pane.sessionName}:${pane.windowName})`
+  )
 }
 
 /** Send Esc to interrupt the agent's current turn (Claude Code / Pi) without killing the window. */

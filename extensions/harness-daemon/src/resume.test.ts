@@ -119,15 +119,65 @@ test("resolves slash-command kicks by the latest matching runtime session id", (
   }
 })
 
-test("kick sends Enter to the managed tmux pane", () => {
+test("kick sends Enter to the managed tmux pane without discovery", () => {
   const previousPath = process.env.THREA_HARNESSD_INVENTORY
   const dir = mkdtempSync(join(tmpdir(), "harnessd-kick-"))
   process.env.THREA_HARNESSD_INVENTORY = join(dir, "inventory.sqlite")
   try {
     const sent: Array<{ target: string; keys: string[] }> = []
     upsertAgent(agent({ runtimeSessionId: "ccs-one", tmuxWindowId: "@7", tmuxPaneId: "%8" }))
-    kickAgent("ccs-one", (target, keys) => sent.push({ target, keys }))
+    kickAgent(
+      "ccs-one",
+      (target, keys) => sent.push({ target, keys }),
+      () => {
+        throw new Error("managed kick must not run discovery")
+      }
+    )
     expect(sent).toEqual([{ target: "%8", keys: ["Enter"] }])
+  } finally {
+    if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
+    else process.env.THREA_HARNESSD_INVENTORY = previousPath
+  }
+})
+
+test("kick discovers a live unmanaged Claude channel pane by runtime session id", () => {
+  const previousPath = process.env.THREA_HARNESSD_INVENTORY
+  const inventory = join(mkdtempSync(join(tmpdir(), "harnessd-unmanaged-kick-")), "missing.sqlite")
+  process.env.THREA_HARNESSD_INVENTORY = inventory
+  try {
+    const sent: Array<{ target: string; keys: string[] }> = []
+    kickAgent(
+      "ccs-one",
+      (target, keys) => sent.push({ target, keys }),
+      () => ({
+        sessionName: "1",
+        windowName: "standalone",
+        windowId: "@7",
+        paneId: "%8",
+        panePid: 33336,
+        cwd: "/repo/threa.standalone",
+        startCommand: "claude --dangerously-load-development-channels server:threa-channel",
+      })
+    )
+    expect(sent).toEqual([{ target: "%8", keys: ["Enter"] }])
+    expect(existsSync(inventory)).toBeFalse()
+  } finally {
+    if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
+    else process.env.THREA_HARNESSD_INVENTORY = previousPath
+  }
+})
+
+test("kick reports unmanaged lookup separately when no live pane matches", () => {
+  const previousPath = process.env.THREA_HARNESSD_INVENTORY
+  process.env.THREA_HARNESSD_INVENTORY = join(mkdtempSync(join(tmpdir(), "harnessd-missing-kick-")), "missing.sqlite")
+  try {
+    expect(() =>
+      kickAgent(
+        "ccs-missing",
+        () => undefined,
+        () => undefined
+      )
+    ).toThrow("no managed agent found for ccs-missing; no live local Claude channel pane matched that runtime session")
   } finally {
     if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
     else process.env.THREA_HARNESSD_INVENTORY = previousPath
