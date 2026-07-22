@@ -673,7 +673,13 @@ export class StreamService {
       if (!anchorEvent || anchorEvent.streamId !== params.parentStreamId) {
         throw new HttpError("Thread anchor event not found", { status: 404, code: "ANCHOR_NOT_FOUND" })
       }
-      if (!THREAD_ANCHORABLE_EVENT_TYPES.includes(anchorEvent.eventType)) {
+      // Message rows must anchor by their canonical msg_ id — an event-id anchor
+      // would break on messages:moved (the event row is tombstoned, the msg_ id
+      // survives).
+      if (
+        anchorEvent.eventType === "message_created" ||
+        !THREAD_ANCHORABLE_EVENT_TYPES.includes(anchorEvent.eventType)
+      ) {
         throw new HttpError("This timeline item cannot be threaded", {
           status: 400,
           code: "ANCHOR_NOT_THREADABLE",

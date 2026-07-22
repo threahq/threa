@@ -833,6 +833,27 @@ describe("StreamService.createThreadOn anchor routing", () => {
     expect(mockInsertThreadOrFind).not.toHaveBeenCalled()
   })
 
+  test("event anchor: a message_created event id is rejected (messages anchor by msg_ id)", async () => {
+    mockEventFindById.mockResolvedValue({
+      id: "event_1",
+      streamId: "stream_channel",
+      eventType: "message_created",
+      actorId: "member_author",
+      actorType: "user",
+    } as never)
+
+    await expect(
+      service.create({
+        workspaceId: "ws_1",
+        type: "thread",
+        parentStreamId: "stream_channel",
+        parentAnchorId: "event_1",
+        createdBy: "member_creator",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "ANCHOR_NOT_THREADABLE" })
+    expect(mockInsertThreadOrFind).not.toHaveBeenCalled()
+  })
+
   test("event anchor: a missing event is rejected", async () => {
     mockEventFindById.mockResolvedValue(null)
 
