@@ -1,5 +1,4 @@
-import { useCallback, useEffect, type ReactNode } from "react"
-import { SidePanel, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
+import { useCallback, useLayoutEffect, useRef } from "react"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { getCallState, setCallSurfaceMode, setDesktopSurfaceOverride } from "@/stores/call-store"
@@ -31,24 +30,7 @@ import { MobileCallDrawer } from "./mobile-call-drawer"
 import { MobileCallJoining } from "./call-island"
 import { DesktopCallDock } from "./desktop-call-dock"
 import { FloatingCallSquare } from "./floating-call-square"
-import { PreJoinGate } from "./pre-join-gate"
 import { ActiveElsewhereChip } from "./active-elsewhere-chip"
-
-function DockFrame({ children }: { children: ReactNode }) {
-  return (
-    <div className={cn("fixed right-4 z-50 w-[340px] max-w-[calc(100vw-2rem)]", DOCK_BOTTOM)}>
-      <SidePanel className="rounded-lg border shadow-xl sm:border">{children}</SidePanel>
-    </div>
-  )
-}
-
-function DockHeader({ title }: { title: string }) {
-  return (
-    <SidePanelHeader className="rounded-t-lg">
-      <SidePanelTitle className="text-sm">{title}</SidePanelTitle>
-    </SidePanelHeader>
-  )
-}
 
 /**
  * The docked call surface. Mounts at the app-layout level and is driven purely by
@@ -73,6 +55,8 @@ export function CallDock() {
   const launching = launch.status !== "idle"
   const inCall = phase === "connected" || phase === "reconnecting"
   const joining = phase === "joining"
+  const joiningModeRef = useRef<"compact" | "standard">("compact")
+  if (launch.status !== "idle") joiningModeRef.current = launch.request.cameraOn ? "standard" : "compact"
 
   const surface = resolveDesktopSurface(desktopCallSurface, lastDesktopSurface, override)
 
@@ -93,7 +77,7 @@ export function CallDock() {
   // (standard/gallery) when joining with the camera on, so a video join lands on
   // tiles. Guarded on the initial `min` so it runs once and later drags win;
   // `surfaceMode` is read only by the sidebar dock (the square uses its own state).
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (inCall && getCallState().surfaceMode === "min") {
       setCallSurfaceMode(getCallState().local.cameraOn ? "standard" : "compact")
     }
@@ -102,6 +86,7 @@ export function CallDock() {
   // Nothing to show: idle with no launch in flight. Surface the cross-tab chip if
   // another tab holds the call, otherwise render nothing.
   if (!launching && !inCall && !joining) {
+    joiningModeRef.current = "compact"
     if (activeElsewhere) {
       return (
         <div className={cn("fixed right-4 z-50", DOCK_BOTTOM)}>
@@ -126,22 +111,18 @@ export function CallDock() {
     return <FloatingCallSquare workspaceId={workspaceId} streamId={streamIdForLabel} onDockToSide={dockToSide} />
   }
 
-  // Desktop sidebar: the resizable dock in-call, the docked pre-join/joining panel
-  // otherwise. The panel is not collapsible — it only ever shows the connecting/
-  // permission gate, which must stay visible (mirrors the floating square).
-  if (inCall) return <DesktopCallDock workspaceId={workspaceId} streamId={streamIdForLabel} onFloat={float} />
+  // Desktop sidebar owns launch, joining, and connected phases. Keeping one
+  // full-height dock mounted avoids swapping a detached loader for the real dock
+  // after the call connects; the joining gate renders inside its content region.
+  // Cancel clears launch state before the manager's async rollback leaves the
+  // joining phase; retain the request-derived width until this surface unmounts.
   return (
-    <DockFrame>
-      <DockHeader title="Call" />
-      <div className="p-4">{joining && launch.status === "idle" ? <JoiningBody /> : <PreJoinGate />}</div>
-    </DockFrame>
-  )
-}
-
-function JoiningBody() {
-  return (
-    <div role="status" className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-      Connecting…
-    </div>
+    <DesktopCallDock
+      workspaceId={workspaceId}
+      streamId={streamIdForLabel}
+      onFloat={float}
+      joining={!inCall}
+      joiningMode={joiningModeRef.current}
+    />
   )
 }

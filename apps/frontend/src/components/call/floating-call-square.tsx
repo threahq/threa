@@ -14,8 +14,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { useCallLaunch } from "./call-launch-context"
-import { PreJoinGate } from "./pre-join-gate"
+import { CallJoiningBody } from "./pre-join-gate"
 import { CallTile } from "./call-tile"
 import { CallControls } from "./call-controls"
 import { CallTimer } from "./call-timer"
@@ -183,28 +182,6 @@ function ConnectedBody({
         <CallControls />
       </div>
     </>
-  )
-}
-
-/**
- * Joining/pre-join body — the desktop joining surface, mirroring
- * {@link import("./call-dock").CallDock}'s DockFrame: an active launch (permission
- * request / device pick / error) shows the {@link PreJoinGate}; once the launch is
- * idle and the call is connecting, a plain "Connecting…" indicator.
- */
-function JoiningBody() {
-  const { state } = useCallLaunch()
-  if (state.status !== "idle") {
-    return (
-      <div className="p-3">
-        <PreJoinGate />
-      </div>
-    )
-  }
-  return (
-    <div role="status" className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-      Connecting…
-    </div>
   )
 }
 
@@ -449,7 +426,7 @@ export function FloatingCallSquare({
       data-testid="floating-call-square"
       data-minimized="false"
       style={{ left: `${pos.x}px`, top: `${pos.y}px`, width: `${SQUARE_WIDTH}px` }}
-      className="pointer-events-auto fixed z-50 flex max-h-[70vh] flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
+      className="pointer-events-auto fixed z-50 flex min-h-[260px] max-h-[70vh] flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
     >
       <SquareHeader
         title={title}
@@ -470,7 +447,7 @@ export function FloatingCallSquare({
           captureError={captureError}
         />
       ) : (
-        <JoiningBody />
+        <CallJoiningBody />
       )}
     </div>
   )
