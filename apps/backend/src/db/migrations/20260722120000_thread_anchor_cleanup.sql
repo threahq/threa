@@ -48,6 +48,11 @@ FROM (
 ) stats
 WHERE s.id = stats.stream_id;
 
+-- The rolling-deploy bridge is no longer needed once predecessor replicas have
+-- drained. Remove it before the companion migration drops messages.reply_count.
+DROP TRIGGER IF EXISTS sync_legacy_message_thread_projection ON messages;
+DROP FUNCTION IF EXISTS sync_legacy_message_thread_projection();
+
 -- Companion migrations drop the legacy index concurrently, then remove the
 -- columns it protected. Keeping the index operation standalone avoids holding a
 -- write-blocking streams lock for the duration of the index drop.
