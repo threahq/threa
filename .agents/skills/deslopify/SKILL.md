@@ -18,8 +18,9 @@ For API docs, CLIs, and engineering content, lean terse and literal.
 
 ## Modes
 
-- **Edit (default):** Return the revised copy and a short summary of material
-  changes. Make the minimum effective edit.
+- **Edit (default):** Make the minimum effective edit. Return the full revision
+  for pasted text; for file edits, change the files and report only material
+  changes.
 - **Detect:** When asked to audit, scan, or judge copy without rewriting, name
   each pattern, quote the affected line, and suggest the fix in a few words.
   Don't score the draft, rewrite it, or guess whether AI wrote it. Pattern
