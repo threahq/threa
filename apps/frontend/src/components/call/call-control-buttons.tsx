@@ -15,6 +15,7 @@ import {
   useCallStreamId,
   useCallWorkspaceId,
 } from "./call-store-hooks"
+import { getCallState, setCallSurfaceMode } from "@/stores/call-store"
 
 // The mute / camera / flip / leave controls, one component each so the compact
 // island and the (later) desktop pill share one implementation instead of
@@ -123,6 +124,11 @@ export function ChatButton({ className }: { className?: string }) {
         to={{ pathname: `/w/${workspaceId}/s/${streamId}`, search }}
         aria-label="Open call chat"
         title="Open call chat"
+        onClick={() => {
+          // The fullscreen mobile surface is an opaque route-independent overlay —
+          // without collapsing it the thread panel opens invisibly underneath.
+          if (getCallState().surfaceMode === "full") setCallSurfaceMode("standard")
+        }}
       >
         <MessageSquare className="h-4 w-4" />
       </Link>
