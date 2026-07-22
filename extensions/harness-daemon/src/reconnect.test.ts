@@ -7,6 +7,7 @@ import { parseReconnect } from "./cli"
 import { findLocalPiPane, parsePiLaunch, type LocalTmuxPane } from "./discovery"
 import { reconnectPi, type ReconnectDeps } from "./reconnect"
 import { readInventoryReadonly } from "./inventory"
+import { piResumeCommand } from "./spawners"
 import type { ManagedAgent } from "./types"
 
 const SESSION = "123e4567-e89b-42d3-a456-426614174000"
@@ -127,6 +128,35 @@ describe("reconnectPi", () => {
         `'env' 'THREA_HARNESSD_ENTRYPOINT=/h/index.ts' 'THREA_HARNESSD_BUN_BIN=/bin/bun' 'THREA_INSTANCE_ID=pi-one' 'THREA_RUNTIME_SESSION_ID=${SESSION}' '/opt/bin/pi' '--session-id' '${SESSION}'`,
       ],
     ])
+  })
+
+  test("preserves the production resume command root binding", async () => {
+    const startCommand = piResumeCommand("/opt/bin/pi", SESSION, "stream_one")
+    const d = deps({ panes: () => [pane({ startCommand })] })
+
+    await reconnectPi({ runtimeSessionId: SESSION, rootStreamId: "stream_one" }, d)
+
+    expect(parsePiLaunch(d.calls[0]![2]!)?.environment).toContainEqual({
+      name: "THREA_EXPECTED_ROOT_STREAM_ID",
+      value: "stream_one",
+    })
+  })
+
+  test("production resume command root mismatch leaves pane untouched before preflight", async () => {
+    let preflights = 0
+    const startCommand = piResumeCommand("/opt/bin/pi", SESSION, "stream_other")
+    const d = deps({
+      panes: () => [pane({ startCommand })],
+      preflight: async () => {
+        preflights += 1
+        return { status: "linked", rootStreamId: "stream_one" }
+      },
+    })
+
+    await expect(reconnectPi({ runtimeSessionId: SESSION, rootStreamId: "stream_one" }, d)).rejects.toThrow(
+      "expects root stream_other, not stream_one"
+    )
+    expect({ preflights, respawns: d.calls.length }).toEqual({ preflights: 0, respawns: 0 })
   })
 
   test("supports standalone without adopting inventory", async () => {

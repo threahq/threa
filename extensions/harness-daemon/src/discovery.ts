@@ -29,10 +29,11 @@ const PI_ENVIRONMENT = new Set([
   "THREA_HARNESSD_BUN_BIN",
   "THREA_INSTANCE_ID",
   "THREA_RUNTIME_SESSION_ID",
+  "THREA_EXPECTED_ROOT_STREAM_ID",
 ])
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-function shellWords(input: string): string[] | undefined {
+function strictShellWords(input: string): string[] | undefined {
   const words: string[] = []
   let word = ""
   let quote: "'" | '"' | undefined
@@ -89,11 +90,65 @@ function shellWords(input: string): string[] | undefined {
   return words
 }
 
-function launchWords(command: string): string[] | undefined {
-  const firstPass = shellWords(command)
+function strictLaunchWords(command: string): string[] | undefined {
+  const firstPass = strictShellWords(command)
   if (!firstPass) return undefined
   if (firstPass.length !== 1 || !/\s/.test(firstPass[0]!)) return firstPass
-  return shellWords(firstPass[0]!)
+  return strictShellWords(firstPass[0]!)
+}
+
+function permissiveShellWords(input: string): string[] | undefined {
+  const words: string[] = []
+  let word = ""
+  let quote: "'" | '"' | undefined
+  let escaped = false
+  let started = false
+
+  for (const char of input.trim()) {
+    if (escaped) {
+      word += char
+      escaped = false
+      started = true
+      continue
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true
+      started = true
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = undefined
+      else word += char
+      started = true
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      started = true
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (started) {
+        words.push(word)
+        word = ""
+        started = false
+      }
+      continue
+    }
+    word += char
+    started = true
+  }
+
+  if (quote || escaped) return undefined
+  if (started) words.push(word)
+  return words
+}
+
+function permissiveLaunchWords(command: string): string[] | undefined {
+  const firstPass = permissiveShellWords(command)
+  if (!firstPass) return undefined
+  if (firstPass.length !== 1 || !/\s/.test(firstPass[0]!)) return firstPass
+  return permissiveShellWords(firstPass[0]!)
 }
 
 function parseAssignment(word: string): { name: string; value: string } | undefined {
@@ -102,7 +157,7 @@ function parseAssignment(word: string): { name: string; value: string } | undefi
 }
 
 export function parsePiLaunch(command: string): PiLaunch | undefined {
-  const words = launchWords(command)
+  const words = strictLaunchWords(command)
   if (!words?.length) return undefined
 
   let index = 0
@@ -153,7 +208,7 @@ export function findLocalPiPane(
 }
 
 export function parseClaudeChannelLaunch(command: string): ClaudeChannelLaunch | undefined {
-  const words = launchWords(command)
+  const words = permissiveLaunchWords(command)
   if (!words || words.length === 0) return undefined
 
   let index = 0

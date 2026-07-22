@@ -64,6 +64,14 @@ describe("parseClaudeChannelLaunch", () => {
     ).toEqual({ runtimeSessionId: "ccs-explicit" })
   })
 
+  test("retains parent-compatible tmux parsing for single-quoted literal expansions", () => {
+    expect(
+      parseClaudeChannelLaunch(
+        "\"env 'THREA_DISPLAY_NAME=price $5 `literal`' THREA_RUNTIME_SESSION_ID=ccs.parent claude --dangerously-load-development-channels server:threa-channel\""
+      )
+    ).toEqual({ runtimeSessionId: "ccs-parent" })
+  })
+
   test("rejects commands that only contain Claude channel tokens", () => {
     for (const command of [
       "echo claude --dangerously-load-development-channels server:threa-channel",

@@ -88,6 +88,10 @@ function resolveTarget(options: ReconnectOptions, deps: ReconnectDeps): Reconnec
   if (commandInstance && commandInstance !== link.instanceId) {
     throw new Error(`pane ${pane.paneId} has a different Threa instance identity`)
   }
+  const commandRoot = launch.environment.find(({ name }) => name === "THREA_EXPECTED_ROOT_STREAM_ID")?.value
+  if (commandRoot && commandRoot !== options.rootStreamId) {
+    throw new Error(`pane ${pane.paneId} expects root ${commandRoot}, not ${options.rootStreamId}`)
+  }
   return { pane, launch, instanceId: link.instanceId }
 }
 
