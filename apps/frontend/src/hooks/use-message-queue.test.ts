@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { renderHook, act, waitFor } from "@testing-library/react"
 import { useMessageQueue } from "./use-message-queue"
 import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
@@ -220,14 +220,13 @@ describe("useMessageQueue", () => {
     ]
 
     renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20))
-    })
 
-    expect(useDraftMessageModule.rescopeScopeDrafts).toHaveBeenCalledWith(
-      "ws_1",
-      "thread:event_card",
-      "stream:stream_real_thread"
+    await waitFor(() =>
+      expect(useDraftMessageModule.rescopeScopeDrafts).toHaveBeenCalledWith(
+        "ws_1",
+        "thread:event_card",
+        "stream:stream_real_thread"
+      )
     )
   })
 
