@@ -70,6 +70,7 @@ describe("parseClaudeChannelLaunch", () => {
       "bash -c 'claude --dangerously-load-development-channels server:threa-channel'",
       "python claude --dangerously-load-development-channels server:threa-channel",
       "pi --session-id ccs-target --dangerously-load-development-channels server:threa-channel",
+      "claude -- --dangerously-load-development-channels server:threa-channel",
     ]) {
       expect(parseClaudeChannelLaunch(command)).toBeUndefined()
     }

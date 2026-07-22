@@ -100,6 +100,7 @@ export function parseClaudeChannelLaunch(command: string): ClaudeChannelLaunch |
   let channel = false
   for (; index < words.length; index += 1) {
     const word = words[index]!
+    if (word === "--") break
     if (word === "--dangerously-load-development-channels" && words[index + 1] === "server:threa-channel") {
       channel = true
       break
