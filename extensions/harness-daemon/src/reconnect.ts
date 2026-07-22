@@ -359,6 +359,14 @@ export async function reconnectRuntime(
   if (exact[0]?.runtime === "pi") return reconnectPi(options, deps)
   if (exact[0]?.runtime === "claude") return reconnectClaude(options, deps)
   const panes = deps.panes()
-  if (findLocalPiPane(options.runtimeSessionId, panes)) return reconnectPi(options, deps)
-  return reconnectClaude(options, deps)
+  const piPane = findLocalPiPane(options.runtimeSessionId, panes)
+  const claudePane = findLocalClaudeChannelPane(
+    options.runtimeSessionId,
+    panes,
+    (deps.claudeConfig ?? readThreaChannelConfig)()
+  )
+  if (piPane && claudePane) throw new Error(`multiple live runtimes match ${options.runtimeSessionId}`)
+  if (piPane) return reconnectPi(options, deps)
+  if (claudePane) return reconnectClaude(options, deps)
+  throw new Error(`no live runtime matched ${options.runtimeSessionId}`)
 }

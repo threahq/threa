@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { output } from "./shell"
 import { parseClaudeLaunch, type LocalTmuxPane } from "./discovery"
 import { defaultClaudeRegistryDeps, resolveClaudeNativeSession, type ClaudeRegistryDeps } from "./claude-registry"
-import { reconnectClaude, type ReconnectDeps } from "./reconnect"
+import { reconnectClaude, reconnectRuntime, type ReconnectDeps } from "./reconnect"
 import { deriveClaudeRuntimeIdentity } from "./spawners"
 import type { ManagedAgent } from "./types"
 
@@ -255,6 +255,22 @@ describe("reconnectClaude", () => {
     })
     await reconnectClaude({ runtimeSessionId: identity.runtimeSessionId, rootStreamId: "stream_one" }, d)
     expect(d.calls[0]?.[2]).toContain(`'THREA_INSTANCE_ID=${identity.instanceId}'`)
+  })
+
+  test("standalone dispatch rejects cross-runtime identity collisions", async () => {
+    const claude = pane({
+      startCommand: COMMAND.replaceAll(RUNTIME, NATIVE),
+    })
+    const pi = pane({
+      paneId: "%9",
+      panePid: 9999,
+      startCommand: `/opt/pi --session-id ${NATIVE}`,
+    })
+    const d = deps({ inventory: () => [], panes: () => [claude, pi] })
+    await expect(reconnectRuntime({ runtimeSessionId: NATIVE, rootStreamId: "stream_one" }, d)).rejects.toThrow(
+      "multiple live runtimes match"
+    )
+    expect(d.calls).toEqual([])
   })
 
   test("standalone discovery does not adopt inventory", async () => {
