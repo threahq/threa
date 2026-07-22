@@ -11,6 +11,7 @@ import {
   type CallCaptureErrorInfo,
 } from "@/stores/call-store"
 import type { CallMode } from "@/calls/config"
+import type { DesktopSurface } from "@/stores/call-prefs-store"
 
 /**
  * Slice-scoped reads over the call store. {@link useCallState} re-renders every
@@ -43,6 +44,10 @@ export function useCallPhase(): CallPhase {
 
 export function useCallSurfaceMode(): CallSurfaceMode {
   return useCallSelector((s) => s.surfaceMode)
+}
+
+export function useDesktopSurfaceOverride(): DesktopSurface | null {
+  return useCallSelector((s) => s.desktopSurfaceOverride)
 }
 
 export function useCallStreamId(): string | null {

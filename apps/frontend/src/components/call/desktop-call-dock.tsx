@@ -6,7 +6,8 @@ import {
   Minimize2,
   PanelBottom,
   PanelRight,
-  PanelTop,
+  PictureInPicture2,
+  Pin,
   Users,
 } from "lucide-react"
 import { getAvatarUrl } from "@threa/types"
@@ -15,6 +16,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { getInitials } from "@/lib/initials"
 import { useStreamName } from "@/hooks/use-stream-name"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import {
@@ -23,46 +25,42 @@ import {
   type CallRosterParticipant,
   type CallSurfaceMode,
 } from "@/stores/call-store"
-import {
-  useCallPrefs,
-  setCallDockPosition,
-  setCallFilmstripSide,
-  type CallDockPosition,
-} from "@/stores/call-prefs-store"
+import { useCallPrefs, setCallFilmstripSide, setCallSideDockWidth } from "@/stores/call-prefs-store"
 import { CallTile } from "./call-tile"
 import { CallControls } from "./call-controls"
-import { CallStageLayout } from "./call-stage-layout"
 import { CameraButton, LeaveButton, MuteButton } from "./call-control-buttons"
+import { CallStageLayout } from "./call-stage-layout"
 import { CallTimer } from "./call-timer"
 import { CaptureErrorBanner } from "./call-capture-error"
 import { LayoutToggle } from "./layout-toggle"
 import { useCallCaptureError, useCallConnectedAt, useCallRoster, useCallSurfaceMode } from "./call-store-hooks"
-import { nearestStep } from "./mobile-call-drawer-snap"
 
 const REDUCED_MOTION =
   typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
 
-const MODES: readonly CallSurfaceMode[] = ["min", "compact", "standard", "full"]
-const MODE_INDEX: Record<CallSurfaceMode, number> = { min: 0, compact: 1, standard: 2, full: 3 }
-
-/** The 3 pushing step sizes (px) — min/compact/standard; `full` = the whole content region. */
-const SIDE_STEP_SIZES: readonly number[] = [56, 320, 520]
-const TOP_STEP_SIZES: readonly number[] = [44, 72, 220]
-
-// Always leave this much of the conversation beside/below a pushing dock, so a
-// narrow window / wide sidebar can't collapse the timeline to nothing.
+const RAIL_WIDTH = 56
+const MIN_OPEN = 280
+// Always leave this much of the conversation beside a pushing dock, so a narrow
+// window / wide sidebar can't collapse the timeline to nothing.
 const MIN_CONTENT = 320
+const FULLSCREEN_FRACTION = 0.75
 
 /**
- * The 4 snap detents [min, compact, standard, full] for a given axis ceiling (the
- * measured content region). The pushing steps are capped to `ceil - MIN_CONTENT`
- * (leaving timeline) and `full` is the whole ceiling — guaranteeing a NON-DECREASING
- * list even on a tiny window (so the snap never sees an unsorted/duplicate-final
- * detent), and the inset a pushing mode reserves never exceeds `ceil - MIN_CONTENT`.
+ * The resting open clamp: ≤75% of the content region, leaving MIN_CONTENT of timeline
+ * where the window allows. On a sub-~600px content region the outer floor wins (MIN_OPEN),
+ * so a very narrow window trades some timeline rather than shrinking the dock below usable.
  */
-function dockDetents(steps: readonly number[], ceil: number): number[] {
-  const cap = Math.max(steps[0], ceil - MIN_CONTENT)
-  return [steps[0], Math.min(steps[1], cap), Math.min(steps[2], cap), ceil]
+function maxOpenWidth(ceil: number): number {
+  return Math.max(MIN_OPEN, Math.min(FULLSCREEN_FRACTION * ceil, ceil - MIN_CONTENT))
+}
+
+function clampOpen(width: number, ceil: number): number {
+  return Math.min(Math.max(width, MIN_OPEN), maxOpenWidth(ceil))
+}
+
+/** First-open width before the user has ever resized: video opens fuller than audio (#1486). */
+function defaultOpen(mode: CallSurfaceMode): number {
+  return mode === "compact" ? 360 : 520
 }
 
 interface DockViewProps {
@@ -73,32 +71,11 @@ interface DockViewProps {
   users: ReturnType<typeof useWorkspaceUsers>
   captureError: CallCaptureErrorInfo | null
   title: string
-  speakerName: string | null
-}
-
-function DockPositionToggle({ dark = false }: { dark?: boolean }) {
-  const { dockPosition } = useCallPrefs()
-  return (
-    <ToggleGroup
-      type="single"
-      size="sm"
-      role="radiogroup"
-      value={dockPosition}
-      onValueChange={(next) => {
-        if (next === "top" || next === "side") setCallDockPosition(next)
-      }}
-      aria-label="Dock position"
-      data-testid="call-dock-position-toggle"
-      className={cn("shrink-0 gap-0.5 rounded-md p-0.5", dark ? "bg-white/10" : "bg-muted")}
-    >
-      <ToggleGroupItem value="top" aria-label="Top" title="Dock to the top" className="h-7 px-2 [&_svg]:size-3.5">
-        <PanelTop aria-hidden="true" />
-      </ToggleGroupItem>
-      <ToggleGroupItem value="side" aria-label="Side" title="Dock to the side" className="h-7 px-2 [&_svg]:size-3.5">
-        <PanelRight aria-hidden="true" />
-      </ToggleGroupItem>
-    </ToggleGroup>
-  )
+  // Rendered from the minimized hover-overlay (a transient peek) rather than a
+  // pinned-open dock — shows the pin affordance to commit the peek.
+  peeking?: boolean
+  // Pop the call out to the floating square. Absent in tests / when floating is unreachable.
+  onFloat?: () => void
 }
 
 function FilmstripSideToggle() {
@@ -149,13 +126,52 @@ function MinimizeButton() {
   )
 }
 
-/** Title + Top/Side toggle + minimize, shared by the side Panel/Wide and the top Gallery. */
-function DockHeaderBar({ title }: { title: string }) {
+function FloatButton({ onFloat }: { onFloat: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Pop out to a floating window"
+      title="Pop out to a floating window"
+      onClick={onFloat}
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+    >
+      <PictureInPicture2 className="h-4 w-4" />
+    </button>
+  )
+}
+
+/** Keeps a hover-peek open (mouse pre-empts the rail's expand chevron, so the peek needs its own pin). */
+function PinButton() {
+  return (
+    <button
+      type="button"
+      aria-label="Keep call open"
+      title="Keep call open"
+      onClick={() => setCallSurfaceMode("standard")}
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+    >
+      <Pin className="h-4 w-4" />
+    </button>
+  )
+}
+
+/**
+ * Title + trailing action. A hover-peek shows Pin (commit to open); an already-open
+ * dock shows Minimize (collapse) — a peek is dismissed by moving the mouse away, so
+ * Minimize there would be a redundant no-op.
+ */
+function DockHeaderBar({ title, peeking, onFloat }: { title: string; peeking?: boolean; onFloat?: () => void }) {
   return (
     <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
-      <DockPositionToggle />
-      <MinimizeButton />
+      {peeking ? (
+        <PinButton />
+      ) : (
+        <>
+          {onFloat && <FloatButton onFloat={onFloat} />}
+          <MinimizeButton />
+        </>
+      )}
     </div>
   )
 }
@@ -206,19 +222,22 @@ function SideRailView({ roster, users, workspaceId, connectedAt, captureError }:
         />
       )}
       <RailAvatars roster={roster} users={users} workspaceId={workspaceId} />
-      <div className="mt-auto">
-        <CallTimer connectedAt={connectedAt} className="text-xs" />
+      <div className="mt-auto flex flex-col items-center gap-1">
+        <MuteButton />
+        <CameraButton />
+        <LeaveButton />
       </div>
+      <CallTimer connectedAt={connectedAt} className="text-xs" />
     </div>
   )
 }
 
 /** Side `compact`/`standard`: header + tile grid + controls (the panel width does the sizing). */
-function SideTilesView({ workspaceId, currentUserId, roster, captureError, title }: DockViewProps) {
+function SideTilesView({ workspaceId, currentUserId, roster, captureError, title, peeking, onFloat }: DockViewProps) {
   const joined = roster.filter((p) => p.participantStatus === "joined")
   return (
     <div className="flex h-full w-full flex-col border-l bg-background">
-      <DockHeaderBar title={title} />
+      <DockHeaderBar title={title} peeking={peeking} onFloat={onFloat} />
       {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
       <div className={cn("grid flex-1 gap-2 overflow-y-auto p-3", joined.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
         {joined.map((p) => (
@@ -237,90 +256,7 @@ function SideTilesView({ workspaceId, currentUserId, roster, captureError, title
   )
 }
 
-/** Top `min`: a thin bar — live/error dot + timer, tap to expand. */
-function TopTabView({ connectedAt, captureError }: DockViewProps) {
-  return (
-    <button
-      type="button"
-      aria-label="Expand call"
-      onClick={() => setCallSurfaceMode("compact")}
-      className="flex h-full w-full items-center justify-center gap-2 border-b bg-background px-4"
-    >
-      {captureError ? (
-        <span
-          className="h-2 w-2 shrink-0 rounded-full bg-destructive"
-          role="alert"
-          data-testid="call-capture-error"
-          aria-label="Microphone or camera problem — expand the call to see details"
-        />
-      ) : (
-        <span
-          className={cn("h-2 w-2 shrink-0 rounded-full bg-primary", !REDUCED_MOTION && "animate-pulse")}
-          aria-hidden
-        />
-      )}
-      <CallTimer connectedAt={connectedAt} />
-    </button>
-  )
-}
-
-/** Top `compact`: timer + speaker + controls, horizontal. */
-function TopBarView({ connectedAt, speakerName, captureError }: DockViewProps) {
-  return (
-    <div className="flex h-full w-full items-center gap-3 border-b bg-background px-4">
-      {captureError && (
-        <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center text-destructive"
-          role="alert"
-          data-testid="call-capture-error"
-          aria-label="Microphone or camera problem"
-        >
-          <AlertTriangle className="h-4 w-4" aria-hidden />
-        </span>
-      )}
-      <div className="flex min-w-0 flex-col">
-        <CallTimer connectedAt={connectedAt} />
-        {speakerName && <span className="truncate text-xs text-muted-foreground">{speakerName}</span>}
-      </div>
-      <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <MuteButton />
-        <CameraButton />
-        <LeaveButton />
-        <DockPositionToggle />
-        <MinimizeButton />
-      </div>
-    </div>
-  )
-}
-
-/** Top `standard`: header + a tiles row + controls. */
-function TopGalleryView({ workspaceId, currentUserId, roster, captureError, title }: DockViewProps) {
-  const joined = roster.filter((p) => p.participantStatus === "joined")
-  return (
-    <div className="flex h-full w-full flex-col border-b bg-background">
-      <DockHeaderBar title={title} />
-      {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
-      <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto px-3 py-2">
-        {joined.map((p) => (
-          <div key={p.userId} className="aspect-video h-full shrink-0">
-            <CallTile
-              participant={p}
-              workspaceId={workspaceId}
-              isSelf={!!currentUserId && p.userId === currentUserId}
-              stage
-              fill
-            />
-          </div>
-        ))}
-      </div>
-      <div className="shrink-0 border-t p-2">
-        <CallControls />
-      </div>
-    </div>
-  )
-}
-
-/** Fullscreen (both orientations): the ch5 stage with a permanent header of call controls/toggles. */
+/** Fullscreen: the ch5 stage with a permanent header of call controls/toggles. */
 function DockFullscreenView({ workspaceId, connectedAt, currentUserId, roster, title, captureError }: DockViewProps) {
   const { layout, filmstripSide } = useCallPrefs()
   const joined = roster.filter((p) => p.participantStatus === "joined")
@@ -352,7 +288,6 @@ function DockFullscreenView({ workspaceId, connectedAt, currentUserId, roster, t
           <div data-testid="call-layout-slot">
             <LayoutToggle className="bg-white/10" />
           </div>
-          <DockPositionToggle dark />
         </div>
       </div>
 
@@ -373,53 +308,34 @@ function DockFullscreenView({ workspaceId, connectedAt, currentUserId, roster, t
   )
 }
 
-function DockBody({
-  dockPosition,
-  mode,
-  view,
-}: {
-  dockPosition: CallDockPosition
-  mode: CallSurfaceMode
-  view: DockViewProps
-}) {
+function DockBody({ mode, view }: { mode: CallSurfaceMode; view: DockViewProps }) {
   if (mode === "full") return <DockFullscreenView {...view} />
-  if (dockPosition === "side") {
-    if (mode === "min") return <SideRailView {...view} />
-    return <SideTilesView {...view} />
-  }
-  if (mode === "min") return <TopTabView {...view} />
-  if (mode === "compact") return <TopBarView {...view} />
-  return <TopGalleryView {...view} />
+  if (mode === "min") return <SideRailView {...view} />
+  return <SideTilesView {...view} />
 }
 
 function DockResizeHandle({
-  orientation,
   onPointerDown,
   onPointerMove,
   onPointerUp,
 }: {
-  orientation: CallDockPosition
   onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void
   onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => void
   onPointerUp: (e: ReactPointerEvent<HTMLDivElement>) => void
 }) {
-  const side = orientation === "side"
   return (
     <div
       role="separator"
-      aria-orientation={side ? "vertical" : "horizontal"}
+      aria-orientation="vertical"
       aria-label="Resize call"
       data-testid="call-dock-handle"
-      className={cn(
-        "absolute z-10 flex touch-none items-center justify-center",
-        side ? "inset-y-0 left-0 w-2 cursor-col-resize" : "inset-x-0 bottom-0 h-2 cursor-row-resize"
-      )}
+      className="absolute inset-y-0 left-0 z-10 flex w-2 cursor-col-resize touch-none items-center justify-center"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
-      <span className={cn("rounded-full bg-muted-foreground/40", side ? "h-10 w-1" : "h-1 w-10")} aria-hidden />
+      <span className="h-10 w-1 rounded-full bg-muted-foreground/40" aria-hidden />
     </div>
   )
 }
@@ -428,25 +344,31 @@ interface DragState {
   start: number
   startSize: number
   size: number
-  velocity: number
-  last: number
-  lastT: number
   full: number
 }
 
 /**
- * The desktop in-call surface: a resizable dock, docked to the top or the side
- * (`dockPosition` pref), snapping through the four {@link CallSurfaceMode} steps
- * with the same physics as the mobile drawer ({@link nearestStep}). It pushes the
- * conversation aside via `--call-dock-inset-right`/`--call-dock-inset-top` (the
+ * The desktop in-call surface: a resizable dock, docked to the side, with a
+ * freeform open width (persisted as {@link CallPrefs.sideDockWidth}) capped at
+ * {@link FULLSCREEN_FRACTION} of the content region; dragging past that cap goes
+ * Fullscreen. It pushes the conversation aside via `--call-dock-inset-right` (the
  * main content region reserves the inset) rather than overlaying it, until
  * Fullscreen. Rendered by {@link import("./call-dock").CallDock} on desktop for
- * the connected phase; reads the call store, not the route, so it survives stream
- * navigation.
+ * the connected phase; reads the call store, not the route, so it survives
+ * stream navigation.
  */
-export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string | null; streamId: string | null }) {
-  const { dockPosition } = useCallPrefs()
+export function DesktopCallDock({
+  workspaceId,
+  streamId,
+  onFloat,
+}: {
+  workspaceId: string | null
+  streamId: string | null
+  onFloat?: () => void
+}) {
   const surfaceMode = useCallSurfaceMode()
+  const { sideDockWidth } = useCallPrefs()
+  const inputMode = useInputMode()
   const roster = useCallRoster()
   const connectedAt = useCallConnectedAt()
   const captureError = useCallCaptureError()
@@ -455,71 +377,63 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
   const name = useStreamName(workspaceId ?? "", streamId ?? "", "generic")
   const title = name ?? "Call"
 
-  const isSide = dockPosition === "side"
-
   const rootRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const drag = useRef<DragState | null>(null)
   const [dragging, setDragging] = useState(false)
   const [dragSize, setDragSize] = useState<number | null>(null)
+  const [hovering, setHovering] = useState(false)
+  // Peek hover only means anything at `min`. Pinning (or dragging) out of the rail
+  // with the cursor still inside fires no mouseleave, so clear the flag on the mode
+  // change — else a stale `hovering` keeps re-arming the peek and Minimize looks dead.
+  useEffect(() => {
+    if (surfaceMode !== "min") setHovering(false)
+  }, [surfaceMode])
   // The dock root spans the content region (left = sidebar width → right:0); its
-  // measured size is the ceiling for the panel + inset so a narrow window / wide
+  // measured width is the ceiling for the panel + inset so a narrow window / wide
   // sidebar can never push the panel over the sidebar or squash the timeline to 0.
-  const [content, setContent] = useState<{ w: number; h: number }>({ w: Infinity, h: Infinity })
+  const [contentW, setContentW] = useState<number>(Infinity)
   useEffect(() => {
     const el = rootRef.current
     if (!el) return
-    const measure = () => setContent({ w: el.clientWidth, h: el.clientHeight })
+    const measure = () => setContentW(el.clientWidth)
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
 
-  // Ceilings from the measured content region; 0 means "not laid out yet" (initial
+  // Ceiling from the measured content region; 0 means "not laid out yet" (initial
   // render / jsdom) → treat as unbounded so we never clamp to nothing.
-  const ceilW = content.w || Infinity
-  const ceilH = content.h || Infinity
+  const ceilW = contentW || Infinity
 
-  const detentsW = dockDetents(SIDE_STEP_SIZES, ceilW)
-  const detentsH = dockDetents(TOP_STEP_SIZES, ceilH)
+  // The resting open width: the saved freeform width (or the mode's first-open
+  // default), clamped to ≤75% and always leaving MIN_CONTENT.
+  const openWidth = clampOpen(sideDockWidth ?? defaultOpen(surfaceMode), ceilW)
 
-  // Content push: reserve the pushing mode's detent (which already leaves MIN_CONTENT)
-  // on :root so the main content region (AppShell's <main>) reflows. Fullscreen → 0.
-  const insetRight = isSide && surfaceMode !== "full" ? detentsW[MODE_INDEX[surfaceMode]] : 0
-  const insetTop = !isSide && surfaceMode !== "full" ? detentsH[MODE_INDEX[surfaceMode]] : 0
+  // Content push: rail → RAIL_WIDTH, open → openWidth (already ≤ ceil−MIN_CONTENT),
+  // fullscreen → 0. Hovering the rail is an overlay, so the inset tracks surfaceMode
+  // (still `min`) and never reflows the timeline.
+  let insetRight: number
+  if (surfaceMode === "full") insetRight = 0
+  else if (surfaceMode === "min") insetRight = RAIL_WIDTH
+  else insetRight = openWidth
   useEffect(() => {
-    const root = document.documentElement
-    root.style.setProperty("--call-dock-inset-right", `${insetRight}px`)
-    root.style.setProperty("--call-dock-inset-top", `${insetTop}px`)
-  }, [insetRight, insetTop])
+    document.documentElement.style.setProperty("--call-dock-inset-right", `${insetRight}px`)
+  }, [insetRight])
   useEffect(
     () => () => {
-      const root = document.documentElement
-      root.style.setProperty("--call-dock-inset-right", "0px")
-      root.style.setProperty("--call-dock-inset-top", "0px")
+      document.documentElement.style.setProperty("--call-dock-inset-right", "0px")
     },
     []
   )
 
-  const stepSizes = isSide ? SIDE_STEP_SIZES : TOP_STEP_SIZES
-  const minStep = stepSizes[0]
-
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     const panel = panelRef.current?.getBoundingClientRect()
     const root = rootRef.current?.getBoundingClientRect()
-    const full = (isSide ? root?.width : root?.height) ?? stepSizes[stepSizes.length - 1]
-    const startSize = (isSide ? panel?.width : panel?.height) ?? stepSizes[1]
-    const pointer = isSide ? e.clientX : e.clientY
-    drag.current = {
-      start: pointer,
-      startSize,
-      size: startSize,
-      velocity: 0,
-      last: pointer,
-      lastT: performance.now(),
-      full,
-    }
+    const full = root?.width ?? ceilW
+    const startSize = panel?.width ?? openWidth
+    drag.current = { start: e.clientX, startSize, size: startSize, full }
     e.currentTarget.setPointerCapture(e.pointerId)
     setDragSize(startSize)
     setDragging(true)
@@ -528,16 +442,9 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current
     if (!d) return
-    const pointer = isSide ? e.clientX : e.clientY
-    // Side grows as the pointer moves left; top grows as it moves down.
-    const grow = isSide ? d.start - pointer : pointer - d.start
-    const next = Math.min(Math.max(d.startSize + grow, minStep), d.full)
-    const now = performance.now()
-    const dt = now - d.lastT
-    const stepGrow = isSide ? d.last - pointer : pointer - d.last
-    if (dt > 0) d.velocity = stepGrow / dt
-    d.last = pointer
-    d.lastT = now
+    // Side grows as the pointer moves left; allow dragging up into the fullscreen zone.
+    const grow = d.start - e.clientX
+    const next = Math.min(Math.max(d.startSize + grow, MIN_OPEN), d.full)
     d.size = next
     setDragSize(next)
   }
@@ -547,24 +454,44 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
     drag.current = null
     setDragging(false)
     setDragSize(null)
-    if (d) {
-      // A pause before release means the drag stopped — don't flick on stale velocity.
-      const vel = performance.now() - d.lastT > 120 ? 0 : d.velocity
-      setCallSurfaceMode(MODES[nearestStep(d.size, vel, dockDetents(stepSizes, d.full))])
+    if (!d) return
+    // Only offer fullscreen when there's a real freeform band below it (else a
+    // very narrow content region would send every release to fullscreen).
+    if (FULLSCREEN_FRACTION * d.full > MIN_OPEN && d.size > FULLSCREEN_FRACTION * d.full) {
+      setCallSurfaceMode("full")
+      return
     }
+    setCallSideDockWidth(clampOpen(d.size, d.full))
+    // Dragging out of the rail (or out of fullscreen) opens it; an already-open mode keeps its mode.
+    if (surfaceMode === "min" || surfaceMode === "full") setCallSurfaceMode("standard")
   }
 
-  const speaker = roster.find((p) => p.participantStatus === "joined" && p.userId !== currentUserId) ?? null
-  const speakerName = speaker ? (users.find((u) => u.id === speaker.userId)?.name ?? null) : null
-
-  const dragFull = drag.current?.full ?? stepSizes[stepSizes.length - 1]
-  const dragMode =
-    dragging && dragSize != null ? MODES[nearestStep(dragSize, 0, dockDetents(stepSizes, dragFull))] : null
   // While dragging, don't MOUNT the fullscreen stage (its heavy per-frame re-render
-  // thrashes the drag) — the preview caps at `standard`; fullscreen mounts on release.
-  const cappedDragMode = dragMode === "full" ? "standard" : dragMode
-  const contentMode: CallSurfaceMode = cappedDragMode ?? surfaceMode
-  const detents = isSide ? detentsW : detentsH
+  // thrashes the drag) — the preview stays on the open tiles; fullscreen mounts on release.
+  // Minimized + mouse hover = a transient peek (overlay, no push); it renders the open
+  // tiles and shows a pin affordance to commit to a pushing, persisted open dock.
+  const peeking = surfaceMode === "min" && hovering
+  let cappedDragMode: CallSurfaceMode | null = null
+  if (dragging) cappedDragMode = surfaceMode === "compact" ? "compact" : "standard"
+  let contentMode: CallSurfaceMode
+  if (cappedDragMode) contentMode = cappedDragMode
+  else if (peeking) contentMode = "standard"
+  else contentMode = surfaceMode
+
+  const dragCeil = drag.current?.full ?? ceilW
+  // No cue while already fullscreen (a drag there is an EXIT — the cue would misread as "go full"),
+  // and none when the region is too narrow to have a freeform band below the fullscreen line.
+  const showFullscreenCue =
+    dragging &&
+    surfaceMode !== "full" &&
+    dragSize != null &&
+    FULLSCREEN_FRACTION * dragCeil > MIN_OPEN &&
+    dragSize > FULLSCREEN_FRACTION * dragCeil
+
+  let panelWidth: number
+  if (dragging && dragSize != null) panelWidth = dragSize
+  else if (surfaceMode === "min") panelWidth = hovering ? openWidth : RAIL_WIDTH
+  else panelWidth = openWidth
 
   const restingFull = !dragging && surfaceMode === "full"
   let positionClass: string
@@ -572,14 +499,9 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
   if (restingFull) {
     positionClass = "inset-0"
     sizeStyle = {}
-  } else if (isSide) {
-    positionClass = "inset-y-0 right-0"
-    const w = dragging && dragSize != null ? dragSize : detents[MODE_INDEX[contentMode]]
-    sizeStyle = { width: `${w}px` }
   } else {
-    positionClass = "inset-x-0 top-0"
-    const h = dragging && dragSize != null ? dragSize : detents[MODE_INDEX[contentMode]]
-    sizeStyle = { height: `${h}px` }
+    positionClass = "inset-y-0 right-0"
+    sizeStyle = { width: `${panelWidth}px` }
   }
 
   const view: DockViewProps = {
@@ -590,7 +512,8 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
     users,
     captureError,
     title,
-    speakerName,
+    peeking,
+    onFloat,
   }
 
   return (
@@ -603,25 +526,37 @@ export function DesktopCallDock({ workspaceId, streamId }: { workspaceId: string
         ref={panelRef}
         data-testid="desktop-call-dock"
         data-mode={contentMode}
-        data-position={dockPosition}
+        data-position="side"
+        data-hovering={hovering ? "true" : "false"}
+        onMouseEnter={() => {
+          // Preview only arms from the rail (mirrors the nav-sidebar collapsed→preview);
+          // entering an open panel — including while minimizing with the cursor over it —
+          // must not flip to the overlay.
+          if (inputMode !== "touch" && surfaceMode === "min") setHovering(true)
+        }}
+        onMouseLeave={() => setHovering(false)}
         className={cn(
           "pointer-events-auto absolute overflow-hidden shadow-xl",
           positionClass,
-          !dragging && !REDUCED_MOTION && (isSide ? "transition-[width]" : "transition-[height]"),
-          !dragging && !REDUCED_MOTION && "duration-200 ease-out"
+          !dragging && !REDUCED_MOTION && "transition-[width] duration-200 ease-out"
         )}
         style={sizeStyle}
       >
-        <DockBody dockPosition={dockPosition} mode={contentMode} view={view} />
+        <DockBody mode={contentMode} view={view} />
+        {showFullscreenCue && (
+          <div
+            data-testid="call-dock-fullscreen-cue"
+            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-dashed border-primary bg-primary/10"
+          >
+            <span className="rounded-md bg-background/80 px-3 py-1.5 text-sm font-medium">
+              Release to go fullscreen
+            </span>
+          </div>
+        )}
         {/* Always mounted — including at rest-fullscreen — so it holds the pointer
             capture/settle through a drag into full AND lets you drag back OUT of
             fullscreen (a thin edge strip over the stage); collapse via chevron still works. */}
-        <DockResizeHandle
-          orientation={dockPosition}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-        />
+        <DockResizeHandle onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
       </div>
     </div>
   )

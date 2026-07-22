@@ -13,30 +13,57 @@ import { useSyncExternalStore } from "react"
  */
 
 export type CallLayout = "speaker" | "grid"
-export type CallDockPosition = "top" | "side"
 export type CallFilmstripSide = "bottom" | "side"
 /** Local self-view mirroring. `auto` = mirror a front/desktop camera, not a mobile back camera. */
 export type CallSelfMirror = "auto" | "on" | "off"
+/** A concrete desktop call surface. */
+export type DesktopSurface = "sidebar" | "floating"
+/** The desktop-surface preference: `keep_last` reopens wherever the last call was. */
+export type DesktopCallSurface = "keep_last" | DesktopSurface
 
 export interface CallPrefs {
   layout: CallLayout
-  dockPosition: CallDockPosition
   filmstripSide: CallFilmstripSide
   selfMirror: CallSelfMirror
+  /** Last resting open width (px) of the desktop side dock; `null` = never resized. */
+  sideDockWidth: number | null
+  /** Which desktop surface a call opens on. */
+  desktopCallSurface: DesktopCallSurface
+  /** The surface the last desktop call resolved to — the target of `keep_last`. */
+  lastDesktopSurface: DesktopSurface
 }
 
 const DEFAULT_PREFS: CallPrefs = {
   layout: "speaker",
-  dockPosition: "side",
   filmstripSide: "bottom",
   selfMirror: "auto",
+  sideDockWidth: null,
+  desktopCallSurface: "keep_last",
+  lastDesktopSurface: "floating",
 }
 const STORAGE_KEY = "threa:callPrefs:v1"
 
 const isLayout = (v: unknown): v is CallLayout => v === "speaker" || v === "grid"
-const isDockPosition = (v: unknown): v is CallDockPosition => v === "top" || v === "side"
 const isFilmstripSide = (v: unknown): v is CallFilmstripSide => v === "bottom" || v === "side"
 const isSelfMirror = (v: unknown): v is CallSelfMirror => v === "auto" || v === "on" || v === "off"
+const isDesktopSurface = (v: unknown): v is DesktopSurface => v === "sidebar" || v === "floating"
+const isDesktopCallSurface = (v: unknown): v is DesktopCallSurface => v === "keep_last" || isDesktopSurface(v)
+const parseSideDockWidth = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null
+
+/**
+ * Resolve the effective desktop surface. An in-call session override wins; else
+ * `keep_last` follows the last-used surface and an explicit pin returns as-is.
+ */
+export function resolveDesktopSurface(
+  pref: DesktopCallSurface,
+  last: DesktopSurface,
+  override: DesktopSurface | null
+): DesktopSurface {
+  if (override) return override
+  if (pref === "keep_last") return last
+  return pref
+}
 
 /**
  * Resolve the effective self-view mirror. `auto` mirrors a front-facing view (any
@@ -64,9 +91,15 @@ function readPersisted(): CallPrefs {
     const p = parsed as Record<string, unknown>
     return {
       layout: isLayout(p.layout) ? p.layout : DEFAULT_PREFS.layout,
-      dockPosition: isDockPosition(p.dockPosition) ? p.dockPosition : DEFAULT_PREFS.dockPosition,
       filmstripSide: isFilmstripSide(p.filmstripSide) ? p.filmstripSide : DEFAULT_PREFS.filmstripSide,
       selfMirror: isSelfMirror(p.selfMirror) ? p.selfMirror : DEFAULT_PREFS.selfMirror,
+      sideDockWidth: parseSideDockWidth(p.sideDockWidth),
+      desktopCallSurface: isDesktopCallSurface(p.desktopCallSurface)
+        ? p.desktopCallSurface
+        : DEFAULT_PREFS.desktopCallSurface,
+      lastDesktopSurface: isDesktopSurface(p.lastDesktopSurface)
+        ? p.lastDesktopSurface
+        : DEFAULT_PREFS.lastDesktopSurface,
     }
   } catch {
     return { ...DEFAULT_PREFS }
@@ -93,9 +126,11 @@ function update(patch: Partial<CallPrefs>): void {
   const next = { ...prefs, ...patch }
   if (
     next.layout === prefs.layout &&
-    next.dockPosition === prefs.dockPosition &&
     next.filmstripSide === prefs.filmstripSide &&
-    next.selfMirror === prefs.selfMirror
+    next.selfMirror === prefs.selfMirror &&
+    next.sideDockWidth === prefs.sideDockWidth &&
+    next.desktopCallSurface === prefs.desktopCallSurface &&
+    next.lastDesktopSurface === prefs.lastDesktopSurface
   ) {
     return
   }
@@ -112,16 +147,24 @@ export function setCallLayout(layout: CallLayout): void {
   update({ layout })
 }
 
-export function setCallDockPosition(dockPosition: CallDockPosition): void {
-  update({ dockPosition })
-}
-
 export function setCallFilmstripSide(filmstripSide: CallFilmstripSide): void {
   update({ filmstripSide })
 }
 
 export function setCallSelfMirror(selfMirror: CallSelfMirror): void {
   update({ selfMirror })
+}
+
+export function setCallSideDockWidth(px: number): void {
+  update({ sideDockWidth: px })
+}
+
+export function setDesktopCallSurface(desktopCallSurface: DesktopCallSurface): void {
+  update({ desktopCallSurface })
+}
+
+export function setLastDesktopSurface(lastDesktopSurface: DesktopSurface): void {
+  update({ lastDesktopSurface })
 }
 
 function subscribe(listener: () => void): () => void {

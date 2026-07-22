@@ -19,7 +19,7 @@ import {
   bumpCallMediaEpoch,
   type CallRosterParticipant,
 } from "@/stores/call-store"
-import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
+import { __resetCallPrefsForTests, getCallPrefs, setDesktopCallSurface } from "@/stores/call-prefs-store"
 import { CallCaptureError, type CallController } from "@/calls/call-manager"
 import { CallDock } from "./call-dock"
 import { CallManagerProvider } from "./call-manager-context"
@@ -138,6 +138,9 @@ beforeEach(() => {
   resetWorkspaceStoreCache()
   localStorage.clear()
   __resetCallPrefsForTests()
+  // Default resolves to the floating square now; pin the sidebar dock so the dock-
+  // specific cases below exercise their surface. The routing suite overrides per test.
+  setDesktopCallSurface("sidebar")
   seedUsers()
   vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_self" } as ReturnType<typeof authModule.useUser>)
 })
@@ -398,5 +401,78 @@ describe("CallDock — mobile drawer vs desktop dock", () => {
     await userEvent.click(screen.getByText("launch"))
     expect(await screen.findByText(/Microphone access denied/i)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /Try again/i })).toBeInTheDocument()
+  })
+})
+
+describe("CallDock — desktop surface routing", () => {
+  it("floating pref renders the square for both joining and connected", () => {
+    setDesktopCallSurface("floating")
+    renderDock(makeManager())
+    act(() => setCallSession({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
+    // Joining (launch idle): the square owns the joining surface, not the DockFrame.
+    expect(screen.getByTestId("floating-call-square")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Collapse call")).toBeNull()
+    act(() => {
+      setCallPhase("connected")
+      setCallRoster([participant({ userId: "usr_self", endpointId: "callep_self" })], 1)
+    })
+    expect(screen.getByTestId("floating-call-square")).toBeInTheDocument()
+    expect(screen.getByTestId("call-tile")).toBeInTheDocument()
+    expect(screen.queryByTestId("desktop-call-dock")).toBeNull()
+  })
+
+  it("sidebar pref renders the DockFrame while joining and the dock in-call", () => {
+    // beforeEach pins sidebar.
+    renderDock(makeManager())
+    act(() => setCallSession({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
+    // The docked joining panel (not the square); it has no collapse toggle — the gate stays visible.
+    expect(screen.getByText("Connecting…")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Collapse call")).toBeNull()
+    expect(screen.queryByTestId("floating-call-square")).toBeNull()
+    act(() => {
+      setCallPhase("connected")
+      setCallRoster([participant({ userId: "usr_self", endpointId: "callep_self" })], 1)
+    })
+    expect(screen.getByTestId("desktop-call-dock")).toBeInTheDocument()
+    expect(screen.queryByTestId("floating-call-square")).toBeNull()
+  })
+
+  it("floating pref surfaces the pre-join permission gate inside the square during an active launch", async () => {
+    setDesktopCallSurface("floating")
+    const startCall = vi.fn(async () => {
+      throw new CallCaptureError(
+        "capture_failed",
+        Object.assign(new Error("Permission denied"), { name: "NotAllowedError" })
+      )
+    })
+    renderDock(makeManager({ startCall }))
+    await userEvent.click(screen.getByText("launch"))
+    // The gate (not a bare "Joining…" pill) renders on the floating surface — no PreJoinGate = no way to recover permission.
+    expect(screen.getByTestId("floating-call-square")).toBeInTheDocument()
+    expect(await screen.findByText(/Microphone access denied/i)).toBeInTheDocument()
+  })
+
+  it("the square's Dock to the side flips to the dock and records the override + last", async () => {
+    setDesktopCallSurface("floating")
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    expect(screen.getByTestId("floating-call-square")).toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText("Dock to the side"))
+    expect(screen.getByTestId("desktop-call-dock")).toBeInTheDocument()
+    expect(screen.queryByTestId("floating-call-square")).toBeNull()
+    expect(getCallState().desktopSurfaceOverride).toBe("sidebar")
+    expect(getCallPrefs().lastDesktopSurface).toBe("sidebar")
+  })
+
+  it("the dock's Float flips to the square and records the override + last", async () => {
+    // beforeEach pins sidebar.
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    expect(screen.getByTestId("desktop-call-dock")).toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText("Pop out to a floating window"))
+    expect(screen.getByTestId("floating-call-square")).toBeInTheDocument()
+    expect(screen.queryByTestId("desktop-call-dock")).toBeNull()
+    expect(getCallState().desktopSurfaceOverride).toBe("floating")
+    expect(getCallPrefs().lastDesktopSurface).toBe("floating")
   })
 })

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react"
 import type { CallMode, PublishedTrackKind } from "@/calls/config"
+import type { DesktopSurface } from "./call-prefs-store"
 
 // Module store (useSyncExternalStore) for the single active call. The CallManager
 // (non-React, account-scoped) is the sole writer; components read via the hooks.
@@ -12,9 +13,9 @@ export type CallPhase = "idle" | "joining" | "connected" | "reconnecting"
 
 /**
  * Unified surface size for the call UI. One enum, four steps; each surface maps a
- * step to its own presentation (mobile Tab/Bar/Tiny-gallery/Fullscreen; desktop-top
- * Tab/Bar/Gallery/Fullscreen; desktop-side Rail/Panel/Wide/Fullscreen). Ephemeral —
- * defaults to "min" ("opens minimal") and resets to "min" on teardown, like the roster.
+ * step to its own presentation (mobile Tab/Bar/Tiny-gallery/Fullscreen; desktop-side
+ * Rail/Panel/Wide/Fullscreen). The floating square ignores it (own local state).
+ * Ephemeral — defaults to "min" and resets to "min" on teardown, like the roster.
  */
 export type CallSurfaceMode = "min" | "compact" | "standard" | "full"
 
@@ -87,6 +88,12 @@ export interface CallState {
   /** Unified surface size ({@link CallSurfaceMode}); "min" until a surface steps it up. */
   surfaceMode: CallSurfaceMode
   /**
+   * In-call desktop-surface override — an explicit dock-to-side / float this call
+   * only. Wins over the persisted pref while set; cleared on teardown (so a pinned
+   * Sidebar/Floating governs the next call). Session-scoped like {@link surfaceMode}.
+   */
+  desktopSurfaceOverride: DesktopSurface | null
+  /**
    * `Date.now()` at the first "connected" transition — the in-call timer anchor.
    * Stamped once and preserved across reconnects (a blip must not reset the clock);
    * reset to null on a new session and on teardown.
@@ -131,6 +138,7 @@ function idleState(): CallState {
   return {
     phase: "idle",
     surfaceMode: "min",
+    desktopSurfaceOverride: null,
     connectedAt: null,
     callId: null,
     workspaceId: null,
@@ -185,6 +193,11 @@ export function setCallPhase(phase: CallPhase): void {
 export function setCallSurfaceMode(surfaceMode: CallSurfaceMode): void {
   if (state.surfaceMode === surfaceMode) return
   setState({ ...state, surfaceMode })
+}
+
+export function setDesktopSurfaceOverride(desktopSurfaceOverride: DesktopSurface | null): void {
+  if (state.desktopSurfaceOverride === desktopSurfaceOverride) return
+  setState({ ...state, desktopSurfaceOverride })
 }
 
 export function setCallSession(args: { callId: string; workspaceId: string; streamId: string; mode: CallMode }): void {

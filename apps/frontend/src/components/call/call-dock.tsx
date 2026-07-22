@@ -1,12 +1,17 @@
-import { useEffect, useState, type ReactNode } from "react"
-import { ChevronDown, ChevronUp } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { useCallback, useEffect, type ReactNode } from "react"
 import { SidePanel, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
-import { getCallState, setCallSurfaceMode } from "@/stores/call-store"
+import { getCallState, setCallSurfaceMode, setDesktopSurfaceOverride } from "@/stores/call-store"
+import { resolveDesktopSurface, setLastDesktopSurface, useCallPrefs } from "@/stores/call-prefs-store"
 import { useCallLaunch } from "./call-launch-context"
-import { useCallActiveElsewhere, useCallPhase, useCallStreamId, useCallWorkspaceId } from "./call-store-hooks"
+import {
+  useCallActiveElsewhere,
+  useCallPhase,
+  useCallStreamId,
+  useCallWorkspaceId,
+  useDesktopSurfaceOverride,
+} from "./call-store-hooks"
 
 // Bottom-anchored call surfaces clear the iOS home indicator on desktop (app
 // convention — see message-composer.tsx) and, on a phone, sit a composer-height
@@ -25,6 +30,7 @@ export const RING_ABOVE_DOCK_BOTTOM =
 import { MobileCallDrawer } from "./mobile-call-drawer"
 import { MobileCallJoining } from "./call-island"
 import { DesktopCallDock } from "./desktop-call-dock"
+import { FloatingCallSquare } from "./floating-call-square"
 import { PreJoinGate } from "./pre-join-gate"
 import { ActiveElsewhereChip } from "./active-elsewhere-chip"
 
@@ -36,20 +42,10 @@ function DockFrame({ children }: { children: ReactNode }) {
   )
 }
 
-function DockHeader({ title, collapsed, onToggle }: { title: string; collapsed: boolean; onToggle: () => void }) {
+function DockHeader({ title }: { title: string }) {
   return (
     <SidePanelHeader className="rounded-t-lg">
       <SidePanelTitle className="text-sm">{title}</SidePanelTitle>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 shrink-0"
-        aria-label={collapsed ? "Expand call" : "Collapse call"}
-        aria-expanded={!collapsed}
-        onClick={onToggle}
-      >
-        {collapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-      </Button>
     </SidePanelHeader>
   )
 }
@@ -71,25 +67,32 @@ export function CallDock() {
   const storeStreamId = useCallStreamId()
   const workspaceId = useCallWorkspaceId()
   const isMobile = useIsMobile()
-  const [collapsed, setCollapsed] = useState(false)
+  const { desktopCallSurface, lastDesktopSurface } = useCallPrefs()
+  const override = useDesktopSurfaceOverride()
 
   const launching = launch.status !== "idle"
   const inCall = phase === "connected" || phase === "reconnecting"
   const joining = phase === "joining"
 
-  // The dock is always mounted, so `collapsed` would otherwise leak across call
-  // lifecycles. The pre-join/joining window must never be collapsed — a collapsed
-  // pill would hide the PreJoinGate and its permission taxonomy — so force it open
-  // whenever a launch is in flight or the call is connecting.
-  useEffect(() => {
-    if (launching || joining) setCollapsed(false)
-  }, [launching, joining])
+  const surface = resolveDesktopSurface(desktopCallSurface, lastDesktopSurface, override)
+
+  // An in-call switch moves THIS call (the override) and remembers the choice for
+  // `keep_last` next time; the override clears on teardown, so a pinned surface wins
+  // the next call (interaction model A). Silent — the surface change is its own signal.
+  const dockToSide = useCallback(() => {
+    setDesktopSurfaceOverride("sidebar")
+    setLastDesktopSurface("sidebar")
+  }, [])
+  const float = useCallback(() => {
+    setDesktopSurfaceOverride("floating")
+    setLastDesktopSurface("floating")
+  }, [])
 
   // On connect, open to a visible size — `min` (the Tab/Rail) is too minimal a
   // default. Open to the first open state (compact) normally, and the second
   // (standard/gallery) when joining with the camera on, so a video join lands on
   // tiles. Guarded on the initial `min` so it runs once and later drags win;
-  // `surfaceMode` is shared but only one surface renders per session.
+  // `surfaceMode` is read only by the sidebar dock (the square uses its own state).
   useEffect(() => {
     if (inCall && getCallState().surfaceMode === "min") {
       setCallSurfaceMode(getCallState().local.cameraOn ? "standard" : "compact")
@@ -111,25 +114,34 @@ export function CallDock() {
 
   const streamIdForLabel = storeStreamId ?? (launch.status !== "idle" ? launch.request.streamId : null)
 
-  if (inCall) {
-    // Mobile gets the 4-mode global top drawer; desktop gets the resizable dock.
-    if (isMobile) return <MobileCallDrawer workspaceId={workspaceId} streamId={streamIdForLabel} />
-    return <DesktopCallDock workspaceId={workspaceId} streamId={streamIdForLabel} />
+  // Mobile is unchanged: the 4-mode top drawer in-call, the same top island for
+  // joining/permission (one surface, no bottom→top jump).
+  if (isMobile) {
+    if (inCall) return <MobileCallDrawer workspaceId={workspaceId} streamId={streamIdForLabel} />
+    return <MobileCallJoining />
   }
 
-  // Joining / permission gate. Mobile renders the same top island as the connected
-  // call (one surface, no bottom→top jump); desktop keeps the docked panel.
-  if (isMobile) return <MobileCallJoining />
+  // Desktop floating: the square owns the whole lifecycle (launch / join / in-call).
+  if (surface === "floating") {
+    return <FloatingCallSquare workspaceId={workspaceId} streamId={streamIdForLabel} onDockToSide={dockToSide} />
+  }
+
+  // Desktop sidebar: the resizable dock in-call, the docked pre-join/joining panel
+  // otherwise. The panel is not collapsible — it only ever shows the connecting/
+  // permission gate, which must stay visible (mirrors the floating square).
+  if (inCall) return <DesktopCallDock workspaceId={workspaceId} streamId={streamIdForLabel} onFloat={float} />
   return (
     <DockFrame>
-      <DockHeader title="Call" collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
-      {!collapsed && (
-        <div className="p-4">{joining && launch.status === "idle" ? <JoiningBody /> : <PreJoinGate />}</div>
-      )}
+      <DockHeader title="Call" />
+      <div className="p-4">{joining && launch.status === "idle" ? <JoiningBody /> : <PreJoinGate />}</div>
     </DockFrame>
   )
 }
 
 function JoiningBody() {
-  return <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">Connecting…</div>
+  return (
+    <div role="status" className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+      Connecting…
+    </div>
+  )
 }

@@ -415,7 +415,6 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             className="relative flex flex-1 flex-col overflow-hidden"
             style={{
               paddingRight: "var(--call-dock-inset-right, 0px)",
-              paddingTop: "var(--call-dock-inset-top, 0px)",
               ...(!isKeyboardOpen ? { paddingBottom: "env(safe-area-inset-bottom)" } : {}),
             }}
           >

@@ -4,10 +4,20 @@ import { Separator } from "@/components/ui/separator"
 import {
   setCallLayout,
   setCallSelfMirror,
+  setDesktopCallSurface,
+  setLastDesktopSurface,
   useCallPrefs,
   type CallLayout,
   type CallSelfMirror,
+  type DesktopCallSurface,
 } from "@/stores/call-prefs-store"
+
+// Picking an explicit surface in settings also seeds `lastDesktopSurface`, so a later
+// switch to "Keep last" resolves to what the user actually chose, not the stale default.
+function chooseDesktopSurface(value: DesktopCallSurface): void {
+  setDesktopCallSurface(value)
+  if (value !== "keep_last") setLastDesktopSurface(value)
+}
 
 const MIRROR_OPTIONS: { value: CallSelfMirror; label: string; description: string }[] = [
   {
@@ -28,12 +38,22 @@ const LAYOUT_OPTIONS: { value: CallLayout; label: string; description: string }[
   { value: "grid", label: "Grid", description: "Equal-sized tiles for everyone." },
 ]
 
+const DESKTOP_SURFACE_OPTIONS: { value: DesktopCallSurface; label: string; description: string }[] = [
+  { value: "keep_last", label: "Keep last", description: "Reopen calls wherever you last had them." },
+  {
+    value: "floating",
+    label: "Floating square",
+    description: "A movable square you can drag anywhere and minimize.",
+  },
+  { value: "sidebar", label: "Sidebar", description: "Docked down the right side, resizable." },
+]
+
 /**
  * Call preferences (the persisted {@link import("@/stores/call-prefs-store").CallPrefs}).
  * The in-call device menu carries a quick mirror toggle; this is the canonical home.
  */
 export function CallSettings() {
-  const { selfMirror, layout } = useCallPrefs()
+  const { selfMirror, layout, desktopCallSurface } = useCallPrefs()
   return (
     <div className="space-y-6">
       <section className="space-y-3">
@@ -76,6 +96,32 @@ export function CallSettings() {
               <RadioGroupItem value={option.value} id={`layout-${option.value}`} className="mt-1" />
               <div className="grid gap-1">
                 <Label htmlFor={`layout-${option.value}`} className="cursor-pointer">
+                  {option.label}
+                </Label>
+                <p className="text-sm text-muted-foreground">{option.description}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Desktop video</h3>
+          <p className="text-sm text-muted-foreground">Where a call opens on desktop; you can still switch mid-call.</p>
+        </div>
+        <RadioGroup
+          value={desktopCallSurface}
+          onValueChange={(value) => chooseDesktopSurface(value as DesktopCallSurface)}
+          className="space-y-3"
+        >
+          {DESKTOP_SURFACE_OPTIONS.map((option) => (
+            <div key={option.value} className="flex items-start space-x-3">
+              <RadioGroupItem value={option.value} id={`desktop-surface-${option.value}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`desktop-surface-${option.value}`} className="cursor-pointer">
                   {option.label}
                 </Label>
                 <p className="text-sm text-muted-foreground">{option.description}</p>

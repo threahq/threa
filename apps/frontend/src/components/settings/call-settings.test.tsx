@@ -27,4 +27,22 @@ describe("CallSettings", () => {
     expect(screen.getByRole("radio", { name: "Grid" })).toBeChecked()
     expect(getCallPrefs().layout).toBe("grid")
   })
+
+  it("sets the desktop call surface from the radio, and seeds lastDesktopSurface for an explicit pick", async () => {
+    render(<CallSettings />)
+    expect(getCallPrefs().desktopCallSurface).toBe("keep_last")
+    expect(screen.getByRole("radio", { name: "Keep last" })).toBeChecked()
+    await userEvent.click(screen.getByLabelText("Floating square"))
+    expect(screen.getByRole("radio", { name: "Floating square" })).toBeChecked()
+    expect(getCallPrefs().desktopCallSurface).toBe("floating")
+    expect(getCallPrefs().lastDesktopSurface).toBe("floating")
+    await userEvent.click(screen.getByLabelText("Sidebar"))
+    expect(getCallPrefs().desktopCallSurface).toBe("sidebar")
+    // An explicit pick also records "last" so switching to Keep last later resolves to it.
+    expect(getCallPrefs().lastDesktopSurface).toBe("sidebar")
+    await userEvent.click(screen.getByLabelText("Keep last"))
+    expect(getCallPrefs().desktopCallSurface).toBe("keep_last")
+    // Keep last must NOT overwrite the remembered surface.
+    expect(getCallPrefs().lastDesktopSurface).toBe("sidebar")
+  })
 })
