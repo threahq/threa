@@ -1039,6 +1039,22 @@ describe("Access Control", () => {
       expect(accessible.has(otherPrivateChannel.id)).toBe(false)
     })
 
+    test("workspace listings include inherited threads without exposing private roots", async () => {
+      const { wsId, viewerId, memberThread, publicChannel, otherPrivateChannel } = await buildFixture()
+
+      const [listed, withPreviews] = await Promise.all([
+        streamService.list(wsId, viewerId),
+        streamService.listWithPreviews(wsId, viewerId),
+      ])
+
+      for (const streams of [listed, withPreviews]) {
+        const ids = new Set(streams.map((stream) => stream.id))
+        expect(ids.has(memberThread.id)).toBe(true)
+        expect(ids.has(publicChannel.id)).toBe(true)
+        expect(ids.has(otherPrivateChannel.id)).toBe(false)
+      }
+    })
+
     test("search accessible-stream gating resolves all three cases", async () => {
       const { wsId, viewerId, memberThread, publicChannel, otherPrivateChannel } = await buildFixture()
 

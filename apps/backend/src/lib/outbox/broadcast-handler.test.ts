@@ -247,6 +247,26 @@ describe("BroadcastHandler", () => {
     })
   })
 
+  it("should emit event-anchored stream:created to the parent stream room", async () => {
+    const event = makeEvent(1n, "stream:created", {
+      workspaceId: "ws_1",
+      streamId: "stream_parent",
+      stream: { id: "stream_thread", parentAnchorId: "event_call" },
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:stream:stream_parent",
+      eventType: "stream:created",
+      payload: event.payload,
+    })
+  })
+
   it("should emit stream:created public channel to workspace room", async () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",

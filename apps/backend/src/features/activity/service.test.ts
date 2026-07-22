@@ -317,6 +317,65 @@ describe("ActivityService author name resolution", () => {
   })
 })
 
+describe("ActivityService inherited thread notifications", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("notifies effective-root members without direct thread membership", async () => {
+    const service = setupService()
+    const rootId = "stream_root"
+    const thread = fakeStream({
+      type: StreamTypes.THREAD,
+      parentStreamId: rootId,
+      rootStreamId: rootId,
+    })
+    const root = fakeStream({ id: rootId, type: StreamTypes.CHANNEL })
+
+    spyOn(StreamRepository, "findById").mockResolvedValueOnce(thread).mockResolvedValueOnce(root)
+    spyOn(StreamMemberRepository, "list")
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          streamId: rootId,
+          memberId: TARGET_USER_ID,
+          notificationLevel: NotificationLevels.EVERYTHING,
+          lastReadEventId: null,
+          lastReadAt: null,
+          joinedAt: new Date(),
+        },
+      ])
+    const resolveModule = await import("../streams")
+    spyOn(resolveModule, "resolveNotificationLevelsForStream").mockImplementation(async (_db, _stream, members) => {
+      expect(members).toEqual([
+        expect.objectContaining({
+          streamId: STREAM_ID,
+          memberId: TARGET_USER_ID,
+          notificationLevel: null,
+        }),
+      ])
+      return [{ memberId: TARGET_USER_ID, effectiveLevel: NotificationLevels.ACTIVITY, source: "inherited" }]
+    })
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
+    const insertBatch = spyOn(ActivityRepository, "insertBatch").mockResolvedValue([])
+
+    await service.processMessageNotifications({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: USER_ID,
+      actorType: AuthorTypes.USER,
+      contentMarkdown: "thread reply",
+      excludeUserIds: new Set(),
+    })
+
+    expect(insertBatch).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ userIds: [TARGET_USER_ID], streamId: STREAM_ID })
+    )
+  })
+})
+
 describe("ActivityService born-read for already-read recipients", () => {
   afterEach(() => {
     mock.restore()

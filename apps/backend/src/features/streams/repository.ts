@@ -591,7 +591,22 @@ export const StreamRepository = {
               WHERE workspace_id = ${workspaceId}
                 AND type = ANY(${types})
                 AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
-                AND (visibility = 'public' OR id = ANY(${userMembershipStreamIds}))
+                AND (
+                  visibility = 'public'
+                  OR id = ANY(${userMembershipStreamIds})
+                  OR (
+                    type = 'thread'
+                    AND EXISTS (
+                      SELECT 1 FROM streams access_root
+                      WHERE access_root.id = streams.root_stream_id
+                        AND access_root.workspace_id = ${workspaceId}
+                        AND (
+                          access_root.visibility = 'public'
+                          OR access_root.id = ANY(${userMembershipStreamIds})
+                        )
+                    )
+                  )
+                )
                 AND ${sql.raw(purposeIsNull())}
               ORDER BY created_at DESC`
         )
@@ -602,7 +617,22 @@ export const StreamRepository = {
         sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
             WHERE workspace_id = ${workspaceId}
               AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
-              AND (visibility = 'public' OR id = ANY(${userMembershipStreamIds}))
+              AND (
+                visibility = 'public'
+                OR id = ANY(${userMembershipStreamIds})
+                OR (
+                  type = 'thread'
+                  AND EXISTS (
+                    SELECT 1 FROM streams access_root
+                    WHERE access_root.id = streams.root_stream_id
+                      AND access_root.workspace_id = ${workspaceId}
+                      AND (
+                        access_root.visibility = 'public'
+                        OR access_root.id = ANY(${userMembershipStreamIds})
+                      )
+                  )
+                )
+              )
               AND ${sql.raw(purposeIsNull())}
             ORDER BY created_at DESC`
       )
@@ -715,7 +745,22 @@ export const StreamRepository = {
               WHERE s.workspace_id = ${workspaceId}
                 AND s.type = ANY(${types})
                 AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
-                AND (s.visibility = 'public' OR s.id = ANY(${userMembershipStreamIds}))
+                AND (
+                  s.visibility = 'public'
+                  OR s.id = ANY(${userMembershipStreamIds})
+                  OR (
+                    s.type = 'thread'
+                    AND EXISTS (
+                      SELECT 1 FROM streams access_root
+                      WHERE access_root.id = s.root_stream_id
+                        AND access_root.workspace_id = ${workspaceId}
+                        AND (
+                          access_root.visibility = 'public'
+                          OR access_root.id = ANY(${userMembershipStreamIds})
+                        )
+                    )
+                  )
+                )
                 ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
               ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
               ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
@@ -727,7 +772,23 @@ export const StreamRepository = {
         sql`${sql.raw(SELECT_WITH_PREVIEW)}
             WHERE s.workspace_id = ${workspaceId}
               AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
-              AND (s.visibility = 'public' OR s.id = ANY(${userMembershipStreamIds}))
+              AND (
+                s.visibility = 'public'
+                OR s.id = ANY(${userMembershipStreamIds})
+                OR (
+                  s.type = 'thread'
+                  AND EXISTS (
+                    SELECT 1 FROM streams access_root
+                    WHERE access_root.id = s.root_stream_id
+                      AND access_root.workspace_id = ${workspaceId}
+                      AND (
+                        access_root.visibility = 'public'
+                        OR access_root.id = ANY(${userMembershipStreamIds})
+                      )
+                    )
+                  )
+                )
+              )
               ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
               ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
