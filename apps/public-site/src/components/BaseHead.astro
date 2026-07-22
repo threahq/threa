@@ -33,7 +33,7 @@ const jsonLd = [
     name: "Threa",
     url: site.href,
     description:
-      "Threa is workplace chat built with memory at its core: decisions and their reasoning stay with the conversation. Open source, self-hostable, with a public API for agents.",
+      "Threa is open-source workplace chat that stores decisions and their reasoning as memos linked to the original conversation. Includes a public API for agents.",
     publisher: { "@id": ORG_ID },
   },
   ...schema,
@@ -90,7 +90,7 @@ const jsonLd = [
 
 <!-- Agent entry points: a markdown index of the developer docs and the full
      API contract, discoverable from every page (robots.txt names them too). -->
-<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt — markdown index of the developer docs" />
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt: markdown index of the developer docs" />
 <link rel="alternate" type="application/json" href="/openapi.json" title="OpenAPI 3.0 contract for the Threa API" />
 
 <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />

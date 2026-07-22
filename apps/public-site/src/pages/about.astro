@@ -21,7 +21,7 @@ const schema = [
 
 <Layout
   title="About · Threa"
-  description="Threa began as a side project, out of curiosity and frustration with workplace chat: how much more you can do with what a conversation already holds, and whether a tool like this has to lock you in. Built by Kristoffer Remback, in the open."
+  description="Why Kristoffer Remback built Threa, an open-source workplace chat app that keeps decisions linked to their source conversations."
   schema={schema}
 >
   <SvgDefs />
@@ -49,14 +49,15 @@ const schema = [
 
         <div class="about-hero">
           <h1 class="h-display">
-            Threa came out of<br />
-            <span class="accent">curiosity</span>, and a bit<br />
-            of frustration.
+            I built Threa out of<br />
+            <span class="accent">curiosity</span> and<br />
+            frustration.
           </h1>
           <p class="lede">
             My day job is software engineering, where I spend a lot of time in
-            tools that are <em>fine</em> but never great. The little frustrations
-            add up, and eventually my curiosity got out of hand. Meet Threa.
+            tools that are <em>fine</em>. Their small frustrations add up.
+            Eventually my curiosity got out of hand, and I started building
+            Threa.
           </p>
         </div>
       </div>
@@ -70,50 +71,40 @@ const schema = [
   <div class="frame warm">
     <div class="memo-shell">
       <div class="section-meta">
-        <span>Why this exists in the first place</span>
+        <span>Why I built it</span>
       </div>
-      <h2>What I kept running into.</h2>
-      <p class="lede about-why-lede">
-        Three of them stuck around long enough that I did something about them.
-      </p>
+      <h2>Three problems kept coming up.</h2>
 
       <div class="about-duo">
         <div class="about-q">
           <span class="about-qnum">What gets lost</span>
-          <h3>What did we say again?</h3>
+          <h3>Lost context</h3>
           <p>
-            Years of decisions and the reasoning behind them pile up in a
-            workplace chat, and almost none of it resurfaces. My memory runs on
-            gist: I'll remember that we discussed something, sometimes why,
-            rarely the exact wording or where we said it, though I'll know it was
-            Kate who said it. I was curious whether a chat app could surface that
-            context when it helps, instead of just
-            holding it, and whether doing it well was even affordable. I assumed
-            it would be too expensive to bother with. So far it hasn't been.
+            Years of decisions and their reasoning pile up in workplace chat,
+            and I rarely find them again. My memory runs on gist: I'll remember
+            that we discussed something, sometimes why, rarely the exact wording
+            or where we said it, though I'll know it was Kate who said it. I
+            wanted to know whether a chat app could bring that context back when
+            useful and whether doing it well was affordable. I assumed it would
+            cost too much. So far it hasn't.
           </p>
         </div>
         <div class="about-q">
           <span class="about-qnum">On your own terms</span>
-          <h3>Tools are supposed to be yours.</h3>
+          <h3>Use your own agent</h3>
           <p>
-            Most tools want to be the platform you can't afford to leave, and
-            they all insist on shipping their own AI agent. I rarely want it: it
-            runs a cheaper model on thinner context and can't see past its own
-            walls. Yours can. Threa has an assistant too, Ariadne, and I want her
-            to be genuinely great, but she's only ever great inside the room,
-            where the shared context lives. For your own work you'd rather bring
-            your own agent, so Threa connects to it instead of replacing it.
+            I don't want Threa to be hard to leave. It includes Ariadne, where
+            shared room context makes her useful, and exposes workspace data
+            through a public API so you can connect your own agent.
           </p>
         </div>
         <div class="about-q">
           <span class="about-qnum">The chat part too</span>
-          <h3>Chat could be so much nicer.</h3>
+          <h3>Better chat basics</h3>
           <p>
-            Nested threading, quoting, replying to one message in a busy room,
-            formatting that behaves. None of it sells a platform, which is
-            probably why it keeps getting skipped, but it all adds up over a day
-            spent in chat. After years of putting up with the basics done badly,
-            I think we deserve nice things.
+            Nested threads, quoting, replies to a specific message in a busy
+            room, and formatting that behaves. These details add up over a day
+            spent in chat, and I wanted them done well.
           </p>
         </div>
       </div>
@@ -132,7 +123,7 @@ const schema = [
       <p class="lede">
         Hi, I'm Kristoffer. People have paid me to build software for over ten
         years now. During parental leave I started tinkering on Threa to keep
-        myself from going insane, and I'm not sure it worked: here I am, up late
+        myself from going insane, and I'm not sure it worked. Here I am, up late
         after my wife has gone to bed, talking to an agent about who I am and why
         I'm building this.
       </p>
@@ -154,18 +145,16 @@ const schema = [
       </div>
       <h2>Built the way I want tools to work.</h2>
       <p class="lede about-built-lede">
-        Good at its job, composable with everything else, and easy to step away
-        from. Threa is built that way on purpose. The door stays open, so if you
-        stay it's because you want to, not because leaving would cost you.
+        I want Threa to do its job well, work with the rest of your tools, and
+        remain easy to leave. Its source and APIs stay open so you can inspect,
+        change, or replace it.
       </p>
       <p class="lede about-built-lede">
-        It has also been my way into building with AI agents. Most of Threa is
-        written by directing them, but the thinking stays mine, and that matters
-        more than ever. They're a good way to chase a curiosity, and you can get
-        genuinely decent software out of them as long as you do the thinking
-        yourself. Seeing where they shine and where they fall short has been half
-        the fun. It's a work in progress, on what I think is a good trajectory.
-        The repo is public, so have a look.
+        Threa has also been my way into building with AI agents. Most of it is
+        written by directing them, but the thinking stays mine. They're useful
+        for chasing a curiosity and still need close review. Learning where they
+        help and where they fall short has been half the fun. The repo is public
+        if you want to see the work in progress.
       </p>
       <div class="about-cta-row">
         <a class="os-cta" href="https://github.com/threahq/threa">Browse the source <span class="arr">→</span></a>
@@ -179,14 +168,13 @@ const schema = [
        ============================================================ -->
   <div class="frame">
     <div class="memo-shell is-centerpiece about-close">
-      <h2>Early, and <span class="accent">built in the open</span>.</h2>
+      <h2>Threa is <span class="accent">early</span> and open source.</h2>
       <p class="lede">
-        Threa is early, and there's plenty left to build. Join the waitlist, or
-        follow along in the public repo.
+        There's plenty left to build. Join the waitlist or follow the work in the
+        public repository.
       </p>
       <div class="actions">
         <a class="cta" href="/#waitlist">Join the waitlist</a>
-        <span class="quiet">/ early 2026</span>
       </div>
     </div>
   </div>
@@ -213,9 +201,6 @@ const schema = [
       align-items: end;
     }
     .about-hero .lede { max-width: 460px; font-size: 18px; margin: 0 0 6px; }
-
-    /* Constrain the intro line so it doesn't run the full shell width. */
-    .about-why-lede { max-width: 620px; font-size: 17px; margin: 0 0 4px; }
 
     /* The strands: open columns, no card chrome. A hairline rule and a mono
        label give structure without boxing them in. */

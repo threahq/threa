@@ -2280,13 +2280,6 @@ body::after {
   line-height: 1.5;
   color: hsl(var(--ink-soft));
 }
-.missing-sign {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: hsl(var(--muted));
-  margin: 0;
-}
 @media (max-width: 880px) {
   .missing-grid {
     grid-template-columns: 1fr;
