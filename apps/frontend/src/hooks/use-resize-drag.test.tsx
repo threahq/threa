@@ -26,6 +26,7 @@ function ResizeHarness({
 
 describe("useResizeDrag", () => {
   const frames = new Map<number, FrameRequestCallback>()
+  const originalSetPointerCapture = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "setPointerCapture")
   let nextFrame = 1
   const setPointerCapture = vi.fn()
 
@@ -33,7 +34,10 @@ describe("useResizeDrag", () => {
     frames.clear()
     nextFrame = 1
     setPointerCapture.mockClear()
-    HTMLElement.prototype.setPointerCapture = setPointerCapture
+    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+      configurable: true,
+      value: setPointerCapture,
+    })
     vi.stubGlobal(
       "requestAnimationFrame",
       vi.fn((callback: FrameRequestCallback) => {
@@ -51,6 +55,11 @@ describe("useResizeDrag", () => {
   })
 
   afterEach(() => {
+    if (originalSetPointerCapture) {
+      Object.defineProperty(HTMLElement.prototype, "setPointerCapture", originalSetPointerCapture)
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "setPointerCapture")
+    }
     vi.unstubAllGlobals()
   })
 
@@ -69,8 +78,7 @@ describe("useResizeDrag", () => {
     expect(onWidthChange).not.toHaveBeenCalled()
 
     act(() => frames.values().next().value?.(0))
-    expect(onWidthChange).toHaveBeenCalledTimes(1)
-    expect(onWidthChange).toHaveBeenLastCalledWith(295)
+    expect(onWidthChange.mock.calls).toEqual([[295]])
 
     fireEvent.pointerMove(handle, { pointerId: 7, clientX: 160 })
     fireEvent.pointerUp(handle, { pointerId: 7, clientX: 160 })
