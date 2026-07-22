@@ -82,8 +82,21 @@ export interface CachedStream {
   descriptionJson?: ThreaDocument | null
   visibility: "public" | "private"
   parentStreamId: string | null
+  /**
+   * Canonical id of the timeline item a thread anchors on: `msg_…` (message) or
+   * `event_…` (card). The one anchor track (INV-2 prefix discriminates). Absent on
+   * rows cached before this shipped — fall back to `parentMessageId`.
+   */
+  parentAnchorId?: string | null
   parentMessageId: string | null
   rootStreamId: string | null
+  /**
+   * Live reply count on a thread stream (0 for non-threads). Absent on rows cached
+   * before this shipped — treat missing as 0.
+   */
+  replyCount?: number
+  /** Timestamp of the thread's most recent non-deleted reply, or null when none. */
+  lastReplyAt?: string | null
   companionMode: "off" | "on"
   companionPersonaId: string | null
   memoryMode?: "auto" | "off"
@@ -276,6 +289,12 @@ export interface PendingStreamCreation {
   /** Companion persona chosen on the draft; threaded into the create request. */
   companionPersonaId?: string
   parentStreamId?: string
+  /** Canonical anchor id a thread draft is created on (`msg_…` or `event_…`). New
+   *  writes set this; consumers read `parentAnchorId ?? parentMessageId`. */
+  parentAnchorId?: string
+  /** Legacy message anchor. Grace period only: ops enqueued by a previous bundle
+   *  are persisted in IDB and carry this instead of `parentAnchorId`; keep reading
+   *  it as a fallback until those drain. New writes leave it unset. */
   parentMessageId?: string
   /** At-creation tool policy carried from the draft; threaded into the create request. */
   allowedToolCategories?: ToolPrivacyPolicy

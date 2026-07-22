@@ -508,7 +508,7 @@ describe("useReplyToBoardPost", () => {
         workspaceId: WORKSPACE_ID,
         streamId: "draft:chan_1:msg_open",
         draftId: "draft:chan_1:msg_open",
-        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "chan_1", parentMessageId: "msg_open" },
+        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "chan_1", parentAnchorId: "msg_open" },
         conversation: { intent: "threadFromMessage", sourceConversationId: "conv_1" },
       })
     )
@@ -534,7 +534,7 @@ describe("useReplyToBoardPost", () => {
       expect.objectContaining({ contentJson: DOC }),
       expect.objectContaining({
         streamId: "draft:dm_1:msg_open",
-        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "dm_1", parentMessageId: "msg_open" },
+        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "dm_1", parentAnchorId: "msg_open" },
         conversation: { intent: "threadFromMessage", sourceConversationId: "conv_dm" },
       })
     )

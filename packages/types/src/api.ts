@@ -2348,9 +2348,14 @@ export function draftStreamScope(streamId: string): DraftScope {
   return `stream:${streamId}`
 }
 
-/** Build the `thread:{parentMessageId}` draft scope (reply to a not-yet-threaded message). */
-export function draftThreadScope(parentMessageId: string): DraftScope {
-  return `thread:${parentMessageId}`
+/**
+ * Build the `thread:{anchorId}` draft scope (reply to a timeline item that has no
+ * thread stream of its own yet). `anchorId` is the item's canonical id — `msg_…`
+ * for a message, `event_…` for a card (INV-2 prefix is the discriminator); the
+ * scope string is the one anchor track, byte-identical to before for messages.
+ */
+export function draftThreadScope(anchorId: string): DraftScope {
+  return `thread:${anchorId}`
 }
 
 /** Slash-command draft payload (mirrors the composer's `ExtractedCommand`). */

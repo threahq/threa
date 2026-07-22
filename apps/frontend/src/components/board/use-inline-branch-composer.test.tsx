@@ -16,7 +16,7 @@ const PARENT_ID = "conv_parent"
 // — the structural parenthood `collectBranchThreadStreamIds` walks (sub-topic
 // conversations carry no parentConversationId).
 const index = {
-  threadsByParentMessageId: new Map([["msg_fork_b", { id: "stream_thread_1" }]]),
+  threadsByAnchorId: new Map([["msg_fork_b", { id: "stream_thread_1" }]]),
 } as unknown as StreamStructuralIndex
 
 function makeGraph(): ConversationGraph {

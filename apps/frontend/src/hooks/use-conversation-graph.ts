@@ -135,7 +135,13 @@ export function useConversationGraphReady(workspaceId: string): boolean {
  *  grouping) and threads keyed by their fork message (for stub discovery). */
 export interface StreamStructuralIndex {
   streamsById: Map<string, CachedStream>
-  threadsByParentMessageId: Map<string, CachedStream>
+  /**
+   * Threads keyed by their anchor id (`parentAnchorId ?? parentMessageId`). Board
+   * branches fork off MESSAGES, so event-anchored (card) threads are excluded — a
+   * card's discussion is never a board branch. Keeping the map free of card
+   * anchors makes the board's message-only assumption explicit at the build site.
+   */
+  threadsByAnchorId: Map<string, CachedStream>
 }
 
 // Cached by the raw streams array identity so every card shares one build; the
@@ -146,14 +152,16 @@ function computeStructuralIndex(streams: CachedStream[]): StreamStructuralIndex 
   const cached = structuralIndexCache.get(streams)
   if (cached) return cached
   const streamsById = new Map<string, CachedStream>()
-  const threadsByParentMessageId = new Map<string, CachedStream>()
+  const threadsByAnchorId = new Map<string, CachedStream>()
   for (const stream of streams) {
     streamsById.set(stream.id, stream)
-    if (stream.type === StreamTypes.THREAD && stream.parentMessageId) {
-      threadsByParentMessageId.set(stream.parentMessageId, stream)
-    }
+    if (stream.type !== StreamTypes.THREAD) continue
+    const anchorId = stream.parentAnchorId ?? stream.parentMessageId
+    // Board branches fork off MESSAGES; exclude event-anchored (card) threads so
+    // the board's message-only assumption is explicit at the index build site.
+    if (anchorId && !anchorId.startsWith("event_")) threadsByAnchorId.set(anchorId, stream)
   }
-  const index = { streamsById, threadsByParentMessageId }
+  const index = { streamsById, threadsByAnchorId }
   structuralIndexCache.set(streams, index)
   return index
 }
@@ -179,8 +187,12 @@ export function resolveParentConversationId(params: {
 }): string | null {
   const { conversationId, anchorStreamId, index, graph } = params
   const anchor = index.streamsById.get(anchorStreamId)
-  if (!anchor || anchor.type !== StreamTypes.THREAD || !anchor.parentMessageId) return null
-  const parentId = graph.conversationIdByMemberMessageId.get(anchor.parentMessageId)
+  // The fork the branch hangs off is this thread's anchor. A card anchor (event_)
+  // never matches a message-keyed conversation membership, so it resolves to no
+  // parent naturally — the board's message-only assumption without an extra guard.
+  const anchorId = anchor?.parentAnchorId ?? anchor?.parentMessageId
+  if (!anchor || anchor.type !== StreamTypes.THREAD || !anchorId) return null
+  const parentId = graph.conversationIdByMemberMessageId.get(anchorId)
   if (!parentId || parentId === conversationId) return null
   const parentPost = graph.conversationById.get(parentId)
   if (!parentPost || parentPost.conversation.messageIds.length === 0) return null
@@ -210,7 +222,7 @@ function hasDeeperBranch(
   seenConversationIds: Set<string>
 ): boolean {
   for (const messageId of memberMessageIds) {
-    const thread = index.threadsByParentMessageId.get(messageId)
+    const thread = index.threadsByAnchorId.get(messageId)
     if (!thread) continue
     const childPost = graph.conversationByAnchorStreamId.get(thread.id)
     if (childPost && !seenConversationIds.has(childPost.id) && childPost.conversation.messageIds.length > 0) return true
@@ -260,7 +272,7 @@ export function deriveBranchConversations(params: {
     for (const messageId of forkCandidateIds) {
       if (seenFork.has(messageId)) continue
       seenFork.add(messageId)
-      const thread = index.threadsByParentMessageId.get(messageId)
+      const thread = index.threadsByAnchorId.get(messageId)
       if (!thread || excludeThreadStreamIds?.has(thread.id)) continue
       const childPost = graph.conversationByAnchorStreamId.get(thread.id)
       if (!childPost || seen.has(childPost.id) || childPost.conversation.messageIds.length === 0) continue
@@ -306,7 +318,7 @@ export function collectBranchThreadStreamIds(params: {
     for (const messageId of forkCandidateIds) {
       if (seenFork.has(messageId)) continue
       seenFork.add(messageId)
-      const thread = index.threadsByParentMessageId.get(messageId)
+      const thread = index.threadsByAnchorId.get(messageId)
       if (!thread) continue
       const childPost = graph.conversationByAnchorStreamId.get(thread.id)
       if (!childPost || seen.has(childPost.id) || childPost.conversation.messageIds.length === 0) continue

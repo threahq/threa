@@ -26,14 +26,15 @@ import { useDecryptedDraftContent } from "./use-decrypted-draft-content"
 
 // Key formats (a draft's `scope`):
 // - "stream:{streamId}" for messages in existing streams
-// - "thread:{parentMessageId}" for new threads (reply to a message that doesn't have a thread yet)
+// - "thread:{anchorId}" for new threads (reply to a timeline item — message or
+//   card — that has no thread stream of its own yet)
 export function getDraftMessageKey(
-  location: { type: "stream"; streamId: string } | { type: "thread"; parentMessageId: string }
+  location: { type: "stream"; streamId: string } | { type: "thread"; anchorId: string }
 ): string {
   if (location.type === "stream") {
     return draftStreamScope(location.streamId)
   }
-  return draftThreadScope(location.parentMessageId)
+  return draftThreadScope(location.anchorId)
 }
 
 const DEBOUNCE_MS = import.meta.env.VITE_DRAFT_DEBOUNCE_MS ? Number(import.meta.env.VITE_DRAFT_DEBOUNCE_MS) : 500

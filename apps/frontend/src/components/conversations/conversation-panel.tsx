@@ -556,7 +556,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     // Hide "New sub-topic" once a thread already exists under the message (a
     // populated thread would mix membership — "Split this thread" is the gesture
     // there, adjustment D).
-    const canBranch = !structuralIndex.threadsByParentMessageId.has(message.id)
+    const canBranch = !structuralIndex.threadsByAnchorId.has(message.id)
     return (
       <MessageItem
         key={message.id}
@@ -583,7 +583,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   // provider — no mark-read/unread here) and identified as the CHILD conversation
   // so copy-link opens its panel. Same shape as the board card's.
   const renderBranchMessage = (branch: BranchConversationView, message: RenderableMessage, continuation: boolean) => {
-    const canBranch = !structuralIndex.threadsByParentMessageId.has(message.id)
+    const canBranch = !structuralIndex.threadsByAnchorId.has(message.id)
     // Per-message spine color (persona gold / bot green / system) overlaying the
     // branch's neutral rail at that row; a user row stays plain so the neutral
     // grouping rail shows. See the board card's renderBranchMessage.

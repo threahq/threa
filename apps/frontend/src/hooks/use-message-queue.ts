@@ -64,7 +64,7 @@ async function promoteDraft(
       companionMode: creation.companionMode,
       companionPersonaId: creation.companionPersonaId,
       parentStreamId: creation.parentStreamId,
-      parentMessageId: creation.parentMessageId,
+      parentAnchorId: creation.parentAnchorId ?? creation.parentMessageId,
       allowedToolCategories: creation.allowedToolCategories,
     })
     realStreamId = newStream.id
@@ -121,11 +121,12 @@ async function promoteDraft(
   // the message:created event for the optimistic swap
   void syncEngine.subscribeStream(realStreamId)
 
-  // For threads, swap the parent message's threadId from the draft panel ID
-  // to the real thread stream. The replyCount was already bumped at queue time
-  // so we don't re-increment here.
-  if (creation.type === StreamTypes.THREAD && creation.parentStreamId && creation.parentMessageId) {
-    setParentThreadId(creation.parentStreamId, creation.parentMessageId, realStreamId).catch(() => {})
+  // For threads, swap the anchor's threadId from the draft panel ID to the real
+  // thread stream. The replyCount was already bumped at queue time so we don't
+  // re-increment here.
+  const anchorId = creation.parentAnchorId ?? creation.parentMessageId
+  if (creation.type === StreamTypes.THREAD && creation.parentStreamId && anchorId) {
+    setParentThreadId(creation.parentStreamId, anchorId, realStreamId).catch(() => {})
   }
 
   // Clean up draft data (no-ops gracefully for non-scratchpad drafts).

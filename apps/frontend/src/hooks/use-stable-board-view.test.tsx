@@ -437,7 +437,7 @@ describe("useStableBoardView", () => {
     const threadRow = { id: "t1", type: "thread", parentStreamId: "root", parentMessageId: "m1", rootStreamId: "root" }
     vi.spyOn(graphModule, "useStreamStructuralIndex").mockReturnValue({
       streamsById: new Map([["t1", threadRow]]),
-      threadsByParentMessageId: new Map([["m1", threadRow]]),
+      threadsByAnchorId: new Map([["m1", threadRow]]),
     } as unknown as ReturnType<typeof graphModule.useStreamStructuralIndex>)
     vi.spyOn(graphModule, "useConversationGraph").mockReturnValue({
       conversationByAnchorStreamId: new Map([["t1", child]]),
@@ -481,7 +481,7 @@ describe("useStableBoardView", () => {
     const threadRow = { id: "t1", type: "thread", parentStreamId: "root", parentMessageId: "m1", rootStreamId: "root" }
     vi.spyOn(graphModule, "useStreamStructuralIndex").mockReturnValue({
       streamsById: new Map([["t1", threadRow]]),
-      threadsByParentMessageId: new Map([["m1", threadRow]]),
+      threadsByAnchorId: new Map([["m1", threadRow]]),
     } as unknown as ReturnType<typeof graphModule.useStreamStructuralIndex>)
     vi.spyOn(graphModule, "useConversationGraph").mockReturnValue({
       conversationByAnchorStreamId: new Map([["t1", child]]),

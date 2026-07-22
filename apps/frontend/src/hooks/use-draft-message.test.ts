@@ -50,8 +50,12 @@ describe("getDraftMessageKey", () => {
     expect(getDraftMessageKey({ type: "stream", streamId: "stream_123" })).toBe("stream:stream_123")
   })
 
-  it("should return thread key format for thread type", () => {
-    expect(getDraftMessageKey({ type: "thread", parentMessageId: "msg_456" })).toBe("thread:msg_456")
+  it("should return thread key format for a message anchor", () => {
+    expect(getDraftMessageKey({ type: "thread", anchorId: "msg_456" })).toBe("thread:msg_456")
+  })
+
+  it("should return thread key format for a card (event) anchor", () => {
+    expect(getDraftMessageKey({ type: "thread", anchorId: "event_789" })).toBe("thread:event_789")
   })
 })
 
