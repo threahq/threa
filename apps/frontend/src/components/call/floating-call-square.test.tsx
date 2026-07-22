@@ -12,7 +12,7 @@ import {
 } from "@/stores/call-store"
 import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
 import { CallCaptureError, type CallController } from "@/calls/call-manager"
-import { FloatingCallSquare, clampSquareToViewport } from "./floating-call-square"
+import { FloatingCallSquare, anchorSurfaceAtPointer, clampSquareToViewport } from "./floating-call-square"
 import { CallManagerProvider } from "./call-manager-context"
 import { CallLaunchProvider, useCallLaunch } from "./call-launch-context"
 
@@ -179,6 +179,19 @@ describe("clampSquareToViewport", () => {
   })
 })
 
+describe("anchorSurfaceAtPointer", () => {
+  it("centers and clamps a surface at the pointer", () => {
+    const size = { width: 200, height: 48 }
+    const viewport = { width: 1000, height: 800 }
+    expect(anchorSurfaceAtPointer({ x: 500, y: 400 }, size, viewport)).toEqual({ x: 400, y: 376 })
+    expect(anchorSurfaceAtPointer({ x: 500, y: 400 }, size, viewport, { x: 180, y: 24 })).toEqual({
+      x: 320,
+      y: 376,
+    })
+    expect(anchorSurfaceAtPointer({ x: 10, y: 10 }, size, viewport)).toEqual({ x: 8, y: 8 })
+  })
+})
+
 describe("FloatingCallSquare — connected", () => {
   it("renders one tile per joined participant, Leave, and Dock to the side", () => {
     renderSquare()
@@ -212,25 +225,71 @@ describe("FloatingCallSquare — connected", () => {
 })
 
 describe("FloatingCallSquare — minimize / restore", () => {
-  it("minimizes to a bubble (dot + timer) then restores to the tiles", async () => {
-    renderSquare()
+  it("minimizes at the cursor with persistent call controls, then restores", async () => {
+    const manager = makeManager()
+    renderSquare(manager)
     enterConnected(TWO_PEERS)
     expect(screen.getAllByTestId("call-tile")).toHaveLength(2)
 
-    await act(async () => {
-      fireEvent.click(screen.getByLabelText("Minimize call"))
-    })
-    const bubble = screen.getByTestId("floating-call-square")
-    expect(bubble).toHaveAttribute("data-minimized", "true")
-    expect(screen.getByLabelText("Restore call")).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText("Minimize call"), { clientX: 500, clientY: 300, detail: 1 })
+
+    const compact = screen.getByTestId("floating-call-square")
+    expect(compact).toHaveAttribute("data-minimized", "true")
+    expect(compact.style.left).toBe("264px")
+    expect(compact.style.top).toBe("275px")
+    expect(screen.getByLabelText("Restore call")).toHaveFocus()
     expect(screen.getByLabelText("Call duration")).toBeInTheDocument()
+    expect(screen.getByLabelText("Mute")).toBeInTheDocument()
+    expect(screen.getByLabelText("Turn camera on")).toBeInTheDocument()
+    expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
     expect(screen.queryAllByTestId("call-tile")).toHaveLength(0)
+
+    fireEvent.click(screen.getByLabelText("Mute"))
+    expect(manager.setMuted).toHaveBeenCalledWith(true)
 
     await act(async () => {
       fireEvent.click(screen.getByLabelText("Restore call"))
     })
     expect(screen.getByTestId("floating-call-square")).toHaveAttribute("data-minimized", "false")
+    expect(screen.getByLabelText("Minimize call")).toHaveFocus()
     expect(screen.getAllByTestId("call-tile")).toHaveLength(2)
+  })
+
+  it("moves the minimized bar by dragging or focused arrow-key controls", async () => {
+    renderSquare()
+    enterConnected(TWO_PEERS)
+    fireEvent.click(screen.getByLabelText("Minimize call"), { clientX: 500, clientY: 300, detail: 1 })
+
+    const compact = screen.getByTestId("floating-call-square")
+    const handle = screen.getByTestId("minimized-call-drag-handle")
+    handle.setPointerCapture = vi.fn()
+    fireEvent.pointerDown(handle, { clientX: 500, clientY: 300, pointerId: 1, isPrimary: true })
+    fireEvent.pointerMove(handle, { clientX: 600, clientY: 400, pointerId: 1 })
+    expect(compact.style.left).toBe("364px")
+    expect(compact.style.top).toBe("375px")
+
+    handle.focus()
+    expect(handle).toHaveFocus()
+    await userEvent.keyboard("{ArrowLeft}")
+    expect(compact.style.left).toBe("348px")
+    expect(compact.style.top).toBe("375px")
+
+    window.dispatchEvent(new Event("resize"))
+    fireEvent.pointerMove(handle, { clientX: 700, clientY: 500, pointerId: 1 })
+    expect(compact.style.left).toBe("348px")
+    expect(compact.style.top).toBe("375px")
+  })
+
+  it("reclamps the expanded square before restore is painted", () => {
+    renderSquare()
+    enterConnected(TWO_PEERS)
+    fireEvent.click(screen.getByLabelText("Minimize call"), { clientX: 1000, clientY: 750, detail: 1 })
+    expect(screen.getByTestId("floating-call-square").style.left).toBe("756px")
+    expect(screen.getByTestId("floating-call-square").style.top).toBe("710px")
+
+    fireEvent.click(screen.getByLabelText("Restore call"))
+    expect(screen.getByTestId("floating-call-square").style.left).toBe("676px")
+    expect(screen.getByTestId("floating-call-square").style.top).toBe("440px")
   })
 })
 
