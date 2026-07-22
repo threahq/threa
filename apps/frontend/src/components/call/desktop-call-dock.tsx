@@ -381,6 +381,12 @@ export function DesktopCallDock({
   const [dragging, setDragging] = useState(false)
   const [dragSize, setDragSize] = useState<number | null>(null)
   const [hovering, setHovering] = useState(false)
+  // Peek hover only means anything at `min`. Pinning (or dragging) out of the rail
+  // with the cursor still inside fires no mouseleave, so clear the flag on the mode
+  // change — else a stale `hovering` keeps re-arming the peek and Minimize looks dead.
+  useEffect(() => {
+    if (surfaceMode !== "min") setHovering(false)
+  }, [surfaceMode])
   // The dock root spans the content region (left = sidebar width → right:0); its
   // measured width is the ceiling for the panel + inset so a narrow window / wide
   // sidebar can never push the panel over the sidebar or squash the timeline to 0.
@@ -447,7 +453,9 @@ export function DesktopCallDock({
     setDragging(false)
     setDragSize(null)
     if (!d) return
-    if (d.size > FULLSCREEN_FRACTION * d.full) {
+    // Only offer fullscreen when there's a real freeform band below it (else a
+    // very narrow content region would send every release to fullscreen).
+    if (FULLSCREEN_FRACTION * d.full > MIN_OPEN && d.size > FULLSCREEN_FRACTION * d.full) {
       setCallSurfaceMode("full")
       return
     }
@@ -469,9 +477,14 @@ export function DesktopCallDock({
   else contentMode = surfaceMode
 
   const dragCeil = drag.current?.full ?? ceilW
-  // No cue while already fullscreen (a drag there is an EXIT — the cue would misread as "go full").
+  // No cue while already fullscreen (a drag there is an EXIT — the cue would misread as "go full"),
+  // and none when the region is too narrow to have a freeform band below the fullscreen line.
   const showFullscreenCue =
-    dragging && surfaceMode !== "full" && dragSize != null && dragSize > FULLSCREEN_FRACTION * dragCeil
+    dragging &&
+    surfaceMode !== "full" &&
+    dragSize != null &&
+    FULLSCREEN_FRACTION * dragCeil > MIN_OPEN &&
+    dragSize > FULLSCREEN_FRACTION * dragCeil
 
   let panelWidth: number
   if (dragging && dragSize != null) panelWidth = dragSize

@@ -389,6 +389,20 @@ describe("DesktopCallDock — minimized hover overlay", () => {
     expect(insetRight()).toBe("520px")
   })
 
+  it("pinning a peek then Minimizing (no mouse-leave) actually minimizes — stale hover doesn't re-arm", () => {
+    renderDock()
+    enterConnected(TWO_PEERS)
+    setMode("min")
+    const dock = screen.getByTestId("desktop-call-dock")
+    fireEvent.mouseEnter(dock)
+    act(() => fireEvent.click(screen.getByLabelText("Keep call open")))
+    expect(getCallState().surfaceMode).toBe("standard")
+    // Minimize while the cursor is still inside the panel (no mouseleave fired).
+    act(() => fireEvent.click(screen.getByLabelText("Minimize call")))
+    expect(getCallState().surfaceMode).toBe("min")
+    expect(screen.getByTestId("desktop-call-dock")).toHaveAttribute("data-mode", "min")
+  })
+
   it("clicking the collapsed rail's Leave dispatches to the manager", async () => {
     const manager = makeManager()
     renderDock(manager)

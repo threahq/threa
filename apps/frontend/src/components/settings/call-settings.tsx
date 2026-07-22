@@ -5,11 +5,19 @@ import {
   setCallLayout,
   setCallSelfMirror,
   setDesktopCallSurface,
+  setLastDesktopSurface,
   useCallPrefs,
   type CallLayout,
   type CallSelfMirror,
   type DesktopCallSurface,
 } from "@/stores/call-prefs-store"
+
+// Picking an explicit surface in settings also seeds `lastDesktopSurface`, so a later
+// switch to "Keep last" resolves to what the user actually chose, not the stale default.
+function chooseDesktopSurface(value: DesktopCallSurface): void {
+  setDesktopCallSurface(value)
+  if (value !== "keep_last") setLastDesktopSurface(value)
+}
 
 const MIRROR_OPTIONS: { value: CallSelfMirror; label: string; description: string }[] = [
   {
@@ -34,7 +42,7 @@ const DESKTOP_SURFACE_OPTIONS: { value: DesktopCallSurface; label: string; descr
   { value: "keep_last", label: "Keep last", description: "Reopen calls wherever you last had them." },
   {
     value: "floating",
-    label: "Floating window",
+    label: "Floating square",
     description: "A movable square you can drag anywhere and minimize.",
   },
   { value: "sidebar", label: "Sidebar", description: "Docked down the right side, resizable." },
@@ -106,7 +114,7 @@ export function CallSettings() {
         </div>
         <RadioGroup
           value={desktopCallSurface}
-          onValueChange={(value) => setDesktopCallSurface(value as DesktopCallSurface)}
+          onValueChange={(value) => chooseDesktopSurface(value as DesktopCallSurface)}
           className="space-y-3"
         >
           {DESKTOP_SURFACE_OPTIONS.map((option) => (

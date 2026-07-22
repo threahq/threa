@@ -255,6 +255,12 @@ export function FloatingCallSquare({
     if (!inCall) setMinimized(false)
   }, [inCall])
 
+  // Restoring measures the full square (the bubble carries no ref, so a resize while
+  // minimized couldn't reclamp it) — pull it back on-screen if the window shrank.
+  useEffect(() => {
+    if (!minimized) reclamp()
+  }, [minimized, reclamp])
+
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     // Primary pointer only; the header's action buttons aren't drag handles.
     if (!e.isPrimary) return

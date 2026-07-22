@@ -13,9 +13,9 @@ export type CallPhase = "idle" | "joining" | "connected" | "reconnecting"
 
 /**
  * Unified surface size for the call UI. One enum, four steps; each surface maps a
- * step to its own presentation (mobile Tab/Bar/Tiny-gallery/Fullscreen; desktop-top
- * Tab/Bar/Gallery/Fullscreen; desktop-side Rail/Panel/Wide/Fullscreen). Ephemeral —
- * defaults to "min" ("opens minimal") and resets to "min" on teardown, like the roster.
+ * step to its own presentation (mobile Tab/Bar/Tiny-gallery/Fullscreen; desktop-side
+ * Rail/Panel/Wide/Fullscreen). The floating square ignores it (own local state).
+ * Ephemeral — defaults to "min" and resets to "min" on teardown, like the roster.
  */
 export type CallSurfaceMode = "min" | "compact" | "standard" | "full"
 
