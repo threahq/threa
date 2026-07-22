@@ -10,7 +10,7 @@ import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
 import { reconcileOptimisticBoardPost } from "@/stores/board-store"
 import { rescopeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
-import { MessageErrorCodes, ShareErrorCodes, StreamTypes, draftStreamScope } from "@threa/types"
+import { MessageErrorCodes, ShareErrorCodes, StreamTypes, draftStreamScope, draftThreadScope } from "@threa/types"
 import type { PendingMessage } from "@/db"
 import type {
   AttachmentSummary,
@@ -140,11 +140,13 @@ async function promoteDraft(
       }
     })
     deleteDraftScratchpadFromCache(next.workspaceId, next.draftId)
-    // Re-point the scratchpad scope's surviving drafts onto the real stream so
+    // Re-point the promoted scope's surviving drafts onto the real stream so
     // stash entries composed before promotion keep roaming (the just-sent loaded
-    // draft was already resolved by the send path). Push each so the server row
-    // follows; kick the op queue so it drains promptly.
-    await rescopeScopeDrafts(next.workspaceId, draftStreamScope(next.draftId), draftStreamScope(realStreamId))
+    // draft was already resolved by the send path). Thread panels persist under
+    // their canonical anchor scope, not under the synthetic draft panel id.
+    const fromScope =
+      creation.type === StreamTypes.THREAD && anchorId ? draftThreadScope(anchorId) : draftStreamScope(next.draftId)
+    await rescopeScopeDrafts(next.workspaceId, fromScope, draftStreamScope(realStreamId))
     syncEngine.kickOperationQueue()
   }
 

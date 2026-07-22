@@ -193,6 +193,44 @@ describe("useMessageQueue", () => {
     expect(mockMarkSent).toHaveBeenCalledWith("temp_abc")
   })
 
+  it("re-scopes card-thread stashes from the canonical anchor when promoting", async () => {
+    mockStreamCreate.mockResolvedValue({
+      id: "stream_real_thread",
+      workspaceId: "ws_1",
+      type: "thread",
+      parentStreamId: "stream_parent",
+      parentAnchorId: "event_card",
+    })
+    mockPendingMessages = [
+      {
+        clientId: "temp_card_reply",
+        workspaceId: "ws_1",
+        streamId: "draft:stream_parent:event_card",
+        draftId: "draft:stream_parent:event_card",
+        content: "Reply",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+        streamCreation: {
+          type: "thread",
+          parentStreamId: "stream_parent",
+          parentAnchorId: "event_card",
+        },
+      } as unknown as MockPendingMessage,
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(useDraftMessageModule.rescopeScopeDrafts).toHaveBeenCalledWith(
+      "ws_1",
+      "thread:event_card",
+      "stream:stream_real_thread"
+    )
+  })
+
   it("forwards atomic steer on the message request", async () => {
     mockPendingMessages = [
       {

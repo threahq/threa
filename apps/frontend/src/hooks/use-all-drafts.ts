@@ -14,7 +14,7 @@ import { deleteDraftById } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
 import { purgeScopeDrafts } from "./use-draft-message"
-import type { CompanionMode } from "@threa/types"
+import { THREAD_ANCHORABLE_EVENT_TYPES, type CompanionMode } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
@@ -352,9 +352,9 @@ function useDraftThreadStreamMap(
     []
   )
 
-  // Message-anchored thread drafts key on payload.messageId (the anchor id), not
-  // event.id. Card-anchored drafts (event_ anchors) don't exist yet — the cards
-  // opt into thread creation in later chunks — so only message anchors are indexed.
+  // Message anchors key on payload.messageId because message event rows can be
+  // recreated on move. Threadable cards are stable broadcast rows and key on
+  // their canonical event id.
   return useMemo(() => {
     const map = new Map<string, { streamId: string; anchorId: string }>()
     for (const event of cachedEvents ?? []) {
@@ -363,6 +363,8 @@ function useDraftThreadStreamMap(
         if (payload.messageId) {
           map.set(payload.messageId, { streamId: event.streamId, anchorId: payload.messageId })
         }
+      } else if (THREAD_ANCHORABLE_EVENT_TYPES.includes(event.eventType)) {
+        map.set(event.id, { streamId: event.streamId, anchorId: event.id })
       }
     }
     return map

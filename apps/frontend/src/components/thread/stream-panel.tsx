@@ -35,6 +35,7 @@ import {
   useStashComposer,
   useDecryptedDraftPreviews,
   useWorkspaceUserId,
+  useExternalThreadDraftPromotion,
 } from "@/hooks"
 import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
@@ -167,11 +168,6 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     return (anchorEvent.payload as { threadId?: string }).threadId ?? null
   }, [anchorEvent])
 
-  useEffect(() => {
-    if (!isDraft || !externalThreadId) return
-    openPanel(externalThreadId)
-  }, [isDraft, externalThreadId, openPanel])
-
   // Draft composer
   const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", anchorId: draftInfo.anchorId }) : ""
   // A draft thread has no stream row of its own yet — its E2E state is the
@@ -186,6 +182,15 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     draftKey,
     scopeId: draftInfo?.anchorId ?? "",
     e2eStreamId: e2eRoot,
+  })
+  useExternalThreadDraftPromotion({
+    workspaceId,
+    isDraft,
+    anchorId: draftInfo?.anchorId,
+    externalThreadId,
+    flushDraft: composer.flushDraft,
+    setIsSending: composer.setIsSending,
+    onPromoted: openPanel,
   })
 
   // Stashed drafts for this thread. `draftKey` is "" until the panel resolves
