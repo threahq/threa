@@ -95,6 +95,10 @@ export function createWindow(
   return { windowId, paneId }
 }
 
+export function respawnPane(target: string, cwd: string, command: string): void {
+  run(["tmux", "respawn-pane", "-k", "-t", target, "-c", cwd, command])
+}
+
 export function capturePane(target: string, lines = 30): string {
   return output(["tmux", "capture-pane", "-t", target, "-p", "-S", `-${lines}`], {
     allowFailure: true,

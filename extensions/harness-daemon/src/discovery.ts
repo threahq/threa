@@ -18,28 +18,51 @@ interface ClaudeChannelLaunch {
   runtimeSessionId?: string
 }
 
+export interface PiLaunch {
+  executable: string
+  sessionId: string
+  environment: Array<{ name: string; value: string }>
+}
+
+const PI_ENVIRONMENT = new Set([
+  "THREA_HARNESSD_ENTRYPOINT",
+  "THREA_HARNESSD_BUN_BIN",
+  "THREA_INSTANCE_ID",
+  "THREA_RUNTIME_SESSION_ID",
+])
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 function shellWords(input: string): string[] | undefined {
   const words: string[] = []
   let word = ""
   let quote: "'" | '"' | undefined
-  let escaped = false
   let started = false
 
-  for (const char of input.trim()) {
-    if (escaped) {
-      word += char
-      escaped = false
-      started = true
-      continue
-    }
-    if (char === "\\" && quote !== "'") {
-      escaped = true
-      started = true
-      continue
-    }
-    if (quote) {
+  for (let index = 0; index < input.trim().length; index += 1) {
+    const char = input.trim()[index]!
+    if (quote === "'") {
       if (char === quote) quote = undefined
       else word += char
+      started = true
+      continue
+    }
+    if (quote === '"') {
+      if (char === quote) quote = undefined
+      else if (char === "\\") {
+        const next = input.trim()[index + 1]
+        if (next && '$`"\\'.includes(next)) word += input.trim()[++index]!
+        else word += char
+      } else {
+        if (char === "$" || char === "`") return undefined
+        word += char
+      }
+      started = true
+      continue
+    }
+    if (char === "\\") {
+      const next = input.trim()[++index]
+      if (!next || next === "\n") return undefined
+      word += next
       started = true
       continue
     }
@@ -56,11 +79,12 @@ function shellWords(input: string): string[] | undefined {
       }
       continue
     }
+    if ("$`*?[]{};|&<>".includes(char) || (char === "~" && !started)) return undefined
     word += char
     started = true
   }
 
-  if (quote || escaped) return undefined
+  if (quote) return undefined
   if (started) words.push(word)
   return words
 }
@@ -75,6 +99,57 @@ function launchWords(command: string): string[] | undefined {
 function parseAssignment(word: string): { name: string; value: string } | undefined {
   const match = word.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s)
   return match ? { name: match[1]!, value: match[2]! } : undefined
+}
+
+export function parsePiLaunch(command: string): PiLaunch | undefined {
+  const words = launchWords(command)
+  if (!words?.length) return undefined
+
+  let index = 0
+  const environment: PiLaunch["environment"] = []
+  const names = new Set<string>()
+  if (basename(words[index]!) === "env") {
+    index += 1
+    while (index < words.length) {
+      const assignment = parseAssignment(words[index]!)
+      if (!assignment) break
+      if (
+        !PI_ENVIRONMENT.has(assignment.name) ||
+        names.has(assignment.name) ||
+        !assignment.value ||
+        /[$`*?[\]{};|&<>]/.test(assignment.value)
+      )
+        return undefined
+      names.add(assignment.name)
+      environment.push(assignment)
+      index += 1
+    }
+  } else if (parseAssignment(words[index]!)) {
+    return undefined
+  }
+
+  const executable = words[index]
+  if (!executable || basename(executable) !== "pi") return undefined
+  index += 1
+  if (words.length - index !== 2 || words[index] !== "--session-id") return undefined
+  const sessionId = words[index + 1]!
+  if (!UUID_RE.test(sessionId)) return undefined
+  const runtimeIdentity = environment.find(({ name }) => name === "THREA_RUNTIME_SESSION_ID")?.value
+  if (runtimeIdentity && runtimeIdentity !== sessionId) return undefined
+  return { executable, sessionId, environment }
+}
+
+export function findLocalPiPane(
+  runtimeSessionId: string,
+  panes: LocalTmuxPane[] = listLocalTmuxPanes()
+): LocalTmuxPane | undefined {
+  const matches = panes.filter((pane) => parsePiLaunch(pane.startCommand)?.sessionId === runtimeSessionId)
+  if (matches.length > 1) {
+    throw new Error(
+      `multiple live standalone Pi panes match ${runtimeSessionId}: ${matches.map((pane) => pane.paneId).join(", ")}`
+    )
+  }
+  return matches[0]
 }
 
 export function parseClaudeChannelLaunch(command: string): ClaudeChannelLaunch | undefined {
