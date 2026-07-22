@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { Phone, PhoneOff, BellOff, Video } from "lucide-react"
@@ -13,6 +13,72 @@ import { useIncomingCalls, settleIncomingCall, type IncomingCall } from "@/store
 import { installRingAudioWarmup, startRing, stopRing } from "@/calls/ring-tone"
 import { useCallLaunch } from "./call-launch-context"
 import { DOCK_BOTTOM, RING_ABOVE_DOCK_BOTTOM } from "./call-dock"
+import { placementOverlapsProtected, resolveAvoidanceOffset, type Point } from "./call-surface-geometry"
+import { useFloatingSurfaceGeometry } from "@/stores/floating-surface-geometry-store"
+
+interface RingPlacement {
+  offset: Point
+  /** No placement clears the surface's controls, so the ring must yield stacking. */
+  yieldStacking: boolean
+}
+
+const NO_PLACEMENT: RingPlacement = { offset: { x: 0, y: 0 }, yieldStacking: false }
+
+/**
+ * Keep the CSS-anchored ring stack clear of the draggable floating call surface.
+ * The stack is measured where the browser laid it out and the applied translation
+ * subtracted back out, so the input to {@link resolveAvoidanceOffset} is always the
+ * un-translated anchor rect — the policy therefore converges in one extra render
+ * and never drifts as the square is dragged.
+ *
+ * Placement is applied instantly, with no transition or hysteresis: an animated
+ * or damped move would spend its duration on top of the controls it exists to
+ * clear, which is the exact failure this avoids.
+ */
+function useRingPlacement(containerRef: { current: HTMLElement | null }): RingPlacement {
+  const obstacle = useFloatingSurfaceGeometry()
+  const appliedRef = useRef<RingPlacement>(NO_PLACEMENT)
+  const [placement, setPlacement] = useState<RingPlacement>(NO_PLACEMENT)
+
+  const measure = useCallback(() => {
+    const el = containerRef.current
+    if (!el) return
+    const applied = appliedRef.current
+    const box = el.getBoundingClientRect()
+    const anchored = {
+      x: box.left - applied.offset.x,
+      y: box.top - applied.offset.y,
+      width: box.width,
+      height: box.height,
+    }
+    const raw = resolveAvoidanceOffset(anchored, obstacle, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })
+    // Round before comparing: measured rects are subpixel, so an unrounded offset
+    // can differ from the applied one by a fraction that the rendered transform
+    // rounds away — the comparison never settles and the effect re-renders forever.
+    const offset = { x: Math.round(raw.x), y: Math.round(raw.y) }
+    const yieldStacking = placementOverlapsProtected(anchored, offset, obstacle)
+    // Compare both: a drag can leave the offset identical while flipping whether
+    // that placement is still clear, and only re-rendering restores the stacking.
+    if (offset.x === applied.offset.x && offset.y === applied.offset.y && yieldStacking === applied.yieldStacking) {
+      return
+    }
+    const next = { offset, yieldStacking }
+    appliedRef.current = next
+    setPlacement(next)
+  }, [containerRef, obstacle])
+
+  useLayoutEffect(measure)
+
+  useEffect(() => {
+    window.addEventListener("resize", measure)
+    return () => window.removeEventListener("resize", measure)
+  }, [measure])
+
+  return placement
+}
 
 /**
  * Fire a local service-worker notification for a ring when the page can't sound
@@ -54,6 +120,8 @@ export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
   const surfaceMode = useCallSurfaceMode()
   const [searchParams, setSearchParams] = useSearchParams()
   const notifiedRef = useRef<Set<string>>(new Set())
+  const containerRef = useRef<HTMLDivElement>(null)
+  const { offset: avoidanceOffset, yieldStacking } = useRingPlacement(containerRef)
   // Per-attempt mute (INV-... scoped so a fresh ring rings again). State, not a
   // ref, so muting one ring re-evaluates whether any other ring should still sound.
   const [mutedAttempts, setMutedAttempts] = useState<Set<string>>(() => new Set())
@@ -164,11 +232,25 @@ export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
+      ref={containerRef}
+      data-testid="incoming-call-overlay"
       className={cn(
-        "pointer-events-none fixed z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2",
+        "pointer-events-none fixed flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2",
+        // Normally the ring shares the floating surface's level and simply moves
+        // out of its way. When the viewport is too crowded for any clear
+        // placement, geometry can't help — so the ring drops one level and the
+        // z-50 call surface paints above it and keeps its pointer input. Losing a
+        // corner of a ring card beats losing Leave.
+        yieldStacking ? "z-[49]" : "z-50",
         liftAboveDock ? RING_ABOVE_DOCK_BOTTOM : DOCK_BOTTOM
       )}
-      style={{ right: "calc(1rem + var(--call-dock-inset-right, 0px))" }}
+      style={{
+        right: "calc(1rem + var(--call-dock-inset-right, 0px))",
+        transform:
+          avoidanceOffset.x || avoidanceOffset.y
+            ? `translate(${avoidanceOffset.x}px, ${avoidanceOffset.y}px)`
+            : undefined,
+      }}
     >
       {calls.map((call) => (
         <div
@@ -183,7 +265,7 @@ export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
             <p className="truncate text-sm font-medium">{call.inviterName ?? "Someone"} is calling…</p>
             <p className="text-xs text-muted-foreground">{call.mode === "video" ? "Video call" : "Voice call"}</p>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1" inert={yieldStacking}>
             <Button size="icon" variant="ghost" aria-label="Silence ring" onClick={() => muteRing(call.attemptId)}>
               <BellOff className="size-4" />
             </Button>

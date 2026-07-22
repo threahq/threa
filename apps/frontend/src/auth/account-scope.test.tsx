@@ -4,6 +4,7 @@ import { AuthProvider } from "@/auth"
 import { AccountScopeProvider, useAccountScope, type AccountScopeValue } from "@/auth/account-scope"
 import { hasSeededWorkspaceCache, seedWorkspaceCache } from "@/stores/workspace-store"
 import { addIncomingCall, getIncomingCalls } from "@/stores/incoming-call-store"
+import { getFloatingSurfaceGeometry, publishFloatingSurfaceGeometry } from "@/stores/floating-surface-geometry-store"
 import type { CachedWorkspace } from "@/db"
 
 // PR-4a headline test. Mounts the real AuthProvider + AccountScopeProvider
@@ -175,6 +176,14 @@ describe("AccountScope", () => {
     })
     expect(getIncomingCalls()).toHaveLength(1)
 
+    // Same for the floating call surface's published geometry: it outlives the
+    // remount, so a stale square would keep displacing B's rings.
+    publishFloatingSurfaceGeometry({
+      rect: { x: 676, y: 440, width: 340, height: 320 },
+      protectedRects: [{ x: 684, y: 700, width: 324, height: 44 }],
+    })
+    expect(getFloatingSurfaceGeometry()).not.toBeNull()
+
     await act(async () => {
       await scope.switchAccount("workos_B")
     })
@@ -201,6 +210,7 @@ describe("AccountScope", () => {
     // Layer 3 — module store cache: flushed on switch.
     expect(hasSeededWorkspaceCache("workspace_A")).toBe(false)
     expect(getIncomingCalls()).toHaveLength(0)
+    expect(getFloatingSurfaceGeometry()).toBeNull()
   })
 
   it("flips a second tab over BroadcastChannel and serves no cross-account data", async () => {

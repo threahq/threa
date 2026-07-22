@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useCallLaunch } from "./call-launch-context"
+import { CALL_SURFACE_PROTECTED_ATTR } from "./call-surface-geometry"
 import type { MediaPermissionErrorKind } from "./media-permissions"
 
 // Distinct copy per permission-taxonomy class (plan §Permission UX). Each states
@@ -71,7 +72,7 @@ export function PreJoinGate({ onDark = false }: { onDark?: boolean } = {}) {
 
   if (state.status === "requesting") {
     return (
-      <div className="flex flex-col items-center gap-3 py-6 text-center">
+      <div {...{ [CALL_SURFACE_PROTECTED_ATTR]: "" }} className="flex flex-col items-center gap-3 py-6 text-center">
         <Loader2 className={cn("h-6 w-6 animate-spin", subtle)} aria-hidden />
         <p className={cn("text-sm", subtle)}>Joining…</p>
         <Button variant="ghost" size="sm" className={cancelClass} onClick={cancel}>
@@ -83,7 +84,7 @@ export function PreJoinGate({ onDark = false }: { onDark?: boolean } = {}) {
 
   if (state.status === "join_error") {
     return (
-      <div className="flex flex-col items-center gap-3 py-6 text-center">
+      <div {...{ [CALL_SURFACE_PROTECTED_ATTR]: "" }} className="flex flex-col items-center gap-3 py-6 text-center">
         <p className="text-sm font-medium">Couldn't start the call</p>
         <p className={cn("text-xs", subtle)}>The call service didn't respond. Try again in a moment.</p>
         <div className="flex gap-2">
@@ -101,7 +102,11 @@ export function PreJoinGate({ onDark = false }: { onDark?: boolean } = {}) {
   if (state.status === "permission_error") {
     const copy = PERMISSION_COPY[state.error.kind]
     return (
-      <div className="flex flex-col items-center gap-3 py-6 text-center" data-error-kind={state.error.kind}>
+      <div
+        {...{ [CALL_SURFACE_PROTECTED_ATTR]: "" }}
+        className="flex flex-col items-center gap-3 py-6 text-center"
+        data-error-kind={state.error.kind}
+      >
         <p className="text-sm font-medium">{copy.title}</p>
         <p className={cn("text-xs", subtle)}>{copy.body}</p>
         <div className="flex gap-2">
