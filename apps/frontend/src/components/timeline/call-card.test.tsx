@@ -86,6 +86,7 @@ describe("CallCard", () => {
     renderCard()
     expect(screen.getByText("Call in progress")).toBeTruthy()
     const join = screen.getByRole("button", { name: "Join" })
+    expect(join).toHaveClass("min-h-9")
     await userEvent.click(join)
     expect(launch).toHaveBeenCalledWith({
       workspaceId: "ws_1",
@@ -138,6 +139,7 @@ describe("CallCard", () => {
     const chat = screen.getByRole("link", { name: /Discuss this call/i })
     // Draft panel keyed on the card's event id — the call chat anchor.
     expect(chat.getAttribute("href")).toContain("draft%3Astream_1%3Aevt_call")
+    expect(chat).toHaveClass("min-h-9", "min-w-9")
   })
 
   it("renders the thread chip and hides Chat once the call has replies (live and ended)", () => {

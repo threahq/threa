@@ -175,7 +175,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardP
               to={replyUrl}
               aria-label="Discuss this call"
               title="Discuss this call in a thread"
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:min-h-0 sm:min-w-0 sm:justify-start"
             >
               <MessageSquareReply className="h-3 w-3" aria-hidden="true" />
               <span className="hidden sm:inline">Chat</span>
@@ -191,7 +191,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardP
                 disabled={callActive}
                 title={callActive ? "You're already in another call" : undefined}
                 className={cn(
-                  "rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-colors",
+                  "min-h-9 rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-colors sm:min-h-0",
                   callActive ? "opacity-50" : "hover:bg-primary/90"
                 )}
               >
