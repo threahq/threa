@@ -547,7 +547,11 @@ const claimedDelegationSchema = delegationSchema.extend({
 
 const delegationHeartbeatSchema = z.object({ claimExpiresAt: z.string().datetime() })
 
-const completedDelegationSchema = delegationSchema.extend({ resultMessageId: z.string().optional() })
+const completedDelegationSchema = delegationSchema.extend({
+  resultMessageId: z.string().optional(),
+  /** Thread containing the full result, for both legacy anchor and card-anchor completions. */
+  resultThreadId: z.string().optional(),
+})
 
 const delegationAccessRequestSchema = z.object({
   /** Absent when the bot already had access (`already_granted`); otherwise the open request's id. */
@@ -1140,7 +1144,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "completeDelegation",
     summary: "Complete a delegation",
     description:
-      "Complete the claimed delegation. When resultMarkdown is given, the result is posted to the delegation's stream in the same transaction as the completion, authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. It enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+      "Complete the claimed delegation. When resultMarkdown is given, the result is posted in a thread anchored on the delegation card in the same transaction as the completion, authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. The response includes resultMessageId and resultThreadId. It enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
     parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],

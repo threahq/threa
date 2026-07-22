@@ -3452,7 +3452,7 @@
         "operationId": "completeDelegation",
         "summary": "Complete a delegation",
         "tags": ["Delegations"],
-        "description": "Complete the claimed delegation. When resultMarkdown is given, the result is posted to the delegation's stream in the same transaction as the completion, authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. It enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+        "description": "Complete the claimed delegation. When resultMarkdown is given, a compact resultMessageId anchor is posted to the delegation stream and the full result is posted in resultThreadId. Both writes share the completion transaction. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -3527,7 +3527,8 @@
                         "resultMessageId": { "type": "string" },
                         "sourceConversationId": { "type": "string" },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "statusChangedAt": { "type": "string", "format": "date-time" }
+                        "statusChangedAt": { "type": "string", "format": "date-time" },
+                        "resultThreadId": { "type": "string" }
                       },
                       "required": ["id", "streamId", "title", "status", "createdAt", "statusChangedAt"],
                       "additionalProperties": false

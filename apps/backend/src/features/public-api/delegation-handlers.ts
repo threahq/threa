@@ -13,9 +13,9 @@ import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror
 import { withTransaction } from "../../db"
 import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"
-import type { EventService } from "../messaging"
+import { MessageRepository, type EventService } from "../messaging"
 import type { StreamService } from "../streams"
-import { listAccessibleStreamIds } from "../streams"
+import { listAccessibleStreamIds, StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import type { BotChannelService } from "../api-keys"
 import { hashCallbackToken } from "../agents"
@@ -135,6 +135,13 @@ export function createDelegationPublicApiHandlers({
     return token
   }
 
+  async function findResultThreadId(delegation: DelegatedTask): Promise<string | undefined> {
+    if (!delegation.resultMessageId) return undefined
+    const resultMessage = await MessageRepository.findById(pool, delegation.resultMessageId)
+    if (resultMessage && resultMessage.streamId !== delegation.streamId) return resultMessage.streamId
+    return (await StreamRepository.findByAnchor(pool, delegation.streamId, delegation.resultMessageId))?.id
+  }
+
   return {
     /** The claimable queue, filtered to streams the key's identity can access (INV-62 / channel grants). */
     async listDelegations(req: Request, res: Response) {
@@ -249,7 +256,11 @@ export function createDelegationPublicApiHandlers({
         delegation.claimTokenHash === hashCallbackToken(claimToken)
       ) {
         res.json({
-          data: { ...serializeDelegation(delegation), resultMessageId: delegation.resultMessageId ?? undefined },
+          data: {
+            ...serializeDelegation(delegation),
+            resultMessageId: delegation.resultMessageId ?? undefined,
+            resultThreadId: await findResultThreadId(delegation),
+          },
         })
         return
       }
@@ -282,8 +293,14 @@ export function createDelegationPublicApiHandlers({
       const contentMarkdown = resultMarkdown ? normalizeMessage(resultMarkdown) : null
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
+      const useLegacyResultAnchor = req.apiVersion === "2026-07-12"
+      const anchorMarkdown =
+        useLegacyResultAnchor && contentMarkdown
+          ? normalizeMessage(`✓ Completed: **${delegation.title}**. Result in thread.`)
+          : null
+      const anchorJson = anchorMarkdown ? parseMarkdown(anchorMarkdown, undefined, toEmoji) : null
 
-      const { completed, resultMessageId } = await withTransaction(pool, async (client: PoolClient) => {
+      const { completed, resultMessageId, resultThreadId } = await withTransaction(pool, async (client: PoolClient) => {
         // Validate the claim BEFORE any write (FOR UPDATE, token-guarded): an
         // invalid or lapsed token does no work, and the row lock serializes
         // complete-vs-cancel — the findActiveClaimForUpdate shape.
@@ -292,20 +309,42 @@ export function createDelegationPublicApiHandlers({
           throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
         }
         let resultMessageId: string | undefined
+        let resultThreadId: string | undefined
         let threadStreamId: string | undefined
         if (contentMarkdown && contentJson && author) {
-          // The result thread anchors on the delegation's own card (its
-          // `delegation:created` event) — no synthetic anchor message. The card
-          // IS the timeline row; the full result lives one level down in the
-          // thread, and `result_message_id` points at that result message.
-          const createdEventId = await delegationService.findCreatedEventId(client, { workspaceId, id })
-          if (!createdEventId) {
-            throw new HttpError("Delegation card event not found", { status: 500, code: "DELEGATION_EVENT_MISSING" })
+          let threadAnchorId: string
+          if (useLegacyResultAnchor && anchorMarkdown && anchorJson) {
+            // Preserve the 2026-07-12 contract: resultMessageId names the compact
+            // message in the delegation stream, whose child thread holds the result.
+            const { message: anchor } = await eventService.createMessageInTransaction(client, {
+              workspaceId,
+              streamId: delegation.streamId,
+              authorId: author.authorId,
+              authorType: author.authorType,
+              contentJson: anchorJson,
+              contentMarkdown: anchorMarkdown,
+              clientMessageId: `delegation:${delegation.id}`,
+              sentVia: author.sentVia,
+            })
+            threadAnchorId = anchor.id
+            resultMessageId = anchor.id
+          } else {
+            // Current contract: the delegation card is the anchor and
+            // resultMessageId names the full result inside that card's thread.
+            const createdEventId = await delegationService.findCreatedEventId(client, { workspaceId, id })
+            if (!createdEventId) {
+              throw new HttpError("Delegation card event not found", {
+                status: 500,
+                code: "DELEGATION_EVENT_MISSING",
+              })
+            }
+            threadAnchorId = createdEventId
           }
+
           const thread = await streamService.createThreadOn(client, {
             workspaceId,
             parentStreamId: delegation.streamId,
-            parentAnchorId: createdEventId,
+            parentAnchorId: threadAnchorId,
             createdBy: author.authorId,
             createdByType: author.authorType === AuthorTypes.BOT ? "bot" : "user",
           })
@@ -321,8 +360,11 @@ export function createDelegationPublicApiHandlers({
             sentVia: author.sentVia,
             metadata,
           })
-          resultMessageId = result.id
-          threadStreamId = thread.id
+          resultThreadId = thread.id
+          if (!useLegacyResultAnchor) {
+            resultMessageId = result.id
+            threadStreamId = thread.id
+          }
         }
         const completed = await delegationService.completeInTransaction(client, {
           workspaceId,
@@ -334,10 +376,10 @@ export function createDelegationPublicApiHandlers({
         if (!completed) {
           throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
         }
-        return { completed, resultMessageId }
+        return { completed, resultMessageId, resultThreadId }
       })
 
-      res.json({ data: { ...serializeDelegation(completed), resultMessageId } })
+      res.json({ data: { ...serializeDelegation(completed), resultMessageId, resultThreadId } })
     },
 
     /** Terminal failure: records why on the card. */

@@ -140,15 +140,25 @@ describe("VERSION_CHANGES: the anchorId stream change (first real entry)", () =>
   const anchorChange = VERSION_CHANGES.find((c) => c.operations.has("listStreams"))!
   const ctx = { operationId: "getStream" } as const
 
-  test("registry is ascending and the entry is dated at the current version, scoped to the stream-embedding operations", () => {
+  test("registry is ascending and scopes every operation whose thread-anchor behavior changed", () => {
     expect(() => assertChangesAscending(VERSION_CHANGES)).not.toThrow()
     expect(anchorChange.version).toBe(CURRENT_API_VERSION)
-    expect([...anchorChange.operations].sort()).toEqual(["getStream", "listStreams", "updateStream"])
+    expect([...anchorChange.operations].sort()).toEqual([
+      "completeDelegation",
+      "getStream",
+      "listStreams",
+      "updateStream",
+    ])
   })
 
   test("an older pin is behind on it; a caller at the current version is not", () => {
     expect(changesAfter("2026-07-12" as never)).toContain(anchorChange)
     expect(changesAfter(CURRENT_API_VERSION)).not.toContain(anchorChange)
+  })
+
+  test("completion payloads need no structural downgrade because behavior branches before side effects", () => {
+    const payload = { data: { resultMessageId: "msg_anchor", resultThreadId: "stream_thread" } }
+    expect(anchorChange.downgradeResponse!(payload, { operationId: "completeDelegation" })).toBe(payload)
   })
 
   test("downgradeResponse lowers a message-anchored stream to parentMessageId (single-object envelope)", () => {
@@ -178,6 +188,22 @@ describe("VERSION_CHANGES: the anchorId stream change (first real entry)", () =>
       hasMore: true,
       cursor: "cur_1",
     })
+  })
+
+  test("downgradeSpec restores the legacy delegation completion description", () => {
+    const spec: OpenApiSpec = {
+      paths: {
+        "/delegations/{id}/complete": {
+          post: {
+            operationId: "completeDelegation",
+            description: "Current card-thread behavior",
+          },
+        },
+      },
+    }
+    const out = anchorChange.downgradeSpec!(spec) as any
+    expect(out.paths["/delegations/{id}/complete"].post.description).toContain("compact resultMessageId anchor")
+    expect((spec as any).paths["/delegations/{id}/complete"].post.description).toBe("Current card-thread behavior")
   })
 
   test("downgradeSpec restores an optional parentMessageId and removes anchorId from a stream schema node", () => {

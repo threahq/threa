@@ -4,9 +4,9 @@ Generated from the version-change modules. Do not edit by hand.
 
 ## 2026-07-22
 
-Streams: `parentMessageId` replaced by `anchorId` (`msg_…` / `event_…` — threads can now anchor on cards).
+Threads can now anchor on cards: stream `parentMessageId` became `anchorId`, and current-version delegation completions put results directly in the card thread while 2026-07-12 retains its synthetic message anchor.
 
-Affected operations: getStream, listStreams, updateStream
+Affected operations: completeDelegation, getStream, listStreams, updateStream
 
 ## 2026-07-12
 

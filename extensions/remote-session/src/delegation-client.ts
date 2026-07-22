@@ -120,15 +120,15 @@ export class DelegationClient {
   }
 
   /**
-   * Terminal success. `resultMarkdown` posts into the stream as the key's
-   * identity in the same transaction as the flip; retries with the same token
-   * are idempotent (the committed outcome comes back, nothing double-posts).
+   * Terminal success. `resultMarkdown` posts into the delegation card's thread
+   * as the key's identity in the same transaction as the flip; retries with the
+   * same token are idempotent (the committed outcome comes back, nothing double-posts).
    */
   async complete(
     id: string,
     claimToken: string,
     body: { resultMarkdown?: string; metadata?: Record<string, string> }
-  ): Promise<DelegationSummary & { resultMessageId?: string }> {
+  ): Promise<DelegationSummary & { resultMessageId?: string; resultThreadId?: string }> {
     return this.request(this.path(`/${id}/complete`), {
       method: "POST",
       body: JSON.stringify(body),

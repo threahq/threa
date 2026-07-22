@@ -9,6 +9,7 @@ import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion, type OpenApiSpec, t
  * responses carry stream *ids*, not stream objects.
  */
 const STREAM_ANCHOR_OPERATIONS = new Set<OperationId>(["listStreams", "getStream", "updateStream"])
+const THREAD_ANCHOR_CHANGE_OPERATIONS = new Set<OperationId>([...STREAM_ANCHOR_OPERATIONS, "completeDelegation"])
 
 /** Lower one serialized stream object from the anchorId shape to the legacy parentMessageId shape. */
 function downgradeStreamAnchor(stream: Record<string, unknown>): Record<string, unknown> {
@@ -37,7 +38,15 @@ function restoreParentMessageIdInSpec(node: unknown): unknown {
         },
       }
     }
-    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, restoreParentMessageIdInSpec(v)]))
+    const restored = Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, restoreParentMessageIdInSpec(v)]))
+    if (obj.operationId === "completeDelegation") {
+      return {
+        ...restored,
+        description:
+          "Complete the claimed delegation. When resultMarkdown is given, a compact resultMessageId anchor is posted to the delegation stream and the full result is posted in resultThreadId. Both writes share the completion transaction. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+      }
+    }
+    return restored
   }
   return node
 }
@@ -47,9 +56,12 @@ export const VERSION_CHANGES: VersionChange[] = [
   {
     version: "2026-07-22",
     description:
-      "Streams: `parentMessageId` replaced by `anchorId` (`msg_…` / `event_…` — threads can now anchor on cards).",
-    operations: STREAM_ANCHOR_OPERATIONS,
-    downgradeResponse: (payload) => {
+      "Threads can now anchor on cards: stream `parentMessageId` became `anchorId`, and current-version delegation completions put results directly in the card thread while 2026-07-12 retains its synthetic message anchor.",
+    operations: THREAD_ANCHOR_CHANGE_OPERATIONS,
+    downgradeResponse: (payload, context) => {
+      // Completion side effects branch on req.apiVersion before this response
+      // transform; resultThreadId is additive and safe for pinned clients.
+      if (context.operationId === "completeDelegation") return payload
       if (payload === null || typeof payload !== "object") return payload
       const envelope = payload as Record<string, unknown>
       const data = envelope.data

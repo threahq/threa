@@ -9,8 +9,8 @@ import { hashCallbackToken } from "../agents"
 import type { BotChannelService } from "../api-keys"
 import type { DelegatedTask, DelegationService } from "../delegations"
 import type { BotAccessRequestService } from "../bot-access-requests"
-import type { EventService } from "../messaging"
-import type { StreamService } from "../streams"
+import { MessageRepository, type EventService } from "../messaging"
+import { StreamRepository, type StreamService } from "../streams"
 import { BotRepository } from "./bot-repository"
 import { createDelegationPublicApiHandlers } from "./delegation-handlers"
 
@@ -60,14 +60,23 @@ interface RequestOptions {
   token?: string
   body?: unknown
   query?: unknown
+  apiVersion?: "2026-07-12" | "2026-07-22"
 }
 
-function makeRequest({ userKey = true, botKey = false, token, body = {}, query = {} }: RequestOptions = {}) {
+function makeRequest({
+  userKey = true,
+  botKey = false,
+  token,
+  body = {},
+  query = {},
+  apiVersion = "2026-07-22",
+}: RequestOptions = {}) {
   return {
     workspaceId: "ws_1",
     params: { delegationId: "dlg_1" },
     body,
     query,
+    apiVersion,
     user: userKey ? { id: "usr_1", name: "Kris" } : undefined,
     userApiKey: userKey ? { id: "uak_1", workspaceId: "ws_1", userId: "usr_1", scopes: new Set() } : undefined,
     botApiKey: botKey ? { id: "bak_1", workspaceId: "ws_1", botId: "bot_1", scopes: new Set() } : undefined,
@@ -377,7 +386,53 @@ describe("completeDelegation", () => {
       resultMessageId: "msg_result",
       threadStreamId: "stream_thread",
     })
-    expect((payloads[0] as { data: { resultMessageId?: string } }).data.resultMessageId).toBe("msg_result")
+    expect((payloads[0] as { data: { resultMessageId?: string; resultThreadId?: string } }).data).toMatchObject({
+      resultMessageId: "msg_result",
+      resultThreadId: "stream_thread",
+    })
+  })
+
+  it("preserves the 2026-07-12 synthetic result anchor contract", async () => {
+    const createMessageInTransaction = mock()
+      .mockResolvedValueOnce({ message: { id: "msg_anchor" } })
+      .mockResolvedValueOnce({ message: { id: "msg_result" } }) as unknown as EventService["createMessageInTransaction"]
+    const { handlers, completeInTransaction, createThreadOn } = transactionalHandlers({
+      createMessageInTransaction,
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.completeDelegation(
+      makeRequest({
+        apiVersion: "2026-07-12",
+        token: "tok",
+        body: { resultMarkdown: "All done.", metadata: { "github.pr": "https://x/1" } },
+      }),
+      res
+    )
+
+    const messageCalls = (createMessageInTransaction as ReturnType<typeof mock>).mock.calls
+    expect(messageCalls).toHaveLength(2)
+    expect(messageCalls[0][1]).toMatchObject({
+      streamId: "stream_1",
+      clientMessageId: "delegation:dlg_1",
+    })
+    expect((createThreadOn as ReturnType<typeof mock>).mock.calls[0][1]).toMatchObject({
+      parentStreamId: "stream_1",
+      parentAnchorId: "msg_anchor",
+    })
+    expect(messageCalls[1][1]).toMatchObject({
+      streamId: "stream_thread",
+      clientMessageId: "delegation:dlg_1:result",
+      metadata: { "github.pr": "https://x/1" },
+    })
+    expect((completeInTransaction as ReturnType<typeof mock>).mock.calls[0][1]).toMatchObject({
+      resultMessageId: "msg_anchor",
+      threadStreamId: undefined,
+    })
+    expect((payloads[0] as { data: { resultMessageId?: string; resultThreadId?: string } }).data).toMatchObject({
+      resultMessageId: "msg_anchor",
+      resultThreadId: "stream_thread",
+    })
   })
 
   it("404s (rolling the message back with the transaction) when the claim CAS matches nothing", async () => {
@@ -464,6 +519,7 @@ describe("completeDelegation", () => {
       claimTokenHash: hashCallbackToken("tok"),
     })
     const completeInTransaction = mock(async () => null)
+    spyOn(MessageRepository, "findById").mockResolvedValue({ id: "msg_result", streamId: "stream_thread" } as never)
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => committed), completeInTransaction },
       streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
@@ -473,10 +529,35 @@ describe("completeDelegation", () => {
     await handlers.completeDelegation(makeRequest({ token: "tok", body: { resultMarkdown: "All done." } }), res)
 
     expect(completeInTransaction).not.toHaveBeenCalled()
-    expect((payloads[0] as { data: { status: string; resultMessageId?: string } }).data).toMatchObject({
+    expect(
+      (payloads[0] as { data: { status: string; resultMessageId?: string; resultThreadId?: string } }).data
+    ).toMatchObject({
       status: DelegationStatuses.COMPLETED,
       resultMessageId: "msg_result",
+      resultThreadId: "stream_thread",
     })
+  })
+
+  it("reconstructs a legacy result thread on an idempotent retry", async () => {
+    const committed = makeDelegation({
+      status: DelegationStatuses.COMPLETED,
+      resultMessageId: "msg_anchor",
+      claimTokenHash: hashCallbackToken("tok"),
+    })
+    spyOn(MessageRepository, "findById").mockResolvedValue({ id: "msg_anchor", streamId: "stream_1" } as never)
+    spyOn(StreamRepository, "findByAnchor").mockResolvedValue({ id: "stream_legacy_thread" } as never)
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => committed) },
+      streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.completeDelegation(
+      makeRequest({ apiVersion: "2026-07-12", token: "tok", body: { resultMarkdown: "All done." } }),
+      res
+    )
+
+    expect((payloads[0] as { data: { resultThreadId?: string } }).data.resultThreadId).toBe("stream_legacy_thread")
   })
 
   it("still 404s a retry bearing the wrong token", async () => {
