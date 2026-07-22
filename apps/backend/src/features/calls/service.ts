@@ -70,6 +70,13 @@ export interface StartCallResult {
   created: boolean
   participant: CallParticipant
   endpoint: CallEndpoint
+  /**
+   * The `call_started` event id — the anchor for the call's chat thread (a thread
+   * on this event, created lazily on first chat open). Handed to the client so the
+   * dock can open the thread panel without loading the host-stream timeline. Null
+   * only if the started card row is somehow missing (never for a fresh create).
+   */
+  chatAnchorId: string | null
 }
 
 export interface JoinCallResult {
@@ -187,14 +194,18 @@ export class CallService {
       // A newly created call is a slotted broadcast row on the host stream
       // (INV-4/7): append it in the SAME transaction as the call insert so every
       // member sees the live card and it survives reload. A join onto an existing
-      // call adds no row (the card already exists) — only the roster changes.
+      // call adds no row (the card already exists) — only the roster changes, so
+      // resolve the pre-existing card's event id to hand back as the chat anchor.
+      let chatAnchorId: string | null
       if (created) {
-        await this.appendCallStarted(client, {
+        chatAnchorId = await this.appendCallStarted(client, {
           call: admitted.call,
           streamId: params.streamId,
           streamVisibility: stream.visibility,
           startedBy: params.userId,
         })
+      } else {
+        chatAnchorId = await CallRepository.findCallStartedEventId(client, params.streamId, targetCallId)
       }
 
       if (created && stream.type === StreamTypes.DM) {
@@ -225,7 +236,13 @@ export class CallService {
       }
 
       return {
-        result: { call: admitted.call, created, participant: admitted.participant, endpoint: admitted.endpoint },
+        result: {
+          call: admitted.call,
+          created,
+          participant: admitted.participant,
+          endpoint: admitted.endpoint,
+          chatAnchorId,
+        },
         closedSessionIds: admitted.closedSessionIds,
       }
     })
@@ -1453,7 +1470,7 @@ export class CallService {
   private async appendCallStarted(
     client: PoolClient,
     args: { call: Call; streamId: string; streamVisibility: Visibility; startedBy: string }
-  ): Promise<void> {
+  ): Promise<string> {
     const payload: CallStartedEventPayload = {
       callId: args.call.id,
       mode: args.call.mode,
@@ -1477,6 +1494,7 @@ export class CallService {
       streamVisibility: args.streamVisibility,
       memberUserIds,
     })
+    return event.id
   }
 
   /**

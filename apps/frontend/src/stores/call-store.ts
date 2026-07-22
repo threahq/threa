@@ -102,6 +102,13 @@ export interface CallState {
   callId: string | null
   workspaceId: string | null
   streamId: string | null
+  /**
+   * The `call_started` event id — the anchor for this call's chat thread. Handed
+   * back by the start/join REST response so the dock's Chat control can open the
+   * thread panel (draft on the anchor, or the real thread once it exists) without
+   * loading the host-stream timeline. Null when the started card row is missing.
+   */
+  chatAnchorId: string | null
   mode: CallMode | null
   roster: CallRosterParticipant[]
   rosterVersion: number
@@ -143,6 +150,7 @@ function idleState(): CallState {
     callId: null,
     workspaceId: null,
     streamId: null,
+    chatAnchorId: null,
     mode: null,
     roster: [],
     rosterVersion: 0,
@@ -200,8 +208,16 @@ export function setDesktopSurfaceOverride(desktopSurfaceOverride: DesktopSurface
   setState({ ...state, desktopSurfaceOverride })
 }
 
-export function setCallSession(args: { callId: string; workspaceId: string; streamId: string; mode: CallMode }): void {
-  setState({ ...state, ...args, phase: "joining", connectedAt: null })
+export function setCallSession(args: {
+  callId: string
+  workspaceId: string
+  streamId: string
+  mode: CallMode
+  /** The `call_started` event id anchoring this call's chat thread; null if unknown. */
+  chatAnchorId?: string | null
+}): void {
+  const { chatAnchorId = null, ...session } = args
+  setState({ ...state, ...session, chatAnchorId, phase: "joining", connectedAt: null })
 }
 
 export function setCallRoster(roster: CallRosterParticipant[], rosterVersion: number): void {

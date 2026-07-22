@@ -15,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { CallDeviceState, CallDiagnostics } from "@/stores/call-store"
 import { useCallManager } from "./call-manager-context"
-import { CameraButton, FlipButton, LeaveButton, MuteButton } from "./call-control-buttons"
+import { CameraButton, ChatButton, FlipButton, LeaveButton, MuteButton } from "./call-control-buttons"
 import { useCallDevices, useCallDiagnostics } from "./call-store-hooks"
 
 // setSinkId (output device selection) is unsupported on Safari/Firefox; hide the
@@ -188,6 +188,7 @@ export function CallControls() {
       <FlipButton />
       <DevicePickerMenu devices={devices} />
       <ConnectionDiagnostics diagnostics={diagnostics} />
+      <ChatButton />
       <LeaveButton />
     </div>
   )

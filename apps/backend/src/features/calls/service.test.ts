@@ -132,6 +132,9 @@ describe("CallService.startCall — product glare", () => {
     })
 
     expect(result).toMatchObject({ created: true, call: { id: "call_1" }, endpoint: { id: "callep_1" } })
+    // The freshly-appended `call_started` event is the chat-thread anchor handed
+    // back to the client (stubbed StreamEventRepository.insert → { id: "evt_1" }).
+    expect(result.chatAnchorId).toBe("evt_1")
     expect(admit).toHaveBeenCalledTimes(1)
     expect(insert).toHaveBeenCalledTimes(1)
   })
@@ -148,6 +151,9 @@ describe("CallService.startCall — product glare", () => {
     )
     stubCleanEndpointAdmission()
     spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
+    // A join onto an existing call appends no new card — the chat anchor is the
+    // pre-existing `call_started` event, resolved by id from the host stream.
+    const findAnchor = spyOn(CallRepository, "findCallStartedEventId").mockResolvedValue("event_existing")
 
     const result = await makeService().startCall({
       workspaceId: "ws_1",
@@ -157,6 +163,8 @@ describe("CallService.startCall — product glare", () => {
     })
 
     expect(result).toMatchObject({ created: false, call: { id: "call_winner" } })
+    expect(result.chatAnchorId).toBe("event_existing")
+    expect(findAnchor).toHaveBeenCalledWith(expect.anything(), "stream_1", "call_winner")
     expect(findOpen).toHaveBeenCalledTimes(1)
     expect(admit).toHaveBeenCalledTimes(1)
   })

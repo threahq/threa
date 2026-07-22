@@ -58,6 +58,11 @@ export function useCallConnectedAt(): number | null {
   return useCallSelector((s) => s.connectedAt)
 }
 
+/** The `call_started` event id anchoring the live call's chat thread, or null. */
+export function useCallChatAnchor(): string | null {
+  return useCallSelector((s) => s.chatAnchorId)
+}
+
 export function useCallMode(): CallMode | null {
   return useCallSelector((s) => s.mode)
 }

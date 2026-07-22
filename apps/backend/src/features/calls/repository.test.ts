@@ -113,6 +113,27 @@ describe("CallRepository — active-call glare + grace re-verification", () => {
     expect(sql).toContain("ORDER BY id")
     expect(sql).toContain("FOR UPDATE")
   })
+
+  it("findCallStartedEventId resolves the chat anchor by stream + call_started + payload callId", async () => {
+    const captured: Captured = { text: "" }
+    const id = await CallRepository.findCallStartedEventId(
+      createQuerier(captured, [{ id: "event_chat_1" }]),
+      "stream_1",
+      "call_1"
+    )
+    expect(id).toBe("event_chat_1")
+    const sql = normalize(captured.text)
+    expect(sql).toContain("FROM stream_events")
+    expect(sql).toContain("stream_id =")
+    expect(sql).toContain("event_type = 'call_started'")
+    expect(sql).toContain("payload->>'callId' =")
+  })
+
+  it("findCallStartedEventId returns null when no matching card exists", async () => {
+    const captured: Captured = { text: "" }
+    const id = await CallRepository.findCallStartedEventId(createQuerier(captured, []), "stream_1", "call_1")
+    expect(id).toBeNull()
+  })
 })
 
 describe("CallParticipantRepository — actor-conditional admission", () => {

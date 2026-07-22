@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { act } from "@testing-library/react"
+import { MemoryRouter } from "react-router-dom"
 import { render, screen, userEvent } from "@/test"
 import * as useMobileModule from "@/hooks/use-mobile"
 import { clearCallState, setCallSession, setCallPhase, setCallDevices, type CallDeviceState } from "@/stores/call-store"
@@ -121,6 +122,47 @@ describe("DevicePickerMenu — camera group", () => {
     await userEvent.click(screen.getByLabelText("Devices"))
     expect(await screen.findByText("Microphone")).toBeInTheDocument()
     expect(screen.queryByText("Camera")).toBeNull()
+  })
+})
+
+describe("CallControls — call chat", () => {
+  function renderRouted(manager: CallController) {
+    return render(
+      <MemoryRouter initialEntries={["/w/ws_1/s/other"]}>
+        <CallManagerProvider manager={manager}>
+          <CallControls />
+        </CallManagerProvider>
+      </MemoryRouter>
+    )
+  }
+
+  it("opens the call chat thread on the call_started anchor of the call's stream", () => {
+    act(() => {
+      setCallSession({
+        callId: "call_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "video",
+        chatAnchorId: "event_chat_1",
+      })
+      setCallPhase("connected")
+    })
+    renderRouted(makeManager())
+    const chat = screen.getByRole("link", { name: "Open call chat" })
+    const href = chat.getAttribute("href") ?? ""
+    // Absolute host-stream URL (dock is above PanelProvider) + draft panel keyed
+    // on the call_started event id.
+    expect(href).toContain("/w/ws_1/s/stream_1")
+    expect(href).toContain("draft%3Astream_1%3Aevent_chat_1")
+  })
+
+  it("hides the chat control until the anchor is known", () => {
+    act(() => {
+      setCallSession({ callId: "call_1", workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+      setCallPhase("connected")
+    })
+    renderRouted(makeManager())
+    expect(screen.queryByRole("link", { name: "Open call chat" })).toBeNull()
   })
 })
 
