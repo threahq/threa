@@ -18,14 +18,14 @@ import {
   watchUnarchived,
 } from "./commands"
 import { die } from "./errors"
-import { reconnectPi } from "./reconnect"
+import { reconnectRuntime } from "./reconnect"
 
 async function main(): Promise<void> {
   const [, , command, ...args] = process.argv
   if (!command || command === "help" || command === "--help" || command === "-h") usage()
   if (command === "spawn") return spawnAgent(parseSpawn(args))
   if (command === "list") return listAgents()
-  if (command === "reconnect") return reconnectPi(parseReconnect(args))
+  if (command === "reconnect") return reconnectRuntime(parseReconnect(args))
   if (
     command === "up" ||
     command === "revive-unarchived" ||

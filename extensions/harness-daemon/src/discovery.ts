@@ -18,12 +18,32 @@ interface ClaudeChannelLaunch {
   runtimeSessionId?: string
 }
 
+export interface ClaudeLaunch {
+  executable: string
+  name?: string
+  channel: string
+  mcpConfig?: string
+  skipPermissions: boolean
+  environment: Array<{ name: string; value: string }>
+}
+
 export interface PiLaunch {
   executable: string
   sessionId: string
   environment: Array<{ name: string; value: string }>
 }
 
+const CLAUDE_ENVIRONMENT = new Set([
+  "THREA_INSTANCE_ID",
+  "THREA_RUNTIME_SESSION_ID",
+  "THREA_DISPLAY_NAME",
+  "THREA_DEFAULT_LABEL",
+  "THREA_HARNESSD_ENTRYPOINT",
+  "THREA_HARNESSD_BUN_BIN",
+  "THREA_COLD_START_IF_ARCHIVED",
+  "THREA_COLD_START_IF_MISSING",
+  "THREA_EXPECTED_ROOT_STREAM_ID",
+])
 const PI_ENVIRONMENT = new Set([
   "THREA_HARNESSD_ENTRYPOINT",
   "THREA_HARNESSD_BUN_BIN",
@@ -192,6 +212,59 @@ export function parsePiLaunch(command: string): PiLaunch | undefined {
   const runtimeIdentity = environment.find(({ name }) => name === "THREA_RUNTIME_SESSION_ID")?.value
   if (runtimeIdentity && runtimeIdentity !== sessionId) return undefined
   return { executable, sessionId, environment }
+}
+
+export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
+  const words = strictLaunchWords(command)
+  if (!words?.length) return undefined
+  let index = 0
+  const environment: ClaudeLaunch["environment"] = []
+  const environmentNames = new Set<string>()
+  if (basename(words[index]!) === "env") {
+    index += 1
+    while (index < words.length) {
+      const assignment = parseAssignment(words[index]!)
+      if (!assignment) break
+      if (
+        !CLAUDE_ENVIRONMENT.has(assignment.name) ||
+        environmentNames.has(assignment.name) ||
+        !assignment.value ||
+        /[$`*?[\]{};|&<>]/.test(assignment.value)
+      )
+        return undefined
+      environmentNames.add(assignment.name)
+      environment.push(assignment)
+      index += 1
+    }
+  } else if (parseAssignment(words[index]!)) return undefined
+
+  const executable = words[index++]
+  if (!executable || basename(executable) !== "claude") return undefined
+  let name: string | undefined
+  let channel: string | undefined
+  let mcpConfig: string | undefined
+  let skipPermissions = false
+  while (index < words.length) {
+    const option = words[index++]!
+    if (option === "--" || option === "--resume" || option.includes("=")) return undefined
+    if (option === "--name") {
+      const value = words[index++]
+      if (name || !value?.match(/^threa\.[A-Za-z0-9_-]+$/)) return undefined
+      name = value
+    } else if (option === "--dangerously-load-development-channels") {
+      const value = words[index++]
+      if (channel || !value?.match(/^server:[A-Za-z0-9_-]+$/)) return undefined
+      channel = value.slice("server:".length)
+    } else if (option === "--dangerously-skip-permissions") {
+      if (skipPermissions) return undefined
+      skipPermissions = true
+    } else if (option === "--mcp-config") {
+      const value = words[index++]
+      if (mcpConfig || !value || value.startsWith("-") || /^[{[]/.test(value.trim())) return undefined
+      mcpConfig = value
+    } else return undefined
+  }
+  return channel ? { executable, name, channel, mcpConfig, skipPermissions, environment } : undefined
 }
 
 export function findLocalPiPane(
