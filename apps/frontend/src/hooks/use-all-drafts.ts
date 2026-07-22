@@ -3,7 +3,7 @@ import { useCallback, useMemo } from "react"
 import { db, type CachedBoardPost, type CachedDraft, type CachedStream } from "@/db"
 import { createConversationPanelId } from "@/contexts"
 import { parseBoardDraftKey, type ParsedBoardDraftKey } from "@/lib/board/draft-keys"
-import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
+import { THREAD_ANCHORABLE_EVENT_TYPES, type CompanionMode } from "@threa/types"
 import {
   deleteDraftScratchpadFromCache,
   useComposerLoadedFromStore,
@@ -15,7 +15,6 @@ import { deleteDraftById } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
 import { purgeScopeDrafts } from "./use-draft-message"
-import { THREAD_ANCHORABLE_EVENT_TYPES, type CompanionMode } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
