@@ -367,6 +367,29 @@ describe("RemoteSession.onReplyTimeout", () => {
   })
 })
 
+describe("RemoteSession status snapshot", () => {
+  test("reports link, socket, and active-turn state without mutation", async () => {
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+
+    expect(session.statusSnapshot).toEqual({
+      stopped: false,
+      linkState: "unlinked",
+      rootStreamId: undefined,
+      activeStreamId: undefined,
+      socketConnected: false,
+      inflightCount: 0,
+      activeTurnStreamId: undefined,
+    })
+
+    seedInflight(session, makeInvocation({ id: "binv_status" }))
+    expect(session.statusSnapshot.inflightCount).toBe(1)
+    await session.shutdown()
+    expect(session.statusSnapshot.stopped).toBe(true)
+  })
+})
+
 describe("RemoteSession session-archived handling (grace window)", () => {
   function makeGraceSession(params: {
     client: ThreaClient

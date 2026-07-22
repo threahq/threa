@@ -13,6 +13,7 @@ export {
   type ModelSuggestionInfo,
   type RemoteSessionDelegate,
   type RemoteSessionOptions,
+  type RemoteSessionStatusSnapshot,
   type RuntimeDescriptor,
   type SendResult,
   type SessionControlActuator,

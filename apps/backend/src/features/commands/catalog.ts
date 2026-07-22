@@ -16,6 +16,7 @@ export const SESSION_CONTROL_COMMAND_NAMES = [
   "steer",
   "stop",
   "kick",
+  "status",
   "run",
   "carry-on",
 ] as const
@@ -110,6 +111,12 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
     {
       name: "kick",
       description: "Nudge the linked session to continue",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+    },
+    {
+      name: "status",
+      description: "Show the linked session's connection, activity, and current terminal view",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
     },

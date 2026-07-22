@@ -2,8 +2,9 @@
 
 Status: **implemented + tmux mechanics live-verified** on `feat/harness-steer`, 2026-06-26.
 Author: agent session. Command set shipped: `stop`, `steer`, `model`, `compact`, `run`, `reload` —
-later joined by `thinking`, `carry-on` (quota carry-on; see `docs/quota-carry-on.md`), and
-`kick` (an Enter nudge routed through harnessd). The
+later joined by `thinking`, `carry-on` (quota carry-on; see `docs/quota-carry-on.md`),
+`kick` (an Enter nudge routed through harnessd), and `status` (Threa connectivity, local session
+metadata, and a bounded capture of the current tmux pane). The
 genuinely-novel tmux paths ($TMUX_PANE inheritance, Esc interrupt, `/model`) are verified against
 Claude Code v2.1.193 (and live testing found + fixed two bugs — see the checklist); the full
 dispatch round-trip through a real scratchpad is still only unit-tested.
@@ -115,6 +116,7 @@ Notes:
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **stop**            | `Escape`                                                                                                                                 | Complete every in-flight invocation (interrupted), ack the stop invocation: "Stopped Claude."                                                                                                                                                                                                                                                           |
 | **kick**            | `harnessd kick <runtime-session-id>` → `Enter`                                                                                           | Nudge a managed pane past a blocking prompt, then acknowledge the command.                                                                                                                                                                                                                                                                              |
+| **status**          | `tmux display-message` + `capture-pane`                                                                                                  | Report channel/link/WebSocket state, active work and blockers, runtime/tmux/git identity, and the current visible pane. Read-only; no key injection.                                                                                                                                                                                                    |
 | **steer `<text>`**  | Turn in flight: `Ctrl-U` + bracketed paste + `Enter` (Claude's native mid-turn steering, **no Escape**). Idle: the interrupt path below. | Turn in flight: record a `steer` step on the RUNNING invocation's trace, fold queued msgs + steer text into the injected block, close swept msgs `noResponse`, complete /steer immediately — the running turn keeps its trace and its `reply` answers the steer. Idle: drain + one combined turn under the /steer invocation (original semantics below) |
 | **model `<alias>`** | `typeLine("/model <alias>")`                                                                                                             | Ack "Model set to `<alias>`." (best-effort)                                                                                                                                                                                                                                                                                                             |
 | **compact**         | `typeLine("/compact")`                                                                                                                   | Ack                                                                                                                                                                                                                                                                                                                                                     |
@@ -194,7 +196,7 @@ The channel advertises in its `bot:hello` / presence `capabilities` **only when 
   "supportsActiveScratchpad": true,
   "supportsPersistentSessions": true,
   "supportsSessionControlCommands": true,
-  "sessionControlCommands": ["stop", "steer", "kick", "model", "thinking", "compact", "run", "reload"],
+  "sessionControlCommands": ["stop", "steer", "kick", "status", "model", "thinking", "compact", "run", "reload"],
   "modelSuggestions": [
     { "value": "opus", "label": "Opus", "description": "Opus 4.8 with 1M context · Best for everyday, complex tasks" },
     // …built-in aliases (default/opus/sonnet/haiku) plus models discovered from the

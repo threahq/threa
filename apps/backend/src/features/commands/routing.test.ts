@@ -22,7 +22,7 @@ describe("resolveRuntimeInvocationRouting", () => {
   })
 
   it("routes every other command to session-control regardless of runtime kind", () => {
-    for (const name of ["model", "compact", "thinking", "skill", "reload", "shell", "run"]) {
+    for (const name of ["model", "compact", "thinking", "skill", "reload", "shell", "status", "run"]) {
       for (const kind of [BotRuntimeKinds.PI_LOCAL, BotRuntimeKinds.CLAUDE_CODE_CHANNEL]) {
         expect(resolveRuntimeInvocationRouting(name, kind)).toEqual({
           trigger: BotInvocationTriggers.SESSION_CONTROL,

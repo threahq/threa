@@ -18,6 +18,96 @@ function paneTarget(): string | undefined {
   return pane || undefined
 }
 
+export interface TmuxPaneSnapshot {
+  sessionName: string
+  windowName: string
+  windowId: string
+  paneId: string
+  panePid: number
+  width: number
+  height: number
+  cwd: string
+  branch: string | null
+  view: string
+}
+
+export interface LocalCommandResult {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+export type LocalCommandRunner = (command: string[]) => LocalCommandResult
+
+function runLocalCommand(command: string[]): LocalCommandResult {
+  const result = Bun.spawnSync(command, { stdout: "pipe", stderr: "pipe" })
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+  }
+}
+
+export function captureTmuxPaneSnapshot(run: LocalCommandRunner = runLocalCommand): TmuxPaneSnapshot {
+  const target = paneTarget()
+  if (!target) throw new Error("tmux pane target is unavailable")
+
+  const details = run([
+    "tmux",
+    "display-message",
+    "-p",
+    "-t",
+    target,
+    "#{session_name}\t#{window_name}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_width}\t#{pane_height}\t#{pane_current_path}\t#{pane_dead}",
+  ])
+  if (details.exitCode !== 0) {
+    throw new Error(details.stderr.trim() || `tmux could not inspect ${target}`)
+  }
+  const [sessionName, windowName, windowId, paneId, pidText, widthText, heightText, cwd, dead] = details.stdout
+    .trimEnd()
+    .split("\t")
+  const panePid = Number(pidText)
+  const width = Number(widthText)
+  const height = Number(heightText)
+  if (
+    !sessionName ||
+    !windowName ||
+    !windowId ||
+    !paneId ||
+    !cwd ||
+    dead !== "0" ||
+    !Number.isSafeInteger(panePid) ||
+    panePid <= 0 ||
+    !Number.isSafeInteger(width) ||
+    width <= 0 ||
+    !Number.isSafeInteger(height) ||
+    height <= 0
+  ) {
+    throw new Error(`tmux returned invalid pane details for ${target}`)
+  }
+
+  const captured = run(["tmux", "capture-pane", "-p", "-t", paneId])
+  if (captured.exitCode !== 0) {
+    throw new Error(captured.stderr.trim() || `tmux could not capture ${paneId}`)
+  }
+  const branchResult = run(["git", "-C", cwd, "branch", "--show-current"])
+  return {
+    sessionName,
+    windowName,
+    windowId,
+    paneId,
+    panePid,
+    width,
+    height,
+    cwd,
+    branch: branchResult.exitCode === 0 ? branchResult.stdout.trim() || null : null,
+    view: captured.stdout
+      .replace(/[ \t]+$/gm, "")
+      .trim()
+      .slice(-20_000),
+  }
+}
+
 /** True only when we're inside tmux AND know which pane to drive. Gates whether the channel advertises session control at all (fail-safe: no control → no commands offered). */
 export function tmuxAvailable(): boolean {
   return Boolean(process.env.TMUX && paneTarget())

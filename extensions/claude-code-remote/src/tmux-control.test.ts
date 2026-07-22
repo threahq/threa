@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { tmuxAvailable } from "./tmux-control"
+import { captureTmuxPaneSnapshot, tmuxAvailable, type LocalCommandRunner } from "./tmux-control"
 
 describe("tmuxAvailable", () => {
   const saved = {
@@ -41,5 +41,51 @@ describe("tmuxAvailable", () => {
     process.env.TMUX = "/tmp/tmux-501/default,1234,0"
     process.env.THREA_TMUX_TARGET = "work:claude.0"
     expect(tmuxAvailable()).toBe(true)
+  })
+
+  it("captures pane metadata, branch, and the visible terminal", () => {
+    process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+    process.env.TMUX_PANE = "%5"
+    const calls: string[][] = []
+    const run: LocalCommandRunner = (command) => {
+      calls.push(command)
+      if (command[0] === "tmux" && command[1] === "display-message") {
+        return {
+          exitCode: 0,
+          stdout: "1\tfeature\t@7\t%5\t33336\t180\t48\t/repo/threa.feature\t0\n",
+          stderr: "",
+        }
+      }
+      if (command[0] === "tmux" && command[1] === "capture-pane") {
+        return { exitCode: 0, stdout: "Working…   \n\n", stderr: "" }
+      }
+      return { exitCode: 0, stdout: "feat/status\n", stderr: "" }
+    }
+
+    expect(captureTmuxPaneSnapshot(run)).toEqual({
+      sessionName: "1",
+      windowName: "feature",
+      windowId: "@7",
+      paneId: "%5",
+      panePid: 33336,
+      width: 180,
+      height: 48,
+      cwd: "/repo/threa.feature",
+      branch: "feat/status",
+      view: "Working…",
+    })
+    expect(calls.map((command) => command.slice(0, 2))).toEqual([
+      ["tmux", "display-message"],
+      ["tmux", "capture-pane"],
+      ["git", "-C"],
+    ])
+  })
+
+  it("fails loudly when the pane cannot be inspected", () => {
+    process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+    process.env.TMUX_PANE = "%5"
+    expect(() => captureTmuxPaneSnapshot(() => ({ exitCode: 1, stdout: "", stderr: "can't find pane: %5" }))).toThrow(
+      "can't find pane: %5"
+    )
   })
 })
