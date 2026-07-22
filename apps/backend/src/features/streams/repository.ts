@@ -785,7 +785,6 @@ export const StreamRepository = {
                         access_root.visibility = 'public'
                         OR access_root.id = ANY(${userMembershipStreamIds})
                       )
-                    )
                   )
                 )
               )
