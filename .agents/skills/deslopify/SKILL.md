@@ -1,6 +1,6 @@
 ---
 name: deslopify
-description: Rewrite user-facing copy (marketing pages, docs, headings, UI microcopy, READMEs, PR descriptions) to strip AI-slop and salesy tone, leaving plain, understated, factual prose. Use when asked to "deslopify", "deslop", "remove the AI slop", "make this less salesy/less AI-sounding", "make the copy plainer", or when reviewing copy for slop tells.
+description: Rewrite or audit user-facing copy (marketing pages, docs, headings, UI microcopy, READMEs, PR descriptions) to remove AI-slop and salesy tone while preserving the writer's voice. Use when asked to "deslopify", "deslop", "remove the AI slop", "make this less salesy/less AI-sounding", "make the copy plainer", or detect whether copy contains slop patterns.
 ---
 
 # Deslopify
@@ -16,11 +16,26 @@ markup, not just the prose.
 Audience note: developers and technical readers are especially allergic to slop.
 For API docs, CLIs, and engineering content, lean terse and literal.
 
+## Modes
+
+- **Edit (default):** Make the minimum effective edit. Return the full revision
+  for pasted text; for file edits, change the files and report only material
+  changes.
+- **Detect:** When asked to audit, scan, or judge copy without rewriting, name
+  each pattern, quote the affected line, and suggest the fix in a few words.
+  Don't score the draft, rewrite it, or guess whether AI wrote it. Pattern
+  evidence is useful; AI-authorship guesses aren't.
+
 ## When to use
 
 Any user-facing text: landing pages, section copy, headings, button/label
 microcopy, docs, READMEs, changelogs, PR/release descriptions, notification
-strings. Not for code identifiers, log lines, or internal comments.
+strings. Also use for slop audits. Not for code identifiers, log lines, or
+internal comments.
+
+If no draft or file is provided, ask for it. Infer the audience, format, and
+intended reader outcome from context when possible. If one remains unclear and
+would materially change the edit, ask one focused question before rewriting.
 
 ## The tells (hunt and remove)
 
@@ -85,17 +100,53 @@ strings. Not for code identifiers, log lines, or internal comments.
     trimming heading highlights doesn't drain the color, it just stops the tell.
     This is a visual tell, not a word choice: hunt the markup (`grep -rn
     'class="accent"'`), not the prose.
+19. **Faux-insight setups** — "what nobody tells you", "the part everyone
+    misses", "what most people get wrong". These manufacture authority instead
+    of supporting the claim. Cut the setup and state the claim.
+20. **Dramatic colon reveals** — a setup followed by a colon and a punchline:
+    "The best part: it learns." Write a normal sentence. Keep colons for lists,
+    labels, and quotations; use sentence case after them unless grammar requires
+    otherwise.
+21. **Decorative analysis** — trailing clauses with "highlighting",
+    "underscoring", "reflecting", or "showcasing" that attach vague importance
+    to a fact. Explain the concrete consequence or stop at the fact.
+22. **Importance puffery** — "marks a pivotal moment", "plays a vital role",
+    "stands as a testament", "underscores its significance". State what happened
+    and let the reader judge its importance.
+23. **Synonym cycling** — renaming the same thing in adjacent sentences ("agent",
+    then "assistant", then "tool") to avoid repetition. Repeat the precise term.
+24. **Negative listing and dramatic fragments** — "Not X. Not Y. Z.", "X. And Y.
+    And Z.", "That's it. That's the whole thing." Use one complete sentence.
+25. **Robotic rhythm** — repeated sentence shapes, identical paragraph patterns,
+    or a stack of equally punchy fragments. Preserve useful cadence, but vary the
+    structure when the repetition is mechanical.
+26. **Fake-profound endings** — a closing metaphor, aphorism, or mic-drop line
+    that adds no information. Delete it rather than polishing the metaphor. End
+    on the last concrete point or next action.
+27. **Recap endings** — "In conclusion", "Ultimately", "Overall", or a final
+    paragraph that merely repeats the piece. Trust the reader; end on the last
+    useful point.
+28. **Formatting decoration** — emoji in headings, bold scattered through
+    sentences, bullets that would read better as two sentences, or headings over
+    tiny sections. Let structure follow the content rather than decorating it.
 
 ## Rewrite principles
 
 - **Plain and understated beats polished and salesy.** Short declaratives. Say
   what it is and what it does.
 - **Preserve the author's voice and any first-person framing.** Deslop ≠ rewrite
-  in your voice. Keep their cadence, just remove the tells.
-- **Be conservative.** Change a sentence only if it carries a tell or reads as
-  marketing. Don't rephrase clean copy for its own sake.
-- **Never add claims.** Don't invent benefits, features, or numbers to fill the
-  hole a cut cliché left. If a line only had hype, it can often just go.
+  in your voice. Keep distinctive vocabulary, cadence, bluntness, humor,
+  uncertainty, rough edges, and useful digressions. Don't make every paragraph
+  equally tidy.
+- **Be conservative.** Change a sentence only if it carries a tell, reads as
+  marketing, repeats itself, or is hard to follow. Don't rephrase clean copy for
+  consistency.
+- **Use direct verbs and concrete facts.** Prefer "can" to "has the ability to";
+  name the actor instead of hiding it in passive voice. Protect names, numbers,
+  dates, mechanisms, and examples instead of smoothing them into abstractions.
+- **Never add claims.** Don't invent benefits, features, numbers, opinions, or
+  sources to fill the hole a cut cliché left. If a line only had hype, it can
+  often just go.
 - **Stay honest.** Describe the real, current mechanic — not aspirations dressed
   as fact. If copy claims something the product doesn't do yet, flag it rather
   than smoothing it over. (This is a hard rule for sales/marketing surfaces.)
@@ -104,18 +155,22 @@ strings. Not for code identifiers, log lines, or internal comments.
 
 ## Process
 
-1. **Locate the copy in scope.** A file, a selection, a section, or "the whole
-   page". For multi-file sweeps, list the files first.
+1. **Locate and read all copy in scope.** For multi-file sweeps, list the files
+   first. Identify the core point and the writer's voice before changing anything.
 2. **Scan for each tell** above. Read for tone, not just keywords — slop is often
-   structural (cadence, contrast, triples), not a single word.
-3. **Rewrite in place**, one tell at a time, keeping voice and accuracy.
-4. **Re-scan mechanically.** At minimum `grep -rn '—' <files>` for stray
+   structural (cadence, contrast, symmetry), not a single word.
+3. For **detect mode**, report each named pattern with the exact line and a short
+   fix, then stop. Don't silently switch to editing.
+4. For **edit mode**, rewrite one tell at a time, keeping voice and accuracy.
+5. **Re-scan mechanically.** At minimum `grep -rn '—' <files>` for stray
    em-dashes; `grep -rn 'class="accent"' <files>` for highlight tells and
    `grep -rn '^[[:space:]]*[-*] \*\*' <files>` for bold-first bullets; spot-check
    the cliché list and openers ("Here's", "It turns out"). Em-dashes hide in page
    `<title>`s and alt text too.
-5. **Report** what changed: the notable before→after rewrites and anything you
-   flagged as a possibly-false claim rather than edited.
+6. **Run the self-check in `eval.md`.** Fix every failed check before returning.
+7. **Report** the full edited copy when working from pasted text. For in-repo
+   edits, report only the files and material changes. Flag claims that may be
+   false or unsourced instead of quietly rewriting them.
 
 ## Examples
 
@@ -147,5 +202,6 @@ strings. Not for code identifiers, log lines, or internal comments.
 
 ## Credits
 
-Part of the tell catalog cross-pollinated from Stephen Turner's `skill-deslop`
-(github.com/stephenturner/skill-deslop, MIT) and tropes.fyi.
+The tell catalog incorporates ideas from Stephen Turner's `skill-deslop`
+(github.com/stephenturner/skill-deslop, MIT), Peter Yang's `no-ai-slop`
+(github.com/petergyang/no-ai-slop, MIT), and tropes.fyi.
