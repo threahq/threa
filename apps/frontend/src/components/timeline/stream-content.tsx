@@ -1,3 +1,4 @@
+import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
@@ -205,17 +206,6 @@ export function shouldStartHighlightClear(args: {
 }): boolean {
   if (!args.highlightMessageId) return false
   return args.deepLinkTargetLoaded || args.deepLinkGaveUp
-}
-
-/**
- * `?m=` deep-link targets are message ids or, for non-message rows (delegation
- * cards), raw `event_…` ids — the prefixes never collide, so one matcher serves
- * every deep-link path (mirrors findMessageItemIndex). Every in-window check a
- * deep link flows through must use this, or an event-id target wedges that path
- * on its give-up/timeout branch.
- */
-export function matchesDeepLinkTarget(event: { id: string; payload: unknown }, target: string): boolean {
-  return (event.payload as { messageId?: string })?.messageId === target || event.id === target
 }
 
 /**

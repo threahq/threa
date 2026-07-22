@@ -57,7 +57,7 @@ import { ComposerEncryptionNotice } from "@/components/encryption/stream-encrypt
 import { SidebarToggle } from "@/components/layout"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { ThreadParentEvent } from "./thread-parent-event"
-import { matchesDeepLinkTarget } from "@/components/timeline/stream-content"
+import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { ThreadHeader } from "./thread-header"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { LabelableResourceTypes, StreamTypes } from "@threa/types"
