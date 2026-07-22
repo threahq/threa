@@ -875,6 +875,9 @@ export const StreamRepository = {
    */
   async insertThreadOrFind(db: Querier, params: InsertStreamParams): Promise<{ stream: Stream; created: boolean }> {
     const anchorId = params.parentAnchorId ?? params.parentMessageId ?? null
+    if (!params.parentStreamId || !anchorId) {
+      throw new Error("parentStreamId and parentAnchorId are required for thread creation")
+    }
     // Dual-write the legacy column for message anchors so an old-deploy replica
     // (which reads only `parent_message_id`) still resolves the thread during
     // the grace window. Event anchors leave it null — old code never knew them.
@@ -910,7 +913,7 @@ export const StreamRepository = {
       return { stream: mapRowToStream(insertResult.rows[0]), created: true }
     }
 
-    const existing = await this.findByAnchor(db, params.parentStreamId!, anchorId!)
+    const existing = await this.findByAnchor(db, params.parentStreamId, anchorId)
     if (!existing) {
       throw new Error("Thread creation conflict but existing thread not found")
     }

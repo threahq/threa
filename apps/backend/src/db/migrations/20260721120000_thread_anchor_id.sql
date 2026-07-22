@@ -32,9 +32,5 @@ FROM (
 ) stats
 WHERE s.id = stats.stream_id AND s.type = 'thread';
 
--- One anchor per (parent stream, anchor). `insertThreadOrFind` targets this
--- index for idempotent find-or-create across message- and event-anchored
--- threads alike. The legacy idx_streams_thread_parent stays until cleanup.
-CREATE UNIQUE INDEX idx_streams_thread_anchor
-ON streams (parent_stream_id, parent_anchor_id)
-WHERE parent_anchor_id IS NOT NULL;
+-- The companion migration builds the unique anchor index concurrently after
+-- this backfill. The legacy idx_streams_thread_parent stays until cleanup.

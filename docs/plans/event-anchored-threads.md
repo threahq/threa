@@ -87,7 +87,7 @@ Board cards are conversations (`message_ids[]`); branches key off `forkMessageId
 
 ### Consumer 2: calls (the chat becomes the thread)
 
-The call chat = a thread anchored on the `call_started` event; `calls.chat_stream_id` stores the thread stream id (the association column the plan reserved — now a real thread rather than a bespoke linked stream). Created lazily on first chat open/message via `insertThreadOrFind` (race-safe on the anchor index).
+The call chat = a thread anchored on the `call_started` event. Created lazily on first chat open/message via `insertThreadOrFind` (race-safe on the anchor index); v1 resolves the association through anchor propagation and lookup without writing `calls.chat_stream_id`.
 
 - Access: plain `root_stream_id` inheritance — v1 calls require host-stream access (calls plan v5/v7 ruling: zero `access.ts` changes), so thread inheritance is exactly right. The deferred guest primitive composes later.
 - During-call: dock/expanded call UI opens the thread panel (existing panel machinery); members discuss live.
@@ -119,7 +119,7 @@ Phase 2 (cleanup PR after a short grace, ~1–2 weeks): stop legacy writes/emiss
 2. **Projections + sync**: `thread:updated` (dual-emitted) + `streams.reply_count` maintenance + bootstrap `threadStates` reshape + frontend healing via canonical-id lookup.
 3. **Thread UI substrate**: draft/panel/scope anchor generalization + `<ThreadParentEvent>` via EventItem dispatch + shared thread-affordance extraction.
 4. **Delegation cutover**: card affordance + `completeDelegation` re-anchor + `threadStreamId` in status payload.
-5. **Call chat**: lazy thread on `call_started` + `chat_stream_id` wiring + dock chat surface.
+5. **Call chat**: lazy thread on `call_started` + anchor propagation/lookup + dock chat surface.
 6. **Public API version**: first `VERSION_CHANGES` entry + docs regen + public-site per-version spec.
 7. **Cleanup (post-grace)**: legacy removal + drop migration.
 
@@ -128,7 +128,7 @@ Phase 2 (cleanup PR after a short grace, ~1–2 weeks): stop legacy writes/emiss
 ## Decisions (Kris, 2026-07-22 — plan fully ratified)
 
 1. Call chat creation: **lazy**, like other threads.
-2. v1 threadable set: **`delegation:created` + `call_started` only**.
+2. v1 additions to the threadable set: **`delegation:created` + `call_started`**; `message_created` remains threadable.
 3. Grace: **cleanup ships as a PR immediately after the stack; Kris merges it when he pleases** (no fixed window).
 
 Resolved earlier in discussion: unified single anchor column (not XOR columns); `thread:updated` for all anchors immediately with legacy dual-emit then removal; mint the first dated public-API version.
