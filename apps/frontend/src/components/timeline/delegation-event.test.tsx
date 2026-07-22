@@ -104,16 +104,22 @@ describe("DelegationEvent", () => {
     expect(screen.getByText("tests are compiling")).toBeInTheDocument()
   })
 
-  it("completed (new shape): View result opens the result thread panel, hides Cancel and Discuss", () => {
-    renderCard({
-      delegationId: "dlg_1",
-      status: "completed",
-      resultMessageId: "msg_result",
-      threadStreamId: "stream_thread",
-    })
+  it("completed with threadStreamId: chip + View result reach the thread, no Discuss duplicate", () => {
+    renderCard(
+      {
+        delegationId: "dlg_1",
+        status: "completed",
+        resultMessageId: "msg_result",
+        threadStreamId: "stream_thread",
+      },
+      { threadId: "stream_thread", replyCount: 3 }
+    )
 
     const link = screen.getByRole("link", { name: "View result" })
     expect(link).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
+    const chip = screen.getByRole("link", { name: /replies/ })
+    expect(chip).toHaveTextContent("3 replies")
+    expect(chip).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
     expect(screen.queryByRole("link", { name: "Discuss this delegation" })).not.toBeInTheDocument()
   })
@@ -147,6 +153,16 @@ describe("DelegationEvent", () => {
     expect(screen.getByText(new RegExp(`Ariadne · ${status}`, "i"))).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Cancel/ })).not.toBeInTheDocument()
   })
+
+  it.each(["failed", "cancelled", "expired"] as const)(
+    "%s card is discussion-worthy: Discuss stays available when there's no thread yet",
+    (status) => {
+      renderCard({ delegationId: "dlg_1", status })
+
+      const discuss = screen.getByRole("link", { name: "Discuss this delegation" })
+      expect(discuss).toHaveAttribute("href", "/w/ws_1?panel=draft%3Astream_1%3Aevt_dlg")
+    }
+  )
 
   it("cancelled keeps the relabeled button in place (follow-up card pattern: focus retained, announced)", () => {
     renderCard({ delegationId: "dlg_1", status: "cancelled" })

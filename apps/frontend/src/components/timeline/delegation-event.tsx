@@ -147,6 +147,21 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
 
   const replyCount = payload.replyCount ?? 0
 
+  // Discuss starts (or opens) a thread on this card. Failure cards are
+  // discussion-worthy too ("why did this fail"), so it shows on every state
+  // EXCEPT when the card already exposes its thread another way: a completed
+  // card's thread opens via "View result" (threadStreamId), and any card with
+  // replies shows the footer thread chip. Either would make Discuss a duplicate
+  // entry point.
+  const threadChipShowing = replyCount > 0 && !!threadHref
+  const showDiscuss = !threadStreamId && !threadChipShowing
+
+  // Icon-only below `sm` (labels appear at `sm`). Force a ~36px square hit area
+  // on narrow viewports so three adjacent targets aren't sub-30px mis-taps;
+  // desktop footprint is unchanged (min sizing reset at `sm`).
+  const iconActionClass =
+    "inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:min-h-0 sm:min-w-0 sm:justify-start"
+
   const promptText = () => buildDelegationPrompt(payload, { workspaceId, origin: window.location.origin })
 
   async function handleCopy() {
@@ -273,15 +288,15 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
               </Link>
             )}
             {/* Discuss the card: start (or open) a thread anchored on this
-                event. Shown while the delegation is live — a completed card's
-                thread is reached via "View result". Navigation, so a <Link>
-                to the draft/thread panel (INV-40). */}
-            {!terminal && (
+                event. Hidden only when the card already has a thread entry
+                (View result / footer chip) — see `showDiscuss`. Navigation, so
+                a <Link> to the draft/thread panel (INV-40). */}
+            {showDiscuss && (
               <Link
                 to={replyUrl}
                 aria-label="Discuss this delegation"
                 title="Discuss this delegation in a thread"
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className={iconActionClass}
               >
                 <MessageSquareReply className="h-3 w-3" aria-hidden="true" />
                 <span className="hidden sm:inline">Discuss</span>
@@ -293,7 +308,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
               aria-label={copyDone ? "Prompt copied" : "Copy prompt"}
               aria-live="polite"
               title="Copy the hand-off prompt for a local agent"
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className={iconActionClass}
             >
               {copyDone ? (
                 <Check className="h-3 w-3" aria-hidden="true" />
@@ -309,7 +324,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
               aria-label={copyLinkDone ? "Link copied" : "Copy link"}
               aria-live="polite"
               title="Copy a shareable link to this delegation"
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className={iconActionClass}
             >
               {copyLinkDone ? (
                 <Check className="h-3 w-3" aria-hidden="true" />
