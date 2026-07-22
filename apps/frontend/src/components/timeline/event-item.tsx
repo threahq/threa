@@ -194,7 +194,13 @@ export function EventItem({
       const statusPatch = delegationId ? delegationStatusPatches?.get(delegationId) : undefined
       return (
         <div data-event-id={event.id}>
-          <DelegationEvent event={event} workspaceId={workspaceId} streamId={streamId} statusPatch={statusPatch} />
+          <DelegationEvent
+            event={event}
+            workspaceId={workspaceId}
+            streamId={streamId}
+            statusPatch={statusPatch}
+            isThreadParent={isThreadParent}
+          />
         </div>
       )
     }

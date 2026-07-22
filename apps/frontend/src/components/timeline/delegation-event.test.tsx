@@ -44,7 +44,11 @@ const CREATED_PAYLOAD: DelegationCreatedEventPayload = {
   sourceConversationId: null,
 }
 
-function renderCard(statusPatch?: DelegationStatusChangedEventPayload, payloadOverride?: Partial<CardPayload>) {
+function renderCard(
+  statusPatch?: DelegationStatusChangedEventPayload,
+  payloadOverride?: Partial<CardPayload>,
+  isThreadParent = false
+) {
   return render(
     <MemoryRouter initialEntries={["/w/ws_1"]}>
       <PanelProvider>
@@ -53,6 +57,7 @@ function renderCard(statusPatch?: DelegationStatusChangedEventPayload, payloadOv
           workspaceId="ws_1"
           streamId="stream_1"
           statusPatch={statusPatch}
+          isThreadParent={isThreadParent}
         />
       </PanelProvider>
     </MemoryRouter>
@@ -121,6 +126,23 @@ describe("DelegationEvent", () => {
     expect(chip).toHaveTextContent("3 replies")
     expect(chip).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "Discuss this delegation" })).not.toBeInTheDocument()
+  })
+
+  it("completed thread parent suppresses self-links and nested thread affordances", () => {
+    renderCard(
+      {
+        delegationId: "dlg_1",
+        status: "completed",
+        resultMessageId: "msg_result",
+        threadStreamId: "stream_thread",
+      },
+      { threadId: "stream_thread", replyCount: 3 },
+      true
+    )
+
+    expect(screen.queryByRole("link", { name: "View result" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /replies/ })).not.toBeInTheDocument()
     expect(screen.queryByRole("link", { name: "Discuss this delegation" })).not.toBeInTheDocument()
   })
 

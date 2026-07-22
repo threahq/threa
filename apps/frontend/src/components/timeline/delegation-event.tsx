@@ -32,6 +32,7 @@ interface DelegationEventProps {
   event: StreamEvent
   workspaceId: string
   streamId: string
+  isThreadParent?: boolean
   /**
    * The latest `delegation:status_changed` patch for this delegation within
    * the loaded window — the authoritative live status, so every viewer (not
@@ -99,7 +100,7 @@ export function buildDelegationPrompt(
  * The status from `statusPatch` is authoritative; the local optimistic flips
  * only fast-path the clicking member's own action.
  */
-export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: DelegationEventProps) {
+export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isThreadParent }: DelegationEventProps) {
   const { getActorName } = useActors(workspaceId)
   const { getPanelUrl } = usePanel()
   // Healing (chunk-2) lands thread stats on the card's own payload once a thread
@@ -142,8 +143,9 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
   const threadStreamId = completed ? (statusPatch?.threadStreamId ?? undefined) : undefined
   const legacyResultMessageId = completed && !threadStreamId ? (statusPatch?.resultMessageId ?? undefined) : undefined
   let viewResultHref: string | null = null
-  if (threadStreamId) viewResultHref = getPanelUrl(threadStreamId)
-  else if (legacyResultMessageId) viewResultHref = `/w/${workspaceId}/s/${streamId}?m=${legacyResultMessageId}`
+  if (!isThreadParent && threadStreamId) viewResultHref = getPanelUrl(threadStreamId)
+  else if (!isThreadParent && legacyResultMessageId)
+    viewResultHref = `/w/${workspaceId}/s/${streamId}?m=${legacyResultMessageId}`
 
   const replyCount = payload.replyCount ?? 0
 
@@ -153,8 +155,8 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
   // card's thread opens via "View result" (threadStreamId), and any card with
   // replies shows the footer thread chip. Either would make Discuss a duplicate
   // entry point.
-  const threadChipShowing = replyCount > 0 && !!threadHref
-  const showDiscuss = !threadStreamId && !threadChipShowing
+  const threadChipShowing = replyCount > 0 && !!threadHref && !isThreadParent
+  const showDiscuss = !threadStreamId && !threadChipShowing && !isThreadParent
 
   // Icon-only below `sm` (labels appear at `sm`). Force a ~36px square hit area
   // on narrow viewports so three adjacent targets aren't sub-30px mis-taps;
@@ -402,12 +404,14 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
       {/* Thread anchored on this card — surfaces the discussion (and a completed
           delegation's result) as a footer chip once replies land. Keyed on the
           card's event id via `useThreadAnchor`; healed payload drives the count. */}
-      <ThreadSlot
-        replyCount={replyCount}
-        threadHref={threadHref}
-        summary={payload.threadSummary}
-        workspaceId={workspaceId}
-      />
+      {!isThreadParent && (
+        <ThreadSlot
+          replyCount={replyCount}
+          threadHref={threadHref}
+          summary={payload.threadSummary}
+          workspaceId={workspaceId}
+        />
+      )}
     </div>
   )
 }
