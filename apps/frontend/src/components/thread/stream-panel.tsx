@@ -26,6 +26,7 @@ import {
 } from "@/components/layout/sidebar/sidebar-actions"
 import {
   useStreamBootstrap,
+  useThreadAnchorEvent,
   useDraftComposer,
   getDraftMessageKey,
   useThreadAncestors,
@@ -146,11 +147,17 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     parentStream?.rootStreamId ?? null
   )
 
-  const anchorEvent = useMemo(() => {
+  const localAnchorEvent = useMemo(() => {
     if (cachedAnchorEvent) return cachedAnchorEvent
-    if (!draftInfo || !parentBootstrap?.events) return null
-    return parentBootstrap.events.find((e) => matchesDeepLinkTarget(e, draftInfo.anchorId))
-  }, [cachedAnchorEvent, parentBootstrap, draftInfo])
+    if (!draftInfo) return null
+    return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, draftInfo.anchorId)) ?? null
+  }, [cachedAnchorEvent, parentBootstrap?.events, draftInfo])
+  const { event: anchorEvent } = useThreadAnchorEvent(
+    workspaceId,
+    draftInfo?.parentStreamId,
+    draftInfo?.anchorId,
+    localAnchorEvent
+  )
 
   // Auto-convert draft to real thread when created externally (e.g., agent eager
   // thread creation). The healed threadId lands on the anchor's payload for both

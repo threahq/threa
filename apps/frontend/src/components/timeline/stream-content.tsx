@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   useEvents,
+  useThreadAnchorEvent,
   useStreamSocket,
   useTimelineScroll,
   useScrollBehavior,
@@ -713,13 +714,17 @@ export function StreamContent({
     enabled: !isDraft && isThread && !!parentStreamId && !!anchorId && !cachedAnchorEvent,
   })
 
-  // Find the anchor item from the parent stream's events
-  const anchorEvent = useMemo(() => {
+  const localAnchorEvent = useMemo(() => {
     if (!isThread || !parentStreamId || !anchorId) return null
     if (cachedAnchorEvent) return cachedAnchorEvent as unknown as StreamEvent
-    if (!parentBootstrap?.events) return null
-    return parentBootstrap.events.find((e) => matchesDeepLinkTarget(e, anchorId))
+    return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, anchorId)) ?? null
   }, [cachedAnchorEvent, isThread, parentStreamId, anchorId, parentBootstrap?.events])
+  const { event: anchorEvent, sharedMessages: anchorSharedMessages } = useThreadAnchorEvent(
+    workspaceId,
+    isThread ? parentStreamId : null,
+    anchorId,
+    localAnchorEvent
+  )
 
   // Subscribe to stream room FIRST (subscribe-then-bootstrap pattern)
   useStreamSocket(workspaceId, streamId, { enabled: !isDraft })
@@ -774,10 +779,11 @@ export function StreamContent({
   const mergedSharedMessages = useMemo(
     () => ({
       ...pagedSharedMessages,
+      ...(anchorSharedMessages ?? {}),
       ...(parentBootstrap?.sharedMessages ?? {}),
       ...(bootstrap?.sharedMessages ?? {}),
     }),
-    [pagedSharedMessages, parentBootstrap?.sharedMessages, bootstrap?.sharedMessages]
+    [pagedSharedMessages, anchorSharedMessages, parentBootstrap?.sharedMessages, bootstrap?.sharedMessages]
   )
 
   // For drafts, query pending/failed events directly from IDB so optimistic
