@@ -139,5 +139,9 @@ export function CallDock() {
 }
 
 function JoiningBody() {
-  return <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">Connecting…</div>
+  return (
+    <div role="status" className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+      Connecting…
+    </div>
+  )
 }

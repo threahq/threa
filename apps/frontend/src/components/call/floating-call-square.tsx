@@ -101,6 +101,7 @@ function SquareHeader({
       <button
         type="button"
         aria-label="Dock to the side"
+        title="Dock to the side"
         onClick={onDockToSide}
         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
       >
@@ -172,7 +173,11 @@ function JoiningBody() {
       </div>
     )
   }
-  return <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">Connecting…</div>
+  return (
+    <div role="status" className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+      Connecting…
+    </div>
+  )
 }
 
 function MinimizedBubble({

@@ -131,6 +131,7 @@ function FloatButton({ onFloat }: { onFloat: () => void }) {
     <button
       type="button"
       aria-label="Pop out to a floating window"
+      title="Pop out to a floating window"
       onClick={onFloat}
       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
     >
@@ -145,6 +146,7 @@ function PinButton() {
     <button
       type="button"
       aria-label="Keep call open"
+      title="Keep call open"
       onClick={() => setCallSurfaceMode("standard")}
       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
     >
