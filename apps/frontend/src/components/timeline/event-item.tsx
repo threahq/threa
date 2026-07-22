@@ -235,7 +235,13 @@ export function EventItem({
       const endedPatch = callId ? callEndedPatches?.get(callId) : undefined
       return (
         <div data-event-id={event.id}>
-          <CallCard event={event} workspaceId={workspaceId} streamId={streamId} endedPatch={endedPatch} />
+          <CallCard
+            event={event}
+            workspaceId={workspaceId}
+            streamId={streamId}
+            endedPatch={endedPatch}
+            isThreadParent={isThreadParent}
+          />
         </div>
       )
     }

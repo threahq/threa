@@ -504,7 +504,9 @@ describe("StreamService.createThread (via create)", () => {
   }
 
   const mockInsertThreadOrFind = spyOn(StreamRepository, "insertThreadOrFind")
-  const mockMessageFindById = spyOn(MessageRepository, "findById")
+  // createThreadOn locks the msg anchor FOR UPDATE (INV-20), so the anchor lookup
+  // this describe drives is findByIdForUpdate.
+  const mockMessageFindByIdForUpdate = spyOn(MessageRepository, "findByIdForUpdate")
   const mockIsMember = spyOn(StreamMemberRepository, "isMember")
   const mockFindByStreamAndMember = spyOn(StreamMemberRepository, "findByStreamAndMember")
   const mockUpdateMember = spyOn(StreamMemberRepository, "update")
@@ -538,7 +540,7 @@ describe("StreamService.createThread (via create)", () => {
   })
 
   test("emits stream:member_added for parent message author so they see the thread in real-time", async () => {
-    mockMessageFindById.mockResolvedValue({
+    mockMessageFindByIdForUpdate.mockResolvedValue({
       id: "msg_1",
       streamId: "stream_channel",
       authorType: "user",
@@ -566,7 +568,7 @@ describe("StreamService.createThread (via create)", () => {
 
   test("inherits memoryMode from the root stream", async () => {
     mockFindById.mockReset().mockResolvedValue({ ...parentStream, memoryMode: "off" } as never)
-    mockMessageFindById.mockResolvedValue({
+    mockMessageFindByIdForUpdate.mockResolvedValue({
       id: "msg_1",
       streamId: "stream_channel",
       authorType: "user",
@@ -585,7 +587,7 @@ describe("StreamService.createThread (via create)", () => {
   })
 
   test("does not emit stream:member_added when author is the thread creator", async () => {
-    mockMessageFindById.mockResolvedValue({
+    mockMessageFindByIdForUpdate.mockResolvedValue({
       id: "msg_1",
       streamId: "stream_channel",
       authorType: "user",
@@ -605,7 +607,7 @@ describe("StreamService.createThread (via create)", () => {
   })
 
   test("does not emit stream:member_added for bot-authored parent messages", async () => {
-    mockMessageFindById.mockResolvedValue({
+    mockMessageFindByIdForUpdate.mockResolvedValue({
       id: "msg_1",
       streamId: "stream_channel",
       authorType: "bot",
@@ -625,7 +627,7 @@ describe("StreamService.createThread (via create)", () => {
   })
 
   test("emits stream:created to parent stream room when thread is newly created", async () => {
-    mockMessageFindById.mockResolvedValue({
+    mockMessageFindByIdForUpdate.mockResolvedValue({
       id: "msg_1",
       streamId: "stream_channel",
       authorType: "user",
@@ -666,7 +668,7 @@ describe("StreamService.createThread (via create)", () => {
     const e2eThread = { ...thread, parentStreamId: "stream_root", rootStreamId: "stream_root" }
     const sealedThread = { ...e2eThread, e2eEnabled: true, e2eOwnerKeyId: "uik_owner" }
 
-    mockMessageFindById.mockResolvedValue({
+    mockMessageFindByIdForUpdate.mockResolvedValue({
       id: "msg_1",
       streamId: "stream_root",
       authorType: "user",
@@ -749,7 +751,9 @@ describe("StreamService.createThreadOn anchor routing", () => {
   }
 
   const mockInsertThreadOrFind = spyOn(StreamRepository, "insertThreadOrFind")
-  const mockMessageFindById = spyOn(MessageRepository, "findById")
+  // createThreadOn locks the anchor message FOR UPDATE (INV-20) — the msg-anchor
+  // race guard — so the routing test spies the locking read, not plain findById.
+  const mockMessageFindByIdForUpdate = spyOn(MessageRepository, "findByIdForUpdate")
   const mockEventFindById = spyOn(StreamEventRepository, "findById")
   const mockIsMember = spyOn(StreamMemberRepository, "isMember")
 
@@ -761,7 +765,7 @@ describe("StreamService.createThreadOn anchor routing", () => {
     mockInsertMember.mockReset().mockResolvedValue({} as never)
     mockInsertEvent.mockReset().mockResolvedValue({ id: "evt_1", actorId: "member_author" } as never)
     mockInsertOutbox.mockReset().mockResolvedValue({ id: 1n } as never)
-    mockMessageFindById.mockReset()
+    mockMessageFindByIdForUpdate.mockReset()
     mockEventFindById.mockReset()
   })
 
@@ -782,7 +786,7 @@ describe("StreamService.createThreadOn anchor routing", () => {
       createdBy: "member_creator",
     })
 
-    expect(mockMessageFindById).not.toHaveBeenCalled()
+    expect(mockMessageFindByIdForUpdate).not.toHaveBeenCalled()
     expect(mockInsertThreadOrFind).toHaveBeenCalledWith({}, expect.objectContaining({ parentAnchorId: "event_1" }))
     expect(mockInsertOutbox).toHaveBeenCalledWith(
       {},
@@ -898,12 +902,12 @@ describe("StreamService.createThreadOn anchor routing", () => {
         createdBy: "member_creator",
       })
     ).rejects.toMatchObject({ status: 400, code: "ANCHOR_INVALID" })
-    expect(mockMessageFindById).not.toHaveBeenCalled()
+    expect(mockMessageFindByIdForUpdate).not.toHaveBeenCalled()
     expect(mockEventFindById).not.toHaveBeenCalled()
   })
 
   test("message anchor: routes through the message lookup and passes the msg id as the anchor", async () => {
-    mockMessageFindById.mockResolvedValue({
+    mockMessageFindByIdForUpdate.mockResolvedValue({
       id: "msg_1",
       streamId: "stream_channel",
       authorType: "user",

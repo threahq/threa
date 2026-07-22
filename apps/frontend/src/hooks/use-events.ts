@@ -271,11 +271,36 @@ function dedupeAndSort(eventArrays: StreamEvent[][]): StreamEvent[] {
   return sortBySequence(Array.from(eventMap.values()))
 }
 
+/** Thread-stat fields healed onto an anchor's payload by `thread:updated` /
+ *  bootstrap `threadStates`. These fetch paths (`/events` pagination,
+ *  `/events/around`) return the anchor UNenriched, so a blind overwrite wipes a
+ *  healed card/message (chip vanishes, Discuss reappears). Preserve them. */
+const HEALED_THREAD_STAT_KEYS = ["threadId", "replyCount", "threadSummary"] as const
+
 async function cacheToIndexedDB(workspaceId: string, events: StreamEvent[]) {
   if (events.length === 0) return
   const now = Date.now()
+  const existingRows = await db.events.bulkGet(events.map((e) => e.id))
+  const existingById = new Map(
+    existingRows.filter((row): row is NonNullable<typeof row> => row != null).map((row) => [row.id, row] as const)
+  )
   await db.events.bulkPut(
-    events.map((e) => ({ ...e, workspaceId, _sequenceNum: sequenceToNum(e.sequence), _cachedAt: now }))
+    events.map((e) => {
+      const base = { ...e, workspaceId, _sequenceNum: sequenceToNum(e.sequence), _cachedAt: now }
+      const existing = existingById.get(e.id)
+      if (!existing) return base
+      const existingPayload = existing.payload as Record<string, unknown>
+      const healed: Record<string, unknown> = {}
+      for (const key of HEALED_THREAD_STAT_KEYS) {
+        if (existingPayload[key] !== undefined) healed[key] = existingPayload[key]
+      }
+      if (Object.keys(healed).length === 0) return base
+      return {
+        ...base,
+        payload: { ...(base.payload as Record<string, unknown>), ...healed },
+        _patchedAt: existing._patchedAt,
+      }
+    })
   )
 }
 

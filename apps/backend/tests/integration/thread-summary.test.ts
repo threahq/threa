@@ -3,8 +3,9 @@
  *
  * Covers the two queries that back ThreadCard:
  * - `findThreadSummaries(parentStreamId)` — batch lookup for a whole bootstrap
- * - `findThreadSummaryByParentMessage(parentMessageId)` — single-parent lookup
- *   used by the real-time reply-count path
+ * - `findThreadSummaryByParentMessage(parentStreamId, anchorId)` — single-parent
+ *   lookup used by the real-time reply-count path (parentStreamId correlates the
+ *   anchor index)
  *
  * Verifies the plan's requirements: 0 / 1 / N replies, ≥4 participants capped at
  * 3, deterministic participant ordering by first-reply sequence, raw markdown
@@ -18,7 +19,11 @@ import { withTestTransaction, addTestMember, setupTestDatabase, testMessageConte
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
-import { OutboxRepository, type MessageUpdatedOutboxPayload } from "../../src/lib/outbox"
+import {
+  OutboxRepository,
+  type MessageUpdatedOutboxPayload,
+  type ThreadUpdatedOutboxPayload,
+} from "../../src/lib/outbox"
 import { userId, workspaceId } from "../../src/lib/id"
 import { Visibilities } from "@threa/types"
 
@@ -124,13 +129,13 @@ describe("Thread Summary", () => {
   describe("findThreadSummaryByParentMessage (single-parent lookup)", () => {
     test("returns null when the parent message has no replies", async () => {
       const f = await seedThread(0, 0)
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
       expect(summary).toBeNull()
     })
 
     test("returns the single reply as the latest when there is exactly one", async () => {
       const f = await seedThread(1, 1)
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
       expect(summary).not.toBeNull()
       expect(summary!.participants).toHaveLength(1)
       expect(summary!.latestReply.messageId).toBe(f.replyIds[f.replyIds.length - 1])
@@ -138,15 +143,15 @@ describe("Thread Summary", () => {
 
     test("caps participants at 3 even with more distinct authors", async () => {
       const f = await seedThread(5, 1)
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
       expect(summary).not.toBeNull()
       expect(summary!.participants).toHaveLength(3)
     })
 
     test("orders participants by first-reply sequence (deterministic)", async () => {
       const f = await seedThread(4, 1)
-      const first = await StreamRepository.findThreadSummaryByParentMessage(pool, f.parentMessageId)
-      const second = await StreamRepository.findThreadSummaryByParentMessage(pool, f.parentMessageId)
+      const first = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      const second = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
       // Same call twice → identical ordering.
       expect(first!.participants).toEqual(second!.participants)
     })
@@ -154,7 +159,7 @@ describe("Thread Summary", () => {
     test("sends contentMarkdown raw (caller strips via INV-60)", async () => {
       const raw = "**bold** and `code` and :emoji:"
       const f = await seedThread(1, 1, { markdown: raw })
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
       expect(summary!.latestReply.contentMarkdown).toBe(raw)
     })
 
@@ -171,7 +176,7 @@ describe("Thread Summary", () => {
         authorType: "persona",
         ...testMessageContent("Persona-authored reply"),
       })
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
       expect(summary!.participants.length).toBeGreaterThanOrEqual(2)
       expect(summary!.participants.some((p) => p.type === "persona" && p.id === "persona_system_ariadne")).toBe(true)
       expect(summary!.participants.some((p) => p.type === "user")).toBe(true)
@@ -373,6 +378,59 @@ describe("Thread Summary", () => {
         contentMarkdown: "Edited latest reply",
       })
     })
+
+    test("edit emits thread:updated with a refreshed summary but NO replyCount (never republishes an unlocked count)", async () => {
+      const f = await seedThread(1, 1, { markdown: "Original latest reply" })
+      const latestReply = f.replies[f.replies.length - 1]!
+
+      const baselineResult = await pool.query("SELECT COALESCE(MAX(id), 0) AS max_id FROM outbox")
+      const baselineId = BigInt(baselineResult.rows[0].max_id)
+
+      await eventService.editMessage({
+        workspaceId: f.wsId,
+        streamId: f.threadId,
+        messageId: latestReply.id,
+        actorId: latestReply.authorId,
+        ...testMessageContent("Edited latest reply"),
+      })
+
+      const outboxEvents = await OutboxRepository.fetchAfterId(pool, baselineId)
+      const threadUpdated = outboxEvents.find((event) => event.eventType === "thread:updated")
+      expect(threadUpdated).toBeDefined()
+      const payload = threadUpdated!.payload as ThreadUpdatedOutboxPayload
+      expect(payload).toMatchObject({
+        parentStreamId: f.channelId,
+        anchorId: f.parentMessageId,
+        threadId: f.threadId,
+      })
+      // Summary-only refresh — count omitted so a stale unlocked read can't clobber
+      // a concurrent create/delete's authoritative count.
+      expect(payload.replyCount).toBeUndefined()
+      expect(payload.threadSummary).not.toBeNull()
+      expect(payload.threadSummary!.latestReply.contentMarkdown).toBe("Edited latest reply")
+    })
+
+    test("a reply create emits thread:updated carrying the authoritative replyCount", async () => {
+      const f = await seedThread(1, 1)
+
+      const baselineResult = await pool.query("SELECT COALESCE(MAX(id), 0) AS max_id FROM outbox")
+      const baselineId = BigInt(baselineResult.rows[0].max_id)
+
+      await eventService.createMessage({
+        workspaceId: f.wsId,
+        streamId: f.threadId,
+        authorId: f.ownerId,
+        authorType: "user",
+        ...testMessageContent("Another reply"),
+      })
+
+      const outboxEvents = await OutboxRepository.fetchAfterId(pool, baselineId)
+      const threadUpdated = outboxEvents.find((event) => event.eventType === "thread:updated")
+      expect(threadUpdated).toBeDefined()
+      const payload = threadUpdated!.payload as ThreadUpdatedOutboxPayload
+      expect(payload.anchorId).toBe(f.parentMessageId)
+      expect(payload.replyCount).toBe(2)
+    })
   })
 
   describe("drift parity between batch and single-parent queries", () => {
@@ -383,7 +441,11 @@ describe("Thread Summary", () => {
     // silently diverges, the parity check fails.
     async function pairCompare(fixture: ThreadFixture) {
       const batchMap = await StreamRepository.findThreadSummaries(pool, fixture.channelId)
-      const single = await StreamRepository.findThreadSummaryByParentMessage(pool, fixture.parentMessageId)
+      const single = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        fixture.channelId,
+        fixture.parentMessageId
+      )
       // Normalize "no summary" on both sides so `.toEqual()` can compare them
       // uniformly: batch returns `undefined` from `Map.get`, single returns
       // `null`. Both represent the same semantic "no thread summary".

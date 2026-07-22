@@ -15,7 +15,8 @@ interface ThreadParentEventProps {
  * anchor (`message_created`/`companion_response`) renders exactly as a message
  * does inline and a card anchor (`delegation:created`, `call_started`) renders as
  * its card — no thread affordance inside the parent render (`isThreadParent`
- * suppresses the message row's own ThreadSlot; cards carry no affordance here).
+ * suppresses the ThreadSlot chip + Discuss/Chat on message rows AND cards, which
+ * would otherwise loop back to the panel already open).
  * A card outside its patch window renders pre-patch (its `call_ended` /
  * `delegation:status_changed` isn't fetched into the panel) — accepted, the
  * parent timeline is authoritative.

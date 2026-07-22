@@ -284,13 +284,17 @@ export interface MessageUpdatedOutboxPayload extends StreamScopedPayload {
  * the grace period. `anchorId` is the canonical id of the anchored timeline item
  * (`msg_…` / `event_…`); `replyCount` is the post-mutation value read off the
  * thread stream row; `threadSummary` is `null` when the thread has no live reply.
+ * Both stat fields are optional: the edit path re-emits only a refreshed
+ * `threadSummary` (no count change) and omits `replyCount` so it can never
+ * republish a count read without a lock (a concurrent create/delete owns the
+ * authoritative count). Consumers heal only the fields present.
  */
 export interface ThreadUpdatedOutboxPayload extends StreamScopedPayload {
   parentStreamId: string
   anchorId: string
   threadId: string
-  replyCount: number
-  threadSummary: import("@threa/types").ThreadSummary | null
+  replyCount?: number
+  threadSummary?: import("@threa/types").ThreadSummary | null
 }
 
 export interface ReactionOutboxPayload extends StreamScopedPayload {

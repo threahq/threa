@@ -144,6 +144,7 @@ describe("DelegationEvent", () => {
     expect(screen.queryByRole("link", { name: "View result" })).not.toBeInTheDocument()
     expect(screen.queryByRole("link", { name: /replies/ })).not.toBeInTheDocument()
     expect(screen.queryByRole("link", { name: "Discuss this delegation" })).not.toBeInTheDocument()
+    expect(screen.getByText("Add rate limiting to the webhook endpoint")).toBeInTheDocument()
   })
 
   it("completed (legacy shape): no threadStreamId falls back to the ?m= result deep-link", () => {

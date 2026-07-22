@@ -422,23 +422,37 @@ export class EventService {
    * `bumpThreadReplyCount`) and the anchor it hangs under.
    *
    * Emits `thread:updated` for EVERY anchor kind (message- or event-anchored),
-   * routed to the parent stream room. GRACE: for `msg_` anchors it also dual-emits
-   * the legacy `message:updated {updateType:"reply_count"}` patch so a client that
-   * hasn't upgraded still heals the anchor message; removed in the cleanup chunk.
+   * routed to the parent stream room. `includeReplyCount` (default true) carries
+   * the authoritative post-mutation count on that payload; the edit path passes
+   * false so it refreshes only `threadSummary` and never republishes an unlocked
+   * thread-stream count a concurrent create/delete already advanced (INV-20).
+   * GRACE: for `msg_` anchors it also dual-emits the legacy `message:updated
+   * {updateType:"reply_count"}` patch (carrying the message's own shadow count) so
+   * a client that hasn't upgraded still heals the anchor message; removed in the
+   * cleanup chunk.
    */
-  private async emitThreadUpdate(client: PoolClient, threadStream: ThreadStreamStats | null): Promise<void> {
+  private async emitThreadUpdate(
+    client: PoolClient,
+    threadStream: ThreadStreamStats | null,
+    options: { includeReplyCount?: boolean } = {}
+  ): Promise<void> {
     if (!threadStream?.parentStreamId) return
     const anchorId = threadStream.parentAnchorId ?? threadStream.parentMessageId
     if (!anchorId) return
+    const includeReplyCount = options.includeReplyCount ?? true
 
-    const threadSummary = await StreamRepository.findThreadSummaryByParentMessage(client, anchorId)
+    const threadSummary = await StreamRepository.findThreadSummaryByParentMessage(
+      client,
+      threadStream.parentStreamId,
+      anchorId
+    )
     await OutboxRepository.insert(client, "thread:updated", {
       workspaceId: threadStream.workspaceId,
       streamId: threadStream.parentStreamId,
       parentStreamId: threadStream.parentStreamId,
       anchorId,
       threadId: threadStream.id,
-      replyCount: threadStream.replyCount ?? 0,
+      ...(includeReplyCount ? { replyCount: threadStream.replyCount ?? 0 } : {}),
       threadSummary,
     })
 
@@ -1011,9 +1025,10 @@ export class EventService {
 
         const stream = await StreamRepository.findById(client, params.streamId)
         if (stream?.parentStreamId && (stream.parentAnchorId || stream.parentMessageId)) {
-          // No count change on edit — refresh the thread summary (latest-reply
-          // preview may have changed). `stream.replyCount` is already current.
-          await this.emitThreadUpdate(client, stream)
+          // No count change on edit — refresh only the thread summary; omit
+          // replyCount so a stale unlocked read can't clobber a concurrent
+          // create/delete's authoritative count (INV-20).
+          await this.emitThreadUpdate(client, stream, { includeReplyCount: false })
         }
       }
 
@@ -1441,6 +1456,7 @@ export class EventService {
       const parentReplyCount = updatedTargetMessage?.replyCount ?? uniqueMessageIds.length
       const parentThreadSummary = await StreamRepository.findThreadSummaryByParentMessage(
         client,
+        destinationThread.parentStreamId ?? params.sourceStreamId,
         params.targetMessageId
       )
 

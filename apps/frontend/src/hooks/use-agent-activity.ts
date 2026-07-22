@@ -13,6 +13,7 @@ import type {
   AgentActivityStartedPayload,
   AgentActivityEndedPayload,
 } from "@threa/types"
+import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
 import { getStepInlineLabel } from "@/lib/step-config"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { tryDecryptMessagePayload } from "@/lib/crypto/message-envelope"
@@ -91,8 +92,12 @@ export function useAgentActivity(
     if (streamId === undefined) return null
     const ids = new Set<string>()
     for (const event of events) {
+      // The anchor a session's parent-room indicator keys on: a message's id, or
+      // a threadable card's event id (delegation/call chat sessions anchor there).
       if (event.eventType === "message_created") {
         ids.add((event.payload as { messageId: string }).messageId)
+      } else if (THREAD_ANCHORABLE_EVENT_TYPES.includes(event.eventType)) {
+        ids.add(event.id)
       }
     }
     return ids

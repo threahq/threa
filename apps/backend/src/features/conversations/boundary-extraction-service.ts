@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg"
 import { sql, withTransaction, withClient } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
 import { MessageRepository, type Message } from "../messaging"
-import { StreamRepository, type Stream } from "../streams"
+import { StreamRepository, StreamEventRepository, type Stream } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExtraction } from "../attachments"
 import { awaitLinkPreviewProcessing, LinkPreviewRepository } from "../link-previews"
@@ -23,7 +23,13 @@ import { addStalenessFields } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
-import { AuthorTypes, ConversationStatuses, LinkPreviewStatuses, StreamTypes } from "@threa/types"
+import {
+  AuthorTypes,
+  ConversationStatuses,
+  LinkPreviewStatuses,
+  StreamTypes,
+  THREAD_ANCHORABLE_EVENT_TYPES,
+} from "@threa/types"
 import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5
@@ -164,15 +170,30 @@ export class BoundaryExtractionService {
         MESSAGES_AFTER
       )
 
-      // Which surrounding messages actually anchor a thread with live replies is
-      // read from the thread stream rows (streams.reply_count, the maintained
-      // source of truth), not the message's own shadow count (plan §Projections).
-      const anchorsWithReplies = await StreamRepository.findAnchorsWithReplies(
-        client,
-        stream.id,
-        surroundingMessages.map((m) => m.id)
-      )
-      const threadRootIds = surroundingMessages.filter((m) => anchorsWithReplies.has(m.id)).map((m) => m.id)
+      // Threadable card events (delegation:created, call_started) interleaved with
+      // the surrounding messages are also valid thread anchors — their replies must
+      // reach parent-stream extraction just like message-anchored ones. Bound the
+      // card query to the surrounding messages' sequence range (messages share the
+      // stream_events sequence space — a message's sequence is its message_created
+      // event's).
+      const cardAnchorTypes = THREAD_ANCHORABLE_EVENT_TYPES.filter((t) => t !== "message_created")
+      const surroundingCardEventIds: string[] =
+        surroundingMessages.length > 0
+          ? (
+              await StreamEventRepository.list(client, stream.id, {
+                types: cardAnchorTypes,
+                afterSequence: surroundingMessages[0]!.sequence - 1n,
+                beforeSequence: surroundingMessages[surroundingMessages.length - 1]!.sequence + 1n,
+              })
+            ).map((e) => e.id)
+          : []
+
+      // Which candidate anchors actually anchor a thread with live replies is read
+      // from the thread stream rows (streams.reply_count, the maintained source of
+      // truth), not the message's own shadow count (plan §Projections).
+      const candidateAnchorIds = [...surroundingMessages.map((m) => m.id), ...surroundingCardEventIds]
+      const anchorsWithReplies = await StreamRepository.findAnchorsWithReplies(client, stream.id, candidateAnchorIds)
+      const threadRootIds = candidateAnchorIds.filter((id) => anchorsWithReplies.has(id))
       const threadMessagesByParent = await MessageRepository.findThreadMessages(client, threadRootIds)
       const allThreadMessages = Array.from(threadMessagesByParent.values()).flat()
 

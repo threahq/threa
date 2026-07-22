@@ -662,7 +662,14 @@ export class StreamService {
     let anchorActorId: string | null = null
     let anchorActorType: AuthorType | null = null
     if (anchorId.startsWith("msg_")) {
-      const parentMessage = await MessageRepository.findById(client, anchorId)
+      // Lock the anchor message: a concurrent `moveMessagesToThread` re-parents
+      // the message (UPDATE messages.stream_id) after an unlocked read would have
+      // validated `streamId === parentStreamId`, letting this insert a thread under
+      // the stale parent — a distinct row from any thread under the new parent (the
+      // unique index is scoped per parent_stream_id), so no conflict catches it
+      // (INV-20). The lock serializes the validate-then-insert against the move.
+      // Event anchors don't move (cards are never re-parented), so no lock there.
+      const parentMessage = await MessageRepository.findByIdForUpdate(client, anchorId)
       if (!parentMessage || parentMessage.streamId !== params.parentStreamId) {
         throw new MessageNotFoundError()
       }
