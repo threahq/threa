@@ -159,6 +159,7 @@ describe("message move integration", () => {
     expect(result.thread.parentMessageId).toBe(target.id)
     expect(result.thread.rootStreamId).toBe(sourceStreamId)
     expect(result.thread.companionMode).toBe("on")
+    expect(result.thread.replyCount).toBe(2)
 
     // Move-in bumps the destination thread's streams.reply_count set-based by the
     // number of moved messages (chunk 2 projections; INV-56 single UPDATE).

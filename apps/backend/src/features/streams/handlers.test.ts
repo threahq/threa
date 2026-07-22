@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import type { LinkPreviewSummary } from "@threa/types"
 import type { Request, Response } from "express"
 import type { StreamEvent } from "./event-repository"
-import { applyLinkPreviewStateToEvents, createStreamHandlers } from "./handlers"
+import { applyLinkPreviewStateToEvents, collectThreadAnchorIds, createStreamHandlers } from "./handlers"
 import type { StreamService } from "./service"
 import * as agentsBarrel from "../agents"
 
@@ -23,6 +23,16 @@ function createMessageEvent(messageId: string): StreamEvent {
     },
   }
 }
+
+describe("collectThreadAnchorIds", () => {
+  it("collects canonical message and threadable card anchors", () => {
+    const message = createMessageEvent("msg_1")
+    const delegation = { ...message, id: "event_delegation", eventType: "delegation:created" as const, payload: {} }
+    const membership = { ...message, id: "event_member", eventType: "member_joined" as const, payload: {} }
+
+    expect(collectThreadAnchorIds([message, delegation, membership])).toEqual(["msg_1", "event_delegation"])
+  })
+})
 
 describe("applyLinkPreviewStateToEvents", () => {
   it("attaches preview summaries to matching message events", () => {

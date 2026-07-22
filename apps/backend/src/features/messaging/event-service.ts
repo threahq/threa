@@ -1422,7 +1422,8 @@ export class EventService {
         destinationThread.id,
         uniqueMessageIds.length
       )
-      await this.emitThreadUpdate(client, updatedDestThread ?? destinationThread)
+      const projectedDestinationThread = updatedDestThread ?? destinationThread
+      await this.emitThreadUpdate(client, projectedDestinationThread)
 
       // Snapshot the post-increment reply count + thread summary so we can
       // ship them inside `messages:moved` itself. Without this, source
@@ -1453,7 +1454,7 @@ export class EventService {
         await OutboxRepository.insert(client, "stream:created", {
           workspaceId: params.workspaceId,
           streamId: params.sourceStreamId,
-          stream: destinationThread,
+          stream: projectedDestinationThread,
         })
       }
 
@@ -1548,7 +1549,7 @@ export class EventService {
         destinationStreamId: destinationThread.id,
         targetMessageId: params.targetMessageId,
         movedMessageIds: uniqueMessageIds,
-        thread: destinationThread,
+        thread: projectedDestinationThread,
         events: serializedDestinationEvents,
         removedEventIds,
         sourceTombstoneEvent: serializedSourceTombstone,
@@ -1562,7 +1563,7 @@ export class EventService {
         destinationStreamId: destinationThread.id,
         targetMessageId: params.targetMessageId,
         movedMessageIds: uniqueMessageIds,
-        thread: destinationThread,
+        thread: projectedDestinationThread,
         events: serializedDestinationEvents,
         removedEventIds,
         sourceTombstoneEvent: serializedSourceTombstone,

@@ -1191,9 +1191,10 @@ export const StreamRepository = {
   },
 
   /**
-   * Find all threads anchored in a given parent stream, with reply counts read
-   * from the maintained `streams.reply_count` (the thread IS the stream its
-   * replies land in). Returns a map of anchorId -> { threadId, replyCount },
+   * Find all threads anchored in a given parent stream. During grace, message
+   * anchors read the legacy parent-message shadow because predecessor replicas
+   * update only that column; event anchors read `streams.reply_count`. Returns a
+   * map of anchorId -> { threadId, replyCount },
    * keyed by `COALESCE(parent_anchor_id, parent_message_id)` so message- and
    * event-anchored threads surface uniformly (and grace-window rows written by
    * an old-deploy replica with only the legacy column still resolve).
@@ -1214,8 +1215,15 @@ export const StreamRepository = {
       SELECT
         COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id,
         s.id,
-        s.reply_count
+        CASE
+          WHEN COALESCE(s.parent_anchor_id, s.parent_message_id) LIKE 'msg_%'
+            THEN COALESCE(anchor_message.reply_count, s.reply_count)
+          ELSE s.reply_count
+        END AS reply_count
       FROM streams s
+      LEFT JOIN messages anchor_message
+        ON anchor_message.id = COALESCE(s.parent_anchor_id, s.parent_message_id)
+       AND anchor_message.stream_id = s.parent_stream_id
       WHERE s.parent_stream_id = ${parentStreamId}
         AND s.type = 'thread'
         AND COALESCE(s.parent_anchor_id, s.parent_message_id) IS NOT NULL
@@ -1255,19 +1263,27 @@ export const StreamRepository = {
 
   /**
    * Anchor ids (of the given candidate set) whose thread in this parent stream
-   * has at least one live reply — read from the maintained `streams.reply_count`
-   * (plan §Projections). Used by boundary extraction to decide which anchors to
+   * has at least one live reply. Message anchors use the grace-period parent
+   * shadow; event anchors use `streams.reply_count`. Used by boundary extraction
+   * to decide which anchors to
    * pull thread content for.
    */
   async findAnchorsWithReplies(db: Querier, parentStreamId: string, anchorIds: string[]): Promise<Set<string>> {
     if (anchorIds.length === 0) return new Set<string>()
     const result = await db.query<{ anchor_id: string }>(sql`
-      SELECT COALESCE(parent_anchor_id, parent_message_id) AS anchor_id
-      FROM streams
-      WHERE parent_stream_id = ${parentStreamId}
-        AND type = 'thread'
-        AND reply_count > 0
-        AND COALESCE(parent_anchor_id, parent_message_id) = ANY(${anchorIds})
+      SELECT COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id
+      FROM streams s
+      LEFT JOIN messages anchor_message
+        ON anchor_message.id = COALESCE(s.parent_anchor_id, s.parent_message_id)
+       AND anchor_message.stream_id = s.parent_stream_id
+      WHERE s.parent_stream_id = ${parentStreamId}
+        AND s.type = 'thread'
+        AND CASE
+          WHEN COALESCE(s.parent_anchor_id, s.parent_message_id) LIKE 'msg_%'
+            THEN COALESCE(anchor_message.reply_count, s.reply_count)
+          ELSE s.reply_count
+        END > 0
+        AND COALESCE(s.parent_anchor_id, s.parent_message_id) = ANY(${anchorIds})
     `)
     return new Set(result.rows.map((r) => r.anchor_id))
   },

@@ -310,6 +310,36 @@ describe("Thread Summary", () => {
         counts: [],
       })
     })
+
+    test("message anchors honor predecessor-replica reply-count writes during grace", async () => {
+      const fixture = await seedThread(1, 1)
+
+      await pool.query("UPDATE streams SET reply_count = 0 WHERE id = $1", [fixture.threadId])
+      await pool.query("UPDATE messages SET reply_count = 1 WHERE id = $1", [fixture.parentMessageId])
+
+      let counts = await StreamRepository.findThreadsWithReplyCounts(pool, fixture.channelId, [fixture.parentMessageId])
+      let anchors = await StreamRepository.findAnchorsWithReplies(pool, fixture.channelId, [fixture.parentMessageId])
+      expect({
+        count: counts.get(fixture.parentMessageId)?.replyCount,
+        included: anchors.has(fixture.parentMessageId),
+      }).toEqual({
+        count: 1,
+        included: true,
+      })
+
+      await pool.query("UPDATE streams SET reply_count = 1 WHERE id = $1", [fixture.threadId])
+      await pool.query("UPDATE messages SET reply_count = 0 WHERE id = $1", [fixture.parentMessageId])
+
+      counts = await StreamRepository.findThreadsWithReplyCounts(pool, fixture.channelId, [fixture.parentMessageId])
+      anchors = await StreamRepository.findAnchorsWithReplies(pool, fixture.channelId, [fixture.parentMessageId])
+      expect({
+        count: counts.get(fixture.parentMessageId)?.replyCount,
+        included: anchors.has(fixture.parentMessageId),
+      }).toEqual({
+        count: 0,
+        included: false,
+      })
+    })
   })
 
   describe("thread-summary reactivity", () => {

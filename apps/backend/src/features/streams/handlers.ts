@@ -288,6 +288,16 @@ const actorRewrapSchema = z.object({
 /** Default number of events returned in bootstrap and event list queries. */
 const EVENTS_DEFAULT_LIMIT = 50
 
+export function collectThreadAnchorIds(events: readonly StreamEvent[]): string[] {
+  return events
+    .map((event) => {
+      if (event.eventType === "message_created") return (event.payload as { messageId?: string }).messageId
+      if (THREAD_ANCHORABLE_EVENT_TYPES.includes(event.eventType)) return event.id
+      return undefined
+    })
+    .filter((id): id is string => !!id)
+}
+
 /** Audit ref for a range read: the stream plus the min/max sequence loaded. */
 function streamSequenceRangeRef(streamId: string, events: readonly StreamEvent[]): AuditSubjectRef {
   const ref: AuditSubjectRef = { type: "stream", id: streamId }
@@ -797,7 +807,12 @@ export function createStreamHandlers({
         })
       }
 
-      const enrichedEvents = await eventService.enrichBootstrapEvents(result.events, new Map())
+      const candidateAnchorIds = collectThreadAnchorIds(result.events)
+      const [threadDataMap, threadSummaryMap] = await Promise.all([
+        streamService.getThreadsWithReplyCounts(streamId, candidateAnchorIds),
+        streamService.getThreadSummaries(streamId, candidateAnchorIds),
+      ])
+      const enrichedEvents = await eventService.enrichBootstrapEvents(result.events, threadDataMap, threadSummaryMap)
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(
         linkPreviewService,
         workspaceId,
@@ -1066,13 +1081,7 @@ export function createStreamHandlers({
       // Candidate anchors = message ids of message_created events + event ids of
       // threadable card events (delegation:created, call_started). One anchor
       // track: a message anchors by its `msg_` id, a card by its `event_` id.
-      const candidateAnchorIds = events
-        .map((e) => {
-          if (e.eventType === "message_created") return (e.payload as { messageId?: string }).messageId
-          if (THREAD_ANCHORABLE_EVENT_TYPES.includes(e.eventType)) return e.id
-          return undefined
-        })
-        .filter((id): id is string => !!id)
+      const candidateAnchorIds = collectThreadAnchorIds(events)
       const threadScope = syncMode === "append" ? undefined : candidateAnchorIds
       const [threadDataMap, threadSummaryMap] = await Promise.all([
         streamService.getThreadsWithReplyCounts(streamId, threadScope),
