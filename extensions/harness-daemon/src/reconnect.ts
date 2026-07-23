@@ -88,20 +88,18 @@ function resolveTarget(options: ReconnectOptions, deps: ReconnectDeps): Reconnec
   if (commandInstance && commandInstance !== link.instanceId) {
     throw new Error(`pane ${pane.paneId} has a different Threa instance identity`)
   }
-  const commandRoot = launch.environment.find(({ name }) => name === "THREA_EXPECTED_ROOT_STREAM_ID")?.value
-  if (commandRoot && commandRoot !== options.rootStreamId) {
-    throw new Error(`pane ${pane.paneId} expects root ${commandRoot}, not ${options.rootStreamId}`)
-  }
   return { pane, launch, instanceId: link.instanceId }
 }
 
-export function reconstructPiCommand(target: ReconnectTarget, runtimeSessionId: string): string {
+export function reconstructPiCommand(target: ReconnectTarget, runtimeSessionId: string, rootStreamId: string): string {
   const environment = target.launch.environment.filter(
-    ({ name }) => name !== "THREA_INSTANCE_ID" && name !== "THREA_RUNTIME_SESSION_ID"
+    ({ name }) =>
+      name !== "THREA_INSTANCE_ID" && name !== "THREA_RUNTIME_SESSION_ID" && name !== "THREA_EXPECTED_ROOT_STREAM_ID"
   )
   environment.push(
     { name: "THREA_INSTANCE_ID", value: target.instanceId },
-    { name: "THREA_RUNTIME_SESSION_ID", value: runtimeSessionId }
+    { name: "THREA_RUNTIME_SESSION_ID", value: runtimeSessionId },
+    { name: "THREA_EXPECTED_ROOT_STREAM_ID", value: rootStreamId }
   )
   return [
     "env",
@@ -149,7 +147,19 @@ export async function reconnectPi(
   if (!currentLaunch || currentLaunch.sessionId !== target.launch.sessionId) {
     throw new Error(`Pi session identity changed during reconnect preflight`)
   }
+  const currentLink = deps.piLink(options.runtimeSessionId)
+  if (
+    !currentLink ||
+    currentLink.instanceId !== target.instanceId ||
+    currentLink.rootStreamId !== options.rootStreamId
+  ) {
+    throw new Error(`Pi remote link changed during reconnect preflight`)
+  }
 
-  deps.respawn(target.pane.paneId, target.pane.cwd, reconstructPiCommand(target, options.runtimeSessionId))
+  deps.respawn(
+    target.pane.paneId,
+    target.pane.cwd,
+    reconstructPiCommand(target, options.runtimeSessionId, options.rootStreamId)
+  )
   console.log(`harnessd: reconnected Pi session ${options.runtimeSessionId} in ${target.pane.paneId}`)
 }

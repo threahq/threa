@@ -125,7 +125,7 @@ describe("reconnectPi", () => {
       [
         "%8",
         "/work/feature",
-        `'env' 'THREA_HARNESSD_ENTRYPOINT=/h/index.ts' 'THREA_HARNESSD_BUN_BIN=/bin/bun' 'THREA_INSTANCE_ID=pi-one' 'THREA_RUNTIME_SESSION_ID=${SESSION}' '/opt/bin/pi' '--session-id' '${SESSION}'`,
+        `'env' 'THREA_HARNESSD_ENTRYPOINT=/h/index.ts' 'THREA_HARNESSD_BUN_BIN=/bin/bun' 'THREA_INSTANCE_ID=pi-one' 'THREA_RUNTIME_SESSION_ID=${SESSION}' 'THREA_EXPECTED_ROOT_STREAM_ID=stream_one' '/opt/bin/pi' '--session-id' '${SESSION}'`,
       ],
     ])
   })
@@ -142,28 +142,34 @@ describe("reconnectPi", () => {
     })
   })
 
-  test("production resume command root mismatch leaves pane untouched before preflight", async () => {
-    let preflights = 0
+  test("replaces the production resume command root binding with the routed root", async () => {
     const startCommand = piResumeCommand("/opt/bin/pi", SESSION, "stream_other")
-    const d = deps({
-      panes: () => [pane({ startCommand })],
-      preflight: async () => {
-        preflights += 1
-        return { status: "linked", rootStreamId: "stream_one" }
-      },
-    })
+    const d = deps({ panes: () => [pane({ startCommand })] })
 
-    await expect(reconnectPi({ runtimeSessionId: SESSION, rootStreamId: "stream_one" }, d)).rejects.toThrow(
-      "expects root stream_other, not stream_one"
-    )
-    expect({ preflights, respawns: d.calls.length }).toEqual({ preflights: 0, respawns: 0 })
+    await reconnectPi({ runtimeSessionId: SESSION, rootStreamId: "stream_one" }, d)
+
+    expect(parsePiLaunch(d.calls[0]![2]!)?.environment).toContainEqual({
+      name: "THREA_EXPECTED_ROOT_STREAM_ID",
+      value: "stream_one",
+    })
   })
 
-  test("supports standalone without adopting inventory", async () => {
+  test("standalone launch without environment gains the routed expected root without adopting inventory", async () => {
     let inventoryReads = 0
-    const d = deps({ inventory: () => (inventoryReads++, []), panes: () => [pane()] })
+    const startCommand = `/usr/local/bin/pi --session-id ${SESSION}`
+    const d = deps({ inventory: () => (inventoryReads++, []), panes: () => [pane({ startCommand })] })
+
     await reconnectPi({ runtimeSessionId: SESSION, rootStreamId: "stream_one" }, d)
+
     expect({ inventoryReads, respawns: d.calls.length }).toEqual({ inventoryReads: 1, respawns: 1 })
+    expect(parsePiLaunch(d.calls[0]![2]!)).toMatchObject({
+      sessionId: SESSION,
+      environment: expect.arrayContaining([
+        { name: "THREA_INSTANCE_ID", value: "pi-one" },
+        { name: "THREA_RUNTIME_SESSION_ID", value: SESSION },
+        { name: "THREA_EXPECTED_ROOT_STREAM_ID", value: "stream_one" },
+      ]),
+    })
   })
 
   test("fails closed on duplicate exact managed inventory matches", async () => {
@@ -180,6 +186,25 @@ describe("reconnectPi", () => {
       "preflight failed"
     )
     expect(d.calls).toEqual([])
+  })
+
+  test("post-preflight link mutations leave pane untouched", async () => {
+    for (const changedLink of [
+      undefined,
+      { instanceId: "pi-relinked", rootStreamId: "stream_one", scratchpadUrl: "unused" },
+      { instanceId: "pi-one", rootStreamId: "stream_other", scratchpadUrl: "unused" },
+    ]) {
+      let reads = 0
+      const d = deps({
+        piLink: () =>
+          ++reads === 1 ? { instanceId: "pi-one", rootStreamId: "stream_one", scratchpadUrl: "unused" } : changedLink,
+      })
+
+      await expect(reconnectPi({ runtimeSessionId: SESSION, rootStreamId: "stream_one" }, d)).rejects.toThrow(
+        "link changed during reconnect preflight"
+      )
+      expect(d.calls).toEqual([])
+    }
   })
 
   test("pane generation changes leave pane untouched", async () => {
