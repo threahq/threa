@@ -395,8 +395,8 @@ export const ConversationRepository = {
 
   /**
    * Find conversations in a stream AND in any child threads of that stream.
-   * Child threads are streams where parent_message_id belongs to a message in
-   * the given stream.
+   * Child threads are thread streams whose `parent_stream_id` is this stream —
+   * anchor-agnostic, so threads on cards (event-anchored) are included too.
    */
   async findByStreamIncludingThreads(
     db: Querier,
@@ -412,10 +412,7 @@ export const ConversationRepository = {
           stream_id = ${streamId}
           OR stream_id IN (
             SELECT s.id FROM streams s
-            WHERE s.type = 'thread'
-              AND s.parent_message_id IN (
-                SELECT m.id FROM messages m WHERE m.stream_id = ${streamId}
-              )
+            WHERE s.type = 'thread' AND s.parent_stream_id = ${streamId}
           )
         )
         AND status = ${options.status}
@@ -430,10 +427,7 @@ export const ConversationRepository = {
       WHERE stream_id = ${streamId}
          OR stream_id IN (
            SELECT s.id FROM streams s
-           WHERE s.type = 'thread'
-             AND s.parent_message_id IN (
-               SELECT m.id FROM messages m WHERE m.stream_id = ${streamId}
-             )
+           WHERE s.type = 'thread' AND s.parent_stream_id = ${streamId}
          )
       ORDER BY last_activity_at DESC
       LIMIT ${limit}

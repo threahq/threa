@@ -66,7 +66,7 @@ interface StreamRow {
  * the two aligned arrays and zip them in `threadSummaryFromRow`.
  */
 interface ThreadSummaryRow {
-  parent_message_id: string
+  anchor_id: string
   latest_message_id: string
   latest_author_id: string
   latest_author_type: string
@@ -1186,49 +1186,106 @@ export const StreamRepository = {
       SET parent_stream_id = ${params.destinationParentStreamId}, updated_at = NOW()
       WHERE workspace_id = ${params.workspaceId}
         AND parent_stream_id = ${params.sourceParentStreamId}
-        AND parent_message_id = ANY(${params.parentMessageIds})
+        AND COALESCE(parent_anchor_id, parent_message_id) = ANY(${params.parentMessageIds})
     `)
   },
 
   /**
-   * Find all threads for messages in a given parent stream, including reply counts.
-   * Returns a map of parentMessageId -> { threadId, replyCount }
-   * Counts only non-deleted replies so bootstrap matches the live thread-summary
-   * semantics and doesn't resurrect deleted-only threads after refresh.
+   * Find all threads anchored in a given parent stream. During grace, message
+   * anchors read the legacy parent-message shadow because predecessor replicas
+   * update only that column; event anchors read `streams.reply_count`. Returns a
+   * map of anchorId -> { threadId, replyCount },
+   * keyed by `COALESCE(parent_anchor_id, parent_message_id)` so message- and
+   * event-anchored threads surface uniformly (and grace-window rows written by
+   * an old-deploy replica with only the legacy column still resolve).
    */
   async findThreadsWithReplyCounts(
     db: Querier,
     parentStreamId: string,
-    parentMessageIds?: string[]
+    anchorIds?: string[]
   ): Promise<Map<string, { threadId: string; replyCount: number }>> {
     // An empty scope matches nothing — skip the round-trip entirely.
-    if (parentMessageIds !== undefined && parentMessageIds.length === 0) {
+    if (anchorIds !== undefined && anchorIds.length === 0) {
       return new Map<string, { threadId: string; replyCount: number }>()
     }
-    // `parentMessageIds === undefined` keeps the whole-stream behavior; passing a
-    // list scopes the scan to those parents (bootstrap only needs summaries for
-    // the messages in its window, not every thread in the stream). An empty list
-    // matches nothing, returning an empty map without scanning.
-    const result = await db.query<{ parent_message_id: string; id: string; reply_count: string }>(sql`
+    // `anchorIds === undefined` keeps the whole-stream behavior; passing a list
+    // scopes the scan to those anchors (bootstrap only needs state for the items
+    // in its window, not every thread in the stream).
+    const result = await db.query<{ anchor_id: string; id: string; reply_count: number }>(sql`
       SELECT
-        s.parent_message_id,
+        COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id,
         s.id,
-        COUNT(m.id)::text AS reply_count
+        CASE
+          WHEN COALESCE(s.parent_anchor_id, s.parent_message_id) LIKE 'msg_%'
+            THEN COALESCE(anchor_message.reply_count, s.reply_count)
+          ELSE s.reply_count
+        END AS reply_count
       FROM streams s
-      LEFT JOIN messages m ON m.stream_id = s.id AND m.deleted_at IS NULL
+      LEFT JOIN messages anchor_message
+        ON anchor_message.id = COALESCE(s.parent_anchor_id, s.parent_message_id)
+       AND anchor_message.stream_id = s.parent_stream_id
       WHERE s.parent_stream_id = ${parentStreamId}
-        AND s.parent_message_id IS NOT NULL
-        AND (${parentMessageIds === undefined} OR s.parent_message_id = ANY(${parentMessageIds ?? []}))
-      GROUP BY s.id, s.parent_message_id
+        AND s.type = 'thread'
+        AND COALESCE(s.parent_anchor_id, s.parent_message_id) IS NOT NULL
+        AND (${anchorIds === undefined} OR COALESCE(s.parent_anchor_id, s.parent_message_id) = ANY(${anchorIds ?? []}))
     `)
     const map = new Map<string, { threadId: string; replyCount: number }>()
     for (const row of result.rows) {
-      map.set(row.parent_message_id, {
+      map.set(row.anchor_id, {
         threadId: row.id,
-        replyCount: parseInt(row.reply_count, 10),
+        replyCount: row.reply_count,
       })
     }
     return map
+  },
+
+  /**
+   * Atomically apply a reply-count delta to a thread stream row and refresh its
+   * `last_reply_at` from its own live messages (the source of truth, so a delete
+   * settles the timestamp back correctly). Increment is a race-safe in-place
+   * UPDATE (INV-20); `GREATEST(0, …)` guards underflow. Returns the updated row
+   * (with the post-mutation `replyCount`) for the caller's `thread:updated` emit.
+   */
+  async bumpThreadReplyCount(db: Querier, threadId: string, delta: number): Promise<Stream | null> {
+    const result = await db.query<StreamRow>(sql`
+      UPDATE streams
+      SET reply_count = GREATEST(0, reply_count + ${delta}),
+          last_reply_at = (
+            SELECT MAX(created_at) FROM messages
+            WHERE stream_id = ${threadId} AND deleted_at IS NULL
+          ),
+          updated_at = NOW()
+      WHERE id = ${threadId} AND type = 'thread'
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return result.rows[0] ? mapRowToStream(result.rows[0]) : null
+  },
+
+  /**
+   * Anchor ids (of the given candidate set) whose thread in this parent stream
+   * has at least one live reply. Message anchors use the grace-period parent
+   * shadow; event anchors use `streams.reply_count`. Used by boundary extraction
+   * to decide which anchors to
+   * pull thread content for.
+   */
+  async findAnchorsWithReplies(db: Querier, parentStreamId: string, anchorIds: string[]): Promise<Set<string>> {
+    if (anchorIds.length === 0) return new Set<string>()
+    const result = await db.query<{ anchor_id: string }>(sql`
+      SELECT COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id
+      FROM streams s
+      LEFT JOIN messages anchor_message
+        ON anchor_message.id = COALESCE(s.parent_anchor_id, s.parent_message_id)
+       AND anchor_message.stream_id = s.parent_stream_id
+      WHERE s.parent_stream_id = ${parentStreamId}
+        AND s.type = 'thread'
+        AND CASE
+          WHEN COALESCE(s.parent_anchor_id, s.parent_message_id) LIKE 'msg_%'
+            THEN COALESCE(anchor_message.reply_count, s.reply_count)
+          ELSE s.reply_count
+        END > 0
+        AND COALESCE(s.parent_anchor_id, s.parent_message_id) = ANY(${anchorIds})
+    `)
+    return new Set(result.rows.map((r) => r.anchor_id))
   },
 
   /**
@@ -1251,19 +1308,21 @@ export const StreamRepository = {
   async findThreadSummaries(
     db: Querier,
     parentStreamId: string,
-    parentMessageIds?: string[]
+    anchorIds?: string[]
   ): Promise<Map<string, ThreadSummary>> {
     // An empty scope matches nothing — skip the round-trip entirely.
-    if (parentMessageIds !== undefined && parentMessageIds.length === 0) {
+    if (anchorIds !== undefined && anchorIds.length === 0) {
       return new Map<string, ThreadSummary>()
     }
-    // `parentMessageIds === undefined` keeps the whole-stream behavior; passing a
-    // list scopes the (potentially large) reply scan to just those parents so a
+    // `anchorIds === undefined` keeps the whole-stream behavior; passing a list
+    // scopes the (potentially large) reply scan to just those anchors so a
     // bootstrap of a deep stream doesn't summarize every thread it has ever had.
+    // Keyed by `COALESCE(parent_anchor_id, parent_message_id)` so event-anchored
+    // threads surface and grace-window legacy-only rows still resolve.
     const result = await db.query<ThreadSummaryRow>(sql`
       WITH thread_messages AS (
         SELECT
-          s.parent_message_id,
+          COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id,
           m.id,
           m.author_id,
           m.author_type,
@@ -1272,40 +1331,41 @@ export const StreamRepository = {
         FROM streams s
         JOIN messages m ON m.stream_id = s.id
         WHERE s.parent_stream_id = ${parentStreamId}
-          AND s.parent_message_id IS NOT NULL
+          AND s.type = 'thread'
+          AND COALESCE(s.parent_anchor_id, s.parent_message_id) IS NOT NULL
           AND m.deleted_at IS NULL
-          AND (${parentMessageIds === undefined} OR s.parent_message_id = ANY(${parentMessageIds ?? []}))
+          AND (${anchorIds === undefined} OR COALESCE(s.parent_anchor_id, s.parent_message_id) = ANY(${anchorIds ?? []}))
       ),
       latest AS (
-        SELECT DISTINCT ON (parent_message_id)
-          parent_message_id, id, author_id, author_type, content_markdown, created_at
+        SELECT DISTINCT ON (anchor_id)
+          anchor_id, id, author_id, author_type, content_markdown, created_at
         FROM thread_messages
-        ORDER BY parent_message_id, created_at DESC, id DESC
+        ORDER BY anchor_id, created_at DESC, id DESC
       ),
       participants_distinct AS (
-        -- Pick the earliest reply row per (parent, author) so first_reply_at
+        -- Pick the earliest reply row per (anchor, author) so first_reply_at
         -- and first_reply_id come from the same row. Independent MIN()s could
         -- pair an early timestamp with a later id from the same author and
         -- destabilize the (first_reply_at, first_reply_id) tie-break.
-        SELECT DISTINCT ON (parent_message_id, author_id, author_type)
-          parent_message_id,
+        SELECT DISTINCT ON (anchor_id, author_id, author_type)
+          anchor_id,
           author_id,
           author_type,
           created_at AS first_reply_at,
           id AS first_reply_id
         FROM thread_messages
-        ORDER BY parent_message_id, author_id, author_type, created_at ASC, id ASC
+        ORDER BY anchor_id, author_id, author_type, created_at ASC, id ASC
       ),
       participants AS (
         SELECT
-          parent_message_id,
+          anchor_id,
           (ARRAY_AGG(author_id ORDER BY first_reply_at, first_reply_id))[1:3] AS author_ids,
           (ARRAY_AGG(author_type ORDER BY first_reply_at, first_reply_id))[1:3] AS author_types
         FROM participants_distinct
-        GROUP BY parent_message_id
+        GROUP BY anchor_id
       )
       SELECT
-        l.parent_message_id,
+        l.anchor_id,
         l.id AS latest_message_id,
         l.author_id AS latest_author_id,
         l.author_type AS latest_author_type,
@@ -1314,12 +1374,12 @@ export const StreamRepository = {
         COALESCE(p.author_ids, ARRAY[]::TEXT[]) AS participant_ids,
         COALESCE(p.author_types, ARRAY[]::TEXT[]) AS participant_types
       FROM latest l
-      LEFT JOIN participants p USING (parent_message_id)
+      LEFT JOIN participants p USING (anchor_id)
     `)
 
     const map = new Map<string, ThreadSummary>()
     for (const row of result.rows) {
-      map.set(row.parent_message_id, threadSummaryFromRow(row))
+      map.set(row.anchor_id, threadSummaryFromRow(row))
     }
     return map
   },
@@ -1337,11 +1397,11 @@ export const StreamRepository = {
    * is covered by a test that asserts both entry points return the same
    * `ThreadSummary` for a given parent.
    */
-  async findThreadSummaryByParentMessage(db: Querier, parentMessageId: string): Promise<ThreadSummary | null> {
+  async findThreadSummaryByParentMessage(db: Querier, anchorId: string): Promise<ThreadSummary | null> {
     const result = await db.query<ThreadSummaryRow>(sql`
       WITH thread_messages AS (
         SELECT
-          s.parent_message_id,
+          COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id,
           m.id,
           m.author_id,
           m.author_type,
@@ -1349,7 +1409,8 @@ export const StreamRepository = {
           m.created_at
         FROM streams s
         JOIN messages m ON m.stream_id = s.id
-        WHERE s.parent_message_id = ${parentMessageId}
+        WHERE COALESCE(s.parent_anchor_id, s.parent_message_id) = ${anchorId}
+          AND s.type = 'thread'
           AND m.deleted_at IS NULL
       ),
       participants_distinct AS (
@@ -1370,7 +1431,7 @@ export const StreamRepository = {
         FROM participants_distinct
       )
       SELECT
-        l.parent_message_id,
+        l.anchor_id,
         l.id AS latest_message_id,
         l.author_id AS latest_author_id,
         l.author_type AS latest_author_type,

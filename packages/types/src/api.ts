@@ -226,7 +226,18 @@ export interface StreamBootstrap {
    * replies.
    */
   threadStates?: Array<{
-    parentMessageId: string
+    /**
+     * Canonical id of the timeline item the thread anchors on: `msg_…` for a
+     * message, `event_…` for a card. The one anchor track — healing locates the
+     * row to patch by this id (INV-2 prefix is the discriminator).
+     */
+    anchorId: string
+    /**
+     * Legacy message anchor. Populated (== `anchorId`) for `msg_` anchors during
+     * the grace period so old-deploy clients keying on it stay correct; `null`
+     * for event-anchored threads.
+     */
+    parentMessageId: string | null
     threadId: string
     replyCount: number
     threadSummary: ThreadSummary | null

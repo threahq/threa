@@ -2287,6 +2287,145 @@ describe("registerStreamSocketHandlers — message:updated reply_count patch", (
   })
 })
 
+describe("registerStreamSocketHandlers — thread:updated patch (anchor-agnostic)", () => {
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  const summary = {
+    lastReplyAt: new Date().toISOString(),
+    participants: [{ id: "user_2", type: "user" as const }],
+    latestReply: { messageId: "msg_r1", actorId: "user_2", actorType: "user" as const, contentMarkdown: "a reply" },
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("heals a message anchor (msg_) live by canonical id", async () => {
+    const streamId = "stream_tu_msg"
+    await db.events.put({
+      ...makeEvent({ id: "evt_msg_parent", streamId, sequence: "10" }),
+      payload: { messageId: "msg_anchor", contentMarkdown: "parent" },
+      workspaceId: "ws_1",
+      _sequenceNum: 10,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
+
+    await emit("thread:updated", {
+      workspaceId: "ws_1",
+      streamId,
+      parentStreamId: streamId,
+      anchorId: "msg_anchor",
+      threadId: "stream_thread_m",
+      replyCount: 3,
+      threadSummary: summary,
+    })
+
+    const row = await db.events.get("evt_msg_parent")
+    expect(row?.payload).toMatchObject({
+      messageId: "msg_anchor",
+      threadId: "stream_thread_m",
+      replyCount: 3,
+      threadSummary: summary,
+    })
+    cleanup()
+  })
+
+  it("heals a card anchor (event_) live, located by event id", async () => {
+    const streamId = "stream_tu_card"
+    // A threadable card row (e.g. delegation:created) — anchored by its own id.
+    await db.events.put({
+      ...makeEvent({ id: "event_card1", streamId, sequence: "12", eventType: "delegation:created" }),
+      payload: { delegationId: "dlg_1", title: "Do the thing" },
+      workspaceId: "ws_1",
+      _sequenceNum: 12,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
+
+    await emit("thread:updated", {
+      workspaceId: "ws_1",
+      streamId,
+      parentStreamId: streamId,
+      anchorId: "event_card1",
+      threadId: "stream_thread_c",
+      replyCount: 2,
+      threadSummary: summary,
+    })
+
+    const row = await db.events.get("event_card1")
+    expect(row?.payload).toMatchObject({
+      delegationId: "dlg_1",
+      threadId: "stream_thread_c",
+      replyCount: 2,
+      threadSummary: summary,
+    })
+    cleanup()
+  })
+
+  it("double delivery (both thread:updated and legacy message:updated) converges — no double count", async () => {
+    const streamId = "stream_tu_double"
+    await db.events.put({
+      ...makeEvent({ id: "evt_double_parent", streamId, sequence: "10" }),
+      payload: { messageId: "msg_double", contentMarkdown: "parent" },
+      workspaceId: "ws_1",
+      _sequenceNum: 10,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
+
+    // Both patches carry the same ABSOLUTE count — last-write-wins is idempotent.
+    await emit("thread:updated", {
+      workspaceId: "ws_1",
+      streamId,
+      parentStreamId: streamId,
+      anchorId: "msg_double",
+      threadId: "stream_thread_d",
+      replyCount: 4,
+      threadSummary: summary,
+    })
+    await emit("message:updated", {
+      workspaceId: "ws_1",
+      streamId,
+      messageId: "msg_double",
+      updateType: "reply_count",
+      replyCount: 4,
+      threadSummary: summary,
+      threadId: "stream_thread_d",
+    })
+
+    const row = await db.events.get("evt_double_parent")
+    expect(row?.payload).toMatchObject({ replyCount: 4, threadId: "stream_thread_d", threadSummary: summary })
+    cleanup()
+  })
+})
+
 describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
   beforeEach(async () => {
     await db.events.clear()
@@ -2318,7 +2457,13 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
       syncMode: "append",
       snapshotAt: new Date().toISOString(),
       threadStates: [
-        { parentMessageId: "msg_stale_parent", threadId: "stream_thread_1", replyCount: 6, threadSummary: healSummary },
+        {
+          anchorId: "msg_stale_parent",
+          parentMessageId: "msg_stale_parent",
+          threadId: "stream_thread_1",
+          replyCount: 6,
+          threadSummary: healSummary,
+        },
       ],
     }
 
@@ -2354,7 +2499,13 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
       syncMode: "append",
       snapshotAt,
       threadStates: [
-        { parentMessageId: "msg_fresh_parent", threadId: "stream_thread_2", replyCount: 6, threadSummary: null },
+        {
+          anchorId: "msg_fresh_parent",
+          parentMessageId: "msg_fresh_parent",
+          threadId: "stream_thread_2",
+          replyCount: 6,
+          threadSummary: null,
+        },
       ],
     }
 
@@ -2387,7 +2538,13 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
       syncMode: "append",
       snapshotAt: new Date().toISOString(),
       threadStates: [
-        { parentMessageId: "msg_noop_parent", threadId: "stream_thread_3", replyCount: 2, threadSummary: null },
+        {
+          anchorId: "msg_noop_parent",
+          parentMessageId: "msg_noop_parent",
+          threadId: "stream_thread_3",
+          replyCount: 2,
+          threadSummary: null,
+        },
       ],
     }
 
@@ -2395,5 +2552,82 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
 
     const row = await db.events.get("evt_noop_parent")
     expect(row?._cachedAt).toBe(cachedAt)
+  })
+
+  it("heals a card event's payload by anchorId (event_ anchor)", async () => {
+    const streamId = "stream_heal_card"
+
+    // A threadable card row persisted before its thread got replies.
+    await db.events.put({
+      ...makeEvent({ id: "event_card_stale", streamId, sequence: "10", eventType: "delegation:created" }),
+      payload: { delegationId: "dlg_9", title: "task" },
+      workspaceId: "ws_1",
+      _sequenceNum: 10,
+      _cachedAt: Date.now() - 60_000,
+    })
+
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([makeEvent({ id: "evt_new", streamId, sequence: "20" })], streamId),
+      syncMode: "append",
+      snapshotAt: new Date().toISOString(),
+      threadStates: [
+        {
+          anchorId: "event_card_stale",
+          parentMessageId: null,
+          threadId: "stream_thread_card",
+          replyCount: 4,
+          threadSummary: healSummary,
+        },
+      ],
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    const row = await db.events.get("event_card_stale")
+    expect(row?.payload).toMatchObject({
+      delegationId: "dlg_9",
+      threadId: "stream_thread_card",
+      replyCount: 4,
+      threadSummary: healSummary,
+    })
+    expect(row?._patchedAt).toBeUndefined()
+  })
+
+  it("heals from a legacy threadState with no anchorId (old-backend deploy skew)", async () => {
+    const streamId = "stream_heal_legacy"
+
+    await db.events.put({
+      ...makeEvent({ id: "evt_legacy_parent", streamId, sequence: "10" }),
+      payload: { messageId: "msg_legacy_parent", contentMarkdown: "parent" },
+      workspaceId: "ws_1",
+      _sequenceNum: 10,
+      _cachedAt: Date.now() - 60_000,
+    })
+
+    // Old-backend append response: legacy shape, keyed on parentMessageId only,
+    // anchorId absent at runtime (required in the type, unfilled on the wire).
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([makeEvent({ id: "evt_new", streamId, sequence: "20" })], streamId),
+      syncMode: "append",
+      snapshotAt: new Date().toISOString(),
+      threadStates: [
+        {
+          parentMessageId: "msg_legacy_parent",
+          threadId: "stream_thread_legacy",
+          replyCount: 6,
+          threadSummary: healSummary,
+        } as unknown as NonNullable<StreamBootstrap["threadStates"]>[number],
+      ],
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    const row = await db.events.get("evt_legacy_parent")
+    expect(row?.payload).toMatchObject({
+      messageId: "msg_legacy_parent",
+      threadId: "stream_thread_legacy",
+      replyCount: 6,
+      threadSummary: healSummary,
+    })
   })
 })

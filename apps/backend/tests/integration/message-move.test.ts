@@ -159,6 +159,12 @@ describe("message move integration", () => {
     expect(result.thread.parentMessageId).toBe(target.id)
     expect(result.thread.rootStreamId).toBe(sourceStreamId)
     expect(result.thread.companionMode).toBe("on")
+    expect(result.thread.replyCount).toBe(2)
+
+    // Move-in bumps the destination thread's streams.reply_count set-based by the
+    // number of moved messages (chunk 2 projections; INV-56 single UPDATE).
+    const destThreadRow = await StreamRepository.findById(pool, result.thread.id)
+    expect(destThreadRow?.replyCount).toBe(2)
 
     const sourceEvents = await StreamEventRepository.list(pool, sourceStreamId, { types: ["message_created"] })
     const sourceMessageIds = sourceEvents.map((event) => (event.payload as { messageId: string }).messageId)

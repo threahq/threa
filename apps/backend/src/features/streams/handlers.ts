@@ -24,6 +24,7 @@ import {
   StreamTypes,
   SLUG_PATTERN,
   CompanionModes,
+  THREAD_ANCHORABLE_EVENT_TYPES,
   E2E_ACTOR_KINDS,
   E2E_KEY_WRAP_RECIPIENT_KINDS,
   TOOL_PRIVACY_CATEGORIES,
@@ -286,6 +287,16 @@ const actorRewrapSchema = z.object({
 
 /** Default number of events returned in bootstrap and event list queries. */
 const EVENTS_DEFAULT_LIMIT = 50
+
+export function collectThreadAnchorIds(events: readonly StreamEvent[]): string[] {
+  return events
+    .map((event) => {
+      if (event.eventType === "message_created") return (event.payload as { messageId?: string }).messageId
+      if (THREAD_ANCHORABLE_EVENT_TYPES.includes(event.eventType)) return event.id
+      return undefined
+    })
+    .filter((id): id is string => !!id)
+}
 
 /** Audit ref for a range read: the stream plus the min/max sequence loaded. */
 function streamSequenceRangeRef(streamId: string, events: readonly StreamEvent[]): AuditSubjectRef {
@@ -796,7 +807,12 @@ export function createStreamHandlers({
         })
       }
 
-      const enrichedEvents = await eventService.enrichBootstrapEvents(result.events, new Map())
+      const candidateAnchorIds = collectThreadAnchorIds(result.events)
+      const [threadDataMap, threadSummaryMap] = await Promise.all([
+        streamService.getThreadsWithReplyCounts(streamId, candidateAnchorIds),
+        streamService.getThreadSummaries(streamId, candidateAnchorIds),
+      ])
+      const enrichedEvents = await eventService.enrichBootstrapEvents(result.events, threadDataMap, threadSummaryMap)
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(
         linkPreviewService,
         workspaceId,
@@ -1062,22 +1078,25 @@ export function createStreamHandlers({
       // otherwise stay stale until a hard refresh. The full map rides the
       // response as `threadStates` so the client can heal already-persisted
       // parent rows.
-      const parentMessageIds = events
-        .filter((e) => e.eventType === "message_created")
-        .map((e) => (e.payload as { messageId?: string }).messageId)
-        .filter((id): id is string => !!id)
-      const threadScope = syncMode === "append" ? undefined : parentMessageIds
+      // Candidate anchors = message ids of message_created events + event ids of
+      // threadable card events (delegation:created, call_started). One anchor
+      // track: a message anchors by its `msg_` id, a card by its `event_` id.
+      const candidateAnchorIds = collectThreadAnchorIds(events)
+      const threadScope = syncMode === "append" ? undefined : candidateAnchorIds
       const [threadDataMap, threadSummaryMap] = await Promise.all([
         streamService.getThreadsWithReplyCounts(streamId, threadScope),
         streamService.getThreadSummaries(streamId, threadScope),
       ])
       const threadStates =
         syncMode === "append"
-          ? [...threadDataMap.entries()].map(([parentMessageId, thread]) => ({
-              parentMessageId,
+          ? [...threadDataMap.entries()].map(([anchorId, thread]) => ({
+              anchorId,
+              // Grace: msg_ anchors carry the legacy field (== anchorId) so an
+              // un-upgraded client keying on it stays correct; null for cards.
+              parentMessageId: anchorId.startsWith("msg_") ? anchorId : null,
               threadId: thread.threadId,
               replyCount: thread.replyCount,
-              threadSummary: threadSummaryMap.get(parentMessageId) ?? null,
+              threadSummary: threadSummaryMap.get(anchorId) ?? null,
             }))
           : undefined
 

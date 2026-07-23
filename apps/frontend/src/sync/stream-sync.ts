@@ -481,37 +481,69 @@ async function writeBootstrapEventsAndStream(
  * `_cachedAt` is bumped — this is bootstrap data, not a socket patch, so
  * `_patchedAt` must stay untouched for later bootstraps to reason against.
  */
+type BootstrapThreadState = NonNullable<StreamBootstrap["threadStates"]>[number]
+
 async function applyBootstrapThreadStates(streamId: string, bootstrap: StreamBootstrap, now: number): Promise<void> {
   if (!bootstrap.threadStates || bootstrap.threadStates.length === 0) return
 
   const snapshotMs = bootstrap.snapshotAt ? Date.parse(bootstrap.snapshotAt) : null
-  const stateByMessageId = new Map(bootstrap.threadStates.map((state) => [state.parentMessageId, state]))
 
-  await db.events
-    .where("[streamId+eventType]")
-    .equals([streamId, "message_created"])
-    .filter((event) => {
-      const state = stateByMessageId.get((event.payload as { messageId?: string })?.messageId ?? "")
-      if (!state) return false
-      if (snapshotMs !== null && event._patchedAt !== undefined && event._patchedAt > snapshotMs) return false
-      const payload = event.payload as { threadId?: string; replyCount?: number; threadSummary?: unknown }
-      return (
-        payload.threadId !== state.threadId ||
-        (payload.replyCount ?? 0) !== state.replyCount ||
-        JSON.stringify(payload.threadSummary ?? null) !== JSON.stringify(state.threadSummary)
-      )
-    })
-    .modify((event) => {
-      const state = stateByMessageId.get((event.payload as { messageId?: string })?.messageId ?? "")
-      if (!state) return
-      event.payload = {
-        ...(event.payload as Record<string, unknown>),
-        threadId: state.threadId,
-        replyCount: state.replyCount,
-        threadSummary: state.threadSummary,
-      }
-      event._cachedAt = now
-    })
+  // A row patched by a socket handler AFTER the bootstrap snapshot keeps its
+  // (newer) values — the snapshot may have read stale data. Only `_cachedAt` is
+  // bumped: this is bootstrap data, not a socket patch.
+  const isStale = (event: CachedEvent): boolean =>
+    snapshotMs !== null && event._patchedAt !== undefined && event._patchedAt > snapshotMs
+  const differs = (payload: Record<string, unknown>, state: BootstrapThreadState): boolean =>
+    payload.threadId !== state.threadId ||
+    ((payload.replyCount as number | undefined) ?? 0) !== state.replyCount ||
+    JSON.stringify(payload.threadSummary ?? null) !== JSON.stringify(state.threadSummary)
+  const heal = (event: CachedEvent, state: BootstrapThreadState): void => {
+    event.payload = {
+      ...(event.payload as Record<string, unknown>),
+      threadId: state.threadId,
+      replyCount: state.replyCount,
+      threadSummary: state.threadSummary,
+    }
+    event._cachedAt = now
+  }
+
+  // Message anchors: located by payload.messageId over the indexed
+  // message_created rows. Event anchors (card threads): located by event id
+  // (the anchor id IS the event's primary key).
+  const anchorIdOf = (s: BootstrapThreadState): string | null => s.anchorId ?? s.parentMessageId
+  const messageStateByAnchor = new Map<string, BootstrapThreadState>()
+  const eventAnchorStates: BootstrapThreadState[] = []
+  for (const s of bootstrap.threadStates) {
+    const id = anchorIdOf(s)
+    if (id === null || id === undefined) continue
+    if (id.startsWith("msg_")) messageStateByAnchor.set(id, s)
+    else eventAnchorStates.push(s)
+  }
+
+  if (messageStateByAnchor.size > 0) {
+    await db.events
+      .where("[streamId+eventType]")
+      .equals([streamId, "message_created"])
+      .filter((event) => {
+        const state = messageStateByAnchor.get((event.payload as { messageId?: string })?.messageId ?? "")
+        if (!state || isStale(event)) return false
+        return differs(event.payload as Record<string, unknown>, state)
+      })
+      .modify((event) => {
+        const state = messageStateByAnchor.get((event.payload as { messageId?: string })?.messageId ?? "")
+        if (state) heal(event, state)
+      })
+  }
+
+  for (const state of eventAnchorStates) {
+    await db.events
+      .where("id")
+      .equals(anchorIdOf(state) as string)
+      .modify((event) => {
+        if (event.streamId !== streamId || isStale(event)) return
+        if (differs(event.payload as Record<string, unknown>, state)) heal(event, state)
+      })
+  }
 }
 
 /**
@@ -653,6 +685,18 @@ interface MessageUpdatedPayload {
   threadId?: string | null
 }
 
+interface ThreadUpdatedPayload {
+  workspaceId: string
+  /** The PARENT stream (routing scope) — where the anchored timeline item lives. */
+  streamId: string
+  parentStreamId: string
+  /** Canonical id of the anchored item: `msg_…` (message) or `event_…` (card). */
+  anchorId: string
+  threadId: string
+  replyCount: number
+  threadSummary: ThreadSummary | null
+}
+
 interface CommandEventPayload {
   workspaceId: string
   streamId: string
@@ -746,6 +790,34 @@ export async function updateMessageEvent(
       // bumped by socket-handler patches (and the optimistic helpers below
       // that mirror them); bootstrap apply leaves it alone so a later
       // bootstrap response can decide whether its enrichment is stale.
+      event._patchedAt = now
+    })
+}
+
+/**
+ * Patch the timeline row a thread anchors on, by its canonical anchor id. A
+ * `msg_` anchor routes to the message_created row via {@link updateMessageEvent};
+ * an `event_` anchor (card thread) is located by the event's own primary key.
+ * One lookup for both kinds (mirrors `matchesDeepLinkTarget`: payload.messageId
+ * for messages, event id for cards).
+ */
+export async function updateEventByAnchor(
+  streamId: string,
+  anchorId: string,
+  updater: (payload: Record<string, unknown>) => Record<string, unknown>
+): Promise<void> {
+  if (anchorId.startsWith("msg_")) {
+    await updateMessageEvent(streamId, anchorId, updater)
+    return
+  }
+  await db.events
+    .where("id")
+    .equals(anchorId)
+    .modify((event) => {
+      if (event.streamId !== streamId) return
+      const now = Date.now()
+      event.payload = updater(event.payload as Record<string, unknown>)
+      event._cachedAt = now
       event._patchedAt = now
     })
 }
@@ -1166,9 +1238,10 @@ export function registerStreamSocketHandlers(
   const handleStreamCreated = async (payload: StreamCreatedPayload) => {
     if (payload.streamId !== streamId) return
     const stream = payload.stream
-    if (!stream.parentMessageId) return
+    const anchorId = stream.parentAnchorId ?? stream.parentMessageId
+    if (!anchorId) return
 
-    await updateMessageEvent(streamId, stream.parentMessageId, (p) => ({
+    await updateEventByAnchor(streamId, anchorId, (p) => ({
       ...p,
       threadId: stream.id,
     }))
@@ -1216,6 +1289,21 @@ export function registerStreamSocketHandlers(
       }
       return p
     })
+  }
+
+  // Live thread reply-stat patch for EVERY anchor kind. Heals the anchored row
+  // (message or card) by canonical id. Payloads carry ABSOLUTE counts, so this
+  // is idempotent last-write-wins — for `msg_` anchors the legacy
+  // `message:updated` patch (below) also arrives during the grace period and
+  // converges on the identical values (no double-increment, no flicker).
+  const handleThreadUpdated = async (payload: ThreadUpdatedPayload) => {
+    if (payload.streamId !== streamId) return
+    await updateEventByAnchor(streamId, payload.anchorId, (p) => ({
+      ...p,
+      replyCount: payload.replyCount,
+      threadSummary: payload.threadSummary,
+      threadId: payload.threadId,
+    }))
   }
 
   const handleAppendEvent = async (
@@ -1402,6 +1490,7 @@ export function registerStreamSocketHandlers(
   socket.on("reaction:removed", handleReactionRemoved)
   socket.on("stream:created", handleStreamCreated)
   socket.on("message:updated", handleMessageUpdated)
+  socket.on("thread:updated", handleThreadUpdated)
   socket.on("stream:member_joined", handleAppendEvent)
   socket.on("stream:member_added", handleAppendEvent)
   socket.on("stream:member_removed", handleAppendEvent)
@@ -1444,6 +1533,7 @@ export function registerStreamSocketHandlers(
     socket.off("reaction:removed", handleReactionRemoved)
     socket.off("stream:created", handleStreamCreated)
     socket.off("message:updated", handleMessageUpdated)
+    socket.off("thread:updated", handleThreadUpdated)
     socket.off("stream:member_joined", handleAppendEvent)
     socket.off("stream:member_added", handleAppendEvent)
     socket.off("stream:member_removed", handleAppendEvent)

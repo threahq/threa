@@ -412,7 +412,18 @@ describe("SyncLogRepository catch-up reads", () => {
   const HOUR = 60 * 60 * 1000
   const DAY = 24 * HOUR
 
+  // The prune window is global (its LIMIT spans all workspaces), so expired rows
+  // accumulated in a long-lived local threa_test DB crowd a fresh workspace out
+  // of the batch and the exact-assertion tests below see an empty prune result.
+  async function drainExpired(cutoff: Date) {
+    for (;;) {
+      const { deletedCount } = await SyncLogRepository.pruneExpiredEntries(pool, { cutoff, minKeep: 0, limit: 1000 })
+      if (deletedCount < 1000) break
+    }
+  }
+
   test("prune deletes expired entries beyond the count floor and advances retained_from atomically", async () => {
+    await drainExpired(new Date(Date.now() - 30 * DAY))
     const workspaceId = uniqueId("ws")
     const userId = uniqueId("usr")
     const ids: bigint[] = []
@@ -462,6 +473,7 @@ describe("SyncLogRepository catch-up reads", () => {
   })
 
   test("the time horizon spares entries newer than the cutoff", async () => {
+    await drainExpired(new Date(Date.now() - 30 * DAY))
     const workspaceId = uniqueId("ws")
     const userId = uniqueId("usr")
     const ids: bigint[] = []

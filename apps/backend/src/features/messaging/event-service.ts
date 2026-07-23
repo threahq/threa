@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
-import { StreamRepository } from "../streams"
+import { StreamRepository, type Stream } from "../streams"
 import { StreamMemberRepository, SparseReadRepository } from "../streams"
 import { checkStreamAccess, resolveEffectiveAccessStream } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
@@ -35,6 +35,7 @@ import {
   ConversationIntents,
   StreamTypes,
   Visibilities,
+  THREAD_ANCHORABLE_EVENT_TYPES,
   draftStreamScope,
   draftThreadScope,
   type AttachmentSummary,
@@ -394,38 +395,67 @@ export interface ConversationAssigner {
   ): Promise<string>
 }
 
+/**
+ * Minimal thread stream shape `emitThreadUpdate` needs — accepts both the
+ * repository's row-mapped `Stream` (dates) and the wire `Stream` (strings),
+ * since only these anchor/identity/count fields are read.
+ */
+interface ThreadStreamStats {
+  id: string
+  workspaceId: string
+  parentStreamId: string | null
+  parentAnchorId?: string | null
+  parentMessageId: string | null
+  replyCount?: number
+}
+
 export class EventService {
   constructor(
     private pool: Pool,
     private conversationAssigner?: ConversationAssigner
   ) {}
 
-  private async publishParentThreadUpdate(
-    client: PoolClient,
-    params: {
-      workspaceId: string
-      parentStreamId: string | null
-      parentMessageId: string | null
-    }
-  ): Promise<void> {
-    if (!params.parentStreamId || !params.parentMessageId) return
+  /**
+   * Emit the projection patch(es) for a thread whose reply stats just changed.
+   * The thread IS the stream its replies land in, so `threadStream` carries the
+   * post-mutation `replyCount` (read off `streams.reply_count` via the caller's
+   * `bumpThreadReplyCount`) and the anchor it hangs under.
+   *
+   * Emits `thread:updated` for EVERY anchor kind (message- or event-anchored),
+   * routed to the parent stream room. GRACE: for `msg_` anchors it also dual-emits
+   * the legacy `message:updated {updateType:"reply_count"}` patch so a client that
+   * hasn't upgraded still heals the anchor message; removed in the cleanup chunk.
+   */
+  private async emitThreadUpdate(client: PoolClient, threadStream: ThreadStreamStats | null): Promise<void> {
+    if (!threadStream?.parentStreamId) return
+    const anchorId = threadStream.parentAnchorId ?? threadStream.parentMessageId
+    if (!anchorId) return
 
-    const parentMessage = await MessageRepository.findById(client, params.parentMessageId)
-    if (!parentMessage) return
-
-    const [threadSummary, thread] = await Promise.all([
-      StreamRepository.findThreadSummaryByParentMessage(client, params.parentMessageId),
-      StreamRepository.findByParentMessage(client, params.parentStreamId, params.parentMessageId),
-    ])
-    await OutboxRepository.insert(client, "message:updated", {
-      workspaceId: params.workspaceId,
-      streamId: params.parentStreamId,
-      messageId: params.parentMessageId,
-      updateType: "reply_count",
-      replyCount: parentMessage.replyCount,
+    const threadSummary = await StreamRepository.findThreadSummaryByParentMessage(client, anchorId)
+    await OutboxRepository.insert(client, "thread:updated", {
+      workspaceId: threadStream.workspaceId,
+      streamId: threadStream.parentStreamId,
+      parentStreamId: threadStream.parentStreamId,
+      anchorId,
+      threadId: threadStream.id,
+      replyCount: threadStream.replyCount ?? 0,
       threadSummary,
-      threadId: thread?.id ?? null,
     })
+
+    if (anchorId.startsWith("msg_")) {
+      const parentMessage = await MessageRepository.findById(client, anchorId)
+      if (parentMessage) {
+        await OutboxRepository.insert(client, "message:updated", {
+          workspaceId: threadStream.workspaceId,
+          streamId: threadStream.parentStreamId,
+          messageId: anchorId,
+          updateType: "reply_count",
+          replyCount: parentMessage.replyCount,
+          threadSummary,
+          threadId: threadStream.id,
+        })
+      }
+    }
   }
 
   private async resolveActorType(
@@ -812,13 +842,21 @@ export class EventService {
       },
     })
 
-    if (stream?.parentMessageId && stream?.parentStreamId) {
-      await MessageRepository.incrementReplyCount(client, stream.parentMessageId)
-      await this.publishParentThreadUpdate(client, {
-        workspaceId: params.workspaceId,
-        parentStreamId: stream.parentStreamId,
-        parentMessageId: stream.parentMessageId,
-      })
+    if (stream?.parentStreamId && (stream.parentAnchorId || stream.parentMessageId)) {
+      // Legacy shadow: keep messages.reply_count dual-written for msg_ anchors
+      // (grace). Authoritative count lives on the thread stream row.
+      let updatedThread: Stream | null
+      if (stream.parentMessageId) {
+        // The rolling-deploy trigger mirrors this legacy write into the canonical
+        // stream projection. Do not also delta-bump the stream row: predecessor
+        // replicas may have changed the shadow, and taking both locks in opposite
+        // order can deadlock mixed-version transactions.
+        await MessageRepository.incrementReplyCount(client, stream.parentMessageId)
+        updatedThread = await StreamRepository.findById(client, stream.id)
+      } else {
+        updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, 1)
+      }
+      await this.emitThreadUpdate(client, updatedThread ?? stream)
     }
 
     // A declared message assigns its conversation synchronously, in this same
@@ -972,12 +1010,10 @@ export class EventService {
         })
 
         const stream = await StreamRepository.findById(client, params.streamId)
-        if (stream?.parentMessageId && stream.parentStreamId) {
-          await this.publishParentThreadUpdate(client, {
-            workspaceId: params.workspaceId,
-            parentStreamId: stream.parentStreamId,
-            parentMessageId: stream.parentMessageId,
-          })
+        if (stream?.parentStreamId && (stream.parentAnchorId || stream.parentMessageId)) {
+          // No count change on edit — refresh the thread summary (latest-reply
+          // preview may have changed). `stream.replyCount` is already current.
+          await this.emitThreadUpdate(client, stream)
         }
       }
 
@@ -1102,13 +1138,15 @@ export class EventService {
         })
 
         const stream = await StreamRepository.findById(client, params.streamId)
-        if (stream?.parentMessageId && stream?.parentStreamId) {
-          await MessageRepository.decrementReplyCount(client, stream.parentMessageId)
-          await this.publishParentThreadUpdate(client, {
-            workspaceId: params.workspaceId,
-            parentStreamId: stream.parentStreamId,
-            parentMessageId: stream.parentMessageId,
-          })
+        if (stream?.parentStreamId && (stream.parentAnchorId || stream.parentMessageId)) {
+          let updatedThread: Stream | null
+          if (stream.parentMessageId) {
+            await MessageRepository.decrementReplyCount(client, stream.parentMessageId)
+            updatedThread = await StreamRepository.findById(client, stream.id)
+          } else {
+            updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, -1)
+          }
+          await this.emitThreadUpdate(client, updatedThread ?? stream)
         }
       }
 
@@ -1389,11 +1427,9 @@ export class EventService {
       })
 
       await MessageRepository.incrementReplyCountBy(client, params.targetMessageId, uniqueMessageIds.length)
-      await this.publishParentThreadUpdate(client, {
-        workspaceId: params.workspaceId,
-        parentStreamId: params.sourceStreamId,
-        parentMessageId: params.targetMessageId,
-      })
+      const projectedDestinationThread =
+        (await StreamRepository.findById(client, destinationThread.id)) ?? destinationThread
+      await this.emitThreadUpdate(client, projectedDestinationThread)
 
       // Snapshot the post-increment reply count + thread summary so we can
       // ship them inside `messages:moved` itself. Without this, source
@@ -1408,20 +1444,26 @@ export class EventService {
         params.targetMessageId
       )
 
-      if (sourceStream.parentStreamId && sourceStream.parentMessageId) {
-        await MessageRepository.decrementReplyCountBy(client, sourceStream.parentMessageId, uniqueMessageIds.length)
-        await this.publishParentThreadUpdate(client, {
-          workspaceId: params.workspaceId,
-          parentStreamId: sourceStream.parentStreamId,
-          parentMessageId: sourceStream.parentMessageId,
-        })
+      if (sourceStream.parentStreamId && (sourceStream.parentAnchorId || sourceStream.parentMessageId)) {
+        let updatedSourceThread: Stream | null
+        if (sourceStream.parentMessageId) {
+          await MessageRepository.decrementReplyCountBy(client, sourceStream.parentMessageId, uniqueMessageIds.length)
+          updatedSourceThread = await StreamRepository.findById(client, sourceStream.id)
+        } else {
+          updatedSourceThread = await StreamRepository.bumpThreadReplyCount(
+            client,
+            sourceStream.id,
+            -uniqueMessageIds.length
+          )
+        }
+        await this.emitThreadUpdate(client, updatedSourceThread ?? sourceStream)
       }
 
       if (created) {
         await OutboxRepository.insert(client, "stream:created", {
           workspaceId: params.workspaceId,
           streamId: params.sourceStreamId,
-          stream: destinationThread,
+          stream: projectedDestinationThread,
         })
       }
 
@@ -1516,7 +1558,7 @@ export class EventService {
         destinationStreamId: destinationThread.id,
         targetMessageId: params.targetMessageId,
         movedMessageIds: uniqueMessageIds,
-        thread: destinationThread,
+        thread: projectedDestinationThread,
         events: serializedDestinationEvents,
         removedEventIds,
         sourceTombstoneEvent: serializedSourceTombstone,
@@ -1530,7 +1572,7 @@ export class EventService {
         destinationStreamId: destinationThread.id,
         targetMessageId: params.targetMessageId,
         movedMessageIds: uniqueMessageIds,
-        thread: destinationThread,
+        thread: projectedDestinationThread,
         events: serializedDestinationEvents,
         removedEventIds,
         sourceTombstoneEvent: serializedSourceTombstone,
@@ -1886,6 +1928,23 @@ export class EventService {
                 },
               }
             : event
+        }
+        // Threadable card events (delegation:created, call_started) anchor by
+        // their event id — inject the same thread projection so a fresh-load
+        // card renders its thread affordance without a second fetch.
+        if (event.eventType !== "message_created" && THREAD_ANCHORABLE_EVENT_TYPES.includes(event.eventType)) {
+          const threadData = threadDataMap.get(event.id)
+          if (!threadData) return event
+          const threadSummary = threadSummaryMap.get(event.id)
+          return {
+            ...event,
+            payload: {
+              ...(event.payload as Record<string, unknown>),
+              threadId: threadData.threadId,
+              replyCount: threadData.replyCount,
+              ...(threadSummary ? { threadSummary } : {}),
+            },
+          }
         }
         if (event.eventType !== "message_created") return event
         const payload = event.payload as MessageCreatedPayload
