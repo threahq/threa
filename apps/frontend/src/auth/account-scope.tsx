@@ -18,6 +18,7 @@ import { resetConversationReplyOpenStoreCache } from "@/stores/conversation-repl
 import { resetE2eSessionStoreCache } from "@/stores/e2e-session-store"
 import { resetCallStoreCache } from "@/stores/call-store"
 import { resetIncomingCallStoreCache } from "@/stores/incoming-call-store"
+import { resetFloatingSurfaceGeometryStoreCache } from "@/stores/floating-surface-geometry-store"
 import { resetRevealGate } from "@/sync/reveal-gate"
 import { useAuth } from "./hooks"
 
@@ -84,6 +85,7 @@ function flushModuleStoreCaches(): void {
   // account switch with a live call never leaves the prior account's mic hot.
   resetCallStoreCache()
   resetIncomingCallStoreCache()
+  resetFloatingSurfaceGeometryStoreCache()
   resetRevealGate()
 }
 

@@ -14,6 +14,7 @@ import { setCallSelfMirror, useCallPrefs, type CallSelfMirror } from "@/stores/c
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { CallDeviceState, CallDiagnostics } from "@/stores/call-store"
+import { CALL_SURFACE_PROTECTED_ATTR } from "./call-surface-geometry"
 import { useCallManager } from "./call-manager-context"
 import { CameraButton, ChatButton, FlipButton, LeaveButton, MuteButton } from "./call-control-buttons"
 import { useCallDevices, useCallDiagnostics } from "./call-store-hooks"
@@ -182,7 +183,7 @@ export function CallControls() {
   // Camera hides itself on audio_only, Flip on desktop / single-camera — so the row
   // gates itself without CallControls re-deciding.
   return (
-    <div className="flex items-center justify-center gap-1.5">
+    <div {...{ [CALL_SURFACE_PROTECTED_ATTR]: "" }} className="flex items-center justify-center gap-1.5">
       <MuteButton />
       <CameraButton />
       <FlipButton />

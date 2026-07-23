@@ -21,6 +21,16 @@ import { CallTimer } from "./call-timer"
 import { CameraButton, LeaveButton, MuteButton } from "./call-control-buttons"
 import { CaptureErrorBanner } from "./call-capture-error"
 import { useCallCaptureError, useCallConnectedAt, useCallPhase, useCallRoster } from "./call-store-hooks"
+import {
+  anchorSurfaceAtPointer,
+  clampSquareToViewport,
+  CALL_SURFACE_PROTECTED_ATTR,
+  type FloatingSurfaceGeometry,
+  type Point,
+  type Rect,
+  type Size,
+} from "./call-surface-geometry"
+import { publishFloatingSurfaceGeometry } from "@/stores/floating-surface-geometry-store"
 
 const REDUCED_MOTION =
   typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
@@ -34,40 +44,6 @@ const MINIMIZED_SIZE = { width: 260, height: 50 }
 const MINIMIZED_POINTER_ANCHOR = { x: MINIMIZED_SIZE.width - 24, y: MINIMIZED_SIZE.height / 2 }
 const KEYBOARD_MOVE_STEP = 16
 
-interface Point {
-  x: number
-  y: number
-}
-
-interface Size {
-  width: number
-  height: number
-}
-
-/**
- * Clamp a floating square so it stays fully on-screen with `margin` padding. When
- * the square is larger than the viewport the upper bound would go negative, so it
- * floors at `margin` (top-left pinned) rather than clamping to a negative x/y.
- */
-export function clampSquareToViewport(pos: Point, size: Size, viewport: Size, margin = 8): Point {
-  const maxX = Math.max(margin, viewport.width - size.width - margin)
-  const maxY = Math.max(margin, viewport.height - size.height - margin)
-  return {
-    x: Math.min(Math.max(pos.x, margin), maxX),
-    y: Math.min(Math.max(pos.y, margin), maxY),
-  }
-}
-
-export function anchorSurfaceAtPointer(
-  pointer: Point,
-  size: Size,
-  viewport: Size,
-  anchor: Point = { x: size.width / 2, y: size.height / 2 },
-  margin = 8
-): Point {
-  return clampSquareToViewport({ x: pointer.x - anchor.x, y: pointer.y - anchor.y }, size, viewport, margin)
-}
-
 function defaultAnchor(): Point {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1024
   const vh = typeof window !== "undefined" ? window.innerHeight : 768
@@ -77,6 +53,31 @@ function defaultAnchor(): Point {
     { width: vw, height: vh },
     MARGIN
   )
+}
+
+function toRect(box: DOMRect): Rect {
+  return { x: box.left, y: box.top, width: box.width, height: box.height }
+}
+
+/**
+ * Measure the surface and every interactive group inside it, in viewport
+ * coordinates. Measured boxes are authoritative: they already carry any
+ * transform/zoom the ring's own `getBoundingClientRect` sees, so both sides
+ * compare like with like. jsdom lays nothing out and reports an all-zero box,
+ * hence the caller-supplied fallback for the root; zero-sized groups drop out
+ * rather than scoring as a point obstacle.
+ */
+function measureSurfaceGeometry(root: HTMLElement, fallbackRect: Rect): FloatingSurfaceGeometry {
+  const box = root.getBoundingClientRect()
+  const groups: Element[] = [...root.querySelectorAll(`[${CALL_SURFACE_PROTECTED_ATTR}]`)]
+  if (root.hasAttribute(CALL_SURFACE_PROTECTED_ATTR)) groups.unshift(root)
+  return {
+    rect: box.width > 0 && box.height > 0 ? toRect(box) : fallbackRect,
+    protectedRects: groups
+      .map((group) => group.getBoundingClientRect())
+      .filter((groupBox) => groupBox.width > 0 && groupBox.height > 0)
+      .map(toRect),
+  }
 }
 
 interface DragState {
@@ -113,6 +114,10 @@ function SquareHeader({
   return (
     <div
       data-testid="floating-call-square-header"
+      // The whole header is protected, not just the action pair: the grip, the
+      // title and the empty space between them are the drag surface, so a ring
+      // lying across them is as unusable as one lying across the buttons.
+      {...{ [CALL_SURFACE_PROTECTED_ATTR]: "" }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -197,7 +202,7 @@ function MinimizedBar({
   onRestore,
   restoreRef,
 }: {
-  surfaceRef: RefObject<HTMLDivElement | null>
+  surfaceRef: (node: HTMLDivElement | null) => void
   pos: Point
   connectedAt: number | null
   dragging: boolean
@@ -213,6 +218,7 @@ function MinimizedBar({
       ref={surfaceRef}
       data-testid="floating-call-square"
       data-minimized="true"
+      {...{ [CALL_SURFACE_PROTECTED_ATTR]: "" }}
       style={{ left: `${pos.x}px`, top: `${pos.y}px`, width: `${MINIMIZED_SIZE.width}px` }}
       className="pointer-events-auto fixed z-50 flex items-center gap-1 rounded-xl border bg-background p-1.5 shadow-xl"
     >
@@ -286,7 +292,14 @@ export function FloatingCallSquare({
 
   const inCall = phase === "connected" || phase === "reconnecting"
 
-  const surfaceRef = useRef<HTMLDivElement>(null)
+  const surfaceRef = useRef<HTMLDivElement | null>(null)
+  // Node in state, not just a ref: the observers below must re-attach when
+  // minimize/restore swaps the root element out for a different one.
+  const [surfaceNode, setSurfaceNode] = useState<HTMLDivElement | null>(null)
+  const attachSurface = useCallback((node: HTMLDivElement | null) => {
+    surfaceRef.current = node
+    setSurfaceNode(node)
+  }, [])
   const minimizeButtonRef = useRef<HTMLButtonElement>(null)
   const restoreButtonRef = useRef<HTMLButtonElement>(null)
   const pendingFocus = useRef<"minimize" | "restore" | null>(null)
@@ -311,6 +324,43 @@ export function FloatingCallSquare({
   useLayoutEffect(() => {
     reclamp()
   }, [reclamp])
+
+  const posRef = useRef(pos)
+  posRef.current = pos
+
+  const publishGeometry = useCallback(() => {
+    const root = surfaceRef.current
+    if (!root) return
+    const fallback = { x: posRef.current.x, y: posRef.current.y, ...getSurfaceSize() }
+    publishFloatingSurfaceGeometry(measureSurfaceGeometry(root, fallback))
+  }, [getSurfaceSize])
+
+  // Publish on every render — position, minimize and content-driven size changes
+  // all land here — so the incoming-ring overlay can avoid the surface.
+  useLayoutEffect(publishGeometry)
+
+  // ...but the phase body is a child that owns its own state: a PreJoinGate going
+  // requesting → permission_error changes which controls exist, and where, without
+  // rerendering this component. Observe the subtree so those republish too.
+  // Attributes are filtered to `class`: a control group can move or disappear by
+  // class alone (hidden/size utilities) with no childList change, while a drag
+  // rewrites the root's inline style every frame and already republishes through
+  // the render above — observing all attributes would republish per drag frame.
+  useEffect(() => {
+    if (!surfaceNode) return
+    const mutations = new MutationObserver(publishGeometry)
+    mutations.observe(surfaceNode, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] })
+    const resizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(publishGeometry)
+    resizes?.observe(surfaceNode)
+    return () => {
+      mutations.disconnect()
+      resizes?.disconnect()
+    }
+  }, [surfaceNode, publishGeometry])
+
+  // Layout-effect cleanup, not an effect: the ring must lose the obstacle in the
+  // same commit the square unmounts, or it paints one frame still translated.
+  useLayoutEffect(() => () => publishFloatingSurfaceGeometry(null), [])
 
   useEffect(() => {
     const handleResize = () => {
@@ -406,7 +456,7 @@ export function FloatingCallSquare({
   if (minimized) {
     return (
       <MinimizedBar
-        surfaceRef={surfaceRef}
+        surfaceRef={attachSurface}
         pos={pos}
         connectedAt={connectedAt}
         dragging={dragging}
@@ -422,7 +472,7 @@ export function FloatingCallSquare({
 
   return (
     <div
-      ref={surfaceRef}
+      ref={attachSurface}
       data-testid="floating-call-square"
       data-minimized="false"
       style={{ left: `${pos.x}px`, top: `${pos.y}px`, width: `${SQUARE_WIDTH}px` }}

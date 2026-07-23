@@ -12,7 +12,7 @@ import {
 } from "@/stores/call-store"
 import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
 import { CallCaptureError, type CallController } from "@/calls/call-manager"
-import { FloatingCallSquare, anchorSurfaceAtPointer, clampSquareToViewport } from "./floating-call-square"
+import { FloatingCallSquare } from "./floating-call-square"
 import { CallManagerProvider } from "./call-manager-context"
 import { CallLaunchProvider, useCallLaunch } from "./call-launch-context"
 
@@ -152,44 +152,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
-})
-
-describe("clampSquareToViewport", () => {
-  const size = { width: 200, height: 200 }
-  const viewport = { width: 1000, height: 800 }
-
-  it("passes an in-bounds position through unchanged", () => {
-    expect(clampSquareToViewport({ x: 100, y: 100 }, size, viewport)).toEqual({ x: 100, y: 100 })
-  })
-
-  it("clamps past each edge back to the on-screen bound", () => {
-    expect(clampSquareToViewport({ x: -50, y: -50 }, size, viewport)).toEqual({ x: 8, y: 8 })
-    expect(clampSquareToViewport({ x: 5000, y: 5000 }, size, viewport)).toEqual({ x: 792, y: 592 })
-  })
-
-  it("respects a custom margin", () => {
-    expect(clampSquareToViewport({ x: 0, y: 0 }, size, viewport, 20)).toEqual({ x: 20, y: 20 })
-    expect(clampSquareToViewport({ x: 9999, y: 9999 }, size, viewport, 20)).toEqual({ x: 780, y: 580 })
-  })
-
-  it("clamps to the margin (never negative) when the square is larger than the viewport", () => {
-    const big = { width: 2000, height: 2000 }
-    expect(clampSquareToViewport({ x: 400, y: 400 }, big, viewport)).toEqual({ x: 8, y: 8 })
-    expect(clampSquareToViewport({ x: -400, y: -400 }, big, viewport)).toEqual({ x: 8, y: 8 })
-  })
-})
-
-describe("anchorSurfaceAtPointer", () => {
-  it("centers and clamps a surface at the pointer", () => {
-    const size = { width: 200, height: 48 }
-    const viewport = { width: 1000, height: 800 }
-    expect(anchorSurfaceAtPointer({ x: 500, y: 400 }, size, viewport)).toEqual({ x: 400, y: 376 })
-    expect(anchorSurfaceAtPointer({ x: 500, y: 400 }, size, viewport, { x: 180, y: 24 })).toEqual({
-      x: 320,
-      y: 376,
-    })
-    expect(anchorSurfaceAtPointer({ x: 10, y: 10 }, size, viewport)).toEqual({ x: 8, y: 8 })
-  })
 })
 
 describe("FloatingCallSquare — connected", () => {
