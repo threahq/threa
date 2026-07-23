@@ -140,7 +140,7 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       description: "Reconnect the linked live session",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
-      args: [{ name: "--force", required: false, description: "Reconnect even when the runtime is busy" }],
+      args: [{ name: "--force", required: false, description: "Reconnect despite local runtime activity" }],
     },
   ]
 }
