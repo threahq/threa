@@ -215,24 +215,14 @@ export function useQueueDraftMessage(workspaceId: string) {
         await db.streams.put(optimisticStream)
       }
 
-      // For thread drafts, show a pending reply indicator on the parent message
-      // by temporarily setting the parent's threadId to the draft panel ID and
+      // For thread drafts, show a pending reply indicator on the anchor item by
+      // temporarily setting the anchor's threadId to the draft panel ID and
       // bumping its replyCount. The promotion step swaps the threadId to the
       // real thread stream without re-incrementing.
-      if (
-        params.streamCreation?.type === StreamTypes.THREAD &&
-        params.streamCreation.parentStreamId &&
-        params.streamCreation.parentMessageId
-      ) {
-        const draftPanelId = createDraftPanelId(
-          params.streamCreation.parentStreamId,
-          params.streamCreation.parentMessageId
-        )
-        await optimisticReplyCountUpdate(
-          params.streamCreation.parentStreamId,
-          params.streamCreation.parentMessageId,
-          draftPanelId
-        ).catch(() => {})
+      const anchorId = params.streamCreation?.parentAnchorId ?? params.streamCreation?.parentMessageId
+      if (params.streamCreation?.type === StreamTypes.THREAD && params.streamCreation.parentStreamId && anchorId) {
+        const draftPanelId = createDraftPanelId(params.streamCreation.parentStreamId, anchorId)
+        await optimisticReplyCountUpdate(params.streamCreation.parentStreamId, anchorId, draftPanelId).catch(() => {})
       }
 
       notifyQueue()

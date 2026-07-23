@@ -823,19 +823,20 @@ export async function updateEventByAnchor(
 }
 
 /**
- * Optimistically update a parent message's replyCount and threadId in IDB.
+ * Optimistically update an anchor item's replyCount and threadId in IDB.
  *
  * Called after draft thread submission so the reply count appears instantly
  * when the user navigates back via breadcrumb. The socket handler for
  * message:updated may miss this event because the panel navigated away
- * from the parent stream (handlers were cleaned up on unmount).
+ * from the parent stream (handlers were cleaned up on unmount). Keyed by the
+ * anchor's canonical id so event-anchored (card) threads bump too.
  */
 export async function optimisticReplyCountUpdate(
   parentStreamId: string,
-  parentMessageId: string,
+  anchorId: string,
   threadId: string
 ): Promise<void> {
-  await updateMessageEvent(parentStreamId, parentMessageId, (p) => ({
+  await updateEventByAnchor(parentStreamId, anchorId, (p) => ({
     ...p,
     threadId,
     replyCount: ((p.replyCount as number) ?? 0) + 1,
@@ -843,7 +844,7 @@ export async function optimisticReplyCountUpdate(
 }
 
 /**
- * Swap the threadId on a parent message without touching replyCount.
+ * Swap the threadId on an anchor item without touching replyCount.
  *
  * Used when promoting a draft thread: the initial optimistic update set the
  * threadId to the draft panel ID (and incremented replyCount by 1) so the UI
@@ -851,12 +852,8 @@ export async function optimisticReplyCountUpdate(
  * created, we swap the threadId to the server-assigned one so navigation
  * targets the real thread.
  */
-export async function setParentThreadId(
-  parentStreamId: string,
-  parentMessageId: string,
-  threadId: string
-): Promise<void> {
-  await updateMessageEvent(parentStreamId, parentMessageId, (p) => ({
+export async function setParentThreadId(parentStreamId: string, anchorId: string, threadId: string): Promise<void> {
+  await updateEventByAnchor(parentStreamId, anchorId, (p) => ({
     ...p,
     threadId,
   }))

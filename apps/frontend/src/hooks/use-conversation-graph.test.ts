@@ -1,11 +1,14 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi, afterEach } from "vitest"
+import { renderHook } from "@testing-library/react"
 import { StreamTypes } from "@threa/types"
 import type { CachedBoardPost, CachedStream } from "@/db"
 import type { RenderableMessage } from "@/components/message/message-item"
+import * as workspaceStore from "@/stores/workspace-store"
 import {
   deriveBranchConversations,
   collectBranchThreadStreamIds,
   branchParentConversationId,
+  useStreamStructuralIndex,
   type ConversationGraph,
   type StreamStructuralIndex,
 } from "./use-conversation-graph"
@@ -34,7 +37,7 @@ function post(id: string, anchorStreamId: string, messageIds: string[], topicSum
 function fixtures(streams: CachedStream[], posts: CachedBoardPost[]) {
   const index: StreamStructuralIndex = {
     streamsById: new Map(streams.map((s) => [s.id, s])),
-    threadsByParentMessageId: new Map(
+    threadsByAnchorId: new Map(
       streams.filter((s) => s.type === StreamTypes.THREAD && s.parentMessageId).map((s) => [s.parentMessageId!, s])
     ),
   }
@@ -145,6 +148,44 @@ describe("collectBranchThreadStreamIds", () => {
     // t3 sits past the depth budget — its subtree renders behind the overflow
     // link, so its rail isn't subscribed from this card.
     expect(ids.sort()).toEqual(["t1", "t2"])
+  })
+})
+
+describe("useStreamStructuralIndex — anchor-keyed thread map", () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function threadStream(id: string, fields: Partial<CachedStream>): CachedStream {
+    return {
+      id,
+      workspaceId: "ws_1",
+      type: StreamTypes.THREAD,
+      parentStreamId: "root",
+      parentAnchorId: null,
+      parentMessageId: null,
+      rootStreamId: "root",
+      ...fields,
+    } as CachedStream
+  }
+
+  it("keys threads by anchor id across a mixed set, excluding card (event) anchors", () => {
+    const streams: CachedStream[] = [
+      { id: "root", workspaceId: "ws_1", type: StreamTypes.CHANNEL } as CachedStream,
+      // New message anchor (dual-written) — indexed under the anchor id.
+      threadStream("t_msg", { parentAnchorId: "msg_a", parentMessageId: "msg_a" }),
+      // Legacy row with only parentMessageId — falls back, still indexed.
+      threadStream("t_legacy", { parentAnchorId: null, parentMessageId: "msg_b" }),
+      // Card anchor — a board branch never forks off a card, so it's excluded.
+      threadStream("t_card", { parentAnchorId: "event_c", parentMessageId: null }),
+    ]
+    vi.spyOn(workspaceStore, "useWorkspaceStreamsRaw").mockReturnValue(streams)
+
+    const { result } = renderHook(() => useStreamStructuralIndex("ws_1"))
+    const map = result.current.threadsByAnchorId
+
+    expect(map.get("msg_a")?.id).toBe("t_msg")
+    expect(map.get("msg_b")?.id).toBe("t_legacy")
+    expect(map.has("event_c")).toBe(false)
+    expect(result.current.streamsById.get("t_card")?.id).toBe("t_card")
   })
 })
 

@@ -451,7 +451,7 @@ export function useReplyToBoardPost(workspaceId: string) {
           streamCreation: {
             type: StreamTypes.THREAD,
             parentStreamId: conversation.streamId,
-            parentMessageId: plan.parentMessageId,
+            parentAnchorId: plan.parentMessageId,
           },
           draftId: panelId,
           conversation: { intent: "threadFromMessage", sourceConversationId: conversation.id },

@@ -33,6 +33,8 @@ export {
 } from "./use-streams"
 
 export { useEvents, eventKeys } from "./use-events"
+export { useThreadAnchorEvent, threadAnchorEventKeys } from "./use-thread-anchor-event"
+export { useExternalThreadDraftPromotion } from "./use-external-thread-draft-promotion"
 
 export { useSidebarConfig } from "./use-sidebar-config"
 

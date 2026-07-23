@@ -18,7 +18,7 @@ import { RelativeTime } from "@/components/relative-time"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
-import { usePendingMessages, usePanel, createDraftPanelId, createConversationPanelId, useTrace } from "@/contexts"
+import { usePendingMessages, usePanel, createConversationPanelId, useTrace } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
@@ -62,6 +62,7 @@ import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { MessageActionDrawer } from "./message-action-drawer"
 import { isAgentTraceActor } from "./message-actions"
 import { ThreadSlot } from "./thread-slot"
+import { useThreadAnchor } from "./use-thread-anchor"
 import { DeleteMessageDialog } from "./delete-message-dialog"
 import { MessageEditForm } from "./message-edit-form"
 import { UnsentMessageEditForm } from "./unsent-message-edit-form"
@@ -905,7 +906,7 @@ function SentMessageEvent({
   e2eDecryptedMarkdown,
   batch,
 }: MessageEventInnerProps) {
-  const { panelId, getPanelUrl, openPanel } = usePanel()
+  const { panelId, openPanel } = usePanel()
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { getTraceUrl } = useTrace()
   const quoteReplyCtx = useQuoteReply()
@@ -1011,15 +1012,17 @@ function SentMessageEvent({
     }
   }, [isHighlighted])
 
-  const draftPanelId = createDraftPanelId(streamId, payload.messageId)
-  const draftPanelUrl = getPanelUrl(draftPanelId)
+  // Shared thread affordance wiring, keyed on this message's canonical id.
+  // `activity.threadStreamId` lets us link to the real thread immediately when
+  // an agent response is in flight, before the slower stream:created event.
+  const { threadHref, replyUrl } = useThreadAnchor(streamId, payload.messageId, {
+    threadId,
+    activityThreadStreamId: activity?.threadStreamId,
+  })
 
   // Thread card shown below the message body when a thread exists with replies.
   // Users without a thread start one via the hover toolbar or context menu —
   // the old always-visible "Reply in thread" footer link has been removed.
-  // `activity.threadStreamId` lets us link to the real thread immediately when
-  // an agent response is in flight, before the slower stream:created event.
-  const effectiveThreadId = threadId ?? activity?.threadStreamId
   // Unified thread-slot: owns the gold left-line across pill → card so the
   // transition reads as a single thread extending downward, with a CSS
   // grow-in on first appearance and a grid-rows extension when the card
@@ -1029,7 +1032,7 @@ function SentMessageEvent({
     <ThreadSlot
       activity={activity}
       replyCount={replyCount}
-      threadHref={effectiveThreadId ? getPanelUrl(effectiveThreadId) : null}
+      threadHref={threadHref}
       summary={payload.threadSummary}
       workspaceId={workspaceId}
     />
@@ -1148,7 +1151,7 @@ function SentMessageEvent({
       actorType: event.actorType,
       sessionId: payload.sessionId,
       isThreadParent: panelId === threadId || isThreadParentProp,
-      replyUrl: effectiveThreadId ? getPanelUrl(effectiveThreadId) : draftPanelUrl,
+      replyUrl,
       traceUrl:
         isAgentTraceActor(event.actorType) && payload.sessionId
           ? getTraceUrl(payload.sessionId, payload.messageId)
@@ -1275,9 +1278,7 @@ function SentMessageEvent({
       panelId,
       threadId,
       isThreadParentProp,
-      effectiveThreadId,
-      getPanelUrl,
-      draftPanelUrl,
+      replyUrl,
       getTraceUrl,
       currentUserId,
       workspaceId,

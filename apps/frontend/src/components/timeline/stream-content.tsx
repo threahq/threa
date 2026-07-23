@@ -1,3 +1,4 @@
+import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
@@ -6,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   useEvents,
+  useThreadAnchorEvent,
   useStreamSocket,
   useTimelineScroll,
   useScrollBehavior,
@@ -111,7 +113,7 @@ import {
 import { MessageInput } from "./message-input"
 import { StreamDateHeader } from "./stream-date-header"
 import { JoinChannelBar } from "./join-channel-bar"
-import { ThreadParentMessage } from "../thread/thread-parent-message"
+import { ThreadParentEvent } from "../thread/thread-parent-event"
 import { EditLastMessageContext } from "./edit-last-message-context"
 import { QuoteReplyProvider } from "./quote-reply-context"
 import { ConversationReplyProvider } from "./conversation-reply-context"
@@ -205,17 +207,6 @@ export function shouldStartHighlightClear(args: {
 }): boolean {
   if (!args.highlightMessageId) return false
   return args.deepLinkTargetLoaded || args.deepLinkGaveUp
-}
-
-/**
- * `?m=` deep-link targets are message ids or, for non-message rows (delegation
- * cards), raw `event_…` ids — the prefixes never collide, so one matcher serves
- * every deep-link path (mirrors findMessageItemIndex). Every in-window check a
- * deep link flows through must use this, or an event-id target wedges that path
- * on its give-up/timeout branch.
- */
-export function matchesDeepLinkTarget(event: { id: string; payload: unknown }, target: string): boolean {
-  return (event.payload as { messageId?: string })?.messageId === target || event.id === target
 }
 
 /**
@@ -707,33 +698,33 @@ export function StreamContent({
   // overlay returns when move-to-thread batch mode ends.
   const activeConversationOverlay = batchMode && batchIntent === "moveToThread" ? undefined : conversationOverlay
   const parentStreamId = stream?.parentStreamId
-  const parentMessageId = stream?.parentMessageId
+  // The thread's anchor: a message (`msg_…`) or a card (`event_…`), located in the
+  // parent timeline by its canonical id. `matchesDeepLinkTarget` is exactly this
+  // lookup (payload.messageId for messages, event id for cards).
+  const anchorId = stream ? (stream.parentAnchorId ?? stream.parentMessageId) : null
   const parentCachedEvents = useStreamEvents(parentStreamId ?? undefined)
-  const cachedParentMessage = useMemo(() => {
-    if (!isThread || !parentStreamId || !parentMessageId || !parentCachedEvents) return null
-    return parentCachedEvents.find(
-      (event) =>
-        event.eventType === "message_created" &&
-        (event.payload as { messageId?: string })?.messageId === parentMessageId
-    )
-  }, [isThread, parentStreamId, parentMessageId, parentCachedEvents])
+  const cachedAnchorEvent = useMemo(() => {
+    if (!isThread || !parentStreamId || !anchorId || !parentCachedEvents) return null
+    return parentCachedEvents.find((event) => matchesDeepLinkTarget(event, anchorId))
+  }, [isThread, parentStreamId, anchorId, parentCachedEvents])
 
-  // Fetch parent stream bootstrap (for threads to get parent message)
+  // Fetch parent stream bootstrap (for threads to get the anchor item)
   // Only fetch when we have a valid parentStreamId
   const { data: parentBootstrap } = useStreamBootstrap(workspaceId, parentStreamId!, {
-    enabled: !isDraft && isThread && !!parentStreamId && !!parentMessageId && !cachedParentMessage,
+    enabled: !isDraft && isThread && !!parentStreamId && !!anchorId && !cachedAnchorEvent,
   })
 
-  // Find parent message from parent stream's events
-  const parentMessage = useMemo(() => {
-    if (!isThread || !parentStreamId || !parentMessageId) return null
-    if (cachedParentMessage) return cachedParentMessage as unknown as StreamEvent
-    if (!parentBootstrap?.events) return null
-
-    return parentBootstrap.events.find(
-      (e) => e.eventType === "message_created" && (e.payload as { messageId?: string })?.messageId === parentMessageId
-    )
-  }, [cachedParentMessage, isThread, parentStreamId, parentMessageId, parentBootstrap?.events])
+  const localAnchorEvent = useMemo(() => {
+    if (!isThread || !parentStreamId || !anchorId) return null
+    if (cachedAnchorEvent) return cachedAnchorEvent as unknown as StreamEvent
+    return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, anchorId)) ?? null
+  }, [cachedAnchorEvent, isThread, parentStreamId, anchorId, parentBootstrap?.events])
+  const { event: anchorEvent, sharedMessages: anchorSharedMessages } = useThreadAnchorEvent(
+    workspaceId,
+    isThread ? parentStreamId : null,
+    anchorId,
+    localAnchorEvent
+  )
 
   // Subscribe to stream room FIRST (subscribe-then-bootstrap pattern)
   useStreamSocket(workspaceId, streamId, { enabled: !isDraft })
@@ -788,10 +779,11 @@ export function StreamContent({
   const mergedSharedMessages = useMemo(
     () => ({
       ...pagedSharedMessages,
+      ...(anchorSharedMessages ?? {}),
       ...(parentBootstrap?.sharedMessages ?? {}),
       ...(bootstrap?.sharedMessages ?? {}),
     }),
-    [pagedSharedMessages, parentBootstrap?.sharedMessages, bootstrap?.sharedMessages]
+    [pagedSharedMessages, anchorSharedMessages, parentBootstrap?.sharedMessages, bootstrap?.sharedMessages]
   )
 
   // For drafts, query pending/failed events directly from IDB so optimistic
@@ -2496,9 +2488,9 @@ export function StreamContent({
                         {...batchPointerHandlers}
                       >
                         <div ref={plainContentRef}>
-                          {isThread && parentMessage && parentStreamId && (
-                            <ThreadParentMessage
-                              event={parentMessage}
+                          {isThread && anchorEvent && parentStreamId && (
+                            <ThreadParentEvent
+                              event={anchorEvent}
                               workspaceId={workspaceId}
                               streamId={parentStreamId}
                               replyCount={displayEvents.length}

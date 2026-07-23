@@ -256,7 +256,7 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
       {
         workspaceId: WS,
         streamId: createDraftPanelId("stream_1", "m_open"),
-        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "stream_1", parentMessageId: "m_open" },
+        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "stream_1", parentAnchorId: "m_open" },
         draftId: createDraftPanelId("stream_1", "m_open"),
         conversation: { intent: "newSubtopic" },
       }
@@ -334,7 +334,7 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
       {
         workspaceId: WS,
         streamId: createDraftPanelId("stream_1", "m_open"),
-        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "stream_1", parentMessageId: "m_open" },
+        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "stream_1", parentAnchorId: "m_open" },
         draftId: createDraftPanelId("stream_1", "m_open"),
         conversation: { intent: "newSubtopic" },
       }

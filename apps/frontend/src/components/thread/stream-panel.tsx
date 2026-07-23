@@ -26,6 +26,7 @@ import {
 } from "@/components/layout/sidebar/sidebar-actions"
 import {
   useStreamBootstrap,
+  useThreadAnchorEvent,
   useDraftComposer,
   getDraftMessageKey,
   useThreadAncestors,
@@ -34,6 +35,7 @@ import {
   useStashComposer,
   useDecryptedDraftPreviews,
   useWorkspaceUserId,
+  useExternalThreadDraftPromotion,
 } from "@/hooks"
 import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
@@ -56,7 +58,8 @@ import { FloatingComposerShell, MessageComposer, StashedDraftsPicker } from "@/c
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 import { SidebarToggle } from "@/components/layout"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { ThreadParentMessage } from "./thread-parent-message"
+import { ThreadParentEvent } from "./thread-parent-event"
+import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { ThreadHeader } from "./thread-header"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { LabelableResourceTypes, StreamTypes } from "@threa/types"
@@ -128,16 +131,12 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
         : [],
     [hasDraftThreadPendingEvents, draftThreadPendingEvents, currentWorkspaceUserId]
   )
-  const cachedParentMessage = useMemo(() => {
+  const cachedAnchorEvent = useMemo(() => {
     if (!draftInfo || !parentCachedEvents) return null
-    return parentCachedEvents.find(
-      (event) =>
-        event.eventType === "message_created" &&
-        (event.payload as { messageId?: string })?.messageId === draftInfo.parentMessageId
-    )
+    return parentCachedEvents.find((event) => matchesDeepLinkTarget(event, draftInfo.anchorId))
   }, [draftInfo, parentCachedEvents])
   const { data: parentBootstrap } = useStreamBootstrap(workspaceId, draftInfo?.parentStreamId ?? "", {
-    enabled: !!draftInfo && (!idbParentStream || !cachedParentMessage),
+    enabled: !!draftInfo && (!idbParentStream || !cachedAnchorEvent),
   })
 
   // For draft threads, fetch parent stream's ancestors to build full breadcrumb trail
@@ -149,29 +148,28 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     parentStream?.rootStreamId ?? null
   )
 
-  const parentMessage = useMemo(() => {
-    if (cachedParentMessage) return cachedParentMessage
-    if (!draftInfo || !parentBootstrap?.events) return null
-    return parentBootstrap.events.find(
-      (e) =>
-        e.eventType === "message_created" &&
-        (e.payload as { messageId?: string })?.messageId === draftInfo.parentMessageId
-    )
-  }, [cachedParentMessage, parentBootstrap, draftInfo])
+  const localAnchorEvent = useMemo(() => {
+    if (cachedAnchorEvent) return cachedAnchorEvent
+    if (!draftInfo) return null
+    return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, draftInfo.anchorId)) ?? null
+  }, [cachedAnchorEvent, parentBootstrap?.events, draftInfo])
+  const { event: anchorEvent } = useThreadAnchorEvent(
+    workspaceId,
+    draftInfo?.parentStreamId,
+    draftInfo?.anchorId,
+    localAnchorEvent
+  )
 
-  // Auto-convert draft to real thread when created externally (e.g., agent eager thread creation)
+  // Auto-convert draft to real thread when created externally (e.g., agent eager
+  // thread creation). The healed threadId lands on the anchor's payload for both
+  // message and card anchors (chunk-2 healing) — one accessor covers both.
   const externalThreadId = useMemo(() => {
-    if (!parentMessage) return null
-    return (parentMessage.payload as { threadId?: string }).threadId ?? null
-  }, [parentMessage])
-
-  useEffect(() => {
-    if (!isDraft || !externalThreadId) return
-    openPanel(externalThreadId)
-  }, [isDraft, externalThreadId, openPanel])
+    if (!anchorEvent) return null
+    return (anchorEvent.payload as { threadId?: string }).threadId ?? null
+  }, [anchorEvent])
 
   // Draft composer
-  const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", parentMessageId: draftInfo.parentMessageId }) : ""
+  const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", anchorId: draftInfo.anchorId }) : ""
   // A draft thread has no stream row of its own yet — its E2E state is the
   // parent's (threads inherit the root's SSK server-side, INV-E1). Read the flag
   // and the encrypted root off the thread stream when it exists, else the parent,
@@ -182,8 +180,17 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
-    scopeId: draftInfo?.parentMessageId ?? "",
+    scopeId: draftInfo?.anchorId ?? "",
     e2eStreamId: e2eRoot,
+  })
+  useExternalThreadDraftPromotion({
+    workspaceId,
+    isDraft,
+    anchorId: draftInfo?.anchorId,
+    externalThreadId,
+    flushDraft: composer.flushDraft,
+    setIsSending: composer.setIsSending,
+    onPromoted: openPanel,
   })
 
   // Stashed drafts for this thread. `draftKey` is "" until the panel resolves
@@ -427,7 +434,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
           streamCreation: {
             type: StreamTypes.THREAD,
             parentStreamId: draftInfo.parentStreamId,
-            parentMessageId: draftInfo.parentMessageId,
+            parentAnchorId: draftInfo.anchorId,
           },
           draftId: panelId,
           e2e,
@@ -607,9 +614,9 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
               }
               style={{ paddingBottom: "var(--composer-height, 0px)" }}
             >
-              {parentMessage && (
-                <ThreadParentMessage
-                  event={parentMessage}
+              {anchorEvent && (
+                <ThreadParentEvent
+                  event={anchorEvent}
                   workspaceId={workspaceId}
                   streamId={draftInfo.parentStreamId}
                   replyCount={

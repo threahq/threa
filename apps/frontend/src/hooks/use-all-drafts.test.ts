@@ -89,6 +89,22 @@ function seedMessageEvent(messageId: string, streamId: string, seq: number): Pro
   } as never)
 }
 
+function seedThreadableCardEvent(eventId: string, streamId: string, seq: number): Promise<unknown> {
+  return db.events.put({
+    id: eventId,
+    workspaceId,
+    streamId,
+    sequence: String(seq),
+    _sequenceNum: seq,
+    eventType: "delegation:created",
+    payload: { delegationId: "delegation_1", task: "Investigate" },
+    actorId: "usr_1",
+    actorType: "user",
+    createdAt: new Date(seq).toISOString(),
+    _cachedAt: seq,
+  } as never)
+}
+
 function makeArchivedRoot(id: string): Stream {
   return {
     id,
@@ -442,6 +458,25 @@ describe("useAllDrafts archived streams", () => {
     // The gated events query resolves the reply's parent stream; once it does,
     // the thread draft is hidden because its root (`stream_root`) is archived.
     await waitFor(() => expect(result.current.drafts).toHaveLength(0))
+  })
+
+  it("resolves a card-anchored thread draft through the card's canonical event id", async () => {
+    await seedStream({ id: "stream_cards", displayName: "Ops" })
+    await seedThreadableCardEvent("event_delegation", "stream_cards", 1)
+    await db.drafts.add(
+      syncedDraft({ id: "draft_card_thread", scope: "thread:event_delegation", contentJson: makeDoc("reply") })
+    )
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts).toHaveLength(1))
+    expect(result.current.drafts[0]).toMatchObject({
+      id: "draft_card_thread",
+      type: "thread",
+      streamId: "stream_cards",
+      href: expect.stringContaining(`/w/${workspaceId}/s/stream_cards?draft=stream_cards:event_delegation`),
+    })
   })
 
   it("keeps a thread-reply draft whose root stream is active", async () => {

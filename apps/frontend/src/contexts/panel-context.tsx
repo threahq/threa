@@ -12,23 +12,27 @@ export function isDraftPanel(panelId: string): boolean {
 }
 
 /**
- * Parse draft panel ID to get parent stream and message IDs
- * Returns null if not a draft panel
+ * Parse a draft panel id into its parent stream and anchor ids. `anchorId` is the
+ * canonical id of the timeline item the draft thread hangs under — `msg_…` for a
+ * message, `event_…` for a card (INV-2 prefix discriminates). The id is opaque:
+ * message anchors produce byte-identical strings to before, so persisted panel
+ * state migrates by construction. Returns null when not a draft panel.
  */
-export function parseDraftPanel(panelId: string): { parentStreamId: string; parentMessageId: string } | null {
+export function parseDraftPanel(panelId: string): { parentStreamId: string; anchorId: string } | null {
   if (!isDraftPanel(panelId)) return null
   const parts = panelId.split(":")
   if (parts.length !== 3) return null
-  const [, parentStreamId, parentMessageId] = parts
-  if (!parentStreamId || !parentMessageId) return null
-  return { parentStreamId, parentMessageId }
+  const [, parentStreamId, anchorId] = parts
+  if (!parentStreamId || !anchorId) return null
+  return { parentStreamId, anchorId }
 }
 
 /**
- * Create a draft panel ID from parent stream and message IDs
+ * Create a draft panel id from a parent stream id and an anchor id (the canonical
+ * id of the timeline item the thread hangs under).
  */
-export function createDraftPanelId(parentStreamId: string, parentMessageId: string): string {
-  return `draft:${parentStreamId}:${parentMessageId}`
+export function createDraftPanelId(parentStreamId: string, anchorId: string): string {
+  return `draft:${parentStreamId}:${anchorId}`
 }
 
 /** A conversation panel (Mechanism B) opens a single conversation as a projection
@@ -58,7 +62,7 @@ interface PanelContextValue {
 
   /** Generate URL for opening a panel (for use in <a> or <Link> href) */
   getPanelUrl: (streamId: string) => string
-  /** Open a panel - streamId can be real stream or "draft:parentStreamId:parentMessageId" */
+  /** Open a panel - streamId can be real stream or "draft:parentStreamId:anchorId" */
   openPanel: (streamId: string) => void
   /** Close the current panel */
   closePanel: () => void

@@ -14,7 +14,7 @@ import { deleteDraftById } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
 import { purgeScopeDrafts } from "./use-draft-message"
-import type { CompanionMode } from "@threa/types"
+import { THREAD_ANCHORABLE_EVENT_TYPES, type CompanionMode } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
@@ -70,7 +70,7 @@ export interface UnifiedDraft {
  * Parse a draft message key to extract stream/thread ID and type.
  * Key formats:
  * - "stream:{streamId}" for messages in streams
- * - "thread:{parentMessageId}" for thread replies
+ * - "thread:{anchorId}" for thread replies (anchor is a message or card canonical id)
  */
 function parseDraftMessageKey(key: string): { type: "stream" | "thread"; id: string } | null {
   if (key.startsWith("stream:")) {
@@ -122,7 +122,7 @@ function draftPreviewLabel(draft: CachedDraft, previewMap: Map<string, DraftPrev
 function resolveRootStreamId(
   parsed: { type: "stream" | "thread"; id: string },
   streamMap: Map<string, CachedStream>,
-  messageToStreamMap: Map<string, { streamId: string; parentMessageId: string }>
+  messageToStreamMap: Map<string, { streamId: string; anchorId: string }>
 ): string | null {
   if (parsed.type === "thread") {
     const info = messageToStreamMap.get(parsed.id)
@@ -173,7 +173,7 @@ function resolveDraftLocation(
   parsed: { type: "stream" | "thread"; id: string },
   workspaceId: string,
   streamMap: Map<string, CachedStream>,
-  messageToStreamMap: Map<string, { streamId: string; parentMessageId: string }>
+  messageToStreamMap: Map<string, { streamId: string; anchorId: string }>
 ): ResolvedDraftLocation {
   if (parsed.type === "thread") {
     const messageInfo = messageToStreamMap.get(parsed.id)
@@ -324,7 +324,7 @@ export function streamIdsWithLoadedDraft(drafts: UnifiedDraft[]): Set<string> {
 function useDraftThreadStreamMap(
   allDrafts: CachedDraft[],
   cachedStreams: CachedStream[] | undefined
-): Map<string, { streamId: string; parentMessageId: string }> {
+): Map<string, { streamId: string; anchorId: string }> {
   // Prefix-checking each `|`-split scope avoids false positives on a scope that
   // merely contains the substring `thread:` in a non-prefix spot.
   const hasThreadDrafts = useMemo(() => allDrafts.some((draft) => draft.scope.startsWith("thread:")), [allDrafts])
@@ -352,15 +352,19 @@ function useDraftThreadStreamMap(
     []
   )
 
-  // Thread drafts use payload.messageId as key, not event.id.
+  // Message anchors key on payload.messageId because message event rows can be
+  // recreated on move. Threadable cards are stable broadcast rows and key on
+  // their canonical event id.
   return useMemo(() => {
-    const map = new Map<string, { streamId: string; parentMessageId: string }>()
+    const map = new Map<string, { streamId: string; anchorId: string }>()
     for (const event of cachedEvents ?? []) {
       if (event.eventType === "message_created") {
         const payload = event.payload as { messageId?: string }
         if (payload.messageId) {
-          map.set(payload.messageId, { streamId: event.streamId, parentMessageId: payload.messageId })
+          map.set(payload.messageId, { streamId: event.streamId, anchorId: payload.messageId })
         }
+      } else if (THREAD_ANCHORABLE_EVENT_TYPES.includes(event.eventType)) {
+        map.set(event.id, { streamId: event.streamId, anchorId: event.id })
       }
     }
     return map

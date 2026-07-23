@@ -449,7 +449,7 @@ export function BoardCard({
     // "New sub-topic" only where a fresh branch is valid: hide it once a thread
     // already exists under the message (a populated thread would mix membership —
     // "Split this thread" is the gesture there, adjustment D).
-    const canBranch = !structuralIndex.threadsByParentMessageId.has(message.id)
+    const canBranch = !structuralIndex.threadsByAnchorId.has(message.id)
     return (
       <MessageItem
         key={message.id}
@@ -476,7 +476,7 @@ export function BoardCard({
   // auto-read, no unread-dot input — their read state belongs to the child's own
   // surfaces) and identify as the CHILD conversation (copy-link opens its panel).
   const renderBranchMessage = (branch: BranchConversationView, message: RenderableMessage, continuation: boolean) => {
-    const canBranch = !structuralIndex.threadsByParentMessageId.has(message.id)
+    const canBranch = !structuralIndex.threadsByAnchorId.has(message.id)
     // Per-message spine color: a colored actor (persona gold / bot green / system)
     // overlays its own 2px border onto the branch's neutral rail at that row —
     // covering it at the same width — while a user row stays plain so the neutral

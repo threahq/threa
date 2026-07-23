@@ -575,7 +575,7 @@ describe("EventService.editMessage version capture", () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     // editMessage looks up the stream post-edit to decide whether to publish a
     // thread-summary update to the parent (for reply edits). Default to a
-    // non-thread stream so the publishParentThreadUpdate branch short-circuits
+    // non-thread stream so the emitThreadUpdate branch short-circuits
     // — tests that care about the thread path can override per case.
     spyOn(StreamRepository, "findById").mockResolvedValue({
       id: "stream_1",

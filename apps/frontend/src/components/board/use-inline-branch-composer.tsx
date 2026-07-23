@@ -189,7 +189,7 @@ export function useInlineBranchComposer(params: {
   useEffect(() => {
     if (openComposer !== null) return
     for (const entry of subtopicDraftIndex.values()) {
-      const thread = index.threadsByParentMessageId.get(entry.messageId)
+      const thread = index.threadsByAnchorId.get(entry.messageId)
       if (!thread) continue
       const branchPost = graph.conversationByAnchorStreamId.get(thread.id)
       if (!branchPost) continue
@@ -251,7 +251,7 @@ export function useInlineBranchComposer(params: {
   // `conversation:created` echo lands.
   const isGraphRendered = useCallback(
     (p: { messageId: string }) => {
-      const threadId = index.threadsByParentMessageId.get(p.messageId)?.id
+      const threadId = index.threadsByAnchorId.get(p.messageId)?.id
       return !!threadId && graph.conversationByAnchorStreamId.has(threadId)
     },
     [index, graph]
@@ -271,7 +271,7 @@ export function useInlineBranchComposer(params: {
       // Both rails: the optimistic row starts on the draft panel and is swapped
       // onto the real thread stream at promotion — subscribe across the hand-off.
       ids.add(createDraftPanelId(p.streamId, p.messageId))
-      const threadId = index.threadsByParentMessageId.get(p.messageId)?.id
+      const threadId = index.threadsByAnchorId.get(p.messageId)?.id
       if (threadId) ids.add(threadId)
     }
     return [...ids]
@@ -282,7 +282,7 @@ export function useInlineBranchComposer(params: {
       const out: BranchConversationView[] = []
       for (const p of pendingSubtopics) {
         const draftPanelId = createDraftPanelId(p.streamId, p.messageId)
-        const threadId = index.threadsByParentMessageId.get(p.messageId)?.id
+        const threadId = index.threadsByAnchorId.get(p.messageId)?.id
         const rows: RenderableMessage[] = []
         for (const message of messagesById.values()) {
           if (message.streamId === draftPanelId || (threadId && message.streamId === threadId)) rows.push(message)
@@ -317,7 +317,7 @@ export function useInlineBranchComposer(params: {
       await queueDraftMessage(input, {
         workspaceId,
         streamId: draftPanelId,
-        streamCreation: { type: StreamTypes.THREAD, parentStreamId: streamId, parentMessageId: messageId },
+        streamCreation: { type: StreamTypes.THREAD, parentStreamId: streamId, parentAnchorId: messageId },
         draftId: draftPanelId,
         conversation: { intent: "newSubtopic" },
       })
@@ -389,7 +389,7 @@ export function useInlineBranchComposer(params: {
         // A materialized branch owns this draft (the migration effect is moving
         // it onto the tail); never render the "create a sub-conversation"
         // affordance next to the sub-conversation it was for.
-        const thread = index.threadsByParentMessageId.get(messageId)
+        const thread = index.threadsByAnchorId.get(messageId)
         const materialized = thread !== undefined && graph.conversationByAnchorStreamId.has(thread.id)
         if (materialized) return null
         return (

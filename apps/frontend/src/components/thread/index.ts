@@ -1,3 +1,3 @@
 export { StreamPanel } from "./stream-panel"
 export { ThreadHeader } from "./thread-header"
-export { ThreadParentMessage } from "./thread-parent-message"
+export { ThreadParentEvent } from "./thread-parent-event"
