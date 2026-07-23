@@ -21,6 +21,7 @@ interface ClaudeChannelLaunch {
 export interface ClaudeLaunch {
   executable: string
   name?: string
+  resumeSessionId?: string
   channel: string
   mcpConfig?: string
   skipPermissions: boolean
@@ -241,13 +242,18 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
   const executable = words[index++]
   if (!executable || basename(executable) !== "claude") return undefined
   let name: string | undefined
+  let resumeSessionId: string | undefined
   let channel: string | undefined
   let mcpConfig: string | undefined
   let skipPermissions = false
   while (index < words.length) {
     const option = words[index++]!
-    if (option === "--" || option === "--resume" || option.includes("=")) return undefined
-    if (option === "--name") {
+    if (option === "--" || option.includes("=")) return undefined
+    if (option === "--resume") {
+      const value = words[index++]
+      if (resumeSessionId || !value || !UUID_RE.test(value)) return undefined
+      resumeSessionId = value
+    } else if (option === "--name") {
       const value = words[index++]
       if (name || !value?.match(/^threa\.[A-Za-z0-9_-]+$/)) return undefined
       name = value
@@ -264,7 +270,7 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
       mcpConfig = value
     } else return undefined
   }
-  return channel ? { executable, name, channel, mcpConfig, skipPermissions, environment } : undefined
+  return channel ? { executable, name, resumeSessionId, channel, mcpConfig, skipPermissions, environment } : undefined
 }
 
 export function findLocalPiPane(

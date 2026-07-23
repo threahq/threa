@@ -107,6 +107,9 @@ describe("parseClaudeLaunch", () => {
       channel: "threa-channel",
       mcpConfig: undefined,
     })
+    expect(
+      parseClaudeLaunch(`claude --resume ${NATIVE} --dangerously-load-development-channels server:threa-channel`)
+    ).toMatchObject({ resumeSessionId: NATIVE, channel: "threa-channel" })
   })
 
   test("rejects unsupported policy and shell forms", () => {
@@ -119,7 +122,9 @@ describe("parseClaudeLaunch", () => {
       "claude --mcp-config '[]' --dangerously-load-development-channels server:x",
       "claude --mcp-config /a --mcp-config /b --dangerously-load-development-channels server:x",
       "claude prompt --dangerously-load-development-channels server:x",
-      `claude --resume ${NATIVE} --dangerously-load-development-channels server:x`,
+      "claude --resume invalid --dangerously-load-development-channels server:x",
+      `claude --resume ${NATIVE} --resume ${NATIVE} --dangerously-load-development-channels server:x`,
+      `claude ${NATIVE} --dangerously-load-development-channels server:x`,
       "claude --dangerously-load-development-channels server:x -- tail",
     ])
       expect(parseClaudeLaunch(command.replace("\u0000", ""))).toBeUndefined()
@@ -168,6 +173,58 @@ describe("reconnectClaude", () => {
       CWD,
       `'env' 'THREA_DISPLAY_NAME=Claude' 'THREA_INSTANCE_ID=cc-one' 'THREA_RUNTIME_SESSION_ID=${RUNTIME}' 'THREA_COLD_START_IF_ARCHIVED=wait' 'THREA_COLD_START_IF_MISSING=error' 'THREA_EXPECTED_ROOT_STREAM_ID=stream_one' '/opt/claude' '--resume' '${NATIVE}' '--name' 'threa.feature' '--mcp-config' '/tmp/threa.json' '--dangerously-load-development-channels' 'server:threa-channel' '--dangerously-skip-permissions'`,
     ])
+  })
+
+  test("reconnects a generated launch again with exactly the same native UUID", async () => {
+    let current = pane()
+    let nextPid = current.panePid
+    const calls: string[][] = []
+    const d = deps({
+      panes: () => [current],
+      claudeRegistry: {
+        ...registry(),
+        read: (path) =>
+          JSON.stringify({
+            pid: Number(path.match(/(\d+)\.json$/)?.[1]),
+            sessionId: NATIVE,
+            cwd: CWD,
+            procStart: START,
+            name: "threa.feature",
+            status: "idle",
+          }),
+      },
+      respawn: (target, cwd, command) => {
+        calls.push([target, cwd, command])
+        current = pane({ panePid: ++nextPid, startCommand: command })
+      },
+    })
+
+    await reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, d)
+    expect(parseClaudeLaunch(calls[0]![2])).toMatchObject({ resumeSessionId: NATIVE })
+    await reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, d)
+
+    expect(calls).toHaveLength(2)
+    for (const [, , command] of calls) {
+      expect(command.match(/'--resume'/g)).toHaveLength(1)
+      expect(parseClaudeLaunch(command)?.resumeSessionId).toBe(NATIVE)
+    }
+  })
+
+  test("rejects generated resume UUID mismatch before preflight and leaves pane untouched", async () => {
+    let preflights = 0
+    const other = "223e4567-e89b-42d3-a456-426614174000"
+    const d = deps({
+      panes: () => [pane({ startCommand: COMMAND.replace("/opt/claude", `/opt/claude --resume ${other}`) })],
+      preflight: async () => {
+        preflights += 1
+        return { status: "linked", rootStreamId: "stream_one" }
+      },
+    })
+
+    await expect(reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, d)).rejects.toThrow(
+      "resume UUID does not match"
+    )
+    expect({ preflights, respawns: d.calls.length }).toEqual({ preflights: 0, respawns: 0 })
   })
 
   test("validates MCP config type, relative resolution, and pre-respawn existence", async () => {

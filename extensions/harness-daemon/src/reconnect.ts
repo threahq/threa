@@ -245,6 +245,9 @@ function resolveClaudeTarget(options: ReconnectOptions, deps: ReconnectDeps): Cl
     }
   }
   const native = resolveClaudeNativeSession(pane.panePid, pane.cwd, launch.name, options.force ?? false, registryDeps)
+  if (launch.resumeSessionId && launch.resumeSessionId !== native.sessionId) {
+    throw new Error("Claude launch resume UUID does not match live registry session")
+  }
   return { pane, launch, native, instanceId }
 }
 
@@ -319,6 +322,9 @@ export async function reconnectClaude(
   )
   if (native.sessionId !== target.native.sessionId)
     throw new Error("Claude native session changed during reconnect preflight")
+  if (launch.resumeSessionId && launch.resumeSessionId !== native.sessionId) {
+    throw new Error("Claude launch resume UUID changed during reconnect preflight")
+  }
 
   if (target.launch.mcpConfig && !(deps.mcpFile ?? ((path) => statSync(path).isFile()))(target.launch.mcpConfig)) {
     throw new Error(`Claude MCP config changed before respawn: ${target.launch.mcpConfig}`)
