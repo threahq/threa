@@ -83,7 +83,7 @@ describe("Thread Summary", () => {
     const thread = await streamService.createThread({
       workspaceId: wsId,
       parentStreamId: channel.id,
-      parentMessageId: parent.id,
+      parentAnchorId: parent.id,
       createdBy: ownerId,
     })
 
@@ -260,7 +260,7 @@ describe("Thread Summary", () => {
         const thread = await streamService.createThread({
           workspaceId: wsId,
           parentStreamId: channel.id,
-          parentMessageId: parent.id,
+          parentAnchorId: parent.id,
           createdBy: ownerId,
         })
         await eventService.createMessage({

@@ -141,7 +141,7 @@ export interface PersonaAgentDeps {
   createThread: (params: {
     workspaceId: string
     parentStreamId: string
-    parentMessageId: string
+    parentAnchorId: string
     createdBy: string
   }) => Promise<{ id: string }>
   /**
@@ -429,7 +429,7 @@ export class PersonaAgent {
       const thread = await createThread({
         workspaceId,
         parentStreamId: streamId,
-        parentMessageId: messageId,
+        parentAnchorId: messageId,
         createdBy: persona.id,
       })
       sessionStreamId = thread.id

@@ -315,7 +315,7 @@ export function createDelegationPublicApiHandlers({
           const thread = await streamService.createThreadOn(client, {
             workspaceId,
             parentStreamId: delegation.streamId,
-            parentMessageId: anchor.id,
+            parentAnchorId: anchor.id,
             createdBy: author.authorId,
             createdByType: author.authorType === AuthorTypes.BOT ? "bot" : "user",
           })

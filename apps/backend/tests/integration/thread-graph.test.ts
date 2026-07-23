@@ -12,10 +12,10 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { withTestTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamService } from "../../src/features/streams"
+import { StreamService, StreamEventRepository, StreamRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { setupTestDatabase, testMessageContent } from "./setup"
-import { userId, workspaceId, messageId } from "../../src/lib/id"
+import { userId, workspaceId, messageId, eventId, streamId } from "../../src/lib/id"
 import { StreamTypes, Visibilities } from "@threa/types"
 
 describe("Thread Graph", () => {
@@ -69,7 +69,7 @@ describe("Thread Graph", () => {
       const thread = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -113,7 +113,7 @@ describe("Thread Graph", () => {
       const thread1 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: msg1.id,
+        parentAnchorId: msg1.id,
         createdBy: ownerId,
       })
 
@@ -128,7 +128,7 @@ describe("Thread Graph", () => {
       const thread2 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: thread1.id,
-        parentMessageId: msg2.id,
+        parentAnchorId: msg2.id,
         createdBy: ownerId,
       })
 
@@ -177,7 +177,7 @@ describe("Thread Graph", () => {
         const thread = await streamService.createThread({
           workspaceId: wsId,
           parentStreamId: parentStream.id,
-          parentMessageId: msg.id,
+          parentAnchorId: msg.id,
           createdBy: ownerId,
         })
         threads.push(thread)
@@ -231,7 +231,7 @@ describe("Thread Graph", () => {
       const thread = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: scratchpad.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -273,7 +273,7 @@ describe("Thread Graph", () => {
       const thread = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -302,7 +302,7 @@ describe("Thread Graph", () => {
         streamService.createThread({
           workspaceId: wsId,
           parentStreamId: "stream_nonexistent",
-          parentMessageId: "msg_nonexistent",
+          parentAnchorId: "msg_nonexistent",
           createdBy: ownerId,
         })
       ).rejects.toThrow("Stream not found")
@@ -344,7 +344,7 @@ describe("Thread Graph", () => {
       const thread1 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -352,7 +352,7 @@ describe("Thread Graph", () => {
       const thread2 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -397,7 +397,7 @@ describe("Thread Graph", () => {
       const thread1 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -405,7 +405,7 @@ describe("Thread Graph", () => {
       const thread2 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: user2Id,
       })
 
@@ -461,7 +461,7 @@ describe("Thread Graph", () => {
       const thread = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: parentMessage.id,
+        parentAnchorId: parentMessage.id,
         createdBy: ownerId,
       })
 
@@ -526,7 +526,7 @@ describe("Thread Graph", () => {
       const thread1 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
-        parentMessageId: channelMessage.id,
+        parentAnchorId: channelMessage.id,
         createdBy: ownerId,
       })
 
@@ -547,7 +547,7 @@ describe("Thread Graph", () => {
       const thread2 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: thread1.id,
-        parentMessageId: thread1Message.id,
+        parentAnchorId: thread1Message.id,
         createdBy: ownerId,
       })
 
@@ -567,6 +567,198 @@ describe("Thread Graph", () => {
       // Thread 1 message should have 1 reply
       const thread1MsgUpdated = await eventService.getMessageById(thread1Message.id)
       expect(thread1MsgUpdated?.replyCount).toBe(1)
+    })
+  })
+
+  describe("Event-Anchored Threads", () => {
+    async function seedChannel(name: string): Promise<{
+      wsId: string
+      ownerId: string
+      actorId: string
+      channelId: string
+    }> {
+      const ownerId = userId()
+      const actorId = userId()
+      const wsId = workspaceId()
+      await withTestTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: `${name} Workspace`,
+          slug: `${name}-ws-${wsId}`,
+          createdBy: ownerId,
+        })
+        await addTestMember(client, wsId, ownerId)
+        await addTestMember(client, wsId, actorId)
+      })
+      const channel = await streamService.createChannel({
+        workspaceId: wsId,
+        slug: `${name}-channel-${Date.now()}`,
+        createdBy: ownerId,
+        visibility: Visibilities.PUBLIC,
+      })
+      return { wsId, ownerId, actorId, channelId: channel.id }
+    }
+
+    test("threading a threadable event anchors on the event, leaves the legacy column null, adds the event actor", async () => {
+      const { wsId, ownerId, actorId, channelId } = await seedChannel("event-anchor")
+
+      const event = await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: channelId,
+        eventType: "delegation:created",
+        payload: {},
+        actorId,
+        actorType: "user",
+      })
+
+      const thread = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channelId,
+        parentAnchorId: event.id,
+        createdBy: ownerId,
+      })
+
+      expect(thread.parentAnchorId).toBe(event.id)
+      // Event anchors never touch the legacy message column.
+      expect(thread.parentMessageId).toBeNull()
+      expect(thread.rootStreamId).toBe(channelId)
+      // Members: the creator plus the event's user actor.
+      expect(await streamService.isMember(thread.id, ownerId)).toBe(true)
+      expect(await streamService.isMember(thread.id, actorId)).toBe(true)
+    })
+
+    test("a non-threadable event type is rejected with ANCHOR_NOT_THREADABLE", async () => {
+      const { wsId, ownerId, actorId, channelId } = await seedChannel("event-nonthreadable")
+      const event = await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: channelId,
+        eventType: "member_added",
+        payload: {},
+        actorId,
+        actorType: "user",
+      })
+
+      await expect(
+        streamService.createThread({
+          workspaceId: wsId,
+          parentStreamId: channelId,
+          parentAnchorId: event.id,
+          createdBy: ownerId,
+        })
+      ).rejects.toMatchObject({ code: "ANCHOR_NOT_THREADABLE" })
+    })
+
+    test("an event on another stream is rejected with ANCHOR_NOT_FOUND", async () => {
+      const { wsId, ownerId, actorId, channelId } = await seedChannel("event-crossstream")
+      const other = await streamService.createChannel({
+        workspaceId: wsId,
+        slug: `event-crossstream-other-${Date.now()}`,
+        createdBy: ownerId,
+        visibility: Visibilities.PUBLIC,
+      })
+      const event = await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: other.id,
+        eventType: "delegation:created",
+        payload: {},
+        actorId,
+        actorType: "user",
+      })
+
+      await expect(
+        streamService.createThread({
+          workspaceId: wsId,
+          parentStreamId: channelId,
+          parentAnchorId: event.id,
+          createdBy: ownerId,
+        })
+      ).rejects.toMatchObject({ code: "ANCHOR_NOT_FOUND" })
+    })
+
+    test("message-anchored create dual-writes both the anchor and the legacy column", async () => {
+      const { wsId, ownerId, channelId } = await seedChannel("msg-dualwrite")
+      const parentMessage = await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: channelId,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("Dual-write parent"),
+      })
+
+      const thread = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channelId,
+        parentAnchorId: parentMessage.id,
+        createdBy: ownerId,
+      })
+
+      // Re-read the persisted row: both columns carry the message id during grace.
+      const persisted = await StreamRepository.findById(pool, thread.id)
+      expect(persisted?.parentAnchorId).toBe(parentMessage.id)
+      expect(persisted?.parentMessageId).toBe(parentMessage.id)
+    })
+
+    test("a legacy message thread (parent_anchor_id null) resolves idempotently for new code", async () => {
+      // Deploy grace window: an OLD replica created the message thread writing only
+      // the legacy parent_message_id, leaving parent_anchor_id null. NEW code then
+      // re-creates on the same message; the arbiter-less ON CONFLICT must suppress
+      // BOTH indexes (the new row conflicts on the legacy index, not the anchor one)
+      // so findByAnchor's COALESCE fallback returns the existing row, not a 500.
+      const { wsId, ownerId, channelId } = await seedChannel("legacy-msg-thread")
+      const parentMessage = await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: channelId,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("Legacy grace-window parent"),
+      })
+
+      const legacyThreadId = streamId()
+      await pool.query(
+        `INSERT INTO streams (
+          id, workspace_id, type, visibility, parent_stream_id,
+          parent_anchor_id, parent_message_id, root_stream_id, created_by
+        ) VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8)`,
+        [legacyThreadId, wsId, StreamTypes.THREAD, Visibilities.PUBLIC, channelId, parentMessage.id, channelId, ownerId]
+      )
+
+      const resolved = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channelId,
+        parentAnchorId: parentMessage.id,
+        createdBy: ownerId,
+      })
+
+      expect(resolved.id).toBe(legacyThreadId)
+    })
+
+    test("double-create on the same event anchor is idempotent", async () => {
+      const { wsId, ownerId, actorId, channelId } = await seedChannel("event-idempotent")
+      const event = await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: channelId,
+        eventType: "delegation:created",
+        payload: {},
+        actorId,
+        actorType: "user",
+      })
+
+      const first = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channelId,
+        parentAnchorId: event.id,
+        createdBy: ownerId,
+      })
+      const second = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: channelId,
+        parentAnchorId: event.id,
+        createdBy: actorId,
+      })
+
+      expect(second.id).toBe(first.id)
+      // First creator owns the row; a second caller does not clobber it.
+      expect(second.createdBy).toBe(first.createdBy)
     })
   })
 })

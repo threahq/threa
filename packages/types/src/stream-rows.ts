@@ -71,6 +71,17 @@ export interface StreamRowSpec {
   /** {@link ConversationRef}: how the board/panel projection places this row. */
   conversationRef: ConversationRef
   /**
+   * Whether a thread may be anchored on this timeline item (`createThreadOn`
+   * accepts its canonical id as `parentAnchorId`). True only for items that
+   * render a standalone, discussable card: message bodies plus the cards this
+   * feature turns on (`delegation:created`, `call_started`). Everything else is
+   * false — patches, command/session chrome, membership notices — so a thread
+   * can never hang off a row with no card to anchor it. Turning on a future
+   * card (e.g. `memos:captured`) is flipping this flag plus giving its renderer
+   * the affordance. Derives {@link THREAD_ANCHORABLE_EVENT_TYPES}.
+   */
+  threadable: boolean
+  /**
    * Whether appending this event bumps `conversations.last_activity_at` (moves the
    * card in the board's activity order). Contract: only a member message bumps —
    * every render-only agent/memo/follow-up row is `false`, so it can appear on a
@@ -88,6 +99,7 @@ const MESSAGE: StreamRowSpec = {
   broadcastSlot: true,
   conversationRef: "self-message",
   bumps: true,
+  threadable: true,
 }
 
 /** A live patch onto an existing row (edit / reaction / delete / cancel). */
@@ -99,6 +111,7 @@ const PATCH: StreamRowSpec = {
   broadcastSlot: false,
   conversationRef: "none",
   bumps: false,
+  threadable: false,
 }
 
 /** Channel chrome: a broadcast row in the timeline, never a board/topic row. */
@@ -110,6 +123,7 @@ const CHROME_BROADCAST: StreamRowSpec = {
   broadcastSlot: true,
   conversationRef: "none",
   bumps: false,
+  threadable: false,
 }
 
 const AGENT_SESSION: StreamRowSpec = {
@@ -120,6 +134,7 @@ const AGENT_SESSION: StreamRowSpec = {
   broadcastSlot: true,
   conversationRef: "trigger-message",
   bumps: false,
+  threadable: false,
 }
 
 const COMMAND: StreamRowSpec = {
@@ -130,6 +145,7 @@ const COMMAND: StreamRowSpec = {
   broadcastSlot: false,
   conversationRef: "none",
   bumps: false,
+  threadable: false,
 }
 
 export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
@@ -145,6 +161,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     broadcastSlot: false,
     conversationRef: "none",
     bumps: false,
+    threadable: false,
   },
   message_edited: PATCH,
   reaction_added: PATCH,
@@ -174,6 +191,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     broadcastSlot: false,
     conversationRef: "none",
     bumps: false,
+    threadable: false,
   },
 
   command_dispatched: COMMAND,
@@ -195,6 +213,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     broadcastSlot: true,
     conversationRef: "source-conversation",
     bumps: false,
+    threadable: false,
   },
   // Scheduled agent follow-up — payload carries `sourceConversationId`.
   "agent:follow_up_scheduled": {
@@ -205,6 +224,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     broadcastSlot: true,
     conversationRef: "source-conversation",
     bumps: false,
+    threadable: false,
   },
   // A patch that flips the matching scheduled card to "Cancelled" — not its own row.
   "agent:follow_up_cancelled": PATCH,
@@ -218,6 +238,10 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     broadcastSlot: true,
     conversationRef: "source-conversation",
     bumps: false,
+    // A delegation card is discussable: a thread anchors on its event id so the
+    // hand-off's result and follow-up land in one place (retires the synthetic
+    // anchor-message hack).
+    threadable: true,
   },
   // A patch that advances the matching delegation card's status — not its own row.
   "delegation:status_changed": PATCH,
@@ -234,7 +258,18 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   // author-grouping). `conversationRef: "none"` and `bumps: false` because a call
   // card is stream chrome, not anchored to a board conversation and never moving a
   // card in the board's activity order (matching the delegation precedent).
-  call_started: CHROME_BROADCAST,
+  // Own broadcast row (the live call card), like CHROME_BROADCAST, but threadable:
+  // the call chat is a thread anchored on this event (`calls.chat_stream_id`).
+  call_started: {
+    rendersAsOwnRow: true,
+    grouping: null,
+    authorGroupable: false,
+    patchesRow: false,
+    broadcastSlot: true,
+    conversationRef: "none",
+    bumps: false,
+    threadable: true,
+  },
   // A patch carrying the end summary onto the matching `call_started` card — not
   // its own row (the delegation:status_changed analog).
   call_ended: PATCH,
@@ -252,3 +287,11 @@ export const BOARD_EVENT_ROW_TYPES: EventType[] = EVENT_TYPES.filter(
     STREAM_ROW_SPEC[type].conversationRef === "trigger-message" ||
     STREAM_ROW_SPEC[type].conversationRef === "source-conversation"
 )
+
+/**
+ * Event types a thread may anchor on — `createThreadOn` rejects an `event_`
+ * anchor whose type is not in this set. Derived from {@link STREAM_ROW_SPEC}'s
+ * `threadable` flag (same pattern as {@link BOARD_EVENT_ROW_TYPES}) so turning a
+ * new card on is a one-line spec change, not a second parallel wiring.
+ */
+export const THREAD_ANCHORABLE_EVENT_TYPES: EventType[] = EVENT_TYPES.filter((type) => STREAM_ROW_SPEC[type].threadable)

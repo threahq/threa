@@ -6,7 +6,7 @@ import {
   AGENT_SESSION_EVENT_TYPES,
   type EventType,
 } from "./constants"
-import { STREAM_ROW_SPEC, BOARD_EVENT_ROW_TYPES } from "./stream-rows"
+import { STREAM_ROW_SPEC, BOARD_EVENT_ROW_TYPES, THREAD_ANCHORABLE_EVENT_TYPES } from "./stream-rows"
 
 function typesWhere(predicate: (type: EventType) => boolean): Set<EventType> {
   return new Set(EVENT_TYPES.filter(predicate))
@@ -45,6 +45,23 @@ describe("STREAM_ROW_SPEC", () => {
     // Render-only rows (agent sessions, memo captures, follow-ups) must never move
     // a card in the board's activity order or perturb its frozen stable view.
     expect(typesWhere((t) => STREAM_ROW_SPEC[t].bumps)).toEqual(new Set<EventType>(["message_created"]))
+  })
+
+  test("threadable is exactly the message body plus the turned-on cards", () => {
+    // The v1 set the substrate ships: a thread may anchor on a message, a
+    // delegation card, or a call card — nothing else.
+    expect(typesWhere((t) => STREAM_ROW_SPEC[t].threadable)).toEqual(
+      new Set<EventType>(["message_created", "delegation:created", "call_started"])
+    )
+  })
+
+  test("THREAD_ANCHORABLE_EVENT_TYPES derives from the threadable flag", () => {
+    expect(new Set(THREAD_ANCHORABLE_EVENT_TYPES)).toEqual(
+      new Set<EventType>(["message_created", "delegation:created", "call_started"])
+    )
+    // Every anchorable card is a standalone row — a patch/grouped row has no
+    // card to hang a thread under.
+    for (const type of THREAD_ANCHORABLE_EVENT_TYPES) expect(STREAM_ROW_SPEC[type].rendersAsOwnRow).toBe(true)
   })
 
   test("a grouped or patched row is never also its own standalone row", () => {

@@ -232,8 +232,32 @@ export interface Stream {
   descriptionJson?: ThreaDocument | null
   visibility: Visibility
   parentStreamId: string | null
+  /**
+   * Canonical id of the timeline item a thread anchors on: `msg_…` for a
+   * message, `event_…` for a card. The one anchor track (INV-2 prefix is the
+   * discriminator). Null on non-thread streams. Absent on legacy cached rows
+   * synced before this shipped — fall back to `parentMessageId` during the
+   * grace period (the backend reads `COALESCE(parent_anchor_id, parent_message_id)`).
+   */
+  parentAnchorId?: string | null
+  /**
+   * Legacy message anchor. Retained through the grace period and still
+   * dual-written for `msg_` anchors; prefer `parentAnchorId`. Null on
+   * non-thread streams and on event-anchored threads.
+   */
   parentMessageId: string | null
   rootStreamId: string | null
+  /**
+   * Live reply count for a thread stream (0 for non-threads). Maintained on the
+   * thread row itself. Absent on legacy cached rows synced before this shipped —
+   * treat a missing value as 0 (a freshly-fetched thread always carries it).
+   */
+  replyCount?: number
+  /**
+   * Timestamp of the thread's most recent non-deleted reply, or null when it has
+   * none. Absent on legacy cached rows synced before this shipped.
+   */
+  lastReplyAt?: string | null
   companionMode: CompanionMode
   companionPersonaId: string | null
   /**

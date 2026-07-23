@@ -65,6 +65,9 @@ const createStreamSchema = z
     companionMode: companionModeSchema.optional(),
     companionPersonaId: z.string().optional(),
     parentStreamId: z.string().optional(),
+    /** Canonical thread anchor (`msg_…` message / `event_…` card). */
+    parentAnchorId: z.string().optional(),
+    /** Legacy message anchor, accepted as an alias during grace (normalized to `parentAnchorId`). */
     parentMessageId: z.string().optional(),
     memberIds: z.array(z.string().min(1)).max(50).optional(),
     /**
@@ -100,9 +103,13 @@ const createStreamSchema = z
     message: "Slug is required for channels",
     path: ["slug"],
   })
-  .refine((data) => data.type !== "thread" || (data.parentStreamId && data.parentMessageId), {
-    message: "parentStreamId and parentMessageId are required for threads",
+  .refine((data) => data.type !== "thread" || !!data.parentStreamId, {
+    message: "parentStreamId is required for threads",
     path: ["parentStreamId"],
+  })
+  .refine((data) => data.type !== "thread" || (data.parentAnchorId ? !data.parentMessageId : !!data.parentMessageId), {
+    message: "Exactly one of parentAnchorId or parentMessageId is required for threads",
+    path: ["parentAnchorId"],
   })
   .refine((data) => !data.contextBag || data.type === "scratchpad", {
     message: "contextBag is only supported on scratchpad creation",
@@ -561,6 +568,7 @@ export function createStreamHandlers({
         companionMode,
         companionPersonaId,
         parentStreamId,
+        parentAnchorId,
         parentMessageId,
         memberIds,
         contextBag,
@@ -568,6 +576,10 @@ export function createStreamHandlers({
         e2eOwnerKeyId,
         allowedToolCategories,
       } = data
+
+      // Normalize the two accepted forms to the single anchor track. The schema
+      // guarantees exactly one is present for a thread.
+      const anchorId = parentAnchorId ?? parentMessageId
 
       // Verify the caller owns the referenced E2E key BEFORE we hand off to
       // the service. Phase 1 invariant: the stream's `owner_user_key_id`
@@ -662,7 +674,7 @@ export function createStreamHandlers({
         companionMode: resolvedCompanionMode,
         companionPersonaId: resolvedPersonaId,
         parentStreamId,
-        parentMessageId,
+        parentAnchorId: anchorId,
         memberIds,
         createdBy: userId,
         contextBag,

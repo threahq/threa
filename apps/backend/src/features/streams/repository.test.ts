@@ -39,6 +39,26 @@ function streamRow(overrides: Record<string, unknown> = {}) {
   }
 }
 
+describe("StreamRepository.insertThreadOrFind", () => {
+  test("rejects a missing parent stream or anchor before writing", async () => {
+    const db = makeDb([])
+    const base = {
+      id: "stream_thread",
+      workspaceId: "ws_1",
+      type: "thread" as const,
+      createdBy: "usr_1",
+    }
+
+    await expect(StreamRepository.insertThreadOrFind(db, { ...base, parentAnchorId: "msg_root" })).rejects.toThrow(
+      "parentStreamId and parentAnchorId are required"
+    )
+    await expect(StreamRepository.insertThreadOrFind(db, { ...base, parentStreamId: "stream_parent" })).rejects.toThrow(
+      "parentStreamId and parentAnchorId are required"
+    )
+    expect(db._query).not.toHaveBeenCalled()
+  })
+})
+
 describe("StreamRepository.isAncestor", () => {
   test("short-circuits without a query when the IDs are equal", async () => {
     const db = makeDb([])

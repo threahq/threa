@@ -229,14 +229,17 @@ export class ActivityService {
       const stream = await StreamRepository.findById(client, streamId)
       if (!stream || stream.workspaceId !== workspaceId) return []
 
-      const streamMembers = await StreamMemberRepository.list(client, { streamId })
+      const directMembers = await StreamMemberRepository.list(client, { streamId })
+      const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
+      const streamMembers = rootStream
+        ? await this.resolveInheritedNotificationCandidates(client, stream, rootStream.id, directMembers)
+        : directMembers
       if (streamMembers.length === 0) return []
 
-      // DMs and scratchpads are direct communication — create activities for all
-      // non-muted members (more permissive than channels which require ACTIVITY/EVERYTHING).
-      const isDirectStream = stream.type === StreamTypes.DM || stream.type === StreamTypes.SCRATCHPAD
-
-      const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
+      // Thread notification semantics inherit from the effective root, just as
+      // access does (INV-62). DMs and scratchpads notify all non-muted members.
+      const effectiveType = rootStream?.type ?? stream.type
+      const isDirectStream = effectiveType === StreamTypes.DM || effectiveType === StreamTypes.SCRATCHPAD
 
       const streamContext = resolveStreamContext(stream, rootStream)
       const contentPreview = contentMarkdown.slice(0, 200)
@@ -269,6 +272,35 @@ export class ActivityService {
         context: { contentPreview, authorName, ...streamContext },
         readUserIds,
       })
+    })
+  }
+
+  /**
+   * Build a thread's notification audience from effective-root membership while
+   * retaining any explicit child-stream override. A direct thread membership
+   * cannot grant access without root access (INV-62), so it never adds a candidate
+   * on its own. Candidates without a child row carry a null level so the shared
+   * resolver performs its normal ancestor cascade.
+   */
+  private async resolveInheritedNotificationCandidates(
+    client: PoolClient,
+    stream: Stream,
+    rootStreamId: string,
+    directMembers: Awaited<ReturnType<typeof StreamMemberRepository.list>>
+  ): Promise<Awaited<ReturnType<typeof StreamMemberRepository.list>>> {
+    const rootMembers = await StreamMemberRepository.list(client, { streamId: rootStreamId })
+    const directByMemberId = new Map(directMembers.map((member) => [member.memberId, member]))
+
+    return rootMembers.map((rootMember) => {
+      const directMember = directByMemberId.get(rootMember.memberId)
+      if (directMember) return directMember
+      return {
+        ...rootMember,
+        streamId: stream.id,
+        notificationLevel: null,
+        lastReadEventId: null,
+        lastReadAt: null,
+      }
     })
   }
 
@@ -338,9 +370,29 @@ export class ActivityService {
       // they're not the reactor. Resolve via their actual stream membership so
       // explicit per-stream levels and ancestor inheritance are honored.
       if (message.authorType === AuthorTypes.USER && message.authorId && message.authorId !== actorId) {
-        const authorMember = await StreamMemberRepository.findByStreamAndMember(client, streamId, message.authorId)
+        const directAuthorMember = await StreamMemberRepository.findByStreamAndMember(
+          client,
+          streamId,
+          message.authorId
+        )
+        const rootAuthorMember = rootStream
+          ? await StreamMemberRepository.findByStreamAndMember(client, rootStream.id, message.authorId)
+          : null
+        let authorMember = directAuthorMember
+        if (rootStream) {
+          authorMember = rootAuthorMember
+            ? (directAuthorMember ?? {
+                ...rootAuthorMember,
+                streamId: stream.id,
+                notificationLevel: null,
+                lastReadEventId: null,
+                lastReadAt: null,
+              })
+            : null
+        }
         if (authorMember) {
-          const isDirectStream = stream.type === StreamTypes.DM || stream.type === StreamTypes.SCRATCHPAD
+          const effectiveType = rootStream?.type ?? stream.type
+          const isDirectStream = effectiveType === StreamTypes.DM || effectiveType === StreamTypes.SCRATCHPAD
           const resolved = await resolveNotificationLevelsForStream(client, stream, [authorMember])
           const level = resolved[0]?.effectiveLevel
           const shouldNotify =

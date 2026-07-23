@@ -723,6 +723,206 @@ describe("StreamService.createThread (via create)", () => {
   })
 })
 
+describe("StreamService.createThreadOn anchor routing", () => {
+  let service: StreamService
+
+  const parentStream = {
+    id: "stream_channel",
+    workspaceId: "ws_1",
+    type: "channel",
+    visibility: "private",
+    rootStreamId: null,
+    companionMode: "off",
+    companionPersonaId: null,
+  }
+
+  const thread = {
+    id: "stream_new",
+    workspaceId: "ws_1",
+    type: "thread",
+    visibility: "private",
+    parentStreamId: "stream_channel",
+    parentAnchorId: "event_1",
+    rootStreamId: "stream_channel",
+    createdBy: "member_creator",
+    createdAt: new Date().toISOString(),
+  }
+
+  const mockInsertThreadOrFind = spyOn(StreamRepository, "insertThreadOrFind")
+  const mockMessageFindById = spyOn(MessageRepository, "findById")
+  const mockEventFindById = spyOn(StreamEventRepository, "findById")
+  const mockIsMember = spyOn(StreamMemberRepository, "isMember")
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockFindById.mockReset().mockResolvedValue(parentStream as never)
+    mockInsertThreadOrFind.mockReset().mockResolvedValue({ stream: thread, created: true } as never)
+    mockIsMember.mockReset().mockResolvedValue(false)
+    mockInsertMember.mockReset().mockResolvedValue({} as never)
+    mockInsertEvent.mockReset().mockResolvedValue({ id: "evt_1", actorId: "member_author" } as never)
+    mockInsertOutbox.mockReset().mockResolvedValue({ id: 1n } as never)
+    mockMessageFindById.mockReset()
+    mockEventFindById.mockReset()
+  })
+
+  test("event anchor: threadable event succeeds, passes parentAnchorId, adds event actor as member", async () => {
+    mockEventFindById.mockResolvedValue({
+      id: "event_1",
+      streamId: "stream_channel",
+      eventType: "delegation:created",
+      actorId: "member_author",
+      actorType: "user",
+    } as never)
+
+    await service.create({
+      workspaceId: "ws_1",
+      type: "thread",
+      parentStreamId: "stream_channel",
+      parentAnchorId: "event_1",
+      createdBy: "member_creator",
+    })
+
+    expect(mockMessageFindById).not.toHaveBeenCalled()
+    expect(mockInsertThreadOrFind).toHaveBeenCalledWith({}, expect.objectContaining({ parentAnchorId: "event_1" }))
+    expect(mockInsertOutbox).toHaveBeenCalledWith(
+      {},
+      "stream:member_added",
+      expect.objectContaining({ streamId: thread.id, memberId: "member_author" })
+    )
+  })
+
+  test("event anchor: non-user actor is not added as a member", async () => {
+    mockEventFindById.mockResolvedValue({
+      id: "event_1",
+      streamId: "stream_channel",
+      eventType: "call_started",
+      actorId: "usr_host",
+      actorType: "system",
+    } as never)
+
+    await service.create({
+      workspaceId: "ws_1",
+      type: "thread",
+      parentStreamId: "stream_channel",
+      parentAnchorId: "event_1",
+      createdBy: "member_creator",
+    })
+
+    const memberAddedCalls = mockInsertOutbox.mock.calls.filter(([, type]) => type === "stream:member_added")
+    expect(memberAddedCalls).toHaveLength(0)
+  })
+
+  test("event anchor: a non-threadable event type is rejected", async () => {
+    mockEventFindById.mockResolvedValue({
+      id: "event_1",
+      streamId: "stream_channel",
+      eventType: "member_joined",
+      actorId: "member_author",
+      actorType: "user",
+    } as never)
+
+    await expect(
+      service.create({
+        workspaceId: "ws_1",
+        type: "thread",
+        parentStreamId: "stream_channel",
+        parentAnchorId: "event_1",
+        createdBy: "member_creator",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "ANCHOR_NOT_THREADABLE" })
+    expect(mockInsertThreadOrFind).not.toHaveBeenCalled()
+  })
+
+  test("event anchor: a message_created event id is rejected (messages anchor by msg_ id)", async () => {
+    mockEventFindById.mockResolvedValue({
+      id: "event_1",
+      streamId: "stream_channel",
+      eventType: "message_created",
+      actorId: "member_author",
+      actorType: "user",
+    } as never)
+
+    await expect(
+      service.create({
+        workspaceId: "ws_1",
+        type: "thread",
+        parentStreamId: "stream_channel",
+        parentAnchorId: "event_1",
+        createdBy: "member_creator",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "ANCHOR_NOT_THREADABLE" })
+    expect(mockInsertThreadOrFind).not.toHaveBeenCalled()
+  })
+
+  test("event anchor: a missing event is rejected", async () => {
+    mockEventFindById.mockResolvedValue(null)
+
+    await expect(
+      service.create({
+        workspaceId: "ws_1",
+        type: "thread",
+        parentStreamId: "stream_channel",
+        parentAnchorId: "event_missing",
+        createdBy: "member_creator",
+      })
+    ).rejects.toMatchObject({ status: 404, code: "ANCHOR_NOT_FOUND" })
+  })
+
+  test("event anchor: an event on another stream is rejected", async () => {
+    mockEventFindById.mockResolvedValue({
+      id: "event_1",
+      streamId: "stream_other",
+      eventType: "delegation:created",
+      actorId: "member_author",
+      actorType: "user",
+    } as never)
+
+    await expect(
+      service.create({
+        workspaceId: "ws_1",
+        type: "thread",
+        parentStreamId: "stream_channel",
+        parentAnchorId: "event_1",
+        createdBy: "member_creator",
+      })
+    ).rejects.toMatchObject({ status: 404, code: "ANCHOR_NOT_FOUND" })
+  })
+
+  test("an unrecognized anchor prefix is rejected", async () => {
+    await expect(
+      service.create({
+        workspaceId: "ws_1",
+        type: "thread",
+        parentStreamId: "stream_channel",
+        parentAnchorId: "conv_1",
+        createdBy: "member_creator",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "ANCHOR_INVALID" })
+    expect(mockMessageFindById).not.toHaveBeenCalled()
+    expect(mockEventFindById).not.toHaveBeenCalled()
+  })
+
+  test("message anchor: routes through the message lookup and passes the msg id as the anchor", async () => {
+    mockMessageFindById.mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_channel",
+      authorType: "user",
+      authorId: "member_author",
+    } as never)
+
+    await service.create({
+      workspaceId: "ws_1",
+      type: "thread",
+      parentStreamId: "stream_channel",
+      parentAnchorId: "msg_1",
+      createdBy: "member_creator",
+    })
+
+    expect(mockEventFindById).not.toHaveBeenCalled()
+    expect(mockInsertThreadOrFind).toHaveBeenCalledWith({}, expect.objectContaining({ parentAnchorId: "msg_1" }))
+  })
+})
+
 describe("StreamService.inviteActor", () => {
   let service: StreamService
 
