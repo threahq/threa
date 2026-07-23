@@ -1355,6 +1355,38 @@ describe("claim drain serialization", () => {
     fetchSpy.mockRestore()
   })
 
+  test("stops draining on an empty claim during a rate-limit wait", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
+    })
+    __testing.setRateLimitWaitForTesting(true)
+    let claimRequests = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/bot-invocations/claim")) claimRequests++
+      return new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    const ctx = {
+      sessionManager: { getSessionId: () => "runtime" },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: { notify: () => {}, setStatus: () => {}, theme: { fg: (_tone: string, text: string) => text } },
+    } as never
+
+    try {
+      expect(await __testing.claimIfIdle({} as never, ctx)).toBe(true)
+      expect(claimRequests).toBe(1)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   test("drains all pending invocations from one wakeup", async () => {
     __testing.setConfigForTesting({
       baseUrl: "https://app.threa.io",

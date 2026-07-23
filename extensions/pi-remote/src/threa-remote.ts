@@ -2950,7 +2950,7 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
         if (invocation) await failInvocation(invocation, "Pi session lifecycle changed while claiming")
         return false
       }
-      if (!invocation) break
+      if (!invocation) return true
       if (isSessionControlInvocation(invocation)) {
         await handleSessionControlInvocation(pi, ctx, invocation)
         // A /stop cancelled the wait (and possibly the turn) — stop sweeping.
@@ -3618,6 +3618,9 @@ export const __testing = {
   },
   setSupervisedRevivalBlockedForTesting: (value: boolean) => {
     supervisedRevivalBlocked = value
+  },
+  setRateLimitWaitForTesting: (value: boolean) => {
+    isWaitingForRetry = value
   },
   setStorageDirectoryForTesting,
   storagePaths: () => ({ configPath: CONFIG_PATH, lockPath: CONFIG_LOCK_PATH, bikPath: BIK_PATH }),
