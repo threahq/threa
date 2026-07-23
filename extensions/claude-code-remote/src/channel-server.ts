@@ -184,11 +184,19 @@ export async function runClaudeCommand(
       }
       const root = rootStreamId?.()
       if (!runtimeSessionId || !root) throw new Error("Harness reconnect is unavailable for this session.")
-      const afterAck = prepareHarnessReconnect(runtimeSessionId, root, { force: args === "--force" })
+      const force = args === "--force"
+      const startReconnect = prepareHarnessReconnect(runtimeSessionId, root, { force })
       return {
         ok: true,
         message: "Reconnect request accepted; attempting to resume the linked Claude session.",
-        afterAck,
+        afterAck: () => {
+          if (!force && reconnectBusy?.()) {
+            throw new Error(
+              "Claude became busy after reconnect acknowledgement; retry when idle or use `/reconnect --force`."
+            )
+          }
+          startReconnect()
+        },
       }
     }
     case "carry-on": {
@@ -390,7 +398,7 @@ export class ChannelServer {
               activeDelegationCount: this.openDelegations.size,
             }),
           () => this.session?.rootStreamId,
-          () => (this.session?.statusSnapshot.inflightCount ?? 0) > 0 || (this.carryOn?.holding ?? false)
+          () => this.reconnectBusy()
         ),
         onArchived: () => this.windDownForArchive(),
         ...(config.permissionRelay
@@ -421,6 +429,14 @@ export class ChannelServer {
       log,
     })
     this.registerHandlers()
+  }
+
+  private reconnectBusy(): boolean {
+    return (
+      (this.session.statusSnapshot.inflightCount ?? 0) > 0 ||
+      (this.carryOn?.holding ?? false) ||
+      this.openDelegations.size > 0
+    )
   }
 
   /** Connect the stdio transport so Claude Code can talk to the server and discover tools. */

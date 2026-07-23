@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
 import {
+  RECONNECT_HANDOFF_FALLBACK_MS,
   RemoteSession,
   buildSteerContent,
   claimCapabilitiesFor,
@@ -782,6 +783,10 @@ describe("RemoteSession.shutdown", () => {
 })
 
 describe("session control via the actuator", () => {
+  test("keeps reconnect handoff through the complete local replacement bound", () => {
+    expect(RECONNECT_HANDOFF_FALLBACK_MS).toBe(30_000)
+  })
+
   test("routes an advertised command to runCommand and acks with its message", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
@@ -859,6 +864,7 @@ describe("session control via the actuator", () => {
         runCommand: async () => ({ ok: true, message: "accepted", afterAck: () => order.push("start") }),
       },
     })
+    ;(session as any).link = { rootStreamId: "stream_root" }
 
     await (
       session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
@@ -871,6 +877,42 @@ describe("session control via the actuator", () => {
     expect(order).toEqual(["ack", "start"])
     expect(presence.at(-1)).toMatchObject({ status: "busy", acceptingInvocations: false })
   })
+
+  for (const lifecycle of ["shutdown", "archive"] as const) {
+    test(`does not run a post-ack action when ack resolves after ${lifecycle}`, async () => {
+      const { client } = makeFakeClient()
+      let releaseAck!: () => void
+      const ackBlocked = new Promise<void>((resolve) => (releaseAck = resolve))
+      ;(client as unknown as { complete: () => Promise<void> }).complete = () => ackBlocked
+      const { transport } = makeFakeTransport()
+      let started = false
+      const session = makeSession(client, transport, {
+        sessionControl: {
+          commands: ["reconnect"],
+          interrupt: () => true,
+          runCommand: async () => ({ ok: true, message: "accepted", afterAck: () => (started = true) }),
+        },
+      })
+      ;(session as any).link = { rootStreamId: "stream_root" }
+      const handling = (session as any).handleSessionControl(
+        makeInvocation({
+          trigger: "session-control",
+          metadata: { command: { executionKind: "bot-runtime", id: "cmd", name: "reconnect", args: "" } },
+        })
+      )
+      await Bun.sleep(0)
+
+      if (lifecycle === "shutdown") await session.shutdown()
+      else {
+        await (session as any).handleSessionArchived({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
+      }
+      releaseAck()
+      await handling
+
+      expect(started).toBe(false)
+      if (lifecycle === "archive") await session.shutdown()
+    })
+  }
 
   test("logs a post-ack action error after preserving the successful acknowledgement", async () => {
     const { client, calls } = makeFakeClient()
@@ -897,6 +939,7 @@ describe("session control via the actuator", () => {
       transport,
       log: (message) => logs.push(message),
     })
+    ;(session as any).link = { rootStreamId: "stream_root" }
 
     await (session as any).handleSessionControl(
       makeInvocation({

@@ -29,8 +29,8 @@ export interface BotRuntimeHello {
   runtimeKind: string
   runtimeSessionId?: string
   displayName?: string | null
-  status: "available" | "busy" | "offline" | "error"
-  acceptingInvocations: boolean
+  status?: "available" | "busy" | "offline" | "error"
+  acceptingInvocations?: boolean
   supportedCapabilities: string[]
   capabilities?: Record<string, unknown>
   manifest?: { output: { reply?: boolean; trace?: boolean; sources?: boolean } }

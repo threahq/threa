@@ -70,6 +70,8 @@ const ARCHIVE_RESTORE_GRACE_MS = 5 * 60 * 1000
 // (≤ ~7 requests), so it cannot become a quota burn; each probe is a
 // session-create that either reattaches (scratchpad unarchived) or 409s.
 const ARCHIVE_RESTORE_PROBE_MS = 45_000
+// Harness preflight can take 10s and replacement verification up to 15s.
+export const RECONNECT_HANDOFF_FALLBACK_MS = 30_000
 const MAX_CLAIMS_PER_DRAIN = 20
 // Server-side cap on frames per bot:invocation:steps call (`stepsFrameSchema`
 // in apps/backend/src/features/bot-runtimes/socket-handler.ts).
@@ -863,10 +865,13 @@ export class RemoteSession {
           this.reconnectHandoff = true
           await this.syncPresence()
           const completed = await this.completeAck(invocation, outcome.message)
-          if (!completed) return this.resetReconnectHandoff()
+          if (!completed || this.stopped || !this.link || this.archivePending) {
+            this.resetReconnectHandoff()
+            return
+          }
           try {
             outcome.afterAck()
-            this.reconnectResetTimer = setTimeout(() => this.resetReconnectHandoff(), 5_000)
+            this.reconnectResetTimer = setTimeout(() => this.resetReconnectHandoff(), RECONNECT_HANDOFF_FALLBACK_MS)
           } catch (error) {
             this.log(`session-control post-ack action failed: ${this.summarize(error)}`)
             this.resetReconnectHandoff()

@@ -186,6 +186,15 @@ describe("ChannelServer delegations", () => {
     await server.shutdown()
   })
 
+  test("active delegations make reconnect busy", () => {
+    const config = makeConfig()
+    const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+    const internals = server as any
+    expect(internals.reconnectBusy()).toBe(false)
+    internals.openDelegations.set("dlg_1", {})
+    expect(internals.reconnectBusy()).toBe(true)
+  })
+
   test("shutdown fails an in-flight delegation instead of stranding its claim", async () => {
     const { server, calls } = await startDelegatingServer("dlg_1")
     await server.shutdown()

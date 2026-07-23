@@ -126,6 +126,25 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     ).toBe(true)
   })
 
+  it("refuses non-force reconnect when work begins after the outcome but before afterAck", async () => {
+    let busy = false
+    const outcome = await runClaudeCommand(
+      "reconnect",
+      "",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      () => busy
+    )
+
+    expect(outcome.ok).toBe(true)
+    busy = true
+    expect(() => outcome.afterAck?.()).toThrow(
+      "Claude became busy after reconnect acknowledgement; retry when idle or use `/reconnect --force`."
+    )
+  })
+
   it("fails loudly when /kick has no harness-managed runtime identity", async () => {
     expect(runClaudeCommand("kick", "")).rejects.toThrow("Harness kick is unavailable for this session.")
   })

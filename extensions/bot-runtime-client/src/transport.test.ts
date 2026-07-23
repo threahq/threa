@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import * as socketIoClient from "socket.io-client"
 import { BotRuntimeTransport } from "./transport"
+import type { BotRuntimeHello } from "./types"
 import { buildBotSocketUrl, parseWsHint } from "./ws-hint"
 
 const HELLO = {
@@ -10,6 +11,20 @@ const HELLO = {
   acceptingInvocations: true,
   supportedCapabilities: ["active-scratchpad"],
 }
+
+const LEGACY_PI_HELLO: BotRuntimeHello = {
+  instanceId: "inst_legacy",
+  runtimeKind: "pi-local",
+  supportedCapabilities: ["active-scratchpad"],
+}
+
+it("keeps status fields optional for legacy Pi hello payloads", () => {
+  expect(LEGACY_PI_HELLO).toEqual({
+    instanceId: "inst_legacy",
+    runtimeKind: "pi-local",
+    supportedCapabilities: ["active-scratchpad"],
+  })
+})
 
 function makeTransport(): BotRuntimeTransport {
   return new BotRuntimeTransport({
