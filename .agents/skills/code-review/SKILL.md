@@ -1,7 +1,7 @@
 ---
 name: code-review
 description: Run multi-perspective code review on a PR or the local branch
-allowed-tools: Bash(gh api:*), Bash(gh issue view:*), Bash(gh issue list:*), Bash(gh pr comment:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*), Bash(git:*)
+allowed-tools: Bash(gh api:*), Bash(gh issue view:*), Bash(gh issue list:*), Bash(gh pr comment:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*), Bash(git:*), Bash(mktemp:*), Bash(rm:*)
 ---
 
 # Multi-Perspective Code Review
@@ -28,6 +28,14 @@ This skill runs in one of two modes. The default is to review (and post to) the 
 
 Precedence: an explicit "stay local" request wins over an open PR. A provided number always wins. Otherwise, if an open PR exists for the branch, use PR mode and post.
 
+Create a private workspace for this invocation before gathering either mode's context:
+
+```bash
+mktemp -d "${TMPDIR:-/tmp}/threa-code-review.XXXXXX"
+```
+
+Store the printed absolute path as `review_dir`. Every `<review-dir>` below means that exact path; expand it to a literal absolute path in commands and reviewer prompts. Never use a shared `/tmp/code-review*` path.
+
 Resolve the base and diff for **local mode** (PR mode gets its diff from the PR — see Step 2):
 
 ```bash
@@ -38,12 +46,12 @@ git diff --quiet "$base_ref"...HEAD && git diff --quiet HEAD && echo "NO_CHANGES
 # Do NOT diff the two-dot `git diff "$base_ref"`: when origin/main has advanced past
 # the branch point it folds that unrelated main-ahead churn into the review and
 # produces phantom "this PR also changes X" findings.
-{ git diff "$base_ref"...HEAD; git diff HEAD; } > /tmp/code-review.diff
+{ git diff "$base_ref"...HEAD; git diff HEAD; } > <review-dir>/review.diff
 git rev-parse HEAD            # HEAD SHA for links (only clickable if a remote exists)
 git branch --show-current
 ```
 
-Skip the review if `NO_CHANGES`. Store `base_ref`, the diff path, branch, and HEAD SHA.
+Skip the review if `NO_CHANGES` and remove `review_dir`. Otherwise store `base_ref`, the absolute diff path, branch, and HEAD SHA.
 
 ## Step 1: Eligibility (PR mode only)
 
@@ -66,37 +74,41 @@ Note ALL active IDs — new review supersedes each one.
 **PR mode:**
 1. `gh pr view N --json number,title,url,headRefOid,body` — store PR metadata + HEAD SHA
 2. `gh repo view --json owner,name` — store OWNER/REPO
-3. `gh pr diff N > /tmp/code-review.diff` — the diff agents read
+3. `gh pr diff N > <review-dir>/review.diff` — the reviewers read this invocation-private file.
 4. Plan: extract the `<details>` block under `<summary>📋 Full implementation plan</summary>` from the PR body. Store it or "No plan found".
 5. Historical context (single Bash call):
    ```bash
-   files=$(gh pr diff N --name-only | grep -v -E '\.test\.|\.spec\.|evals/|\.env|\.md$|\.json$')
-   for f in $files; do
-     prs=$(gh pr list --state merged --search "path:$f" --limit 3 --json number,title -q '.[] | "#\(.number) \(.title)"')
-     [ -n "$prs" ] && printf '=== %s ===\n%s\n' "$f" "$prs"
-   done
+   {
+     files=$(gh pr diff N --name-only | grep -v -E '\.test\.|\.spec\.|evals/|\.env|\.md$|\.json$')
+     for f in $files; do
+       prs=$(gh pr list --state merged --search "path:$f" --limit 3 --json number,title -q '.[] | "#\(.number) \(.title)"')
+       [ -n "$prs" ] && printf '=== %s ===\n%s\n' "$f" "$prs"
+     done
+   } > <review-dir>/history.txt
    ```
 
 **Local mode:**
-1. Diff is already at `/tmp/code-review.diff` (Step 0). OWNER/REPO from `gh repo view` or `git remote get-url origin` (best-effort, for links only).
+1. Diff is already at `<review-dir>/review.diff` (Step 0). OWNER/REPO from `gh repo view` or `git remote get-url origin` (best-effort, for links only).
 2. Plan: the user's chat is the spec. Distill their intent, constraints, and preferences for the reviewer owning Spec/Design and, for frontend work, the reviewer owning UX. If a PR exists, also pull its body's plan block.
 3. Historical context from git (no `gh pr list`):
    ```bash
-   mb=$(git merge-base "$base_ref" HEAD)
-   git diff --name-only "$base_ref"...HEAD | grep -v -E '\.test\.|\.spec\.|evals/|\.env|\.md$|\.json$' | while IFS= read -r f; do
-     hist=$(git log --no-merges --format='%h %s' -3 "$mb" -- "$f" 2>/dev/null)
-     [ -n "$hist" ] && printf '=== %s ===\n%s\n' "$f" "$hist"
-   done
+   {
+     mb=$(git merge-base "$base_ref" HEAD)
+     git diff --name-only "$base_ref"...HEAD | grep -v -E '\.test\.|\.spec\.|evals/|\.env|\.md$|\.json$' | while IFS= read -r f; do
+       hist=$(git log --no-merges --format='%h %s' -3 "$mb" -- "$f" 2>/dev/null)
+       [ -n "$hist" ] && printf '=== %s ===\n%s\n' "$f" "$hist"
+     done
+   } > <review-dir>/history.txt
    ```
 
-In both modes: read CLAUDE.md files (root + directories touched by the diff). Write historical output to `/tmp/code-review-history.txt`; the reviewer owning Spec/Design reads the file instead of receiving a pasted wall.
+In both modes: read CLAUDE.md files (root + directories touched by the diff). The reviewer owning Spec/Design reads `<review-dir>/history.txt` instead of receiving a pasted wall.
 
 ## Step 3: Triage Scope, Select Runtime Profile, Then Spawn
 
 Spawning every lens is the largest avoidable quota drain. Triage first:
 
 ```bash
-diff=/tmp/code-review.diff
+diff=<review-dir>/review.diff
 changed_lines=$(grep -cE '^[+-]' "$diff")
 sub_files=$(grep -E '^\+\+\+ b/' "$diff" | sed 's#^\+\+\+ b/##' \
   | grep -vE '\.(test|spec)\.|/evals/|\.env|\.md$|\.json$|\.lock$')
@@ -120,13 +132,13 @@ Record the active profile, reviewer count, and lens allocation.
 - **Large** (`changed_lines` > 1000 or `sub_count` > 20): maximum two reviewers. Backend: Spec/Design/Plan + Correctness/Data Flow/Security. Frontend: first reviewer covers Spec/Design/Correctness/Data Flow/Security; second covers UX/Mobile.
 - Never spawn a reviewer per finding, never let a reviewer delegate, and never automatically spawn a post-fix review. A later recheck must be explicitly requested and narrowly scoped to accepted findings.
 
-Each reviewer gets the distilled intent/plan, `/tmp/code-review.diff`, `/tmp/code-review-history.txt`, and the PR number in PR mode. Pass paths, not pasted diffs.
+Each reviewer gets the distilled intent/plan, the absolute `<review-dir>/review.diff` and `<review-dir>/history.txt` paths, and the PR number in PR mode. Pass paths, not pasted diffs.
 
 **CLAUDE.md handling:** Do not paste full CLAUDE.md into every reviewer. The reviewer owning Spec/Design receives root plus touched-directory instructions. Other reviewers receive only Quick Lookup and: *"Read root CLAUDE.md only to confirm a specific invariant before flagging it."*
 
 **Shared instructions** (include in every reviewer prompt):
 
-Do NOT build/typecheck or rerun broad green gates. Read `/tmp/code-review.diff`; read source only to push a specific candidate over the ≥80 threshold. Do not browse the tree. Pi/Sol reviewers follow the root `AGENTS.md` read-efficiency rules.
+Do NOT build/typecheck or rerun broad green gates. Read the invocation-private `review.diff` path supplied in the prompt; read source only to push a specific candidate over the ≥80 threshold. Do not browse the tree. Pi/Sol reviewers follow the root `AGENTS.md` read-efficiency rules.
 
 Self-score each issue 0-100 before including it. **Only output issues scoring ≥80.**
 
@@ -147,7 +159,7 @@ Do NOT flag: pre-existing issues — UNLESS the diff converts a latent one into 
 1. **CLAUDE.md audit:** Check each change for violations of instructions/invariants. Cite the specific INV-ID, quote the exact rule text, and include the relevant Invariant Playbook section title. Only CLEAR violations introduced by this change. Skip: pre-existing, linter-catchable, stylistic.
 2. **Plan/intent adherence:** Compare the diff against the plan / the user's stated intent. Missing corresponding changes? (API→frontend, type→usages, schema→migration, backend pref key→frontend wiring). Skip: supporting infrastructure, implementation choices.
 3. **Design quality:** Leaky abstractions, config sprawl, partial abstractions, parallel implementations, N+1/unbounded queries, missing memoization / re-render storms, outbox/transaction/reactivity issues. Concrete issues with a named consequence only.
-4. **Historical context:** Read `/tmp/code-review-history.txt` (recent commits/PRs per touched file). Only flag changes that clearly violate patterns visible from the history. Do NOT make additional history calls — all of it is pre-provided.
+4. **Historical context:** Read the invocation-private `history.txt` path supplied in the prompt (recent commits/PRs per touched file). Only flag changes that clearly violate patterns visible from the history. Do NOT make additional history calls — all of it is pre-provided.
 
 **Agent 2: Correctness & Data Flow** (invariant digest only) — three jobs:
 1. **Bug scan:** Logic errors, unhandled edges, off-by-one, null hazards, race conditions, stale-closure/ref bugs, listener leaks, state machines that can wedge. Changes only, significant bugs only. For the riskiest change, mentally execute the primary user sequence step by step rather than reading lines in isolation.
@@ -240,6 +252,8 @@ In local mode, drop the `<!-- unified-review -->` / reaction-footer lines from t
 **Supersede old comments** (PR mode, for each active ID from Step 1): Fetch old body, replace `<!-- unified-review -->` with `<!-- unified-review:old -->`, update with `<!-- unified-review:superseded -->`, link to new comment, preserve full old content in `<details>`.
 
 Use `gh api -X PATCH repos/OWNER/REPO/issues/comments/ID -f body=...` locally, or `curl -X PATCH` per the **`github-api-web`** skill in remote/web sessions. **Do not attempt this via `mcp__github__*`** — the MCP server does not expose a working issue-comment edit, and skipping supersede leaves stale reviews stacked on the PR (this is the most common remote-session failure mode for this skill).
+
+After all reviewers have finished and the report/comment is complete, remove only the exact invocation directory returned by `mktemp`: `rm -rf -- <review-dir>`.
 
 ## Step 7: Report to User
 
