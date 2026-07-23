@@ -140,9 +140,69 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
 
     expect(outcome.ok).toBe(true)
     busy = true
-    expect(() => outcome.afterAck?.()).toThrow(
+    await expect(outcome.afterAck?.()).rejects.toThrow(
       "Claude became busy after reconnect acknowledgement; retry when idle or use `/reconnect --force`."
     )
+  })
+
+  for (const lifecycle of ["shutdown", "archive→same-root restore"] as const) {
+    it(`does not launch reconnect when ${lifecycle} wins during deferred delegation quiesce`, async () => {
+      let releaseQuiesce!: () => void
+      const quiesce = new Promise<void>((resolve) => (releaseQuiesce = resolve))
+      let target: {
+        stopped: boolean
+        linkGeneration: number
+        linkState: "unlinked" | "linked" | "detached"
+        rootStreamId: string | undefined
+      } = { stopped: false, linkGeneration: 1, linkState: "linked", rootStreamId: "root" }
+      const outcome = await runClaudeCommand(
+        "reconnect",
+        "--force",
+        undefined,
+        "runtime",
+        undefined,
+        () => "root",
+        undefined,
+        () => quiesce,
+        undefined,
+        () => target
+      )
+
+      const postAck = outcome.afterAck?.()
+      target =
+        lifecycle === "shutdown"
+          ? { stopped: true, linkGeneration: 1, linkState: "unlinked", rootStreamId: undefined }
+          : { stopped: false, linkGeneration: 3, linkState: "linked", rootStreamId: "root" }
+      releaseQuiesce()
+
+      await expect(postAck).rejects.toThrow(
+        "Remote session changed while delegation intake was quiescing; reconnect was not started."
+      )
+    })
+  }
+
+  it("does not launch reconnect when delegation quiesce fails and exposes intake restoration", async () => {
+    const releaseError = new Error("delegation release failed: 500")
+    let resets = 0
+    const outcome = await runClaudeCommand(
+      "reconnect",
+      "--force",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      undefined,
+      async () => {
+        throw releaseError
+      },
+      () => {
+        resets += 1
+      }
+    )
+
+    await expect(outcome.afterAck?.()).rejects.toBe(releaseError)
+    outcome.onHandoffReset?.()
+    expect(resets).toBe(1)
   })
 
   it("fails loudly when /kick has no harness-managed runtime identity", async () => {

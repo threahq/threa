@@ -8,6 +8,7 @@ const DEFAULT_HEARTBEAT_MS = 5 * 60 * 1000
 const FAIL_MESSAGE_MAX = 1_000
 /** The server's `statusNote` validator cap. */
 const STATUS_NOTE_MAX = 2_000
+export const DELEGATION_STOP_REASON = "Delegation runner stopped for reconnect or shutdown"
 
 export interface DelegationExecutorContext {
   /** Put a progress note on the card (also renews the lease). Best-effort. */
@@ -65,6 +66,8 @@ export class DelegationRunner {
   private readonly log: (message: string) => void
 
   private stopped = true
+  private stopReason = DELEGATION_STOP_REASON
+  private strictStop = false
   /** The in-flight drain, when one is running — the single-flight latch. */
   private current: Promise<void> | undefined
   private pollTimer: ReturnType<typeof setInterval> | undefined
@@ -92,6 +95,8 @@ export class DelegationRunner {
   start(): void {
     if (!this.stopped) return
     this.stopped = false
+    this.stopReason = DELEGATION_STOP_REASON
+    this.strictStop = false
     this.pollTimer = setInterval(() => this.drain(), this.pollMs)
     this.drain()
   }
@@ -100,8 +105,10 @@ export class DelegationRunner {
    * Resolves once the in-flight drain (if any) has finished, so a graceful
    * shutdown can reject its executor and still see the fail report posted.
    */
-  stop(): Promise<void> {
+  stop(reason = DELEGATION_STOP_REASON, options?: { strict?: boolean }): Promise<void> {
     this.stopped = true
+    this.stopReason = reason
+    this.strictStop = options?.strict ?? false
     if (this.pollTimer) clearInterval(this.pollTimer)
     this.pollTimer = undefined
     return this.current ?? Promise.resolve()
@@ -143,6 +150,10 @@ export class DelegationRunner {
           if (this.stopped) return
           const claimed = await this.tryClaim(summary)
           if (!claimed) continue
+          if (this.stopped) {
+            await this.releaseStoppedClaim(claimed)
+            return
+          }
           await this.execute(claimed)
           // One at a time: after finishing, re-list rather than working a
           // possibly-stale snapshot of the queue.
@@ -156,6 +167,10 @@ export class DelegationRunner {
           if (this.stopped) return
           const claimed = await this.tryClaimNudged(id)
           if (!claimed) continue
+          if (this.stopped) {
+            await this.releaseStoppedClaim(claimed)
+            return
+          }
           await this.execute(claimed)
           executed = true
           break
@@ -163,6 +178,7 @@ export class DelegationRunner {
       }
     } catch (error) {
       this.log(`delegation drain failed: ${error instanceof Error ? error.message : String(error)}`)
+      if (this.stopped && this.strictStop) throw error
     }
   }
 
@@ -227,6 +243,17 @@ export class DelegationRunner {
     }
   }
 
+  private async releaseStoppedClaim(task: ClaimedDelegation): Promise<void> {
+    try {
+      await this.client.fail(task.id, task.claimToken, this.stopReason)
+    } catch (error) {
+      this.log(
+        `delegation ${task.id} stop fail report failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+      if (this.strictStop) throw error
+    }
+  }
+
   private async execute(task: ClaimedDelegation): Promise<void> {
     const { id, claimToken } = task
     const heartbeat = setInterval(() => {
@@ -265,6 +292,7 @@ export class DelegationRunner {
             failError instanceof Error ? failError.message : String(failError)
           }`
         )
+        if (this.stopped && this.strictStop) throw failError
       }
     } finally {
       clearInterval(heartbeat)

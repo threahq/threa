@@ -15,7 +15,7 @@ import {
   type SessionControlActuator,
 } from "./session"
 import type { RemoteSessionConfig } from "./identity"
-import type { ClaimedInvocation, ThreaClient } from "./client"
+import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
 
 function makeConfig(overrides?: Partial<RemoteSessionConfig>): RemoteSessionConfig {
   return {
@@ -376,6 +376,7 @@ describe("RemoteSession status snapshot", () => {
 
     expect(session.statusSnapshot).toEqual({
       stopped: false,
+      linkGeneration: 0,
       linkState: "unlinked",
       rootStreamId: undefined,
       activeStreamId: undefined,
@@ -635,6 +636,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     expect(created).toHaveLength(1)
     expect(asInternal(session).archivePending).toBeUndefined()
     expect(asInternal(session).link).toMatchObject({ rootStreamId: "stream_root" })
+    expect(session.statusSnapshot.linkGeneration).toBe(2)
     expect(presence.at(-1)?.status).toBe("available")
     expect(archived).toEqual([])
     await session.shutdown()
@@ -914,6 +916,41 @@ describe("session control via the actuator", () => {
     })
   }
 
+  test("runs the handoff reset once before restoring intake after a post-ack failure", async () => {
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const order: string[] = []
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["reconnect"],
+        interrupt: () => true,
+        runCommand: async () => ({
+          ok: true,
+          message: "accepted",
+          afterAck: () => {
+            order.push("post-ack")
+            throw new Error("launch failed")
+          },
+          onHandoffReset: () => order.push("reset"),
+        }),
+      },
+    })
+    ;(session as any).link = { rootStreamId: "stream_root" }
+    ;(session as any).syncPresence = async () => order.push("presence")
+    ;(session as any).claimDrain = async () => order.push("drain")
+
+    await (session as any).handleSessionControl(
+      makeInvocation({
+        trigger: "session-control",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd", name: "reconnect", args: "" } },
+      })
+    )
+    ;(session as any).resetReconnectHandoff()
+    await Bun.sleep(0)
+
+    expect(order).toEqual(["presence", "post-ack", "reset", "presence", "drain"])
+  })
+
   test("logs a post-ack action error after preserving the successful acknowledgement", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
@@ -950,6 +987,41 @@ describe("session control via the actuator", () => {
     expect({ completed: calls.complete.length, logs }).toEqual({
       completed: 1,
       logs: ["session-control post-ack action failed: detached launch failed"],
+    })
+  })
+
+  test("does not run a post-ack action when sealed key-race fallback only closes silently", async () => {
+    const { client, calls } = makeFakeClient()
+    ;(client as unknown as { complete: (id: string, body: Record<string, unknown>) => Promise<void> }).complete =
+      async (id, body) => {
+        if (body.finalMessageMarkdown) {
+          throw new ThreaApiError("plaintext rejected", 400, "E2E_STREAM_PLAINTEXT_UNSUPPORTED")
+        }
+        calls.complete.push({ id, body })
+      }
+    const { transport } = makeFakeTransport()
+    let started = false
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["reconnect"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "accepted", afterAck: () => (started = true) }),
+      },
+    })
+    ;(session as any).link = { rootStreamId: "stream_root" }
+    ;(session as any).sealSessionControlAck = async () => undefined
+
+    await (session as any).handleSessionControl(
+      makeInvocation({
+        trigger: "session-control",
+        sealedAck: { keyWraps: [] },
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd", name: "reconnect", args: "" } },
+      })
+    )
+
+    expect({ started, silentCloses: calls.complete.filter((call) => call.body.noResponse).length }).toEqual({
+      started: false,
+      silentCloses: 1,
     })
   })
 

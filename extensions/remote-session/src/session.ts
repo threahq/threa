@@ -125,7 +125,15 @@ export interface SessionControlActuator {
    * interrupt + redeliver. False = control lost.
    */
   steer?(text: string): Promise<boolean> | boolean
-  runCommand(name: string, args: string): Promise<{ ok: boolean; message: string; afterAck?: () => void }>
+  runCommand(
+    name: string,
+    args: string
+  ): Promise<{
+    ok: boolean
+    message: string
+    afterAck?: () => unknown | Promise<unknown>
+    onHandoffReset?: () => unknown | Promise<unknown>
+  }>
 }
 
 /**
@@ -183,6 +191,7 @@ export interface SendResult {
 
 export interface RemoteSessionStatusSnapshot {
   stopped: boolean
+  linkGeneration: number
   linkState: "unlinked" | "linked" | "detached"
   rootStreamId?: string
   activeStreamId?: string
@@ -335,8 +344,10 @@ export class RemoteSession {
   private readonly bik: BikKeystore
   private readonly hello: BotRuntimeHello
   private link: RuntimeSessionLink | undefined
+  private linkGeneration = 0
   private claiming = false
   private reconnectHandoff = false
+  private onHandoffReset: (() => unknown | Promise<unknown>) | undefined
   private reconnectResetTimer: ReturnType<typeof setTimeout> | undefined
   private reconnectFallbackTask: Promise<unknown> | undefined
   private stopped = false
@@ -424,6 +435,7 @@ export class RemoteSession {
     const linkState = this.archivePending ? "detached" : this.link ? "linked" : "unlinked"
     return {
       stopped: this.stopped,
+      linkGeneration: this.linkGeneration,
       linkState,
       rootStreamId: this.link?.rootStreamId ?? this.archivePending?.rootStreamId,
       activeStreamId: this.link?.activeStreamId,
@@ -465,6 +477,7 @@ export class RemoteSession {
         return
       }
       this.link = link
+      this.linkGeneration += 1
       // A successful link while detached-pending-restore is the reattach (the
       // server revived the archived link for this runtime session) — the probe
       // beat the bot:session_restored push. Cancel the wind-down.
@@ -863,6 +876,7 @@ export class RemoteSession {
             return
           }
           this.reconnectHandoff = true
+          this.onHandoffReset = outcome.onHandoffReset
           await this.syncPresence()
           const completed = await this.completeAck(invocation, outcome.message)
           if (!completed || this.stopped || !this.link || this.archivePending) {
@@ -870,7 +884,7 @@ export class RemoteSession {
             return
           }
           try {
-            outcome.afterAck()
+            await outcome.afterAck()
             this.reconnectResetTimer = setTimeout(() => this.resetReconnectHandoff(), RECONNECT_HANDOFF_FALLBACK_MS)
           } catch (error) {
             this.log(`session-control post-ack action failed: ${this.summarize(error)}`)
@@ -1115,7 +1129,7 @@ export class RemoteSession {
       if (error instanceof ThreaApiError && error.code === "E2E_STREAM_PLAINTEXT_UNSUPPORTED") {
         try {
           await this.completeTurn(invocation, { noResponse: true })
-          return true
+          return false
         } catch (inner) {
           this.log(`session-control silent ack failed: ${this.summarize(inner)}`)
           return false
@@ -1491,6 +1505,7 @@ export class RemoteSession {
     this.inflight.clear()
     this.activeTurnStream = undefined
     this.link = undefined
+    this.linkGeneration += 1
     const pending = {
       rootStreamId,
       deadline: setTimeout(() => void this.windDownAfterGrace(rootStreamId), this.archiveGraceMs),
@@ -1642,14 +1657,31 @@ export class RemoteSession {
 
   private resetReconnectHandoff(): void {
     if (this.reconnectResetTimer) clearTimeout(this.reconnectResetTimer)
+    this.reconnectResetTimer = undefined
+    const wasHandoff = this.reconnectHandoff
     this.reconnectHandoff = false
-    if (this.stopped || !this.link || this.archivePending) return
+    const onHandoffReset = this.onHandoffReset
+    this.onHandoffReset = undefined
+    if (!wasHandoff && !onHandoffReset) return
+    let callbackTask: Promise<unknown> | undefined
+    if (onHandoffReset) {
+      try {
+        callbackTask = Promise.resolve(onHandoffReset()).catch((error) =>
+          this.log(`session-control handoff reset failed: ${this.summarize(error)}`)
+        )
+      } catch (error) {
+        this.log(`session-control handoff reset failed: ${this.summarize(error)}`)
+      }
+    }
+    if (this.stopped || !this.link || this.archivePending) {
+      if (callbackTask) this.reconnectFallbackTask = callbackTask
+      return
+    }
     let task: Promise<unknown>
-    task = this.syncPresence()
-      .then(() => this.claimDrain())
-      .finally(() => {
-        if (this.reconnectFallbackTask === task) this.reconnectFallbackTask = undefined
-      })
+    const restoreIntake = () => this.syncPresence().then(() => this.claimDrain())
+    task = (callbackTask ? callbackTask.then(restoreIntake) : restoreIntake()).finally(() => {
+      if (this.reconnectFallbackTask === task) this.reconnectFallbackTask = undefined
+    })
     this.reconnectFallbackTask = task
   }
 
