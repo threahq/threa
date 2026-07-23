@@ -180,6 +180,16 @@ export interface SendResult {
   retryable?: boolean
 }
 
+export interface RemoteSessionStatusSnapshot {
+  stopped: boolean
+  linkState: "unlinked" | "linked" | "detached"
+  rootStreamId?: string
+  activeStreamId?: string
+  socketConnected: boolean
+  inflightCount: number
+  activeTurnStreamId?: string
+}
+
 type SessionControlCommand = { name: string; args: string }
 
 /**
@@ -402,6 +412,19 @@ export class RemoteSession {
   /** The scratchpad root stream, once linked. */
   get rootStreamId(): string | undefined {
     return this.link?.rootStreamId
+  }
+
+  get statusSnapshot(): RemoteSessionStatusSnapshot {
+    const linkState = this.archivePending ? "detached" : this.link ? "linked" : "unlinked"
+    return {
+      stopped: this.stopped,
+      linkState,
+      rootStreamId: this.link?.rootStreamId ?? this.archivePending?.rootStreamId,
+      activeStreamId: this.link?.activeStreamId,
+      socketConnected: this.transport.socketConnected,
+      inflightCount: this.inflight.size,
+      activeTurnStreamId: this.activeTurnStream,
+    }
   }
 
   // --- Lifecycle ------------------------------------------------------------

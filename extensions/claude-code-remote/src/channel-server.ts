@@ -20,6 +20,7 @@ import { z } from "zod"
 import { CarryOnController } from "./carry-on"
 import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"
 import { pushBranchAndScheduleRemoval } from "./archive-cleanup"
+import { formatClaudeStatusReport } from "./status"
 import { interrupt, killOwnWindow, steerText, submitLine, tmuxAvailable } from "./tmux-control"
 import { TranscriptTracer } from "./transcript-trace"
 
@@ -33,11 +34,13 @@ export const CHANNEL_SOURCE = "threa-channel"
 // disk this session — `/reload-plugins` is reachable via `run` for the plugin
 // case); Threa's canonical `thinking` maps to Claude Code's `/effort`;
 // `carry-on` queues text for the quota carry-on resume (see carry-on.ts);
-// `kick` asks harnessd to press Enter in this managed session's pane.
+// `kick` asks harnessd to press Enter in this session's pane; `status` reads
+// connection/activity state and captures the visible pane without sending keys.
 const SESSION_CONTROL_COMMANDS = [
   "stop",
   "steer",
   "kick",
+  "status",
   "model",
   "thinking",
   "compact",
@@ -160,7 +163,8 @@ export async function runClaudeCommand(
   name: string,
   args: string,
   carryOn?: CarryOnController,
-  runtimeSessionId?: string
+  runtimeSessionId?: string,
+  statusReport?: () => string
 ): Promise<{ ok: boolean; message: string }> {
   switch (name) {
     case "carry-on": {
@@ -172,6 +176,17 @@ export async function runClaudeCommand(
       const result = runHarnessKick(runtimeSessionId)
       if (!result.ok) throw new Error(`Could not kick the session: ${result.error}`)
       return { ok: true, message: "Kicked the linked Claude Code session." }
+    }
+    case "status": {
+      if (!statusReport) return { ok: false, message: "Session status is unavailable." }
+      try {
+        return { ok: true, message: statusReport() }
+      } catch (error) {
+        return {
+          ok: false,
+          message: `Could not inspect the session: ${error instanceof Error ? error.message : String(error)}`,
+        }
+      }
     }
     case "model": {
       const alias = args.trim()
@@ -224,7 +239,8 @@ async function runSlash(slash: string): Promise<{ ok: boolean; message: string }
  */
 export function createClaudeSessionControl(
   carryOn: () => CarryOnController | undefined = () => undefined,
-  runtimeSessionId?: string
+  runtimeSessionId?: string,
+  statusReport?: () => string
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
@@ -249,7 +265,7 @@ export function createClaudeSessionControl(
       if (absorbed !== undefined) return true
       return steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`)
     },
-    runCommand: (name, args) => runClaudeCommand(name, args, carryOn(), runtimeSessionId),
+    runCommand: (name, args) => runClaudeCommand(name, args, carryOn(), runtimeSessionId, statusReport),
   }
 }
 
@@ -329,7 +345,20 @@ export class ChannelServer {
       },
       delegate: {
         deliverTurn: (turn) => this.deliverToClaude(turn),
-        sessionControl: createClaudeSessionControl(() => this.carryOn, config.runtimeSessionId),
+        sessionControl: createClaudeSessionControl(
+          () => this.carryOn,
+          config.runtimeSessionId,
+          () =>
+            formatClaudeStatusReport({
+              channelStarted: this.started,
+              instanceId: config.instanceId,
+              runtimeSessionId: config.runtimeSessionId,
+              remote: this.session.statusSnapshot,
+              quotaHolding: this.carryOn?.holding ?? false,
+              pendingPermissionCount: this.openPermissions.size,
+              activeDelegationCount: this.openDelegations.size,
+            })
+        ),
         onArchived: () => this.windDownForArchive(),
         ...(config.permissionRelay
           ? { interceptClaimed: (invocation: ClaimedInvocation) => this.interceptVerdict(invocation) }

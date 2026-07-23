@@ -37,6 +37,7 @@ describe("createClaudeSessionControl", () => {
         "stop",
         "steer",
         "kick",
+        "status",
         "model",
         "thinking",
         "compact",
@@ -57,6 +58,7 @@ describe("createClaudeSessionControl", () => {
       expect(createClaudeSessionControl()!.commands).toEqual([
         "stop",
         "steer",
+        "status",
         "model",
         "thinking",
         "compact",
@@ -71,6 +73,18 @@ describe("createClaudeSessionControl", () => {
 describe("runClaudeCommand validation (paths that never touch tmux)", () => {
   it("fails loudly when /kick has no harness-managed runtime identity", async () => {
     expect(runClaudeCommand("kick", "")).rejects.toThrow("Harness kick is unavailable for this session.")
+  })
+
+  it("returns the injected read-only status report", async () => {
+    const outcome = await runClaudeCommand("status", "", undefined, "ccs-one", () => "pane status")
+    expect(outcome).toEqual({ ok: true, message: "pane status" })
+  })
+
+  it("reports status capture failures without throwing out of command handling", async () => {
+    const outcome = await runClaudeCommand("status", "", undefined, "ccs-one", () => {
+      throw new Error("pane disappeared")
+    })
+    expect(outcome).toEqual({ ok: false, message: "Could not inspect the session: pane disappeared" })
   })
 
   it("gives usage help for /model without an argument", async () => {
