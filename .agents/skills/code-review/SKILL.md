@@ -6,7 +6,7 @@ allowed-tools: Bash(gh api:*), Bash(gh issue view:*), Bash(gh issue list:*), Bas
 
 # Multi-Perspective Code Review
 
-Up to 4 parallel Sonnet reviewers — **Agent 1: Spec & Design**, **Agent 2: Correctness & Data Flow**, **Agent 3: UX**, **Agent 4: Mobile** — with inline self-scoring (threshold ≥80/100) → filtered report. The fan-out scales to the diff (Step 3): UX + Mobile only spawn on frontend changes, and trivial diffs collapse to a single combined agent, so a backend-only PR runs 2 agents and a small one runs 1. The report is ALWAYS printed to chat; when reviewing a GitHub PR it is also posted as a PR comment.
+Runtime-aware multi-perspective review with inline self-scoring (threshold ≥80/100) and bounded fan-out. Claude may use up to four Sonnet lenses; Pi/OpenAI uses one combined Sol/high reviewer for most diffs and never more than two. The report is ALWAYS printed to chat; PR mode also posts it as a PR comment. One invocation is one review pass—reviewers never delegate, and fixes do not trigger an automatic clean-room rerun.
 
 > **Remote / web sessions:** `gh` is not installed and the GitHub MCP server cannot reliably update existing issue comments (the supersede step in Step 6 silently no-ops). If `gh` fails with "command not found", use the **`github-api-web` skill** for every GitHub interaction in this skill — list/read/post/**PATCH** comments via `curl $GH_TOKEN`. Do NOT fall back to `mcp__github__*` for the supersede flow; it cannot edit prior comment bodies.
 
@@ -79,7 +79,7 @@ Note ALL active IDs — new review supersedes each one.
 
 **Local mode:**
 1. Diff is already at `/tmp/code-review.diff` (Step 0). OWNER/REPO from `gh repo view` or `git remote get-url origin` (best-effort, for links only).
-2. Plan: the user's chat is the spec. Treat the user's stated intent in this conversation — what they asked for, the constraints and preferences they voiced — as the plan, and pass a short distillation of it to the agents (especially Agent 1 for adherence and Agent 3 for the UX expectations the user voiced). If a PR exists, also pull its body's plan block.
+2. Plan: the user's chat is the spec. Distill their intent, constraints, and preferences for the reviewer owning Spec/Design and, for frontend work, the reviewer owning UX. If a PR exists, also pull its body's plan block.
 3. Historical context from git (no `gh pr list`):
    ```bash
    mb=$(git merge-base "$base_ref" HEAD)
@@ -89,11 +89,11 @@ Note ALL active IDs — new review supersedes each one.
    done
    ```
 
-In both modes: read CLAUDE.md files (root + directories touched by the diff). Store historical output as `historicalContext` and write it to `/tmp/code-review-history.txt` so Agent 1 can Read it instead of receiving a huge prompt.
+In both modes: read CLAUDE.md files (root + directories touched by the diff). Write historical output to `/tmp/code-review-history.txt`; the reviewer owning Spec/Design reads the file instead of receiving a pasted wall.
 
-## Step 3: Triage Scope, Then Spawn Review Agents
+## Step 3: Triage Scope, Select Runtime Profile, Then Spawn
 
-The fan-out scales to the diff — spawning all lenses on every change is the single biggest quota drain, so size the review to the work. First triage:
+Spawning every lens is the largest avoidable quota drain. Triage first:
 
 ```bash
 diff=/tmp/code-review.diff
@@ -105,20 +105,28 @@ fe_count=$(printf '%s\n' "$sub_files" | grep -cE 'apps/frontend/|\.(tsx|jsx|css|
 printf 'changed_lines=%s substantive_files=%s frontend_files=%s\n' "$changed_lines" "$sub_count" "$fe_count"
 ```
 
-Pick the tier from those numbers:
+Record the active profile, reviewer count, and lens allocation.
 
-- **Trivial** — `changed_lines` ≤ 50 AND `sub_count` ≤ 2: spawn **one** combined Sonnet agent that runs every relevant lens (drop UX/Mobile if `fe_count` = 0) in a single prompt. No fan-out.
-- **Standard** — anything larger: always spawn **Agent 1 (Spec & Design)** and **Agent 2 (Correctness & Data Flow)**. Spawn **Agent 3 (UX)** and **Agent 4 (Mobile)** ONLY when `fe_count` ≥ 1. A backend-only diff therefore runs 2 agents, not 4 — UX and Mobile findings cannot exist without frontend changes, so paying for those agents on backend diffs is pure waste.
+### Claude profile
 
-Record which agents you spawned and why (e.g. "backend-only: skipped UX + Mobile") — Step 6 attribution must reflect the actual set.
+- **Trivial** (`changed_lines` ≤ 50 and `sub_count` ≤ 2): one combined Sonnet reviewer; omit UX/Mobile when `fe_count` = 0.
+- **Standard:** Sonnet Agent 1 (Spec & Design) + Agent 2 (Correctness & Data Flow); add Agent 3 (UX) and Agent 4 (Mobile) only when `fe_count` ≥ 1.
+- Run agents in the background with `model: "sonnet"`. Maximum four.
 
-Agents run `run_in_background: true`, `subagent_type: "general-purpose"`, `model: "sonnet"`. Each gets: the plan / distilled chat intent, the diff path (`/tmp/code-review.diff`), and (PR mode) the PR number.
+### Pi / OpenAI profile
 
-**CLAUDE.md handling (quota):** Do NOT paste full CLAUDE.md into every agent — it is ~5.5k tokens and duplicating it across agents is the largest avoidable cost. Only **Agent 1** receives the full root CLAUDE.md text (plus any touched-directory CLAUDE.md) because it owns the invariant audit. Every other agent gets only the "Quick Invariant Lookup" digest from CLAUDE.md and the instruction: *"Read root CLAUDE.md ONLY to confirm a specific invariant before flagging it."*
+- Use fresh GPT-5.6 Sol reviewers at effort `high`; never `xhigh` in `/code-review`.
+- **Trivial or standard:** one combined reviewer covering Spec, Design, Correctness, Data Flow, Security, and—when `fe_count` ≥ 1—UX and Mobile.
+- **Large** (`changed_lines` > 1000 or `sub_count` > 20): maximum two reviewers. Backend: Spec/Design/Plan + Correctness/Data Flow/Security. Frontend: first reviewer covers Spec/Design/Correctness/Data Flow/Security; second covers UX/Mobile.
+- Never spawn a reviewer per finding, never let a reviewer delegate, and never automatically spawn a post-fix review. A later recheck must be explicitly requested and narrowly scoped to accepted findings.
 
-**Shared instructions** (include in every agent prompt):
+Each reviewer gets the distilled intent/plan, `/tmp/code-review.diff`, `/tmp/code-review-history.txt`, and the PR number in PR mode. Pass paths, not pasted diffs.
 
-Do NOT build/typecheck. Read the diff from `/tmp/code-review.diff` (PR mode agents may instead run `gh pr diff <N>`). Rely on the diff; Read a source file ONLY when it is needed to push a specific finding over the ≥80 threshold — do not browse the tree.
+**CLAUDE.md handling:** Do not paste full CLAUDE.md into every reviewer. The reviewer owning Spec/Design receives root plus touched-directory instructions. Other reviewers receive only Quick Lookup and: *"Read root CLAUDE.md only to confirm a specific invariant before flagging it."*
+
+**Shared instructions** (include in every reviewer prompt):
+
+Do NOT build/typecheck or rerun broad green gates. Read `/tmp/code-review.diff`; read source only to push a specific candidate over the ≥80 threshold. Do not browse the tree. For Pi/Sol: omit `limit` when a needed whole file likely fits the 50KB read budget, issue independent reads together in one turn, search before reading for one symbol, and never walk a known-needed file through narrow 50–200-line slices.
 
 Self-score each issue 0-100 before including it. **Only output issues scoring ≥80.**
 
@@ -170,7 +178,7 @@ Mobile rubric: 0=not real, 25=minor/subjective, 50=minor friction, 75=clear brea
 
 ## Step 4: Compose Report
 
-Collect all issues from the spawned agents (2–4, or 1 for a trivial diff). Drop any with score <80. De-duplicate where two agents found the same thing (keep the clearest framing, note both lenses). Verify the highest-impact claims against the source before publishing — a confidently-posted false positive is worse than a missed nitpick; lower the score or drop it if it doesn't hold.
+Collect all issues from the selected profile's reviewers (1–4). Drop any with score <80. De-duplicate where two agents found the same thing (keep the clearest framing, note both lenses). Verify the highest-impact claims against the source before publishing — a confidently-posted false positive is worse than a missed nitpick; lower the score or drop it if it doesn't hold.
 
 Confidence 1-7: 7=Excellent(none survived), 6=Very Good(minor), 5=Good(few non-blocking), 4=Acceptable(some), 3=Needs Work(multiple), 2=Significant Concerns(blocking), 1=Major Problems.
 
@@ -184,7 +192,7 @@ Re-run Step 1 to ensure the PR hasn't been closed/drafted during review.
 
 **PR mode also posts a comment.** Use `gh pr comment N --body-file …`. Link format: `https://github.com/OWNER/REPO/blob/FULL_SHA/path/file.ts#L10-L15` (full SHA, 1-2 lines context). In local mode, use the same link format only if a remote/SHA is known; otherwise cite `path/file.ts:10-15`.
 
-**Attribution:** Disclose models AND the actual lens set that ran (it varies by tier/surface). Include `**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x<N> (<lenses actually spawned>)` — e.g. `sonnet x2 (spec+design, correctness+data-flow)` for a backend diff, `sonnet x4 (spec+design, correctness+data-flow, UX, mobile)` for a frontend one, or `sonnet x1 (combined)` for a trivial diff.
+**Attribution:** Disclose models, effort where applicable, and actual lenses. Include `**Review models:** Orchestrator: <runtime model> | Reviewers: <model/effort> x<N> (<lenses>)`, e.g. `sonnet x2 (spec+design, correctness+data-flow)` or `gpt-5.6-sol/high x1 (combined)`.
 
 Report body (identical for the chat printout and the PR comment; the PR comment also carries the `<!-- unified-review -->` marker as its first line):
 
@@ -192,7 +200,7 @@ Report body (identical for the chat printout and the PR comment; the PR comment 
 <!-- unified-review -->
 ### Code review
 **Confidence: X/7** — [Label]
-**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x<N> (<lenses that ran>)
+**Review models:** Orchestrator: <runtime model> | Reviewers: <model/effort> x<N> (<lenses that ran>)
 
 Found N issues:
 
@@ -219,7 +227,7 @@ Found N issues:
 <!-- unified-review -->
 ### Code review
 **Confidence: 7/7** — Excellent
-**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x<N> (<lenses that ran>)
+**Review models:** Orchestrator: <runtime model> | Reviewers: <model/effort> x<N> (<lenses that ran>)
 
 No issues found. Checked for <the lenses that actually ran — e.g. bugs, data-flow lifecycle, CLAUDE.md compliance, plan adherence, design quality, and security on a backend diff; add UX and mobile when those agents ran>.
 
@@ -238,7 +246,7 @@ Use `gh api -X PATCH repos/OWNER/REPO/issues/comments/ID -f body=...` locally, o
 ```
 Code review complete — <PR #N: URL | local branch <name> vs <base_ref>>
 Confidence: X/7
-Models: Orchestrator=<runtime model>, Reviewers=sonnet x<N> (<lenses that ran>)
+Models: Orchestrator=<runtime model>, Reviewers=<model/effort> x<N> (<lenses that ran>)
 Summary:
 - 📐 Plan: <status>
 - 🔍 Bugs: <status>
