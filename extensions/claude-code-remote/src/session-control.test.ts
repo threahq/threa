@@ -67,6 +67,24 @@ describe("createClaudeSessionControl", () => {
     })
   })
 
+  it("advertises key only with exact runtime, root, and a nonempty TMUX_PANE self-target", () => {
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => "root")!.commands).toContain("key")
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => undefined)!.commands).not.toContain(
+        "key"
+      )
+      expect(createClaudeSessionControl()!.commands).not.toContain("key")
+    })
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0" }, () => {
+      process.env.THREA_TMUX_TARGET = "%9"
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => "root")!.commands).not.toContain("key")
+    })
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "   " }, () => {
+      process.env.THREA_TMUX_TARGET = "%9"
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => "root")!.commands).not.toContain("key")
+    })
+  })
+
   it("does not advertise /kick without a harness runtime identity", () => {
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
       expect(createClaudeSessionControl()!.commands).toEqual([
@@ -203,6 +221,38 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     await expect(outcome.afterAck?.()).rejects.toBe(releaseError)
     outcome.onHandoffReset?.()
     expect(resets).toBe(1)
+  it("sends one exact allowed key using Claude's parent PID", async () => {
+    const sends: unknown[][] = []
+    const outcome = await runClaudeCommand("key", "ctrl-d", undefined, "runtime", undefined, () => "root", undefined, ((
+      ...args: unknown[]
+    ) => sends.push(args)) as any)
+    expect({ outcome, sends }).toEqual({
+      outcome: { ok: true, message: "Sent `ctrl-d` to the linked Claude session." },
+      sends: [["ctrl-d", process.ppid]],
+    })
+  })
+
+  it("throws when key inspection or send fails", async () => {
+    await expect(
+      runClaudeCommand("key", "enter", undefined, "runtime", undefined, () => "root", undefined, (() => {
+        throw new Error("pane inspection failed")
+      }) as any)
+    ).rejects.toThrow("pane inspection failed")
+    await expect(runClaudeCommand("key", "enter", undefined, undefined, undefined, () => "root")).rejects.toThrow(
+      "Key control is unavailable"
+    )
+  })
+
+  it("rejects malformed key args without sending", async () => {
+    for (const args of ["Enter", " enter", "enter ", "enter down", "-t", "%2", "unknown"]) {
+      let sent = false
+      expect(
+        await runClaudeCommand("key", args, undefined, "runtime", undefined, () => "root", undefined, (() => {
+          sent = true
+        }) as any)
+      ).toEqual({ ok: false, message: "Usage: `/key <name>`." })
+      expect(sent).toBe(false)
+    }
   })
 
   it("fails loudly when /kick has no harness-managed runtime identity", async () => {

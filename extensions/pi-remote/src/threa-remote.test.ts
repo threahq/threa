@@ -995,6 +995,86 @@ describe("Pi reconnect session control", () => {
     ).toBe(false)
   })
 
+  test("advertises and sends an allowed key only for the exact link using Pi's PID", async () => {
+    const commands = __testing.buildRuntimeCapabilities(context(true), () => true).sessionControlCommands as string[]
+    expect(commands).toContain("key")
+
+    const sent: unknown[][] = []
+    const messages: string[] = []
+    await __testing.runKeyCommand(invocation, "ctrl-u", context(true), {
+      send: (...args: unknown[]) => sent.push(args),
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
+      },
+    } as never)
+    expect({ sent, messages }).toEqual({
+      sent: [["ctrl-u", process.pid]],
+      messages: ["Sent `ctrl-u` to the linked Pi session."],
+    })
+
+    delete process.env.TMUX_PANE
+    expect(
+      __testing.buildRuntimeCapabilities(context(true), () => true).sessionControlCommands as string[]
+    ).not.toContain("key")
+  })
+
+  test("stale root, instance, or relinked runtime sends no key", async () => {
+    let sends = 0
+    const staleInvocations = [
+      { ...invocation, rootStreamId: "stream-root-stale" },
+      { ...invocation, claimedInstanceId: "pi-instance-stale" },
+    ]
+    for (const staleInvocation of staleInvocations) {
+      await expect(
+        __testing.runKeyCommand(staleInvocation as never, "enter", context(true), {
+          send: () => sends++,
+          complete: async () => true,
+        } as never)
+      ).rejects.toThrow("Key control is unavailable")
+    }
+
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        "runtime-exact": {
+          enabled: true,
+          instanceId: "pi-instance-new",
+          runtimeSessionId: "runtime-exact",
+          rootStreamId: "stream-root-new",
+          activeStreamId: "stream-root-new",
+          streamUrlPath: "/streams/stream-root-new",
+        },
+      },
+    })
+    await expect(
+      __testing.runKeyCommand(invocation, "enter", context(true), {
+        send: () => sends++,
+        complete: async () => true,
+      } as never)
+    ).rejects.toThrow("Key control is unavailable")
+    expect(sends).toBe(0)
+  })
+
+  test("rejects malformed key args without sending", async () => {
+    const messages: string[] = []
+    let sends = 0
+    for (const args of ["Enter", " enter", "enter ", "enter down", "-t", "%2", "unknown"]) {
+      await __testing.runKeyCommand(invocation, args, context(true), {
+        send: () => {
+          sends++
+        },
+        complete: async (_invocation: unknown, message: string) => {
+          messages.push(message)
+          return true
+        },
+      } as never)
+    }
+    expect({ sends, messages }).toEqual({ sends: 0, messages: Array(7).fill("Usage: `/key <name>`.") })
+  })
+
   test("a claim from link A cannot prepare or ack after relinking to B", async () => {
     let prepared = 0
     let acknowledged = 0

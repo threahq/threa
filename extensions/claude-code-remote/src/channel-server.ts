@@ -5,6 +5,8 @@ import {
   harnessReconnectAvailable,
   prepareHarnessReconnect,
   runHarnessKick,
+  parseAllowedTmuxKey,
+  sendAllowedTmuxKey,
   type BotRuntimeTransport,
 } from "@threa/bot-runtime-client"
 import {
@@ -54,6 +56,7 @@ const SESSION_CONTROL_COMMANDS = [
   "reload",
   "carry-on",
   "reconnect",
+  "key",
 ] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
 // whatever the local client's own picker cache discovers (see model-catalog).
@@ -179,7 +182,8 @@ export async function runClaudeCommand(
   stopDelegationsForReconnect?: (force: boolean) => Promise<void>,
   restartDelegationsAfterReset?: () => void,
   reconnectTarget?: () => ReconnectTarget,
-  reconnectReady?: () => boolean
+  reconnectReady?: () => boolean,
+  keySender: typeof sendAllowedTmuxKey = sendAllowedTmuxKey
 ): Promise<{
   ok: boolean
   message: string
@@ -187,6 +191,13 @@ export async function runClaudeCommand(
   onHandoffReset?: () => void
 }> {
   switch (name) {
+    case "key": {
+      const key = parseAllowedTmuxKey(args)
+      if (!key) return { ok: false, message: "Usage: `/key <name>`." }
+      if (!runtimeSessionId || !rootStreamId?.()) throw new Error("Key control is unavailable for this session.")
+      keySender(key, process.ppid)
+      return { ok: true, message: `Sent \`${key}\` to the linked Claude session.` }
+    }
     case "reconnect": {
       if (args !== "" && args !== "--force") {
         return { ok: false, message: "Usage: `/reconnect [--force]`." }
@@ -310,10 +321,14 @@ export function createClaudeSessionControl(
   return {
     get commands() {
       return runtimeSessionId
-        ? SESSION_CONTROL_COMMANDS.filter(
-            (command) => command !== "reconnect" || Boolean(rootStreamId?.() && harnessReconnectAvailable())
+        ? SESSION_CONTROL_COMMANDS.filter((command) => {
+            if (command === "reconnect") return Boolean(rootStreamId?.() && harnessReconnectAvailable())
+            if (command === "key") return Boolean(rootStreamId?.() && process.env.TMUX_PANE?.trim())
+            return true
+          })
+        : SESSION_CONTROL_COMMANDS.filter(
+            (command) => command !== "kick" && command !== "reconnect" && command !== "key"
           )
-        : SESSION_CONTROL_COMMANDS.filter((command) => command !== "kick" && command !== "reconnect")
     },
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],

@@ -27,6 +27,8 @@ import {
   parseSealedTurnContext,
   prepareHarnessReconnect,
   runHarnessKick,
+  parseAllowedTmuxKey,
+  sendAllowedTmuxKey,
   scrubSealedError,
   sealReply,
   sealStep,
@@ -102,6 +104,7 @@ const SESSION_CONTROL_COMMANDS = [
   "kick",
   "carry-on",
   "reconnect",
+  "key",
 ] as const
 type PiSessionControlCommandName = (typeof SESSION_CONTROL_COMMANDS)[number]
 const STEER_DRAIN_LIMIT = 10
@@ -696,10 +699,7 @@ function buildModelSuggestions(ctx: ExtensionContext): Array<{ value: string; la
   return ordered.slice(0, 30)
 }
 
-function currentReconnectLink(
-  ctx: ExtensionContext,
-  reconnectAvailable: () => boolean = harnessReconnectAvailable
-): RuntimeSessionLink | undefined {
+function currentSessionControlLink(ctx: ExtensionContext): RuntimeSessionLink | undefined {
   const link = getCurrentSessionLink(ctx)
   if (
     link?.enabled !== true ||
@@ -707,12 +707,19 @@ function currentReconnectLink(
     link.rootStreamId.trim().length === 0 ||
     link.runtimeSessionId !== getRuntimeSessionId(ctx) ||
     link.instanceId !== getSessionInstanceId(ctx) ||
-    !process.env.TMUX_PANE ||
-    !reconnectAvailable()
+    !process.env.TMUX_PANE
   ) {
     return undefined
   }
   return link
+}
+
+function currentReconnectLink(
+  ctx: ExtensionContext,
+  reconnectAvailable: () => boolean = harnessReconnectAvailable
+): RuntimeSessionLink | undefined {
+  const link = currentSessionControlLink(ctx)
+  return link && reconnectAvailable() ? link : undefined
 }
 
 function buildRuntimeCapabilities(
@@ -724,9 +731,11 @@ function buildRuntimeCapabilities(
     supportsPersistentSessions: true,
     supportsMentionInvocations: true,
     supportsSessionControlCommands: true,
-    sessionControlCommands: SESSION_CONTROL_COMMANDS.filter(
-      (command) => command !== "reconnect" || Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
-    ),
+    sessionControlCommands: SESSION_CONTROL_COMMANDS.filter((command) => {
+      if (command === "reconnect") return Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
+      if (command === "key") return Boolean(ctx && currentSessionControlLink(ctx))
+      return true
+    }),
     thinkingLevels: [...THINKING_LEVELS],
     preferredModels: [...(config?.preferredModels ?? [])],
     ...(ctx?.model && { currentModel: `${ctx.model.provider}/${ctx.model.id}` }),
@@ -2569,6 +2578,28 @@ async function runKickCommand(invocation: ClaimedInvocation, ctx: ExtensionConte
   await completeInvocationWithMarkdown(invocation, "Kicked the linked Pi session.", ctx)
 }
 
+async function runKeyCommand(
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext,
+  deps: {
+    send: typeof sendAllowedTmuxKey
+    complete: typeof completeInvocationWithMarkdown
+  } = { send: sendAllowedTmuxKey, complete: completeInvocationWithMarkdown }
+): Promise<void> {
+  const key = parseAllowedTmuxKey(args)
+  if (!key) {
+    await deps.complete(invocation, "Usage: `/key <name>`.", ctx)
+    return
+  }
+  const link = currentSessionControlLink(ctx)
+  if (!link || invocation.rootStreamId !== link.rootStreamId || invocation.claimedInstanceId !== link.instanceId) {
+    throw new Error("Key control is unavailable for this session.")
+  }
+  deps.send(key, process.pid)
+  await deps.complete(invocation, `Sent \`${key}\` to the linked Pi session.`, ctx)
+}
+
 interface ReconnectCommandDeps {
   available: () => boolean
   prepare: typeof prepareHarnessReconnect
@@ -2793,6 +2824,9 @@ async function handleSessionControlInvocation(
         return
       case "reconnect":
         await runReconnectCommand(invocation, command.args, ctx)
+        return
+      case "key":
+        await runKeyCommand(invocation, command.args, ctx)
         return
       default:
         await failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
@@ -3569,6 +3603,7 @@ export const __testing = {
   claimNextInvocation,
   claimIfIdle,
   runReconnectCommand,
+  runKeyCommand,
   reconnectPending: () => reconnectPending,
   sessionLifecycleGeneration: () => sessionLifecycleGeneration,
   sessionTearingDown: () => sessionTearingDown,
