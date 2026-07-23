@@ -11,7 +11,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs"
-import { homedir, hostname, platform } from "node:os"
+import { homedir, hostname, platform, tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import {
   BikKeystore,
@@ -46,13 +46,25 @@ import type {
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent"
 
-const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
+const PRODUCTION_STORAGE_DIRECTORY = join(homedir(), ".pi", "agent")
+const TEST_ENTRYPOINT_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/
+
+function isTestEntrypoint(entrypoint = process.argv[1]): boolean {
+  return TEST_ENTRYPOINT_PATTERN.test(entrypoint ?? "")
+}
+
+// Bun test runs all selected files with the first test file as argv[1]. Keep
+// the boundary private even when a future test forgets to install its own path.
+const DEFAULT_STORAGE_DIRECTORY = isTestEntrypoint()
+  ? join(tmpdir(), `threa-pi-remote-tests-${process.pid}`)
+  : PRODUCTION_STORAGE_DIRECTORY
+let CONFIG_PATH = join(DEFAULT_STORAGE_DIRECTORY, "threa-remote.json")
 // The Bot Identity Key (BIK): a per-install X25519 keypair the harness registers
 // so an owner can wrap an E2E scratchpad's stream key to it (design §2.6).
 // Persisted separately from the config (private key material, mode 0600) and
 // stable across restarts — the owner's wraps target its `publicKeyId`, so
 // rotating it would orphan every wrap.
-const BIK_PATH = join(homedir(), ".pi", "agent", "threa-remote-bik.json")
+let BIK_PATH = join(DEFAULT_STORAGE_DIRECTORY, "threa-remote-bik.json")
 const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 /** Server cap on `attachmentIds` per sealed message (`sealedAttachmentIdsSchema` caps at 16). */
@@ -296,10 +308,14 @@ let transport: BotRuntimeTransport | undefined
 // half rides every hello/presence body — the backend's instance upsert
 // overwrites the stored key by default, so omitting it on a heartbeat would
 // clear the registration and break sealed-claim wrap coverage.
-const bikKeystore = new BikKeystore({
-  path: BIK_PATH,
-  log: (message) => console.error(`Threa remote: ${message}`),
-})
+function createBikKeystore(path: string): BikKeystore {
+  return new BikKeystore({
+    path,
+    log: (message) => console.error(`Threa remote: ${message}`),
+  })
+}
+
+let bikKeystore = createBikKeystore(BIK_PATH)
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -365,7 +381,7 @@ function readConfig(): Config | undefined {
 // into this runtime-loaded package. If the lock can't be acquired the save is
 // skipped (never an unlocked RMW — that would reintroduce the clobber), and
 // the owning instance's next save self-heals.
-const CONFIG_LOCK_PATH = `${CONFIG_PATH}.lock`
+let CONFIG_LOCK_PATH = `${CONFIG_PATH}.lock`
 const CONFIG_LOCK_MAX_ATTEMPTS = 10
 const CONFIG_LOCK_DELAY_MS = 25
 
@@ -3531,6 +3547,51 @@ async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void
   await heartbeat("available", undefined, ctx).catch(() => undefined)
 }
 
+async function setStorageDirectoryForTesting(directory: string): Promise<void> {
+  if (!isTestEntrypoint()) throw new Error("Test storage can only be configured under bun test")
+  await resetRuntimeForTesting()
+  const resolved = resolve(directory)
+  CONFIG_PATH = join(resolved, "threa-remote.json")
+  CONFIG_LOCK_PATH = `${CONFIG_PATH}.lock`
+  BIK_PATH = join(resolved, "threa-remote-bik.json")
+  bikKeystore = createBikKeystore(BIK_PATH)
+}
+
+async function resetRuntimeForTesting(): Promise<void> {
+  sessionTearingDown = true
+  sessionLifecycleGeneration++
+  reconnectPending = false
+  stopPolling()
+  stopClaimRenewTimer()
+  clearPendingRetry()
+  teardownTransport()
+  await claimIfIdleInFlight?.catch(() => undefined)
+  claimIfIdleInFlight = undefined
+  config = undefined
+  pollInFlightRunId = undefined
+  pending = undefined
+  steeredInvocations = []
+  pendingContextCursor = undefined
+  pendingAssistantTexts = []
+  pendingNonAssistantTexts = []
+  pendingToolCalls = new Map()
+  pendingProviderError = undefined
+  pendingModelError = undefined
+  pendingRetryAfterMs = undefined
+  pendingInvocationPrompt = undefined
+  isWaitingForRetry = false
+  carryOnTexts = []
+  lastTraceHeartbeat = undefined
+  consecutivePollFailures = 0
+  consecutiveQuietPolls = 0
+  lastPollFailureSummary = undefined
+  lastBusyHeartbeatAt = 0
+  lastPollDebugSummary = undefined
+  fallbackRuntimeSessionId = undefined
+  supervisedRevivalBlocked = false
+  sessionTearingDown = false
+}
+
 export const __testing = {
   buildRetryPrompt,
   describeToolCall,
@@ -3546,6 +3607,13 @@ export const __testing = {
   setSupervisedRevivalBlockedForTesting: (value: boolean) => {
     supervisedRevivalBlocked = value
   },
+  setStorageDirectoryForTesting,
+  storagePaths: () => ({ configPath: CONFIG_PATH, lockPath: CONFIG_LOCK_PATH, bikPath: BIK_PATH }),
+  defaultStorageDirectoryForTesting: (entrypoint?: string) =>
+    isTestEntrypoint(entrypoint)
+      ? join(tmpdir(), `threa-pi-remote-tests-${process.pid}`)
+      : PRODUCTION_STORAGE_DIRECTORY,
+  resetRuntimeForTesting,
   buildClaimInvocationPayload,
   buildPersistedConfig,
   buildRuntimeCapabilities,

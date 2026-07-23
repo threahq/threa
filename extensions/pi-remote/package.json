@@ -9,6 +9,9 @@
     "@threa/bot-runtime-client": "file:../bot-runtime-client",
     "socket.io-client": "^4.8.1"
   },
+  "scripts": {
+    "test": "bun test"
+  },
   "pi": {
     "extensions": [
       "./src/threa-remote.ts"
