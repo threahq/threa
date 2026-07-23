@@ -14,7 +14,7 @@ const schema = [
     name: "Threa",
     url: site.href,
     description:
-      "Threa is open-source team chat that turns decisions and their reasoning into searchable memos linked to the conversation, with a public REST API and bot runtime for connecting your own agents.",
+      "Team chat with memory at its core: decisions and their reasoning become searchable memos linked to the conversation. Open source and self-hostable, with a public REST API and bot runtime for connecting your own agents.",
     applicationCategory: "BusinessApplication",
     operatingSystem: "Web",
     softwareHelp: { "@type": "CreativeWork", url: new URL("/developers", site).href },
@@ -44,12 +44,13 @@ const schema = [
         <div>
           <h1 class="h-display">
             Chat that remembers<br/>
-            <span class="accent">decisions</span>.
+            <span class="accent">the decisions</span>.
           </h1>
           <p class="lede">
-            Channels, threads, and DMs come with memory underneath, keeping
-            decisions and their reasoning linked to the source conversation so
-            you can find them when the topic returns.
+            Channels, threads, and DMs, with a memory underneath. The decisions
+            you make and the reasons behind them stay attached to the
+            conversation, so they're still there when the question comes up
+            again.
           </p>
           <div class="actions">
             <a class="cta" href="#waitlist">Join the waitlist</a>
@@ -220,12 +221,13 @@ const schema = [
     <div class="section-meta">
       <span>The board</span>
     </div>
-    <h2>Chat you can find later.</h2>
+    <h2>Chat you can actually find later.</h2>
     <p class="lede">
-      Timelines keep current conversations in order, but older discussions become
-      harder to recover as a channel grows. The board groups the same messages by
-      topic, so you can return to a conversation without scrolling through the
-      full timeline.
+      A timeline is great for real-time chat. It's linear and immediate, and good
+      for keeping up with what's latest. Where it falls short is discoverability.
+      Once a discussion gets long or complex, it's hard to find again weeks later.
+      The board answers that: the same messages, grouped by topic, so you can go
+      back and find a conversation instead of scrolling for it.
     </p>
 
     <div class="board-compare">
@@ -402,12 +404,14 @@ const schema = [
   <div class="memo-shell is-centerpiece">
     <div class="section-meta">
       <span>How memory works</span>
-      <span>· sourced memos</span>
+      <span>· capture · hold · return</span>
     </div>
-    <h2>Threa turns conversations into sourced memory.</h2>
+    <h2>Conversation becomes memory.</h2>
     <p class="lede">
-      Each short memo captures a decision or piece of reusable knowledge and
-      links back to the original messages.
+      Threa reads the conversation, finds the decisions and context worth
+      keeping, and saves them as short memos linked to the messages they came
+      from. When the question comes up again, ask Ariadne to search workspace
+      memory for the relevant memo and its source conversation.
     </p>
 
     <div class="memory-flow">
@@ -415,11 +419,11 @@ const schema = [
       <!-- ============ 01 · CAPTURE ============ -->
       <div class="memory-col">
         <div class="memory-step">01 / Capture</div>
-        <h3 class="memory-heading">Finding reusable knowledge</h3>
+        <h3 class="memory-heading">Finding what matters</h3>
         <p class="memory-why">
-          Threa identifies the messages where the team made a decision, learned
-          something, worked out a procedure, or shared useful context or reference
-          information.
+          Most of a channel is noise. The parts worth keeping are usually a
+          handful of lines where the team settles something, works out a process,
+          or shares context they'll need again.
         </p>
 
         <div class="capture-list" aria-label="Five-message slice; the three middle messages carry the decision.">
@@ -492,8 +496,8 @@ const schema = [
         <div class="memory-step">02 / Hold</div>
         <h3 class="memory-heading">Keeping it as a memo</h3>
         <p class="memory-why">
-          A short, sourced memo keeps the decision useful after the thread has
-          scrolled away.
+          Nobody rereads a transcript two months later. A short, sourced memo is
+          the part that stays useful once the thread has scrolled away.
         </p>
 
         <div class="memory-card decision-memo">
@@ -521,10 +525,11 @@ const schema = [
       <!-- ============ 03 · RETURN ============ -->
       <div class="memory-col is-return">
         <div class="memory-step">03 / Return</div>
-        <h3 class="memory-heading">Retrieving it later</h3>
+        <h3 class="memory-heading">When it comes up again</h3>
         <p class="memory-why">
-          When you ask Ariadne about a past decision, it searches workspace
-          memory and returns the relevant memo with its source context.
+          A reason you can't find isn't worth much. When the question returns,
+          ask Ariadne to search for the relevant memo and follow its links back to
+          the source conversation.
         </p>
 
         <div class="recall-thread">
@@ -601,7 +606,7 @@ const schema = [
           <span class="row"><span class="prompt">$</span><span class="cmd">cd</span> <span class="arg">threa</span> <span class="cmd">&amp;&amp;</span> <span class="cmd">bun install</span></span>
           <span class="row"><span class="prompt">$</span><span class="cmd">bun run dev</span></span>
           <span class="out">→ http://localhost:5173</span>
-          <span class="row"><span class="cmt"># running locally</span></span>
+          <span class="row"><span class="cmt"># your machine. your fork.</span></span>
         </div>
 
         <figure class="patch-example" aria-label="Patch Threa by describing the change to your own agent.">
@@ -620,35 +625,35 @@ const schema = [
       <div class="band-copy">
         <div class="section-meta">
           <span>Open source</span>
-          <span>· GitHub</span>
+          <span>· read · fork · audit</span>
         </div>
-        <h2>Threa is open source.</h2>
+        <h2>The whole thing is open source.</h2>
         <p class="lede">
-          The code we deploy is public, from the frontend and backend to the
-          control plane and infrastructure, so you can inspect it, fork it, or run
-          your own version.
+          The frontend, backend, control plane, and infrastructure are all public.
+          Read exactly how Threa works, fork it if you want your own version, or
+          run it yourself. The public repo is the one we ship.
         </p>
 
         <div class="os-tenets">
           <div class="os-tenet">
-            <h4>Inspect the implementation</h4>
+            <h4>Public source</h4>
             <p>
-              The repository shows how Threa stores data, checks access, calls
-              models, and deploys each service.
+              The code, data model, access checks, model calls, and deployment
+              setup are all there on GitHub.
             </p>
           </div>
           <div class="os-tenet">
-            <h4>Fork and modify it</h4>
+            <h4>Yours to fork</h4>
             <p>
-              You can fork the same codebase we deploy to run your own version or
-              modify the product.
+              It's MIT-licensed. Fork it, change the product, or run your own
+              version on the same codebase we deploy.
             </p>
           </div>
           <div class="os-tenet">
-            <h4>Follow development</h4>
+            <h4>Built in the open</h4>
             <p>
-              We publish the roadmap, design notes, and decision records in the
-              repository.
+              Design docs, implementation plans, and the feature inventory are
+              public too, not just the finished code.
             </p>
           </div>
         </div>
@@ -675,33 +680,35 @@ const schema = [
           <span>Bring your own agent</span>
           <span>· bot runtime · CLI · MCP</span>
         </div>
-        <h2>Your agent can join the workspace.</h2>
+        <h2>Bring the agent you already use.</h2>
         <p class="lede">
-          Connect the agent on your laptop as a Threa bot. It works behind NAT,
-          answers @mentions as a workspace participant, searches messages, memos,
-          and attachments, and posts its work back into the conversation.
+          Threa ships with Ariadne, useful from day one. But you've probably
+          already got an agent set up the way you like it. Connect that agent as a
+          Threa bot and it can stay on your laptop behind NAT, answer @mentions,
+          search messages, memos, and attachments, and post its work back into the
+          conversation.
         </p>
 
         <div class="os-tenets">
           <div class="os-tenet">
-            <h4>Answer in the room</h4>
+            <h4>Ask it in the room</h4>
             <p>
-              The bot runtime delivers mentions to your local agent and posts its
-              reply under the bot's own identity.
+              Mention the bot in a channel and the runtime sends the invocation
+              to your local agent, then posts its reply under the bot's identity.
             </p>
           </div>
           <div class="os-tenet">
-            <h4>Use workspace memory</h4>
+            <h4>Let it look things up</h4>
             <p>
-              Search messages by text or meaning, query memos, read attachments,
-              and follow memos back to their source messages.
+              Your agent can search messages by text or meaning, read memos and
+              attachments, and follow every memo back to its source messages.
             </p>
           </div>
           <div class="os-tenet">
-            <h4>Take on delegated work</h4>
+            <h4>Hand it the work</h4>
             <p>
-              Claim a task on your machine, post progress, and return the finished
-              work to the stream.
+              Delegate a task, follow its progress in the stream, and get the
+              finished work back where the team can see it.
             </p>
           </div>
         </div>
@@ -710,8 +717,9 @@ const schema = [
       </div>
       <div class="band-media">
         <blockquote class="byo-quote">
-          Your agent keeps its local tools and credentials, uses Threa for team
-          context, and returns the result to the conversation.
+          Ariadne is here to get you started. The agent you rely on can stay on
+          your machine, with your work reachable from it instead of locked inside
+          one more app.
         </blockquote>
 
         <div class="byo-agents" aria-label="Bring your own Claude Code, Codex, Cursor, OpenCode, Gemini CLI, custom bot, or whatever comes next.">
@@ -742,12 +750,13 @@ const schema = [
   <div class="memo-shell">
     <div class="section-meta">
       <span>Why I built this</span>
-      <span>· founder notes</span>
+      <span>· from one developer</span>
     </div>
-    <h2>Features I wanted from chat.</h2>
+    <h2>What I wished other tools had.</h2>
     <p class="lede">
-      Partly I built Threa out of spite. After years of watching decisions
-      disappear into channels, I started building the chat app I wanted to use.
+      Partly I built Threa out of spite. Years of watching decisions disappear
+      into channels, plus a short list of things I wanted from a chat app and
+      never got. So I added them.
     </p>
 
     <ul class="missing-grid">
@@ -790,18 +799,19 @@ const schema = [
         <span class="check"><svg><use href="#check-icon"/></svg></span>
         <div>
           <h4>Stash a message</h4>
-          <p>Save half-written messages in a stash and return to them later.</p>
+          <p>Save a half-written message without sending it and pick it back up later. Not one draft stuck in the input box, but a stash you can pull from.</p>
         </div>
       </li>
       <li class="missing-item">
         <span class="check"><svg><use href="#check-icon"/></svg></span>
         <div>
           <h4>Decisions you can find later</h4>
-          <p>The reasoning behind a call stays in a memo for Ariadne to retrieve when you ask about it again.</p>
+          <p>The reasoning behind a call stays in a memo, ready for Ariadne to retrieve when you ask about it again.</p>
         </div>
       </li>
     </ul>
 
+    <p class="missing-sign">Building Threa in the open.</p>
   </div>
 </div>
 
