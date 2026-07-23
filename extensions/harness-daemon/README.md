@@ -2,6 +2,10 @@
 
 Local supervisor for Threa-linked agent sessions (Claude Code channel + Pi remote). `spawn` creates worktree + tmux window + harness and records the launch in `~/.threa/harnessd/inventory.sqlite`; `up` and the `watch-unarchived` LaunchAgent revive recorded sessions safely. `kick <ref>` sends Enter to a managed session (the same nudge exposed as `/kick` in its linked scratchpad). If a Claude channel session was launched by the standalone worktree helper and has no inventory row, `kick` can still resolve its exact runtime session ID from a live `server:threa-channel` tmux pane and nudge it without adopting or reviving it. Run `threa-harnessd help` for the full command list.
 
+## Live Pi reconnect
+
+`threa-harnessd reconnect <runtime-session-id> --root-stream-id <stream-id> [--force]` replaces a live Pi process in its existing tmux pane and resumes the same native Pi session. It accepts only the exact `pi --session-id <UUID>` launch shape (plus ordinary shell-metacharacter-free harness and Threa identity environment assignments), preflights the exact linked root with create/replace disabled, then revalidates the pane generation before `tmux respawn-pane`. Managed inventory is preferred; a matching standalone pane may be used without writing or adopting it. Missing, ambiguous, stale, unsupported, or mismatched targets fail without launching a fresh session. `--force` is reserved for the shared reconnect interface; it does not weaken Pi validation.
+
 ## `up` (alias `resume-active`)
 
 Brings every eligible recorded session back up. Safe to rerun: each pass is a no-op for anything already running, and the decision is driven by the **live scratchpad state on Threa**, never by which local directories happen to exist.

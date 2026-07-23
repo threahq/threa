@@ -1,5 +1,6 @@
 import { resolve } from "node:path"
 import { die } from "./errors"
+import type { ReconnectOptions } from "./reconnect"
 import type { ResumeOptions, RuntimeKind, SpawnOptions } from "./types"
 
 export function usage(): never {
@@ -15,6 +16,7 @@ Usage:
   threa-harnessd boot-resume [--tmux <session>] [--dry-run]
   threa-harnessd install-watch [--tmux <session>]
   threa-harnessd install-boot-resume [--tmux <session>]
+  threa-harnessd reconnect <runtime-session-id> --root-stream-id <stream-id> [--force]
   threa-harnessd stop <agent-id-or-name>
   threa-harnessd kick <agent-id-or-name-or-runtime-session-id>
   threa-harnessd interrupt <agent-id-or-name>
@@ -104,6 +106,31 @@ export function parseResume(args: string[]): ResumeOptions {
     dryRun: boolFlag(flags, "dry-run"),
     recreateWorktree: boolFlag(flags, "recreate-worktree"),
   }
+}
+
+export function parseReconnect(args: string[]): ReconnectOptions {
+  const runtimeSessionId = args.shift()
+  if (!runtimeSessionId || runtimeSessionId.startsWith("--")) die("reconnect requires a runtime session id")
+  let rootStreamId: string | undefined
+  let force = false
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === "--force") {
+      if (force) die("reconnect accepts --force exactly once")
+      force = true
+      continue
+    }
+    if (arg === "--root-stream-id") {
+      if (rootStreamId) die("reconnect accepts --root-stream-id exactly once")
+      const value = args[++index]
+      if (!value || value.startsWith("--")) die("reconnect requires --root-stream-id <stream-id>")
+      rootStreamId = value
+      continue
+    }
+    die(`unexpected reconnect argument: ${arg}`)
+  }
+  if (!rootStreamId) die("reconnect requires --root-stream-id <stream-id>")
+  return { runtimeSessionId, rootStreamId, force }
 }
 
 export function parseSpawn(args: string[]): SpawnOptions {
