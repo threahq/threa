@@ -12,6 +12,7 @@ import {
   buildInstructions,
   formatDelegationContent,
   parsePermissionVerdict,
+  runClaudeCommand,
   verdictCandidateText,
 } from "./channel-server"
 
@@ -184,6 +185,107 @@ describe("ChannelServer delegations", () => {
     await server.handleToolCall("reply", "dlg_1", "Done.")
     expect(sessionReply).not.toHaveBeenCalled()
     await server.shutdown()
+  })
+
+  test("active delegations make reconnect busy", () => {
+    const config = makeConfig()
+    const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+    const internals = server as any
+    expect(internals.reconnectBusy()).toBe(false)
+    internals.openDelegations.set("dlg_1", {})
+    expect(internals.reconnectBusy()).toBe(true)
+  })
+
+  test("reconnect stops delegation intake and rechecks active work before non-force handoff", async () => {
+    const server = new ChannelServer(makeConfig(), new ThreaClient(makeConfig()), makeFakeTransport())
+    const internals = server as any
+    let stopped = false
+    internals.delegations = {
+      stop: () => {
+        stopped = true
+        internals.openDelegations.set("dlg_race", { reject: () => {}, clear: () => {} })
+        return Promise.resolve()
+      },
+    }
+
+    await expect(internals.stopDelegationsForReconnect(false)).rejects.toThrow("Claude became busy")
+    expect(stopped).toBe(true)
+  })
+
+  test("handoff reset restarts delegation intake while archive-detached, but not during shutdown", () => {
+    const server = new ChannelServer(makeConfig(), new ThreaClient(makeConfig()), makeFakeTransport())
+    const internals = server as any
+    let starts = 0
+    internals.delegations = { start: () => starts++ }
+    internals.started = true
+    internals.session.archivePending = { rootStreamId: "stream_root" }
+
+    internals.restartDelegationsAfterReset()
+    internals.shuttingDown = true
+    internals.restartDelegationsAfterReset()
+
+    expect(starts).toBe(1)
+  })
+
+  test("shared runner stop lets shutdown prevent reconnect spawn and delegation restart", async () => {
+    const server = new ChannelServer(makeConfig(), new ThreaClient(makeConfig()), makeFakeTransport())
+    const internals = server as any
+    let releaseStop!: () => void
+    const sharedStop = new Promise<void>((resolve) => (releaseStop = resolve))
+    let starts = 0
+    internals.started = true
+    internals.delegations = { stop: () => sharedStop, start: () => starts++ }
+    spyOn(server.session, "shutdown").mockResolvedValue()
+
+    const outcome = await runClaudeCommand(
+      "reconnect",
+      "--force",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      undefined,
+      () => internals.stopDelegationsForReconnect(true),
+      () => internals.restartDelegationsAfterReset(),
+      () => ({ stopped: false, linkGeneration: 1, linkState: "linked", rootStreamId: "root" }),
+      () => !internals.shuttingDown
+    )
+    const reconnect = outcome.afterAck?.()
+    await Promise.resolve()
+    const shutdown = server.shutdown()
+    releaseStop()
+
+    await expect(reconnect).rejects.toThrow(
+      "Remote session changed while delegation intake was quiescing; reconnect was not started."
+    )
+    outcome.onHandoffReset?.()
+    await shutdown
+    expect(starts).toBe(0)
+  })
+
+  test("force reconnect interrupts active delegation and waits for its fail report", async () => {
+    const server = new ChannelServer(makeConfig(), new ThreaClient(makeConfig()), makeFakeTransport())
+    const internals = server as any
+    let releaseStop!: () => void
+    let rejectedWith = ""
+    internals.delegations = { stop: () => new Promise<void>((resolve) => (releaseStop = resolve)) }
+    internals.openDelegations.set("dlg_active", {
+      reject: (error: Error) => {
+        rejectedWith = error.message
+      },
+      clear: () => {},
+    })
+
+    let finished = false
+    const stopping = internals.stopDelegationsForReconnect(true).then(() => (finished = true))
+    await Promise.resolve()
+    expect({ rejectedWith, finished }).toEqual({
+      rejectedWith: "Claude Code channel reconnected mid-delegation",
+      finished: false,
+    })
+    releaseStop()
+    await stopping
+    expect(finished).toBe(true)
   })
 
   test("shutdown fails an in-flight delegation instead of stranding its claim", async () => {

@@ -3,7 +3,7 @@ import { BotInvocationCapabilities, BotInvocationTriggers, BotRuntimeKinds } fro
 import { resolveRuntimeInvocationRouting } from "./handlers"
 
 describe("resolveRuntimeInvocationRouting", () => {
-  it("routes steer/stop/kick/carry-on to active-scratchpad for pi-local (claimable by a busy Pi)", () => {
+  it("routes interrupt commands to active-scratchpad for pi-local (claimable by a busy Pi)", () => {
     for (const name of ["steer", "stop", "kick", "carry-on"]) {
       expect(resolveRuntimeInvocationRouting(name, BotRuntimeKinds.PI_LOCAL)).toEqual({
         trigger: BotInvocationTriggers.SESSION_CONTROL,
@@ -12,13 +12,20 @@ describe("resolveRuntimeInvocationRouting", () => {
     }
   })
 
-  it("routes steer/stop/kick/carry-on to session-control for the Claude Code channel (so a busy channel still claims control)", () => {
-    for (const name of ["steer", "stop", "kick", "carry-on"]) {
+  it("routes interrupt commands to session-control for the Claude Code channel (so a busy channel still claims control)", () => {
+    for (const name of ["steer", "stop", "kick", "carry-on", "reconnect"]) {
       expect(resolveRuntimeInvocationRouting(name, BotRuntimeKinds.CLAUDE_CODE_CHANNEL)).toEqual({
         trigger: BotInvocationTriggers.SESSION_CONTROL,
         requiredCapability: BotInvocationCapabilities.SESSION_CONTROL,
       })
     }
+  })
+
+  it("keeps reconnect on normal session-control routing for pi-local", () => {
+    expect(resolveRuntimeInvocationRouting("reconnect", BotRuntimeKinds.PI_LOCAL)).toEqual({
+      trigger: BotInvocationTriggers.SESSION_CONTROL,
+      requiredCapability: BotInvocationCapabilities.SESSION_CONTROL,
+    })
   })
 
   it("routes every other command to session-control regardless of runtime kind", () => {

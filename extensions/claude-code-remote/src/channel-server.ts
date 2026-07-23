@@ -1,7 +1,12 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { runHarnessKick, type BotRuntimeTransport } from "@threa/bot-runtime-client"
+import {
+  harnessReconnectAvailable,
+  prepareHarnessReconnect,
+  runHarnessKick,
+  type BotRuntimeTransport,
+} from "@threa/bot-runtime-client"
 import {
   DelegationClient,
   DelegationRunner,
@@ -13,6 +18,7 @@ import {
   type DelegationExecutorContext,
   type DeliveredTurn,
   type RemoteSessionConfig,
+  type RemoteSessionStatusSnapshot,
   type SendResult,
   type SessionControlActuator,
 } from "@threa/remote-session"
@@ -47,6 +53,7 @@ const SESSION_CONTROL_COMMANDS = [
   "run",
   "reload",
   "carry-on",
+  "reconnect",
 ] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
 // whatever the local client's own picker cache discovers (see model-catalog).
@@ -159,14 +166,65 @@ export function buildInstructions(permissionRelay: boolean, channelActive = true
  * slash-command equivalent into the tmux pane. `stop`/`steer` never reach this
  * — the SDK actuates those itself via `interrupt`/`steer`.
  */
+type ReconnectTarget = Pick<RemoteSessionStatusSnapshot, "stopped" | "linkGeneration" | "linkState" | "rootStreamId">
+
 export async function runClaudeCommand(
   name: string,
   args: string,
   carryOn?: CarryOnController,
   runtimeSessionId?: string,
-  statusReport?: () => string
-): Promise<{ ok: boolean; message: string }> {
+  statusReport?: () => string,
+  rootStreamId?: () => string | undefined,
+  reconnectBusy?: () => boolean,
+  stopDelegationsForReconnect?: (force: boolean) => Promise<void>,
+  restartDelegationsAfterReset?: () => void,
+  reconnectTarget?: () => ReconnectTarget,
+  reconnectReady?: () => boolean
+): Promise<{
+  ok: boolean
+  message: string
+  afterAck?: () => void | Promise<void>
+  onHandoffReset?: () => void
+}> {
   switch (name) {
+    case "reconnect": {
+      if (args !== "" && args !== "--force") {
+        return { ok: false, message: "Usage: `/reconnect [--force]`." }
+      }
+      if (args !== "--force" && reconnectBusy?.()) {
+        return { ok: false, message: "Claude is busy; retry when idle or use `/reconnect --force`." }
+      }
+      const target = reconnectTarget?.()
+      const root = target?.rootStreamId ?? rootStreamId?.()
+      if (!runtimeSessionId || !root) throw new Error("Harness reconnect is unavailable for this session.")
+      const force = args === "--force"
+      const startReconnect = prepareHarnessReconnect(runtimeSessionId, root, { force })
+      return {
+        ok: true,
+        message: "Reconnect request accepted; attempting to resume the linked Claude session.",
+        afterAck: async () => {
+          if (!force && reconnectBusy?.()) {
+            throw new Error(
+              "Claude became busy after reconnect acknowledgement; retry when idle or use `/reconnect --force`."
+            )
+          }
+          await stopDelegationsForReconnect?.(force)
+          const current = reconnectTarget?.()
+          if (
+            reconnectReady?.() === false ||
+            (current &&
+              (current.stopped ||
+                current.linkState !== "linked" ||
+                current.rootStreamId !== root ||
+                current.linkGeneration !== target?.linkGeneration))
+          ) {
+            throw new Error("Remote session changed while delegation intake was quiescing; reconnect was not started.")
+          }
+          startReconnect()
+        },
+        onHandoffReset: restartDelegationsAfterReset,
+      }
+    }
     case "carry-on": {
       if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
       return carryOn.enqueue(args)
@@ -240,13 +298,23 @@ async function runSlash(slash: string): Promise<{ ok: boolean; message: string }
 export function createClaudeSessionControl(
   carryOn: () => CarryOnController | undefined = () => undefined,
   runtimeSessionId?: string,
-  statusReport?: () => string
+  statusReport?: () => string,
+  rootStreamId?: () => string | undefined,
+  reconnectBusy?: () => boolean,
+  stopDelegationsForReconnect?: (force: boolean) => Promise<void>,
+  restartDelegationsAfterReset?: () => void,
+  reconnectTarget?: () => ReconnectTarget,
+  reconnectReady?: () => boolean
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
-    commands: runtimeSessionId
-      ? [...SESSION_CONTROL_COMMANDS]
-      : SESSION_CONTROL_COMMANDS.filter((command) => command !== "kick"),
+    get commands() {
+      return runtimeSessionId
+        ? SESSION_CONTROL_COMMANDS.filter(
+            (command) => command !== "reconnect" || Boolean(rootStreamId?.() && harnessReconnectAvailable())
+          )
+        : SESSION_CONTROL_COMMANDS.filter((command) => command !== "kick" && command !== "reconnect")
+    },
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],
     interrupt: () => {
@@ -265,7 +333,20 @@ export function createClaudeSessionControl(
       if (absorbed !== undefined) return true
       return steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`)
     },
-    runCommand: (name, args) => runClaudeCommand(name, args, carryOn(), runtimeSessionId, statusReport),
+    runCommand: (name, args) =>
+      runClaudeCommand(
+        name,
+        args,
+        carryOn(),
+        runtimeSessionId,
+        statusReport,
+        rootStreamId,
+        reconnectBusy,
+        stopDelegationsForReconnect,
+        restartDelegationsAfterReset,
+        reconnectTarget,
+        reconnectReady
+      ),
   }
 }
 
@@ -300,6 +381,7 @@ export class ChannelServer {
     }
   >()
   private started = false
+  private shuttingDown = false
 
   constructor(
     private readonly config: RemoteSessionConfig,
@@ -357,7 +439,16 @@ export class ChannelServer {
               quotaHolding: this.carryOn?.holding ?? false,
               pendingPermissionCount: this.openPermissions.size,
               activeDelegationCount: this.openDelegations.size,
-            })
+            }),
+          () => this.session?.rootStreamId,
+          () => this.reconnectBusy(),
+          (force) => this.stopDelegationsForReconnect(force),
+          () => this.restartDelegationsAfterReset(),
+          () => {
+            const remote = this.session.statusSnapshot
+            return { ...remote, rootStreamId: this.session.rootStreamId }
+          },
+          () => !this.shuttingDown
         ),
         onArchived: () => this.windDownForArchive(),
         ...(config.permissionRelay
@@ -390,6 +481,45 @@ export class ChannelServer {
     this.registerHandlers()
   }
 
+  private reconnectBusy(): boolean {
+    return (
+      (this.session.statusSnapshot.inflightCount ?? 0) > 0 ||
+      (this.carryOn?.holding ?? false) ||
+      this.openDelegations.size > 0
+    )
+  }
+
+  private async stopDelegationsForReconnect(force: boolean): Promise<void> {
+    const reason = "Claude Code channel reconnected mid-delegation"
+    const stopping = this.delegations?.stop(reason, { strict: true }) ?? Promise.resolve()
+
+    if (force) {
+      this.failOpenDelegations(reason)
+      await stopping
+      return
+    }
+
+    if (this.openDelegations.size > 0) {
+      void stopping.catch((error) =>
+        log(`delegation stop failed: ${error instanceof Error ? error.message : String(error)}`)
+      )
+      throw new Error(
+        "Claude became busy after reconnect acknowledgement; retry when idle or use `/reconnect --force`."
+      )
+    }
+
+    await stopping
+    if (this.openDelegations.size > 0) {
+      throw new Error(
+        "Claude became busy after reconnect acknowledgement; retry when idle or use `/reconnect --force`."
+      )
+    }
+  }
+
+  private restartDelegationsAfterReset(): void {
+    if (this.started && !this.shuttingDown) this.delegations?.start()
+  }
+
   /** Connect the stdio transport so Claude Code can talk to the server and discover tools. */
   async connectStdio(): Promise<void> {
     await this.mcp.connect(new StdioServerTransport())
@@ -402,6 +532,7 @@ export class ChannelServer {
   }
 
   async shutdown(): Promise<void> {
+    this.shuttingDown = true
     this.tracer.stop()
     this.carryOn?.stop()
     // Fail an in-flight delegation loudly (its executor promise rejects →

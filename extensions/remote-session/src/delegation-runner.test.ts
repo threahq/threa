@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { ThreaApiError } from "./client"
 import type { ClaimedDelegation, DelegationClient, DelegationSummary } from "./delegation-client"
-import { DelegationRunner, type DelegationExecutor } from "./delegation-runner"
+import { DELEGATION_STOP_REASON, DelegationRunner, type DelegationExecutor } from "./delegation-runner"
 
 function summary(id: string): DelegationSummary {
   return {
@@ -35,7 +35,11 @@ interface StubCalls {
   accessRequests: string[]
 }
 
-function stubClient(overrides: { queue?: DelegationSummary[][]; claimError?: (id: string) => Error | null }): {
+function stubClient(overrides: {
+  queue?: DelegationSummary[][]
+  claimError?: (id: string) => Error | null
+  failError?: Error
+}): {
   client: DelegationClient
   calls: StubCalls
 } {
@@ -79,6 +83,7 @@ function stubClient(overrides: { queue?: DelegationSummary[][]; claimError?: (id
     },
     fail: async (id: string, token: string, errorMessage: string) => {
       calls.fails.push({ id, token, errorMessage })
+      if (overrides.failError) throw overrides.failError
       return { ...summary(id), status: "failed" }
     },
     requestAccess: async (id: string) => {
@@ -302,6 +307,127 @@ describe("DelegationRunner", () => {
 
     expect(calls.claims.map((c) => c.id)).toEqual(["dlg_listed"])
     expect(calls.accessRequests).toEqual([])
+  })
+
+  for (const trigger of ["nudge", "poll"] as const) {
+    it(`stop wins while a ${trigger} claim is in flight`, async () => {
+      let releaseClaim!: (task: ClaimedDelegation) => void
+      let claimStarted!: () => void
+      const started = new Promise<void>((resolve) => (claimStarted = resolve))
+      const calls: StubCalls["fails"] = []
+      const client = {
+        listOpen: async () => (trigger === "poll" ? [summary("dlg_race")] : []),
+        claim: () =>
+          new Promise<ClaimedDelegation>((resolve) => {
+            releaseClaim = resolve
+            claimStarted()
+          }),
+        fail: async (id: string, token: string, errorMessage: string) => {
+          calls.push({ id, token, errorMessage })
+        },
+      } as unknown as DelegationClient
+      let executions = 0
+      const runner = makeRunner(client, async () => {
+        executions += 1
+      })
+
+      runner.start()
+      if (trigger === "nudge") runner.notifyAvailable({ delegationId: "dlg_race" })
+      await started
+      const stopped = runner.stop()
+      releaseClaim(claimed("dlg_race"))
+      await stopped
+
+      expect({ executions, calls }).toEqual({
+        executions: 0,
+        calls: [{ id: "dlg_race", token: "token-dlg_race", errorMessage: DELEGATION_STOP_REASON }],
+      })
+    })
+  }
+
+  for (const trigger of ["list", "nudge"] as const) {
+    it(`strict stop propagates a failed ${trigger} claim release`, async () => {
+      let releaseClaim!: (task: ClaimedDelegation) => void
+      let claimStarted!: () => void
+      const started = new Promise<void>((resolve) => (claimStarted = resolve))
+      const logs: string[] = []
+      const releaseError = new Error(trigger === "list" ? "release 500" : "release timed out")
+      const client = {
+        listOpen: async () => (trigger === "list" ? [summary("dlg_race")] : []),
+        claim: () =>
+          new Promise<ClaimedDelegation>((resolve) => {
+            releaseClaim = resolve
+            claimStarted()
+          }),
+        fail: async () => {
+          throw releaseError
+        },
+      } as unknown as DelegationClient
+      const runner = makeRunner(client, async () => {}, { log: (message) => logs.push(message) })
+
+      runner.start()
+      if (trigger === "nudge") runner.notifyAvailable({ delegationId: "dlg_race" })
+      await started
+      const stopped = runner.stop(DELEGATION_STOP_REASON, { strict: true })
+      releaseClaim(claimed("dlg_race"))
+
+      await expect(stopped).rejects.toBe(releaseError)
+      expect(logs).toEqual([
+        `delegation dlg_race stop fail report failed: ${releaseError.message}`,
+        `delegation drain failed: ${releaseError.message}`,
+      ])
+    })
+  }
+
+  it("normal shutdown stop clears an overlapping reconnect strict stop", async () => {
+    let releaseClaim!: (task: ClaimedDelegation) => void
+    let claimStarted!: () => void
+    const started = new Promise<void>((resolve) => (claimStarted = resolve))
+    const releaseError = new Error("release 500")
+    const client = {
+      listOpen: async () => [summary("dlg_race")],
+      claim: () =>
+        new Promise<ClaimedDelegation>((resolve) => {
+          releaseClaim = resolve
+          claimStarted()
+        }),
+      fail: async () => {
+        throw releaseError
+      },
+    } as unknown as DelegationClient
+    const runner = makeRunner(client, async () => {})
+
+    runner.start()
+    await started
+    const reconnectStop = runner.stop(DELEGATION_STOP_REASON, { strict: true })
+    const shutdownStop = runner.stop()
+    releaseClaim(claimed("dlg_race"))
+
+    await expect(reconnectStop).resolves.toBeUndefined()
+    await expect(shutdownStop).resolves.toBeUndefined()
+  })
+
+  it("strict stop propagates a failed terminal fail for active work", async () => {
+    let rejectExecution!: (error: Error) => void
+    let executionStarted!: () => void
+    const started = new Promise<void>((resolve) => (executionStarted = resolve))
+    const releaseError = new Error("terminal fail 500")
+    const { client } = stubClient({ queue: [[summary("dlg_active")]], failError: releaseError })
+    const runner = makeRunner(
+      client,
+      () =>
+        new Promise((_, reject) => {
+          rejectExecution = reject
+          executionStarted()
+        })
+    )
+
+    runner.start()
+    await started
+    const stopped = runner.stop(DELEGATION_STOP_REASON, { strict: true })
+    rejectExecution(new Error("reconnect"))
+
+    await expect(stopped).rejects.toBe(releaseError)
   })
 
   it("does nothing after stop()", async () => {

@@ -35,6 +35,7 @@ const VENDORED = [
       "sealed.ts",
       "supervisor.ts",
       "harness-kick.ts",
+      "harness-reconnect.ts",
     ],
     dir: "bot-runtime-client",
   },

@@ -5,6 +5,7 @@ import type { TmuxPaneSnapshot } from "./tmux-control"
 
 const remote: RemoteSessionStatusSnapshot = {
   stopped: false,
+  linkGeneration: 1,
   linkState: "linked",
   rootStreamId: "stream_1",
   activeStreamId: "stream_1",

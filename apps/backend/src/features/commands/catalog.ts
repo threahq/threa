@@ -19,6 +19,7 @@ export const SESSION_CONTROL_COMMAND_NAMES = [
   "status",
   "run",
   "carry-on",
+  "reconnect",
 ] as const
 export type SessionControlCommandName = (typeof SESSION_CONTROL_COMMAND_NAMES)[number]
 
@@ -133,6 +134,13 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "message", required: false, description: "Instruction to deliver when the session resumes" }],
+    },
+    {
+      name: "reconnect",
+      description: "Reconnect the linked live session",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+      args: [{ name: "--force", required: false, description: "Reconnect even when the runtime is busy" }],
     },
   ]
 }

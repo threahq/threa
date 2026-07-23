@@ -109,7 +109,7 @@ The flag is required for the scratchpad to link at all: the server checks its pa
 
 Open the scratchpad in Threa and type a message. No `@`-mention needed: the bot is the scratchpad's active actor, so every message you post is forwarded to your Claude Code session. The presence pill shows **Available** / **Working**. Claude's answer posts back as a `BOT` message.
 
-For harness-managed sessions, `/kick` asks harnessd to send Enter to the session's recorded tmux pane. Use it to accept or move past a blocking Claude Code prompt without opening the terminal.
+For harness-managed sessions, `/kick` asks harnessd to send Enter to the session's recorded tmux pane. Use it to accept or move past a blocking Claude Code prompt without opening the terminal. `/reconnect [--force]` is offered only while the exact linked Claude runtime is live in tmux; after acknowledging, it asks harnessd to replace the pane process and resume the same native session. It is not offline recovery and is unavailable after the channel disconnects.
 
 ## Permission relay
 
