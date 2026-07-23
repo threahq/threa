@@ -7,8 +7,10 @@ import path from "path"
 
 // Ports can be configured via env vars for browser E2E tests
 const backendPort = process.env.VITE_BACKEND_PORT || "3001"
+const socketPort = process.env.VITE_SOCKET_PORT || "3002"
 const frontendPort = parseInt(process.env.VITE_PORT || "3000", 10)
 const backendTarget = `http://localhost:${backendPort}`
+const socketTarget = `http://localhost:${socketPort}`
 const allowedHosts = (process.env.VITE_ALLOWED_HOSTS ?? "")
   .split(",")
   .map((host) => host.trim())
@@ -74,9 +76,10 @@ function withForwardedHostHeaders() {
 }
 
 function buildProxyConfig() {
-  // /api and /test-auth-login are proxied to the backend (the workspace-router
-  // in E2E). Socket.io connects directly to the backend's wsUrl, so it does not
-  // need a proxy entry here. Shared by the dev server and the E2E preview server.
+  // /api and /test-auth-login go through the workspace router. Socket.IO
+  // normally connects directly to the region URL, but Tailscale remote mode
+  // deliberately uses the frontend origin so one HTTPS Serve listener can
+  // carry the app, API, and WebSocket without exposing extra ports.
   return {
     "/api": {
       target: backendTarget,
@@ -88,6 +91,13 @@ function buildProxyConfig() {
       target: backendTarget,
       changeOrigin: true,
       xfwd: true,
+      ...withForwardedHostHeaders(),
+    },
+    "/socket.io": {
+      target: socketTarget,
+      changeOrigin: true,
+      xfwd: true,
+      ws: true,
       ...withForwardedHostHeaders(),
     },
   }

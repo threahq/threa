@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import type { DelegationCreatedEventPayload, DelegationStatusChangedEventPayload, StreamEvent } from "@threa/types"
@@ -9,11 +9,15 @@ import { PanelProvider } from "@/contexts"
 import { delegationsApi } from "@/api"
 import { buildDelegationPrompt, DelegationEvent } from "./delegation-event"
 
+afterEach(() => vi.useRealTimers())
+
 beforeEach(() => {
   vi.restoreAllMocks()
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: () => "Ariadne",
   } as unknown as ReturnType<typeof hooksModule.useActors>)
+  vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(false)
+  vi.spyOn(hooksModule, "useInputMode").mockReturnValue("mouse")
 })
 
 /** Healed thread stats (chunk-2) ride alongside the created payload on the card event. */
@@ -42,6 +46,11 @@ const CREATED_PAYLOAD: DelegationCreatedEventPayload = {
   brief: "Implement a token bucket. Done when the e2e suite passes.",
   contextRefs: ["memo:memo_1"],
   sourceConversationId: null,
+}
+
+async function selectCardAction(name: string | RegExp) {
+  await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+  await userEvent.click(await screen.findByRole("menuitem", { name }))
 }
 
 function renderCard(
@@ -85,21 +94,25 @@ describe("buildDelegationPrompt", () => {
 })
 
 describe("DelegationEvent", () => {
-  it("renders the open state: title, actor · status meta, Copy prompt, and Cancel", () => {
+  it("renders the open state with persistent mobile Copy and the full desktop action menu", async () => {
     renderCard()
 
     expect(screen.getByText("Add rate limiting to the webhook endpoint")).toBeInTheDocument()
     expect(screen.getByText(/Ariadne · Open/)).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /Copy prompt/ })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: "View result" })).not.toBeInTheDocument()
+    expect(screen.getAllByRole("button", { name: /Copy prompt/ })[0]).toHaveClass("min-h-9", "sm:hidden")
+
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.getByRole("menuitem", { name: "Mark done" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Cancel delegation" })).toBeInTheDocument()
+    expect(screen.queryByRole("menuitem", { name: "View result" })).not.toBeInTheDocument()
   })
 
-  it("advances with the authoritative status patch: claimed shows the claimer label", () => {
+  it("advances with the authoritative status patch: claimed shows the claimer label", async () => {
     renderCard({ delegationId: "dlg_1", status: "claimed", claimedByLabel: "Kris's MacBook / Claude Code" })
 
     expect(screen.getByText(/Ariadne · Claimed · Kris's MacBook \/ Claude Code/)).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.getByRole("menuitem", { name: "Cancel delegation" })).toBeInTheDocument()
   })
 
   it("shows the running progress note", () => {
@@ -109,7 +122,7 @@ describe("DelegationEvent", () => {
     expect(screen.getByText("tests are compiling")).toBeInTheDocument()
   })
 
-  it("completed with threadStreamId: chip + View result reach the thread, no Discuss duplicate", () => {
+  it("completed with threadStreamId: chip, quick action, and menu reach the thread", async () => {
     renderCard(
       {
         delegationId: "dlg_1",
@@ -120,16 +133,18 @@ describe("DelegationEvent", () => {
       { threadId: "stream_thread", replyCount: 3 }
     )
 
-    const link = screen.getByRole("link", { name: "View result" })
-    expect(link).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
     const chip = screen.getByRole("link", { name: /replies/ })
     expect(chip).toHaveTextContent("3 replies")
     expect(chip).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
-    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: "Discuss this delegation" })).not.toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "View result" })).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
+    expect(screen.queryByRole("link", { name: "Open thread" })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.getByRole("menuitem", { name: "View result" })).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
+    expect(screen.queryByRole("menuitem", { name: "Cancel delegation" })).not.toBeInTheDocument()
   })
 
-  it("completed thread parent suppresses self-links and nested thread affordances", () => {
+  it("completed thread parent suppresses self-links in every action surface", async () => {
     renderCard(
       {
         delegationId: "dlg_1",
@@ -141,24 +156,28 @@ describe("DelegationEvent", () => {
       true
     )
 
-    expect(screen.queryByRole("link", { name: "View result" })).not.toBeInTheDocument()
     expect(screen.queryByRole("link", { name: /replies/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: "Discuss this delegation" })).not.toBeInTheDocument()
-    expect(screen.getByText("Add rate limiting to the webhook endpoint")).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "Open thread" })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.queryByRole("menuitem", { name: "View result" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("menuitem", { name: /thread/i })).not.toBeInTheDocument()
   })
 
-  it("completed (legacy shape): no threadStreamId falls back to the ?m= result deep-link", () => {
+  it("completed (legacy shape): menu falls back to the ?m= result deep-link", async () => {
     renderCard({ delegationId: "dlg_1", status: "completed", resultMessageId: "msg_result" })
 
-    const link = screen.getByRole("link", { name: "View result" })
-    expect(link).toHaveAttribute("href", "/w/ws_1/s/stream_1?m=msg_result")
-    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.getByRole("menuitem", { name: "View result" })).toHaveAttribute(
+      "href",
+      "/w/ws_1/s/stream_1?m=msg_result"
+    )
+    expect(screen.queryByRole("menuitem", { name: "Cancel delegation" })).not.toBeInTheDocument()
   })
 
-  it("open card: Discuss opens a draft thread panel keyed on the card's event id", () => {
+  it("open card: desktop quick action opens a draft thread keyed on the card event", () => {
     renderCard()
 
-    const discuss = screen.getByRole("link", { name: "Discuss this delegation" })
+    const discuss = screen.getByRole("link", { name: "Discuss in thread" })
     expect(discuss).toHaveAttribute("href", "/w/ws_1?panel=draft%3Astream_1%3Aevt_dlg")
   })
 
@@ -170,29 +189,31 @@ describe("DelegationEvent", () => {
     expect(chip).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
   })
 
-  it.each(["failed", "expired"] as const)("%s is terminal: no Cancel, status in meta", (status) => {
+  it.each(["failed", "expired"] as const)("%s is terminal: no Cancel action, status in meta", async (status) => {
     renderCard({ delegationId: "dlg_1", status })
 
     expect(screen.getByText(new RegExp(`Ariadne · ${status}`, "i"))).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Cancel/ })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.queryByRole("menuitem", { name: /Cancel delegation/ })).not.toBeInTheDocument()
   })
 
   it.each(["failed", "cancelled", "expired"] as const)(
-    "%s card is discussion-worthy: Discuss stays available when there's no thread yet",
+    "%s card remains discussion-worthy when there's no thread yet",
     (status) => {
       renderCard({ delegationId: "dlg_1", status })
 
-      const discuss = screen.getByRole("link", { name: "Discuss this delegation" })
+      const discuss = screen.getByRole("link", { name: "Discuss in thread" })
       expect(discuss).toHaveAttribute("href", "/w/ws_1?panel=draft%3Astream_1%3Aevt_dlg")
     }
   )
 
-  it("cancelled keeps the relabeled button in place (follow-up card pattern: focus retained, announced)", () => {
+  it("cancelled reports terminal status and removes mutation actions", async () => {
     renderCard({ delegationId: "dlg_1", status: "cancelled" })
 
-    const button = screen.getByRole("button", { name: "Cancelled" })
-    expect(button).toHaveAttribute("aria-disabled", "true")
-    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+    expect(screen.getByText(/Ariadne · Cancelled/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.queryByRole("menuitem", { name: "Mark done" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("menuitem", { name: "Cancel delegation" })).not.toBeInTheDocument()
   })
 
   it("copies the compiled prompt and confirms in place with a checkmark (INV-63/21: no toast, same footprint)", async () => {
@@ -201,38 +222,38 @@ describe("DelegationEvent", () => {
     const success = vi.spyOn(toast, "success")
 
     renderCard()
-    await userEvent.click(screen.getByRole("button", { name: /Copy prompt/ }))
+    await userEvent.click(screen.getAllByRole("button", { name: /Copy prompt/ })[0])
 
     expect(writeText).toHaveBeenCalledWith(
       buildDelegationPrompt(CREATED_PAYLOAD, { workspaceId: "ws_1", origin: window.location.origin })
     )
-    await screen.findByRole("button", { name: "Prompt copied" })
+    expect(await screen.findAllByRole("button", { name: "Prompt copied" })).toHaveLength(2)
     expect(success).not.toHaveBeenCalled()
   })
 
-  it("copies a shareable delegation link and confirms in place with a checkmark (INV-63/21: no toast)", async () => {
+  it("copies a shareable delegation link from the menu and confirms after the menu closes", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } })
     const success = vi.spyOn(toast, "success")
 
     renderCard()
-    await userEvent.click(screen.getByRole("button", { name: /Copy link/ }))
+    await selectCardAction("Copy delegation link")
 
     expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/ws_1/delegations/dlg_1`)
-    await screen.findByRole("button", { name: "Link copied" })
-    expect(success).not.toHaveBeenCalled()
+    expect(success).toHaveBeenCalledWith("Delegation link copied")
   })
 
   it("marks the delegation done for paste-path work and relabels in place", async () => {
     const markDone = vi.spyOn(delegationsApi, "markDone").mockResolvedValue({ completed: true })
 
     renderCard()
-    await userEvent.click(screen.getByRole("button", { name: "Mark done" }))
+    await selectCardAction("Mark done")
 
     expect(markDone).toHaveBeenCalledWith("ws_1", "dlg_1")
     await waitFor(() => expect(screen.getByText(/Ariadne · Completed/)).toBeInTheDocument())
-    expect(screen.getByRole("button", { name: /Done/ })).toHaveAttribute("aria-disabled", "true")
-    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.queryByRole("menuitem", { name: "Mark done" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("menuitem", { name: "Cancel delegation" })).not.toBeInTheDocument()
   })
 
   it("does not flip when mark-done lost the race; informs instead", async () => {
@@ -240,7 +261,7 @@ describe("DelegationEvent", () => {
     const info = vi.spyOn(toast, "info")
 
     renderCard()
-    await userEvent.click(screen.getByRole("button", { name: "Mark done" }))
+    await selectCardAction("Mark done")
 
     await waitFor(() => expect(info).toHaveBeenCalled())
     expect(screen.getByText(/Ariadne · Open/)).toBeInTheDocument()
@@ -258,14 +279,12 @@ describe("DelegationEvent", () => {
     const cancel = vi.spyOn(delegationsApi, "cancel").mockResolvedValue({ cancelled: true })
 
     renderCard()
-    await userEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    await selectCardAction("Cancel delegation")
 
     expect(cancel).toHaveBeenCalledWith("ws_1", "dlg_1")
     await waitFor(() => expect(screen.getByText(/Ariadne · Cancelled/)).toBeInTheDocument())
-    // Same element throughout — relabeled and aria-disabled, never unmounted,
-    // so the clicker's focus doesn't drop to <body>.
-    expect(screen.getByRole("button", { name: "Cancelled" })).toHaveAttribute("aria-disabled", "true")
-    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.queryByRole("menuitem", { name: "Cancel delegation" })).not.toBeInTheDocument()
   })
 
   it("does not flip when the cancel lost the race — the authoritative patch will land", async () => {
@@ -273,7 +292,7 @@ describe("DelegationEvent", () => {
     vi.spyOn(delegationsApi, "cancel").mockResolvedValue({ cancelled: false })
 
     renderCard()
-    await userEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    await selectCardAction("Cancel delegation")
 
     await waitFor(() => expect(info).toHaveBeenCalled())
     expect(screen.getByText(/Ariadne · Open/)).toBeInTheDocument()
@@ -285,6 +304,67 @@ describe("DelegationEvent", () => {
     await userEvent.click(screen.getByRole("button", { name: /Show hand-off prompt/ }))
     expect(screen.getByText(/# Add rate limiting to the webhook endpoint/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /Hide hand-off prompt/ })).toBeInTheDocument()
+  })
+
+  it("opens the complete action list from a desktop row context menu", async () => {
+    renderCard()
+
+    fireEvent.contextMenu(screen.getByText("Add rate limiting to the webhook endpoint"))
+
+    expect(await screen.findByRole("menuitem", { name: "Discuss in thread" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Copy prompt" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Mark done" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Cancel delegation" })).toBeInTheDocument()
+  })
+
+  it("restores focus to the overflow trigger after a desktop action", async () => {
+    renderCard()
+    const trigger = screen.getByRole("button", { name: "Card actions" })
+
+    await userEvent.click(trigger)
+    await userEvent.click(screen.getByRole("menuitem", { name: "Show hand-off prompt" }))
+
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it("keeps the complete menu keyboard-accessible when touch hides its chrome", async () => {
+    vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(true)
+    vi.spyOn(hooksModule, "useInputMode").mockReturnValue("touch")
+    renderCard()
+
+    const trigger = screen.getByRole("button", { name: "Card actions" })
+    expect(trigger.closest(".reveal-actions-hover-only")).not.toHaveClass("hidden")
+    await userEvent.click(trigger)
+    expect(screen.getByRole("menuitem", { name: "Mark done" })).toBeInTheDocument()
+  })
+
+  it("opens the mobile action drawer on card long press", () => {
+    vi.useFakeTimers()
+    vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(true)
+    vi.spyOn(hooksModule, "useInputMode").mockReturnValue("touch")
+    renderCard()
+
+    const title = screen.getByText("Add rate limiting to the webhook endpoint")
+    fireEvent.touchStart(title, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(500))
+
+    expect(screen.getByRole("button", { name: "Mark done" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Cancel delegation" })).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it("holding the persistent mobile Copy button does not open the row drawer", () => {
+    vi.useFakeTimers()
+    vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(true)
+    vi.spyOn(hooksModule, "useInputMode").mockReturnValue("touch")
+    renderCard()
+
+    const copy = screen.getAllByRole("button", { name: "Copy prompt" })[0]
+    fireEvent.touchStart(copy, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(500))
+
+    expect(screen.queryByRole("button", { name: "Mark done" })).not.toBeInTheDocument()
+    vi.useRealTimers()
   })
 
   it("renders nothing without a payload", () => {

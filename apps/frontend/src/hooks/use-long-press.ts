@@ -18,6 +18,12 @@ interface UseLongPressOptions {
    * link itself (e.g. a sidebar stream row). Default: false.
    */
   deferToNativeLinks?: boolean
+  /**
+   * When true, do not start a container-level long press from an interactive
+   * descendant. Card rows use this so holding a persistent Copy or Join button
+   * activates that control's native behavior instead of opening the row drawer.
+   */
+  deferToInteractiveElements?: boolean
 }
 
 interface LongPressHandlers {
@@ -39,6 +45,7 @@ export function useLongPress({
   onLongPress,
   enabled = true,
   deferToNativeLinks = false,
+  deferToInteractiveElements = false,
 }: UseLongPressOptions): UseLongPressReturn {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const startPos = useRef<{ x: number; y: number } | null>(null)
@@ -70,12 +77,16 @@ export function useLongPress({
       // (e.g. code blocks) so long-press surfaces "Open in Firefox" / "Copy
       // link" for links, or native text selection for code, instead of the
       // app's drawer.
-      if (
-        deferToNativeLinks &&
-        e.target instanceof Element &&
-        e.target.closest('a[href], [data-native-context="true"]') !== null
-      ) {
-        return
+      if (e.target instanceof Element) {
+        if (deferToNativeLinks && e.target.closest('a[href], [data-native-context="true"]') !== null) return
+        if (
+          deferToInteractiveElements &&
+          e.target.closest(
+            'button, a[href], input, select, textarea, [role="button"], [role="link"], [contenteditable="true"]'
+          ) !== null
+        ) {
+          return
+        }
       }
       firedRef.current = false
       const touch = e.touches[0]
@@ -95,7 +106,7 @@ export function useLongPress({
         onLongPressRef.current()
       }, threshold)
     },
-    [enabled, threshold, deferToNativeLinks]
+    [enabled, threshold, deferToNativeLinks, deferToInteractiveElements]
   )
 
   const onTouchEnd = useCallback(() => {

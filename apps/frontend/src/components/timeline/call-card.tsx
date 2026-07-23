@@ -1,14 +1,22 @@
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
-import { MessageSquareReply, Phone, Video } from "lucide-react"
+import { Link2, LogIn, MessageSquareReply, Phone, Video } from "lucide-react"
+import { toast } from "sonner"
 import type { CallEndedEventPayload, CallStartedEventPayload, StreamEvent, ThreadSummary } from "@threa/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { useActors } from "@/hooks"
 import { useActiveCall } from "@/stores/active-calls-store"
 import { useCallLaunch } from "@/components/call/call-launch-context"
 import { useCallPhase, useCallStreamId } from "@/components/call/call-store-hooks"
+import { buildStreamLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import { ThreadSlot } from "./thread-slot"
+import {
+  TimelineCardActionDrawer,
+  TimelineCardContextMenu,
+  TimelineCardQuickActions,
+  type TimelineCardAction,
+  useTimelineCardActionSurface,
+} from "./timeline-card-actions"
 import { useThreadAnchor } from "./use-thread-anchor"
 
 interface CallCardProps {
@@ -112,6 +120,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
   // Shared thread affordance keyed on the card's event id: `replyUrl` opens the
   // real thread when one exists, else the draft panel to start the call chat.
   const { threadHref, replyUrl } = useThreadAnchor(streamId, event.id, { threadId: payload?.threadId })
+  const actionSurface = useTimelineCardActionSurface()
 
   if (!payload) return null
 
@@ -121,16 +130,59 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
   // is up and their local session is on this stream.
   const selfInThisCall = callPhase !== "idle" && inCallStreamId === streamId
 
-  // Chat opens (or starts) the call's discussion thread. Live and ended cards
-  // both carry it — the discussion is the call's persistent home. Hidden only
-  // when the footer chip already links the thread (a duplicate entry point),
-  // mirroring the delegation card.
   const replyCount = payload.replyCount ?? 0
-  const threadChipShowing = replyCount > 0 && !!threadHref && !isThreadParent
-  const showChat = !threadChipShowing && !isThreadParent
+  const hasThread = !!payload.threadId || replyCount > 0
 
-  return (
-    <div className="px-3 sm:px-6 py-1.5">
+  async function handleCopyLink() {
+    try {
+      await navigator.clipboard.writeText(`${buildStreamLink(workspaceId, streamId)}?m=${event.id}`)
+      toast.success("Call link copied") // INV-63-allow: closing menu/drawer leaves no inline trigger
+    } catch {
+      toast.error("Couldn't copy the call link")
+    }
+  }
+
+  const actions: TimelineCardAction[] = []
+  if (isLive && !selfInThisCall) {
+    actions.push({
+      id: "join",
+      label: "Join call",
+      icon: LogIn,
+      onSelect: () => launch({ workspaceId, streamId, mode: payload.mode, expectedCallId: payload.callId }),
+      disabled: callActive,
+      disabledReason: callActive ? "You're already in another call" : undefined,
+    })
+  }
+  if (!isThreadParent) {
+    actions.push({
+      id: "thread",
+      label: hasThread ? "Open call chat" : "Start call chat",
+      icon: MessageSquareReply,
+      href: replyUrl,
+      quick: true,
+    })
+  }
+  actions.push({
+    id: "copy-link",
+    label: "Copy link to call",
+    icon: Link2,
+    onSelect: handleCopyLink,
+    separatorBefore: actions.length > 0,
+  })
+
+  let subtitle = "Call ended"
+  if (isLive) subtitle = "Call in progress"
+  else if (endedPatch) subtitle = `Call ended · ${formatDuration(endedPatch.durationMs)}`
+
+  const card = (
+    <div
+      className={cn(
+        "group reveal-host relative px-3 py-1.5 sm:px-6",
+        actionSurface.isTouchInput && "select-none",
+        actionSurface.longPress.isPressed && "opacity-70 transition-opacity duration-100"
+      )}
+      {...(actionSurface.touchCapable ? actionSurface.longPress.handlers : {})}
+    >
       <div
         className={cn(
           "flex items-center gap-3 rounded-[10px] border px-3 py-2 transition-colors",
@@ -176,17 +228,6 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          {showChat && (
-            <Link
-              to={replyUrl}
-              aria-label="Discuss this call"
-              title="Discuss this call in a thread"
-              className="inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:min-h-0 sm:min-w-0 sm:justify-start"
-            >
-              <MessageSquareReply className="h-3 w-3" aria-hidden="true" />
-              <span className="hidden sm:inline">Chat</span>
-            </Link>
-          )}
           {isLive &&
             (selfInThisCall ? (
               <span className="rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground">In this call</span>
@@ -220,6 +261,24 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
           workspaceId={workspaceId}
         />
       )}
+      <TimelineCardQuickActions actions={actions} />
     </div>
+  )
+
+  return (
+    <>
+      <TimelineCardContextMenu actions={actions} disabled={actionSurface.isTouchInput}>
+        {card}
+      </TimelineCardContextMenu>
+      {actionSurface.touchCapable && (
+        <TimelineCardActionDrawer
+          open={actionSurface.drawerOpen}
+          onOpenChange={actionSurface.setDrawerOpen}
+          actions={actions}
+          title={payload.mode === "audio_only" ? "Voice call" : "Video call"}
+          subtitle={subtitle}
+        />
+      )}
+    </>
   )
 }
