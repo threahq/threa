@@ -130,6 +130,7 @@ function makeDeps(socket: FakeSocket, transport: MediaTransport) {
       created: true,
       participant: { id: "p_1" },
       endpoint: { id: "ep_rest" },
+      chatAnchorId: "event_chat_1",
       rosterVersion: 0,
       roster: [],
     })),
@@ -228,6 +229,7 @@ describe("CallManager", () => {
       created: false,
       participant: { id: "p_1" },
       endpoint: { id: "ep_rest" },
+      chatAnchorId: "event_chat_1",
       rosterVersion: 0,
       roster: [],
     })

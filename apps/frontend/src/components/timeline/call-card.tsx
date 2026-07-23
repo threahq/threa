@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react"
-import { Phone, Video } from "lucide-react"
-import type { CallEndedEventPayload, CallStartedEventPayload, StreamEvent } from "@threa/types"
+import { Link } from "react-router-dom"
+import { MessageSquareReply, Phone, Video } from "lucide-react"
+import type { CallEndedEventPayload, CallStartedEventPayload, StreamEvent, ThreadSummary } from "@threa/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { useActors } from "@/hooks"
 import { useActiveCall } from "@/stores/active-calls-store"
 import { useCallLaunch } from "@/components/call/call-launch-context"
 import { useCallPhase, useCallStreamId } from "@/components/call/call-store-hooks"
 import { cn } from "@/lib/utils"
+import { ThreadSlot } from "./thread-slot"
+import { useThreadAnchor } from "./use-thread-anchor"
 
 interface CallCardProps {
   event: StreamEvent
@@ -91,11 +94,18 @@ function ParticipantAvatars({ userIds, workspaceId }: { userIds: string[]; works
  * (INV-63): joining just brings up the dock.
  */
 export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardProps) {
-  const payload = event.payload as CallStartedEventPayload | undefined
+  // Chunk-2 healing lands thread stats on this event's payload once a thread
+  // exists, keyed on the event id — the anchor the call chat threads on.
+  const payload = event.payload as
+    | (CallStartedEventPayload & { threadId?: string; replyCount?: number; threadSummary?: ThreadSummary })
+    | undefined
   const live = useActiveCall(workspaceId, payload?.callId)
   const { launch, callActive } = useCallLaunch()
   const callPhase = useCallPhase()
   const inCallStreamId = useCallStreamId()
+  // Shared thread affordance keyed on the card's event id: `replyUrl` opens the
+  // real thread when one exists, else the draft panel to start the call chat.
+  const { threadHref, replyUrl } = useThreadAnchor(streamId, event.id, { threadId: payload?.threadId })
 
   if (!payload) return null
 
@@ -104,6 +114,14 @@ export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardP
   // The viewer is already in THIS call (one active call per stream) when a call
   // is up and their local session is on this stream.
   const selfInThisCall = callPhase !== "idle" && inCallStreamId === streamId
+
+  // Chat opens (or starts) the call's discussion thread. Live and ended cards
+  // both carry it — the discussion is the call's persistent home. Hidden only
+  // when the footer chip already links the thread (a duplicate entry point),
+  // mirroring the delegation card.
+  const replyCount = payload.replyCount ?? 0
+  const threadChipShowing = replyCount > 0 && !!threadHref
+  const showChat = !threadChipShowing
 
   return (
     <div className="px-3 sm:px-6 py-1.5">
@@ -151,26 +169,47 @@ export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardP
           )}
         </div>
 
-        {isLive &&
-          (selfInThisCall ? (
-            <span className="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground">
-              In this call
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={() => launch({ workspaceId, streamId, mode: payload.mode, expectedCallId: payload.callId })}
-              disabled={callActive}
-              title={callActive ? "You're already in another call" : undefined}
-              className={cn(
-                "shrink-0 rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-colors",
-                callActive ? "opacity-50" : "hover:bg-primary/90"
-              )}
+        <div className="flex shrink-0 items-center gap-1">
+          {showChat && (
+            <Link
+              to={replyUrl}
+              aria-label="Discuss this call"
+              title="Discuss this call in a thread"
+              className="inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:min-h-0 sm:min-w-0 sm:justify-start"
             >
-              Join
-            </button>
-          ))}
+              <MessageSquareReply className="h-3 w-3" aria-hidden="true" />
+              <span className="hidden sm:inline">Chat</span>
+            </Link>
+          )}
+          {isLive &&
+            (selfInThisCall ? (
+              <span className="rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground">In this call</span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => launch({ workspaceId, streamId, mode: payload.mode, expectedCallId: payload.callId })}
+                disabled={callActive}
+                title={callActive ? "You're already in another call" : undefined}
+                className={cn(
+                  "min-h-9 rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-colors sm:min-h-0",
+                  callActive ? "opacity-50" : "hover:bg-primary/90"
+                )}
+              >
+                Join
+              </button>
+            ))}
+        </div>
       </div>
+
+      {/* Thread anchored on this card — the call's discussion (and future call
+          summary) surfaces as a footer chip once replies land. Keyed on the
+          event id via `useThreadAnchor`; healed payload drives the count. */}
+      <ThreadSlot
+        replyCount={replyCount}
+        threadHref={threadHref}
+        summary={payload.threadSummary}
+        workspaceId={workspaceId}
+      />
     </div>
   )
 }

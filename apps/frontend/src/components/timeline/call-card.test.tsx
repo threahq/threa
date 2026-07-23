@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router-dom"
 import type { CallEndedEventPayload, CallStartedEventPayload, StreamEvent } from "@threa/types"
 import * as hooksModule from "@/hooks"
+import { PanelProvider } from "@/contexts"
 import * as launchModule from "@/components/call/call-launch-context"
 import * as callHooksModule from "@/components/call/call-store-hooks"
 import { upsertActiveCall, __resetActiveCallsStore } from "@/stores/active-calls-store"
@@ -33,7 +35,9 @@ const STARTED: CallStartedEventPayload = {
   startedAt: new Date().toISOString(),
 }
 
-function startedEvent(): StreamEvent {
+function startedEvent(
+  payloadExtra?: Partial<CallStartedEventPayload> & { threadId?: string; replyCount?: number }
+): StreamEvent {
   return {
     id: "evt_call",
     streamId: "stream_1",
@@ -43,12 +47,18 @@ function startedEvent(): StreamEvent {
     actorId: "usr_a",
     actorType: "user",
     createdAt: new Date().toISOString(),
-    payload: STARTED,
+    payload: { ...STARTED, ...payloadExtra },
   }
 }
 
-function renderCard(endedPatch?: CallEndedEventPayload) {
-  return render(<CallCard event={startedEvent()} workspaceId="ws_1" streamId="stream_1" endedPatch={endedPatch} />)
+function renderCard(endedPatch?: CallEndedEventPayload, event: StreamEvent = startedEvent()) {
+  return render(
+    <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+      <PanelProvider>
+        <CallCard event={event} workspaceId="ws_1" streamId="stream_1" endedPatch={endedPatch} />
+      </PanelProvider>
+    </MemoryRouter>
+  )
 }
 
 describe("CallCard", () => {
@@ -76,6 +86,7 @@ describe("CallCard", () => {
     renderCard()
     expect(screen.getByText("Call in progress")).toBeTruthy()
     const join = screen.getByRole("button", { name: "Join" })
+    expect(join).toHaveClass("min-h-9")
     await userEvent.click(join)
     expect(launch).toHaveBeenCalledWith({
       workspaceId: "ws_1",
@@ -118,5 +129,27 @@ describe("CallCard", () => {
     renderCard()
     expect(screen.getByText("In this call")).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Join" })).toBeNull()
+  })
+
+  it("shows a Chat affordance opening the draft thread on the call_started event when no replies exist", () => {
+    renderCard(
+      { callId: "call_1", durationMs: 1000, participantUserIds: ["usr_a"], endedReason: "completed" },
+      startedEvent()
+    )
+    const chat = screen.getByRole("link", { name: /Discuss this call/i })
+    // Draft panel keyed on the card's event id — the call chat anchor.
+    expect(chat.getAttribute("href")).toContain("draft%3Astream_1%3Aevt_call")
+    expect(chat).toHaveClass("min-h-9", "min-w-9")
+  })
+
+  it("renders the thread chip and hides Chat once the call has replies (live and ended)", () => {
+    // Ended card with a healed thread on its event: chip shows, Chat is the
+    // duplicate entry point so it's hidden.
+    renderCard(
+      { callId: "call_1", durationMs: 1000, participantUserIds: ["usr_a"], endedReason: "completed" },
+      startedEvent({ threadId: "stream_thread", replyCount: 2 })
+    )
+    expect(screen.getByText("2 replies")).toBeTruthy()
+    expect(screen.queryByRole("link", { name: /Discuss this call/i })).toBeNull()
   })
 })

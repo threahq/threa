@@ -87,7 +87,9 @@ Board cards are conversations (`message_ids[]`); branches key off `forkMessageId
 
 ### Consumer 2: calls (the chat becomes the thread)
 
-The call chat = a thread anchored on the `call_started` event. Created lazily on first chat open/message via `insertThreadOrFind` (race-safe on the anchor index); v1 resolves the association through anchor propagation and lookup without writing `calls.chat_stream_id`.
+The call chat = a thread anchored on the `call_started` event. Created lazily on first chat open/message via `insertThreadOrFind` (race-safe on the anchor index).
+
+Build decision (PR 5): `calls.chat_stream_id` stays **unwritten** in v1 — stamping it from `createThreadOn` would couple the streams service to the calls table, and no v1 reader needs it (the card heals `threadId` via `thread:updated`; the dock carries the `call_started` event id from `startCall`). The association is derivable by anchor query (`findByAnchor(streamId, callStartedEventId)`); the transcription follow-up decides whether to stamp the column when it needs to post summaries into the thread.
 
 - Access: plain `root_stream_id` inheritance — v1 calls require host-stream access (calls plan v5/v7 ruling: zero `access.ts` changes), so thread inheritance is exactly right. The deferred guest primitive composes later.
 - During-call: dock/expanded call UI opens the thread panel (existing panel machinery); members discuss live.

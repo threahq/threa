@@ -150,6 +150,25 @@ export const CallRepository = {
     }))
   },
 
+  /**
+   * The `call_started` event id for a call — the anchor for its chat thread. Read
+   * from the host stream's timeline (there is exactly one per call, appended in the
+   * start transaction). Scoped by `stream_id` (stream_events carries no
+   * workspace_id; the stream is the scoping key). Null when the row is missing
+   * (e.g. a pre-timeline legacy call). Kept in the calls feature so the chat-anchor
+   * association resolves without a streams→calls dependency.
+   */
+  async findCallStartedEventId(db: Querier, streamId: string, callId: string): Promise<string | null> {
+    const result = await db.query<{ id: string }>(sql`
+      SELECT id FROM stream_events
+      WHERE stream_id = ${streamId}
+        AND event_type = 'call_started'
+        AND payload->>'callId' = ${callId}
+      LIMIT 1
+    `)
+    return result.rows[0]?.id ?? null
+  },
+
   /** Read a call, workspace-scoped (INV-8). */
   async findById(db: Querier, workspaceId: string, id: string): Promise<Call | null> {
     const result = await db.query<CallRow>(sql`

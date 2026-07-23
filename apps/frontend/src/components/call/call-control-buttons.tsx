@@ -1,10 +1,21 @@
-import { Loader2, Mic, MicOff, PhoneOff, SwitchCamera, Video, VideoOff } from "lucide-react"
+import { Link } from "react-router-dom"
+import { Loader2, MessageSquare, Mic, MicOff, PhoneOff, SwitchCamera, Video, VideoOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { createDraftPanelId } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { useCallManager } from "./call-manager-context"
-import { useCallCameraOn, useCallDevices, useCallMode, useCallMuted } from "./call-store-hooks"
+import {
+  useCallCameraOn,
+  useCallChatAnchor,
+  useCallDevices,
+  useCallMode,
+  useCallMuted,
+  useCallStreamId,
+  useCallWorkspaceId,
+} from "./call-store-hooks"
+import { getCallState, setCallSurfaceMode } from "@/stores/call-store"
 
 // The mute / camera / flip / leave controls, one component each so the compact
 // island and the (later) desktop pill share one implementation instead of
@@ -85,6 +96,42 @@ export function FlipButton({ className }: { className?: string }) {
       onClick={run}
     >
       {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <SwitchCamera className="h-4 w-4" />}
+    </Button>
+  )
+}
+
+/**
+ * Opens the call's chat thread — a thread anchored on the `call_started` event
+ * (`chatAnchorId` from the start/join response). Opening the draft panel resolves
+ * to the real thread once one exists (chunk-3 auto-redirect) and otherwise starts
+ * one on first send, so a single target covers both. Navigation, so a <Link>
+ * (INV-40); hidden until the anchor is known.
+ *
+ * The dock mounts ABOVE `PanelProvider` (it survives navigation and takes no URL
+ * state), so it can't call `getPanelUrl`. It builds the absolute host-stream URL
+ * with the `panel` query itself — navigating to the call's stream and opening the
+ * thread panel there in one hop, which also lands the user on the right page.
+ */
+export function ChatButton({ className }: { className?: string }) {
+  const workspaceId = useCallWorkspaceId()
+  const streamId = useCallStreamId()
+  const chatAnchorId = useCallChatAnchor()
+  if (!workspaceId || !streamId || !chatAnchorId) return null
+  const search = new URLSearchParams({ panel: createDraftPanelId(streamId, chatAnchorId) }).toString()
+  return (
+    <Button asChild variant="ghost" size="icon" className={cn("h-9 w-9", className)}>
+      <Link
+        to={{ pathname: `/w/${workspaceId}/s/${streamId}`, search }}
+        aria-label="Open call chat"
+        title="Open call chat"
+        onClick={() => {
+          // The fullscreen mobile surface is an opaque route-independent overlay —
+          // without collapsing it the thread panel opens invisibly underneath.
+          if (getCallState().surfaceMode === "full") setCallSurfaceMode("standard")
+        }}
+      >
+        <MessageSquare className="h-4 w-4" />
+      </Link>
     </Button>
   )
 }

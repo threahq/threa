@@ -133,6 +133,7 @@ export function createCallHandlers({ pool, io, callService, featureFlagService, 
         created: result.created,
         participant: result.participant,
         endpoint: result.endpoint,
+        chatAnchorId: result.chatAnchorId,
         rosterVersion: snapshot.rosterVersion,
         roster: snapshot.roster,
       })

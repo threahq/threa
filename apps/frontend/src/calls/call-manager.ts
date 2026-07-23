@@ -45,6 +45,8 @@ interface StartCallResponse {
   created: boolean
   participant: { id: string }
   endpoint: { id: string }
+  /** The `call_started` event id — anchor for the call's chat thread (dock Chat control). */
+  chatAnchorId: string | null
   rosterVersion: number
   roster: CallRosterParticipant[]
 }
@@ -330,7 +332,13 @@ export class CallManager implements CallController {
       // even when the launch surface hardcoded "video") — the camera control hides
       // instead of tripping the server's camera-not-allowed gate.
       const mode = started.call.mode
-      setCallSession({ callId, workspaceId: params.workspaceId, streamId: params.streamId, mode })
+      setCallSession({
+        callId,
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        mode,
+        chatAnchorId: started.chatAnchorId,
+      })
       // One tab owns the call (Web Locks). A second tab sees the lock held →
       // activeElsewhere; on this tab's crash the lock releases and the other tab
       // may offer rejoin (surfaced via the store; UI is M1.2).
