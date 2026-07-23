@@ -14,7 +14,7 @@ const schema = [
     name: "Threa",
     url: site.href,
     description:
-      "Team chat that captures decisions and their reasoning as searchable memos linked to the original conversation. Open source and self-hostable, with a public REST API and bot runtime for connecting AI agents.",
+      "Threa is open-source team chat that turns decisions and their reasoning into searchable memos linked to the conversation, with a public REST API and bot runtime for connecting your own agents.",
     applicationCategory: "BusinessApplication",
     operatingSystem: "Web",
     softwareHelp: { "@type": "CreativeWork", url: new URL("/developers", site).href },
@@ -47,9 +47,9 @@ const schema = [
             <span class="accent">decisions</span>.
           </h1>
           <p class="lede">
-            Channels, threads, and DMs with memory underneath. Threa keeps
-            decisions and their reasoning linked to the source conversation,
-            so you can find them when the topic returns.
+            Channels, threads, and DMs come with memory underneath, keeping
+            decisions and their reasoning linked to the source conversation so
+            you can find them when the topic returns.
           </p>
           <div class="actions">
             <a class="cta" href="#waitlist">Join the waitlist</a>
@@ -222,10 +222,10 @@ const schema = [
     </div>
     <h2>Chat you can find later.</h2>
     <p class="lede">
-      Timelines keep current conversation in order. Older discussions become
-      harder to recover as a channel grows. The board groups the same messages
-      by topic, so you can return to a conversation without scrolling through
-      the full timeline.
+      Timelines keep current conversations in order, but older discussions become
+      harder to recover as a channel grows. The board groups the same messages by
+      topic, so you can return to a conversation without scrolling through the
+      full timeline.
     </p>
 
     <div class="board-compare">
@@ -406,8 +406,8 @@ const schema = [
     </div>
     <h2>Threa turns conversations into sourced memory.</h2>
     <p class="lede">
-      Threa saves decisions and reusable knowledge as short memos linked to their
-      source messages. You can open the original messages from the memo.
+      Each short memo captures a decision or piece of reusable knowledge and
+      links back to the original messages.
     </p>
 
     <div class="memory-flow">
@@ -415,10 +415,11 @@ const schema = [
       <!-- ============ 01 · CAPTURE ============ -->
       <div class="memory-col">
         <div class="memory-step">01 / Capture</div>
-        <h3 class="memory-heading">Extracting reusable knowledge</h3>
+        <h3 class="memory-heading">Finding reusable knowledge</h3>
         <p class="memory-why">
-          Threa extracts decisions, learnings, procedures, context, and
-          references from the messages that establish them.
+          Threa identifies the messages where the team made a decision, learned
+          something, worked out a procedure, or shared useful context or reference
+          information.
         </p>
 
         <div class="capture-list" aria-label="Five-message slice; the three middle messages carry the decision.">
@@ -623,9 +624,9 @@ const schema = [
         </div>
         <h2>Threa is open source.</h2>
         <p class="lede">
-          The public repository is the code we deploy. It contains the frontend,
-          backend, control plane, and infrastructure. You can inspect it, fork it,
-          and run your own version.
+          The code we deploy is public, from the frontend and backend to the
+          control plane and infrastructure, so you can inspect it, fork it, or run
+          your own version.
         </p>
 
         <div class="os-tenets">
@@ -639,14 +640,14 @@ const schema = [
           <div class="os-tenet">
             <h4>Fork and modify it</h4>
             <p>
-              Run your own fork or change the product on the same codebase we
-              deploy.
+              You can fork the same codebase we deploy to run your own version or
+              modify the product.
             </p>
           </div>
           <div class="os-tenet">
-            <h4>Public development</h4>
+            <h4>Follow development</h4>
             <p>
-              The roadmap, design notes, and decision records are public in the
+              We publish the roadmap, design notes, and decision records in the
               repository.
             </p>
           </div>
@@ -697,7 +698,7 @@ const schema = [
             </p>
           </div>
           <div class="os-tenet">
-            <h4>Take delegated work</h4>
+            <h4>Take on delegated work</h4>
             <p>
               Claim a task on your machine, post progress, and return the finished
               work to the stream.
@@ -709,8 +710,8 @@ const schema = [
       </div>
       <div class="band-media">
         <blockquote class="byo-quote">
-          Your agent keeps its local tools and credentials. Threa gives it the
-          team context and a place to return the result.
+          Your agent keeps its local tools and credentials, uses Threa for team
+          context, and returns the result to the conversation.
         </blockquote>
 
         <div class="byo-agents" aria-label="Bring your own Claude Code, Codex, Cursor, OpenCode, Gemini CLI, custom bot, or whatever comes next.">
@@ -745,9 +746,8 @@ const schema = [
     </div>
     <h2>Features I wanted from chat.</h2>
     <p class="lede">
-      Partly I built Threa out of spite. Years of watching decisions disappear
-      into channels left me with a list of chat features I wanted, so I started
-      adding them.
+      Partly I built Threa out of spite. After years of watching decisions
+      disappear into channels, I started building the chat app I wanted to use.
     </p>
 
     <ul class="missing-grid">
@@ -797,7 +797,7 @@ const schema = [
         <span class="check"><svg><use href="#check-icon"/></svg></span>
         <div>
           <h4>Decisions you can find later</h4>
-          <p>The reasoning behind a call is kept as a memo that Ariadne can retrieve later.</p>
+          <p>The reasoning behind a call stays in a memo for Ariadne to retrieve when you ask about it again.</p>
         </div>
       </li>
     </ul>

@@ -106,3 +106,7 @@ Architecture and conventions are documented in [`docs/`](docs/). Start with
 [`docs/architecture.md`](docs/architecture.md), and
 [`docs/core-concepts.md`](docs/core-concepts.md). Code constraints live in
 [`CLAUDE.md`](CLAUDE.md).
+
+## License
+
+Threa is available under the [MIT License](LICENSE).
