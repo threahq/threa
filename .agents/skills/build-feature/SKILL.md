@@ -10,7 +10,8 @@ Build each plan chunk, verify it once with the strongest useful runtime profile,
 ## Planning and preconditions
 
 - The invoking agent remains the orchestrator at its current, lower reasoning level. It owns sequencing, user checkpoints, agent briefs, gates, and stack state; it does not become the planner.
-- A ratified plan doc in `docs/plans/<feature>.md` containing a PR-stack breakdown is required. No plan → delegate investigation and plan drafting to one fresh high-reasoning planner, then have the user ratify the result before implementation. Do not start building from a chat message.
+- A ratified implementation plan containing a PR-stack breakdown is required. The plan embedded in the PR body by `/sync-plan` is authoritative. Files under `docs/plans/` are optional desired-design context, never implementation truth.
+- No implementation plan → delegate investigation and drafting to one fresh high-reasoning planner, have the user ratify the result, then publish it with `/sync-plan` before implementation. Do not start building from a chat message.
 - The planner writes the candidate plan but never orchestrates implementation or delegates children.
 - Deferred items in the plan are binding: do not build them.
 
