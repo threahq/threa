@@ -56,6 +56,7 @@ Determine the active harness/provider once and record the profile in the first s
 
 ## Gotchas
 
+- **Decomposition checkpoint:** when a chunk exceeds its budget or starts coordinating independent lifecycle/state machines, stop before adding more machinery. Give the user a short split proposal along the ownership/lifecycle boundary, preserve the patch, ratify the revised stack, and continue in smaller PRs.
 - Workflow `args` must be real JSON values, not a stringified blob; briefs go in files.
 - Stacked PRs only run the main CI trio when targeting `main`; run required local gates before submission.
 - Merge/sync stacks through `gh stack`; never hand-roll rebases around squash merges.
