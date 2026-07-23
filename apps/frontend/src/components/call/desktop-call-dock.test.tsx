@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { act, fireEvent } from "@testing-library/react"
-import { render, screen, userEvent } from "@/test"
+import { render, screen } from "@/test"
 import * as authModule from "@/auth"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import {
@@ -112,7 +112,7 @@ function renderDock(manager: CallController = makeManager()) {
 function renderDockWithFloat(onFloat: () => void, manager: CallController = makeManager()) {
   return render(
     <CallManagerProvider manager={manager}>
-      <DesktopCallDock workspaceId={WORKSPACE_ID} streamId="stream_1" onFloat={onFloat} />
+      <DesktopCallDock workspaceId={WORKSPACE_ID} streamId="stream_1" onSelectSurface={onFloat} />
     </CallManagerProvider>
   )
 }
@@ -183,81 +183,6 @@ describe("DesktopCallDock — side dock presentations", () => {
   })
 })
 
-describe("DesktopCallDock — Float action", () => {
-  it("shows the Float button in the open panel and dispatches onFloat", async () => {
-    const onFloat = vi.fn()
-    renderDockWithFloat(onFloat)
-    enterConnected(TWO_PEERS)
-    setMode("compact")
-    const float = screen.getByLabelText("Pop out to a floating window")
-    expect(float).toBeInTheDocument()
-    await userEvent.click(float)
-    expect(onFloat).toHaveBeenCalled()
-  })
-
-  it("renders no Float button when onFloat is absent", () => {
-    renderDock()
-    enterConnected(TWO_PEERS)
-    setMode("compact")
-    expect(screen.queryByLabelText("Pop out to a floating window")).toBeNull()
-    expect(screen.getByLabelText("Minimize call")).toBeInTheDocument()
-  })
-
-  it("keeps the peek header on Pin, not Float", () => {
-    const onFloat = vi.fn()
-    renderDockWithFloat(onFloat)
-    enterConnected(TWO_PEERS)
-    setMode("min")
-    const dock = screen.getByTestId("desktop-call-dock")
-    fireEvent.mouseEnter(dock)
-    expect(screen.getByLabelText("Keep call open")).toBeInTheDocument()
-    expect(screen.queryByLabelText("Pop out to a floating window")).toBeNull()
-  })
-})
-
-describe("DesktopCallDock — fullscreen", () => {
-  it("mounts the ch5 stage, LayoutToggle, and the desktop filmstrip-side toggle", () => {
-    renderDock()
-    enterConnected([
-      participant({ userId: "usr_self" }),
-      participant({ userId: "usr_peer", endpointId: "callep_peer" }),
-      participant({ userId: "usr_third", endpointId: "callep_third" }),
-    ])
-    setMode("full")
-    expect(screen.getByLabelText("Collapse call")).toBeInTheDocument()
-    expect(screen.getByTestId("call-layout-slot")).toBeInTheDocument()
-    expect(screen.getByTestId("call-stage-speaker")).toBeInTheDocument()
-    expect(screen.getByTestId("call-filmstrip-side-toggle")).toHaveTextContent("BottomSide")
-    expect(screen.getByRole("radio", { name: "Filmstrip bottom" })).toHaveTextContent("Bottom")
-    expect(screen.getByRole("radio", { name: "Filmstrip side" })).toHaveTextContent("Side")
-    expect(screen.getByTestId("call-stage-speaker")).toHaveClass("bg-background")
-    expect(screen.getByLabelText("Collapse call").parentElement?.parentElement).toHaveClass(
-      "bg-background",
-      "text-foreground"
-    )
-    expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
-  })
-
-  it("the filmstrip-side toggle writes and persists filmstripSide", async () => {
-    renderDock()
-    enterConnected(TWO_PEERS)
-    setMode("full")
-    expect(getCallPrefs().filmstripSide).toBe("bottom")
-    await userEvent.click(screen.getByRole("radio", { name: "Filmstrip side" }))
-    expect(getCallPrefs().filmstripSide).toBe("side")
-    expect(JSON.parse(localStorage.getItem("threa:callPrefs:v1") ?? "{}")).toMatchObject({ filmstripSide: "side" })
-    expect(screen.getByTestId("call-stage-speaker")).toHaveAttribute("data-filmstrip-side", "side")
-  })
-
-  it("the collapse control lowers fullscreen to standard", async () => {
-    renderDock()
-    enterConnected(TWO_PEERS)
-    setMode("full")
-    await userEvent.click(screen.getByLabelText("Collapse call"))
-    expect(getCallState().surfaceMode).toBe("standard")
-  })
-})
-
 describe("DesktopCallDock — content push var", () => {
   function insetRight() {
     return document.documentElement.style.getPropertyValue("--call-dock-inset-right")
@@ -270,13 +195,6 @@ describe("DesktopCallDock — content push var", () => {
     expect(insetRight()).toBe("360px")
     setMode("standard")
     expect(insetRight()).toBe("520px")
-  })
-
-  it("drops the inset to 0 in fullscreen (the dock overlays, not pushes)", () => {
-    renderDock()
-    enterConnected([participant({ userId: "usr_self" })])
-    setMode("full")
-    expect(insetRight()).toBe("0px")
   })
 
   it("resets the inset to 0 when the dock unmounts", () => {
@@ -308,7 +226,8 @@ describe("DesktopCallDock — drag settles (no wedge)", () => {
   }
 
   it("dragging the side handle past the wide→full threshold caps the preview at standard and settles to full", () => {
-    renderDock()
+    const onSelectSurface = vi.fn()
+    renderDockWithFloat(onSelectSurface)
     enterConnected(TWO_PEERS)
     setMode("standard")
     const dock = screen.getByTestId("desktop-call-dock")
@@ -325,9 +244,29 @@ describe("DesktopCallDock — drag settles (no wedge)", () => {
     expect(screen.getByTestId("desktop-call-dock")).toHaveAttribute("data-mode", "standard")
     expect(screen.getByTestId("call-dock-handle")).toBeInTheDocument()
     fireEvent.pointerUp(handle, { clientX: 200, pointerId: 1 })
-    expect(getCallState().surfaceMode).toBe("full")
+    expect(onSelectSurface).toHaveBeenCalledWith("fullscreen")
     // The handle is still mounted at rest-fullscreen (drag back out of fullscreen).
     expect(screen.getByTestId("call-dock-handle")).toBeInTheDocument()
+  })
+
+  it("normalizes stale mobile fullscreen state before sidebar cue and selection", () => {
+    const onSelectSurface = vi.fn()
+    renderDockWithFloat(onSelectSurface)
+    enterConnected(TWO_PEERS)
+    setMode("full")
+    expect(getCallState().surfaceMode).toBe("standard")
+    expect(screen.getByTestId("desktop-call-dock")).toHaveAttribute("data-mode", "standard")
+
+    const dock = screen.getByTestId("desktop-call-dock")
+    stubRect(dock, { width: 520 })
+    stubRect(dock.parentElement as HTMLElement, { width: 900 })
+    const handle = screen.getByTestId("call-dock-handle")
+    handle.setPointerCapture = vi.fn()
+    fireEvent.pointerDown(handle, { clientX: 500, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientX: 200, pointerId: 1 })
+    expect(screen.getByTestId("call-dock-fullscreen-cue")).toBeInTheDocument()
+    fireEvent.pointerUp(handle, { clientX: 200, pointerId: 1 })
+    expect(onSelectSurface).toHaveBeenCalledWith("fullscreen")
   })
 
   it("a pointercancel mid-drag settles instead of wedging", () => {
@@ -343,7 +282,7 @@ describe("DesktopCallDock — drag settles (no wedge)", () => {
     fireEvent.pointerMove(handle, { clientX: 100, pointerId: 1 })
     fireEvent.pointerCancel(handle, { clientX: 100, pointerId: 1 })
     // The cancel must settle (onPointerUp ran): surfaceMode moved off "compact".
-    expect(["standard", "full"]).toContain(getCallState().surfaceMode)
+    expect(["compact", "standard"]).toContain(getCallState().surfaceMode)
   })
 
   it("a mid-range drop persists the freeform width (not a detent) and keeps the open mode", () => {

@@ -102,7 +102,7 @@ function renderSquare(manager: CallController = makeManager(), onDockToSide: () 
   return render(
     <CallManagerProvider manager={manager}>
       <CallLaunchProvider>
-        <FloatingCallSquare workspaceId={WORKSPACE_ID} streamId="stream_1" onDockToSide={onDockToSide} />
+        <FloatingCallSquare workspaceId={WORKSPACE_ID} streamId="stream_1" onSelectSurface={onDockToSide} />
       </CallLaunchProvider>
     </CallManagerProvider>
   )
@@ -122,7 +122,7 @@ function renderSquareWithLaunch(manager: CallController) {
     <CallManagerProvider manager={manager}>
       <CallLaunchProvider>
         <LaunchButton />
-        <FloatingCallSquare workspaceId={WORKSPACE_ID} streamId="stream_1" onDockToSide={vi.fn()} />
+        <FloatingCallSquare workspaceId={WORKSPACE_ID} streamId="stream_1" onSelectSurface={vi.fn()} />
       </CallLaunchProvider>
     </CallManagerProvider>
   )
@@ -151,6 +151,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -162,7 +163,7 @@ describe("FloatingCallSquare — connected", () => {
     expect(square).toHaveAttribute("data-minimized", "false")
     expect(screen.getAllByTestId("call-tile")).toHaveLength(2)
     expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
-    expect(screen.getByLabelText("Dock to the side")).toBeInTheDocument()
+    expect(screen.getByLabelText("Call surface")).toBeInTheDocument()
 
     const header = screen.getByTestId("floating-call-square-header")
     expect(header.firstElementChild).toBe(screen.getByTestId("expanded-call-drag-grip"))
@@ -174,7 +175,8 @@ describe("FloatingCallSquare — connected", () => {
     renderSquare(makeManager(), onDockToSide)
     enterConnected(TWO_PEERS)
     await act(async () => {
-      fireEvent.click(screen.getByLabelText("Dock to the side"))
+      await userEvent.click(screen.getByLabelText("Call surface"))
+      await userEvent.click(screen.getByRole("menuitemradio", { name: "Sidebar" }))
     })
     expect(onDockToSide).toHaveBeenCalled()
   })
@@ -201,9 +203,9 @@ describe("FloatingCallSquare — minimize / restore", () => {
 
     const compact = screen.getByTestId("floating-call-square")
     expect(compact).toHaveAttribute("data-minimized", "true")
-    expect(compact.style.left).toBe("244px")
+    expect(compact.style.left).toBe("144px")
     expect(compact.style.top).toBe("275px")
-    expect(compact.style.width).toBe("280px")
+    expect(compact.style.width).toBe("380px")
     expect(screen.getByLabelText("Restore call")).toHaveFocus()
     expect(screen.getByLabelText("Call duration")).toBeInTheDocument()
     expect(screen.getByLabelText("Mute")).toBeInTheDocument()
@@ -222,6 +224,7 @@ describe("FloatingCallSquare — minimize / restore", () => {
     expect(compactChildren).toEqual([
       screen.getByTestId("minimized-call-drag-handle"),
       screen.getByTestId("minimized-call-content"),
+      screen.getByLabelText("Call surface"),
       screen.getByLabelText("Restore call"),
     ])
     expect(screen.queryByLabelText("Dock to the side")).toBeNull()
@@ -237,6 +240,27 @@ describe("FloatingCallSquare — minimize / restore", () => {
     expect(screen.getAllByTestId("call-tile")).toHaveLength(2)
   })
 
+  it("keeps an hour-long timer and every fixed action in the minimized width", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-03-01T10:00:00Z"))
+    renderSquare()
+    enterConnected(TWO_PEERS)
+    fireEvent.click(screen.getByLabelText("Minimize call"))
+
+    act(() => vi.advanceTimersByTime(60 * 60 * 1000))
+
+    const compact = screen.getByTestId("floating-call-square")
+    expect(compact).toHaveStyle({ width: "380px" })
+    expect(screen.getByLabelText("Call duration")).toHaveTextContent("1:00:00")
+    expect(Array.from(compact.children)).toEqual([
+      screen.getByTestId("minimized-call-drag-handle"),
+      screen.getByTestId("minimized-call-content"),
+      screen.getByLabelText("Call surface"),
+      screen.getByLabelText("Restore call"),
+    ])
+    expect(screen.getByTestId("minimized-call-controls").children).toHaveLength(3)
+  })
+
   it("moves the minimized bar by dragging or focused arrow-key controls", async () => {
     renderSquare()
     enterConnected(TWO_PEERS)
@@ -247,18 +271,18 @@ describe("FloatingCallSquare — minimize / restore", () => {
     handle.setPointerCapture = vi.fn()
     fireEvent.pointerDown(handle, { clientX: 500, clientY: 300, pointerId: 1, isPrimary: true })
     fireEvent.pointerMove(handle, { clientX: 600, clientY: 400, pointerId: 1 })
-    expect(compact.style.left).toBe("344px")
+    expect(compact.style.left).toBe("244px")
     expect(compact.style.top).toBe("375px")
 
     handle.focus()
     expect(handle).toHaveFocus()
     await userEvent.keyboard("{ArrowLeft}")
-    expect(compact.style.left).toBe("328px")
+    expect(compact.style.left).toBe("228px")
     expect(compact.style.top).toBe("375px")
 
     window.dispatchEvent(new Event("resize"))
     fireEvent.pointerMove(handle, { clientX: 700, clientY: 500, pointerId: 1 })
-    expect(compact.style.left).toBe("328px")
+    expect(compact.style.left).toBe("228px")
     expect(compact.style.top).toBe("375px")
   })
 
@@ -266,11 +290,11 @@ describe("FloatingCallSquare — minimize / restore", () => {
     renderSquare()
     enterConnected(TWO_PEERS)
     fireEvent.click(screen.getByLabelText("Minimize call"), { clientX: 1000, clientY: 750, detail: 1 })
-    expect(screen.getByTestId("floating-call-square").style.left).toBe("736px")
+    expect(screen.getByTestId("floating-call-square").style.left).toBe("636px")
     expect(screen.getByTestId("floating-call-square").style.top).toBe("710px")
 
     fireEvent.click(screen.getByLabelText("Restore call"))
-    expect(screen.getByTestId("floating-call-square").style.left).toBe("676px")
+    expect(screen.getByTestId("floating-call-square").style.left).toBe("636px")
     expect(screen.getByTestId("floating-call-square").style.top).toBe("440px")
   })
 })

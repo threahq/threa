@@ -10,9 +10,16 @@ import {
   setCallPhase,
   setCallDevices,
   setCallSurfaceMode,
+  setDesktopSurfaceOverride,
   type CallDeviceState,
 } from "@/stores/call-store"
 import type { CallController } from "@/calls/call-manager"
+import {
+  __resetCallPrefsForTests,
+  getCallPrefs,
+  setDesktopCallSurface,
+  setLastDesktopSurface,
+} from "@/stores/call-prefs-store"
 import { CallControls, DevicePickerMenu } from "./call-controls"
 import { CallManagerProvider } from "./call-manager-context"
 
@@ -74,6 +81,8 @@ function enterVideoCall(overrides: Partial<CallDeviceState> = {}) {
 
 beforeEach(() => {
   clearCallState()
+  localStorage.clear()
+  __resetCallPrefsForTests()
 })
 
 afterEach(() => {
@@ -164,6 +173,29 @@ describe("CallControls — call chat", () => {
     expect(href).toContain("draft%3Astream_1%3Aevent_chat_1")
   })
 
+  it.each([
+    ["configured fullscreen", "fullscreen", "floating"],
+    ["keep-last fullscreen", "keep_last", "fullscreen"],
+  ] as const)("reveals chat from %s without rewriting the last-surface preference", (_, pref, last) => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    setDesktopCallSurface(pref)
+    setLastDesktopSurface(last)
+    act(() => {
+      setCallSession({
+        callId: "call_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "video",
+        chatAnchorId: "event_chat_1",
+      })
+      setCallPhase("connected")
+    })
+    renderRouted(makeManager())
+    fireEvent.click(screen.getByRole("link", { name: "Open call chat" }))
+    expect(getCallState().desktopSurfaceOverride).toBe("sidebar")
+    expect(getCallPrefs().lastDesktopSurface).toBe(last)
+  })
+
   it("collapses the fullscreen surface when chat opens (panel would render under the overlay)", () => {
     act(() => {
       setCallSession({
@@ -174,11 +206,12 @@ describe("CallControls — call chat", () => {
         chatAnchorId: "event_chat_1",
       })
       setCallPhase("connected")
-      setCallSurfaceMode("full")
+      setCallSurfaceMode("standard")
+      setDesktopSurfaceOverride("fullscreen")
     })
     renderRouted(makeManager())
     fireEvent.click(screen.getByRole("link", { name: "Open call chat" }))
-    expect(getCallState().surfaceMode).toBe("standard")
+    expect(getCallState().desktopSurfaceOverride).toBe("sidebar")
   })
 
   it("hides the chat control until the anchor is known", () => {

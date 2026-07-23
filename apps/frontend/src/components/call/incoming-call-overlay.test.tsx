@@ -7,8 +7,11 @@ import { IncomingCallOverlay } from "./incoming-call-overlay"
 import * as launchCtx from "./call-launch-context"
 import * as ringTone from "@/calls/ring-tone"
 import * as workspacesHooks from "@/hooks/use-workspaces"
+import * as useMobileModule from "@/hooks/use-mobile"
 import * as workspaceStore from "@/stores/workspace-store"
 import { api } from "@/api/client"
+import { clearCallState, setCallSurfaceMode } from "@/stores/call-store"
+import { __resetCallPrefsForTests, setDesktopCallSurface } from "@/stores/call-prefs-store"
 import {
   addIncomingCall,
   settleIncomingCall,
@@ -43,6 +46,9 @@ function renderOverlay() {
 
 beforeEach(() => {
   resetIncomingCallStoreCache()
+  clearCallState()
+  localStorage.clear()
+  __resetCallPrefsForTests()
   launch = vi.fn()
   vi.spyOn(launchCtx, "useCallLaunch").mockReturnValue({
     launch: launch as unknown as (request: launchCtx.CallLaunchRequest) => void,
@@ -191,6 +197,44 @@ describe("IncomingCallOverlay", () => {
     )
 
     expect(info).toHaveBeenCalledWith("This call has ended")
+  })
+
+  it("ignores stale mobile fullscreen state when clearing a desktop sidebar", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    setDesktopCallSurface("sidebar")
+    act(() => {
+      setCallSurfaceMode("full")
+      addIncomingCall(makeCall())
+    })
+    ;(launchCtx.useCallLaunch as ReturnType<typeof vi.fn>).mockReturnValue({
+      launch,
+      callActive: true,
+      state: { status: "idle" },
+      retry: vi.fn(),
+      cancel: vi.fn(),
+    })
+    renderOverlay()
+    expect(screen.getByTestId("incoming-call-overlay")).toHaveClass("bottom-[calc(var(--composer-height,5rem)_+_1rem)]")
+  })
+
+  it("uses mobile fullscreen state when clearing the mobile controls", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    setDesktopCallSurface("sidebar")
+    act(() => {
+      setCallSurfaceMode("full")
+      addIncomingCall(makeCall())
+    })
+    ;(launchCtx.useCallLaunch as ReturnType<typeof vi.fn>).mockReturnValue({
+      launch,
+      callActive: true,
+      state: { status: "idle" },
+      retry: vi.fn(),
+      cancel: vi.fn(),
+    })
+    renderOverlay()
+    expect(screen.getByTestId("incoming-call-overlay")).toHaveClass(
+      "bottom-[calc(var(--composer-height,5rem)_+_5.5rem)]"
+    )
   })
 
   it("announces the ring through an alert live region", () => {

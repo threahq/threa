@@ -15,7 +15,9 @@ import {
   useCallStreamId,
   useCallWorkspaceId,
 } from "./call-store-hooks"
-import { getCallState, setCallSurfaceMode } from "@/stores/call-store"
+import { getCallState, setCallSurfaceMode, setDesktopSurfaceOverride } from "@/stores/call-store"
+import { resolveDesktopSurface, useCallPrefs } from "@/stores/call-prefs-store"
+import { useDesktopSurfaceOverride } from "./call-store-hooks"
 
 // The mute / camera / flip / leave controls, one component each so the compact
 // island and the (later) desktop pill share one implementation instead of
@@ -116,6 +118,10 @@ export function ChatButton({ className }: { className?: string }) {
   const workspaceId = useCallWorkspaceId()
   const streamId = useCallStreamId()
   const chatAnchorId = useCallChatAnchor()
+  const isMobile = useIsMobile()
+  const desktopSurfaceOverride = useDesktopSurfaceOverride()
+  const { desktopCallSurface, lastDesktopSurface } = useCallPrefs()
+  const desktopSurface = resolveDesktopSurface(desktopCallSurface, lastDesktopSurface, desktopSurfaceOverride)
   if (!workspaceId || !streamId || !chatAnchorId) return null
   const search = new URLSearchParams({ panel: createDraftPanelId(streamId, chatAnchorId) }).toString()
   return (
@@ -127,7 +133,8 @@ export function ChatButton({ className }: { className?: string }) {
         onClick={() => {
           // The fullscreen mobile surface is an opaque route-independent overlay —
           // without collapsing it the thread panel opens invisibly underneath.
-          if (getCallState().surfaceMode === "full") setCallSurfaceMode("standard")
+          if (isMobile && getCallState().surfaceMode === "full") setCallSurfaceMode("standard")
+          if (!isMobile && desktopSurface === "fullscreen") setDesktopSurfaceOverride("sidebar")
         }}
       >
         <MessageSquare className="h-4 w-4" />

@@ -2,7 +2,12 @@ import { useCallback, useLayoutEffect, useRef } from "react"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { getCallState, setCallSurfaceMode, setDesktopSurfaceOverride } from "@/stores/call-store"
-import { resolveDesktopSurface, setLastDesktopSurface, useCallPrefs } from "@/stores/call-prefs-store"
+import {
+  resolveDesktopSurface,
+  setLastDesktopSurface,
+  useCallPrefs,
+  type DesktopSurface,
+} from "@/stores/call-prefs-store"
 import { useCallLaunch } from "./call-launch-context"
 import {
   useCallActiveElsewhere,
@@ -30,6 +35,7 @@ import { MobileCallDrawer } from "./mobile-call-drawer"
 import { MobileCallJoining } from "./call-island"
 import { DesktopCallDock } from "./desktop-call-dock"
 import { FloatingCallSquare } from "./floating-call-square"
+import { DesktopCallFullscreen } from "./desktop-call-fullscreen"
 import { ActiveElsewhereChip } from "./active-elsewhere-chip"
 
 /**
@@ -59,18 +65,27 @@ export function CallDock() {
   if (launch.status !== "idle") joiningModeRef.current = launch.request.cameraOn ? "standard" : "compact"
 
   const surface = resolveDesktopSurface(desktopCallSurface, lastDesktopSurface, override)
+  const surfacePickerTriggerRef = useRef<HTMLButtonElement>(null)
+  const focusSurfacePicker = useRef(false)
 
-  // An in-call switch moves THIS call (the override) and remembers the choice for
-  // `keep_last` next time; the override clears on teardown, so a pinned surface wins
-  // the next call (interaction model A). Silent — the surface change is its own signal.
-  const dockToSide = useCallback(() => {
-    setDesktopSurfaceOverride("sidebar")
-    setLastDesktopSurface("sidebar")
+  const setSurface = useCallback((next: DesktopSurface) => {
+    setDesktopSurfaceOverride(next)
+    setLastDesktopSurface(next)
   }, [])
-  const float = useCallback(() => {
-    setDesktopSurfaceOverride("floating")
-    setLastDesktopSurface("floating")
-  }, [])
+  const selectSurface = useCallback(
+    (next: DesktopSurface) => {
+      if (next === surface) return
+      focusSurfacePicker.current = true
+      if (next === "sidebar" && getCallState().surfaceMode === "min") setCallSurfaceMode("standard")
+      setSurface(next)
+    },
+    [setSurface, surface]
+  )
+  useLayoutEffect(() => {
+    if (!focusSurfacePicker.current) return
+    focusSurfacePicker.current = false
+    surfacePickerTriggerRef.current?.focus()
+  }, [surface])
 
   // On connect, open to a visible size — `min` (the Tab/Rail) is too minimal a
   // default. Open to the first open state (compact) normally, and the second
@@ -106,9 +121,27 @@ export function CallDock() {
     return <MobileCallJoining />
   }
 
-  // Desktop floating: the square owns the whole lifecycle (launch / join / in-call).
   if (surface === "floating") {
-    return <FloatingCallSquare workspaceId={workspaceId} streamId={streamIdForLabel} onDockToSide={dockToSide} />
+    return (
+      <FloatingCallSquare
+        workspaceId={workspaceId}
+        streamId={streamIdForLabel}
+        onSelectSurface={selectSurface}
+        surfacePickerTriggerRef={surfacePickerTriggerRef}
+      />
+    )
+  }
+
+  if (surface === "fullscreen") {
+    return (
+      <DesktopCallFullscreen
+        workspaceId={workspaceId}
+        streamId={streamIdForLabel}
+        joining={!inCall}
+        onSelectSurface={selectSurface}
+        surfacePickerTriggerRef={surfacePickerTriggerRef}
+      />
+    )
   }
 
   // Desktop sidebar owns launch, joining, and connected phases. Keeping one
@@ -120,7 +153,9 @@ export function CallDock() {
     <DesktopCallDock
       workspaceId={workspaceId}
       streamId={streamIdForLabel}
-      onFloat={float}
+      onSelectSurface={selectSurface}
+      onDragToFullscreen={() => setSurface("fullscreen")}
+      surfacePickerTriggerRef={surfacePickerTriggerRef}
       joining={!inCall}
       joiningMode={joiningModeRef.current}
     />
