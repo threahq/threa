@@ -404,10 +404,10 @@ const schema = [
       <span>How memory works</span>
       <span>· sourced memos</span>
     </div>
-    <h2>Threa saves decisions as sourced memos.</h2>
+    <h2>Threa turns conversations into sourced memory.</h2>
     <p class="lede">
-      Threa turns a settled decision into a short memo linked to its source
-      messages. You can open the original messages from the memo.
+      Threa saves decisions and reusable knowledge as short memos linked to their
+      source messages. You can open the original messages from the memo.
     </p>
 
     <div class="memory-flow">
@@ -415,10 +415,10 @@ const schema = [
       <!-- ============ 01 · CAPTURE ============ -->
       <div class="memory-col">
         <div class="memory-step">01 / Capture</div>
-        <h3 class="memory-heading">Finding the decision</h3>
+        <h3 class="memory-heading">Extracting reusable knowledge</h3>
         <p class="memory-why">
-          Threa finds the few messages where the team settles something and
-          leaves the rest in the conversation.
+          Threa extracts decisions, learnings, procedures, context, and
+          references from the messages that establish them.
         </p>
 
         <div class="capture-list" aria-label="Five-message slice; the three middle messages carry the decision.">
@@ -623,9 +623,9 @@ const schema = [
         </div>
         <h2>Threa is open source.</h2>
         <p class="lede">
-          The frontend, backend, control plane, and infrastructure are public.
-          You can inspect the code, fork it, and run your own version. The public
-          repository contains the code we deploy.
+          The public repository is the code we deploy. It contains the frontend,
+          backend, control plane, and infrastructure. You can inspect it, fork it,
+          and run your own version.
         </p>
 
         <div class="os-tenets">
@@ -672,58 +672,59 @@ const schema = [
       <div class="band-copy">
         <div class="section-meta">
           <span>Bring your own agent</span>
-          <span>· public API</span>
+          <span>· bot runtime · CLI · MCP</span>
         </div>
-        <h2>Bring the agent you already use.</h2>
+        <h2>Your agent can join the workspace.</h2>
         <p class="lede">
-          Threa includes Ariadne and exposes workspace messages and memos through
-          a public API with scoped keys. Connect your own agent to the same data,
-          including memo source links.
+          Connect the agent on your laptop as a Threa bot. It works behind NAT,
+          answers @mentions as a workspace participant, searches messages, memos,
+          and attachments, and posts its work back into the conversation.
         </p>
 
         <div class="os-tenets">
           <div class="os-tenet">
-            <h4>Messages and memos</h4>
+            <h4>Answer in the room</h4>
             <p>
-              Read memos as JSON and messages as markdown through the public API.
+              The bot runtime delivers mentions to your local agent and posts its
+              reply under the bot's own identity.
             </p>
           </div>
           <div class="os-tenet">
-            <h4>Scoped access</h4>
+            <h4>Use workspace memory</h4>
             <p>
-              Each API key belongs to one workspace and grants only its configured
-              permissions.
+              Search messages by text or meaning, query memos, read attachments,
+              and follow memos back to their source messages.
             </p>
           </div>
           <div class="os-tenet">
-            <h4>Use any agent</h4>
+            <h4>Take delegated work</h4>
             <p>
-              Any agent that can call the API can read memo content, source links,
-              and timestamps.
+              Claim a task on your machine, post progress, and return the finished
+              work to the stream.
             </p>
           </div>
         </div>
 
-        <a class="os-cta" href="/developers">Read the data docs <span class="arr">→</span></a>
+        <a class="os-cta" href="/developers/recipes#local-agent">Connect a local agent <span class="arr">→</span></a>
       </div>
       <div class="band-media">
         <blockquote class="byo-quote">
-          Use Ariadne inside Threa, or connect your own agent to the same
-          workspace messages and memos.
+          Your agent keeps its local tools and credentials. Threa gives it the
+          team context and a place to return the result.
         </blockquote>
 
-        <div class="byo-agents" aria-label="Bring your own coding agent, research agent, assistant, automation, local model, custom bot, or whatever comes next.">
+        <div class="byo-agents" aria-label="Bring your own Claude Code, Codex, Cursor, OpenCode, Gemini CLI, custom bot, or whatever comes next.">
           <span class="byo-lead">Bring your own</span>
           <span class="byo-clip" aria-hidden="true">
             <span class="byo-track">
-              <span class="byo-word">coding agent</span>
-              <span class="byo-word">research agent</span>
-              <span class="byo-word">assistant</span>
-              <span class="byo-word">automation</span>
-              <span class="byo-word">local model</span>
+              <span class="byo-word">Claude Code</span>
+              <span class="byo-word">Codex</span>
+              <span class="byo-word">Cursor</span>
+              <span class="byo-word">OpenCode</span>
+              <span class="byo-word">Gemini CLI</span>
               <span class="byo-word">custom bot</span>
               <span class="byo-word">whatever's next</span>
-              <span class="byo-word">coding agent</span>
+              <span class="byo-word">Claude Code</span>
             </span>
           </span>
         </div>
