@@ -696,6 +696,25 @@ function buildModelSuggestions(ctx: ExtensionContext): Array<{ value: string; la
   return ordered.slice(0, 30)
 }
 
+function currentReconnectLink(
+  ctx: ExtensionContext,
+  reconnectAvailable: () => boolean = harnessReconnectAvailable
+): RuntimeSessionLink | undefined {
+  const link = getCurrentSessionLink(ctx)
+  if (
+    link?.enabled !== true ||
+    typeof link.rootStreamId !== "string" ||
+    link.rootStreamId.trim().length === 0 ||
+    link.runtimeSessionId !== getRuntimeSessionId(ctx) ||
+    link.instanceId !== getSessionInstanceId(ctx) ||
+    !process.env.TMUX_PANE ||
+    !reconnectAvailable()
+  ) {
+    return undefined
+  }
+  return link
+}
+
 function buildRuntimeCapabilities(
   ctx?: ExtensionContext,
   reconnectAvailable: () => boolean = harnessReconnectAvailable
@@ -706,9 +725,7 @@ function buildRuntimeCapabilities(
     supportsMentionInvocations: true,
     supportsSessionControlCommands: true,
     sessionControlCommands: SESSION_CONTROL_COMMANDS.filter(
-      (command) =>
-        command !== "reconnect" ||
-        Boolean(ctx && process.env.TMUX_PANE && getCurrentSessionLink(ctx)?.rootStreamId && reconnectAvailable())
+      (command) => command !== "reconnect" || Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
     ),
     thinkingLevels: [...THINKING_LEVELS],
     preferredModels: [...(config?.preferredModels ?? [])],
@@ -2080,6 +2097,7 @@ async function completeInvocationWithMarkdown(
       } catch {
         return false
       }
+      return false
     }
     return true
   } finally {
@@ -2574,16 +2592,36 @@ async function runReconnectCommand(
     await deps.complete(invocation, "Usage: `/reconnect [--force]`.", ctx)
     return
   }
-  if (args !== "--force" && (!ctx.isIdle() || pending)) {
+  if (pending) {
+    await deps.complete(invocation, "A Threa invocation is still running; use `/stop` before reconnecting.", ctx)
+    return
+  }
+  if (args !== "--force" && !ctx.isIdle()) {
     await deps.complete(invocation, "Pi is busy; retry when idle or use `/reconnect --force`.", ctx)
     return
   }
-  const link = getCurrentSessionLink(ctx)
+  const link = currentReconnectLink(ctx, deps.available)
   const lifecycleGeneration = sessionLifecycleGeneration
-  if (!process.env.TMUX_PANE || !link?.rootStreamId || !deps.available() || sessionTearingDown) {
+  const runtimeSessionId = getRuntimeSessionId(ctx)
+  const instanceId = getSessionInstanceId(ctx)
+  const invocationFacts = {
+    rootStreamId: invocation.rootStreamId,
+    claimedInstanceId: invocation.claimedInstanceId,
+  }
+  if (
+    !link ||
+    invocationFacts.rootStreamId !== link.rootStreamId ||
+    invocationFacts.claimedInstanceId !== instanceId ||
+    sessionTearingDown
+  ) {
     throw new Error("Harness reconnect is unavailable for this session.")
   }
-  const start = deps.prepare(getRuntimeSessionId(ctx), link.rootStreamId, { force: args === "--force" })
+  const linkFacts = {
+    instanceId: link.instanceId,
+    runtimeSessionId: link.runtimeSessionId,
+    rootStreamId: link.rootStreamId,
+  }
+  const start = deps.prepare(runtimeSessionId, linkFacts.rootStreamId, { force: args === "--force" })
   reconnectPending = true
   await sendHeartbeat("busy", "Reconnect handoff…", ctx).catch(() => undefined)
   try {
@@ -2592,21 +2630,35 @@ async function runReconnectCommand(
       "Reconnect request accepted; attempting to resume the linked Pi session.",
       ctx
     )
+    const currentLink = currentReconnectLink(ctx, deps.available)
     const lifecycleChanged =
-      sessionTearingDown || sessionLifecycleGeneration !== lifecycleGeneration || getCurrentSessionLink(ctx) !== link
+      sessionTearingDown ||
+      sessionLifecycleGeneration !== lifecycleGeneration ||
+      !currentLink ||
+      currentLink.instanceId !== linkFacts.instanceId ||
+      currentLink.runtimeSessionId !== linkFacts.runtimeSessionId ||
+      currentLink.rootStreamId !== linkFacts.rootStreamId ||
+      getRuntimeSessionId(ctx) !== runtimeSessionId ||
+      getSessionInstanceId(ctx) !== instanceId ||
+      invocation.rootStreamId !== invocationFacts.rootStreamId ||
+      invocation.claimedInstanceId !== invocationFacts.claimedInstanceId
     if (!acknowledged || lifecycleChanged) {
       reconnectPending = false
-      if (!lifecycleChanged) {
-        await sendHeartbeat(ctx.isIdle() && !pending ? "available" : "busy", undefined, ctx).catch(() => undefined)
-      }
+      const enabled = isEnabled(ctx)
+      await sendHeartbeat(
+        enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline",
+        undefined,
+        ctx
+      ).catch(() => undefined)
       return
     }
     start()
   } catch (error) {
     reconnectPending = false
-    if (!sessionTearingDown && sessionLifecycleGeneration === lifecycleGeneration) {
-      await sendHeartbeat(ctx.isIdle() && !pending ? "available" : "busy", undefined, ctx).catch(() => undefined)
-    }
+    const enabled = isEnabled(ctx)
+    await sendHeartbeat(enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline", undefined, ctx).catch(
+      () => undefined
+    )
     throw error
   }
 }

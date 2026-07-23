@@ -10,7 +10,7 @@ describe("session-control command catalog", () => {
       description: "Reconnect the linked live session",
       kind: "bot-runtime",
       scope: "stream",
-      args: [{ name: "--force", required: false, description: "Reconnect even when the runtime is busy" }],
+      args: [{ name: "--force", required: false, description: "Reconnect despite local runtime activity" }],
     })
   })
 })

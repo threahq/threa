@@ -888,7 +888,12 @@ describe("buildPersistedConfig", () => {
 })
 
 describe("Pi reconnect session control", () => {
-  const invocation = { id: "binv_reconnect", claimToken: "claim", claimedInstanceId: "pi-instance" } as never
+  const invocation = {
+    id: "binv_reconnect",
+    claimToken: "claim",
+    claimedInstanceId: "pi-instance",
+    rootStreamId: "stream-root-exact",
+  } as never
   const context = (idle: boolean) =>
     ({
       sessionManager: { getSessionId: () => "runtime-exact" },
@@ -946,19 +951,72 @@ describe("Pi reconnect session control", () => {
     }
   })
 
-  test("advertises reconnect only with tmux, an exact root link, and the helper", () => {
+  test("advertises reconnect only for the exact current reconnect link", () => {
     const ctx = context(true)
-    expect(__testing.buildRuntimeCapabilities(ctx, () => true)).toMatchObject({
-      sessionControlCommands: expect.arrayContaining(["reconnect"]),
+    const validLink = {
+      enabled: true,
+      instanceId: "pi-instance",
+      runtimeSessionId: "runtime-exact",
+      rootStreamId: "stream-root-exact",
+      activeStreamId: "stream-root-exact",
+      streamUrlPath: "/streams/stream-root-exact",
+    }
+    const advertised = () =>
+      (__testing.buildRuntimeCapabilities(ctx, () => true).sessionControlCommands as string[]).includes("reconnect")
+
+    expect(advertised()).toBe(true)
+    for (const invalidLink of [
+      { ...validLink, enabled: false },
+      { ...validLink, rootStreamId: "" },
+      { ...validLink, rootStreamId: "   " },
+      { ...validLink, runtimeSessionId: "runtime-other" },
+      { ...validLink, instanceId: undefined },
+    ]) {
+      __testing.setConfigForTesting({
+        baseUrl: "https://app.threa.io",
+        workspaceId: "ws_123",
+        apiKey: "threa_bk_test",
+        linkedSessions: { "runtime-exact": invalidLink },
+      })
+      expect(advertised()).toBe(false)
+    }
+
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { "runtime-exact": validLink },
     })
     delete process.env.TMUX_PANE
-    expect(__testing.buildRuntimeCapabilities(ctx, () => true)).toMatchObject({
-      sessionControlCommands: expect.not.arrayContaining(["reconnect"]),
-    })
+    expect(advertised()).toBe(false)
     process.env.TMUX_PANE = "%9"
-    expect(__testing.buildRuntimeCapabilities(ctx, () => false)).toMatchObject({
-      sessionControlCommands: expect.not.arrayContaining(["reconnect"]),
-    })
+    expect(
+      (__testing.buildRuntimeCapabilities(ctx, () => false).sessionControlCommands as string[]).includes("reconnect")
+    ).toBe(false)
+  })
+
+  test("a claim from link A cannot prepare or ack after relinking to B", async () => {
+    let prepared = 0
+    let acknowledged = 0
+    for (const staleInvocation of [
+      { ...invocation, rootStreamId: "stream-root-a" },
+      { ...invocation, claimedInstanceId: "pi-instance-a" },
+    ]) {
+      await expect(
+        __testing.runReconnectCommand(staleInvocation as never, "", context(true), {
+          available: () => true,
+          prepare: () => {
+            prepared++
+            return () => undefined
+          },
+          complete: async () => {
+            acknowledged++
+            return true
+          },
+        } as never)
+      ).rejects.toThrow("Harness reconnect is unavailable")
+    }
+    expect({ prepared, acknowledged }).toEqual({ prepared: 0, acknowledged: 0 })
   })
 
   test("accepts only empty args or exact --force", async () => {
@@ -1032,6 +1090,83 @@ describe("Pi reconnect session control", () => {
     }
   })
 
+  test("E2E key failure that only closes noResponse does not start reconnect", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      if (String(input).endsWith("/complete")) bodies.push(body)
+      if (body.finalMessageMarkdown) {
+        return new Response(JSON.stringify({ error: { code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    let started = false
+    await __testing.runReconnectCommand({ ...invocation, sealedAck: { invalid: true } } as never, "", context(true), {
+      available: () => true,
+      prepare: () => () => {
+        started = true
+      },
+      complete: __testing.completeInvocationWithMarkdown,
+      heartbeat: async () => undefined,
+    } as never)
+    expect({ bodies, started }).toEqual({
+      bodies: [
+        expect.objectContaining({ finalMessageMarkdown: expect.any(String) }),
+        expect.objectContaining({ noResponse: true }),
+      ],
+      started: false,
+    })
+    fetchSpy.mockRestore()
+  })
+
+  test("revalidates pinned link facts after ack and restores actual presence", async () => {
+    for (const mutate of [
+      (link: Record<string, unknown>) => (link.enabled = false),
+      (link: Record<string, unknown>) => (link.rootStreamId = "stream-other"),
+      (link: Record<string, unknown>) => (link.runtimeSessionId = "runtime-other"),
+      (link: Record<string, unknown>) => (link.instanceId = "pi-other"),
+    ]) {
+      const link = {
+        enabled: true,
+        instanceId: "pi-instance",
+        runtimeSessionId: "runtime-exact",
+        rootStreamId: "stream-root-exact",
+      }
+      __testing.setConfigForTesting({
+        baseUrl: "https://app.threa.io",
+        workspaceId: "ws_123",
+        apiKey: "threa_bk_test",
+        linkedSessions: { "runtime-exact": link },
+      })
+      let started = false
+      const presence: string[] = []
+      await __testing.runReconnectCommand(invocation, "", context(true), {
+        available: () => true,
+        prepare: () => () => {
+          started = true
+        },
+        complete: async () => {
+          mutate(link)
+          return true
+        },
+        heartbeat: async (status: string) => {
+          presence.push(status)
+        },
+      } as never)
+      expect({ started, presence: presence.at(-1) }).toEqual({
+        started: false,
+        presence: link.enabled ? "available" : "offline",
+      })
+      __testing.clearPendingForTesting()
+    }
+  })
+
   test("synchronous start failure restores the handoff state", async () => {
     await expect(
       __testing.runReconnectCommand(invocation, "", context(true), {
@@ -1046,7 +1181,7 @@ describe("Pi reconnect session control", () => {
     expect(__testing.reconnectPending()).toBe(false)
   })
 
-  test("refuses idle-only reconnect while busy but force bypasses the refusal", async () => {
+  test("force bypasses only local busy state and never an owned Threa invocation", async () => {
     const messages: string[] = []
     let prepared = 0
     const deps = {
@@ -1063,10 +1198,14 @@ describe("Pi reconnect session control", () => {
     } as never
     await __testing.runReconnectCommand(invocation, "", context(false), deps)
     await __testing.runReconnectCommand(invocation, "--force", context(false), deps)
+    __testing.clearPendingForTesting()
+    __testing.beginPendingInvocation({ id: "binv_owned", claimToken: "owned" } as never)
+    await __testing.runReconnectCommand(invocation, "--force", context(false), deps)
     expect({ messages, prepared }).toEqual({
       messages: [
         "Pi is busy; retry when idle or use `/reconnect --force`.",
         "Reconnect request accepted; attempting to resume the linked Pi session.",
+        "A Threa invocation is still running; use `/stop` before reconnecting.",
       ],
       prepared: 1,
     })

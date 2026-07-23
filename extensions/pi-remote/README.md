@@ -35,7 +35,7 @@ bun run extensions/pi-remote/install-local.ts
 
 Then run `/reload` in Pi. Pass a different target dir as the first argument if needed.
 
-For harness-managed sessions, `/kick` in the linked scratchpad asks harnessd to send Enter to the session's recorded tmux pane, useful when Pi is waiting on a blocking prompt. `/reconnect [--force]` is offered only to a live, linked Pi running in tmux; it acknowledges first, then asks harnessd to replace the pane process and resume the same Pi session. Without `--force`, Pi must be idle. The command cannot recover a disconnected runtime. Direct `harnessd reconnect` for Pi has no activity signal, so `--force` is currently inert there; this intentionally does not add IPC, status reporting, or another supervisor.
+For harness-managed sessions, `/kick` in the linked scratchpad asks harnessd to send Enter to the session's recorded tmux pane, useful when Pi is waiting on a blocking prompt. `/reconnect [--force]` is offered only to a live, linked Pi running in tmux; it acknowledges first, then asks harnessd to replace the pane process and resume the same Pi session. `--force` may bypass only local Pi activity; an owned pending Threa invocation always fails closed and must be cleared with `/stop` first. The command cannot recover a disconnected runtime. Direct `harnessd reconnect` for Pi has no activity signal, so `--force` is currently inert there; this intentionally does not add IPC, status reporting, or another supervisor.
 
 The script rebuilds `~/.pi/agent/extensions/threa-remote` from scratch each time, so re-running it is the supported way to update.
 
