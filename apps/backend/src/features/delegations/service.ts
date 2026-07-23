@@ -271,8 +271,19 @@ export class DelegationService {
     id: string
     claimToken: string
     resultMessageId?: string
+    threadStreamId?: string
   }): Promise<DelegatedTask | null> {
     return withTransaction(this.pool, (client) => this.completeInTransaction(client, params))
+  }
+
+  /**
+   * The delegation's `delegation:created` event id — the card its result thread
+   * anchors on. Callable on a transaction client so the completion flow resolves
+   * the anchor inside its claim-locked envelope (INV-30 single query → the
+   * caller's querier).
+   */
+  async findCreatedEventId(client: PoolClient, params: { workspaceId: string; id: string }): Promise<string | null> {
+    return DelegatedTaskRepository.findCreatedEventId(client, params.workspaceId, params.id)
   }
 
   /**
@@ -301,7 +312,7 @@ export class DelegationService {
    */
   async completeInTransaction(
     client: PoolClient,
-    params: { workspaceId: string; id: string; claimToken: string; resultMessageId?: string }
+    params: { workspaceId: string; id: string; claimToken: string; resultMessageId?: string; threadStreamId?: string }
   ): Promise<DelegatedTask | null> {
     const completed = await DelegatedTaskRepository.complete(client, {
       workspaceId: params.workspaceId,
@@ -310,7 +321,7 @@ export class DelegationService {
       resultMessageId: params.resultMessageId ?? null,
     })
     if (!completed) return null
-    await this.appendStatusEvent(client, completed, SYSTEM_ACTOR)
+    await this.appendStatusEvent(client, completed, SYSTEM_ACTOR, { threadStreamId: params.threadStreamId })
     return completed
   }
 
@@ -363,13 +374,15 @@ export class DelegationService {
   private async appendStatusEvent(
     client: PoolClient,
     delegation: DelegatedTask,
-    actor: { actorId?: string; actorType: AuthorType }
+    actor: { actorId?: string; actorType: AuthorType },
+    extra: { threadStreamId?: string } = {}
   ): Promise<void> {
     const payload: DelegationStatusChangedEventPayload = {
       delegationId: delegation.id,
       status: delegation.status,
       claimedByLabel: delegation.claimedByLabel,
       resultMessageId: delegation.resultMessageId,
+      threadStreamId: extra.threadStreamId,
       statusNote: delegation.statusNote,
     }
     await this.appendDelegationEvent(client, {

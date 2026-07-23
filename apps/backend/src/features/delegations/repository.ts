@@ -154,6 +154,23 @@ export const DelegatedTaskRepository = {
   },
 
   /**
+   * The delegation's `delegation:created` event id — the timeline card its
+   * result thread anchors on (INV-27: the targeted read the completion flow
+   * needs inside its claim-locked transaction, without re-fetching the whole
+   * row it already holds). Mirrors the join in `findByIdWithEvent`.
+   */
+  async findCreatedEventId(db: Querier, workspaceId: string, id: string): Promise<string | null> {
+    const result = await db.query<{ id: string }>(sql`
+      SELECT id FROM stream_events
+      WHERE stream_id = (SELECT stream_id FROM delegated_tasks WHERE id = ${id} AND workspace_id = ${workspaceId})
+        AND event_type = 'delegation:created'
+        AND payload->>'delegationId' = ${id}
+      LIMIT 1
+    `)
+    return result.rows[0]?.id ?? null
+  },
+
+  /**
    * A workspace's open (claimable) delegations, oldest first — the 5.3 list
    * surface. `since` narrows to rows created after the instant, so a polling
    * runner that remembers its last sweep doesn't re-download the whole queue.

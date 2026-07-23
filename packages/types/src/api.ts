@@ -1297,6 +1297,14 @@ export interface DelegationStatusChangedEventPayload {
   claimedByLabel?: string | null
   /** The stream message the completing agent posted its result as. */
   resultMessageId?: string | null
+  /**
+   * The thread stream the completing agent's result was posted into, anchored
+   * on the delegation card itself. Present on completions that carried a result
+   * (the card opens this thread for "View result", zero-fetch). Absent on
+   * legacy completions, whose `resultMessageId` points at a synthetic anchor
+   * message the card deep-links via `?m=` instead.
+   */
+  threadStreamId?: string | null
   /** Free-text progress/error note from the executing agent. */
   statusNote?: string | null
 }

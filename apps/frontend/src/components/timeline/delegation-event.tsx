@@ -1,24 +1,38 @@
 import { useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
-import { Check, ChevronDown, ChevronRight, Copy, Link2, Loader2, TerminalSquare } from "lucide-react"
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Link2,
+  Loader2,
+  MessageSquareReply,
+  TerminalSquare,
+} from "lucide-react"
 import {
   DelegationStatuses,
   type DelegationCreatedEventPayload,
   type DelegationStatus,
   type DelegationStatusChangedEventPayload,
   type StreamEvent,
+  type ThreadSummary,
 } from "@threa/types"
 import { delegationsApi } from "@/api"
+import { usePanel } from "@/contexts"
 import { useActors } from "@/hooks"
 import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL } from "@/lib/delegation-display"
 import { buildDelegationLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
+import { ThreadSlot } from "./thread-slot"
+import { useThreadAnchor } from "./use-thread-anchor"
 
 interface DelegationEventProps {
   event: StreamEvent
   workspaceId: string
   streamId: string
+  isThreadParent?: boolean
   /**
    * The latest `delegation:status_changed` patch for this delegation within
    * the loaded window — the authoritative live status, so every viewer (not
@@ -86,9 +100,18 @@ export function buildDelegationPrompt(
  * The status from `statusPatch` is authoritative; the local optimistic flips
  * only fast-path the clicking member's own action.
  */
-export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: DelegationEventProps) {
+export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isThreadParent }: DelegationEventProps) {
   const { getActorName } = useActors(workspaceId)
-  const payload = event.payload as DelegationCreatedEventPayload | undefined
+  const { getPanelUrl } = usePanel()
+  // Healing (chunk-2) lands thread stats on the card's own payload once a thread
+  // exists, keyed on this event's id — the same anchor the thread was created on.
+  const payload = event.payload as
+    | (DelegationCreatedEventPayload & { threadId?: string; replyCount?: number; threadSummary?: ThreadSummary })
+    | undefined
+  // Shared thread affordance, keyed on the card's canonical id (its event id) —
+  // the anchor delegation completion threads on. `replyUrl` points at the real
+  // thread when one exists, else the draft panel for starting one.
+  const { threadHref, replyUrl } = useThreadAnchor(streamId, event.id, { threadId: payload?.threadId })
   const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false)
   const [optimisticallyDone, setOptimisticallyDone] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -111,8 +134,35 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
   const metaParts = [`${actorName} · ${DELEGATION_STATUS_LABEL[status]}`]
   if (statusPatch?.claimedByLabel && !optimisticFlip) metaParts.push(statusPatch.claimedByLabel)
   const statusNote = !optimisticFlip ? statusPatch?.statusNote : null
-  const resultMessageId =
-    status === DelegationStatuses.COMPLETED ? (statusPatch?.resultMessageId ?? undefined) : undefined
+
+  // "View result" target. New completions carry `threadStreamId` — the result
+  // lives in a thread anchored on this card, so open that thread panel. Legacy
+  // completions have only `resultMessageId` (a synthetic anchor message), which
+  // still deep-links via `?m=`. Both are navigation (INV-40).
+  const completed = status === DelegationStatuses.COMPLETED
+  const threadStreamId = completed ? (statusPatch?.threadStreamId ?? undefined) : undefined
+  const legacyResultMessageId = completed && !threadStreamId ? (statusPatch?.resultMessageId ?? undefined) : undefined
+  let viewResultHref: string | null = null
+  if (!isThreadParent && threadStreamId) viewResultHref = getPanelUrl(threadStreamId)
+  else if (!isThreadParent && legacyResultMessageId)
+    viewResultHref = `/w/${workspaceId}/s/${streamId}?m=${legacyResultMessageId}`
+
+  const replyCount = payload.replyCount ?? 0
+
+  // Discuss starts (or opens) a thread on this card. Failure cards are
+  // discussion-worthy too ("why did this fail"), so it shows on every state
+  // EXCEPT when the card already exposes its thread another way: a completed
+  // card's thread opens via "View result" (threadStreamId), and any card with
+  // replies shows the footer thread chip. Either would make Discuss a duplicate
+  // entry point.
+  const threadChipShowing = replyCount > 0 && !!threadHref && !isThreadParent
+  const showDiscuss = !threadStreamId && !threadChipShowing && !isThreadParent
+
+  // Icon-only below `sm` (labels appear at `sm`). Force a ~36px square hit area
+  // on narrow viewports so three adjacent targets aren't sub-30px mis-taps;
+  // desktop footprint is unchanged (min sizing reset at `sm`).
+  const iconActionClass =
+    "inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:min-h-0 sm:min-w-0 sm:justify-start"
 
   const promptText = () => buildDelegationPrompt(payload, { workspaceId, origin: window.location.origin })
 
@@ -231,12 +281,27 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
-            {resultMessageId && (
+            {viewResultHref && (
               <Link
-                to={`/w/${workspaceId}/s/${streamId}?m=${resultMessageId}`}
+                to={viewResultHref}
                 className="inline-flex items-center rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 View result
+              </Link>
+            )}
+            {/* Discuss the card: start (or open) a thread anchored on this
+                event. Hidden only when the card already has a thread entry
+                (View result / footer chip) — see `showDiscuss`. Navigation, so
+                a <Link> to the draft/thread panel (INV-40). */}
+            {showDiscuss && (
+              <Link
+                to={replyUrl}
+                aria-label="Discuss this delegation"
+                title="Discuss this delegation in a thread"
+                className={iconActionClass}
+              >
+                <MessageSquareReply className="h-3 w-3" aria-hidden="true" />
+                <span className="hidden sm:inline">Discuss</span>
               </Link>
             )}
             <button
@@ -245,7 +310,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
               aria-label={copyDone ? "Prompt copied" : "Copy prompt"}
               aria-live="polite"
               title="Copy the hand-off prompt for a local agent"
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className={iconActionClass}
             >
               {copyDone ? (
                 <Check className="h-3 w-3" aria-hidden="true" />
@@ -261,7 +326,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
               aria-label={copyLinkDone ? "Link copied" : "Copy link"}
               aria-live="polite"
               title="Copy a shareable link to this delegation"
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className={iconActionClass}
             >
               {copyLinkDone ? (
                 <Check className="h-3 w-3" aria-hidden="true" />
@@ -335,6 +400,18 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch }: D
           </div>
         )}
       </div>
+
+      {/* Thread anchored on this card — surfaces the discussion (and a completed
+          delegation's result) as a footer chip once replies land. Keyed on the
+          card's event id via `useThreadAnchor`; healed payload drives the count. */}
+      {!isThreadParent && (
+        <ThreadSlot
+          replyCount={replyCount}
+          threadHref={threadHref}
+          summary={payload.threadSummary}
+          workspaceId={workspaceId}
+        />
+      )}
     </div>
   )
 }

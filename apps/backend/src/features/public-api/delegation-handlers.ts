@@ -283,15 +283,6 @@ export function createDelegationPublicApiHandlers({
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
 
-      // The result is delivered as a compact anchor in the stream with the
-      // full payload as a thread reply under it (Kris's F1 ruling: no more
-      // wall-of-text in the timeline). The card's result_message_id points at
-      // the anchor — the row a viewer can see and deep-link to.
-      const anchorMarkdown = contentMarkdown
-        ? normalizeMessage(`✓ Completed: **${delegation.title}**. Result in thread.`)
-        : null
-      const anchorJson = anchorMarkdown ? parseMarkdown(anchorMarkdown, undefined, toEmoji) : null
-
       const { completed, resultMessageId } = await withTransaction(pool, async (client: PoolClient) => {
         // Validate the claim BEFORE any write (FOR UPDATE, token-guarded): an
         // invalid or lapsed token does no work, and the row lock serializes
@@ -301,25 +292,24 @@ export function createDelegationPublicApiHandlers({
           throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
         }
         let resultMessageId: string | undefined
-        if (contentMarkdown && contentJson && anchorMarkdown && anchorJson && author) {
-          const { message: anchor } = await eventService.createMessageInTransaction(client, {
-            workspaceId,
-            streamId: delegation.streamId,
-            authorId: author.authorId,
-            authorType: author.authorType,
-            contentJson: anchorJson,
-            contentMarkdown: anchorMarkdown,
-            clientMessageId: `delegation:${delegation.id}`,
-            sentVia: author.sentVia,
-          })
+        let threadStreamId: string | undefined
+        if (contentMarkdown && contentJson && author) {
+          // The result thread anchors on the delegation's own card (its
+          // `delegation:created` event) — no synthetic anchor message. The card
+          // IS the timeline row; the full result lives one level down in the
+          // thread, and `result_message_id` points at that result message.
+          const createdEventId = await delegationService.findCreatedEventId(client, { workspaceId, id })
+          if (!createdEventId) {
+            throw new HttpError("Delegation card event not found", { status: 500, code: "DELEGATION_EVENT_MISSING" })
+          }
           const thread = await streamService.createThreadOn(client, {
             workspaceId,
             parentStreamId: delegation.streamId,
-            parentAnchorId: anchor.id,
+            parentAnchorId: createdEventId,
             createdBy: author.authorId,
             createdByType: author.authorType === AuthorTypes.BOT ? "bot" : "user",
           })
-          await eventService.createMessageInTransaction(client, {
+          const { message: result } = await eventService.createMessageInTransaction(client, {
             workspaceId,
             streamId: thread.id,
             authorId: author.authorId,
@@ -331,13 +321,15 @@ export function createDelegationPublicApiHandlers({
             sentVia: author.sentVia,
             metadata,
           })
-          resultMessageId = anchor.id
+          resultMessageId = result.id
+          threadStreamId = thread.id
         }
         const completed = await delegationService.completeInTransaction(client, {
           workspaceId,
           id,
           claimToken,
           resultMessageId,
+          threadStreamId,
         })
         if (!completed) {
           throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })

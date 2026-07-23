@@ -293,15 +293,14 @@ describe("completeDelegation", () => {
     completeInTransaction?: DelegationService["completeInTransaction"]
     createMessageInTransaction?: EventService["createMessageInTransaction"]
     findClaimedForUpdate?: DelegationService["findClaimedForUpdate"]
+    findCreatedEventId?: DelegationService["findCreatedEventId"]
     isE2e?: boolean
   }) {
     spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as PoolClient))
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(overrides.isE2e ?? false)
     const createMessageInTransaction =
       overrides.createMessageInTransaction ??
-      (mock(async (_client: unknown, params: { clientMessageId?: string }) => ({
-        message: { id: params.clientMessageId?.endsWith(":result") ? "msg_result" : "msg_anchor" },
-      })) as unknown as EventService["createMessageInTransaction"])
+      (mock(async () => ({ message: { id: "msg_result" } })) as unknown as EventService["createMessageInTransaction"])
     const completeInTransaction =
       overrides.completeInTransaction ??
       (mock(async () =>
@@ -312,12 +311,23 @@ describe("completeDelegation", () => {
       (mock(async () =>
         makeDelegation({ status: DelegationStatuses.CLAIMED })
       ) as DelegationService["findClaimedForUpdate"])
+    // The `delegation:created` card event the result thread anchors on. Legacy
+    // delegations (predating the anchor substrate) return their existing event
+    // id here just the same — the completion path never depends on when it was
+    // created, only that the card exists to hang the thread under.
+    const findCreatedEventId =
+      overrides.findCreatedEventId ?? (mock(async () => "event_created") as DelegationService["findCreatedEventId"])
     const createThreadOn = mock(
       async () => ({ id: "stream_thread" }) as never
     ) as unknown as StreamService["createThreadOn"]
     return {
       handlers: makeHandlers({
-        delegationService: { getById: mock(async () => makeDelegation()), completeInTransaction, findClaimedForUpdate },
+        delegationService: {
+          getById: mock(async () => makeDelegation()),
+          completeInTransaction,
+          findClaimedForUpdate,
+          findCreatedEventId,
+        },
         streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never), createThreadOn },
         botChannelService: { isStreamAccessibleForBot: mock(async () => true) },
         eventService: { createMessageInTransaction },
@@ -325,11 +335,12 @@ describe("completeDelegation", () => {
       createMessageInTransaction,
       completeInTransaction,
       findClaimedForUpdate,
+      findCreatedEventId,
       createThreadOn,
     }
   }
 
-  it("posts a compact anchor + the result as a thread reply, and completes in the same transaction", async () => {
+  it("anchors the result thread on the delegation card and posts the result inside it — no synthetic anchor message", async () => {
     const { handlers, createMessageInTransaction, completeInTransaction, createThreadOn } = transactionalHandlers({})
     const { res, payloads } = createResponse()
 
@@ -338,37 +349,35 @@ describe("completeDelegation", () => {
       res
     )
 
-    // First message: the anchor in the delegation's stream — compact, no metadata.
-    const anchorParams = (createMessageInTransaction as ReturnType<typeof mock>).mock.calls[0][1]
-    expect(anchorParams).toMatchObject({
-      streamId: "stream_1",
-      authorId: "usr_1",
-      authorType: AuthorTypes.USER,
-      clientMessageId: "delegation:dlg_1",
-      sentVia: "api_key:uak_1",
-    })
-    expect(anchorParams.contentMarkdown).toContain("Result in thread")
-    // The thread hangs under the anchor, created by the same identity.
+    // The thread hangs under the delegation's own card event, created by the
+    // completing identity.
     expect((createThreadOn as ReturnType<typeof mock>).mock.calls[0][1]).toMatchObject({
       parentStreamId: "stream_1",
-      parentAnchorId: "msg_anchor",
+      parentAnchorId: "event_created",
       createdBy: "usr_1",
       createdByType: "user",
     })
-    // Second message: the full result inside the thread, carrying the metadata.
-    const resultParams = (createMessageInTransaction as ReturnType<typeof mock>).mock.calls[1][1]
-    expect(resultParams).toMatchObject({
+    // Exactly one message is posted — the result, inside the thread — carrying
+    // the metadata. No synthetic anchor message lands in the host stream (INV-23).
+    const messageCalls = (createMessageInTransaction as ReturnType<typeof mock>).mock.calls
+    expect(messageCalls.length).toBe(1)
+    expect(messageCalls[0][1]).toMatchObject({
       streamId: "stream_thread",
+      authorId: "usr_1",
+      authorType: AuthorTypes.USER,
       contentMarkdown: "All done.",
       clientMessageId: "delegation:dlg_1:result",
+      sentVia: "api_key:uak_1",
       metadata: { "github.pr": "https://x/1" },
     })
-    // The card points at the anchor — the row a viewer can see in the stream.
+    expect(messageCalls.some((call) => (call[1] as { streamId: string }).streamId === "stream_1")).toBe(false)
+    // The card points at the result message and its thread (zero-fetch card).
     expect((completeInTransaction as ReturnType<typeof mock>).mock.calls[0][1]).toMatchObject({
       claimToken: "tok",
-      resultMessageId: "msg_anchor",
+      resultMessageId: "msg_result",
+      threadStreamId: "stream_thread",
     })
-    expect((payloads[0] as { data: { resultMessageId?: string } }).data.resultMessageId).toBe("msg_anchor")
+    expect((payloads[0] as { data: { resultMessageId?: string } }).data.resultMessageId).toBe("msg_result")
   })
 
   it("404s (rolling the message back with the transaction) when the claim CAS matches nothing", async () => {
@@ -381,15 +390,17 @@ describe("completeDelegation", () => {
     ).rejects.toMatchObject({ status: 404 })
   })
 
-  it("completes without posting a message when no result is given", async () => {
-    const { handlers, createMessageInTransaction, completeInTransaction } = transactionalHandlers({})
+  it("completes without posting a message or thread when no result is given", async () => {
+    const { handlers, createMessageInTransaction, completeInTransaction, createThreadOn } = transactionalHandlers({})
     const { res } = createResponse()
 
     await handlers.completeDelegation(makeRequest({ token: "tok", body: {} }), res)
 
     expect((createMessageInTransaction as ReturnType<typeof mock>).mock.calls.length).toBe(0)
+    expect((createThreadOn as ReturnType<typeof mock>).mock.calls.length).toBe(0)
     expect((completeInTransaction as ReturnType<typeof mock>).mock.calls[0][1]).toMatchObject({
       resultMessageId: undefined,
+      threadStreamId: undefined,
     })
   })
 

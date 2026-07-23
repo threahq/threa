@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import type { DelegationCreatedEventPayload, DelegationStatusChangedEventPayload, StreamEvent } from "@threa/types"
 import { toast } from "sonner"
 import * as hooksModule from "@/hooks"
+import { PanelProvider } from "@/contexts"
 import { delegationsApi } from "@/api"
 import { buildDelegationPrompt, DelegationEvent } from "./delegation-event"
 
@@ -15,7 +16,13 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof hooksModule.useActors>)
 })
 
-function createdEvent(payload: DelegationCreatedEventPayload): StreamEvent {
+/** Healed thread stats (chunk-2) ride alongside the created payload on the card event. */
+type CardPayload = DelegationCreatedEventPayload & {
+  threadId?: string
+  replyCount?: number
+}
+
+function createdEvent(payload: CardPayload): StreamEvent {
   return {
     id: "evt_dlg",
     streamId: "stream_1",
@@ -37,15 +44,22 @@ const CREATED_PAYLOAD: DelegationCreatedEventPayload = {
   sourceConversationId: null,
 }
 
-function renderCard(statusPatch?: DelegationStatusChangedEventPayload) {
+function renderCard(
+  statusPatch?: DelegationStatusChangedEventPayload,
+  payloadOverride?: Partial<CardPayload>,
+  isThreadParent = false
+) {
   return render(
-    <MemoryRouter>
-      <DelegationEvent
-        event={createdEvent(CREATED_PAYLOAD)}
-        workspaceId="ws_1"
-        streamId="stream_1"
-        statusPatch={statusPatch}
-      />
+    <MemoryRouter initialEntries={["/w/ws_1"]}>
+      <PanelProvider>
+        <DelegationEvent
+          event={createdEvent({ ...CREATED_PAYLOAD, ...payloadOverride })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+          statusPatch={statusPatch}
+          isThreadParent={isThreadParent}
+        />
+      </PanelProvider>
     </MemoryRouter>
   )
 }
@@ -95,12 +109,64 @@ describe("DelegationEvent", () => {
     expect(screen.getByText("tests are compiling")).toBeInTheDocument()
   })
 
-  it("completed: links the result message, hides Cancel", () => {
+  it("completed with threadStreamId: chip + View result reach the thread, no Discuss duplicate", () => {
+    renderCard(
+      {
+        delegationId: "dlg_1",
+        status: "completed",
+        resultMessageId: "msg_result",
+        threadStreamId: "stream_thread",
+      },
+      { threadId: "stream_thread", replyCount: 3 }
+    )
+
+    const link = screen.getByRole("link", { name: "View result" })
+    expect(link).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
+    const chip = screen.getByRole("link", { name: /replies/ })
+    expect(chip).toHaveTextContent("3 replies")
+    expect(chip).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "Discuss this delegation" })).not.toBeInTheDocument()
+  })
+
+  it("completed thread parent suppresses self-links and nested thread affordances", () => {
+    renderCard(
+      {
+        delegationId: "dlg_1",
+        status: "completed",
+        resultMessageId: "msg_result",
+        threadStreamId: "stream_thread",
+      },
+      { threadId: "stream_thread", replyCount: 3 },
+      true
+    )
+
+    expect(screen.queryByRole("link", { name: "View result" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /replies/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "Discuss this delegation" })).not.toBeInTheDocument()
+  })
+
+  it("completed (legacy shape): no threadStreamId falls back to the ?m= result deep-link", () => {
     renderCard({ delegationId: "dlg_1", status: "completed", resultMessageId: "msg_result" })
 
     const link = screen.getByRole("link", { name: "View result" })
     expect(link).toHaveAttribute("href", "/w/ws_1/s/stream_1?m=msg_result")
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+  })
+
+  it("open card: Discuss opens a draft thread panel keyed on the card's event id", () => {
+    renderCard()
+
+    const discuss = screen.getByRole("link", { name: "Discuss this delegation" })
+    expect(discuss).toHaveAttribute("href", "/w/ws_1?panel=draft%3Astream_1%3Aevt_dlg")
+  })
+
+  it("renders the thread chip from the healed payload (replies land on the card's own event)", () => {
+    renderCard(undefined, { threadId: "stream_thread", replyCount: 2 })
+
+    const chip = screen.getByRole("link", { name: /replies/ })
+    expect(chip).toHaveTextContent("2 replies")
+    expect(chip).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
   })
 
   it.each(["failed", "expired"] as const)("%s is terminal: no Cancel, status in meta", (status) => {
@@ -109,6 +175,16 @@ describe("DelegationEvent", () => {
     expect(screen.getByText(new RegExp(`Ariadne · ${status}`, "i"))).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Cancel/ })).not.toBeInTheDocument()
   })
+
+  it.each(["failed", "cancelled", "expired"] as const)(
+    "%s card is discussion-worthy: Discuss stays available when there's no thread yet",
+    (status) => {
+      renderCard({ delegationId: "dlg_1", status })
+
+      const discuss = screen.getByRole("link", { name: "Discuss this delegation" })
+      expect(discuss).toHaveAttribute("href", "/w/ws_1?panel=draft%3Astream_1%3Aevt_dlg")
+    }
+  )
 
   it("cancelled keeps the relabeled button in place (follow-up card pattern: focus retained, announced)", () => {
     renderCard({ delegationId: "dlg_1", status: "cancelled" })
@@ -212,12 +288,14 @@ describe("DelegationEvent", () => {
 
   it("renders nothing without a payload", () => {
     const { container } = render(
-      <MemoryRouter>
-        <DelegationEvent
-          event={{ ...createdEvent(CREATED_PAYLOAD), payload: undefined }}
-          workspaceId="ws_1"
-          streamId="stream_1"
-        />
+      <MemoryRouter initialEntries={["/w/ws_1"]}>
+        <PanelProvider>
+          <DelegationEvent
+            event={{ ...createdEvent(CREATED_PAYLOAD), payload: undefined }}
+            workspaceId="ws_1"
+            streamId="stream_1"
+          />
+        </PanelProvider>
       </MemoryRouter>
     )
     expect(container).toBeEmptyDOMElement()
