@@ -5,6 +5,8 @@ import {
   harnessReconnectAvailable,
   prepareHarnessReconnect,
   runHarnessKick,
+  parseAllowedTmuxKey,
+  sendAllowedTmuxKey,
   type BotRuntimeTransport,
 } from "@threa/bot-runtime-client"
 import {
@@ -21,6 +23,7 @@ import {
   type RemoteSessionStatusSnapshot,
   type SendResult,
   type SessionControlActuator,
+  type SessionControlInvocationContext,
 } from "@threa/remote-session"
 import { z } from "zod"
 import { CarryOnController } from "./carry-on"
@@ -54,6 +57,7 @@ const SESSION_CONTROL_COMMANDS = [
   "reload",
   "carry-on",
   "reconnect",
+  "key",
 ] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
 // whatever the local client's own picker cache discovers (see model-catalog).
@@ -179,7 +183,9 @@ export async function runClaudeCommand(
   stopDelegationsForReconnect?: (force: boolean) => Promise<void>,
   restartDelegationsAfterReset?: () => void,
   reconnectTarget?: () => ReconnectTarget,
-  reconnectReady?: () => boolean
+  reconnectReady?: () => boolean,
+  keySender: typeof sendAllowedTmuxKey = sendAllowedTmuxKey,
+  invocationContext?: SessionControlInvocationContext
 ): Promise<{
   ok: boolean
   message: string
@@ -187,6 +193,17 @@ export async function runClaudeCommand(
   onHandoffReset?: () => void
 }> {
   switch (name) {
+    case "key": {
+      const key = parseAllowedTmuxKey(args)
+      if (!key) return { ok: false, message: "Usage: `/key <name>`." }
+      const currentRootStreamId = rootStreamId?.()
+      if (!runtimeSessionId || !currentRootStreamId) throw new Error("Key control is unavailable for this session.")
+      if (invocationContext?.rootStreamId !== currentRootStreamId) {
+        throw new Error("Key control request no longer matches the linked scratchpad.")
+      }
+      keySender(key, process.ppid)
+      return { ok: true, message: `Sent \`${key}\` to the linked Claude session.` }
+    }
     case "reconnect": {
       if (args !== "" && args !== "--force") {
         return { ok: false, message: "Usage: `/reconnect [--force]`." }
@@ -310,10 +327,14 @@ export function createClaudeSessionControl(
   return {
     get commands() {
       return runtimeSessionId
-        ? SESSION_CONTROL_COMMANDS.filter(
-            (command) => command !== "reconnect" || Boolean(rootStreamId?.() && harnessReconnectAvailable())
+        ? SESSION_CONTROL_COMMANDS.filter((command) => {
+            if (command === "reconnect") return Boolean(rootStreamId?.() && harnessReconnectAvailable())
+            if (command === "key") return Boolean(rootStreamId?.() && process.env.TMUX_PANE?.trim())
+            return true
+          })
+        : SESSION_CONTROL_COMMANDS.filter(
+            (command) => command !== "kick" && command !== "reconnect" && command !== "key"
           )
-        : SESSION_CONTROL_COMMANDS.filter((command) => command !== "kick" && command !== "reconnect")
     },
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],
@@ -333,7 +354,7 @@ export function createClaudeSessionControl(
       if (absorbed !== undefined) return true
       return steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`)
     },
-    runCommand: (name, args) =>
+    runCommand: (name, args, context) =>
       runClaudeCommand(
         name,
         args,
@@ -345,7 +366,9 @@ export function createClaudeSessionControl(
         stopDelegationsForReconnect,
         restartDelegationsAfterReset,
         reconnectTarget,
-        reconnectReady
+        reconnectReady,
+        sendAllowedTmuxKey,
+        context
       ),
   }
 }

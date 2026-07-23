@@ -1,4 +1,12 @@
 export { BotRuntimeTransport } from "./transport"
+export {
+  parseAllowedTmuxKey,
+  sendAllowedTmuxKey,
+  TMUX_KEY_TOKENS,
+  TmuxKeyError,
+  type AllowedTmuxKey,
+  type TmuxKeyFailureCode,
+} from "./tmux-key"
 export { harnessDaemonEntrypoint, runHarnessKick, type HarnessKickResult } from "./harness-kick"
 export {
   harnessReconnectAvailable,

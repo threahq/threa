@@ -31,6 +31,7 @@ const VENDOR_FILES = [
   "supervisor.ts",
   "harness-kick.ts",
   "harness-reconnect.ts",
+  "tmux-key.ts",
 ]
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.

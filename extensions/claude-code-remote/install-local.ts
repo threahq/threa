@@ -36,6 +36,7 @@ const VENDORED = [
       "supervisor.ts",
       "harness-kick.ts",
       "harness-reconnect.ts",
+      "tmux-key.ts",
     ],
     dir: "bot-runtime-client",
   },

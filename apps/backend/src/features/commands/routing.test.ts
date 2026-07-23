@@ -4,7 +4,7 @@ import { resolveRuntimeInvocationRouting } from "./handlers"
 
 describe("resolveRuntimeInvocationRouting", () => {
   it("routes interrupt commands to active-scratchpad for pi-local (claimable by a busy Pi)", () => {
-    for (const name of ["steer", "stop", "kick", "carry-on", "reconnect"]) {
+    for (const name of ["steer", "stop", "kick", "carry-on", "reconnect", "key"]) {
       expect(resolveRuntimeInvocationRouting(name, BotRuntimeKinds.PI_LOCAL)).toEqual({
         trigger: BotInvocationTriggers.SESSION_CONTROL,
         requiredCapability: BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
@@ -13,7 +13,7 @@ describe("resolveRuntimeInvocationRouting", () => {
   })
 
   it("routes interrupt commands to session-control for the Claude Code channel (so a busy channel still claims control)", () => {
-    for (const name of ["steer", "stop", "kick", "carry-on", "reconnect"]) {
+    for (const name of ["steer", "stop", "kick", "carry-on", "reconnect", "key"]) {
       expect(resolveRuntimeInvocationRouting(name, BotRuntimeKinds.CLAUDE_CODE_CHANNEL)).toEqual({
         trigger: BotInvocationTriggers.SESSION_CONTROL,
         requiredCapability: BotInvocationCapabilities.SESSION_CONTROL,

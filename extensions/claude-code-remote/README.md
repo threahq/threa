@@ -111,6 +111,8 @@ Open the scratchpad in Threa and type a message. No `@`-mention needed: the bot 
 
 For harness-managed sessions, `/kick` asks harnessd to send Enter to the session's recorded tmux pane. Use it to accept or move past a blocking Claude Code prompt without opening the terminal. `/reconnect [--force]` is offered only while the exact linked Claude runtime is live in tmux; after acknowledging, it asks harnessd to replace the pane process and resume the same native session. It is not offline recovery and is unavailable after the channel disconnects.
 
+`/key <name>` sends one key to the exact live linked Claude pane. Allowed names are `escape`, `enter`, `up`, `down`, `left`, `right`, `tab`, `backspace`, `ctrl-c`, `ctrl-d`, and `ctrl-u`. Names are case-sensitive; text, aliases, sequences, and repeats are rejected.
+
 ## Permission relay
 
 Away from the terminal, a tool that needs approval would normally stall the session. With `THREA_PERMISSION_RELAY=1` (default), the approval prompt is posted into the scratchpad as a message:

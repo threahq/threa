@@ -792,13 +792,13 @@ describe("session control via the actuator", () => {
   test("routes an advertised command to runCommand and acks with its message", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
-    const ran: Array<{ name: string; args: string }> = []
+    const ran: Array<{ name: string; args: string; rootStreamId: string }> = []
     const session = makeSession(client, transport, {
       sessionControl: {
         commands: ["stop", "steer", "model"],
         interrupt: () => true,
-        runCommand: async (name, args) => {
-          ran.push({ name, args })
+        runCommand: async (name, args, context) => {
+          ran.push({ name, args, rootStreamId: context.rootStreamId })
           return { ok: true, message: "Set model to `opus`." }
         },
       },
@@ -814,7 +814,7 @@ describe("session control via the actuator", () => {
       session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
     ).handleSessionControl(invocation)
 
-    expect(ran).toEqual([{ name: "model", args: "opus" }])
+    expect(ran).toEqual([{ name: "model", args: "opus", rootStreamId: "stream_root" }])
     expect(calls.complete[0]?.body.finalMessageMarkdown).toBe("Set model to `opus`.")
   })
 
@@ -1050,6 +1050,42 @@ describe("session control via the actuator", () => {
     )
     expect(started).toBe(false)
     expect(presence.at(-1)).toMatchObject({ status: "busy", acceptingInvocations: false })
+  })
+
+  test("a failed /key actuator calls /fail and never /complete", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["key"],
+        interrupt: () => true,
+        runCommand: async () => {
+          throw new Error("tmux pane inspection failed")
+        },
+      },
+    })
+    const invocation = makeInvocation({
+      id: "binv_key",
+      trigger: "session-control",
+      promptMarkdown: "/key enter",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_key", name: "key", args: "enter" } },
+    })
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(invocation)
+
+    expect(calls.complete).toEqual([])
+    expect(calls.fail).toEqual([
+      {
+        id: "binv_key",
+        body: {
+          instanceId: "rt-test",
+          claimToken: "tok",
+          errorMessage: "tmux pane inspection failed",
+        },
+      },
+    ])
   })
 
   test("a failed actuator command fails the invocation instead of completing it", async () => {
