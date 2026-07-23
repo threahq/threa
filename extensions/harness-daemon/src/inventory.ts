@@ -113,6 +113,42 @@ export function readInventory(): ManagedAgent[] {
   }
 }
 
+export function readInventoryReadonly(): ManagedAgent[] {
+  const path = inventoryPath()
+  if (!existsSync(path)) return []
+  const db = new Database(path, { readonly: true })
+  try {
+    const table = db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'managed_agents'").get()
+    if (!table) return []
+    const columns = new Set(
+      (db.query("PRAGMA table_info(managed_agents)").all() as Array<{ name: string }>).map(({ name }) => name)
+    )
+    const optional = [
+      "worktree",
+      "branch",
+      "tmux_session",
+      "tmux_window",
+      "tmux_window_id",
+      "tmux_pane_id",
+      "scratchpad_url",
+      "instance_id",
+      "runtime_session_id",
+      "last_output",
+      "probe_failures",
+      "probe_backoff_until",
+    ]
+    const projection = optional.map((name) => (columns.has(name) ? name : `NULL AS ${name}`))
+    const rows = db
+      .query(
+        `SELECT id, name, runtime, status, ${projection.join(", ")}, command_json, created_at, updated_at FROM managed_agents ORDER BY created_at ASC`
+      )
+      .all() as ManagedAgentRow[]
+    return rows.map(rowToAgent)
+  } finally {
+    db.close()
+  }
+}
+
 export function upsertAgent(agent: ManagedAgent): void {
   const db = openInventory()
   try {
@@ -168,8 +204,7 @@ export function upsertAgent(agent: ManagedAgent): void {
   }
 }
 
-export function findAgent(ref: string): ManagedAgent {
-  const agents = readInventory()
+export function findAgentOrUndefined(ref: string, agents: ManagedAgent[] = readInventory()): ManagedAgent | undefined {
   const byId = agents.find((agent) => agent.id === ref)
   if (byId) return byId
 
@@ -179,7 +214,10 @@ export function findAgent(ref: string): ManagedAgent {
   if (byRuntimeSession[0]) return byRuntimeSession[0]
 
   const matches = agents.filter((agent) => agent.name === ref)
-  if (matches.length === 0) die(`no agent found for ${ref}`)
   if (matches.length > 1) die(`multiple agents match ${ref}; use id`)
   return matches[0]
+}
+
+export function findAgent(ref: string): ManagedAgent {
+  return findAgentOrUndefined(ref) ?? die(`no agent found for ${ref}`)
 }

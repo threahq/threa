@@ -1,6 +1,6 @@
 # harness-daemon
 
-Local supervisor for Threa-linked agent sessions (Claude Code channel + Pi remote). `spawn` creates worktree + tmux window + harness and records the launch in `~/.threa/harnessd/inventory.sqlite`; `up` and the `watch-unarchived` LaunchAgent revive recorded sessions safely. `kick <ref>` sends Enter to a managed session (the same nudge exposed as `/kick` in its linked scratchpad). Run `threa-harnessd help` for the full command list.
+Local supervisor for Threa-linked agent sessions (Claude Code channel + Pi remote). `spawn` creates worktree + tmux window + harness and records the launch in `~/.threa/harnessd/inventory.sqlite`; `up` and the `watch-unarchived` LaunchAgent revive recorded sessions safely. `kick <ref>` sends Enter to a managed session (the same nudge exposed as `/kick` in its linked scratchpad). If a Claude channel session was launched by the standalone worktree helper and has no inventory row, `kick` can still resolve its exact runtime session ID from a live `server:threa-channel` tmux pane and nudge it without adopting or reviving it. Run `threa-harnessd help` for the full command list.
 
 ## `up` (alias `resume-active`)
 
