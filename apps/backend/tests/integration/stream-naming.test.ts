@@ -33,7 +33,7 @@ function createMockStream(overrides: Partial<Stream> = {}): Stream {
     description: null,
     visibility: "private",
     parentStreamId: null,
-    parentMessageId: null,
+    parentAnchorId: null,
     rootStreamId: null,
     companionMode: "off",
     companionPersonaId: null,

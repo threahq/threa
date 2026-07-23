@@ -60,7 +60,7 @@ export async function loadCrossSurfaceStitch(
 
   // Only a thread spawned from a message has a parent discussion to stitch, and
   // a non-positive budget means the thread's own window already filled it.
-  if (thread.type !== StreamTypes.THREAD || !thread.parentMessageId || maxChars <= 0) return null
+  if (thread.type !== StreamTypes.THREAD || !thread.parentAnchorId?.startsWith("msg_") || maxChars <= 0) return null
 
   // The spawning message lives in the parent stream — the bridge into the
   // discussion this thread was pulled from. `findThreadRoot` filters soft-deleted

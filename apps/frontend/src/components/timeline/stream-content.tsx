@@ -701,7 +701,10 @@ export function StreamContent({
   // The thread's anchor: a message (`msg_…`) or a card (`event_…`), located in the
   // parent timeline by its canonical id. `matchesDeepLinkTarget` is exactly this
   // lookup (payload.messageId for messages, event id for cards).
-  const anchorId = stream ? (stream.parentAnchorId ?? stream.parentMessageId) : null
+  // Legacy IDB rows (cached before anchor unification) carry only
+  // `parentMessageId`; read it off the cached row so an offline-first startup
+  // resolves the anchor before the next online bootstrap rewrites the row.
+  const anchorId = stream ? (stream.parentAnchorId ?? idbStream?.parentMessageId ?? null) : null
   const parentCachedEvents = useStreamEvents(parentStreamId ?? undefined)
   const cachedAnchorEvent = useMemo(() => {
     if (!isThread || !parentStreamId || !anchorId || !parentCachedEvents) return null

@@ -566,7 +566,7 @@ describe("BoundaryExtractionService", () => {
           companionMode: "off",
           createdBy: testUserId,
           parentStreamId: testStreamId,
-          parentMessageId: parentMsgId,
+          parentAnchorId: parentMsgId,
         })
 
         // Thread root message in the thread stream.

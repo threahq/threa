@@ -12,7 +12,7 @@ const SCHEDULED_ROW = {
   workspace_id: "ws_1",
   user_id: "usr_1",
   stream_id: "stream_1",
-  parent_message_id: null,
+  parent_anchor_id: null,
   content_json: { type: "doc", content: [] },
   content_markdown: "hello",
   attachment_ids: [],

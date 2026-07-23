@@ -67,7 +67,6 @@ function seedStream(overrides: { id: string } & Partial<Record<string, unknown>>
     type: "channel",
     visibility: "private",
     rootStreamId: null,
-    parentMessageId: null,
     archivedAt: null,
     ...overrides,
   } as never)
@@ -115,7 +114,6 @@ function makeArchivedRoot(id: string): Stream {
     description: null,
     visibility: "public",
     parentStreamId: null,
-    parentMessageId: null,
     rootStreamId: null,
     companionMode: "off",
     companionPersonaId: null,
@@ -273,7 +271,7 @@ describe("useAllDrafts board-composer drafts", () => {
       workspaceId,
       type: "thread",
       parentStreamId: "stream_9",
-      parentMessageId: "msg_fork_b",
+      parentAnchorId: "msg_fork_b",
     } as unknown as Parameters<typeof db.streams.put>[0])
     await db.drafts.add(syncedDraft({ id: "draft_b6", scope: "board:branch-reply:conv_branch" }))
 

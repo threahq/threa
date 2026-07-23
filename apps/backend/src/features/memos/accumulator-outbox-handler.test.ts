@@ -25,7 +25,7 @@ function makeStream(overrides: Partial<Record<string, unknown>>): any {
     description: null,
     visibility: "private",
     parentStreamId: null,
-    parentMessageId: null,
+    parentAnchorId: null,
     rootStreamId: null,
     companionMode: CompanionModes.OFF,
     companionPersonaId: null,

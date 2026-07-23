@@ -27,7 +27,6 @@ interface StreamRow {
   visibility: string
   parent_stream_id: string | null
   parent_anchor_id: string | null
-  parent_message_id: string | null
   root_stream_id: string | null
   reply_count: number
   last_reply_at: Date | null
@@ -109,11 +108,9 @@ export interface Stream {
   parentStreamId: string | null
   /**
    * Canonical id of the timeline item this thread anchors on (`msg_…` / `event_…`),
-   * or null on non-thread streams. The one anchor track; `parentMessageId` is the
-   * grace-period legacy shadow.
+   * or null on non-thread streams. The one anchor track.
    */
   parentAnchorId: string | null
-  parentMessageId: string | null
   rootStreamId: string | null
   /** Live reply count on a thread stream (0 for non-threads). */
   replyCount: number
@@ -169,7 +166,6 @@ export interface InsertStreamParams {
   parentStreamId?: string
   /** Canonical anchor id (`msg_…` / `event_…`) for a thread. */
   parentAnchorId?: string
-  parentMessageId?: string
   rootStreamId?: string
   companionMode?: CompanionMode
   companionPersonaId?: string
@@ -226,7 +222,6 @@ function mapRowToStream(row: StreamRow): Stream {
     visibility: row.visibility as Visibility,
     parentStreamId: row.parent_stream_id,
     parentAnchorId: row.parent_anchor_id,
-    parentMessageId: row.parent_message_id,
     rootStreamId: row.root_stream_id,
     replyCount: row.reply_count,
     lastReplyAt: row.last_reply_at,
@@ -281,7 +276,7 @@ function mapRowToStreamWithPreview(row: StreamWithPreviewRow): StreamWithPreview
 
 const SELECT_FIELDS = `
   id, workspace_id, type, display_name, slug, description, description_json, visibility,
-  parent_stream_id, parent_anchor_id, parent_message_id, root_stream_id, reply_count, last_reply_at,
+  parent_stream_id, parent_anchor_id, root_stream_id, reply_count, last_reply_at,
   companion_mode, companion_persona_id, memory_mode, purpose,
   created_by, created_at, updated_at, archived_at, display_name_generated_at
 `
@@ -291,7 +286,7 @@ const SELECT_FIELDS = `
 // NULL for them) so callers don't have to branch on stream type.
 const SELECT_FIELDS_WITH_E2E = `
   s.id, s.workspace_id, s.type, s.display_name, s.slug, s.description, s.description_json, s.visibility,
-  s.parent_stream_id, s.parent_anchor_id, s.parent_message_id, s.root_stream_id, s.reply_count, s.last_reply_at,
+  s.parent_stream_id, s.parent_anchor_id, s.root_stream_id, s.reply_count, s.last_reply_at,
   s.companion_mode, s.companion_persona_id, s.memory_mode, s.purpose,
   s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
@@ -852,7 +847,7 @@ export const StreamRepository = {
     const result = await db.query<StreamRow>(sql`
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, description_json, visibility,
-        parent_stream_id, parent_anchor_id, parent_message_id, root_stream_id,
+        parent_stream_id, parent_anchor_id, root_stream_id,
         companion_mode, companion_persona_id, memory_mode, purpose, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
@@ -865,7 +860,6 @@ export const StreamRepository = {
         ${params.visibility ?? "private"},
         ${params.parentStreamId ?? null},
         ${params.parentAnchorId ?? null},
-        ${params.parentMessageId ?? null},
         ${params.rootStreamId ?? null},
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
@@ -890,7 +884,7 @@ export const StreamRepository = {
     const insertResult = await db.query<StreamRow>(sql`
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, visibility,
-        parent_stream_id, parent_message_id, root_stream_id,
+        parent_stream_id, parent_anchor_id, root_stream_id,
         companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
@@ -901,7 +895,7 @@ export const StreamRepository = {
         ${params.description ?? null},
         ${params.visibility ?? "private"},
         ${params.parentStreamId ?? null},
-        ${params.parentMessageId ?? null},
+        ${params.parentAnchorId ?? null},
         ${params.rootStreamId ?? null},
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
@@ -934,18 +928,14 @@ export const StreamRepository = {
    * @returns { stream, created } - The stream and whether it was newly created
    */
   async insertThreadOrFind(db: Querier, params: InsertStreamParams): Promise<{ stream: Stream; created: boolean }> {
-    const anchorId = params.parentAnchorId ?? params.parentMessageId ?? null
+    const anchorId = params.parentAnchorId ?? null
     if (!params.parentStreamId || !anchorId) {
       throw new Error("parentStreamId and parentAnchorId are required for thread creation")
     }
-    // Dual-write the legacy column for message anchors so an old-deploy replica
-    // (which reads only `parent_message_id`) still resolves the thread during
-    // the grace window. Event anchors leave it null — old code never knew them.
-    const legacyMessageId = anchorId?.startsWith("msg_") ? anchorId : null
     const insertResult = await db.query<StreamRow>(sql`
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, visibility,
-        parent_stream_id, parent_anchor_id, parent_message_id, root_stream_id,
+        parent_stream_id, parent_anchor_id, root_stream_id,
         companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
@@ -957,7 +947,6 @@ export const StreamRepository = {
         ${params.visibility ?? "private"},
         ${params.parentStreamId ?? null},
         ${anchorId},
-        ${legacyMessageId},
         ${params.rootStreamId ?? null},
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
@@ -965,7 +954,7 @@ export const StreamRepository = {
         ${params.uniquenessKey ?? null},
         ${params.createdBy}
       )
-      ON CONFLICT DO NOTHING
+      ON CONFLICT (parent_stream_id, parent_anchor_id) WHERE parent_anchor_id IS NOT NULL DO NOTHING
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
 
@@ -1103,38 +1092,26 @@ export const StreamRepository = {
 
   /**
    * Find a thread by its anchor (`msg_…` / `event_…`) within a parent stream.
-   * Reads `COALESCE(parent_anchor_id, parent_message_id)` so a thread written by
-   * an old-deploy replica (legacy column only) still resolves during the grace
-   * period. The canonical find-or-create lookup that `insertThreadOrFind` falls
-   * back to.
+   * The canonical find-or-create lookup that `insertThreadOrFind` falls back to.
    */
   async findByAnchor(db: Querier, parentStreamId: string, parentAnchorId: string): Promise<Stream | null> {
     const result = await db.query<StreamRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
       WHERE parent_stream_id = ${parentStreamId}
-        AND COALESCE(parent_anchor_id, parent_message_id) = ${parentAnchorId}
+        AND parent_anchor_id = ${parentAnchorId}
     `)
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
-  // Message-anchored lookup, delegating to the anchor-agnostic path. Retained
-  // (not inlined) because message-keyed call sites still pass a `msg_` id.
-  async findByParentMessage(db: Querier, parentStreamId: string, parentMessageId: string): Promise<Stream | null> {
-    return this.findByAnchor(db, parentStreamId, parentMessageId)
-  },
-
   /**
    * Find all threads for messages in a given parent stream.
-   * Returns a map of parentMessageId -> threadStreamId
+   * Returns a map of anchorId -> threadStreamId
    */
   async findThreadsForMessages(db: Querier, parentStreamId: string): Promise<Map<string, string>> {
-    // COALESCE so threads written by an old-deploy replica (legacy column only)
-    // still resolve during the grace period. Message anchors key by their `msg_`
-    // id either way, matching the caller's message-keyed map.
     const result = await db.query<{ anchor_id: string; id: string }>(sql`
-      SELECT COALESCE(parent_anchor_id, parent_message_id) AS anchor_id, id FROM streams
+      SELECT parent_anchor_id AS anchor_id, id FROM streams
       WHERE parent_stream_id = ${parentStreamId}
-        AND COALESCE(parent_anchor_id, parent_message_id) IS NOT NULL
+        AND parent_anchor_id IS NOT NULL
     `)
     const map = new Map<string, string>()
     for (const row of result.rows) {
@@ -1145,7 +1122,7 @@ export const StreamRepository = {
 
   /**
    * Find threads for a specific set of message IDs within a parent stream.
-   * Returns a map of parentMessageId -> threadStreamId
+   * Returns a map of anchorId -> threadStreamId
    */
   async findThreadsForMessageIds(
     db: Querier,
@@ -1154,9 +1131,9 @@ export const StreamRepository = {
   ): Promise<Map<string, string>> {
     if (messageIds.length === 0) return new Map()
     const result = await db.query<{ anchor_id: string; id: string }>(sql`
-      SELECT COALESCE(parent_anchor_id, parent_message_id) AS anchor_id, id FROM streams
+      SELECT parent_anchor_id AS anchor_id, id FROM streams
       WHERE parent_stream_id = ${parentStreamId}
-        AND COALESCE(parent_anchor_id, parent_message_id) = ANY(${messageIds})
+        AND parent_anchor_id = ANY(${messageIds})
     `)
     const map = new Map<string, string>()
     for (const row of result.rows) {
@@ -1186,18 +1163,16 @@ export const StreamRepository = {
       SET parent_stream_id = ${params.destinationParentStreamId}, updated_at = NOW()
       WHERE workspace_id = ${params.workspaceId}
         AND parent_stream_id = ${params.sourceParentStreamId}
-        AND COALESCE(parent_anchor_id, parent_message_id) = ANY(${params.parentMessageIds})
+        AND parent_anchor_id = ANY(${params.parentMessageIds})
     `)
   },
 
   /**
-   * Find all threads anchored in a given parent stream. During grace, message
-   * anchors read the legacy parent-message shadow because predecessor replicas
-   * update only that column; event anchors read `streams.reply_count`. Returns a
-   * map of anchorId -> { threadId, replyCount },
-   * keyed by `COALESCE(parent_anchor_id, parent_message_id)` so message- and
-   * event-anchored threads surface uniformly (and grace-window rows written by
-   * an old-deploy replica with only the legacy column still resolve).
+   * Find all threads anchored in a given parent stream, with reply counts read
+   * from the maintained `streams.reply_count` (the thread IS the stream its
+   * replies land in). Returns a map of anchorId -> { threadId, replyCount },
+   * keyed by `parent_anchor_id` so message- and event-anchored threads surface
+   * uniformly.
    */
   async findThreadsWithReplyCounts(
     db: Querier,
@@ -1213,21 +1188,14 @@ export const StreamRepository = {
     // in its window, not every thread in the stream).
     const result = await db.query<{ anchor_id: string; id: string; reply_count: number }>(sql`
       SELECT
-        COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id,
+        s.parent_anchor_id AS anchor_id,
         s.id,
-        CASE
-          WHEN COALESCE(s.parent_anchor_id, s.parent_message_id) LIKE 'msg_%'
-            THEN COALESCE(anchor_message.reply_count, s.reply_count)
-          ELSE s.reply_count
-        END AS reply_count
+        s.reply_count
       FROM streams s
-      LEFT JOIN messages anchor_message
-        ON anchor_message.id = COALESCE(s.parent_anchor_id, s.parent_message_id)
-       AND anchor_message.stream_id = s.parent_stream_id
       WHERE s.parent_stream_id = ${parentStreamId}
         AND s.type = 'thread'
-        AND COALESCE(s.parent_anchor_id, s.parent_message_id) IS NOT NULL
-        AND (${anchorIds === undefined} OR COALESCE(s.parent_anchor_id, s.parent_message_id) = ANY(${anchorIds ?? []}))
+        AND s.parent_anchor_id IS NOT NULL
+        AND (${anchorIds === undefined} OR s.parent_anchor_id = ANY(${anchorIds ?? []}))
     `)
     const map = new Map<string, { threadId: string; replyCount: number }>()
     for (const row of result.rows) {
@@ -1263,27 +1231,18 @@ export const StreamRepository = {
 
   /**
    * Anchor ids (of the given candidate set) whose thread in this parent stream
-   * has at least one live reply. Message anchors use the grace-period parent
-   * shadow; event anchors use `streams.reply_count`. Used by boundary extraction
-   * to decide which anchors to
-   * pull thread content for.
+   * has at least one live reply according to `streams.reply_count`. Used by
+   * boundary extraction to decide which anchors to pull thread content for.
    */
   async findAnchorsWithReplies(db: Querier, parentStreamId: string, anchorIds: string[]): Promise<Set<string>> {
     if (anchorIds.length === 0) return new Set<string>()
     const result = await db.query<{ anchor_id: string }>(sql`
-      SELECT COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id
-      FROM streams s
-      LEFT JOIN messages anchor_message
-        ON anchor_message.id = COALESCE(s.parent_anchor_id, s.parent_message_id)
-       AND anchor_message.stream_id = s.parent_stream_id
-      WHERE s.parent_stream_id = ${parentStreamId}
-        AND s.type = 'thread'
-        AND CASE
-          WHEN COALESCE(s.parent_anchor_id, s.parent_message_id) LIKE 'msg_%'
-            THEN COALESCE(anchor_message.reply_count, s.reply_count)
-          ELSE s.reply_count
-        END > 0
-        AND COALESCE(s.parent_anchor_id, s.parent_message_id) = ANY(${anchorIds})
+      SELECT parent_anchor_id AS anchor_id
+      FROM streams
+      WHERE parent_stream_id = ${parentStreamId}
+        AND type = 'thread'
+        AND reply_count > 0
+        AND parent_anchor_id = ANY(${anchorIds})
     `)
     return new Set(result.rows.map((r) => r.anchor_id))
   },
@@ -1317,12 +1276,11 @@ export const StreamRepository = {
     // `anchorIds === undefined` keeps the whole-stream behavior; passing a list
     // scopes the (potentially large) reply scan to just those anchors so a
     // bootstrap of a deep stream doesn't summarize every thread it has ever had.
-    // Keyed by `COALESCE(parent_anchor_id, parent_message_id)` so event-anchored
-    // threads surface and grace-window legacy-only rows still resolve.
+    // Keyed by `parent_anchor_id` so event-anchored threads surface uniformly.
     const result = await db.query<ThreadSummaryRow>(sql`
       WITH thread_messages AS (
         SELECT
-          COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id,
+          s.parent_anchor_id AS anchor_id,
           m.id,
           m.author_id,
           m.author_type,
@@ -1332,9 +1290,9 @@ export const StreamRepository = {
         JOIN messages m ON m.stream_id = s.id
         WHERE s.parent_stream_id = ${parentStreamId}
           AND s.type = 'thread'
-          AND COALESCE(s.parent_anchor_id, s.parent_message_id) IS NOT NULL
+          AND s.parent_anchor_id IS NOT NULL
           AND m.deleted_at IS NULL
-          AND (${anchorIds === undefined} OR COALESCE(s.parent_anchor_id, s.parent_message_id) = ANY(${anchorIds ?? []}))
+          AND (${anchorIds === undefined} OR s.parent_anchor_id = ANY(${anchorIds ?? []}))
       ),
       latest AS (
         SELECT DISTINCT ON (anchor_id)
@@ -1390,11 +1348,12 @@ export const StreamRepository = {
    * path so the frontend can refresh ThreadCard content without waiting for
    * the next bootstrap.
    *
-   * Optimized for the single-parent case (direct anchor filter, `LIMIT 1` on the
-   * latest reply, no per-parent grouping) but produces rows shaped identically to
-   * `findThreadSummaries` so the shared `threadSummaryFromRow` mapper can construct
-   * the domain object. The parity is covered by a test that asserts both entry
-   * points return the same `ThreadSummary` for a given parent.
+   * Optimized for the single-parent case (direct `parent_anchor_id` filter,
+   * `LIMIT 1` on the latest reply, no per-parent grouping) but produces rows
+   * shaped identically to `findThreadSummaries` so the shared
+   * `threadSummaryFromRow` mapper can construct the domain object. The parity
+   * is covered by a test that asserts both entry points return the same
+   * `ThreadSummary` for a given parent.
    *
    * `parentStreamId` correlates the leading column of `idx_streams_thread_anchor
    * (parent_stream_id, parent_anchor_id)` so this runs as an index seek — it fires
@@ -1409,7 +1368,7 @@ export const StreamRepository = {
     const result = await db.query<ThreadSummaryRow>(sql`
       WITH thread_messages AS (
         SELECT
-          COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id,
+          s.parent_anchor_id AS anchor_id,
           m.id,
           m.author_id,
           m.author_type,
@@ -1418,7 +1377,7 @@ export const StreamRepository = {
         FROM streams s
         JOIN messages m ON m.stream_id = s.id
         WHERE s.parent_stream_id = ${parentStreamId}
-          AND COALESCE(s.parent_anchor_id, s.parent_message_id) = ${anchorId}
+          AND s.parent_anchor_id = ${anchorId}
           AND s.type = 'thread'
           AND m.deleted_at IS NULL
       ),

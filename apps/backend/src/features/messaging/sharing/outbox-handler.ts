@@ -24,11 +24,10 @@ export const POINTER_INVALIDATED_EVENT = "pointer:invalidated"
  *   target. Content/author/createdAt are unchanged, so the invalidation is
  *   purely a cache-bust hint to re-fetch the hydration payload.
  *
- * `message:updated` is reserved for thread-reply-count bumps
- * (`event-service.ts:163`) and never carries a content/streamId delta, so
- * including it here would fan out `pointer:invalidated` to every target
- * stream of every shared parent on every reply — a pure cache-bust with
- * nothing to re-fetch.
+ * `thread:updated` carries thread-reply-count bumps and never a content/streamId
+ * delta, so including it here would fan out `pointer:invalidated` to every target
+ * stream of every shared parent on every reply — a pure cache-bust with nothing
+ * to re-fetch. (It is not stream-message-scoped anyway, so it never reaches here.)
  */
 function extractMessageIdsForInvalidation(event: OutboxEvent): string[] {
   if (isOutboxEventType(event, "message:edited")) {

@@ -87,7 +87,7 @@ async function seedThread(
     displayName: "Thread",
     visibility: Visibilities.PRIVATE,
     parentStreamId: channelId,
-    parentMessageId: spawningMessageId,
+    parentAnchorId: spawningMessageId,
     rootStreamId: channelId,
     createdBy: ownerId,
   })

@@ -145,9 +145,27 @@ function aggregateReactionsByMessage(rows: ReactionRow[]): Map<string, Record<st
   return result
 }
 
+// `reply_count` is derived, not stored: the message's replies live in the
+// thread stream anchored on it (`streams.parent_anchor_id = <message id>`), so
+// the count is that thread row's maintained `reply_count` (0 when no thread).
+// Correlate BOTH anchor columns (`parent_stream_id = <msg>.stream_id AND
+// parent_anchor_id = <msg>.id`) so the lookup seeks `idx_streams_thread_anchor
+// (parent_stream_id, parent_anchor_id)` instead of scanning `streams` per row —
+// this fires on every message read (lists, search, bootstrap). A thread's parent
+// stream is always its anchor's stream (the move path relinks both together).
+// Shared with search (INV-33/35): interpolate via `sql.raw(...)` inside `sql`
+// templates, or embed in a `sql.raw` field string as here.
+export const REPLY_COUNT_SUBQUERY = (messageAlias: string) => `
+  COALESCE((
+    SELECT t.reply_count FROM streams t
+    WHERE t.parent_stream_id = ${messageAlias}.stream_id
+      AND t.parent_anchor_id = ${messageAlias}.id
+      AND t.type = 'thread'
+  ), 0) AS reply_count`
+
 const SELECT_FIELDS = `
   id, stream_id, sequence, author_id, author_type,
-  content_json, content_markdown, reply_count, client_message_id, sent_via,
+  content_json, content_markdown, ${REPLY_COUNT_SUBQUERY("messages")}, client_message_id, sent_via,
   metadata, conversation_intent,
   edited_at, deleted_at, created_at,
   ciphertext, envelope, e2e_version
@@ -155,7 +173,7 @@ const SELECT_FIELDS = `
 
 const QUALIFIED_SELECT_FIELDS = `
   m.id, m.stream_id, m.sequence, m.author_id, m.author_type,
-  m.content_json, m.content_markdown, m.reply_count, m.client_message_id, m.sent_via,
+  m.content_json, m.content_markdown, ${REPLY_COUNT_SUBQUERY("m")}, m.client_message_id, m.sent_via,
   m.metadata, m.conversation_intent,
   m.edited_at, m.deleted_at, m.created_at,
   m.ciphertext, m.envelope, m.e2e_version
@@ -338,14 +356,15 @@ export const MessageRepository = {
    * include the root so the reply chain stays intelligible. Callers that use
    * `MessageRepository.list(streamId)` on a thread stream miss the root by
    * default (it lives in the parent stream). This helper centralises:
-   *   1. The `parentMessageId` presence check
+   *   1. The message-anchor check — event-anchored threads (`event_…`) have no
+   *      root MESSAGE, so return null (nothing for `findById` to fetch).
    *   2. The `findById` lookup
    *   3. The soft-delete filter — `findById` doesn't filter `deletedAt IS NULL`,
    *      so without this guard a user's deleted root would still reach the AI.
    */
-  async findThreadRoot(db: Querier, stream: { parentMessageId: string | null }): Promise<Message | null> {
-    if (!stream.parentMessageId) return null
-    const parent = await MessageRepository.findById(db, stream.parentMessageId)
+  async findThreadRoot(db: Querier, stream: { parentAnchorId?: string | null }): Promise<Message | null> {
+    if (!stream.parentAnchorId?.startsWith("msg_")) return null
+    const parent = await MessageRepository.findById(db, stream.parentAnchorId)
     if (!parent || parent.deletedAt) return null
     return parent
   },
@@ -695,55 +714,6 @@ export const MessageRepository = {
     return this.findById(db, messageId)
   },
 
-  async incrementReplyCount(db: Querier, id: string): Promise<void> {
-    await db.query(sql`
-      UPDATE messages
-      SET reply_count = reply_count + 1
-      WHERE id = ${id}
-    `)
-  },
-
-  async incrementReplyCountBy(db: Querier, id: string, count: number): Promise<void> {
-    if (count <= 0) return
-    await db.query(sql`
-      UPDATE messages
-      SET reply_count = reply_count + ${count}
-      WHERE id = ${id}
-    `)
-  },
-
-  async decrementReplyCount(db: Querier, id: string): Promise<void> {
-    await db.query(sql`
-      UPDATE messages
-      SET reply_count = GREATEST(reply_count - 1, 0)
-      WHERE id = ${id}
-    `)
-  },
-
-  async decrementReplyCountBy(db: Querier, id: string, count: number): Promise<void> {
-    if (count <= 0) return
-    await db.query(sql`
-      UPDATE messages
-      SET reply_count = GREATEST(reply_count - ${count}, 0)
-      WHERE id = ${id}
-    `)
-  },
-
-  async getReplyCountsBatch(db: Querier, messageIds: string[]): Promise<Map<string, number>> {
-    if (messageIds.length === 0) return new Map()
-
-    const result = await db.query<{ id: string; reply_count: number }>(sql`
-      SELECT id, reply_count FROM messages
-      WHERE id = ANY(${messageIds})
-    `)
-
-    const map = new Map<string, number>()
-    for (const row of result.rows) {
-      map.set(row.id, row.reply_count)
-    }
-    return map
-  },
-
   /**
    * Count non-deleted messages in a stream. Used by surfaces that label a
    * stream by its size (e.g. context-bag chip strips: "12 messages in #intro").
@@ -808,20 +778,20 @@ export const MessageRepository = {
   },
 
   /**
-   * Find messages from threads rooted at the given anchors, keyed by anchor id
-   * (`COALESCE(parent_anchor_id, parent_message_id)`) in chronological order.
-   * Anchors may be message ids (`msg_…`) or card event ids (`event_…`).
+   * Find messages from threads anchored on the given anchor ids, keyed by
+   * anchorId in chronological order. Anchors may be message ids (`msg_…`) or
+   * card event ids (`event_…`).
    */
   async findThreadMessages(db: Querier, anchorIds: string[]): Promise<Map<string, Message[]>> {
     if (anchorIds.length === 0) return new Map()
 
-    const result = await db.query<MessageRow & { anchor_id: string }>(sql`
+    const result = await db.query<MessageRow & { parent_anchor_id: string }>(sql`
       SELECT
         ${sql.raw(QUALIFIED_SELECT_FIELDS)},
-        COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id
+        s.parent_anchor_id
       FROM messages m
       JOIN streams s ON m.stream_id = s.id
-      WHERE COALESCE(s.parent_anchor_id, s.parent_message_id) = ANY(${anchorIds})
+      WHERE s.parent_anchor_id = ANY(${anchorIds})
         AND s.type = 'thread'
         AND m.deleted_at IS NULL
       ORDER BY m.created_at ASC, m.id ASC
@@ -838,7 +808,7 @@ export const MessageRepository = {
 
     const byParent = new Map<string, Message[]>()
     for (const row of result.rows) {
-      const parentId = row.anchor_id
+      const parentId = row.parent_anchor_id
       const messages = byParent.get(parentId) ?? []
       messages.push(mapRowToMessage(row, reactionsByMessage.get(row.id) ?? {}))
       byParent.set(parentId, messages)

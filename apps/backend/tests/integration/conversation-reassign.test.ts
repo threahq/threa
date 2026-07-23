@@ -357,7 +357,7 @@ describe("ConversationService.reassignMessage", () => {
         companionMode: "off",
         createdBy: testUserId,
         parentStreamId: testStreamId,
-        parentMessageId: msg1Id,
+        parentAnchorId: msg1Id,
         rootStreamId: testStreamId,
       })
       await MessageRepository.insert(client, {

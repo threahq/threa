@@ -51,7 +51,6 @@ function createScratchpad(overrides: Partial<StreamItemData> = {}): StreamItemDa
     description: null,
     visibility: Visibilities.PRIVATE,
     parentStreamId: null,
-    parentMessageId: null,
     rootStreamId: null,
     companionMode: "on",
     companionPersonaId: null,

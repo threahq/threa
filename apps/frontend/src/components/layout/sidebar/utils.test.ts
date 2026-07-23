@@ -12,7 +12,6 @@ function makeStream(overrides: Partial<StreamWithPreview> = {}): StreamWithPrevi
     description: null,
     visibility: Visibilities.PRIVATE,
     parentStreamId: null,
-    parentMessageId: null,
     rootStreamId: null,
     companionMode: "off",
     companionPersonaId: null,

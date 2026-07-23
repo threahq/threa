@@ -19,11 +19,7 @@ import { withTestTransaction, addTestMember, setupTestDatabase, testMessageConte
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
-import {
-  OutboxRepository,
-  type MessageUpdatedOutboxPayload,
-  type ThreadUpdatedOutboxPayload,
-} from "../../src/lib/outbox"
+import { OutboxRepository, type ThreadUpdatedOutboxPayload } from "../../src/lib/outbox"
 import { userId, workspaceId } from "../../src/lib/id"
 import { Visibilities } from "@threa/types"
 
@@ -315,33 +311,6 @@ describe("Thread Summary", () => {
         counts: [],
       })
     })
-
-    test("predecessor-replica writes keep the thread projection synchronized during grace", async () => {
-      const fixture = await seedThread(1, 1)
-
-      await pool.query("UPDATE streams SET reply_count = 0 WHERE id = $1", [fixture.threadId])
-      await pool.query("UPDATE messages SET reply_count = 2 WHERE id = $1", [fixture.parentMessageId])
-
-      let counts = await StreamRepository.findThreadsWithReplyCounts(pool, fixture.channelId, [fixture.parentMessageId])
-      let anchors = await StreamRepository.findAnchorsWithReplies(pool, fixture.channelId, [fixture.parentMessageId])
-      const projectedAfterIncrement = await StreamRepository.findById(pool, fixture.threadId)
-      expect({
-        count: counts.get(fixture.parentMessageId)?.replyCount,
-        projectedCount: projectedAfterIncrement?.replyCount,
-        included: anchors.has(fixture.parentMessageId),
-      }).toEqual({ count: 2, projectedCount: 2, included: true })
-
-      await pool.query("UPDATE messages SET reply_count = 0 WHERE id = $1", [fixture.parentMessageId])
-
-      counts = await StreamRepository.findThreadsWithReplyCounts(pool, fixture.channelId, [fixture.parentMessageId])
-      anchors = await StreamRepository.findAnchorsWithReplies(pool, fixture.channelId, [fixture.parentMessageId])
-      const projectedAfterDecrement = await StreamRepository.findById(pool, fixture.threadId)
-      expect({
-        count: counts.get(fixture.parentMessageId)?.replyCount,
-        projectedCount: projectedAfterDecrement?.replyCount,
-        included: anchors.has(fixture.parentMessageId),
-      }).toEqual({ count: 0, projectedCount: 0, included: false })
-    })
   })
 
   describe("thread-summary reactivity", () => {
@@ -361,16 +330,15 @@ describe("Thread Summary", () => {
       })
 
       const outboxEvents = await OutboxRepository.fetchAfterId(pool, baselineId)
-      const refreshEvent = outboxEvents.find((event) => event.eventType === "message:updated")
+      const refreshEvent = outboxEvents.find((event) => event.eventType === "thread:updated")
 
       expect(refreshEvent).toBeDefined()
-      const payload = refreshEvent!.payload as MessageUpdatedOutboxPayload
+      const payload = refreshEvent!.payload as ThreadUpdatedOutboxPayload
       expect(payload).toMatchObject({
         workspaceId: f.wsId,
         streamId: f.channelId,
-        messageId: f.parentMessageId,
-        updateType: "reply_count",
-        replyCount: 1,
+        parentStreamId: f.channelId,
+        anchorId: f.parentMessageId,
       })
       expect(payload.threadSummary).not.toBeNull()
       expect(payload.threadSummary!.latestReply).toMatchObject({

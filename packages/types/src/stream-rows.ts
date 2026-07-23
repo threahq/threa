@@ -259,7 +259,8 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   // card is stream chrome, not anchored to a board conversation and never moving a
   // card in the board's activity order (matching the delegation precedent).
   // Own broadcast row (the live call card), like CHROME_BROADCAST, but threadable:
-  // the call chat is a thread anchored on this event (`calls.chat_stream_id`).
+  // the call chat is a thread anchored on this event id (lazily created via
+  // `insertThreadOrFind`; no dedicated column).
   call_started: {
     rendersAsOwnRow: true,
     grouping: null,

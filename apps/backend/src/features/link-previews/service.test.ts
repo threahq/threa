@@ -57,7 +57,7 @@ function makeStream(overrides: Partial<AccessibleStream> = {}): AccessibleStream
     description: null,
     visibility: "public",
     parentStreamId: null,
-    parentMessageId: null,
+    parentAnchorId: null,
     rootStreamId: null,
     companionMode: "off",
     companionPersonaId: null,

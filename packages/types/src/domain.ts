@@ -235,17 +235,9 @@ export interface Stream {
   /**
    * Canonical id of the timeline item a thread anchors on: `msg_…` for a
    * message, `event_…` for a card. The one anchor track (INV-2 prefix is the
-   * discriminator). Null on non-thread streams. Absent on legacy cached rows
-   * synced before this shipped — fall back to `parentMessageId` during the
-   * grace period (the backend reads `COALESCE(parent_anchor_id, parent_message_id)`).
+   * discriminator). Null on non-thread streams.
    */
   parentAnchorId?: string | null
-  /**
-   * Legacy message anchor. Retained through the grace period and still
-   * dual-written for `msg_` anchors; prefer `parentAnchorId`. Null on
-   * non-thread streams and on event-anchored threads.
-   */
-  parentMessageId: string | null
   rootStreamId: string | null
   /**
    * Live reply count for a thread stream (0 for non-threads). Maintained on the

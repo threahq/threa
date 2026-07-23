@@ -170,7 +170,6 @@ function makeStreamBootstrap(streamId = "stream_1", sequence = "2"): StreamBoots
       description: null,
       visibility: "private",
       parentStreamId: null,
-      parentMessageId: null,
       rootStreamId: null,
       companionMode: "off",
       companionPersonaId: null,

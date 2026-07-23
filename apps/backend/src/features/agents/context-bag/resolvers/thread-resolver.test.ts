@@ -31,7 +31,7 @@ function makeStream(overrides: Record<string, any> = {}): any {
     slug: null,
     description: null,
     parentStreamId: null,
-    parentMessageId: null,
+    parentAnchorId: null,
     rootStreamId: null,
     displayNameGeneratedAt: null,
     ...overrides,
@@ -269,7 +269,7 @@ describe("ThreadResolver.fetch", () => {
       id: "stream_thread",
       type: "thread",
       parentStreamId: "stream_root",
-      parentMessageId: "msg_root",
+      parentAnchorId: "msg_root",
     })
     spyOn(StreamRepository, "findById").mockResolvedValue(thread)
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Author" }] as any)
@@ -302,7 +302,7 @@ describe("ThreadResolver.fetch", () => {
     // the resolver honors that filter — the whole point of centralising
     // thread-root resolution in `findThreadRoot`.
     spyOn(StreamRepository, "findById").mockResolvedValue(
-      makeStream({ id: "stream_thread", type: "thread", parentMessageId: "msg_deleted" })
+      makeStream({ id: "stream_thread", type: "thread", parentAnchorId: "msg_deleted" })
     )
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Author" }] as any)
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
@@ -318,14 +318,14 @@ describe("ThreadResolver.fetch", () => {
     expect(result.items.map((i) => i.messageId)).toEqual(["msg_reply_1"])
   })
 
-  it("skips the root prepend when the source stream has no parentMessageId (scratchpad/channel)", async () => {
-    spyOn(StreamRepository, "findById").mockResolvedValue(makeStream({ parentMessageId: null }))
+  it("skips the root prepend when the source stream has no parentAnchorId (scratchpad/channel)", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue(makeStream({ parentAnchorId: null }))
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Author" }] as any)
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
     spyOn(MessageRepository, "list").mockResolvedValue([makeMessage({ id: "msg_a" })])
     // `findThreadAnchorContext` short-circuits when there's no anchor
-    // (parentAnchorId ?? parentMessageId === null) BEFORE delegating to
-    // findThreadRoot, so the root lookup never runs for a scratchpad/channel.
+    // (parentAnchorId === null) BEFORE delegating to findThreadRoot, so the
+    // root lookup never runs for a scratchpad/channel.
     const findThreadRoot = spyOn(MessageRepository, "findThreadRoot").mockResolvedValue(null)
 
     const result = await ThreadResolver.fetch({} as any, {
@@ -514,7 +514,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
     // root as focal in this case would synthesize a `Focused message`
     // section even though the discuss-window fallback path was taken.
     spyOn(StreamRepository, "findById").mockResolvedValue(
-      makeStream({ id: "stream_thread", type: "thread", parentMessageId: "msg_root" })
+      makeStream({ id: "stream_thread", type: "thread", parentAnchorId: "msg_root" })
     )
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Author" }] as any)
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])

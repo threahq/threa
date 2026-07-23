@@ -296,7 +296,8 @@ export class ConversationService {
     const memberIdsToFetch = new Set<string>()
     for (const conversation of conversations) {
       const stream = streamById.get(conversation.streamId)
-      if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) memberIdsToFetch.add(stream.parentMessageId)
+      const anchorMessageId = stream?.parentAnchorId?.startsWith("msg_") ? stream.parentAnchorId : null
+      if (stream?.type === StreamTypes.THREAD && anchorMessageId) memberIdsToFetch.add(anchorMessageId)
       for (const id of conversation.messageIds) memberIdsToFetch.add(id)
     }
     const memberIds = [...memberIdsToFetch]
@@ -310,10 +311,11 @@ export class ConversationService {
     const hydrateIds = new Set<string>()
     for (const conversation of conversations) {
       const stream = streamById.get(conversation.streamId)
+      const anchorMessageId = stream?.parentAnchorId?.startsWith("msg_") ? stream.parentAnchorId : null
       let originId: string | undefined
       let replyIds: string[]
-      if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
-        originId = stream.parentMessageId
+      if (stream?.type === StreamTypes.THREAD && anchorMessageId) {
+        originId = anchorMessageId
         replyIds = conversation.messageIds
       } else {
         originId = conversation.messageIds[0]
@@ -693,7 +695,8 @@ export class ConversationService {
 
       // The thread's fork message must be a member of the source — it's the
       // branch point the split heals into its own topic.
-      if (!threadStream.parentMessageId || !source.messageIds.includes(threadStream.parentMessageId)) {
+      const forkMessageId = threadStream.parentAnchorId?.startsWith("msg_") ? threadStream.parentAnchorId : null
+      if (!forkMessageId || !source.messageIds.includes(forkMessageId)) {
         throw new HttpError("Thread's fork message is not in the conversation", {
           status: 400,
           code: "FORK_MESSAGE_NOT_MEMBER",
@@ -1403,8 +1406,8 @@ export class ConversationService {
 
     const memberSet = new Set<string>([...conversation.messageIds, ...conversation.secondaryMessageIds])
     const stream = await StreamRepository.findById(client, conversation.streamId)
-    if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
-      memberSet.add(stream.parentMessageId)
+    if (stream?.type === StreamTypes.THREAD && stream.parentAnchorId?.startsWith("msg_")) {
+      memberSet.add(stream.parentAnchorId)
     }
 
     const fetchIds = new Set(memberSet)

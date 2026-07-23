@@ -22,7 +22,6 @@ function scratchpad(overrides: Partial<Stream> = {}): Stream {
     description: null,
     visibility: Visibilities.PRIVATE,
     parentStreamId: null,
-    parentMessageId: null,
     rootStreamId: null,
     companionMode: "off",
     companionPersonaId: null,

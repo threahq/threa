@@ -33,7 +33,6 @@ function makeItem(overrides: ItemOverrides): StreamItemData {
     description: null,
     visibility: Visibilities.PRIVATE,
     parentStreamId: null,
-    parentMessageId: null,
     rootStreamId: null,
     companionMode: "off",
     companionPersonaId: null,

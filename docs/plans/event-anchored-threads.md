@@ -113,7 +113,7 @@ Phase 1 (the feature stack, one deploy):
 2. Code dual-writes both columns (`parent_anchor_id` + legacy `parent_message_id` when `msg_`), dual-emits `thread:updated` + legacy reply_count patch, dual-maintains `streams.reply_count` + `messages.reply_count`. Old-deploy replicas writing only the legacy column stay correct during the window: new code reads `COALESCE(parent_anchor_id, parent_message_id)`.
 3. Frontend consumes the new shapes, tolerates the old for one deploy of skew (pages-before-Railway window).
 
-Phase 2 (cleanup PR after a short grace, ~1–2 weeks): stop legacy writes/emissions, remove alias acceptance + frontend legacy handlers, switch boundary extraction, then a final append-only migration drops `parent_message_id`, its index, and `messages.reply_count`.
+Phase 2 = **the chunk-7 cleanup PR** (built with the stack; Kris merges at will): stops legacy writes/emissions, removes alias acceptance + frontend legacy handlers, and its append-only migration (`20260722120000_thread_anchor_cleanup.sql`) drops `parent_message_id`, its index, and `messages.reply_count` (+ renames `scheduled_messages.parent_message_id` → `parent_anchor_id`). Two IDB dual-reads survive deliberately (cached stream rows + persisted op-queue entries outlive deploys).
 
 ## PR stack sketch
 

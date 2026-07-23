@@ -68,8 +68,6 @@ const createStreamSchema = z
     parentStreamId: z.string().optional(),
     /** Canonical thread anchor (`msg_…` message / `event_…` card). */
     parentAnchorId: z.string().optional(),
-    /** Legacy message anchor, accepted as an alias during grace (normalized to `parentAnchorId`). */
-    parentMessageId: z.string().optional(),
     memberIds: z.array(z.string().min(1)).max(50).optional(),
     /**
      * Optional context-bag attached at creation time. Powers "Discuss with
@@ -108,8 +106,8 @@ const createStreamSchema = z
     message: "parentStreamId is required for threads",
     path: ["parentStreamId"],
   })
-  .refine((data) => data.type !== "thread" || (data.parentAnchorId ? !data.parentMessageId : !!data.parentMessageId), {
-    message: "Exactly one of parentAnchorId or parentMessageId is required for threads",
+  .refine((data) => data.type !== "thread" || !!data.parentAnchorId, {
+    message: "parentAnchorId is required for threads",
     path: ["parentAnchorId"],
   })
   .refine((data) => !data.contextBag || data.type === "scratchpad", {
@@ -580,17 +578,12 @@ export function createStreamHandlers({
         companionPersonaId,
         parentStreamId,
         parentAnchorId,
-        parentMessageId,
         memberIds,
         contextBag,
         e2eEnabled,
         e2eOwnerKeyId,
         allowedToolCategories,
       } = data
-
-      // Normalize the two accepted forms to the single anchor track. The schema
-      // guarantees exactly one is present for a thread.
-      const anchorId = parentAnchorId ?? parentMessageId
 
       // Verify the caller owns the referenced E2E key BEFORE we hand off to
       // the service. Phase 1 invariant: the stream's `owner_user_key_id`
@@ -685,7 +678,7 @@ export function createStreamHandlers({
         companionMode: resolvedCompanionMode,
         companionPersonaId: resolvedPersonaId,
         parentStreamId,
-        parentAnchorId: anchorId,
+        parentAnchorId,
         memberIds,
         createdBy: userId,
         contextBag,
@@ -1073,7 +1066,7 @@ export function createStreamHandlers({
       //
       // Append mode widens the scan to the whole stream: an append response only
       // carries events past the client's cursor, so a thread patch the client
-      // missed live (`message:updated` is a broadcast-sequence-less patch — gap
+      // missed live (`thread:updated` is a broadcast-sequence-less patch — gap
       // detection can't see it, and the parent row is behind the cursor) would
       // otherwise stay stale until a hard refresh. The full map rides the
       // response as `threadStates` so the client can heal already-persisted
@@ -1091,9 +1084,6 @@ export function createStreamHandlers({
         syncMode === "append"
           ? [...threadDataMap.entries()].map(([anchorId, thread]) => ({
               anchorId,
-              // Grace: msg_ anchors carry the legacy field (== anchorId) so an
-              // un-upgraded client keying on it stays correct; null for cards.
-              parentMessageId: anchorId.startsWith("msg_") ? anchorId : null,
               threadId: thread.threadId,
               replyCount: thread.replyCount,
               threadSummary: threadSummaryMap.get(anchorId) ?? null,

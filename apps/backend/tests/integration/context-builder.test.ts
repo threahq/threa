@@ -280,7 +280,7 @@ describe("Context Builder", () => {
           displayName: "Thread Discussion",
           visibility: Visibilities.PRIVATE,
           parentStreamId: channelId,
-          parentMessageId: parentMsgId,
+          parentAnchorId: parentMsgId,
           rootStreamId: channelId,
           createdBy: ownerUserId,
         })
@@ -365,7 +365,7 @@ describe("Context Builder", () => {
           displayName: "Thread Level 1",
           visibility: Visibilities.PRIVATE,
           parentStreamId: channelId,
-          parentMessageId: msg1Id,
+          parentAnchorId: msg1Id,
           rootStreamId: channelId,
           createdBy: ownerUserId,
         })
@@ -387,7 +387,7 @@ describe("Context Builder", () => {
           displayName: "Thread Level 2",
           visibility: Visibilities.PRIVATE,
           parentStreamId: thread1Id,
-          parentMessageId: msg2Id,
+          parentAnchorId: msg2Id,
           rootStreamId: channelId,
           createdBy: ownerUserId,
         })
@@ -602,7 +602,7 @@ describe("Context Builder", () => {
           displayName: "Thread Discussion",
           visibility: Visibilities.PRIVATE,
           parentStreamId: channelId,
-          parentMessageId: parentMsgId,
+          parentAnchorId: parentMsgId,
           rootStreamId: channelId,
           createdBy: ownerUserId,
         })

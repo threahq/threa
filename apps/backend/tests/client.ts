@@ -556,19 +556,19 @@ export async function deleteAttachment(client: TestClient, workspaceId: string, 
 
 export interface Thread extends Stream {
   parentStreamId: string
-  parentMessageId: string
+  parentAnchorId: string
 }
 
 export async function createThread(
   client: TestClient,
   workspaceId: string,
   parentStreamId: string,
-  parentMessageId: string
+  parentAnchorId: string
 ): Promise<Thread> {
   const { status, data } = await client.post<{ stream: Thread }>(`/api/workspaces/${workspaceId}/streams`, {
     type: "thread",
     parentStreamId,
-    parentMessageId,
+    parentAnchorId,
   })
   if (status !== 201) {
     throw new Error(`Create thread failed: ${JSON.stringify(data)}`)

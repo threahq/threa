@@ -222,11 +222,11 @@ export class BoundaryExtractionService {
       const candidateConversations = mergeConversationsById(relevantConversations, quotedConversations)
 
       let parentMessageConversations: Conversation[] = []
-      if (stream.type === StreamTypes.THREAD && stream.parentMessageId) {
+      if (stream.type === StreamTypes.THREAD && stream.parentAnchorId?.startsWith("msg_")) {
         parentMessageConversations = await ConversationRepository.findByMessageId(
           client,
           workspaceId,
-          stream.parentMessageId
+          stream.parentAnchorId
         )
       }
 

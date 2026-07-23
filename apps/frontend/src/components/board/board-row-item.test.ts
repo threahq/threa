@@ -66,9 +66,9 @@ describe("buildBranchedBoardRows continuation", () => {
   function streamNode(
     parentStreamId: string | null,
     rootStreamId: string | null,
-    parentMessageId: string | null
+    parentAnchorId: string | null
   ): BranchStreamNode {
-    return { parentStreamId, rootStreamId, parentMessageId }
+    return { parentStreamId, rootStreamId, parentAnchorId }
   }
 
   it("a soft seam breaks a same-author continuation run", () => {

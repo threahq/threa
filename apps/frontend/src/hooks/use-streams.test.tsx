@@ -139,7 +139,6 @@ describe("useCreateStream", () => {
       description: null,
       visibility: "public",
       parentStreamId: null,
-      parentMessageId: null,
       rootStreamId: null,
       companionMode: "off",
       companionPersonaId: null,

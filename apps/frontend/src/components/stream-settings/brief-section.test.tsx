@@ -19,7 +19,6 @@ function channel(overrides: Partial<Stream> = {}): Stream {
     description: null,
     visibility: Visibilities.PUBLIC,
     parentStreamId: null,
-    parentMessageId: null,
     rootStreamId: null,
     companionMode: "off",
     companionPersonaId: null,
