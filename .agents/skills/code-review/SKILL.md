@@ -202,7 +202,7 @@ Re-run Step 1 to ensure the PR hasn't been closed/drafted during review.
 
 **Always print the full report to chat** (both modes) so the user sees it without leaving the conversation.
 
-**PR mode also posts a comment.** Use `gh pr comment N --body-file …`. Link format: `https://github.com/OWNER/REPO/blob/FULL_SHA/path/file.ts#L10-L15` (full SHA, 1-2 lines context). In local mode, use the same link format only if a remote/SHA is known; otherwise cite `path/file.ts:10-15`.
+Write the final report to `<review-dir>/report.md`; print that exact content to chat. **PR mode also posts the same file** with `gh pr comment N --body-file <review-dir>/report.md`. Link format: `https://github.com/OWNER/REPO/blob/FULL_SHA/path/file.ts#L10-L15` (full SHA, 1-2 lines context). In local mode, use the same link format only if a remote/SHA is known; otherwise cite `path/file.ts:10-15`.
 
 **Attribution:** Disclose models, effort where applicable, and actual lenses. Include `**Review models:** Orchestrator: <runtime model> | Reviewers: <model/effort> x<N> (<lenses>)`, e.g. `sonnet x2 (spec+design, correctness+data-flow)` or `gpt-5.6-sol/high x1 (combined)`.
 
