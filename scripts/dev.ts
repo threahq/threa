@@ -421,8 +421,9 @@ async function main() {
 
   const cpEnvOverrides: Record<string, string> = {}
   const authOrigin = remoteOrigin ?? (primaryLanHost ? `http://${primaryLanHost}:3000` : undefined)
-  if (authOrigin && cpEnv.WORKOS_REDIRECT_URI) {
-    cpEnvOverrides.WORKOS_REDIRECT_URI = replaceUrlOrigin(cpEnv.WORKOS_REDIRECT_URI, authOrigin)
+  const configuredWorkosRedirectUri = cpEnv.WORKOS_REDIRECT_URI ?? process.env.WORKOS_REDIRECT_URI
+  if (authOrigin && configuredWorkosRedirectUri) {
+    cpEnvOverrides.WORKOS_REDIRECT_URI = replaceUrlOrigin(configuredWorkosRedirectUri, authOrigin)
   }
 
   if (remoteMode) {
