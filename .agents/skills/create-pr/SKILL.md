@@ -7,6 +7,11 @@ description: Create a pull request with a dense, verified description. Use when 
 
 Self-review, write a dense verified description, open the PR, subscribe. Invoking this skill is the request for all of it.
 
+## Runtime profile
+
+- Pi / OpenAI: run PR orchestration with GPT-5.6 Sol at effort `low`.
+- Do not raise the orchestration effort for self-review. When Step 3 requires `/code-review`, keep that skill's separate Sol/high reviewer profile.
+
 ## Flow
 
 1. **Context** (parallel): `git branch --show-current` · `git status -sb` · `git log main..HEAD --oneline` · `git diff main...HEAD --stat` · `git diff main...HEAD` (read it). Ticket: `git branch --show-current | grep -oiE 'thr-[0-9]+' | tr '[:lower:]' '[:upper:]'` — if found, in title + linked in body; else cite audit/design ids (`E2EE-22`, `INV-62`) in body.

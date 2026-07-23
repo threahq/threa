@@ -7,9 +7,12 @@ description: Build a planned feature as a stacked PR chain with per-chunk implem
 
 Build each plan chunk, verify it once with the strongest useful runtime profile, fix findings in one batch, and create the stacked PR before moving on. Preserve review quality without paying multiple agents to repeat the same lens on the same diff.
 
-## Preconditions
+## Planning and preconditions
 
-- A ratified plan doc in `docs/plans/<feature>.md` containing a PR-stack breakdown. No plan → write one and get it ratified first; do not start building from a chat message.
+- The invoking agent remains the orchestrator at its current, lower reasoning level. It owns sequencing, user checkpoints, agent briefs, gates, and stack state; it does not become the planner.
+- A ratified implementation plan containing a PR-stack breakdown is required. The plan embedded in the PR body by `/sync-plan` is authoritative. Files under `docs/plans/` are optional desired-design context, never implementation truth.
+- No implementation plan → delegate investigation and drafting to one fresh high-reasoning planner, have the user ratify the result, then publish it with `/sync-plan` before implementation. Do not start building from a chat message.
+- The planner writes the candidate plan but never orchestrates implementation or delegates children.
 - Deferred items in the plan are binding: do not build them.
 
 ## Select one execution profile
@@ -18,6 +21,7 @@ Determine the active harness/provider once and record the profile in the first s
 
 ### Claude profile
 
+- Planner: Fable, effort `high`.
 - Implementer: Opus, effort `medium`.
 - Per-chunk verifier: Opus, effort `xhigh`.
 - Whole-stack reviewer: Fable.
@@ -25,6 +29,7 @@ Determine the active harness/provider once and record the profile in the first s
 
 ### Pi / OpenAI profile
 
+- Planner: one fresh GPT-5.6 Sol agent, effort `high`.
 - Implementer: GPT-5.6 Sol, effort `low`. Pi maps Sol `minimal` to provider `low`, so request `low` explicitly.
 - Per-chunk verifier: one fresh GPT-5.6 Sol agent, effort `high`.
 - Never use `xhigh` per chunk. Reserve it for one final whole-stack review only when the stack crosses security, authorization, migration, concurrency, or data-integrity boundaries; otherwise use `high`.
