@@ -887,10 +887,303 @@ describe("buildPersistedConfig", () => {
   })
 })
 
-describe("session-scoped lifecycle isolation", () => {
+describe("Pi reconnect session control", () => {
+  const invocation = { id: "binv_reconnect", claimToken: "claim", claimedInstanceId: "pi-instance" } as never
+  const context = (idle: boolean) =>
+    ({
+      sessionManager: { getSessionId: () => "runtime-exact" },
+      modelRegistry: { getAvailable: () => [] },
+      isIdle: () => idle,
+    }) as never
+
+  beforeEach(() => {
+    process.env.TMUX_PANE = "%9"
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        "runtime-exact": {
+          enabled: true,
+          instanceId: "pi-instance",
+          runtimeSessionId: "runtime-exact",
+          rootStreamId: "stream-root-exact",
+          activeStreamId: "stream-root-exact",
+          streamUrlPath: "/streams/stream-root-exact",
+        },
+      },
+    })
+  })
+
+  afterEach(() => {
+    delete process.env.TMUX_PANE
+    __testing.clearPendingForTesting()
+    __testing.setConfigForTesting(undefined)
+  })
+
+  test("uses exact routing, gates start on ack, preserves force, and stays nonaccepting", async () => {
+    for (const force of [false, true]) {
+      const prepared: unknown[][] = []
+      let started = false
+      await __testing.runReconnectCommand(invocation, force ? "--force" : "", context(true), {
+        available: () => true,
+        prepare: (...args: unknown[]) => {
+          prepared.push(args)
+          return () => {
+            started = true
+          }
+        },
+        complete: async () => true,
+        heartbeat: async () => undefined,
+      } as never)
+      expect({ prepared, started, guarded: __testing.reconnectPending() }).toEqual({
+        prepared: [["runtime-exact", "stream-root-exact", { force }]],
+        started: true,
+        guarded: true,
+      })
+      expect(await __testing.claimNextInvocation(context(true))).toBeNull()
+      __testing.clearPendingForTesting()
+    }
+  })
+
+  test("advertises reconnect only with tmux, an exact root link, and the helper", () => {
+    const ctx = context(true)
+    expect(__testing.buildRuntimeCapabilities(ctx, () => true)).toMatchObject({
+      sessionControlCommands: expect.arrayContaining(["reconnect"]),
+    })
+    delete process.env.TMUX_PANE
+    expect(__testing.buildRuntimeCapabilities(ctx, () => true)).toMatchObject({
+      sessionControlCommands: expect.not.arrayContaining(["reconnect"]),
+    })
+    process.env.TMUX_PANE = "%9"
+    expect(__testing.buildRuntimeCapabilities(ctx, () => false)).toMatchObject({
+      sessionControlCommands: expect.not.arrayContaining(["reconnect"]),
+    })
+  })
+
+  test("accepts only empty args or exact --force", async () => {
+    const messages: string[] = []
+    let prepared = 0
+    for (const args of ["--force ", " --force", "--force=yes", "extra"]) {
+      await __testing.runReconnectCommand(invocation, args, context(true), {
+        available: () => true,
+        prepare: () => {
+          prepared++
+          return () => undefined
+        },
+        complete: async (_invocation: unknown, message: string) => {
+          messages.push(message)
+          return true
+        },
+      } as never)
+    }
+    expect({ messages, prepared }).toEqual({
+      messages: Array(4).fill("Usage: `/reconnect [--force]`."),
+      prepared: 0,
+    })
+  })
+
+  test("preparation failure and failed ack never start reconnect", async () => {
+    expect(
+      __testing.runReconnectCommand(invocation, "", context(true), {
+        available: () => true,
+        prepare: () => {
+          throw new Error("preflight failed")
+        },
+        complete: async () => true,
+      } as never)
+    ).rejects.toThrow("preflight failed")
+
+    let started = false
+    await __testing.runReconnectCommand(invocation, "", context(true), {
+      available: () => true,
+      prepare: () => () => {
+        started = true
+      },
+      complete: async () => false,
+      heartbeat: async () => undefined,
+    } as never)
+    expect(started).toBe(false)
+    expect(__testing.reconnectPending()).toBe(false)
+  })
+
+  test("real plaintext completion finishes before start and completion failure prevents start", async () => {
+    for (const completeOk of [true, false]) {
+      const order: string[] = []
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input)
+        order.push(url.includes("/complete") ? "complete" : "trace")
+        return new Response(JSON.stringify({ data: {} }), {
+          status: url.includes("/complete") && !completeOk ? 500 : 200,
+          headers: { "content-type": "application/json" },
+        })
+      })
+      const reconnect = __testing.runReconnectCommand(invocation, "", context(true), {
+        available: () => true,
+        prepare: () => () => order.push("start"),
+        complete: __testing.completeInvocationWithMarkdown,
+        heartbeat: async () => undefined,
+      } as never)
+      if (completeOk) await expect(reconnect).resolves.toBeUndefined()
+      else await expect(reconnect).rejects.toThrow("500")
+      expect(order.filter((step) => step !== "trace")).toEqual(completeOk ? ["complete", "start"] : ["complete"])
+      fetchSpy.mockRestore()
+      __testing.clearPendingForTesting()
+    }
+  })
+
+  test("synchronous start failure restores the handoff state", async () => {
+    await expect(
+      __testing.runReconnectCommand(invocation, "", context(true), {
+        available: () => true,
+        prepare: () => () => {
+          throw new Error("start failed")
+        },
+        complete: async () => true,
+        heartbeat: async () => undefined,
+      } as never)
+    ).rejects.toThrow("start failed")
+    expect(__testing.reconnectPending()).toBe(false)
+  })
+
+  test("refuses idle-only reconnect while busy but force bypasses the refusal", async () => {
+    const messages: string[] = []
+    let prepared = 0
+    const deps = {
+      available: () => true,
+      prepare: () => {
+        prepared++
+        return () => {}
+      },
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
+      },
+      heartbeat: async () => undefined,
+    } as never
+    await __testing.runReconnectCommand(invocation, "", context(false), deps)
+    await __testing.runReconnectCommand(invocation, "--force", context(false), deps)
+    expect({ messages, prepared }).toEqual({
+      messages: [
+        "Pi is busy; retry when idle or use `/reconnect --force`.",
+        "Reconnect request accepted; attempting to resume the linked Pi session.",
+      ],
+      prepared: 1,
+    })
+  })
+})
+
+describe("claim drain serialization", () => {
   afterEach(() => {
     __testing.clearPendingForTesting()
     __testing.setConfigForTesting(undefined)
+  })
+
+  test("shares one claim pass between concurrent callers", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    let requests = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async () => {
+      requests++
+      await gate
+      return new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    const ctx = {
+      sessionManager: { getSessionId: () => "runtime" },
+      isIdle: () => true,
+      cwd: "/tmp",
+    } as never
+    const pi = {} as never
+
+    const first = __testing.claimIfIdle(pi, ctx)
+    const second = __testing.claimIfIdle(pi, ctx)
+    expect(first).toBe(second)
+    release()
+    expect(await Promise.all([first, second])).toEqual([true, true])
+    expect(requests).toBe(1)
+    fetchSpy.mockRestore()
+  })
+})
+
+describe("session-scoped lifecycle isolation", () => {
+  afterEach(() => {
+    delete process.env.TMUX_PANE
+    __testing.teardownTransport()
+    __testing.setSupervisedRevivalBlockedForTesting(false)
+    __testing.clearPendingForTesting()
+    __testing.setConfigForTesting(undefined)
+  })
+
+  test("closes a claim returned after shutdown before teardown completes", async () => {
+    const shutdownHandlers: Array<(event: unknown, ctx: unknown) => Promise<void>> = []
+    threaRemote({
+      registerCommand: () => {},
+      on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => {
+        if (event === "session_shutdown") shutdownHandlers.push(handler)
+      },
+    } as never)
+    __testing.teardownTransport()
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { parent: { enabled: true, instanceId: "pi-parent", runtimeSessionId: "parent" } },
+    })
+    let releaseClaim!: () => void
+    const claimGate = new Promise<void>((resolve) => (releaseClaim = resolve))
+    const writes: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith("/bot-invocations/claim")) {
+        await claimGate
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "binv_late",
+              activeStreamId: "stream_1",
+              sourceMessageId: "msg_1",
+              promptMarkdown: "late work",
+              claimToken: "claim_late",
+              claimExpiresAt: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url.endsWith("/bot-invocations/binv_late/fail")) writes.push("fail")
+      if (url.endsWith("/bot-runtime/presence")) writes.push("offline")
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    const ctx = {
+      sessionManager: { getSessionId: () => "parent" },
+      isIdle: () => true,
+      cwd: "/tmp",
+      ui: { setStatus: () => {}, notify: () => {} },
+    } as never
+
+    try {
+      const claim = __testing.claimIfIdle({} as never, ctx)
+      await Bun.sleep(0)
+      const shutdown = shutdownHandlers[0]!({ reason: "quit" }, ctx)
+      releaseClaim()
+      expect(await claim).toBe(false)
+      await shutdown
+      expect(writes.at(0)).toBe("fail")
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 
   test("child shutdown preserves the parent claim while parent shutdown clears it", async () => {

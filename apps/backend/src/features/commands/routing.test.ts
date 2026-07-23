@@ -4,7 +4,7 @@ import { resolveRuntimeInvocationRouting } from "./handlers"
 
 describe("resolveRuntimeInvocationRouting", () => {
   it("routes interrupt commands to active-scratchpad for pi-local (claimable by a busy Pi)", () => {
-    for (const name of ["steer", "stop", "kick", "carry-on"]) {
+    for (const name of ["steer", "stop", "kick", "carry-on", "reconnect"]) {
       expect(resolveRuntimeInvocationRouting(name, BotRuntimeKinds.PI_LOCAL)).toEqual({
         trigger: BotInvocationTriggers.SESSION_CONTROL,
         requiredCapability: BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
@@ -19,13 +19,6 @@ describe("resolveRuntimeInvocationRouting", () => {
         requiredCapability: BotInvocationCapabilities.SESSION_CONTROL,
       })
     }
-  })
-
-  it("keeps reconnect on normal session-control routing for pi-local", () => {
-    expect(resolveRuntimeInvocationRouting("reconnect", BotRuntimeKinds.PI_LOCAL)).toEqual({
-      trigger: BotInvocationTriggers.SESSION_CONTROL,
-      requiredCapability: BotInvocationCapabilities.SESSION_CONTROL,
-    })
   })
 
   it("routes every other command to session-control regardless of runtime kind", () => {

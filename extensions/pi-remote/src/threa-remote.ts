@@ -22,8 +22,10 @@ import {
   mintStreamKeyWraps,
   openSealedAck,
   openSealedTurnContext,
+  harnessReconnectAvailable,
   parseSealedAckContext,
   parseSealedTurnContext,
+  prepareHarnessReconnect,
   runHarnessKick,
   scrubSealedError,
   sealReply,
@@ -99,6 +101,7 @@ const SESSION_CONTROL_COMMANDS = [
   "stop",
   "kick",
   "carry-on",
+  "reconnect",
 ] as const
 type PiSessionControlCommandName = (typeof SESSION_CONTROL_COMMANDS)[number]
 const STEER_DRAIN_LIMIT = 10
@@ -278,6 +281,10 @@ let lastPollDebugSummary: string | undefined
 let pollingRunId = 0
 let fallbackRuntimeSessionId: string | undefined
 let supervisedRevivalBlocked = false
+let reconnectPending = false
+let claimIfIdleInFlight: Promise<boolean> | undefined
+let sessionLifecycleGeneration = 0
+let sessionTearingDown = false
 // Owns the /bot socket + routes presence/renew/steps over it (HTTP fallback
 // when the socket is down). Built lazily once the session ctx is known; torn
 // down + rebuilt on a workspace/auth change so it never reuses a stale target.
@@ -689,17 +696,39 @@ function buildModelSuggestions(ctx: ExtensionContext): Array<{ value: string; la
   return ordered.slice(0, 30)
 }
 
-function buildRuntimeCapabilities(ctx?: ExtensionContext): Record<string, unknown> {
+function buildRuntimeCapabilities(
+  ctx?: ExtensionContext,
+  reconnectAvailable: () => boolean = harnessReconnectAvailable
+): Record<string, unknown> {
   return {
     supportsActiveScratchpad: true,
     supportsPersistentSessions: true,
     supportsMentionInvocations: true,
     supportsSessionControlCommands: true,
-    sessionControlCommands: [...SESSION_CONTROL_COMMANDS],
+    sessionControlCommands: SESSION_CONTROL_COMMANDS.filter(
+      (command) =>
+        command !== "reconnect" ||
+        Boolean(ctx && process.env.TMUX_PANE && getCurrentSessionLink(ctx)?.rootStreamId && reconnectAvailable())
+    ),
     thinkingLevels: [...THINKING_LEVELS],
     preferredModels: [...(config?.preferredModels ?? [])],
     ...(ctx?.model && { currentModel: `${ctx.model.provider}/${ctx.model.id}` }),
     ...(ctx && { modelSuggestions: buildModelSuggestions(ctx) }),
+  }
+}
+
+function presenceBody(status: "available" | "busy" | "offline" | "error", statusText?: string, ctx?: ExtensionContext) {
+  const effectiveStatus = status === "available" && reconnectPending ? "busy" : status
+  return {
+    runtimeKind: "pi-local",
+    instanceId: ctx ? getSessionInstanceId(ctx) : ensureInstanceId(),
+    runtimeSessionId: ctx ? getRuntimeSessionId(ctx) : undefined,
+    displayName: presenceDisplayNameFromCwd(ctx?.cwd) ?? config?.defaultDisplayName,
+    status: effectiveStatus,
+    acceptingInvocations: effectiveStatus === "available",
+    capabilities: buildRuntimeCapabilities(ctx),
+    statusText,
+    ...bikKeystore.presenceFields(),
   }
 }
 
@@ -708,22 +737,11 @@ async function heartbeat(
   statusText?: string,
   ctx?: ExtensionContext
 ): Promise<void> {
-  if (!config) return
+  if (!config || (sessionTearingDown && status !== "offline")) return
   // Cached after the first call; awaiting here guarantees no presence write
   // ever omits the BIK (the upsert would clear the registered key).
   await bikKeystore.ensure()
-  const runtimeSessionId = ctx ? getRuntimeSessionId(ctx) : undefined
-  const body = {
-    runtimeKind: "pi-local",
-    instanceId: ctx ? getSessionInstanceId(ctx) : ensureInstanceId(),
-    runtimeSessionId,
-    displayName: presenceDisplayNameFromCwd(ctx?.cwd) ?? config.defaultDisplayName,
-    status,
-    acceptingInvocations: status === "available",
-    capabilities: buildRuntimeCapabilities(ctx),
-    statusText,
-    ...bikKeystore.presenceFields(),
-  }
+  const body = presenceBody(status, statusText, ctx)
   // Prefer the socket once the transport exists (it falls back to HTTP itself
   // when the socket is down); before the transport is built (a heartbeat that
   // fires pre-enable) go straight to HTTP.
@@ -756,25 +774,21 @@ async function heartbeatBusyIfStale(statusText = "Working…", ctx?: ExtensionCo
 function ensureTransport(pi: ExtensionAPI, ctx: ExtensionContext): BotRuntimeTransport | undefined {
   if (!config) return undefined
   if (transport) return transport
-  const link = getCurrentSessionLink(ctx)
   const hello: BotRuntimeHello = {
-    instanceId: getSessionInstanceId(ctx),
-    runtimeKind: "pi-local",
-    runtimeSessionId: getRuntimeSessionId(ctx),
-    displayName: presenceDisplayNameFromCwd(ctx.cwd) ?? config.defaultDisplayName,
+    ...presenceBody(reconnectPending || pending || !ctx.isIdle() ? "busy" : "available", undefined, ctx),
     supportedCapabilities: ["active-scratchpad", "mentionable", SESSION_CONTROL_CAPABILITY],
-    capabilities: buildRuntimeCapabilities(ctx),
-    ...(link?.wsCursor ? { sinceCursor: link.wsCursor } : {}),
-    // The hello is a snapshot the transport re-sends on every reconnect, so the
-    // BIK must be loaded BEFORE the transport is built (see session_start /
-    // enableRemote, which ensure it ahead of this call).
-    ...bikKeystore.presenceFields(),
+    ...(getCurrentSessionLink(ctx)?.wsCursor ? { sinceCursor: getCurrentSessionLink(ctx)?.wsCursor } : {}),
   }
   transport = new BotRuntimeTransport({
     baseUrl: config.baseUrl,
     workspaceId: config.workspaceId,
     apiKey: config.apiKey,
     hello,
+    beforeHello: () =>
+      Object.assign(
+        hello,
+        presenceBody(reconnectPending || pending || !ctx.isIdle() ? "busy" : "available", undefined, ctx)
+      ),
     reconnectionDelayMaxMs: WS_RECONNECTION_DELAY_MAX_MS,
     fetchTimeoutMs: FETCH_TIMEOUT_MS,
     callbacks: {
@@ -1820,7 +1834,7 @@ function buildClaimInvocationBody(ctx: ExtensionContext): Record<string, unknown
 }
 
 async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvocation | null> {
-  if (!config) return null
+  if (!config || reconnectPending || sessionTearingDown) return null
   const startedAt = Date.now()
   try {
     const body = await request<{ data: (ClaimedInvocation & { sealedContext?: unknown }) | null }>(
@@ -2005,74 +2019,74 @@ async function completeInvocationWithMarkdown(
   invocation: ClaimedInvocation,
   finalMessageMarkdown: string,
   ctx?: ExtensionContext
-): Promise<void> {
-  if (!config) return
+): Promise<boolean> {
+  if (!config) return false
   const instanceId = getInvocationInstanceId(invocation)
-
-  // Sealed session-control ack: on an E2E scratchpad the claim carries the SSK
-  // wraps, so seal the "Model changed …" confirmation under the stream key and
-  // post it as `sealedReply`. No plaintext trace step (the server would reject
-  // it, and it'd leak the ack text). Falls through to the plaintext path when
-  // the bot can't seal (no wrap / key race) — which silently closes on E2E.
-  const sealedReply = await sealSessionControlAck(invocation, finalMessageMarkdown)
-  if (sealedReply) {
-    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-      method: "POST",
-      body: JSON.stringify({
-        instanceId,
-        claimToken: invocation.claimToken,
-        sealedReply,
-        metadata: {
-          "pi.remote.invocationId": invocation.id,
-          "pi.remote.instanceId": instanceId,
-          "pi.remote.sessionControl": "true",
-        },
-      }),
-    }).catch(() => undefined)
-    lastBusyHeartbeatAt = 0
-    await heartbeat("available", undefined, ctx).catch(() => undefined)
-    return
-  }
-
-  await recordInvocationTraceStep(invocation, "response", finalMessageMarkdown, "Composing response…")
   try {
-    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-      method: "POST",
-      body: JSON.stringify({
-        instanceId,
-        claimToken: invocation.claimToken,
-        finalMessageMarkdown,
-        metadata: {
-          "pi.remote.invocationId": invocation.id,
-          "pi.remote.instanceId": instanceId,
-          "pi.remote.sessionControl": "true",
-        },
-      }),
-    })
-  } catch (error) {
-    // Reached only when the ack couldn't be sealed (no BIK / wrap race, so
-    // `sealSessionControlAck` returned undefined). On an E2E scratchpad the
-    // plaintext ack is rejected; close with noResponse so the command doesn't
-    // show as failed — it already ran locally and command:completed still lands.
-    // Any other error is a real failure, so rethrow.
-    if (!String(error).includes("E2E_STREAM_PLAINTEXT_UNSUPPORTED")) throw error
-    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-      method: "POST",
-      body: JSON.stringify({
-        instanceId,
-        claimToken: invocation.claimToken,
-        noResponse: true,
-        metadata: {
-          "pi.remote.invocationId": invocation.id,
-          "pi.remote.instanceId": instanceId,
-          "pi.remote.sessionControl": "true",
-          "pi.remote.noResponse": "true",
-        },
-      }),
-    }).catch(() => undefined)
+    const sealedReply = await sealSessionControlAck(invocation, finalMessageMarkdown)
+    if (sealedReply) {
+      try {
+        await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+          method: "POST",
+          body: JSON.stringify({
+            instanceId,
+            claimToken: invocation.claimToken,
+            sealedReply,
+            metadata: {
+              "pi.remote.invocationId": invocation.id,
+              "pi.remote.instanceId": instanceId,
+              "pi.remote.sessionControl": "true",
+            },
+          }),
+        })
+      } catch {
+        return false
+      }
+      return true
+    }
+
+    await recordInvocationTraceStep(invocation, "response", finalMessageMarkdown, "Composing response…")
+    try {
+      await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+        method: "POST",
+        body: JSON.stringify({
+          instanceId,
+          claimToken: invocation.claimToken,
+          finalMessageMarkdown,
+          metadata: {
+            "pi.remote.invocationId": invocation.id,
+            "pi.remote.instanceId": instanceId,
+            "pi.remote.sessionControl": "true",
+          },
+        }),
+      })
+    } catch (error) {
+      if (!String(error).includes("E2E_STREAM_PLAINTEXT_UNSUPPORTED")) throw error
+      try {
+        await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+          method: "POST",
+          body: JSON.stringify({
+            instanceId,
+            claimToken: invocation.claimToken,
+            noResponse: true,
+            metadata: {
+              "pi.remote.invocationId": invocation.id,
+              "pi.remote.instanceId": instanceId,
+              "pi.remote.sessionControl": "true",
+              "pi.remote.noResponse": "true",
+            },
+          }),
+        })
+      } catch {
+        return false
+      }
+    }
+    return true
+  } finally {
+    lastBusyHeartbeatAt = 0
+    const busy = reconnectPending || pending !== undefined || (ctx !== undefined && !ctx.isIdle())
+    await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
   }
-  lastBusyHeartbeatAt = 0
-  await heartbeat("available", undefined, ctx).catch(() => undefined)
 }
 
 async function buildInvocationPrompt(
@@ -2537,6 +2551,66 @@ async function runKickCommand(invocation: ClaimedInvocation, ctx: ExtensionConte
   await completeInvocationWithMarkdown(invocation, "Kicked the linked Pi session.", ctx)
 }
 
+interface ReconnectCommandDeps {
+  available: () => boolean
+  prepare: typeof prepareHarnessReconnect
+  complete: typeof completeInvocationWithMarkdown
+  heartbeat?: typeof heartbeat
+}
+
+async function runReconnectCommand(
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext,
+  deps: ReconnectCommandDeps = {
+    available: harnessReconnectAvailable,
+    prepare: prepareHarnessReconnect,
+    complete: completeInvocationWithMarkdown,
+    heartbeat,
+  }
+): Promise<void> {
+  const sendHeartbeat = deps.heartbeat ?? heartbeat
+  if (args !== "" && args !== "--force") {
+    await deps.complete(invocation, "Usage: `/reconnect [--force]`.", ctx)
+    return
+  }
+  if (args !== "--force" && (!ctx.isIdle() || pending)) {
+    await deps.complete(invocation, "Pi is busy; retry when idle or use `/reconnect --force`.", ctx)
+    return
+  }
+  const link = getCurrentSessionLink(ctx)
+  const lifecycleGeneration = sessionLifecycleGeneration
+  if (!process.env.TMUX_PANE || !link?.rootStreamId || !deps.available() || sessionTearingDown) {
+    throw new Error("Harness reconnect is unavailable for this session.")
+  }
+  const start = deps.prepare(getRuntimeSessionId(ctx), link.rootStreamId, { force: args === "--force" })
+  reconnectPending = true
+  await sendHeartbeat("busy", "Reconnect handoff…", ctx).catch(() => undefined)
+  try {
+    const acknowledged = await deps.complete(
+      invocation,
+      "Reconnect request accepted; attempting to resume the linked Pi session.",
+      ctx
+    )
+    const lifecycleChanged =
+      sessionTearingDown || sessionLifecycleGeneration !== lifecycleGeneration || getCurrentSessionLink(ctx) !== link
+    if (!acknowledged || lifecycleChanged) {
+      reconnectPending = false
+      if (!lifecycleChanged) {
+        await sendHeartbeat(ctx.isIdle() && !pending ? "available" : "busy", undefined, ctx).catch(() => undefined)
+      }
+      return
+    }
+    start()
+  } catch (error) {
+    reconnectPending = false
+    if (!sessionTearingDown && sessionLifecycleGeneration === lifecycleGeneration) {
+      await sendHeartbeat(ctx.isIdle() && !pending ? "available" : "busy", undefined, ctx).catch(() => undefined)
+    }
+    throw error
+  }
+}
+
 async function runStopCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
   const hadPendingRemoteInvocation = pending !== undefined
   const wasBusy = !ctx.isIdle()
@@ -2665,13 +2739,17 @@ async function handleSessionControlInvocation(
       case "carry-on":
         await runCarryOnCommand(invocation, command.args, ctx)
         return
+      case "reconnect":
+        await runReconnectCommand(invocation, command.args, ctx)
+        return
       default:
         await failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
     }
   } catch (error) {
     await failInvocation(invocation, error)
     lastBusyHeartbeatAt = 0
-    await heartbeat("available", undefined, ctx).catch(() => undefined)
+    const busy = reconnectPending || pending !== undefined || !ctx.isIdle()
+    await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
   } finally {
     clearInterval(renewTimer)
   }
@@ -2731,8 +2809,17 @@ async function executeProviderRetry(pi: ExtensionAPI, ctx: ExtensionContext, att
   pi.sendUserMessage(buildRetryPrompt(prompt, queued))
 }
 
-async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
-  if (!config || !isEnabled(ctx)) return false
+function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
+  if (sessionTearingDown) return Promise.resolve(false)
+  claimIfIdleInFlight ??= claimIfIdlePass(pi, ctx, sessionLifecycleGeneration).finally(() => {
+    claimIfIdleInFlight = undefined
+  })
+  return claimIfIdleInFlight
+}
+
+async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycleGeneration: number): Promise<boolean> {
+  if (!config || !isEnabled(ctx) || sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration)
+    return false
   if (pending) await renewActiveClaims()
 
   if (isWaitingForRetry) {
@@ -2742,13 +2829,21 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boo
     // /carry-on and /steer queue text for it, and plain messages fold in like
     // a steer sweep (N messages → the one retried response). Without this the
     // session is deaf until the retry fires.
-    for (let claimedCount = 0; claimedCount < STEER_DRAIN_LIMIT; claimedCount++) {
+    for (
+      let claimedCount = 0;
+      claimedCount < STEER_DRAIN_LIMIT && !sessionTearingDown && lifecycleGeneration === sessionLifecycleGeneration;
+      claimedCount++
+    ) {
       const invocation = await claimNextInvocation(ctx)
+      if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration) {
+        if (invocation) await failInvocation(invocation, "Pi session lifecycle changed while claiming")
+        return false
+      }
       if (!invocation) break
       if (isSessionControlInvocation(invocation)) {
         await handleSessionControlInvocation(pi, ctx, invocation)
         // A /stop cancelled the wait (and possibly the turn) — stop sweeping.
-        if (!isWaitingForRetry) break
+        if (!isWaitingForRetry || reconnectPending) break
       } else {
         const text = invocation.promptMarkdown.trim() || "(empty message)"
         await recordTraceStep("steer", `Queued while rate-limited:\n\n${text}`, "Queued for retry…").catch(
@@ -2771,16 +2866,24 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boo
     return true
   }
 
-  for (let claimedCount = 0; claimedCount < STEER_DRAIN_LIMIT; claimedCount++) {
+  for (
+    let claimedCount = 0;
+    claimedCount < STEER_DRAIN_LIMIT && !sessionTearingDown && lifecycleGeneration === sessionLifecycleGeneration;
+    claimedCount++
+  ) {
     const steer = pending !== undefined || !ctx.isIdle()
     if (steer) await heartbeatBusyIfStale(pending ? "Working on Threa invocation…" : "Busy in Pi…", ctx)
 
     const invocation = await claimNextInvocation(ctx)
+    if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration) {
+      if (invocation) await failInvocation(invocation, "Pi session lifecycle changed while claiming")
+      return false
+    }
     if (!invocation) return true
     if (isSessionControlInvocation(invocation)) {
       const command = resolveSessionControlCommand(invocation)
       await handleSessionControlInvocation(pi, ctx, invocation)
-      if (command?.name === "stop") return true
+      if (command?.name === "stop" || reconnectPending) return true
     } else {
       await injectInvocation(pi, ctx, invocation, steer)
     }
@@ -3354,6 +3457,9 @@ export const __testing = {
   setConfigForTesting: (value: unknown) => {
     config = value as Config | undefined
   },
+  setSupervisedRevivalBlockedForTesting: (value: boolean) => {
+    supervisedRevivalBlocked = value
+  },
   buildClaimInvocationPayload,
   buildPersistedConfig,
   buildRuntimeCapabilities,
@@ -3400,9 +3506,21 @@ export const __testing = {
     stopClaimRenewTimer()
     pending = undefined
     steeredInvocations = []
+    reconnectPending = false
+    claimIfIdleInFlight = undefined
+    sessionLifecycleGeneration++
+    sessionTearingDown = false
   },
   NO_SOCKET_POLL_CAP_MS,
   nextQuietPollMs,
+  completeInvocationWithMarkdown,
+  claimNextInvocation,
+  claimIfIdle,
+  runReconnectCommand,
+  reconnectPending: () => reconnectPending,
+  sessionLifecycleGeneration: () => sessionLifecycleGeneration,
+  sessionTearingDown: () => sessionTearingDown,
+  teardownTransport,
   resetQuietPollsForTesting: () => {
     consecutiveQuietPolls = 0
   },
@@ -3536,8 +3654,11 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("session_start", async (event, ctx) => {
-    config = readConfig()
-    if (!config) return
+    if (!config) config = readConfig()
+    if (!config || !shouldHandleSessionEvents(ctx)) return
+    sessionLifecycleGeneration++
+    reconnectPending = false
+    sessionTearingDown = false
     if (!isCurrentSessionEnabled(ctx)) {
       setRemoteStatus(ctx, getCurrentSessionLink(ctx) ? "Threa remote: off" : "Threa remote: not linked")
       return
@@ -3678,11 +3799,16 @@ export default function (pi: ExtensionAPI): void {
     // In-process Pi child sessions can discover this global extension. Never
     // let an unlinked child tear down or complete the linked parent's claim.
     if (!shouldHandleSessionEvents(ctx)) return
+    sessionTearingDown = true
+    sessionLifecycleGeneration++
+    reconnectPending = false
     stopPolling()
     stopClaimRenewTimer()
+    await claimIfIdleInFlight?.catch(() => undefined)
     teardownTransport()
     if (event.reason === "reload" && config && isEnabled(ctx)) {
       setRemoteStatus(ctx, "Threa remote: reloading…")
+      await heartbeat("offline", undefined, ctx).catch(() => undefined)
       return
     }
     await failPending("Pi session shut down", ctx)

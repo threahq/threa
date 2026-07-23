@@ -30,6 +30,7 @@ const VENDOR_FILES = [
   "sealed.ts",
   "supervisor.ts",
   "harness-kick.ts",
+  "harness-reconnect.ts",
 ]
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.
