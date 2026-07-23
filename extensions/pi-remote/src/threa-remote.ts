@@ -298,6 +298,7 @@ let fallbackRuntimeSessionId: string | undefined
 let supervisedRevivalBlocked = false
 let reconnectPending = false
 let claimIfIdleInFlight: Promise<boolean> | undefined
+let claimIfIdleRerunRequested = false
 let sessionLifecycleGeneration = 0
 let sessionTearingDown = false
 // Owns the /bot socket + routes presence/renew/steps over it (HTTP fallback
@@ -2913,7 +2914,15 @@ async function executeProviderRetry(pi: ExtensionAPI, ctx: ExtensionContext, att
 
 function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
   if (sessionTearingDown) return Promise.resolve(false)
-  claimIfIdleInFlight ??= claimIfIdlePass(pi, ctx, sessionLifecycleGeneration).finally(() => {
+  claimIfIdleRerunRequested = true
+  claimIfIdleInFlight ??= (async () => {
+    let result = false
+    while (claimIfIdleRerunRequested && !sessionTearingDown) {
+      claimIfIdleRerunRequested = false
+      result = await claimIfIdlePass(pi, ctx, sessionLifecycleGeneration)
+    }
+    return result
+  })().finally(() => {
     claimIfIdleInFlight = undefined
   })
   return claimIfIdleInFlight
@@ -2965,6 +2974,9 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
         }
       }
     }
+    if (isWaitingForRetry && !sessionTearingDown && lifecycleGeneration === sessionLifecycleGeneration) {
+      claimIfIdleRerunRequested = true
+    }
     return true
   }
 
@@ -2989,9 +3001,8 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
     } else {
       await injectInvocation(pi, ctx, invocation, steer)
     }
-    if (!steer) return true
-    if (!pending && ctx.isIdle()) return true
   }
+  if (!sessionTearingDown && lifecycleGeneration === sessionLifecycleGeneration) claimIfIdleRerunRequested = true
   return true
 }
 
@@ -3567,6 +3578,7 @@ async function resetRuntimeForTesting(): Promise<void> {
   teardownTransport()
   await claimIfIdleInFlight?.catch(() => undefined)
   claimIfIdleInFlight = undefined
+  claimIfIdleRerunRequested = false
   config = undefined
   pollInFlightRunId = undefined
   pending = undefined
@@ -3662,6 +3674,7 @@ export const __testing = {
     steeredInvocations = []
     reconnectPending = false
     claimIfIdleInFlight = undefined
+    claimIfIdleRerunRequested = false
     sessionLifecycleGeneration++
     sessionTearingDown = false
   },
@@ -3950,12 +3963,20 @@ export default function (pi: ExtensionAPI): void {
     }
   })
 
+  pi.on("agent_settled", async (_event, ctx) => {
+    if (!config || !isEnabled(ctx) || !shouldHandleSessionEvents(ctx)) return
+    await claimIfIdle(pi, ctx).catch((error) => {
+      ctx.ui.notify(`Threa remote claim failed: ${String(error)}`, "warning")
+    })
+  })
+
   pi.on("session_shutdown", async (event, ctx) => {
     // In-process Pi child sessions can discover this global extension. Never
     // let an unlinked child tear down or complete the linked parent's claim.
     if (!shouldHandleSessionEvents(ctx)) return
     sessionTearingDown = true
     sessionLifecycleGeneration++
+    claimIfIdleRerunRequested = false
     reconnectPending = false
     stopPolling()
     stopClaimRenewTimer()
