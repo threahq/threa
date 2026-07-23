@@ -221,22 +221,72 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     await expect(outcome.afterAck?.()).rejects.toBe(releaseError)
     outcome.onHandoffReset?.()
     expect(resets).toBe(1)
+  })
+
   it("sends one exact allowed key using Claude's parent PID", async () => {
     const sends: unknown[][] = []
-    const outcome = await runClaudeCommand("key", "ctrl-d", undefined, "runtime", undefined, () => "root", undefined, ((
-      ...args: unknown[]
-    ) => sends.push(args)) as any)
+    const outcome = await runClaudeCommand(
+      "key",
+      "ctrl-d",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ((...args: unknown[]) => sends.push(args)) as any,
+      { rootStreamId: "root" }
+    )
     expect({ outcome, sends }).toEqual({
       outcome: { ok: true, message: "Sent `ctrl-d` to the linked Claude session." },
       sends: [["ctrl-d", process.ppid]],
     })
   })
 
+  it("rejects a key claimed for root A after relinking to root B without sending", async () => {
+    const sends: unknown[][] = []
+    await expect(
+      runClaudeCommand(
+        "key",
+        "enter",
+        undefined,
+        "runtime",
+        undefined,
+        () => "root-b",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        ((...args: unknown[]) => sends.push(args)) as any,
+        { rootStreamId: "root-a" }
+      )
+    ).rejects.toThrow("Key control request no longer matches the linked scratchpad")
+    expect(sends).toEqual([])
+  })
+
   it("throws when key inspection or send fails", async () => {
     await expect(
-      runClaudeCommand("key", "enter", undefined, "runtime", undefined, () => "root", undefined, (() => {
-        throw new Error("pane inspection failed")
-      }) as any)
+      runClaudeCommand(
+        "key",
+        "enter",
+        undefined,
+        "runtime",
+        undefined,
+        () => "root",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (() => {
+          throw new Error("pane inspection failed")
+        }) as any,
+        { rootStreamId: "root" }
+      )
     ).rejects.toThrow("pane inspection failed")
     await expect(runClaudeCommand("key", "enter", undefined, undefined, undefined, () => "root")).rejects.toThrow(
       "Key control is unavailable"
@@ -247,9 +297,23 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     for (const args of ["Enter", " enter", "enter ", "enter down", "-t", "%2", "unknown"]) {
       let sent = false
       expect(
-        await runClaudeCommand("key", args, undefined, "runtime", undefined, () => "root", undefined, (() => {
-          sent = true
-        }) as any)
+        await runClaudeCommand(
+          "key",
+          args,
+          undefined,
+          "runtime",
+          undefined,
+          () => "root",
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          (() => {
+            sent = true
+          }) as any,
+          { rootStreamId: "root" }
+        )
       ).toEqual({ ok: false, message: "Usage: `/key <name>`." })
       expect(sent).toBe(false)
     }

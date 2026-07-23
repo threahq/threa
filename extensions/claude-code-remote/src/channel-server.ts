@@ -23,6 +23,7 @@ import {
   type RemoteSessionStatusSnapshot,
   type SendResult,
   type SessionControlActuator,
+  type SessionControlInvocationContext,
 } from "@threa/remote-session"
 import { z } from "zod"
 import { CarryOnController } from "./carry-on"
@@ -183,7 +184,8 @@ export async function runClaudeCommand(
   restartDelegationsAfterReset?: () => void,
   reconnectTarget?: () => ReconnectTarget,
   reconnectReady?: () => boolean,
-  keySender: typeof sendAllowedTmuxKey = sendAllowedTmuxKey
+  keySender: typeof sendAllowedTmuxKey = sendAllowedTmuxKey,
+  invocationContext?: SessionControlInvocationContext
 ): Promise<{
   ok: boolean
   message: string
@@ -194,7 +196,11 @@ export async function runClaudeCommand(
     case "key": {
       const key = parseAllowedTmuxKey(args)
       if (!key) return { ok: false, message: "Usage: `/key <name>`." }
-      if (!runtimeSessionId || !rootStreamId?.()) throw new Error("Key control is unavailable for this session.")
+      const currentRootStreamId = rootStreamId?.()
+      if (!runtimeSessionId || !currentRootStreamId) throw new Error("Key control is unavailable for this session.")
+      if (invocationContext?.rootStreamId !== currentRootStreamId) {
+        throw new Error("Key control request no longer matches the linked scratchpad.")
+      }
       keySender(key, process.ppid)
       return { ok: true, message: `Sent \`${key}\` to the linked Claude session.` }
     }
@@ -348,7 +354,7 @@ export function createClaudeSessionControl(
       if (absorbed !== undefined) return true
       return steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`)
     },
-    runCommand: (name, args) =>
+    runCommand: (name, args, context) =>
       runClaudeCommand(
         name,
         args,
@@ -360,7 +366,9 @@ export function createClaudeSessionControl(
         stopDelegationsForReconnect,
         restartDelegationsAfterReset,
         reconnectTarget,
-        reconnectReady
+        reconnectReady,
+        sendAllowedTmuxKey,
+        context
       ),
   }
 }

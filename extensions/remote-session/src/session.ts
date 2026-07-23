@@ -108,6 +108,10 @@ export interface DeliveredTurn {
  * `interrupt()`/`steer()`; every other advertised command is routed to
  * `runCommand`, which returns the user-facing ack markdown.
  */
+export interface SessionControlInvocationContext {
+  rootStreamId: string
+}
+
 export interface SessionControlActuator {
   /** Command names to advertise (must be Threa catalog names, e.g. "model", "thinking", "compact", "run", "reload", "steer", "stop"). */
   commands: readonly string[]
@@ -127,7 +131,8 @@ export interface SessionControlActuator {
   steer?(text: string): Promise<boolean> | boolean
   runCommand(
     name: string,
-    args: string
+    args: string,
+    context: SessionControlInvocationContext
   ): Promise<{
     ok: boolean
     message: string
@@ -870,7 +875,9 @@ export class RemoteSession {
             await this.failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
             return
           }
-          const outcome = await actuator.runCommand(command.name, command.args)
+          const outcome = await actuator.runCommand(command.name, command.args, {
+            rootStreamId: invocation.rootStreamId,
+          })
           if (!outcome.afterAck) {
             await this.completeAck(invocation, outcome.message)
             return

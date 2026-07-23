@@ -17,6 +17,7 @@ export {
   type RuntimeDescriptor,
   type SendResult,
   type SessionControlActuator,
+  type SessionControlInvocationContext,
 } from "./session"
 export {
   ThreaClient,
