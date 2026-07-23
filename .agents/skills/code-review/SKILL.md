@@ -126,7 +126,7 @@ Each reviewer gets the distilled intent/plan, `/tmp/code-review.diff`, `/tmp/cod
 
 **Shared instructions** (include in every reviewer prompt):
 
-Do NOT build/typecheck or rerun broad green gates. Read `/tmp/code-review.diff`; read source only to push a specific candidate over the ≥80 threshold. Do not browse the tree. For Pi/Sol: omit `limit` when a needed whole file likely fits the 50KB read budget, issue independent reads together in one turn, search before reading for one symbol, and never walk a known-needed file through narrow 50–200-line slices.
+Do NOT build/typecheck or rerun broad green gates. Read `/tmp/code-review.diff`; read source only to push a specific candidate over the ≥80 threshold. Do not browse the tree. Pi/Sol reviewers follow the root `AGENTS.md` read-efficiency rules.
 
 Self-score each issue 0-100 before including it. **Only output issues scoring ≥80.**
 

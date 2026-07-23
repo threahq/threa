@@ -15,6 +15,13 @@ Use this bridge file so Codex can reuse existing Claude assets with minimal dupl
 - Store project skills in `.agents/skills`.
 - Keep `.claude/skills` as a symlink to `.agents/skills` for Claude compatibility.
 
+## Read Efficiency (Pi / Codex)
+
+- When a whole file is needed and likely fits the 50KB read-tool budget, omit `limit` and read it once.
+- Issue independent reads together in one turn.
+- Search before reading when only one symbol or section is needed.
+- Do not walk a known-needed file through narrow 50–200-line slices.
+
 ## Code Review Feedback
 
 CodeRabbit is configured with project-specific rules (`.coderabbit.yaml`) derived from `CLAUDE.md` invariants. Its feedback reflects project standards and must be treated with the same rigor as human review comments.

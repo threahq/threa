@@ -37,7 +37,7 @@ Determine the active harness/provider once and record the profile in the first s
 - Maximum one batched fix pass and one targeted recheck per chunk. If material findings survive, stop for a human checkpoint; do not start another clean-room review.
 - Run declared typecheck/tests once in the orchestrator after implementation and once after the fix batch when code changed. Review agents do not rerun green gates unless a concrete finding requires a focused reproduction.
 - Review from the brief and diff. Read source only to validate a concrete candidate finding; never browse the whole tree for confidence theater.
-- For Pi/Sol reads: omit `limit` when the whole file is needed and likely fits the 50KB tool budget; issue independent reads together in one turn; search before reading when only one symbol is needed; do not walk a known-needed file through narrow 50–200-line slices.
+- Pi/Sol agents follow the root `AGENTS.md` read-efficiency rules.
 - Briefs, diffs, histories, and test output live in files. Pass paths, not pasted walls.
 
 ## Per chunk
