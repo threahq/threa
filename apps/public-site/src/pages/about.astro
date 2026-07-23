@@ -82,27 +82,29 @@ const schema = [
           <span class="about-qnum">What gets lost</span>
           <h3>What did we say again?</h3>
           <p>
-            Years of decisions and the reasoning behind them pile up in a
-            workplace chat, and almost none of it resurfaces. My memory runs on
-            gist: I'll remember that we discussed something, sometimes why,
-            rarely the exact wording or where we said it, though I'll know it was
-            Kate who said it. I was curious whether a chat app could surface that
-            context when it helps, instead of just
-            holding it, and whether doing it well was even affordable. I assumed
-            it would be too expensive to bother with. So far it hasn't been.
+            Years of decisions and their reasoning pile up in workplace chat,
+            and I rarely find them again. My memory runs on gist: I'll remember
+            that we discussed something, sometimes why, rarely the exact wording
+            or where we said it, though I'll know it was Kate who said it. I
+            started wondering whether a chat app could do something more useful
+            with all that conversational data, keeping decisions and their
+            reasoning tied to the messages they came from. I assumed it would
+            cost too much. So far it hasn't.
           </p>
         </div>
         <div class="about-q">
           <span class="about-qnum">On your own terms</span>
           <h3>Tools are supposed to be yours.</h3>
           <p>
-            Most tools want to be the platform you can't afford to leave, and
-            they all insist on shipping their own AI agent. I rarely want it: it
-            runs a cheaper model on thinner context and can't see past its own
-            walls. Yours can. Threa has an assistant too, Ariadne, and I want her
-            to be genuinely great, but she's only ever great inside the room,
-            where the shared context lives. For your own work you'd rather bring
-            your own agent, so Threa connects to it instead of replacing it.
+            Most tools want to become the platform you can't afford to leave, and
+            lately plenty of them insist on shipping their own AI agent. I rarely
+            want it. The agent I already use has my codebase, my tools, and the
+            context I've built around it; another agent inside another app starts
+            without them. Threa has Ariadne too, and I want her to be genuinely
+            great, but she's at her best inside the room, where the shared context
+            lives. For my own work I'd rather bring the agent I already use, so
+            Threa connects to it through the bot runtime, public API, CLI, and MCP
+            server instead of trying to replace it.
           </p>
         </div>
         <div class="about-q">
@@ -186,7 +188,6 @@ const schema = [
       </p>
       <div class="actions">
         <a class="cta" href="/#waitlist">Join the waitlist</a>
-        <span class="quiet">/ early 2026</span>
       </div>
     </div>
   </div>
@@ -213,8 +214,6 @@ const schema = [
       align-items: end;
     }
     .about-hero .lede { max-width: 460px; font-size: 18px; margin: 0 0 6px; }
-
-    /* Constrain the intro line so it doesn't run the full shell width. */
     .about-why-lede { max-width: 620px; font-size: 17px; margin: 0 0 4px; }
 
     /* The strands: open columns, no card chrome. A hairline rule and a mono

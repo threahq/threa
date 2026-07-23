@@ -121,8 +121,11 @@ import CodeBlock from "../../components/CodeBlock.astro"
   <p>
     In the app, create a bot (give it the <code>mentionable</code> trait so people
     can summon it), then mint a <code>threa_bk_</code> key on it with
-    <code>bot-runtime:write</code>, <code>bot-invocations:write</code>, and
-    <code>messages:write</code>. Use that key as the credential below.
+    <code>bot-runtime:write</code>, <code>bot-invocations:write</code>,
+    <code>messages:write</code>, <code>streams:read</code>,
+    <code>messages:read</code>, <code>messages:search</code>,
+    <code>memos:read</code>, and <code>attachments:read</code>. Use that key as the
+    credential below.
   </p>
 
   <h3>2 · Heartbeat a presence</h3>
@@ -217,10 +220,9 @@ async function loop() {
     from a scratchpad.
   </div>
   <p>
-    A bot key with <code>streams:read</code> and <code>memos:read</code> can also
-    read history and search the same memory Ariadne uses while it works, so your
-    local agent answers with the full workspace context behind the message that
-    summoned it.
+    With those read and search scopes, the bot can look through stream history,
+    search messages and memos, and read attachments while it works. That gives
+    your local agent the workspace context behind the message that summoned it.
   </p>
 
   <h2 id="delegations">Run a delegation</h2>
