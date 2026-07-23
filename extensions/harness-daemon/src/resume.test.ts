@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { afterEach, expect, mock, spyOn, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -14,7 +14,7 @@ import {
 import { launchAgentPlist } from "./boot"
 import { parseResume, parseSpawn } from "./cli"
 import { kickAgent, restoredSessionMatches, reviveAgent, type ReviveDeps, type ReviveOutcome } from "./commands"
-import { findAgent, readInventory, upsertAgent } from "./inventory"
+import { findAgent, readInventory, readInventoryReadonly, upsertAgent } from "./inventory"
 import { acquireProcessLock } from "./lock"
 import {
   claudeLaunchArgs,
@@ -161,6 +161,89 @@ test("kick discovers a live unmanaged Claude channel pane by runtime session id"
     )
     expect(sent).toEqual([{ target: "%8", keys: ["Enter"] }])
     expect(existsSync(inventory)).toBeFalse()
+  } finally {
+    if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
+    else process.env.THREA_HARNESSD_INVENTORY = previousPath
+  }
+})
+
+test("kick lookup leaves legacy inventory unchanged for managed and standalone agents", () => {
+  const previousPath = process.env.THREA_HARNESSD_INVENTORY
+  const path = join(mkdtempSync(join(tmpdir(), "harnessd-legacy-kick-")), "inventory.sqlite")
+  const db = new Database(path)
+  db.exec(`
+    CREATE TABLE managed_agents (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, runtime TEXT NOT NULL, status TEXT NOT NULL,
+      tmux_session TEXT, tmux_window TEXT, tmux_pane_id TEXT,
+      command_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    INSERT INTO managed_agents VALUES (
+      'managed-id', 'managed-name', 'claude', 'online', 'legacy', 'managed', '%9', '["claude"]',
+      '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'
+    )
+  `)
+  const schemaBefore = db.query("PRAGMA table_info(managed_agents)").all()
+  db.close()
+  process.env.THREA_HARNESSD_INVENTORY = path
+  try {
+    const sent: Array<{ target: string; keys: string[] }> = []
+    kickAgent(
+      "managed-id",
+      (target, keys) => sent.push({ target, keys }),
+      () => {
+        throw new Error("exact managed match must take priority")
+      }
+    )
+    kickAgent(
+      "standalone-session",
+      (target, keys) => sent.push({ target, keys }),
+      () => ({
+        sessionName: "1",
+        windowName: "standalone",
+        windowId: "@7",
+        paneId: "%8",
+        panePid: 33336,
+        cwd: "/repo/threa.standalone",
+        startCommand: "claude --dangerously-load-development-channels server:threa-channel",
+      })
+    )
+    expect(sent).toEqual([
+      { target: "%9", keys: ["Enter"] },
+      { target: "%8", keys: ["Enter"] },
+    ])
+    const verify = new Database(path, { readonly: true })
+    expect(verify.query("PRAGMA table_info(managed_agents)").all()).toEqual(schemaBefore)
+    verify.close()
+  } finally {
+    if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
+    else process.env.THREA_HARNESSD_INVENTORY = previousPath
+  }
+})
+
+test("kick lookup works with a read-only inventory file", () => {
+  const previousPath = process.env.THREA_HARNESSD_INVENTORY
+  const path = join(mkdtempSync(join(tmpdir(), "harnessd-readonly-kick-")), "inventory.sqlite")
+  process.env.THREA_HARNESSD_INVENTORY = path
+  try {
+    upsertAgent(agent({ tmuxWindowId: "@7", tmuxPaneId: "%8" }))
+    chmodSync(path, 0o444)
+    const sent: Array<{ target: string; keys: string[] }> = []
+    kickAgent("claude-1", (target, keys) => sent.push({ target, keys }))
+    expect(sent).toEqual([{ target: "%8", keys: ["Enter"] }])
+  } finally {
+    chmodSync(path, 0o644)
+    if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
+    else process.env.THREA_HARNESSD_INVENTORY = previousPath
+  }
+})
+
+test("read-only inventory lookup does not create a missing file", () => {
+  const previousPath = process.env.THREA_HARNESSD_INVENTORY
+  const path = join(mkdtempSync(join(tmpdir(), "harnessd-readonly-missing-")), "inventory.sqlite")
+  process.env.THREA_HARNESSD_INVENTORY = path
+  try {
+    expect(readInventoryReadonly()).toEqual([])
+    expect(existsSync(path)).toBeFalse()
   } finally {
     if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
     else process.env.THREA_HARNESSD_INVENTORY = previousPath

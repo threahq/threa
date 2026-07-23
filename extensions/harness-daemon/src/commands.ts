@@ -6,7 +6,14 @@ import { installBootResume } from "./boot"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
 import { findLocalClaudeChannelPane, type LocalTmuxPane } from "./discovery"
 import { die } from "./errors"
-import { findAgent, findAgentOrUndefined, inventoryPath, readInventory, upsertAgent } from "./inventory"
+import {
+  findAgent,
+  findAgentOrUndefined,
+  inventoryPath,
+  readInventory,
+  readInventoryReadonly,
+  upsertAgent,
+} from "./inventory"
 import { acquireProcessLock } from "./lock"
 import { commandExists, commandPath, output } from "./shell"
 import {
@@ -552,7 +559,7 @@ export function kickAgent(
   send: typeof sendKeys = sendKeys,
   discover: (runtimeSessionId: string) => LocalTmuxPane | undefined = findLocalClaudeChannelPane
 ): void {
-  const managed = findAgentOrUndefined(ref)
+  const managed = findAgentOrUndefined(ref, readInventoryReadonly())
   if (managed) {
     const target = tmuxKeyTarget(managed)
     send(target, ["Enter"])
