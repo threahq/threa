@@ -1,7 +1,12 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { runHarnessKick, type BotRuntimeTransport } from "@threa/bot-runtime-client"
+import {
+  harnessReconnectAvailable,
+  prepareHarnessReconnect,
+  runHarnessKick,
+  type BotRuntimeTransport,
+} from "@threa/bot-runtime-client"
 import {
   DelegationClient,
   DelegationRunner,
@@ -47,6 +52,7 @@ const SESSION_CONTROL_COMMANDS = [
   "run",
   "reload",
   "carry-on",
+  "reconnect",
 ] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
 // whatever the local client's own picker cache discovers (see model-catalog).
@@ -164,9 +170,27 @@ export async function runClaudeCommand(
   args: string,
   carryOn?: CarryOnController,
   runtimeSessionId?: string,
-  statusReport?: () => string
-): Promise<{ ok: boolean; message: string }> {
+  statusReport?: () => string,
+  rootStreamId?: () => string | undefined,
+  reconnectBusy?: () => boolean
+): Promise<{ ok: boolean; message: string; afterAck?: () => void }> {
   switch (name) {
+    case "reconnect": {
+      if (args !== "" && args !== "--force") {
+        return { ok: false, message: "Usage: `/reconnect [--force]`." }
+      }
+      if (args !== "--force" && reconnectBusy?.()) {
+        return { ok: false, message: "Claude is busy; retry when idle or use `/reconnect --force`." }
+      }
+      const root = rootStreamId?.()
+      if (!runtimeSessionId || !root) throw new Error("Harness reconnect is unavailable for this session.")
+      const afterAck = prepareHarnessReconnect(runtimeSessionId, root, { force: args === "--force" })
+      return {
+        ok: true,
+        message: "Reconnect request accepted; attempting to resume the linked Claude session.",
+        afterAck,
+      }
+    }
     case "carry-on": {
       if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
       return carryOn.enqueue(args)
@@ -240,13 +264,19 @@ async function runSlash(slash: string): Promise<{ ok: boolean; message: string }
 export function createClaudeSessionControl(
   carryOn: () => CarryOnController | undefined = () => undefined,
   runtimeSessionId?: string,
-  statusReport?: () => string
+  statusReport?: () => string,
+  rootStreamId?: () => string | undefined,
+  reconnectBusy?: () => boolean
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
-    commands: runtimeSessionId
-      ? [...SESSION_CONTROL_COMMANDS]
-      : SESSION_CONTROL_COMMANDS.filter((command) => command !== "kick"),
+    get commands() {
+      return runtimeSessionId
+        ? SESSION_CONTROL_COMMANDS.filter(
+            (command) => command !== "reconnect" || Boolean(rootStreamId?.() && harnessReconnectAvailable())
+          )
+        : SESSION_CONTROL_COMMANDS.filter((command) => command !== "kick" && command !== "reconnect")
+    },
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],
     interrupt: () => {
@@ -265,7 +295,8 @@ export function createClaudeSessionControl(
       if (absorbed !== undefined) return true
       return steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`)
     },
-    runCommand: (name, args) => runClaudeCommand(name, args, carryOn(), runtimeSessionId, statusReport),
+    runCommand: (name, args) =>
+      runClaudeCommand(name, args, carryOn(), runtimeSessionId, statusReport, rootStreamId, reconnectBusy),
   }
 }
 
@@ -357,7 +388,9 @@ export class ChannelServer {
               quotaHolding: this.carryOn?.holding ?? false,
               pendingPermissionCount: this.openPermissions.size,
               activeDelegationCount: this.openDelegations.size,
-            })
+            }),
+          () => this.session?.rootStreamId,
+          () => (this.session?.statusSnapshot.inflightCount ?? 0) > 0 || (this.carryOn?.holding ?? false)
         ),
         onArchived: () => this.windDownForArchive(),
         ...(config.permissionRelay

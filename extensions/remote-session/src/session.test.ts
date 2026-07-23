@@ -664,6 +664,35 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await session.shutdown()
   })
 
+  test("writes offline after an already-fired reconnect fallback", async () => {
+    const client = { fail: async () => {} } as unknown as ThreaClient
+    const { transport, presence } = makeFakeTransport()
+    let releasePresence!: () => void
+    const blocked = new Promise<void>((resolve) => (releasePresence = resolve))
+    ;(transport as unknown as { updatePresence: (body: Record<string, unknown>) => Promise<void> }).updatePresence =
+      async (body) => {
+        presence.push(body)
+        if (body.status === "available") await blocked
+      }
+    const session = makeGraceSession({ client, transport, archiveGraceMs: 60_000 })
+    ;(session as any).link = { rootStreamId: "stream_root" }
+    ;(session as any).reconnectHandoff = true
+    ;(session as any).resetReconnectHandoff()
+    await Bun.sleep(0)
+
+    const archived = asInternal(session).handleSessionArchived({
+      runtimeSessionId: "rts-test",
+      rootStreamId: "stream_root",
+    })
+    await Bun.sleep(0)
+    expect(presence.map((body) => body.status)).toEqual(["available"])
+    releasePresence()
+    await archived
+
+    expect(presence.map((body) => body.status)).toEqual(["available", "offline"])
+    await session.shutdown()
+  })
+
   test("winds down (onArchived) when the grace expires without a restore", async () => {
     const client = { fail: async () => {} } as unknown as ThreaClient
     const { transport, presence } = makeFakeTransport()
@@ -704,6 +733,31 @@ describe("RemoteSession session-archived handling (grace window)", () => {
 })
 
 describe("RemoteSession.shutdown", () => {
+  test("writes offline after an already-fired reconnect fallback", async () => {
+    const { client } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    let releasePresence!: () => void
+    const blocked = new Promise<void>((resolve) => (releasePresence = resolve))
+    ;(transport as unknown as { updatePresence: (body: Record<string, unknown>) => Promise<void> }).updatePresence =
+      async (body) => {
+        presence.push(body)
+        if (body.status === "available") await blocked
+      }
+    const session = makeSession(client, transport)
+    ;(session as any).link = { rootStreamId: "stream_root" }
+    ;(session as any).reconnectHandoff = true
+    ;(session as any).resetReconnectHandoff()
+    await Bun.sleep(0)
+
+    const shutdown = session.shutdown()
+    await Bun.sleep(0)
+    expect(presence.map((body) => body.status)).toEqual(["available"])
+    releasePresence()
+    await shutdown
+
+    expect(presence.map((body) => body.status)).toEqual(["available", "offline"])
+  })
+
   test("marks presence offline and fails every in-flight claim", async () => {
     const failed: Array<{ id: string; body: Record<string, unknown> }> = []
     const client = {
@@ -755,6 +809,132 @@ describe("session control via the actuator", () => {
 
     expect(ran).toEqual([{ name: "model", args: "opus" }])
     expect(calls.complete[0]?.body.finalMessageMarkdown).toBe("Set model to `opus`.")
+  })
+
+  test("refreshes hello with the current nonaccepting handoff state", () => {
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    ;(session as any).reconnectHandoff = true
+    ;(session as any).refreshHelloCapabilities()
+    expect((session as any).hello).toMatchObject({ status: "busy", acceptingInvocations: false })
+  })
+
+  test("handoff fallback restores presence and drains only while linked and running", async () => {
+    const { client } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    let drains = 0
+    ;(session as any).link = { rootStreamId: "stream_root" }
+    ;(session as any).reconnectHandoff = true
+    ;(session as any).claimDrain = async () => {
+      drains++
+    }
+    ;(session as any).resetReconnectHandoff()
+    await Bun.sleep(0)
+    expect({ presence: presence.at(-1), drains }).toMatchObject({
+      presence: { status: "available", acceptingInvocations: true },
+      drains: 1,
+    })
+    ;(session as any).stopped = true
+    ;(session as any).reconnectHandoff = true
+    ;(session as any).resetReconnectHandoff()
+    await Bun.sleep(0)
+    expect({ writes: presence.length, drains }).toEqual({ writes: 1, drains: 1 })
+  })
+
+  test("runs a post-ack action only after acknowledgement completes", async () => {
+    const { client } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    const order: string[] = []
+    const complete = (client as unknown as { complete: (...args: unknown[]) => Promise<void> }).complete
+    ;(client as unknown as { complete: (...args: unknown[]) => Promise<void> }).complete = async (...args) => {
+      await complete(...args)
+      order.push("ack")
+    }
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["reconnect"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "accepted", afterAck: () => order.push("start") }),
+      },
+    })
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(
+      makeInvocation({
+        trigger: "session-control",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd", name: "reconnect", args: "" } },
+      })
+    )
+    expect(order).toEqual(["ack", "start"])
+    expect(presence.at(-1)).toMatchObject({ status: "busy", acceptingInvocations: false })
+  })
+
+  test("logs a post-ack action error after preserving the successful acknowledgement", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const logs: string[] = []
+    const session = new RemoteSession({
+      config: makeConfig(),
+      client,
+      delegate: {
+        deliverTurn: async () => {},
+        sessionControl: {
+          commands: ["reconnect"],
+          interrupt: () => true,
+          runCommand: async () => ({
+            ok: true,
+            message: "accepted",
+            afterAck: () => {
+              throw new Error("detached launch failed")
+            },
+          }),
+        },
+      },
+      runtime: RUNTIME,
+      transport,
+      log: (message) => logs.push(message),
+    })
+
+    await (session as any).handleSessionControl(
+      makeInvocation({
+        trigger: "session-control",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd", name: "reconnect", args: "" } },
+      })
+    )
+    expect({ completed: calls.complete.length, logs }).toEqual({
+      completed: 1,
+      logs: ["session-control post-ack action failed: detached launch failed"],
+    })
+  })
+
+  test("does not run a post-ack action when acknowledgement fails", async () => {
+    const { client } = makeFakeClient()
+    ;(client as unknown as { complete: () => Promise<void> }).complete = async () => {
+      throw new Error("ack failed")
+    }
+    const { transport, presence } = makeFakeTransport()
+    let started = false
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["reconnect"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "accepted", afterAck: () => (started = true) }),
+      },
+    })
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(
+      makeInvocation({
+        trigger: "session-control",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd", name: "reconnect", args: "" } },
+      })
+    )
+    expect(started).toBe(false)
+    expect(presence.at(-1)).toMatchObject({ status: "busy", acceptingInvocations: false })
   })
 
   test("a failed actuator command fails the invocation instead of completing it", async () => {

@@ -29,6 +29,8 @@ export interface BotRuntimeHello {
   runtimeKind: string
   runtimeSessionId?: string
   displayName?: string | null
+  status: "available" | "busy" | "offline" | "error"
+  acceptingInvocations: boolean
   supportedCapabilities: string[]
   capabilities?: Record<string, unknown>
   manifest?: { output: { reply?: boolean; trace?: boolean; sources?: boolean } }
@@ -84,6 +86,7 @@ export interface BotRuntimeTransportOptions {
   workspaceId: string
   apiKey: string
   hello: BotRuntimeHello
+  beforeHello?: (hello: BotRuntimeHello) => void
   callbacks?: BotRuntimeTransportCallbacks
   /** How long to wait for a write-event ack before falling back to HTTP. Default 5s. */
   wsAckTimeoutMs?: number

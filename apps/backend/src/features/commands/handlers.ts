@@ -32,8 +32,13 @@ export function resolveRuntimeInvocationRouting(
   trigger: (typeof BotInvocationTriggers)[keyof typeof BotInvocationTriggers]
   requiredCapability: (typeof BotInvocationCapabilities)[keyof typeof BotInvocationCapabilities]
 } {
-  if (commandName === "steer" || commandName === "stop" || commandName === "kick" || commandName === "carry-on") {
-    // steer/stop/kick/carry-on must reach the runtime mid-turn. Pi advertises
+  if (
+    commandName === "steer" ||
+    commandName === "stop" ||
+    commandName === "kick" ||
+    commandName === "carry-on" ||
+    commandName === "reconnect"
+  ) {
     // `active-scratchpad` while busy, so it claims them there. The Claude Code
     // channel instead advertises ONLY `session-control` while busy (so a normal
     // `active-scratchpad` follow-up stays queued behind the running turn) — route

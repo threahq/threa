@@ -6,6 +6,7 @@ function withTmuxEnv<T>(env: { TMUX?: string; TMUX_PANE?: string }, fn: () => T)
     TMUX: process.env.TMUX,
     TMUX_PANE: process.env.TMUX_PANE,
     THREA_TMUX_TARGET: process.env.THREA_TMUX_TARGET,
+    THREA_HARNESSD_ENTRYPOINT: process.env.THREA_HARNESSD_ENTRYPOINT,
   }
   delete process.env.THREA_TMUX_TARGET
   if (env.TMUX === undefined) delete process.env.TMUX
@@ -53,6 +54,19 @@ describe("createClaudeSessionControl", () => {
     })
   })
 
+  it("advertises reconnect only with exact runtime, root, and harness entrypoint", () => {
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => "root")!.commands).toContain("reconnect")
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => undefined)!.commands).not.toContain(
+        "reconnect"
+      )
+      process.env.THREA_HARNESSD_ENTRYPOINT = "/definitely/missing/harnessd.ts"
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => "root")!.commands).not.toContain(
+        "reconnect"
+      )
+    })
+  })
+
   it("does not advertise /kick without a harness runtime identity", () => {
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
       expect(createClaudeSessionControl()!.commands).toEqual([
@@ -71,6 +85,47 @@ describe("createClaudeSessionControl", () => {
 })
 
 describe("runClaudeCommand validation (paths that never touch tmux)", () => {
+  it("accepts only empty or exact --force reconnect args", async () => {
+    for (const args of ["--FORCE", "force", "--force=true", "--force --force", "extra"]) {
+      expect(await runClaudeCommand("reconnect", args, undefined, "runtime", undefined, () => "root")).toEqual({
+        ok: false,
+        message: "Usage: `/reconnect [--force]`.",
+      })
+    }
+    for (const args of ["", "--force"]) {
+      const outcome = await runClaudeCommand("reconnect", args, undefined, "runtime", undefined, () => "root")
+      expect(outcome.ok).toBe(true)
+      expect(outcome.message).toBe("Reconnect request accepted; attempting to resume the linked Claude session.")
+      expect(typeof outcome.afterAck).toBe("function")
+    }
+  })
+
+  it("refuses non-force reconnect during in-flight or quota-held work", async () => {
+    const busy = await runClaudeCommand(
+      "reconnect",
+      "",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      () => true
+    )
+    expect(busy).toEqual({ ok: false, message: "Claude is busy; retry when idle or use `/reconnect --force`." })
+    expect(
+      (
+        await runClaudeCommand(
+          "reconnect",
+          "--force",
+          undefined,
+          "runtime",
+          undefined,
+          () => "root",
+          () => true
+        )
+      ).ok
+    ).toBe(true)
+  })
+
   it("fails loudly when /kick has no harness-managed runtime identity", async () => {
     expect(runClaudeCommand("kick", "")).rejects.toThrow("Harness kick is unavailable for this session.")
   })

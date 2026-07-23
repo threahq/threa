@@ -6,6 +6,8 @@ import { buildBotSocketUrl, parseWsHint } from "./ws-hint"
 const HELLO = {
   instanceId: "inst_42",
   runtimeKind: "pi-local",
+  status: "available" as const,
+  acceptingInvocations: true,
   supportedCapabilities: ["active-scratchpad"],
 }
 
@@ -228,6 +230,50 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
       staleSocketRedialMs,
     })
   }
+
+  it("refreshes the initial and reconnect hello payloads immediately before emission", async () => {
+    const fake = makeFakeSocket()
+    const hellos: unknown[] = []
+    fake.emit = (event, payload) => {
+      if (event === "bot:hello") hellos.push(structuredClone(payload))
+    }
+    const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      stubHintFetch()
+      let commands = ["stop"]
+      let busy = true
+      const transport = new BotRuntimeTransport({
+        baseUrl: "https://app.example.test",
+        workspaceId: "ws_1",
+        apiKey: "threa_bk_test",
+        hello: { ...HELLO, capabilities: {} },
+        beforeHello: (hello) => {
+          Object.assign(hello, {
+            status: busy ? "busy" : "available",
+            acceptingInvocations: !busy,
+            capabilities: { sessionControlCommands: commands },
+          })
+        },
+      })
+      await transport.connect()
+      fake.handlers.connect!()
+      commands = ["stop", "reconnect"]
+      busy = false
+      fake.handlers.connect!()
+
+      expect(hellos).toEqual([
+        {
+          ...HELLO,
+          status: "busy",
+          acceptingInvocations: false,
+          capabilities: { sessionControlCommands: ["stop"] },
+        },
+        { ...HELLO, capabilities: { sessionControlCommands: ["stop", "reconnect"] } },
+      ])
+    } finally {
+      ioSpy.mockRestore()
+    }
+  })
 
   it("redials after a server-initiated disconnect (Socket.IO won't reconnect on its own)", async () => {
     const fake = makeFakeSocket()

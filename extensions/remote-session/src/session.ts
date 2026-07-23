@@ -123,8 +123,7 @@ export interface SessionControlActuator {
    * interrupt + redeliver. False = control lost.
    */
   steer?(text: string): Promise<boolean> | boolean
-  /** Execute an advertised non-steer/stop command. Returns the ack posted to the scratchpad. */
-  runCommand(name: string, args: string): Promise<{ ok: boolean; message: string }>
+  runCommand(name: string, args: string): Promise<{ ok: boolean; message: string; afterAck?: () => void }>
 }
 
 /**
@@ -335,6 +334,9 @@ export class RemoteSession {
   private readonly hello: BotRuntimeHello
   private link: RuntimeSessionLink | undefined
   private claiming = false
+  private reconnectHandoff = false
+  private reconnectResetTimer: ReturnType<typeof setTimeout> | undefined
+  private reconnectFallbackTask: Promise<unknown> | undefined
   private stopped = false
   private readonly archiveGraceMs: number
   /**
@@ -370,12 +372,8 @@ export class RemoteSession {
     // The transport re-sends this exact object on every reconnect hello, so the
     // BIK fields assigned into it at start() (after ensure()) ride every one.
     this.hello = {
-      instanceId: this.config.instanceId,
-      runtimeKind: this.runtime.kind,
-      runtimeSessionId: this.config.runtimeSessionId,
-      displayName: this.config.displayName,
+      ...this.presenceBody("available"),
       supportedCapabilities: supportedCapabilitiesFor(this.sessionControlEnabled),
-      capabilities: runtimeCapabilitiesFor(this.config.runtimeSessionId, this.delegate.sessionControl),
       ...(this.runtime.manifest ? { manifest: this.runtime.manifest } : {}),
     }
     this.transport =
@@ -385,6 +383,7 @@ export class RemoteSession {
         workspaceId: this.config.workspaceId,
         apiKey: this.config.apiKey,
         hello: this.hello,
+        beforeHello: () => this.refreshHelloCapabilities(),
         callbacks: {
           onInvocationAvailable: () => void this.claimDrain(),
           ...(options.onDelegationAvailable
@@ -402,6 +401,11 @@ export class RemoteSession {
 
   private get sessionControlEnabled(): boolean {
     return Boolean(this.delegate.sessionControl)
+  }
+
+  private refreshHelloCapabilities(): void {
+    Object.assign(this.hello, this.presenceBody(this.reconnectHandoff || this.inflight.size > 0 ? "busy" : "available"))
+    this.hello.supportedCapabilities = supportedCapabilitiesFor(this.sessionControlEnabled)
   }
 
   /** The stream of the turn the runtime is executing right now, if any. */
@@ -495,6 +499,8 @@ export class RemoteSession {
       clearTimeout(this.archivePending.deadline)
       this.archivePending = undefined
     }
+    this.resetReconnectHandoff()
+    await this.reconnectFallbackTask
     // Fast, idempotent teardown first so SIGTERM cleanup isn't held hostage by
     // slow writes when Threa is the thing that's unreachable. Dropping the socket
     // before the offline push means updatePresence falls straight to HTTP rather
@@ -630,7 +636,7 @@ export class RemoteSession {
     // No claims while detached-pending-restore: the scratchpad is archived, so
     // any claimable work predates the archive and would reply into a closed
     // stream. Restore re-runs the drain.
-    if (this.stopped || this.claiming || this.archivePending) return false
+    if (this.stopped || this.claiming || this.archivePending || this.reconnectHandoff) return false
     let claimedAny = false
     this.claiming = true
     try {
@@ -642,6 +648,7 @@ export class RemoteSession {
         // tool approval whose verdict arrives as an ordinary message) keeps
         // draining with full caps via `interceptHoldsClaims`. Without runtime
         // control there's nothing to claim while busy: strict one-at-a-time.
+        if (this.reconnectHandoff) break
         const busy = this.inflight.size > 0 && !this.interceptHoldsClaims
         if (busy && !this.sessionControlEnabled) break
         const invocation = await this.claimNext(busy)
@@ -849,7 +856,21 @@ export class RemoteSession {
             return
           }
           const outcome = await actuator.runCommand(command.name, command.args)
-          await this.completeAck(invocation, outcome.message)
+          if (!outcome.afterAck) {
+            await this.completeAck(invocation, outcome.message)
+            return
+          }
+          this.reconnectHandoff = true
+          await this.syncPresence()
+          const completed = await this.completeAck(invocation, outcome.message)
+          if (!completed) return this.resetReconnectHandoff()
+          try {
+            outcome.afterAck()
+            this.reconnectResetTimer = setTimeout(() => this.resetReconnectHandoff(), 5_000)
+          } catch (error) {
+            this.log(`session-control post-ack action failed: ${this.summarize(error)}`)
+            this.resetReconnectHandoff()
+          }
         }
       }
     } catch (error) {
@@ -1053,21 +1074,24 @@ export class RemoteSession {
     }
   }
 
-  private async completeAck(invocation: ClaimedInvocation, markdown: string): Promise<void> {
+  private async completeAck(invocation: ClaimedInvocation, markdown: string): Promise<boolean> {
     // Sealed session-control ack on E2E: seal the confirmation under the stream
     // key and post it as `sealedReply`. Falls through to the plaintext path when
     // the bot can't seal (no wrap / key race), which silently closes on E2E.
     const sealedReply = await this.sealSessionControlAck(invocation, markdown)
     if (sealedReply) {
-      await this.client
-        .complete(invocation.id, {
+      try {
+        await this.client.complete(invocation.id, {
           instanceId: this.config.instanceId,
           claimToken: invocation.claimToken,
           sealedReply,
           metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true" },
         })
-        .catch((error) => this.log(`sealed session-control ack failed: ${this.summarize(error)}`))
-      return
+        return true
+      } catch (error) {
+        this.log(`sealed session-control ack failed: ${this.summarize(error)}`)
+        return false
+      }
     }
     try {
       await this.client.complete(invocation.id, {
@@ -1084,13 +1108,18 @@ export class RemoteSession {
       // feedback. Narrow to that exact code so a capability/validation 400 isn't
       // masked as a successful close (INV-11, fail loud).
       if (error instanceof ThreaApiError && error.code === "E2E_STREAM_PLAINTEXT_UNSUPPORTED") {
-        await this.completeTurn(invocation, { noResponse: true }).catch((inner) =>
+        try {
+          await this.completeTurn(invocation, { noResponse: true })
+          return true
+        } catch (inner) {
           this.log(`session-control silent ack failed: ${this.summarize(inner)}`)
-        )
-        return
+          return false
+        }
       }
       this.log(`session-control ack failed: ${this.summarize(error)}`)
+      return false
     }
+    return true
   }
 
   private async completeNoResponse(invocation: ClaimedInvocation): Promise<void> {
@@ -1462,6 +1491,8 @@ export class RemoteSession {
       deadline: setTimeout(() => void this.windDownAfterGrace(rootStreamId), this.archiveGraceMs),
     }
     this.archivePending = pending
+    this.resetReconnectHandoff()
+    await this.reconnectFallbackTask
     // Pull the next poll tick onto the probe cadence NOW — the pending tick was
     // scheduled with the slow socket-backstop delay (15 min), which could land
     // zero probes inside the grace window if the restore push is then missed.
@@ -1604,15 +1635,28 @@ export class RemoteSession {
 
   // --- Helpers --------------------------------------------------------------
 
+  private resetReconnectHandoff(): void {
+    if (this.reconnectResetTimer) clearTimeout(this.reconnectResetTimer)
+    this.reconnectHandoff = false
+    if (this.stopped || !this.link || this.archivePending) return
+    let task: Promise<unknown>
+    task = this.syncPresence()
+      .then(() => this.claimDrain())
+      .finally(() => {
+        if (this.reconnectFallbackTask === task) this.reconnectFallbackTask = undefined
+      })
+    this.reconnectFallbackTask = task
+  }
+
   /** Push presence derived from the current in-flight count, so rapid transitions converge on the truth. */
   private async syncPresence(): Promise<void> {
-    const busy = this.inflight.size > 0
+    const busy = this.reconnectHandoff || this.inflight.size > 0
     await this.transport
       .updatePresence(this.presenceBody(busy ? "busy" : "available", busy ? this.runtime.busyStatusText : undefined))
       .catch(() => undefined)
   }
 
-  private presenceBody(status: "available" | "busy" | "offline", statusText?: string): Record<string, unknown> {
+  private presenceBody(status: "available" | "busy" | "offline", statusText?: string) {
     return {
       runtimeKind: this.runtime.kind,
       instanceId: this.config.instanceId,

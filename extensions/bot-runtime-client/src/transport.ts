@@ -42,6 +42,7 @@ export class BotRuntimeTransport {
   private readonly workspaceId: string
   private readonly apiKey: string
   private readonly hello: BotRuntimeTransportOptions["hello"]
+  private readonly beforeHello: BotRuntimeTransportOptions["beforeHello"]
   private readonly callbacks: BotRuntimeTransportCallbacks
   private readonly wsAckTimeoutMs: number
   private readonly reconnectionDelayMaxMs: number
@@ -63,6 +64,7 @@ export class BotRuntimeTransport {
     this.workspaceId = opts.workspaceId
     this.apiKey = opts.apiKey
     this.hello = opts.hello
+    this.beforeHello = opts.beforeHello
     this.callbacks = opts.callbacks ?? {}
     this.wsAckTimeoutMs = opts.wsAckTimeoutMs ?? DEFAULT_WS_ACK_TIMEOUT_MS
     this.reconnectionDelayMaxMs = opts.reconnectionDelayMaxMs ?? DEFAULT_RECONNECTION_DELAY_MAX_MS
@@ -168,6 +170,7 @@ export class BotRuntimeTransport {
   sendHello(): void {
     const socket = this.socket
     if (!socket) return
+    this.beforeHello?.(this.hello)
     socket.emit(
       "bot:hello",
       { ...this.hello, ...(this.cursor ? { sinceCursor: this.cursor } : {}) },

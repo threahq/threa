@@ -287,7 +287,7 @@ function withArgSuggestions(
  * Returning the intersection (instead of a plain boolean) lets the caller
  * surface exactly the commands the runtime can actually handle.
  */
-function resolveAdvertisedSessionControlCommandNames(presence: BotRuntimeInstance): ReadonlySet<string> {
+export function resolveAdvertisedSessionControlCommandNames(presence: BotRuntimeInstance): ReadonlySet<string> {
   if (presence.capabilities.supportsSessionControlCommands !== true) return new Set()
   const advertised = presence.capabilities.sessionControlCommands
   if (!Array.isArray(advertised)) return new Set()
