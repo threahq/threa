@@ -1321,7 +1321,7 @@ describe("claim drain serialization", () => {
     __testing.setConfigForTesting(undefined)
   })
 
-  test("shares one claim pass between concurrent callers", async () => {
+  test("serializes concurrent callers and reruns after a coalesced wakeup", async () => {
     __testing.setConfigForTesting({
       baseUrl: "https://app.threa.io",
       workspaceId: "ws_123",
@@ -1351,8 +1351,114 @@ describe("claim drain serialization", () => {
     expect(first).toBe(second)
     release()
     expect(await Promise.all([first, second])).toEqual([true, true])
-    expect(requests).toBe(1)
+    expect(requests).toBe(2)
     fetchSpy.mockRestore()
+  })
+
+  test("stops draining on an empty claim during a rate-limit wait", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
+    })
+    __testing.setRateLimitWaitForTesting(true)
+    let claimRequests = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/bot-invocations/claim")) claimRequests++
+      return new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    const ctx = {
+      sessionManager: { getSessionId: () => "runtime" },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: { notify: () => {}, setStatus: () => {}, theme: { fg: (_tone: string, text: string) => text } },
+    } as never
+
+    try {
+      expect(await __testing.claimIfIdle({} as never, ctx)).toBe(true)
+      expect(claimRequests).toBe(1)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("drains all pending invocations from one wakeup", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
+    })
+    const expectedMessages = Array.from({ length: 12 }, (_, index) => `message-${index + 1}`)
+    const queued = [...expectedMessages]
+    let claimRequests = 0
+    const deliveries: Array<{ text: string; options?: { deliverAs: string } }> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith("/bot-invocations/claim")) {
+        const promptMarkdown = queued.shift()
+        claimRequests++
+        return new Response(
+          JSON.stringify({
+            data: promptMarkdown
+              ? {
+                  id: `binv_${promptMarkdown}`,
+                  activeStreamId: "stream_1",
+                  sourceMessageId: `msg_${promptMarkdown}`,
+                  promptMarkdown,
+                  claimToken: `claim_${promptMarkdown}`,
+                  claimExpiresAt: null,
+                }
+              : null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url.includes("/streams/stream_1/messages?")) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    const ctx = {
+      sessionManager: { getSessionId: () => "runtime" },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: { notify: () => {}, setStatus: () => {}, theme: { fg: (_tone: string, text: string) => text } },
+    } as never
+    const pi = {
+      sendUserMessage: (text: string, options?: { deliverAs: string }) => deliveries.push({ text, options }),
+    } as never
+
+    try {
+      const result = await __testing.claimIfIdle(pi, ctx)
+      expect({
+        result,
+        claimRequests,
+        firstDeliveryEndsWithPrompt: deliveries[0]?.text.endsWith(`\n${expectedMessages[0]}`),
+        deliveryOptions: deliveries.map(({ options }) => options),
+        steeredTexts: deliveries.slice(1).map(({ text }) => text),
+      }).toEqual({
+        result: true,
+        claimRequests: 13,
+        firstDeliveryEndsWithPrompt: true,
+        deliveryOptions: [undefined, ...Array.from({ length: 11 }, () => ({ deliverAs: "steer" }))],
+        steeredTexts: expectedMessages.slice(1),
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 
   test("runtime reset drains an in-flight claim before teardown completes", async () => {
