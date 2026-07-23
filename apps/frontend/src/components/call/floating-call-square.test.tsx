@@ -163,6 +163,10 @@ describe("FloatingCallSquare — connected", () => {
     expect(screen.getAllByTestId("call-tile")).toHaveLength(2)
     expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
     expect(screen.getByLabelText("Dock to the side")).toBeInTheDocument()
+
+    const header = screen.getByTestId("floating-call-square-header")
+    expect(header.firstElementChild).toBe(screen.getByTestId("expanded-call-drag-grip"))
+    expect(header.lastElementChild).toBe(screen.getByLabelText("Minimize call"))
   })
 
   it("clicking Dock to the side calls onDockToSide", async () => {
@@ -197,14 +201,30 @@ describe("FloatingCallSquare — minimize / restore", () => {
 
     const compact = screen.getByTestId("floating-call-square")
     expect(compact).toHaveAttribute("data-minimized", "true")
-    expect(compact.style.left).toBe("264px")
+    expect(compact.style.left).toBe("244px")
     expect(compact.style.top).toBe("275px")
+    expect(compact.style.width).toBe("280px")
     expect(screen.getByLabelText("Restore call")).toHaveFocus()
     expect(screen.getByLabelText("Call duration")).toBeInTheDocument()
     expect(screen.getByLabelText("Mute")).toBeInTheDocument()
     expect(screen.getByLabelText("Turn camera on")).toBeInTheDocument()
     expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
+    const controls = screen.getByTestId("minimized-call-controls")
+    expect(controls).toHaveClass("shrink-0")
+    expect(Array.from(controls.children)).toEqual([
+      screen.getByLabelText("Mute"),
+      screen.getByLabelText("Turn camera on"),
+      screen.getByLabelText("Leave call"),
+    ])
     expect(screen.queryAllByTestId("call-tile")).toHaveLength(0)
+
+    const compactChildren = Array.from(compact.children)
+    expect(compactChildren).toEqual([
+      screen.getByTestId("minimized-call-drag-handle"),
+      screen.getByTestId("minimized-call-content"),
+      screen.getByLabelText("Restore call"),
+    ])
+    expect(screen.queryByLabelText("Dock to the side")).toBeNull()
 
     fireEvent.click(screen.getByLabelText("Mute"))
     expect(manager.setMuted).toHaveBeenCalledWith(true)
@@ -227,18 +247,18 @@ describe("FloatingCallSquare — minimize / restore", () => {
     handle.setPointerCapture = vi.fn()
     fireEvent.pointerDown(handle, { clientX: 500, clientY: 300, pointerId: 1, isPrimary: true })
     fireEvent.pointerMove(handle, { clientX: 600, clientY: 400, pointerId: 1 })
-    expect(compact.style.left).toBe("364px")
+    expect(compact.style.left).toBe("344px")
     expect(compact.style.top).toBe("375px")
 
     handle.focus()
     expect(handle).toHaveFocus()
     await userEvent.keyboard("{ArrowLeft}")
-    expect(compact.style.left).toBe("348px")
+    expect(compact.style.left).toBe("328px")
     expect(compact.style.top).toBe("375px")
 
     window.dispatchEvent(new Event("resize"))
     fireEvent.pointerMove(handle, { clientX: 700, clientY: 500, pointerId: 1 })
-    expect(compact.style.left).toBe("348px")
+    expect(compact.style.left).toBe("328px")
     expect(compact.style.top).toBe("375px")
   })
 
@@ -246,7 +266,7 @@ describe("FloatingCallSquare — minimize / restore", () => {
     renderSquare()
     enterConnected(TWO_PEERS)
     fireEvent.click(screen.getByLabelText("Minimize call"), { clientX: 1000, clientY: 750, detail: 1 })
-    expect(screen.getByTestId("floating-call-square").style.left).toBe("756px")
+    expect(screen.getByTestId("floating-call-square").style.left).toBe("736px")
     expect(screen.getByTestId("floating-call-square").style.top).toBe("710px")
 
     fireEvent.click(screen.getByLabelText("Restore call"))
@@ -321,8 +341,8 @@ describe("FloatingCallSquare — drag", () => {
     expect(square.style.left).toBe("300px")
     expect(square.style.top).toBe("200px")
 
-    fireEvent.pointerUp(header, { clientX: 300, clientY: 200, pointerId: 1 })
-    // Drag released: a lone move must be a no-op (drag ref nulled — no wedge).
+    fireEvent.pointerCancel(header, { clientX: 300, clientY: 200, pointerId: 1 })
+    // Cancelled drag: a lone move must be a no-op (drag ref nulled — no wedge).
     fireEvent.pointerMove(header, { clientX: 50, clientY: 50, pointerId: 1 })
     expect(square.style.left).toBe("300px")
     expect(square.style.top).toBe("200px")

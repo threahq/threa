@@ -227,7 +227,14 @@ describe("DesktopCallDock — fullscreen", () => {
     expect(screen.getByLabelText("Collapse call")).toBeInTheDocument()
     expect(screen.getByTestId("call-layout-slot")).toBeInTheDocument()
     expect(screen.getByTestId("call-stage-speaker")).toBeInTheDocument()
-    expect(screen.getByTestId("call-filmstrip-side-toggle")).toBeInTheDocument()
+    expect(screen.getByTestId("call-filmstrip-side-toggle")).toHaveTextContent("BottomSide")
+    expect(screen.getByRole("radio", { name: "Filmstrip bottom" })).toHaveTextContent("Bottom")
+    expect(screen.getByRole("radio", { name: "Filmstrip side" })).toHaveTextContent("Side")
+    expect(screen.getByTestId("call-stage-speaker")).toHaveClass("bg-background")
+    expect(screen.getByLabelText("Collapse call").parentElement?.parentElement).toHaveClass(
+      "bg-background",
+      "text-foreground"
+    )
     expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
   })
 
@@ -238,6 +245,7 @@ describe("DesktopCallDock — fullscreen", () => {
     expect(getCallPrefs().filmstripSide).toBe("bottom")
     await userEvent.click(screen.getByRole("radio", { name: "Filmstrip side" }))
     expect(getCallPrefs().filmstripSide).toBe("side")
+    expect(JSON.parse(localStorage.getItem("threa:callPrefs:v1") ?? "{}")).toMatchObject({ filmstripSide: "side" })
     expect(screen.getByTestId("call-stage-speaker")).toHaveAttribute("data-filmstrip-side", "side")
   })
 

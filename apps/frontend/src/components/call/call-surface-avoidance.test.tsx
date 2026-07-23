@@ -35,7 +35,7 @@ const RING_INSET = 16
 const EMPTY_RECT = { x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, toJSON: () => ({}) }
 
 const EXPANDED_SIZE = { width: 340, height: 320 }
-const MINIMIZED_SIZE = { width: 260, height: 50 }
+const MINIMIZED_SIZE = { width: 280, height: 50 }
 
 function domRect(x: number, y: number, width: number, height: number): DOMRect {
   return { x, y, left: x, top: y, right: x + width, bottom: y + height, width, height, toJSON: () => ({}) } as DOMRect
@@ -179,7 +179,7 @@ function squareRect() {
   return {
     x: Number.parseFloat(square.style.left),
     y: Number.parseFloat(square.style.top),
-    width: minimized ? 260 : 340,
+    width: minimized ? 280 : 340,
     height: minimized ? 50 : 320,
   }
 }
