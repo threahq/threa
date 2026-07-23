@@ -493,6 +493,7 @@ Avatar-as-toggle (Gmail Android pattern). On non-continuation rows the avatar sl
 - `MovedMessagesDrawer`, `MovedFromIndicator`, `MessagesMovedEvent`.
 - `SavedIndicator`, `EditedIndicator`.
 - `JoinChannelBar` (CTA bar above the composer when viewing a stream you can join).
+- Delegation and call cards use `TimelineCardQuickActions` plus one shared action list: mouse users get a floating quick-action cluster, overflow menu, and row right-click menu; touch users long-press the card for a vaul drawer. Keyboard focus reveals the otherwise hidden overflow trigger on touch layouts. Delegation cards keep Copy prompt on the card on mobile. Live call cards keep Join on the card. Interactive controls do not start the row long-press gesture.
 
 ### 8.7 Inline edit composer-hide
 

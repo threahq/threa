@@ -1,15 +1,17 @@
-import { useRef, useState, type ReactNode } from "react"
-import { Link } from "react-router-dom"
+import { useRef, useState } from "react"
 import { toast } from "sonner"
 import {
+  ArrowUpRight,
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
+  FileText,
   Link2,
   Loader2,
   MessageSquareReply,
   TerminalSquare,
+  X,
 } from "lucide-react"
 import {
   DelegationStatuses,
@@ -26,6 +28,13 @@ import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL } from "@/lib/delegation-d
 import { buildDelegationLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import { ThreadSlot } from "./thread-slot"
+import {
+  TimelineCardActionDrawer,
+  TimelineCardContextMenu,
+  TimelineCardQuickActions,
+  type TimelineCardAction,
+  useTimelineCardActionSurface,
+} from "./timeline-card-actions"
 import { useThreadAnchor } from "./use-thread-anchor"
 
 interface DelegationEventProps {
@@ -91,19 +100,10 @@ export function buildDelegationPrompt(
 }
 
 /**
- * Timeline card for `delegation:created` (roadmap 5.1/5.2), in the follow-up
- * card's vocabulary (icon tile · content · right-slot actions). One component
- * renders every status (INV-29/43): the created row is the card; each
- * `delegation:status_changed` patch advances it via `statusPatch`.
- *
- * Copy prompt confirms in place by swapping the icon to a checkmark — same
- * footprint, no toast, no layout shift (INV-63/21). Cancel and Mark done are
- * buttons (they mutate — INV-40) shown only while non-terminal; Mark done
- * closes the loop for work executed outside the API path (copy-paste), which
- * previously had no honest terminal transition. "View result" is a link
- * (navigation — INV-40) shown when completed with a linked result message.
- * The status from `statusPatch` is authoritative; the local optimistic flips
- * only fast-path the clicking member's own action.
+ * Timeline card for `delegation:created`. One action list drives the desktop
+ * quick toolbar, overflow/right-click menus, and mobile long-press drawer. Copy
+ * prompt stays on the mobile card and confirms in place (INV-63/21). Status
+ * patches remain authoritative; local flips only fast-path the clicker's action.
  */
 export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isThreadParent }: DelegationEventProps) {
   const { getActorName } = useActors(workspaceId)
@@ -122,10 +122,9 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
   const [cancelling, setCancelling] = useState(false)
   const [markingDone, setMarkingDone] = useState(false)
   const [copyDone, setCopyDone] = useState(false)
-  const [copyLinkDone, setCopyLinkDone] = useState(false)
   const [briefOpen, setBriefOpen] = useState(false)
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const copyLinkResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const actionSurface = useTimelineCardActionSurface()
 
   if (!payload) return null
 
@@ -154,21 +153,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
 
   const replyCount = payload.replyCount ?? 0
 
-  // Discuss starts (or opens) a thread on this card. Failure cards are
-  // discussion-worthy too ("why did this fail"), so it shows on every state
-  // EXCEPT when the card already exposes its thread another way: a completed
-  // card's thread opens via "View result" (threadStreamId), and any card with
-  // replies shows the footer thread chip. Either would make Discuss a duplicate
-  // entry point.
-  const threadChipShowing = replyCount > 0 && !!threadHref && !isThreadParent
-  const showDiscuss = !threadStreamId && !threadChipShowing && !isThreadParent
-
-  // Icon-only below `sm` (labels appear at `sm`). Force a ~36px square hit area
-  // on narrow viewports so three adjacent targets aren't sub-30px mis-taps;
-  // desktop footprint is unchanged (min sizing reset at `sm`).
-  const iconActionClass =
-    "inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:min-h-0 sm:min-w-0 sm:justify-start"
-
+  const hasThread = !!payload.threadId || replyCount > 0
   const promptText = () => buildDelegationPrompt(payload, { workspaceId, origin: window.location.origin })
 
   async function handleCopy() {
@@ -188,13 +173,10 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
     if (!payload) return
     try {
       await navigator.clipboard.writeText(buildDelegationLink(workspaceId, payload.delegationId))
+      toast.success("Delegation link copied") // INV-63-allow: closing menu/drawer leaves no inline trigger
     } catch {
       toast.error("Couldn't copy the link")
-      return
     }
-    setCopyLinkDone(true)
-    if (copyLinkResetRef.current) clearTimeout(copyLinkResetRef.current)
-    copyLinkResetRef.current = setTimeout(() => setCopyLinkDone(false), 1200)
   }
 
   async function handleMarkDone() {
@@ -215,8 +197,6 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
   }
 
   async function handleCancel() {
-    // Re-entrancy guard instead of `disabled` (disable would blur the focused
-    // button); `aria-disabled` keeps it in the focus tree.
     if (!payload || cancelling || terminal) return
     setCancelling(true)
     try {
@@ -235,26 +215,74 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
     }
   }
 
-  // Cancelled keeps the SAME button element relabeled (the follow-up card's
-  // pattern): the clicker's focus stays on it instead of dropping to <body>,
-  // and aria-live announces the flip. Other terminal statuses hide Cancel —
-  // a "Cancelled" label under a Completed/Failed/Expired card would lie.
-  const cancelled = status === DelegationStatuses.CANCELLED
-  const showCancelSlot = !terminal || cancelled
-  let cancelIcon: ReactNode = null
-  if (cancelling) cancelIcon = <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-  else if (cancelled) cancelIcon = <Check className="h-3 w-3" aria-hidden="true" />
+  const actions: TimelineCardAction[] = []
+  if (viewResultHref) {
+    actions.push({
+      id: "view-result",
+      label: "View result",
+      icon: ArrowUpRight,
+      href: viewResultHref,
+      quick: !!threadStreamId,
+    })
+  }
+  if (!isThreadParent && !threadStreamId) {
+    actions.push({
+      id: "thread",
+      label: hasThread ? "Open thread" : "Discuss in thread",
+      icon: MessageSquareReply,
+      href: replyUrl,
+      quick: true,
+    })
+  }
+  actions.push(
+    {
+      id: "copy-prompt",
+      label: copyDone ? "Prompt copied" : "Copy prompt",
+      icon: copyDone ? Check : Copy,
+      onSelect: handleCopy,
+      quick: true,
+      separatorBefore: actions.length > 0,
+    },
+    { id: "copy-link", label: "Copy delegation link", icon: Link2, onSelect: handleCopyLink },
+    {
+      id: "toggle-prompt",
+      label: briefOpen ? "Hide hand-off prompt" : "Show hand-off prompt",
+      icon: FileText,
+      onSelect: () => setBriefOpen((open) => !open),
+    }
+  )
+  if (!terminal) {
+    actions.push(
+      {
+        id: "mark-done",
+        label: markingDone ? "Marking done…" : "Mark done",
+        icon: markingDone ? Loader2 : Check,
+        onSelect: handleMarkDone,
+        disabled: markingDone,
+        loading: markingDone,
+        separatorBefore: true,
+      },
+      {
+        id: "cancel",
+        label: cancelling ? "Cancelling…" : "Cancel delegation",
+        icon: cancelling ? Loader2 : X,
+        onSelect: handleCancel,
+        disabled: cancelling,
+        loading: cancelling,
+        variant: "destructive",
+      }
+    )
+  }
 
-  // Mark done relabels in place only for the clicker's OWN flip; an API/other
-  // completion already shows the Completed pill (and View result), so adding a
-  // disabled "Done" chip there would be noise.
-  const showDoneSlot = !terminal || optimisticallyDone
-  let doneIcon: ReactNode = null
-  if (markingDone) doneIcon = <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-  else if (optimisticallyDone) doneIcon = <Check className="h-3 w-3" aria-hidden="true" />
-
-  return (
-    <div className="px-3 sm:px-6 py-1.5">
+  const card = (
+    <div
+      className={cn(
+        "group reveal-host relative px-3 py-1.5 sm:px-6",
+        actionSurface.isTouchInput && "select-none",
+        actionSurface.longPress.isPressed && "opacity-70 transition-opacity duration-100"
+      )}
+      {...(actionSurface.touchCapable ? actionSurface.longPress.handlers : {})}
+    >
       <div
         className={cn(
           "rounded-[10px] border px-3 py-2 transition-colors",
@@ -285,95 +313,23 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
             <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{metaParts.join(" · ")}</p>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1">
-            {viewResultHref && (
-              <Link
-                to={viewResultHref}
-                className="inline-flex items-center rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                View result
-              </Link>
+          {/* Copy remains a persistent, finger-sized mobile affordance. Every
+              other action lives in the long-press drawer; desktop gets the
+              message-style hover toolbar + overflow menu. */}
+          <button
+            type="button"
+            onClick={handleCopy}
+            aria-label={copyDone ? "Prompt copied" : "Copy prompt"}
+            aria-live="polite"
+            title="Copy the hand-off prompt for a local agent"
+            className="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors active:bg-muted sm:hidden"
+          >
+            {copyDone ? (
+              <Check className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Copy className="h-4 w-4" aria-hidden="true" />
             )}
-            {/* Discuss the card: start (or open) a thread anchored on this
-                event. Hidden only when the card already has a thread entry
-                (View result / footer chip) — see `showDiscuss`. Navigation, so
-                a <Link> to the draft/thread panel (INV-40). */}
-            {showDiscuss && (
-              <Link
-                to={replyUrl}
-                aria-label="Discuss this delegation"
-                title="Discuss this delegation in a thread"
-                className={iconActionClass}
-              >
-                <MessageSquareReply className="h-3 w-3" aria-hidden="true" />
-                <span className="hidden sm:inline">Discuss</span>
-              </Link>
-            )}
-            <button
-              type="button"
-              onClick={handleCopy}
-              aria-label={copyDone ? "Prompt copied" : "Copy prompt"}
-              aria-live="polite"
-              title="Copy the hand-off prompt for a local agent"
-              className={iconActionClass}
-            >
-              {copyDone ? (
-                <Check className="h-3 w-3" aria-hidden="true" />
-              ) : (
-                <Copy className="h-3 w-3" aria-hidden="true" />
-              )}
-              {/* Icon-only below sm: four text buttons crush the title column at 390px. */}
-              <span className="hidden sm:inline">Copy prompt</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleCopyLink}
-              aria-label={copyLinkDone ? "Link copied" : "Copy link"}
-              aria-live="polite"
-              title="Copy a shareable link to this delegation"
-              className={iconActionClass}
-            >
-              {copyLinkDone ? (
-                <Check className="h-3 w-3" aria-hidden="true" />
-              ) : (
-                <Link2 className="h-3 w-3" aria-hidden="true" />
-              )}
-              <span className="hidden sm:inline">Copy link</span>
-            </button>
-            {showDoneSlot && (
-              <button
-                type="button"
-                onClick={handleMarkDone}
-                aria-disabled={optimisticallyDone || markingDone}
-                aria-busy={markingDone}
-                aria-live="polite"
-                title="Close the loop for work done outside the API (e.g. a pasted prompt)"
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors",
-                  optimisticallyDone || markingDone ? "cursor-default" : "hover:bg-muted hover:text-foreground"
-                )}
-              >
-                {doneIcon}
-                {optimisticallyDone ? "Done" : "Mark done"}
-              </button>
-            )}
-            {showCancelSlot && (
-              <button
-                type="button"
-                onClick={handleCancel}
-                aria-disabled={cancelled || cancelling}
-                aria-busy={cancelling}
-                aria-live="polite"
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors",
-                  cancelled || cancelling ? "cursor-default" : "hover:bg-muted hover:text-foreground"
-                )}
-              >
-                {cancelIcon}
-                {cancelled ? "Cancelled" : "Cancel"}
-              </button>
-            )}
-          </div>
+          </button>
         </div>
 
         {statusNote && <p className="mt-1.5 pl-10 text-[11px] text-muted-foreground">{statusNote}</p>}
@@ -382,7 +338,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
           type="button"
           onClick={() => setBriefOpen((open) => !open)}
           aria-expanded={briefOpen}
-          className="mt-1.5 inline-flex items-center gap-1 pl-10 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+          className="mt-1.5 hidden items-center gap-1 pl-10 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
         >
           {briefOpen ? (
             <ChevronDown className="h-3 w-3" aria-hidden="true" />
@@ -419,6 +375,24 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
           workspaceId={workspaceId}
         />
       )}
+      <TimelineCardQuickActions actions={actions} />
     </div>
+  )
+
+  return (
+    <>
+      <TimelineCardContextMenu actions={actions} disabled={actionSurface.isTouchInput}>
+        {card}
+      </TimelineCardContextMenu>
+      {actionSurface.touchCapable && (
+        <TimelineCardActionDrawer
+          open={actionSurface.drawerOpen}
+          onOpenChange={actionSurface.setDrawerOpen}
+          actions={actions}
+          title={payload.title}
+          subtitle={metaParts.join(" · ")}
+        />
+      )}
+    </>
   )
 }

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import type { CallEndedEventPayload, CallStartedEventPayload, StreamEvent } from "@threa/types"
@@ -11,6 +11,8 @@ import { upsertActiveCall, __resetActiveCallsStore } from "@/stores/active-calls
 import { CallCard } from "./call-card"
 
 const launch = vi.fn()
+
+afterEach(() => vi.useRealTimers())
 
 beforeEach(() => {
   vi.restoreAllMocks()
@@ -26,6 +28,8 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof launchModule.useCallLaunch>)
   vi.spyOn(callHooksModule, "useCallPhase").mockReturnValue("idle")
   vi.spyOn(callHooksModule, "useCallStreamId").mockReturnValue(null)
+  vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(false)
+  vi.spyOn(hooksModule, "useInputMode").mockReturnValue("mouse")
 })
 
 const STARTED: CallStartedEventPayload = {
@@ -137,26 +141,25 @@ describe("CallCard", () => {
     expect(screen.queryByRole("button", { name: "Join" })).toBeNull()
   })
 
-  it("shows a Chat affordance opening the draft thread on the call_started event when no replies exist", () => {
+  it("shows a desktop quick action opening draft call chat on the call_started event", () => {
     renderCard(
       { callId: "call_1", durationMs: 1000, participantUserIds: ["usr_a"], endedReason: "completed" },
       startedEvent()
     )
-    const chat = screen.getByRole("link", { name: /Discuss this call/i })
-    // Draft panel keyed on the card's event id — the call chat anchor.
+    const chat = screen.getByRole("link", { name: "Start call chat" })
     expect(chat.getAttribute("href")).toContain("draft%3Astream_1%3Aevt_call")
-    expect(chat).toHaveClass("min-h-9", "min-w-9")
   })
 
-  it("renders the thread chip and hides Chat once the call has replies (live and ended)", () => {
-    // Ended card with a healed thread on its event: chip shows, Chat is the
-    // duplicate entry point so it's hidden.
+  it("keeps call chat in the quick toolbar when the reply chip is present", () => {
     renderCard(
       { callId: "call_1", durationMs: 1000, participantUserIds: ["usr_a"], endedReason: "completed" },
       startedEvent({ threadId: "stream_thread", replyCount: 2 })
     )
     expect(screen.getByText("2 replies")).toBeTruthy()
-    expect(screen.queryByRole("link", { name: /Discuss this call/i })).toBeNull()
+    expect(screen.getByRole("link", { name: "Open call chat" })).toHaveAttribute(
+      "href",
+      "/w/ws_1/s/stream_1?panel=stream_thread"
+    )
   })
 
   it("as thread parent: suppresses the reply chip AND Chat (would loop back to the open panel)", () => {
@@ -166,6 +169,69 @@ describe("CallCard", () => {
       true
     )
     expect(screen.queryByText("2 replies")).toBeNull()
-    expect(screen.queryByRole("link", { name: /Discuss this call/i })).toBeNull()
+    expect(screen.queryByRole("link", { name: /call chat/i })).toBeNull()
+  })
+
+  it("offers Join, chat, and copy link from the desktop row context menu", async () => {
+    upsertActiveCall("ws_1", {
+      callId: "call_1",
+      streamId: "stream_1",
+      rootStreamId: "stream_1",
+      mode: "video",
+      participantCount: 1,
+      participantUserIds: ["usr_a"],
+    })
+    renderCard()
+
+    fireEvent.contextMenu(screen.getByText("Call in progress"))
+
+    expect(await screen.findByRole("menuitem", { name: "Join call" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Start call chat" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Copy link to call" })).toBeInTheDocument()
+  })
+
+  it("opens the mobile action drawer on long press while keeping Join on the card", () => {
+    vi.useFakeTimers()
+    vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(true)
+    vi.spyOn(hooksModule, "useInputMode").mockReturnValue("touch")
+    upsertActiveCall("ws_1", {
+      callId: "call_1",
+      streamId: "stream_1",
+      rootStreamId: "stream_1",
+      mode: "video",
+      participantCount: 1,
+      participantUserIds: ["usr_a"],
+    })
+    renderCard()
+
+    const join = screen.getByRole("button", { name: "Join" })
+    expect(join).toHaveClass("min-h-9")
+    const title = screen.getByText("Call in progress")
+    fireEvent.touchStart(title, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(500))
+
+    expect(screen.getByRole("button", { name: "Join call" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Start call chat" })).toBeInTheDocument()
+  })
+
+  it("holding Join does not open the card drawer", () => {
+    vi.useFakeTimers()
+    vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(true)
+    vi.spyOn(hooksModule, "useInputMode").mockReturnValue("touch")
+    upsertActiveCall("ws_1", {
+      callId: "call_1",
+      streamId: "stream_1",
+      rootStreamId: "stream_1",
+      mode: "video",
+      participantCount: 1,
+      participantUserIds: ["usr_a"],
+    })
+    renderCard()
+
+    const join = screen.getByRole("button", { name: "Join" })
+    fireEvent.touchStart(join, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(500))
+
+    expect(screen.queryByRole("button", { name: "Join call" })).not.toBeInTheDocument()
   })
 })
