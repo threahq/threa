@@ -32,7 +32,6 @@ interface DelegationEventProps {
   event: StreamEvent
   workspaceId: string
   streamId: string
-  isThreadParent?: boolean
   /**
    * The latest `delegation:status_changed` patch for this delegation within
    * the loaded window — the authoritative live status, so every viewer (not
@@ -40,6 +39,12 @@ interface DelegationEventProps {
    * reload. Absent means the delegation is still open.
    */
   statusPatch?: DelegationStatusChangedEventPayload
+  /**
+   * True when this card is pinned atop its OWN thread panel as the thread parent.
+   * Its thread affordance (footer chip + Discuss) would loop back to the panel
+   * already open, so it's suppressed here.
+   */
+  isThreadParent?: boolean
 }
 
 /**
@@ -403,7 +408,9 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
 
       {/* Thread anchored on this card — surfaces the discussion (and a completed
           delegation's result) as a footer chip once replies land. Keyed on the
-          card's event id via `useThreadAnchor`; healed payload drives the count. */}
+          card's event id via `useThreadAnchor`; healed payload drives the count.
+          Suppressed when the card IS the thread parent (chip would link to the
+          panel already open). */}
       {!isThreadParent && (
         <ThreadSlot
           replyCount={replyCount}

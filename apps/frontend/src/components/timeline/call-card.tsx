@@ -21,6 +21,12 @@ interface CallCardProps {
    * it survives a reload. Absent while the call is (or was last seen) live.
    */
   endedPatch?: CallEndedEventPayload
+  /**
+   * True when this card is pinned atop its OWN thread panel as the thread parent.
+   * Its thread affordance (footer chip + Chat) would loop back to the panel
+   * already open, so it's suppressed here.
+   */
+  isThreadParent?: boolean
 }
 
 /** mm:ss, or h:mm:ss past an hour. */
@@ -93,7 +99,7 @@ function ParticipantAvatars({ userIds, workspaceId }: { userIds: string[]; works
  * The full card is not a link — the Join button acts (INV-40). Success is silent
  * (INV-63): joining just brings up the dock.
  */
-export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardProps) {
+export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadParent }: CallCardProps) {
   // Chunk-2 healing lands thread stats on this event's payload once a thread
   // exists, keyed on the event id — the anchor the call chat threads on.
   const payload = event.payload as
@@ -120,8 +126,8 @@ export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardP
   // when the footer chip already links the thread (a duplicate entry point),
   // mirroring the delegation card.
   const replyCount = payload.replyCount ?? 0
-  const threadChipShowing = replyCount > 0 && !!threadHref
-  const showChat = !threadChipShowing
+  const threadChipShowing = replyCount > 0 && !!threadHref && !isThreadParent
+  const showChat = !threadChipShowing && !isThreadParent
 
   return (
     <div className="px-3 sm:px-6 py-1.5">
@@ -203,13 +209,17 @@ export function CallCard({ event, workspaceId, streamId, endedPatch }: CallCardP
 
       {/* Thread anchored on this card — the call's discussion (and future call
           summary) surfaces as a footer chip once replies land. Keyed on the
-          event id via `useThreadAnchor`; healed payload drives the count. */}
-      <ThreadSlot
-        replyCount={replyCount}
-        threadHref={threadHref}
-        summary={payload.threadSummary}
-        workspaceId={workspaceId}
-      />
+          event id via `useThreadAnchor`; healed payload drives the count.
+          Suppressed when the card IS the thread parent (chip would link to the
+          panel already open). */}
+      {!isThreadParent && (
+        <ThreadSlot
+          replyCount={replyCount}
+          threadHref={threadHref}
+          summary={payload.threadSummary}
+          workspaceId={workspaceId}
+        />
+      )}
     </div>
   )
 }

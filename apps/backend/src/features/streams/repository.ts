@@ -1390,14 +1390,22 @@ export const StreamRepository = {
    * path so the frontend can refresh ThreadCard content without waiting for
    * the next bootstrap.
    *
-   * Optimized for the single-parent case (direct `parent_message_id` filter,
-   * `LIMIT 1` on the latest reply, no per-parent grouping) but produces rows
-   * shaped identically to `findThreadSummaries` so the shared
-   * `threadSummaryFromRow` mapper can construct the domain object. The parity
-   * is covered by a test that asserts both entry points return the same
-   * `ThreadSummary` for a given parent.
+   * Optimized for the single-parent case (direct anchor filter, `LIMIT 1` on the
+   * latest reply, no per-parent grouping) but produces rows shaped identically to
+   * `findThreadSummaries` so the shared `threadSummaryFromRow` mapper can construct
+   * the domain object. The parity is covered by a test that asserts both entry
+   * points return the same `ThreadSummary` for a given parent.
+   *
+   * `parentStreamId` correlates the leading column of `idx_streams_thread_anchor
+   * (parent_stream_id, parent_anchor_id)` so this runs as an index seek — it fires
+   * on every reply create/edit/delete via `emitThreadUpdate`, so a per-row streams
+   * scan on the anchor alone would be a hot-path footgun (INV-20 sibling concern).
    */
-  async findThreadSummaryByParentMessage(db: Querier, anchorId: string): Promise<ThreadSummary | null> {
+  async findThreadSummaryByParentMessage(
+    db: Querier,
+    parentStreamId: string,
+    anchorId: string
+  ): Promise<ThreadSummary | null> {
     const result = await db.query<ThreadSummaryRow>(sql`
       WITH thread_messages AS (
         SELECT
@@ -1409,7 +1417,8 @@ export const StreamRepository = {
           m.created_at
         FROM streams s
         JOIN messages m ON m.stream_id = s.id
-        WHERE COALESCE(s.parent_anchor_id, s.parent_message_id) = ${anchorId}
+        WHERE s.parent_stream_id = ${parentStreamId}
+          AND COALESCE(s.parent_anchor_id, s.parent_message_id) = ${anchorId}
           AND s.type = 'thread'
           AND m.deleted_at IS NULL
       ),

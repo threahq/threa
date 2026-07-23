@@ -13,13 +13,13 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { Pool } from "pg"
 import { withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamRepository } from "../../src/features/streams"
+import { StreamRepository, StreamEventRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { ConversationRepository } from "../../src/features/conversations"
 import { BoundaryExtractionService } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { sql } from "../../src/db"
-import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
+import { userId, workspaceId, streamId, messageId, conversationId, eventId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threa/types"
 import type { BoundaryExtractor, ExtractionContext, ExtractionResult } from "../../src/features/conversations"
 
@@ -34,6 +34,7 @@ class StubBoundaryExtractor implements BoundaryExtractor {
   }
 
   extractCallCount = 0
+  lastContext: ExtractionContext | null = null
 
   setNextResult(result: ExtractionResult): void {
     this.nextResult = result
@@ -43,8 +44,9 @@ class StubBoundaryExtractor implements BoundaryExtractor {
     this.extractCallCount = 0
   }
 
-  async extract(_context: ExtractionContext): Promise<ExtractionResult> {
+  async extract(context: ExtractionContext): Promise<ExtractionResult> {
     this.extractCallCount++
+    this.lastContext = context
     return this.nextResult
   }
 }
@@ -622,6 +624,78 @@ describe("BoundaryExtractionService", () => {
         expect(ev.parentStreamId).toBe(testStreamId)
       }
       expect(forRoot.map((e) => e.isPrimary).sort()).toEqual([false, true])
+    })
+
+    test("replies under an event-anchored (card) thread reach the parent-stream extraction context", async () => {
+      // A delegation card lives in the parent channel; its discussion thread
+      // anchors on the card's EVENT id (not a message). A reply in that thread
+      // must join the parent stream's extraction candidate set — the candidate
+      // anchors include threadable card event ids, not only message ids.
+      const cardThreadStreamId = streamId()
+      const cardThreadReplyId = messageId()
+
+      // Insert the card first to read back its allocated sequence, then bracket
+      // the surrounding messages around it (messages share the event sequence
+      // space) so it deterministically falls inside the extraction window.
+      const cardEvent = await withTransaction(pool, async (client) => {
+        return StreamEventRepository.insert(client, {
+          id: eventId(),
+          streamId: testStreamId,
+          eventType: "delegation:created",
+          payload: { delegationId: "dlg_x", title: "Do a thing", brief: "b", contextRefs: [] },
+          actorId: testUserId,
+          actorType: "user",
+        })
+      })
+      const cardSeq = cardEvent.sequence
+      const priorMsgId = messageId()
+      const triggerMsgId = messageId()
+
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: priorMsgId,
+          streamId: testStreamId,
+          sequence: cardSeq - 1n,
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Before the card"),
+        })
+        await MessageRepository.insert(client, {
+          id: triggerMsgId,
+          streamId: testStreamId,
+          sequence: cardSeq + 1n,
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("New message near the card"),
+        })
+        // Thread anchored on the card event, with one live reply.
+        await StreamRepository.insert(client, {
+          id: cardThreadStreamId,
+          workspaceId: testWorkspaceId,
+          type: "thread",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: testUserId,
+          parentStreamId: testStreamId,
+          parentAnchorId: cardEvent.id,
+        })
+        await StreamRepository.bumpThreadReplyCount(client, cardThreadStreamId, 1)
+        await MessageRepository.insert(client, {
+          id: cardThreadReplyId,
+          streamId: cardThreadStreamId,
+          sequence: BigInt(1),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("A reply under the delegation card"),
+        })
+      })
+
+      await service.processMessage(triggerMsgId, testStreamId, testWorkspaceId)
+
+      // The card thread's reply is present in the extraction context (it would be
+      // absent if the candidate anchors were message-only).
+      const contextMessageIds = stubExtractor.lastContext?.recentMessages.map((m) => m.id) ?? []
+      expect(contextMessageIds).toContain(cardThreadReplyId)
     })
   })
 

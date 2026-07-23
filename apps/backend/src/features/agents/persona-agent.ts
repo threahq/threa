@@ -436,13 +436,18 @@ export class PersonaAgent {
       parentStreamId = streamId
       parentMessageId = messageId
       logger.info({ threadId: thread.id, streamId, messageId }, "Created thread for channel mention (eager)")
-    } else if (stream.type === StreamTypes.THREAD && stream.parentStreamId && stream.parentMessageId) {
+    } else if (
+      stream.type === StreamTypes.THREAD &&
+      stream.parentStreamId &&
+      (stream.parentAnchorId ?? stream.parentMessageId)
+    ) {
       // Session in an existing thread: viewers of the parent timeline watch it
-      // through the thread slot on the parent message, so the inline indicator
-      // events must reach the parent stream's room too — the same wiring
-      // channel mentions get via their eagerly created thread.
+      // through the thread slot on the anchor (message or card), so the inline
+      // indicator events must reach the parent stream's room too — the same
+      // wiring channel mentions get via their eagerly created thread. The anchor
+      // is the coalesced id (`event_` for card threads, `msg_` otherwise).
       parentStreamId = stream.parentStreamId
-      parentMessageId = stream.parentMessageId
+      parentMessageId = stream.parentAnchorId ?? stream.parentMessageId ?? undefined
     }
 
     const result = await withCompanionSession(

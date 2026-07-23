@@ -13,6 +13,7 @@ import type { Message } from "../../../messaging"
 import { MessageRepository } from "../../../messaging"
 import { StreamRepository, checkStreamAccess } from "../../../streams"
 import { resolveActorNames } from "../../actor-names"
+import { findThreadAnchorContext } from "../../thread-anchor-context"
 import { fingerprintContent, fingerprintManifest as fingerprintInputs } from "../fingerprint"
 import type { RenderableMessage, Resolver, SummaryInput } from "../types"
 
@@ -89,13 +90,14 @@ export const ThreadResolver: Resolver<ThreadRef> = {
     // discuss flow doesn't use (and can't combine with cleanly).
     const anchored = useDiscussWindow ? messages : await applyAnchors(db, messages, ref)
 
-    // Always prepend the thread's root message when the source is a thread —
-    // the reply chain is unintelligible without the message that spawned it.
-    // Anchors intentionally don't exclude the root: a user narrowing to a
-    // range of replies still expects the parent to anchor the conversation.
-    // `findThreadRoot` is the canonical helper for this — it filters
-    // soft-deleted roots and returns null for non-threads.
-    const root = await MessageRepository.findThreadRoot(db, stream)
+    // Always prepend the thread's anchor when the source is a thread — the reply
+    // chain is unintelligible without the message (or card) that spawned it.
+    // Anchors intentionally don't exclude the root: a user narrowing to a range
+    // of replies still expects the parent to anchor the conversation.
+    // `findThreadAnchorContext` is the canonical helper — it filters soft-deleted
+    // message roots, renders card anchors as terse context, and returns null for
+    // non-threads.
+    const root = await findThreadAnchorContext(db, stream)
     const withRoot = root && !anchored.some((m) => m.id === root.id) ? [root, ...anchored] : anchored
 
     const authorIds = new Set(withRoot.map((m) => m.authorId))

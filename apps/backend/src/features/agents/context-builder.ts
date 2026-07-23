@@ -26,6 +26,7 @@ import { AttachmentExtractionRepository, type PdfMetadata, type PdfSection } fro
 import { enrichMessagesWithLinkPreviews } from "../link-previews"
 import { getUtcOffset, type TemporalContext, type ParticipantTemporal } from "../../lib/temporal"
 import { DEFAULT_CONTEXT_WINDOW_MESSAGES } from "./context-window-policy"
+import { findThreadAnchorContext } from "./thread-anchor-context"
 
 export interface Participant {
   id: string
@@ -426,13 +427,14 @@ async function buildThreadContext(
 
   const threadPath = await buildThreadPath(db, stream)
 
-  // Include the parent (root) message that spawned this thread — the reply
-  // chain is unintelligible without it, and the parent often carries
-  // attachments / context the thread is about. `findThreadRoot` is the
-  // canonical helper: filters soft-deleted roots + returns null for
-  // non-threads. Every new thread-context code path MUST use this helper
-  // rather than hand-rolling a `findById` + prepend (recurring bug class).
-  const parentMessage = await MessageRepository.findThreadRoot(db, stream)
+  // Include the anchor that spawned this thread — the reply chain is
+  // unintelligible without it, and a message anchor often carries attachments /
+  // context the thread is about. `findThreadAnchorContext` is the canonical
+  // helper: a `msg_` anchor is the soft-delete-filtered spawning message; an
+  // `event_` anchor (delegation/call card) is rendered as terse context so the
+  // agent knows the card's subject. Every new thread-context code path MUST use
+  // this helper rather than hand-rolling a `findById` + prepend (recurring bug class).
+  const parentMessage = await findThreadAnchorContext(db, stream)
   const conversationHistory = parentMessage ? [parentMessage, ...messages] : messages
 
   return {
@@ -465,12 +467,13 @@ async function buildThreadPath(db: Querier, stream: Stream): Promise<ThreadPathE
   while (current) {
     let anchorMessage: AnchorMessage | null = null
 
-    // If this is a thread spawned from a message, get that message. Use the
-    // canonical `findThreadRoot` helper so the same soft-delete filter that
-    // protects `conversationHistory` also scrubs `threadPath[*].anchorMessage`
-    // — otherwise a user-deleted root would be absent from the AI's
-    // conversation but still reach the prompt via the breadcrumb path.
-    const message = await MessageRepository.findThreadRoot(db, current)
+    // If this is a thread spawned from a message or card, get that anchor. Use
+    // the canonical `findThreadAnchorContext` helper so the same soft-delete
+    // filter that protects `conversationHistory` also scrubs
+    // `threadPath[*].anchorMessage` — otherwise a user-deleted root would be
+    // absent from the AI's conversation but still reach the prompt via the
+    // breadcrumb path — and so card anchors render in the breadcrumb too.
+    const message = await findThreadAnchorContext(db, current)
     if (message) {
       const authorName = await resolveAuthorName(db, current.workspaceId, message.authorId, message.authorType)
       anchorMessage = {

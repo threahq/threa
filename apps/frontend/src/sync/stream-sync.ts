@@ -1,6 +1,7 @@
 import { db, sequenceToNum, type CachedEvent } from "@/db"
 import {
   StreamTypes,
+  THREAD_ANCHORABLE_EVENT_TYPES,
   type StreamEvent,
   type Stream,
   type StreamBootstrap,
@@ -305,7 +306,10 @@ async function writeBootstrapEventsAndStream(
     //      snapshots of the same reply) can't omit a field that was already
     //      populated in IDB.
     //
-    // Other event types' payloads are immutable post-creation, so a plain
+    // Threadable card payloads (delegation:created / call_started) are NOT
+    // immutable: they accrue healed thread stats (threadId/replyCount/
+    // threadSummary), so they get the same two-tier treatment as messages below.
+    // Every other event type's payload IS immutable post-creation, so a plain
     // overwrite is equivalent for them.
     const snapshotMs = bootstrap.snapshotAt ? Date.parse(bootstrap.snapshotAt) : null
     const existingRows = await db.events.bulkGet(bootstrap.events.map((e) => e.id))
@@ -354,6 +358,25 @@ async function writeBootstrapEventsAndStream(
       const base = { ...e, workspaceId, _sequenceNum: sequenceToNum(e.sequence), _cachedAt: now }
       const existing = existingById.get(e.id)
       if (e.eventType !== "message_created") {
+        // Threadable card: same freshness-skip + per-field merge as messages, so
+        // a `thread:updated` heal that raced this snapshot's enrichment survives.
+        if (existing && THREAD_ANCHORABLE_EVENT_TYPES.includes(e.eventType)) {
+          if (snapshotMs !== null && existing._patchedAt !== undefined && existing._patchedAt > snapshotMs) {
+            continue
+          }
+          const merged: CachedEvent = {
+            ...base,
+            payload: {
+              ...(existing.payload as Record<string, unknown>),
+              ...(e.payload as Record<string, unknown>),
+            },
+            _patchedAt: existing._patchedAt,
+          }
+          if (!isNoOpRewrite(existing, merged)) {
+            toWrite.push(merged)
+          }
+          continue
+        }
         if (existing === undefined || !isNoOpRewrite(existing, base)) {
           toWrite.push(base)
         }
@@ -693,8 +716,9 @@ interface ThreadUpdatedPayload {
   /** Canonical id of the anchored item: `msg_…` (message) or `event_…` (card). */
   anchorId: string
   threadId: string
-  replyCount: number
-  threadSummary: ThreadSummary | null
+  /** Omitted on edit-path patches (summary-only refresh, no count change). */
+  replyCount?: number
+  threadSummary?: ThreadSummary | null
 }
 
 interface CommandEventPayload {
@@ -1295,12 +1319,23 @@ export function registerStreamSocketHandlers(
   // converges on the identical values (no double-increment, no flicker).
   const handleThreadUpdated = async (payload: ThreadUpdatedPayload) => {
     if (payload.streamId !== streamId) return
+    // Heal only the fields the patch carries: the edit path omits replyCount
+    // (summary-only refresh) so it can't overwrite a concurrent create/delete's
+    // authoritative count.
     await updateEventByAnchor(streamId, payload.anchorId, (p) => ({
       ...p,
-      replyCount: payload.replyCount,
-      threadSummary: payload.threadSummary,
+      ...(payload.replyCount !== undefined ? { replyCount: payload.replyCount } : {}),
+      ...(payload.threadSummary !== undefined ? { threadSummary: payload.threadSummary } : {}),
       threadId: payload.threadId,
     }))
+    // Also keep the thread's OWN streams row fresh — `replyCount`/`lastReplyAt`
+    // there feed the sidebar/quick-switcher thread rows (stream-context-row), and
+    // no other handler patches them between bootstraps. No-ops when the thread row
+    // isn't cached (never opened).
+    const streamPatch: { replyCount?: number; lastReplyAt?: string | null } = {}
+    if (payload.replyCount !== undefined) streamPatch.replyCount = payload.replyCount
+    if (payload.threadSummary !== undefined) streamPatch.lastReplyAt = payload.threadSummary?.lastReplyAt ?? null
+    if (Object.keys(streamPatch).length > 0) await db.streams.update(payload.threadId, streamPatch)
   }
 
   const handleAppendEvent = async (

@@ -323,8 +323,9 @@ describe("ThreadResolver.fetch", () => {
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Author" }] as any)
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
     spyOn(MessageRepository, "list").mockResolvedValue([makeMessage({ id: "msg_a" })])
-    // `findThreadRoot` short-circuits on parentMessageId === null without
-    // touching findById. Spying on findThreadRoot exercises the real contract.
+    // `findThreadAnchorContext` short-circuits when there's no anchor
+    // (parentAnchorId ?? parentMessageId === null) BEFORE delegating to
+    // findThreadRoot, so the root lookup never runs for a scratchpad/channel.
     const findThreadRoot = spyOn(MessageRepository, "findThreadRoot").mockResolvedValue(null)
 
     const result = await ThreadResolver.fetch({} as any, {
@@ -333,10 +334,9 @@ describe("ThreadResolver.fetch", () => {
     })
 
     expect(result.items.map((i) => i.messageId)).toEqual(["msg_a"])
-    // findThreadRoot is always called (even for non-threads) and handles the
-    // parentMessageId === null case itself by returning null — verified by
-    // the null result above.
-    expect(findThreadRoot).toHaveBeenCalled()
+    // No anchor → the helper returns null on the short-circuit; findThreadRoot
+    // is never reached.
+    expect(findThreadRoot).not.toHaveBeenCalled()
   })
 
   it("returns the anchored slice when both endpoints resolve", async () => {

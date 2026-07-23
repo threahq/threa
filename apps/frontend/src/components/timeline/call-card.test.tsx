@@ -51,11 +51,17 @@ function startedEvent(
   }
 }
 
-function renderCard(endedPatch?: CallEndedEventPayload, event: StreamEvent = startedEvent()) {
+function renderCard(endedPatch?: CallEndedEventPayload, event: StreamEvent = startedEvent(), isThreadParent?: boolean) {
   return render(
     <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
       <PanelProvider>
-        <CallCard event={event} workspaceId="ws_1" streamId="stream_1" endedPatch={endedPatch} />
+        <CallCard
+          event={event}
+          workspaceId="ws_1"
+          streamId="stream_1"
+          endedPatch={endedPatch}
+          isThreadParent={isThreadParent}
+        />
       </PanelProvider>
     </MemoryRouter>
   )
@@ -150,6 +156,16 @@ describe("CallCard", () => {
       startedEvent({ threadId: "stream_thread", replyCount: 2 })
     )
     expect(screen.getByText("2 replies")).toBeTruthy()
+    expect(screen.queryByRole("link", { name: /Discuss this call/i })).toBeNull()
+  })
+
+  it("as thread parent: suppresses the reply chip AND Chat (would loop back to the open panel)", () => {
+    renderCard(
+      { callId: "call_1", durationMs: 1000, participantUserIds: ["usr_a"], endedReason: "completed" },
+      startedEvent({ threadId: "stream_thread", replyCount: 2 }),
+      true
+    )
+    expect(screen.queryByText("2 replies")).toBeNull()
     expect(screen.queryByRole("link", { name: /Discuss this call/i })).toBeNull()
   })
 })

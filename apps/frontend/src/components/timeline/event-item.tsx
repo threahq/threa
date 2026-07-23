@@ -85,6 +85,10 @@ export function EventItem({
 }: EventItemProps) {
   const messageId = (event.payload as { messageId?: string })?.messageId
   const isHighlighted = highlightMessageId != null && messageId === highlightMessageId
+  // Cards deep-link by their event id (`?m=event_…`); they get the same flash the
+  // message path applies, on the wrapper since card renderers own no ring slot.
+  const cardHighlightClass =
+    highlightMessageId != null && event.id === highlightMessageId ? "animate-highlight-flash" : undefined
 
   switch (event.eventType) {
     case "message_created":
@@ -193,7 +197,7 @@ export function EventItem({
       const delegationId = (event.payload as { delegationId?: string })?.delegationId
       const statusPatch = delegationId ? delegationStatusPatches?.get(delegationId) : undefined
       return (
-        <div data-event-id={event.id}>
+        <div data-event-id={event.id} className={cardHighlightClass}>
           <DelegationEvent
             event={event}
             workspaceId={workspaceId}
@@ -234,8 +238,14 @@ export function EventItem({
       const callId = (event.payload as { callId?: string })?.callId
       const endedPatch = callId ? callEndedPatches?.get(callId) : undefined
       return (
-        <div data-event-id={event.id}>
-          <CallCard event={event} workspaceId={workspaceId} streamId={streamId} endedPatch={endedPatch} />
+        <div data-event-id={event.id} className={cardHighlightClass}>
+          <CallCard
+            event={event}
+            workspaceId={workspaceId}
+            streamId={streamId}
+            endedPatch={endedPatch}
+            isThreadParent={isThreadParent}
+          />
         </div>
       )
     }

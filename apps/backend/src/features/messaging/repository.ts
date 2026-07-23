@@ -808,19 +808,20 @@ export const MessageRepository = {
   },
 
   /**
-   * Find messages from threads rooted at the given parent messages, keyed by
-   * parentMessageId in chronological order.
+   * Find messages from threads rooted at the given anchors, keyed by anchor id
+   * (`COALESCE(parent_anchor_id, parent_message_id)`) in chronological order.
+   * Anchors may be message ids (`msg_…`) or card event ids (`event_…`).
    */
-  async findThreadMessages(db: Querier, parentMessageIds: string[]): Promise<Map<string, Message[]>> {
-    if (parentMessageIds.length === 0) return new Map()
+  async findThreadMessages(db: Querier, anchorIds: string[]): Promise<Map<string, Message[]>> {
+    if (anchorIds.length === 0) return new Map()
 
-    const result = await db.query<MessageRow & { parent_message_id: string }>(sql`
+    const result = await db.query<MessageRow & { anchor_id: string }>(sql`
       SELECT
         ${sql.raw(QUALIFIED_SELECT_FIELDS)},
-        s.parent_message_id
+        COALESCE(s.parent_anchor_id, s.parent_message_id) AS anchor_id
       FROM messages m
       JOIN streams s ON m.stream_id = s.id
-      WHERE s.parent_message_id = ANY(${parentMessageIds})
+      WHERE COALESCE(s.parent_anchor_id, s.parent_message_id) = ANY(${anchorIds})
         AND s.type = 'thread'
         AND m.deleted_at IS NULL
       ORDER BY m.created_at ASC, m.id ASC
@@ -837,7 +838,7 @@ export const MessageRepository = {
 
     const byParent = new Map<string, Message[]>()
     for (const row of result.rows) {
-      const parentId = row.parent_message_id
+      const parentId = row.anchor_id
       const messages = byParent.get(parentId) ?? []
       messages.push(mapRowToMessage(row, reactionsByMessage.get(row.id) ?? {}))
       byParent.set(parentId, messages)

@@ -3452,7 +3452,7 @@
         "operationId": "completeDelegation",
         "summary": "Complete a delegation",
         "tags": ["Delegations"],
-        "description": "Complete the claimed delegation. When resultMarkdown is given, the result is posted to the delegation's stream in the same transaction as the completion, authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. It enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+        "description": "Complete the claimed delegation. When resultMarkdown is given, a compact resultMessageId anchor is posted to the delegation stream and the full result is posted in resultThreadId. Both writes share the completion transaction. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -3527,7 +3527,8 @@
                         "resultMessageId": { "type": "string" },
                         "sourceConversationId": { "type": "string" },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "statusChangedAt": { "type": "string", "format": "date-time" }
+                        "statusChangedAt": { "type": "string", "format": "date-time" },
+                        "resultThreadId": { "type": "string" }
                       },
                       "required": ["id", "streamId", "title", "status", "createdAt", "statusChangedAt"],
                       "additionalProperties": false
@@ -3831,9 +3832,9 @@
                           },
                           "parentStreamId": { "type": "string" },
                           "rootStreamId": { "type": "string" },
-                          "parentMessageId": { "type": "string" },
                           "createdAt": { "type": "string", "format": "date-time" },
-                          "archivedAt": { "type": "string", "format": "date-time" }
+                          "archivedAt": { "type": "string", "format": "date-time" },
+                          "parentMessageId": { "type": "string" }
                         },
                         "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                         "additionalProperties": false
@@ -3926,9 +3927,9 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
-                        "parentMessageId": { "type": "string" },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" }
+                        "archivedAt": { "type": "string", "format": "date-time" },
+                        "parentMessageId": { "type": "string" }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -4032,9 +4033,9 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
-                        "parentMessageId": { "type": "string" },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" }
+                        "archivedAt": { "type": "string", "format": "date-time" },
+                        "parentMessageId": { "type": "string" }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -6305,7 +6306,7 @@
         "name": "Threa-Version",
         "in": "header",
         "required": false,
-        "schema": { "type": "string", "enum": ["2026-07-12"] },
+        "schema": { "type": "string", "enum": ["2026-07-12", "2026-07-22"] },
         "description": "Selects the dated API version for this request. Each API key is pinned to a version when it is minted, and that pin applies when the header is absent. Send this header to override the pin per request (a valid header always wins). The value must be an exact member of the enum; an unknown or malformed value returns 400 with code INVALID_API_VERSION and the known versions in the error. Every response that resolved a version echoes it in a Threa-Version response header."
       }
     },
