@@ -92,7 +92,9 @@ bun run db:start   # PostgreSQL + MinIO via Docker
 bun run dev        # control-plane, workspace-router, backend, frontend, backoffice
 ```
 
-The app comes up at `http://localhost:3000`.
+The app comes up at `http://localhost:3000`. For device testing, use
+`bun run dev:mobile` on the local network or `bun run dev:remote` for a temporary
+HTTPS Tailscale Serve URL.
 
 ```bash
 bun run test       # unit/integration (backend)

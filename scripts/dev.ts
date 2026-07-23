@@ -104,13 +104,17 @@ function getDefaultLanHost(): string | undefined {
     .find((i) => i && i.family === "IPv4" && !i.internal)?.address
 }
 
+interface TailscaleNode {
+  bin: string
+  host: string
+}
+
 /**
- * Best-effort Tailscale MagicDNS hostname so LAN mode also serves devices on
- * the tailnet (e.g. a phone off the home WiFi). Tries the CLI on PATH first,
- * then the macOS app-bundle binary. Returns undefined when Tailscale is
- * absent or not running — LAN mode then behaves exactly as before.
+ * Best-effort Tailscale node discovery so mobile mode can include the
+ * MagicDNS hostname and remote mode can launch `tailscale serve`. Tries the
+ * CLI on PATH first, then the macOS app-bundle binary.
  */
-async function getTailscaleHost(): Promise<string | undefined> {
+async function getTailscaleNode(): Promise<TailscaleNode | undefined> {
   const candidates = ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
   for (const bin of candidates) {
     const result = await $`${bin} status --json`.quiet().nothrow()
@@ -120,13 +124,27 @@ async function getTailscaleHost(): Promise<string | undefined> {
       const dnsName: unknown = status?.Self?.DNSName
       if (status?.BackendState === "Running" && typeof dnsName === "string" && dnsName.length > 0) {
         // MagicDNS names come back fully qualified with a trailing dot.
-        return dnsName.replace(/\.$/, "")
+        return { bin, host: dnsName.replace(/\.$/, "") }
       }
     } catch {
       // Unparseable output — try the next candidate.
     }
   }
   return undefined
+}
+
+function replaceUrlOrigin(value: string, origin: string): string {
+  try {
+    const url = new URL(value)
+    const nextOrigin = new URL(origin)
+    url.protocol = nextOrigin.protocol
+    url.hostname = nextOrigin.hostname
+    url.port = nextOrigin.port
+    return url.toString()
+  } catch {
+    console.error(`Invalid URL while configuring remote auth callback: ${value}`)
+    process.exit(1)
+  }
 }
 
 async function ensureWorktreeEnv(): Promise<void> {
@@ -349,27 +367,44 @@ async function main() {
     }
   }
 
-  // LAN mode: make the app reachable from phones. Every detected host gets
-  // CORS + Vite allowedHosts coverage; auth callbacks can only bind to ONE
-  // host (WORKOS_REDIRECT_URI is a single value), so an explicit LAN_HOST
-  // wins, then the Tailscale MagicDNS name (works away from the home
-  // network), then the WiFi IP.
+  // Mobile mode exposes the ordinary HTTP dev ports to LAN/tailnet devices.
+  // Remote mode adds a temporary HTTPS Tailscale Serve origin and routes the
+  // browser-facing socket through the frontend proxy.
   const explicitLanHost = getExplicitLanHost()
-  const lanMode = process.env.LAN_MODE === "true" || process.argv.includes("--lan") || !!explicitLanHost
+  const remoteMode = process.env.TAILSCALE_MODE === "true" || process.argv.includes("--remote")
+  const lanMode = remoteMode || process.env.LAN_MODE === "true" || process.argv.includes("--lan") || !!explicitLanHost
+  const tailscale = lanMode ? await getTailscaleNode() : undefined
+  const tailscaleHttpsPort = Number(process.env.TAILSCALE_HTTPS_PORT ?? "443")
+  if (remoteMode && (!Number.isInteger(tailscaleHttpsPort) || tailscaleHttpsPort < 1 || tailscaleHttpsPort > 65535)) {
+    console.error(`Invalid TAILSCALE_HTTPS_PORT: ${process.env.TAILSCALE_HTTPS_PORT}`)
+    process.exit(1)
+  }
+
   let lanHosts: string[] = []
   let primaryLanHost: string | undefined
+  let remoteOrigin: string | undefined
 
   if (lanMode) {
-    const tailscaleHost = await getTailscaleHost()
     const defaultLanIp = getDefaultLanHost()
-    lanHosts = [...new Set([explicitLanHost, tailscaleHost, defaultLanIp].filter((h): h is string => !!h))]
+    lanHosts = [...new Set([explicitLanHost, tailscale?.host, defaultLanIp].filter((h): h is string => !!h))]
 
     if (lanHosts.length === 0) {
-      console.error("LAN_MODE enabled but no LAN IP or Tailscale host found — are you connected to WiFi?")
+      console.error("LAN mode enabled but no LAN IP or Tailscale host found — are you connected to a network?")
       process.exit(1)
     }
 
-    primaryLanHost = explicitLanHost ?? tailscaleHost ?? defaultLanIp
+    primaryLanHost = explicitLanHost ?? tailscale?.host ?? defaultLanIp
+  }
+
+  if (remoteMode) {
+    if (!tailscale) {
+      console.error("Remote mode requires a running Tailscale client")
+      process.exit(1)
+    }
+    remoteOrigin =
+      tailscaleHttpsPort === 443 ? `https://${tailscale.host}` : `https://${tailscale.host}:${tailscaleHttpsPort}`
+    console.log(`Remote mode: ${remoteOrigin}  (auth callbacks)`)
+  } else if (lanMode) {
     for (const host of lanHosts) {
       console.log(`LAN mode: http://${host}:3000${host === primaryLanHost ? "  (auth callbacks)" : ""}`)
     }
@@ -382,10 +417,21 @@ async function main() {
     "http://127.0.0.1:5173",
   ]
   for (const host of lanHosts) corsOrigins.push(`http://${host}:3000`)
+  if (remoteOrigin) corsOrigins.push(remoteOrigin)
 
   const cpEnvOverrides: Record<string, string> = {}
-  if (primaryLanHost && cpEnv.WORKOS_REDIRECT_URI) {
-    cpEnvOverrides.WORKOS_REDIRECT_URI = cpEnv.WORKOS_REDIRECT_URI.replace("localhost", primaryLanHost)
+  const authOrigin = remoteOrigin ?? (primaryLanHost ? `http://${primaryLanHost}:3000` : undefined)
+  if (authOrigin && cpEnv.WORKOS_REDIRECT_URI) {
+    cpEnvOverrides.WORKOS_REDIRECT_URI = replaceUrlOrigin(cpEnv.WORKOS_REDIRECT_URI, authOrigin)
+  }
+
+  if (remoteMode) {
+    console.log("Building frontend for reliable Tailscale delivery...")
+    const build = await $`bun run --cwd apps/frontend build`.nothrow()
+    if (build.exitCode !== 0) {
+      console.error("Frontend build failed")
+      process.exit(build.exitCode)
+    }
   }
 
   // Dev convenience: auto-seed a platform admin for the default stub email so
@@ -434,7 +480,12 @@ async function main() {
   })
 
   const routerDir = path.join(process.cwd(), "apps/workspace-router")
-  const router = Bun.spawn(["bunx", "wrangler", "dev", "--port", "3001"], {
+  const routerArgs = ["bunx", "wrangler", "dev", "--port", "3001"]
+  if (remoteOrigin) {
+    const regions = JSON.stringify({ local: { apiUrl: "http://localhost:3002", wsUrl: remoteOrigin } })
+    routerArgs.push("--var", `REGIONS:${regions}`)
+  }
+  const router = Bun.spawn(routerArgs, {
     cwd: routerDir,
     stdout: "inherit",
     stderr: "inherit",
@@ -447,7 +498,7 @@ async function main() {
     stderr: "inherit",
   })
 
-  const frontend = Bun.spawn(["bun", "run", "--cwd", "apps/frontend", "dev"], {
+  const frontend = Bun.spawn(["bun", "run", "--cwd", "apps/frontend", remoteMode ? "preview" : "dev"], {
     stdout: "inherit",
     stderr: "inherit",
     env: {
@@ -459,6 +510,7 @@ async function main() {
         .map((host) => host.trim())
         .filter(Boolean)
         .join(","),
+      ...(tailscale?.host ? { __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: tailscale.host } : {}),
     },
   })
 
@@ -507,18 +559,30 @@ async function main() {
     },
   })
 
-  installDevLifecycle([controlPlane, backend, router, backofficeRouter, frontend, backoffice, enclaveBuilder, enclave])
+  // Foreground Serve removes its temporary HTTPS listener when the dev stack
+  // exits, unlike `tailscale serve --bg`, which strands a proxy to dead ports.
+  const tailscaleServe =
+    remoteOrigin && tailscale
+      ? Bun.spawn([tailscale.bin, "serve", `--https=${tailscaleHttpsPort}`, "http://127.0.0.1:3000"], {
+          stdout: "inherit",
+          stderr: "inherit",
+        })
+      : null
 
-  await Promise.all([
-    controlPlane.exited,
-    backend.exited,
-    router.exited,
-    backofficeRouter.exited,
-    frontend.exited,
-    backoffice.exited,
-    enclaveBuilder.exited,
-    enclave.exited,
-  ])
+  const processes = [
+    controlPlane,
+    backend,
+    router,
+    backofficeRouter,
+    frontend,
+    backoffice,
+    enclaveBuilder,
+    enclave,
+    ...(tailscaleServe ? [tailscaleServe] : []),
+  ]
+  installDevLifecycle(processes)
+
+  await Promise.all(processes.map((child) => child.exited))
 }
 
 main()
