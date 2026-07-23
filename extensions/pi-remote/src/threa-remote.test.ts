@@ -1394,7 +1394,8 @@ describe("claim drain serialization", () => {
       apiKey: "threa_bk_test",
       linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
     })
-    const queued = Array.from({ length: 12 }, (_, index) => `message-${index + 1}`)
+    const expectedMessages = Array.from({ length: 12 }, (_, index) => `message-${index + 1}`)
+    const queued = [...expectedMessages]
     let claimRequests = 0
     const deliveries: Array<{ text: string; options?: { deliverAs: string } }> = []
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -1441,11 +1442,20 @@ describe("claim drain serialization", () => {
     } as never
 
     try {
-      expect(await __testing.claimIfIdle(pi, ctx)).toBe(true)
-      expect(claimRequests).toBe(13)
-      expect(deliveries).toHaveLength(12)
-      expect(deliveries[0]?.options).toBeUndefined()
-      expect(deliveries.slice(1).every(({ options }) => options?.deliverAs === "steer")).toBe(true)
+      const result = await __testing.claimIfIdle(pi, ctx)
+      expect({
+        result,
+        claimRequests,
+        firstDeliveryEndsWithPrompt: deliveries[0]?.text.endsWith(`\n${expectedMessages[0]}`),
+        deliveryOptions: deliveries.map(({ options }) => options),
+        steeredTexts: deliveries.slice(1).map(({ text }) => text),
+      }).toEqual({
+        result: true,
+        claimRequests: 13,
+        firstDeliveryEndsWithPrompt: true,
+        deliveryOptions: [undefined, ...Array.from({ length: 11 }, () => ({ deliverAs: "steer" }))],
+        steeredTexts: expectedMessages.slice(1),
+      })
     } finally {
       fetchSpy.mockRestore()
     }
