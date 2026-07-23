@@ -1,7 +1,30 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
+import { join } from "node:path"
 import threaRemote, { __testing } from "./threa-remote"
 
+let testStorageDirectory: string
+
+beforeEach(async () => {
+  await __testing.resetRuntimeForTesting()
+  testStorageDirectory = mkdtempSync(join(tmpdir(), "pi-remote-test-"))
+  await __testing.setStorageDirectoryForTesting(testStorageDirectory)
+})
+
+afterEach(async () => {
+  await __testing.resetRuntimeForTesting()
+  rmSync(testStorageDirectory, { recursive: true, force: true })
+})
+
 describe("Pi remote trace safety", () => {
+  test("selects temporary storage only for test entrypoints", () => {
+    expect(__testing.defaultStorageDirectoryForTesting("/repo/src/threa-remote.test.ts")).not.toBe(
+      join(homedir(), ".pi", "agent")
+    )
+    expect(__testing.defaultStorageDirectoryForTesting("/usr/local/bin/pi")).toBe(join(homedir(), ".pi", "agent"))
+  })
+
   test("omits sensitive bash command arguments from tool_call traces", () => {
     const trace = __testing.formatToolCallTrace({
       toolName: "bash",
@@ -1331,6 +1354,64 @@ describe("claim drain serialization", () => {
     expect(requests).toBe(1)
     fetchSpy.mockRestore()
   })
+
+  test("runtime reset drains an in-flight claim before teardown completes", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
+    })
+    let releaseClaim!: () => void
+    const claimGate = new Promise<void>((resolve) => (releaseClaim = resolve))
+    const writes: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith("/bot-invocations/claim")) {
+        await claimGate
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "binv_reset",
+              activeStreamId: "stream_1",
+              sourceMessageId: "msg_1",
+              promptMarkdown: "late work",
+              claimToken: "claim_reset",
+              claimExpiresAt: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url.endsWith("/bot-invocations/binv_reset/fail")) writes.push("fail")
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    const ctx = {
+      sessionManager: { getSessionId: () => "runtime" },
+      isIdle: () => true,
+      cwd: "/tmp",
+    } as never
+
+    try {
+      const claim = __testing.claimIfIdle({} as never, ctx)
+      await Bun.sleep(0)
+      let resetComplete = false
+      const reset = __testing.resetRuntimeForTesting().then(() => {
+        resetComplete = true
+      })
+      await Bun.sleep(0)
+      expect(resetComplete).toBe(false)
+      releaseClaim()
+      expect(await claim).toBe(false)
+      await reset
+      expect({ resetComplete, writes }).toEqual({ resetComplete: true, writes: ["fail"] })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
 })
 
 describe("session-scoped lifecycle isolation", () => {
@@ -1405,7 +1486,7 @@ describe("session-scoped lifecycle isolation", () => {
     }
   })
 
-  test("child shutdown preserves the parent claim while parent shutdown clears it", async () => {
+  test("child shutdown preserves the parent claim while parent shutdown clears it without touching other storage", async () => {
     const shutdownHandlers: Array<(event: unknown, ctx: unknown) => Promise<void>> = []
     threaRemote({
       registerCommand: () => {},
@@ -1416,6 +1497,17 @@ describe("session-scoped lifecycle isolation", () => {
     const shutdown = shutdownHandlers[0]
     expect(shutdown).toBeDefined()
 
+    const sentinelPath = __testing.storagePaths().configPath
+    const sentinel = `${JSON.stringify({
+      baseUrl: "https://sentinel.invalid",
+      workspaceId: "ws_sentinel",
+      apiKey: "sentinel-fixture-key",
+      linkedSessions: { existing: { runtimeSessionId: "existing" } },
+    })}\n`
+    writeFileSync(sentinelPath, sentinel)
+    const persistenceDirectory = mkdtempSync(join(tmpdir(), "pi-remote-persistence-"))
+    await __testing.setStorageDirectoryForTesting(persistenceDirectory)
+
     __testing.setConfigForTesting({
       baseUrl: "https://app.threa.io",
       workspaceId: "ws_123",
@@ -1423,7 +1515,6 @@ describe("session-scoped lifecycle isolation", () => {
       linkedSessions: {
         parent: {
           enabled: true,
-          instanceId: "pi-parent",
           runtimeSessionId: "parent",
           activeStreamId: "stream_a",
         },
@@ -1465,8 +1556,15 @@ describe("session-scoped lifecycle isolation", () => {
         claimActive: false,
         madeRequests: true,
       })
+
+      expect(readFileSync(sentinelPath, "utf8")).toBe(sentinel)
+      const paths = __testing.storagePaths()
+      const persisted = JSON.parse(readFileSync(paths.configPath, "utf8")) as Record<string, unknown>
+      expect(persisted).toMatchObject({ workspaceId: "ws_123", apiKey: "threa_bk_test" })
+      expect(readdirSync(persistenceDirectory).sort()).toEqual(["threa-remote-bik.json", "threa-remote.json"])
     } finally {
       fetchSpy.mockRestore()
+      rmSync(persistenceDirectory, { recursive: true, force: true })
     }
   })
 })
@@ -1481,11 +1579,6 @@ describe("claim renewal during a turn", () => {
     claimedInstanceId: "pi-test-1",
     claimExpiresAt: null,
   }
-
-  afterEach(() => {
-    __testing.clearPendingForTesting()
-    __testing.setConfigForTesting(undefined)
-  })
 
   test("renew interval is comfortably inside the claim TTL", () => {
     // Two consecutive missed renews must still leave the claim alive — the

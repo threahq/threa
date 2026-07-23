@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -58,7 +58,18 @@ function bashResult(output: string, isError = false): ToolResultEvent {
   } as unknown as ToolResultEvent
 }
 
-afterEach(() => __testing.setConfigForTesting(undefined))
+let testStorageDirectory: string
+
+beforeEach(async () => {
+  await __testing.resetRuntimeForTesting()
+  testStorageDirectory = mkdtempSync(join(tmpdir(), "pi-remote-sealed-test-"))
+  await __testing.setStorageDirectoryForTesting(testStorageDirectory)
+})
+
+afterEach(async () => {
+  await __testing.resetRuntimeForTesting()
+  rmSync(testStorageDirectory, { recursive: true, force: true })
+})
 
 const tempDirs: string[] = []
 function tempDir(): string {

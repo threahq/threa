@@ -203,7 +203,7 @@ jobs:
       # each is a standalone package with its own bun.lock, linked by file:
       # deps (bot-runtime-client → remote-session → claude-code-remote), so
       # installs must run per-package in dependency order. pi-remote is a
-      # pi-package with no test/typecheck scripts (deferred per #1153).
+      # pi-package with tests but no standalone typecheck (deferred per #1153).
       # The root install is also required: bot-runtime-client's crypto parity
       # test typechecks against the canonical packages/crypto sources, whose
       # deps (@hpke/*) resolve from the root node_modules.
@@ -212,6 +212,7 @@ jobs:
         run: |
           bun install
           bun install --cwd extensions/bot-runtime-client
+          bun install --cwd extensions/pi-remote
           bun install --cwd extensions/remote-session
           bun install --cwd extensions/claude-code-remote
           bun install --cwd extensions/harness-daemon
@@ -228,6 +229,7 @@ jobs:
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
         run: |
           bun run --cwd extensions/bot-runtime-client test
+          bun run --cwd extensions/pi-remote test
           bun run --cwd extensions/remote-session test
           bun run --cwd extensions/claude-code-remote test
           bun run --cwd extensions/harness-daemon test
