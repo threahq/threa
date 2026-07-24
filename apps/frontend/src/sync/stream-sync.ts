@@ -11,6 +11,7 @@ import {
   type WorkspaceBootstrap,
   type BotRuntimePresenceSummary,
   type JSONContent,
+  type SharedMessageHydration,
 } from "@threa/types"
 import { seedDecryption } from "@/lib/crypto/decrypt-cache"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
@@ -639,6 +640,7 @@ interface MessageEventPayload {
   workspaceId: string
   streamId: string
   event: StreamEvent
+  sharedMessages?: Record<string, SharedMessageHydration>
 }
 
 interface MessageDeletedPayload {
@@ -885,6 +887,18 @@ function contentHasSharedMessage(contentJson: unknown): boolean {
   return false
 }
 
+function patchSharedMessagesHydration(
+  queryClient: QueryClient,
+  workspaceId: string,
+  streamId: string,
+  map: Record<string, SharedMessageHydration>
+): void {
+  if (Object.keys(map).length === 0) return
+  queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) =>
+    old ? { ...old, sharedMessages: { ...old.sharedMessages, ...map } } : old
+  )
+}
+
 /** Plaintext content carried by an optimistic (self-sent) event payload, if present. */
 function readPlaintextContent(
   payload: unknown
@@ -1072,11 +1086,11 @@ export function registerStreamSocketHandlers(
       }
     })
 
-    // If the new event includes a sharedMessage pointer, the cached bootstrap's
-    // sharedMessages hydration map won't contain an entry for the source yet —
-    // without a refetch the pointer renders with no content. Invalidate so the
-    // next response populates the hydration map.
-    if (contentHasSharedMessage(newPayload.contentJson)) {
+    if (payload.sharedMessages) {
+      patchSharedMessagesHydration(queryClient, workspaceId, streamId, payload.sharedMessages)
+    } else if (contentHasSharedMessage(newPayload.contentJson)) {
+      // Deploy skew: pre-hydration outbox rows / old backends emit share-bearing
+      // events without the map — refetch so the pointer still hydrates.
       await queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, streamId) })
       await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
     }
@@ -1098,7 +1112,10 @@ export function registerStreamSocketHandlers(
       editedAt: editEvent.createdAt,
     }))
 
-    if (contentHasSharedMessage(editPayload.contentJson)) {
+    if (payload.sharedMessages) {
+      patchSharedMessagesHydration(queryClient, workspaceId, streamId, payload.sharedMessages)
+    } else if (contentHasSharedMessage(editPayload.contentJson)) {
+      // Deploy-skew fallback — see handleMessageCreated.
       await queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, streamId) })
       await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
     }
@@ -1390,14 +1407,21 @@ export function registerStreamSocketHandlers(
   }
 
   /**
-   * Invalidate any TanStack Query cache holding this stream's messages when
-   * a pointer-referenced source message in another stream is edited or
-   * deleted. Triggers a refetch so the hydrated share-map on the next
-   * response reflects the new content. The payload's targetStreamId is the
-   * room this emit was scoped to, so we just invalidate bootstrap/events.
+   * A pointer-referenced source message in another stream changed (edit/
+   * delete/move). The payload carries the re-hydrated entry — patch it into
+   * the cached bootstrap so the pointer card updates in place, no refetch.
    */
-  const handlePointerInvalidated = async (payload: { targetStreamId: string; sourceMessageId: string }) => {
+  const handlePointerInvalidated = async (payload: {
+    targetStreamId: string
+    sourceMessageId: string
+    sharedMessages?: Record<string, SharedMessageHydration>
+  }) => {
     if (payload.targetStreamId !== streamId) return
+    if (payload.sharedMessages) {
+      patchSharedMessagesHydration(queryClient, workspaceId, streamId, payload.sharedMessages)
+      return
+    }
+    // Deploy-skew fallback — see handleMessageCreated.
     await queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, streamId) })
     await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
   }

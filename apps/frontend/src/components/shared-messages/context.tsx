@@ -11,6 +11,7 @@ import type { AttachmentSummary, StreamType, Visibility } from "@threa/types"
  */
 export type HydratedSharedMessage =
   | {
+      type: "sharedMessage"
       state: "ok"
       messageId: string
       streamId: string
@@ -23,15 +24,16 @@ export type HydratedSharedMessage =
       createdAt: string
       attachments: AttachmentSummary[]
     }
-  | { state: "deleted"; messageId: string; deletedAt: string }
-  | { state: "missing"; messageId: string }
+  | { type: "sharedMessage"; state: "deleted"; messageId: string; deletedAt: string }
+  | { type: "sharedMessage"; state: "missing"; messageId: string }
   | {
+      type: "sharedMessage"
       state: "private"
       messageId: string
       sourceStreamKind: StreamType
       sourceVisibility: Visibility
     }
-  | { state: "truncated"; messageId: string; streamId: string }
+  | { type: "sharedMessage"; state: "truncated"; messageId: string; streamId: string }
 
 interface SharedMessagesContextValue {
   get: (messageId: string) => HydratedSharedMessage | null

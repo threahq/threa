@@ -38,6 +38,7 @@ describe("useSharedMessageSource", () => {
         <SharedMessagesProvider
           map={{
             msg_1: {
+              type: "sharedMessage",
               state: "ok",
               messageId: "msg_1",
               streamId: "stream_src",
@@ -74,8 +75,13 @@ describe("useSharedMessageSource", () => {
       wrapper: ({ children }) => (
         <SharedMessagesProvider
           map={{
-            msg_del: { state: "deleted", messageId: "msg_del", deletedAt: "2026-04-23T10:00:00Z" },
-            msg_missing: { state: "missing", messageId: "msg_missing" },
+            msg_del: {
+              type: "sharedMessage",
+              state: "deleted",
+              messageId: "msg_del",
+              deletedAt: "2026-04-23T10:00:00Z",
+            },
+            msg_missing: { type: "sharedMessage", state: "missing", messageId: "msg_missing" },
           }}
         >
           {children}
@@ -95,6 +101,7 @@ describe("useSharedMessageSource", () => {
         <SharedMessagesProvider
           map={{
             msg_p: {
+              type: "sharedMessage",
               state: "private",
               messageId: "msg_p",
               sourceStreamKind: "channel",
@@ -119,7 +126,7 @@ describe("useSharedMessageSource", () => {
       wrapper: ({ children }) => (
         <SharedMessagesProvider
           map={{
-            msg_t: { state: "truncated", messageId: "msg_t", streamId: "stream_deep" },
+            msg_t: { type: "sharedMessage", state: "truncated", messageId: "msg_t", streamId: "stream_deep" },
           }}
         >
           {children}
