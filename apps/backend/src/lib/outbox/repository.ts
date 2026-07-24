@@ -3,6 +3,7 @@ import type { Stream } from "../../features/streams"
 import type { StreamEvent } from "../../features/streams"
 import type { User } from "../../features/workspaces"
 import type { ConversationWithStaleness } from "../../features/conversations"
+import type { HydratedSharedMessage } from "../../features/messaging/sharing"
 import type {
   Memo as WireMemo,
   StreamEvent as WireStreamEvent,
@@ -198,10 +199,12 @@ interface WorkspaceScopedPayload {
 
 export interface MessageCreatedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
+  sharedMessages?: Record<string, HydratedSharedMessage>
 }
 
 export interface MessageEditedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
+  sharedMessages?: Record<string, HydratedSharedMessage>
 }
 
 export interface MessageDeletedOutboxPayload extends StreamScopedPayload {

@@ -2,9 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import { invalidatePointersForEvent, POINTER_INVALIDATED_EVENT } from "./outbox-handler"
 import { SharedMessageRepository } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
+import * as hydration from "./hydration"
 
 beforeEach(() => {
   spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+  spyOn(hydration, "hydrateSharedMessagesForRoom").mockImplementation(
+    async (_db, _ws, _target, ids) =>
+      Object.fromEntries(
+        [...ids].map((id) => [id, { type: "sharedMessage", state: "ok", messageId: id, streamId: "stream_src" }])
+      ) as any
+  )
 })
 
 afterEach(() => {
@@ -71,6 +78,9 @@ describe("invalidatePointersForEvent", () => {
     expect(emits[0].payload).toMatchObject({
       workspaceId: "ws_1",
       sourceMessageId: "msg_a",
+      sharedMessages: {
+        msg_a: { type: "sharedMessage", state: "ok", messageId: "msg_a", streamId: "stream_src" },
+      },
     })
   })
 

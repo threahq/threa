@@ -2,7 +2,7 @@ import type { Querier } from "../../../db"
 import { type AttachmentSummary, type JSONContent, type StreamType, type Visibility, StreamTypes } from "@threa/types"
 import { MessageRepository, type Message } from "../repository"
 import { resolveActorNames } from "../../agents"
-import { listAccessibleStreamIds, StreamRepository, type Stream } from "../../streams"
+import { listAccessibleStreamIds, listRoomReadableStreamIds, StreamRepository, type Stream } from "../../streams"
 import { AttachmentRepository, toAttachmentSummary, fetchUploadStatuses } from "../../attachments"
 
 import { SharedMessageRepository } from "./repository"
@@ -33,6 +33,7 @@ export const MAX_HYDRATION_DEPTH = 3
  */
 export type HydratedSharedMessage =
   | {
+      type: "sharedMessage"
       state: "ok"
       messageId: string
       streamId: string
@@ -51,15 +52,21 @@ export type HydratedSharedMessage =
        */
       attachments: AttachmentSummary[]
     }
-  | { state: "deleted"; messageId: string; deletedAt: Date }
-  | { state: "missing"; messageId: string }
+  | { type: "sharedMessage"; state: "deleted"; messageId: string; deletedAt: Date }
+  | { type: "sharedMessage"; state: "missing"; messageId: string }
   | {
+      type: "sharedMessage"
       state: "private"
       messageId: string
       sourceStreamKind: StreamType
       sourceVisibility: Visibility
     }
-  | { state: "truncated"; messageId: string; streamId: string }
+  | { type: "sharedMessage"; state: "truncated"; messageId: string; streamId: string }
+
+type AccessResolvers = {
+  accessibleStreams(db: Querier, workspaceId: string, streamIds: string[]): Promise<Set<string>>
+  grantedSources(db: Querier, workspaceId: string, sourceMessageIds: string[]): Promise<Set<string>>
+}
 
 interface SharedMessageNodeAttrs {
   messageId?: string
@@ -144,11 +151,11 @@ function resolveSourceForPrivatePlaceholder(
  * through will 403 like any other deep link, which is fine; the cap is a
  * pathological-data guard, not a privacy guard.
  */
-export async function hydrateSharedMessageIds(
+async function hydrateSharedMessageIdsWithResolvers(
   db: Querier,
   workspaceId: string,
-  viewerId: string,
-  sourceMessageIds: Iterable<string>
+  sourceMessageIds: Iterable<string>,
+  resolvers: AccessResolvers
 ): Promise<Record<string, HydratedSharedMessage>> {
   const seedIds = Array.from(new Set(sourceMessageIds))
   if (seedIds.length === 0) return {}
@@ -173,15 +180,15 @@ export async function hydrateSharedMessageIds(
     const byId = await MessageRepository.findByIdsInWorkspace(db, workspaceId, ids)
     const fetchedStreamIds = [...byId.values()].map((m) => m.streamId)
     const [accessibleStreams, grantedSources] = await Promise.all([
-      listAccessibleStreamIds(db, workspaceId, viewerId, fetchedStreamIds),
-      SharedMessageRepository.listSourcesGrantedToViewer(db, workspaceId, viewerId, ids),
+      resolvers.accessibleStreams(db, workspaceId, fetchedStreamIds),
+      resolvers.grantedSources(db, workspaceId, ids),
     ])
 
     const nextFrontier = new Map<string, string>()
     for (const id of ids) {
       const source = byId.get(id)
       if (!source) {
-        result[id] = { state: "missing", messageId: id }
+        result[id] = { type: "sharedMessage", state: "missing", messageId: id }
         continue
       }
       const hasAccess = accessibleStreams.has(source.streamId) || grantedSources.has(id)
@@ -190,7 +197,7 @@ export async function hydrateSharedMessageIds(
         continue
       }
       if (source.deletedAt) {
-        result[id] = { state: "deleted", messageId: id, deletedAt: source.deletedAt }
+        result[id] = { type: "sharedMessage", state: "deleted", messageId: id, deletedAt: source.deletedAt }
         continue
       }
       okMessages.set(id, source)
@@ -217,13 +224,13 @@ export async function hydrateSharedMessageIds(
     const truncatedMessages = await MessageRepository.findByIdsInWorkspace(db, workspaceId, truncatedIds)
     const fetchedStreamIds = [...truncatedMessages.values()].map((m) => m.streamId)
     const [accessibleStreams, grantedSources] = await Promise.all([
-      listAccessibleStreamIds(db, workspaceId, viewerId, fetchedStreamIds),
-      SharedMessageRepository.listSourcesGrantedToViewer(db, workspaceId, viewerId, truncatedIds),
+      resolvers.accessibleStreams(db, workspaceId, fetchedStreamIds),
+      resolvers.grantedSources(db, workspaceId, truncatedIds),
     ])
     for (const id of truncatedIds) {
       const msg = truncatedMessages.get(id)
       if (!msg) {
-        result[id] = { state: "missing", messageId: id }
+        result[id] = { type: "sharedMessage", state: "missing", messageId: id }
         continue
       }
       const hasAccess = accessibleStreams.has(msg.streamId) || grantedSources.has(id)
@@ -232,10 +239,10 @@ export async function hydrateSharedMessageIds(
         continue
       }
       if (msg.deletedAt) {
-        result[id] = { state: "deleted", messageId: id, deletedAt: msg.deletedAt }
+        result[id] = { type: "sharedMessage", state: "deleted", messageId: id, deletedAt: msg.deletedAt }
         continue
       }
-      result[id] = { state: "truncated", messageId: id, streamId: msg.streamId }
+      result[id] = { type: "sharedMessage", state: "truncated", messageId: id, streamId: msg.streamId }
     }
   }
 
@@ -257,11 +264,17 @@ export async function hydrateSharedMessageIds(
     for (const [id, streamId] of privateBuckets) {
       const source = byStreamId.get(streamId)
       if (!source) {
-        result[id] = { state: "missing", messageId: id }
+        result[id] = { type: "sharedMessage", state: "missing", messageId: id }
         continue
       }
       const { kind, visibility } = resolveSourceForPrivatePlaceholder(source, byStreamId)
-      result[id] = { state: "private", messageId: id, sourceStreamKind: kind, sourceVisibility: visibility }
+      result[id] = {
+        type: "sharedMessage",
+        state: "private",
+        messageId: id,
+        sourceStreamKind: kind,
+        sourceVisibility: visibility,
+      }
     }
   }
 
@@ -283,6 +296,7 @@ export async function hydrateSharedMessageIds(
         toAttachmentSummary(a, uploadStatuses.get(a.id))
       )
       result[id] = {
+        type: "sharedMessage",
         state: "ok",
         messageId: source.id,
         streamId: source.streamId,
@@ -301,10 +315,36 @@ export async function hydrateSharedMessageIds(
   // Defensive backfill — every requested id should have a result by now;
   // anything left over (e.g. a seed id that hit no path above) is missing.
   for (const id of seedIds) {
-    if (!result[id]) result[id] = { state: "missing", messageId: id }
+    if (!result[id]) result[id] = { type: "sharedMessage", state: "missing", messageId: id }
   }
 
   return result
+}
+
+export function hydrateSharedMessageIds(
+  db: Querier,
+  workspaceId: string,
+  viewerId: string,
+  sourceMessageIds: Iterable<string>
+): Promise<Record<string, HydratedSharedMessage>> {
+  return hydrateSharedMessageIdsWithResolvers(db, workspaceId, sourceMessageIds, {
+    accessibleStreams: (querier, ws, ids) => listAccessibleStreamIds(querier, ws, viewerId, ids),
+    grantedSources: (querier, ws, ids) =>
+      SharedMessageRepository.listSourcesGrantedToViewer(querier, ws, viewerId, ids),
+  })
+}
+
+export function hydrateSharedMessagesForRoom(
+  db: Querier,
+  workspaceId: string,
+  targetStreamId: string,
+  sourceMessageIds: Iterable<string>
+): Promise<Record<string, HydratedSharedMessage>> {
+  return hydrateSharedMessageIdsWithResolvers(db, workspaceId, sourceMessageIds, {
+    accessibleStreams: (querier, ws, ids) => listRoomReadableStreamIds(querier, ws, targetStreamId, ids),
+    grantedSources: (querier, ws, ids) =>
+      SharedMessageRepository.listSourcesGrantedToRoom(querier, ws, targetStreamId, ids),
+  })
 }
 
 /**

@@ -160,6 +160,34 @@ export function streamAccessPredicateSql(workspaceId: string, userId: string, st
 }
 
 /**
+ * Room-uniform readability: the subset of candidate stream ids in the
+ * workspace that are readable by the room as a whole — the room stream
+ * itself, plus candidates whose effective root (thread → root via
+ * `COALESCE(root_stream_id, id)`) is public. No viewer and no
+ * `stream_members` leg: per-user membership grants are meaningless for a
+ * payload delivered to everyone in the room.
+ *
+ * Empty input → empty Set; missing/cross-workspace ids are silently dropped.
+ */
+export async function listRoomReadableStreamIds(
+  db: Querier,
+  workspaceId: string,
+  roomStreamId: string,
+  candidateStreamIds: readonly string[]
+): Promise<Set<string>> {
+  if (candidateStreamIds.length === 0) return new Set()
+  const result = await db.query<{ id: string }>(sql`
+    SELECT s.id
+    FROM streams s
+    JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+    WHERE s.workspace_id = ${workspaceId}
+      AND s.id = ANY(${candidateStreamIds as string[]})
+      AND (s.id = ${roomStreamId} OR root.visibility = ${Visibilities.PUBLIC})
+  `)
+  return new Set(result.rows.map((r) => r.id))
+}
+
+/**
  * Batched equivalent of {@link checkStreamAccess}. Given a candidate set
  * of stream ids in a workspace, returns the subset the viewer can read.
  *

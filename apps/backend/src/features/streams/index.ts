@@ -13,6 +13,7 @@ export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams } 
 export {
   checkStreamAccess,
   listAccessibleStreamIds,
+  listRoomReadableStreamIds,
   resolveEffectiveAccessStream,
   rootReadableConditionSql,
   streamAccessPredicateSql,

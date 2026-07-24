@@ -1,6 +1,7 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import { isOutboxEventType, type OutboxEvent } from "../../../lib/outbox"
+import { hydrateSharedMessagesForRoom } from "./hydration"
 import { SharedMessageRepository } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
 
@@ -84,11 +85,13 @@ export async function invalidatePointersForEvent(event: OutboxEvent, db: Pool, i
     sources.add(share.sourceMessageId)
   }
   for (const [targetStreamId, sources] of sourcesByTarget) {
+    const hydrated = await hydrateSharedMessagesForRoom(db, workspaceId, targetStreamId, sources)
     for (const sourceMessageId of sources) {
       io.to(`ws:${workspaceId}:stream:${targetStreamId}`).emit(POINTER_INVALIDATED_EVENT, {
         workspaceId,
         targetStreamId,
         sourceMessageId,
+        sharedMessages: { [sourceMessageId]: hydrated[sourceMessageId] },
       })
     }
   }
