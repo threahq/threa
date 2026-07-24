@@ -164,8 +164,9 @@ describe("WS frame sent but ack timed out (idempotency)", () => {
         },
       }),
     }
-    ;(transport as unknown as { socket: unknown; connected: boolean }).socket = socket
+    ;(transport as unknown as { socket: unknown; connected: boolean; helloReady: boolean }).socket = socket
     ;(transport as unknown as { connected: boolean }).connected = true
+    ;(transport as unknown as { helloReady: boolean }).helloReady = true
   }
 
   it("does NOT re-POST steps on a timed-out ack — the in-flight frame would duplicate the trace row", async () => {
@@ -226,8 +227,11 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
         socket.handlers[event] = cb
         return socket
       },
-      emit: () => {},
-      timeout: () => ({ emit: () => {} }),
+      emit: (...args) => {
+        const callback = args.at(-1)
+        if (args[0] === "bot:hello" && typeof callback === "function") callback(null, { ok: true })
+      },
+      timeout: () => ({ emit: (...args) => socket.emit(...args) }),
     }
     return socket
   }
@@ -236,21 +240,25 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
     return stubFetch(() => new Response(JSON.stringify({ wsUrl: "https://ws.example.test" }), { status: 200 }))
   }
 
-  function makeSelfHealTransport(staleSocketRedialMs: number): BotRuntimeTransport {
+  function makeSelfHealTransport(staleSocketRedialMs: number, reconnectionDelayMaxMs?: number): BotRuntimeTransport {
     return new BotRuntimeTransport({
       baseUrl: "https://app.example.test",
       workspaceId: "ws_1",
       apiKey: "threa_bk_test",
       hello: HELLO,
       staleSocketRedialMs,
+      reconnectionDelayMaxMs,
     })
   }
 
   it("refreshes the initial and reconnect hello payloads immediately before emission", async () => {
     const fake = makeFakeSocket()
     const hellos: unknown[] = []
-    fake.emit = (event, payload) => {
-      if (event === "bot:hello") hellos.push(structuredClone(payload))
+    fake.emit = (event, payload, callback) => {
+      if (event === "bot:hello") {
+        hellos.push(structuredClone(payload))
+        if (typeof callback === "function") callback(null, { ok: true })
+      }
     }
     const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
     try {
@@ -285,6 +293,92 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
         },
         { ...HELLO, capabilities: { sessionControlCommands: ["stop", "reconnect"] } },
       ])
+    } finally {
+      ioSpy.mockRestore()
+    }
+  })
+
+  it("does not send a second hello while the first acknowledgement is in flight", async () => {
+    const fake = makeFakeSocket()
+    let helloCalls = 0
+    let acknowledge: ((error: unknown, ack: unknown) => void) | undefined
+    fake.timeout = () => ({
+      emit: (...args) => {
+        helloCalls++
+        acknowledge = args.at(-1) as (error: unknown, ack: unknown) => void
+      },
+    })
+    const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      stubHintFetch()
+      const transport = makeSelfHealTransport(3 * 60 * 1000)
+      await transport.connect()
+      fake.handlers.connect!()
+      await transport.connect()
+
+      expect(helloCalls).toBe(1)
+      expect(transport.socketConnected).toBe(false)
+
+      acknowledge!(null, { ok: true })
+      expect(transport.socketConnected).toBe(true)
+    } finally {
+      ioSpy.mockRestore()
+    }
+  })
+
+  it("tears down a connected socket whose hello is rejected instead of treating it as healthy", async () => {
+    const first = makeFakeSocket()
+    const second = makeFakeSocket()
+    first.timeout = () => ({
+      emit: (...args) => {
+        const callback = args.at(-1)
+        if (typeof callback === "function") callback(null, { ok: false, error: "not registered" })
+      },
+    })
+    const ioSpy = spyOn(socketIoClient, "io")
+      .mockReturnValueOnce(first as unknown as ReturnType<typeof socketIoClient.io>)
+      .mockReturnValueOnce(second as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      stubHintFetch()
+      const transport = makeSelfHealTransport(3 * 60 * 1000)
+      await transport.connect()
+      first.handlers.connect!()
+
+      expect(transport.socketConnected).toBe(false)
+      expect(first.disconnect).toHaveBeenCalledTimes(1)
+
+      await transport.connect()
+      expect(ioSpy).toHaveBeenCalledTimes(2)
+      second.handlers.connect!()
+      expect(transport.socketConnected).toBe(true)
+    } finally {
+      ioSpy.mockRestore()
+    }
+  })
+
+  it("schedules a fresh connection when hello is rejected", async () => {
+    const first = makeFakeSocket()
+    const second = makeFakeSocket()
+    first.timeout = () => ({
+      emit: (...args) => {
+        const callback = args.at(-1)
+        if (typeof callback === "function") callback(null, { ok: false, error: "not registered" })
+      },
+    })
+    const ioSpy = spyOn(socketIoClient, "io")
+      .mockReturnValueOnce(first as unknown as ReturnType<typeof socketIoClient.io>)
+      .mockReturnValueOnce(second as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      stubHintFetch()
+      const transport = makeSelfHealTransport(3 * 60 * 1000, 1)
+      await transport.connect()
+      first.handlers.connect!()
+      await Bun.sleep(10)
+
+      expect(ioSpy).toHaveBeenCalledTimes(2)
+      second.handlers.connect!()
+      expect(transport.socketConnected).toBe(true)
+      transport.disconnect()
     } finally {
       ioSpy.mockRestore()
     }

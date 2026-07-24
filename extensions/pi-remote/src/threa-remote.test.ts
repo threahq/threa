@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import threaRemote, { __testing } from "./threa-remote"
@@ -910,6 +910,70 @@ describe("buildPersistedConfig", () => {
   })
 })
 
+describe("Pi reload session control", () => {
+  test("completes the control claim then queues reload through a command context", async () => {
+    const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>()
+    const followUps: Array<{ text: string; options: unknown }> = []
+    const pi = {
+      registerCommand: (name: string, options: { handler: (args: string, ctx: any) => Promise<void> }) =>
+        commands.set(name, options),
+      on: () => {},
+      sendUserMessage: (text: string, options: unknown) => followUps.push({ text, options }),
+    }
+    threaRemote(pi as never)
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+    })
+    const writes: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      writes.push(String(input))
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+    const eventContext = {
+      isIdle: () => true,
+      cwd: "/tmp",
+      sessionManager: { getSessionId: () => "runtime_reload_control" },
+      modelRegistry: { getAvailable: () => [] },
+    }
+
+    try {
+      await __testing.runReloadCommand(
+        pi as never,
+        {
+          id: "binv_reload_control",
+          activeStreamId: "stream_1",
+          sourceMessageId: "msg_1",
+          promptMarkdown: "/reload",
+          claimToken: "claim_reload_control",
+          claimedInstanceId: "pi-test",
+          claimExpiresAt: null,
+        } as never,
+        eventContext as never
+      )
+
+      expect(writes.some((url) => url.endsWith("/bot-invocations/binv_reload_control/complete"))).toBe(true)
+      expect(followUps).toEqual([{ text: "/threa-remote-reload", options: { deliverAs: "followUp" } }])
+      expect(__testing.reloadPending()).toBe(true)
+
+      let reloads = 0
+      await commands.get("threa-remote-reload")!.handler("", {
+        reload: async () => {
+          reloads++
+        },
+      })
+      expect(reloads).toBe(1)
+      expect(__testing.reloadPending()).toBe(false)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})
+
 describe("Pi reconnect session control", () => {
   const invocation = {
     id: "binv_reconnect",
@@ -1671,6 +1735,175 @@ describe("session-scoped lifecycle isolation", () => {
     } finally {
       fetchSpy.mockRestore()
       rmSync(persistenceDirectory, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("reload claim continuity", () => {
+  test("restores, renews, and completes the in-flight claim after the extension cache is cleared", async () => {
+    const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
+    const pi = {
+      registerCommand: () => {},
+      on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => handlers.set(event, handler),
+      sendUserMessage: () => {},
+    }
+    threaRemote(pi as never)
+
+    const runtimeSessionId = "runtime_reload"
+    const config = {
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        [runtimeSessionId]: {
+          enabled: true,
+          instanceId: "pi-reload",
+          runtimeSessionId,
+          rootStreamId: "stream_1",
+          activeStreamId: "stream_1",
+        },
+      },
+    }
+    let idle = false
+    const ctx = {
+      sessionManager: { getSessionId: () => runtimeSessionId, getBranch: () => [] },
+      isIdle: () => idle,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: {
+        setStatus: () => {},
+        notify: () => {},
+        theme: { fg: (_tone: string, text: string) => text },
+      },
+    }
+    const writes: Array<{ url: string; body?: Record<string, unknown> }> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined
+      writes.push({ url, body })
+      if (url.endsWith(`/api/workspaces/${config.workspaceId}/config`)) {
+        return new Response("", { status: 404 })
+      }
+      const data = url.endsWith("/bot-invocations/claim") ? null : {}
+      return new Response(JSON.stringify({ data }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+
+    try {
+      __testing.setConfigForTesting(config)
+      __testing.beginPendingInvocation({
+        id: "binv_reload",
+        activeStreamId: "stream_1",
+        rootStreamId: "stream_1",
+        sourceMessageId: "msg_1",
+        promptMarkdown: "keep working",
+        claimToken: "claim_reload",
+        claimedInstanceId: "pi-reload",
+        claimExpiresAt: null,
+      } as never)
+
+      await handlers.get("session_shutdown")!({ reason: "reload" }, ctx)
+      const snapshotPath = __testing.pendingSnapshotPathForTesting(runtimeSessionId)
+      expect(existsSync(snapshotPath)).toBe(true)
+
+      await __testing.resetRuntimeForTesting()
+      __testing.setConfigForTesting(config)
+      expect(__testing.pendingInvocationId()).toBeUndefined()
+
+      await handlers.get("session_start")!({ reason: "reload" }, ctx)
+      expect(__testing.pendingInvocationId()).toBe("binv_reload")
+      expect(__testing.claimRenewTimerActive()).toBe(true)
+      expect(writes.some((write) => write.url.endsWith("/bot-invocations/binv_reload/renew"))).toBe(true)
+
+      idle = true
+      await handlers.get("agent_end")!(
+        {
+          messages: [
+            { role: "user", content: "keep working" },
+            { role: "assistant", content: "Finished after reload." },
+          ],
+        },
+        ctx
+      )
+
+      const completion = writes.find((write) => write.url.endsWith("/bot-invocations/binv_reload/complete"))
+      expect(completion?.body).toMatchObject({
+        instanceId: "pi-reload",
+        claimToken: "claim_reload",
+        finalMessageMarkdown: "Finished after reload.",
+      })
+      expect(__testing.pendingInvocationId()).toBeUndefined()
+      expect(__testing.claimRenewTimerActive()).toBe(false)
+      expect(existsSync(snapshotPath)).toBe(false)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})
+
+describe("recovered completion retry", () => {
+  test("keeps the restored claim and retries a transient completion failure", async () => {
+    const runtimeSessionId = "runtime_recovered_completion"
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        [runtimeSessionId]: {
+          enabled: true,
+          instanceId: "pi-recovery",
+          runtimeSessionId,
+          rootStreamId: "stream_1",
+          activeStreamId: "stream_1",
+        },
+      },
+    })
+    __testing.beginPendingInvocation({
+      id: "binv_recovered_completion",
+      activeStreamId: "stream_1",
+      rootStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+      promptMarkdown: "finish me",
+      claimToken: "claim_recovery",
+      claimedInstanceId: "pi-recovery",
+      claimExpiresAt: null,
+    } as never)
+    const ctx = {
+      sessionManager: { getSessionId: () => runtimeSessionId },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+    }
+    let completionAttempts = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith("/bot-invocations/binv_recovered_completion/complete")) {
+        completionAttempts++
+        if (completionAttempts === 1) {
+          return new Response(JSON.stringify({ error: "temporary" }), {
+            status: 503,
+            headers: { "content-type": "application/json" },
+          })
+        }
+      }
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+
+    try {
+      __testing.scheduleRecoveredCompletion("Recovered reply.", ctx as never)
+      await Bun.sleep(1200)
+      expect(completionAttempts).toBe(2)
+      expect(__testing.pendingInvocationId()).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
     }
   })
 })

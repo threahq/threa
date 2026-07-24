@@ -17,6 +17,8 @@ import {
   BikKeystore,
   BotRuntimeTransport,
   THREA_CALLBACK_TOKEN_HEADER,
+  base64ToBytes,
+  bytesToBase64,
   decryptAttachmentBytes,
   encryptAttachmentBytes,
   mintStreamKeyWraps,
@@ -65,6 +67,11 @@ let CONFIG_PATH = join(DEFAULT_STORAGE_DIRECTORY, "threa-remote.json")
 // stable across restarts — the owner's wraps target its `publicKeyId`, so
 // rotating it would orphan every wrap.
 let BIK_PATH = join(DEFAULT_STORAGE_DIRECTORY, "threa-remote-bik.json")
+// Per-session sidecar (`threa-remote-pending-<runtimeSessionId>.json`) carrying
+// the in-flight claim across `/reload`: Pi clears the extension module cache on
+// reload, so every top-level binding (pending, the renew timer, captured texts)
+// is wiped and only disk state crosses the boundary.
+let PENDING_SNAPSHOT_DIRECTORY = DEFAULT_STORAGE_DIRECTORY
 const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 /** Server cap on `attachmentIds` per sealed message (`sealedAttachmentIdsSchema` caps at 16). */
@@ -104,6 +111,7 @@ const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
+const RELOAD_HANDOFF_COMMAND = "threa-remote-reload"
 const SESSION_CONTROL_COMMANDS = [
   "compact",
   "model",
@@ -281,7 +289,7 @@ let pendingProviderError: string | undefined
 let pendingModelError: string | undefined
 let pendingRetryAfterMs: number | undefined
 let pendingInvocationPrompt: string | undefined
-let pendingRetry: { timer: ReturnType<typeof setTimeout>; retryAt: number; attempts: number } | undefined
+let pendingRetry: { timer?: ReturnType<typeof setTimeout>; retryAt: number; attempts: number } | undefined
 let isWaitingForRetry = false
 // User texts queued via /carry-on (and messages swept while rate-limited),
 // folded into the retry prompt when the wait ends.
@@ -297,7 +305,10 @@ let pollingRunId = 0
 let fallbackRuntimeSessionId: string | undefined
 let supervisedRevivalBlocked = false
 let reconnectPending = false
+let reloadPending = false
 let claimIfIdleInFlight: Promise<boolean> | undefined
+let pendingSettlement: Promise<void> | undefined
+let recoveredCompletionTimer: ReturnType<typeof setTimeout> | undefined
 let claimIfIdleRerunRequested = false
 let sessionLifecycleGeneration = 0
 let sessionTearingDown = false
@@ -653,6 +664,15 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
   }
 }
 
+class ThreaApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!config) throw new Error("Threa remote config not loaded")
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData
@@ -696,7 +716,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       }
     }
     detail = detail.slice(0, 500)
-    throw new Error(`Threa API ${response.status}: ${response.statusText}${detail ? ` — ${detail}` : ""}`)
+    throw new ThreaApiError(
+      response.status,
+      `Threa API ${response.status}: ${response.statusText}${detail ? ` — ${detail}` : ""}`
+    )
   }
   return (await response.json()) as T
 }
@@ -761,7 +784,7 @@ function buildRuntimeCapabilities(
 }
 
 function presenceBody(status: "available" | "busy" | "offline" | "error", statusText?: string, ctx?: ExtensionContext) {
-  const effectiveStatus = status === "available" && reconnectPending ? "busy" : status
+  const effectiveStatus = status === "available" && (reconnectPending || reloadPending) ? "busy" : status
   return {
     runtimeKind: "pi-local",
     instanceId: ctx ? getSessionInstanceId(ctx) : ensureInstanceId(),
@@ -1424,8 +1447,8 @@ async function tryRebindLegacySessionInstance(ctx: ExtensionContext): Promise<vo
   }
 }
 
-async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void> {
-  if (!config) return
+async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<boolean | undefined> {
+  if (!config) return undefined
   // pi runs the turn locally, so a `notFound` (claim gone server-side) does NOT
   // drop it — the turn completes and surfaces the gone claim at complete() (404);
   // we just log it so that loss isn't silent.
@@ -1437,17 +1460,23 @@ async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void
       .catch(() => ({ notFound: false }))
     if (notFound) {
       console.error(`[threa-remote] renew ${invocation.id}: claim gone server-side; turn will close on completion`)
+      return false
     }
-    return
+    return true
   }
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/renew`, {
-    method: "POST",
-    body: JSON.stringify({
-      instanceId: getInvocationInstanceId(invocation),
-      claimToken: invocation.claimToken,
-      claimTtlSeconds: CLAIM_TTL_SECONDS,
-    }),
-  }).catch(() => undefined)
+  try {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/renew`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId: getInvocationInstanceId(invocation),
+        claimToken: invocation.claimToken,
+        claimTtlSeconds: CLAIM_TTL_SECONDS,
+      }),
+    })
+    return true
+  } catch (error) {
+    return error instanceof ThreaApiError && error.status === 404 ? false : undefined
+  }
 }
 
 async function renewActiveClaims(): Promise<void> {
@@ -1469,6 +1498,298 @@ function stopClaimRenewTimer(): void {
   if (!claimRenewTimer) return
   clearInterval(claimRenewTimer)
   claimRenewTimer = undefined
+}
+
+type PendingTurnSnapshot = {
+  version: 1
+  savedAt: number
+  runtimeSessionId: string
+  workspaceId: string
+  instanceId: string
+  rootStreamId?: string
+  invocation: Record<string, unknown>
+  steered: Array<{ invocation: Record<string, unknown>; cursor?: string }>
+  contextCursor?: string
+  invocationPrompt?: string
+  waitingForRetry?: { retryAt: number; attempts: number; carryOnTexts: string[] }
+}
+
+function pendingSnapshotPath(runtimeSessionId: string): string {
+  return join(PENDING_SNAPSHOT_DIRECTORY, `threa-remote-pending-${runtimeSessionId}.json`)
+}
+
+function serializeInvocationForSnapshot(invocation: ClaimedInvocation): Record<string, unknown> {
+  const { sealing, ...rest } = invocation
+  if (!sealing) return rest
+  return {
+    ...rest,
+    sealing: {
+      ...sealing,
+      replySsk: bytesToBase64(sealing.replySsk),
+    },
+  }
+}
+
+function deserializeInvocationFromSnapshot(value: unknown): ClaimedInvocation | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const candidate = value as Record<string, unknown>
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.activeStreamId !== "string" ||
+    typeof candidate.sourceMessageId !== "string" ||
+    typeof candidate.promptMarkdown !== "string" ||
+    typeof candidate.claimToken !== "string"
+  ) {
+    return undefined
+  }
+  const invocation = { ...candidate } as unknown as ClaimedInvocation
+  if (candidate.sealing !== undefined) {
+    if (!candidate.sealing || typeof candidate.sealing !== "object") return undefined
+    const sealing = candidate.sealing as Record<string, unknown>
+    if (
+      typeof sealing.streamId !== "string" ||
+      typeof sealing.replyKeyGeneration !== "number" ||
+      typeof sealing.replySenderId !== "string" ||
+      typeof sealing.callbackToken !== "string" ||
+      typeof sealing.replySsk !== "string"
+    ) {
+      return undefined
+    }
+    invocation.sealing = {
+      streamId: sealing.streamId,
+      replyKeyGeneration: sealing.replyKeyGeneration,
+      replySenderId: sealing.replySenderId,
+      callbackToken: sealing.callbackToken,
+      replySsk: base64ToBytes(sealing.replySsk),
+    }
+  }
+  return invocation
+}
+
+function savePendingSnapshot(ctx: ExtensionContext): void {
+  if (!pending) return
+  const runtimeSessionId = getRuntimeSessionId(ctx)
+  const link = getCurrentSessionLink(ctx)
+  const snapshot: PendingTurnSnapshot = {
+    version: 1,
+    savedAt: Date.now(),
+    runtimeSessionId,
+    workspaceId: config?.workspaceId ?? "",
+    instanceId: getInvocationInstanceId(pending),
+    ...(link?.rootStreamId ? { rootStreamId: link.rootStreamId } : {}),
+    invocation: serializeInvocationForSnapshot(pending),
+    steered: steeredInvocations.map((item) => ({
+      invocation: serializeInvocationForSnapshot(item.invocation),
+      ...(item.cursor ? { cursor: item.cursor } : {}),
+    })),
+    ...(pendingContextCursor ? { contextCursor: pendingContextCursor } : {}),
+    ...(pendingInvocationPrompt ? { invocationPrompt: pendingInvocationPrompt } : {}),
+    ...(isWaitingForRetry && pendingRetry
+      ? {
+          waitingForRetry: {
+            retryAt: pendingRetry.retryAt,
+            attempts: pendingRetry.attempts,
+            carryOnTexts: [...carryOnTexts],
+          },
+        }
+      : {}),
+  }
+  try {
+    mkdirSync(PENDING_SNAPSHOT_DIRECTORY, { recursive: true })
+    const path = pendingSnapshotPath(runtimeSessionId)
+    const tmp = `${path}.${process.pid}.tmp`
+    writeFileSync(tmp, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 })
+    renameSync(tmp, path)
+  } catch (error) {
+    console.error(`Threa remote: pending snapshot save failed: ${summarizeError(error)}`)
+  }
+}
+
+function clearPendingSnapshot(ctx: ExtensionContext): void {
+  try {
+    unlinkSync(pendingSnapshotPath(getRuntimeSessionId(ctx)))
+  } catch {
+    // Already absent.
+  }
+}
+
+function readPendingSnapshot(ctx: ExtensionContext): PendingTurnSnapshot | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(pendingSnapshotPath(getRuntimeSessionId(ctx)), "utf8"))
+  } catch {
+    return undefined
+  }
+  if (!parsed || typeof parsed !== "object") return undefined
+  const snapshot = parsed as Partial<PendingTurnSnapshot>
+  const link = getCurrentSessionLink(ctx)
+  if (
+    snapshot.version !== 1 ||
+    typeof snapshot.savedAt !== "number" ||
+    Date.now() - snapshot.savedAt > CLAIM_TTL_SECONDS * 1000 ||
+    snapshot.runtimeSessionId !== getRuntimeSessionId(ctx) ||
+    snapshot.workspaceId !== config?.workspaceId ||
+    snapshot.rootStreamId !== link?.rootStreamId ||
+    !snapshot.invocation ||
+    !Array.isArray(snapshot.steered)
+  ) {
+    return undefined
+  }
+  return snapshot as PendingTurnSnapshot
+}
+
+function recoverFinalTextFromBranch(ctx: ExtensionContext): string | undefined {
+  const messages: Array<{ role: string; text: string }> = []
+  for (const entry of ctx.sessionManager.getBranch()) {
+    if (entry.type !== "message") continue
+    const role = String(entry.message.role)
+    if (role !== "user" && role !== "assistant") continue
+    const text = textFromContent(entry.message.content).trim()
+    if (text) messages.push({ role, text })
+  }
+  let anchor = -1
+  if (pendingInvocationPrompt) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === "user" && messages[i]?.text === pendingInvocationPrompt) {
+        anchor = i
+        break
+      }
+    }
+  }
+  if (anchor < 0) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === "user") {
+        anchor = i
+        break
+      }
+    }
+  }
+  if (anchor < 0) return undefined
+  return messages
+    .slice(anchor + 1)
+    .filter((message) => message.role === "assistant")
+    .at(-1)?.text
+}
+
+function clearRecoveredCompletionTimer(): void {
+  if (!recoveredCompletionTimer) return
+  clearTimeout(recoveredCompletionTimer)
+  recoveredCompletionTimer = undefined
+}
+
+function discardRestoredPending(ctx: ExtensionContext): void {
+  stopClaimRenewTimer()
+  clearPendingRetry()
+  clearRecoveredCompletionTimer()
+  pending = undefined
+  steeredInvocations = []
+  pendingContextCursor = undefined
+  pendingAssistantTexts = []
+  pendingNonAssistantTexts = []
+  pendingToolCalls = new Map()
+  pendingProviderError = undefined
+  pendingModelError = undefined
+  pendingRetryAfterMs = undefined
+  pendingInvocationPrompt = undefined
+  isWaitingForRetry = false
+  carryOnTexts = []
+  lastTraceHeartbeat = undefined
+  clearPendingSnapshot(ctx)
+}
+
+function scheduleRecoveredCompletion(finalText: string, ctx: ExtensionContext, delayMs = 0, attempt = 1): void {
+  const lifecycleGeneration = sessionLifecycleGeneration
+  clearRecoveredCompletionTimer()
+  recoveredCompletionTimer = setTimeout(() => {
+    recoveredCompletionTimer = undefined
+    if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration || !pending) return
+    const settlement = (async () => {
+      try {
+        await completePending(finalText, ctx)
+      } catch (error) {
+        if (error instanceof ThreaApiError && error.status === 404) {
+          discardRestoredPending(ctx)
+          return
+        }
+        const permanentClientError = error instanceof ThreaApiError && error.status >= 400 && error.status < 500
+        const hasAttachments = extractAttachmentDirectives(finalText).paths.length > 0
+        if (permanentClientError || hasAttachments) {
+          try {
+            await failPending(`Recovered completion failed: ${summarizeError(error)}`, ctx)
+          } catch {
+            discardRestoredPending(ctx)
+          }
+          return
+        }
+        scheduleRecoveredCompletion(finalText, ctx, Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5)), attempt + 1)
+      }
+    })()
+    pendingSettlement = settlement
+    void settlement.finally(() => {
+      if (pendingSettlement === settlement) pendingSettlement = undefined
+    })
+  }, delayMs)
+}
+
+async function restorePendingAfterReload(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+  const snapshot = readPendingSnapshot(ctx)
+  if (!snapshot) {
+    clearPendingSnapshot(ctx)
+    return
+  }
+  const invocation = deserializeInvocationFromSnapshot(snapshot.invocation)
+  if (
+    !invocation ||
+    snapshot.instanceId !== getInvocationInstanceId(invocation) ||
+    (await renewInvocationClaim(invocation)) === false
+  ) {
+    clearPendingSnapshot(ctx)
+    return
+  }
+  const restoredSteers = snapshot.steered.flatMap((item) => {
+    const restored = deserializeInvocationFromSnapshot(item.invocation)
+    return restored ? [{ invocation: restored, cursor: item.cursor }] : []
+  })
+  const steerRenewals = await Promise.all(restoredSteers.map((item) => renewInvocationClaim(item.invocation)))
+  pending = invocation
+  steeredInvocations = restoredSteers.filter((_, index) => steerRenewals[index] !== false)
+  pendingContextCursor = typeof snapshot.contextCursor === "string" ? snapshot.contextCursor : undefined
+  pendingInvocationPrompt = typeof snapshot.invocationPrompt === "string" ? snapshot.invocationPrompt : undefined
+  startClaimRenewTimer()
+  await recordTraceStep(
+    "context_received",
+    "Pi reloaded its extensions; resuming the in-flight invocation.",
+    "Resumed after reload…"
+  ).catch(() => undefined)
+
+  const waiting = snapshot.waitingForRetry
+  if (waiting && typeof waiting.retryAt === "number") {
+    isWaitingForRetry = true
+    carryOnTexts = Array.isArray(waiting.carryOnTexts)
+      ? waiting.carryOnTexts.filter((text): text is string => typeof text === "string")
+      : []
+    const attempts = typeof waiting.attempts === "number" ? waiting.attempts : 1
+    const retryAt = Math.max(Date.now(), waiting.retryAt)
+    const lifecycleGeneration = sessionLifecycleGeneration
+    pendingRetry = {
+      timer: setTimeout(
+        () => void executeProviderRetry(pi, ctx, attempts, lifecycleGeneration).catch(() => undefined),
+        retryAt - Date.now()
+      ),
+      retryAt,
+      attempts,
+    }
+    setRemoteStatus(ctx, `Threa remote: retry ${formatLocalTime(new Date(retryAt))}`)
+    return
+  }
+
+  if (ctx.isIdle()) {
+    const finalText = recoverFinalTextFromBranch(ctx)
+    if (finalText) scheduleRecoveredCompletion(finalText, ctx)
+    else await failPending("Pi reloaded as the turn finished; the final response could not be recovered.", ctx)
+    return
+  }
+  setRemoteStatus(ctx, `Threa remote: running ${invocation.id}`)
 }
 
 function isEnabled(ctx: ExtensionContext): boolean {
@@ -1877,7 +2198,7 @@ function buildClaimInvocationBody(ctx: ExtensionContext): Record<string, unknown
 }
 
 async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvocation | null> {
-  if (!config || reconnectPending || sessionTearingDown) return null
+  if (!config || reconnectPending || reloadPending || sessionTearingDown) return null
   const startedAt = Date.now()
   try {
     const body = await request<{ data: (ClaimedInvocation & { sealedContext?: unknown }) | null }>(
@@ -2189,9 +2510,14 @@ function beginPendingInvocation(invocation: ClaimedInvocation, cursor?: string):
   lastTraceHeartbeat = undefined
 }
 
-function clearPendingRetry(): void {
-  if (!pendingRetry) return
+function cancelPendingRetryTimer(): void {
+  if (!pendingRetry?.timer) return
   clearTimeout(pendingRetry.timer)
+  pendingRetry.timer = undefined
+}
+
+function clearPendingRetry(): void {
+  cancelPendingRetryTimer()
   pendingRetry = undefined
 }
 
@@ -2389,12 +2715,25 @@ async function runThinkingCommand(
   await completeInvocationWithMarkdown(invocation, `Thinking level changed: \`${before}\` → \`${after}\``, ctx)
 }
 
-async function runReloadCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
-  // Complete the invocation before reload — `await ctx.reload()` emits session_shutdown
-  // for this runtime, so any acknowledgement after the await would run against a
-  // pre-reload extension instance and may not survive.
-  await completeInvocationWithMarkdown(invocation, "Reloading Pi extensions, skills, prompts, and themes…", ctx)
-  await ctx.reload()
+async function runReloadCommand(pi: ExtensionAPI, invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
+  reloadPending = true
+  try {
+    const completed = await completeInvocationWithMarkdown(
+      invocation,
+      "Reloading Pi extensions, skills, prompts, and themes…",
+      ctx
+    )
+    if (!completed) {
+      reloadPending = false
+      const busy = pending !== undefined || !ctx.isIdle()
+      await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
+      return
+    }
+    pi.sendUserMessage(`/${RELOAD_HANDOFF_COMMAND}`, { deliverAs: "followUp" })
+  } catch (error) {
+    reloadPending = false
+    throw error
+  }
 }
 
 type ShellExecResult = {
@@ -2816,7 +3155,7 @@ async function handleSessionControlInvocation(
         await runSkillCommand(pi, invocation, command.args, ctx)
         return
       case "reload":
-        await runReloadCommand(invocation, ctx)
+        await runReloadCommand(pi, invocation, ctx)
         return
       case "shell":
         await runShellCommand(invocation, command.args, ctx)
@@ -2867,25 +3206,34 @@ async function scheduleProviderRetry(
   if (!pending) return
   const retryAt = Date.now() + retryAfterMs
   const notice = formatRetryNotice(retryAfterMs, attempt)
+  const lifecycleGeneration = sessionLifecycleGeneration
+  isWaitingForRetry = true
+  pendingRetry = { retryAt, attempts: attempt }
   await recordTraceStep("rate_limited", notice, "Rate limited; waiting…").catch(() => undefined)
+  if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration) return
   setRemoteStatus(ctx, `Threa remote: retry ${formatLocalTime(new Date(retryAt))}`)
   lastBusyHeartbeatAt = 0
   await heartbeat("busy", notice.slice(0, 160), ctx).catch(() => undefined)
-  isWaitingForRetry = true
-  pendingRetry = {
-    timer: setTimeout(() => {
-      void executeProviderRetry(pi, ctx, attempt)
-    }, retryAfterMs),
-    retryAt,
-    attempts: attempt,
-  }
+  if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration || !pendingRetry) return
+  pendingRetry.timer = setTimeout(
+    () => {
+      void executeProviderRetry(pi, ctx, attempt, lifecycleGeneration).catch(() => undefined)
+    },
+    Math.max(0, retryAt - Date.now())
+  )
 }
 
-async function executeProviderRetry(pi: ExtensionAPI, ctx: ExtensionContext, attempt: number): Promise<void> {
-  pendingRetry = undefined
+async function executeProviderRetry(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  attempt: number,
+  lifecycleGeneration: number
+): Promise<void> {
+  if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration) return
   const invocation = pending
   const prompt = pendingInvocationPrompt
   if (!invocation) {
+    pendingRetry = undefined
     isWaitingForRetry = false
     return
   }
@@ -2898,16 +3246,19 @@ async function executeProviderRetry(pi: ExtensionAPI, ctx: ExtensionContext, att
     return
   }
   resetPendingTurnTexts()
-  isWaitingForRetry = false
   await recordTraceStep(
     "rate_limit_retry",
     `Retrying after rate limit (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS}).`,
     "Retrying…"
   ).catch(() => undefined)
+  if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration) return
   setRemoteStatus(ctx, `Threa remote: running ${invocation.id}`)
   lastBusyHeartbeatAt = 0
   await heartbeat("busy", "Retrying after rate limit…", ctx).catch(() => undefined)
+  if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration) return
   const queued = carryOnTexts
+  pendingRetry = undefined
+  isWaitingForRetry = false
   carryOnTexts = []
   pi.sendUserMessage(buildRetryPrompt(prompt, queued))
 }
@@ -2997,7 +3348,7 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
     if (isSessionControlInvocation(invocation)) {
       const command = resolveSessionControlCommand(invocation)
       await handleSessionControlInvocation(pi, ctx, invocation)
-      if (command?.name === "stop" || reconnectPending) return true
+      if (command?.name === "stop" || reconnectPending || reloadPending) return true
     } else {
       await injectInvocation(pi, ctx, invocation, steer)
     }
@@ -3524,6 +3875,8 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   carryOnTexts = []
   lastTraceHeartbeat = undefined
   lastBusyHeartbeatAt = 0
+  clearPendingSnapshot(ctx)
+  clearRecoveredCompletionTimer()
   await heartbeat("available", undefined, ctx)
 }
 
@@ -3555,6 +3908,8 @@ async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void
   isWaitingForRetry = false
   lastTraceHeartbeat = undefined
   lastBusyHeartbeatAt = 0
+  if (ctx) clearPendingSnapshot(ctx)
+  clearRecoveredCompletionTimer()
   await heartbeat("available", undefined, ctx).catch(() => undefined)
 }
 
@@ -3562,6 +3917,7 @@ async function setStorageDirectoryForTesting(directory: string): Promise<void> {
   if (!isTestEntrypoint()) throw new Error("Test storage can only be configured under bun test")
   await resetRuntimeForTesting()
   const resolved = resolve(directory)
+  PENDING_SNAPSHOT_DIRECTORY = resolved
   CONFIG_PATH = join(resolved, "threa-remote.json")
   CONFIG_LOCK_PATH = `${CONFIG_PATH}.lock`
   BIK_PATH = join(resolved, "threa-remote-bik.json")
@@ -3572,12 +3928,16 @@ async function resetRuntimeForTesting(): Promise<void> {
   sessionTearingDown = true
   sessionLifecycleGeneration++
   reconnectPending = false
+  reloadPending = false
   stopPolling()
   stopClaimRenewTimer()
   clearPendingRetry()
+  clearRecoveredCompletionTimer()
   teardownTransport()
   await claimIfIdleInFlight?.catch(() => undefined)
+  await pendingSettlement?.catch(() => undefined)
   claimIfIdleInFlight = undefined
+  pendingSettlement = undefined
   claimIfIdleRerunRequested = false
   config = undefined
   pollInFlightRunId = undefined
@@ -3624,6 +3984,8 @@ export const __testing = {
   },
   setStorageDirectoryForTesting,
   storagePaths: () => ({ configPath: CONFIG_PATH, lockPath: CONFIG_LOCK_PATH, bikPath: BIK_PATH }),
+  pendingSnapshotPathForTesting: (runtimeSessionId: string) => pendingSnapshotPath(runtimeSessionId),
+  pendingInvocationId: () => pending?.id,
   defaultStorageDirectoryForTesting: (entrypoint?: string) =>
     isTestEntrypoint(entrypoint)
       ? join(tmpdir(), `threa-pi-remote-tests-${process.pid}`)
@@ -3687,8 +4049,11 @@ export const __testing = {
   claimNextInvocation,
   claimIfIdle,
   runReconnectCommand,
+  runReloadCommand,
+  scheduleRecoveredCompletion,
   runKeyCommand,
   reconnectPending: () => reconnectPending,
+  reloadPending: () => reloadPending,
   sessionLifecycleGeneration: () => sessionLifecycleGeneration,
   sessionTearingDown: () => sessionTearingDown,
   teardownTransport,
@@ -3698,6 +4063,17 @@ export const __testing = {
 }
 
 export default function (pi: ExtensionAPI): void {
+  pi.registerCommand(RELOAD_HANDOFF_COMMAND, {
+    description: "Complete a Threa reload handoff",
+    handler: async (_args, ctx) => {
+      try {
+        await ctx.reload()
+      } finally {
+        reloadPending = false
+      }
+    },
+  })
+
   pi.registerCommand("remote-control", {
     description:
       "Link this Pi session to a Threa scratchpad: configure | status | open | rename <name> | on | off | debug | debug-polls [on|off]",
@@ -3829,6 +4205,7 @@ export default function (pi: ExtensionAPI): void {
     if (!config || !shouldHandleSessionEvents(ctx)) return
     sessionLifecycleGeneration++
     reconnectPending = false
+    reloadPending = false
     sessionTearingDown = false
     if (!isCurrentSessionEnabled(ctx)) {
       setRemoteStatus(ctx, getCurrentSessionLink(ctx) ? "Threa remote: off" : "Threa remote: not linked")
@@ -3840,7 +4217,17 @@ export default function (pi: ExtensionAPI): void {
       return
     }
     lastBusyHeartbeatAt = 0
-    await heartbeat("available", undefined, ctx)
+    if (event.reason === "reload") {
+      try {
+        await restorePendingAfterReload(pi, ctx)
+      } catch (error) {
+        discardRestoredPending(ctx)
+        ctx.ui.notify(`Threa reload claim recovery failed: ${summarizeError(error)}`, "warning")
+      }
+    } else {
+      clearPendingSnapshot(ctx)
+    }
+    await heartbeat(pending ? "busy" : "available", pending ? "Working on Threa invocation…" : undefined, ctx)
     await ensureTransport(pi, ctx)?.connect()
     startPolling(pi, ctx)
     if (event.reason === "reload") ctx.ui.notify("Threa remote reconnected after reload.", "info")
@@ -3922,7 +4309,7 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("agent_end", async (event, ctx) => {
-    if (!shouldHandleSessionEvents(ctx)) return
+    if (!shouldHandleSessionEvents(ctx) || sessionTearingDown) return
     if (!pending) {
       if (config && isEnabled(ctx)) {
         lastBusyHeartbeatAt = 0
@@ -3931,38 +4318,46 @@ export default function (pi: ExtensionAPI): void {
       return
     }
     if (isWaitingForRetry) return
-    if (pendingRetryAfterMs !== undefined && pendingAssistantTexts.length === 0) {
-      const attempt = (pendingRetry?.attempts ?? 0) + 1
-      if (attempt <= MAX_RETRY_ATTEMPTS) {
-        await scheduleProviderRetry(pi, ctx, pendingRetryAfterMs, attempt)
-        return
+    const settlement = (async () => {
+      if (pendingRetryAfterMs !== undefined && pendingAssistantTexts.length === 0) {
+        const attempt = (pendingRetry?.attempts ?? 0) + 1
+        if (attempt <= MAX_RETRY_ATTEMPTS) {
+          await scheduleProviderRetry(pi, ctx, pendingRetryAfterMs, attempt)
+          return
+        }
       }
-    }
+      try {
+        const finalText = resolveFinalText(event, {
+          assistantTexts: pendingAssistantTexts,
+          otherTexts: pendingNonAssistantTexts,
+          providerError: pendingProviderError,
+          modelError: pendingModelError,
+        })
+        // When the reply is the model's final assistant message, it was already
+        // recorded as the last `thinking` trace step in `message_end` — recording
+        // a `message_sent` step too would duplicate it in the trace dialog. Only
+        // record `message_sent` for the fallback paths (provider error, event
+        // error, non-assistant text) where there is no preceding thinking step.
+        if (pendingAssistantTexts.length === 0) {
+          const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
+          await recordTraceStep(
+            "message_sent",
+            `Final response:\n\n${sanitizeTraceText(traceFinalText)}`,
+            "Sent response"
+          )
+        }
+        await completePending(finalText, ctx)
+        setRemoteStatus(ctx, "Threa remote: linked")
+      } catch (error) {
+        ctx.ui.notify(`Failed to complete Threa invocation: ${String(error)}`, "warning")
+        await failPending(error, ctx)
+      }
+    })()
+    pendingSettlement = settlement
     try {
-      const finalText = resolveFinalText(event, {
-        assistantTexts: pendingAssistantTexts,
-        otherTexts: pendingNonAssistantTexts,
-        providerError: pendingProviderError,
-        modelError: pendingModelError,
-      })
-      // When the reply is the model's final assistant message, it was already
-      // recorded as the last `thinking` trace step in `message_end` — recording
-      // a `message_sent` step too would duplicate it in the trace dialog. Only
-      // record `message_sent` for the fallback paths (provider error, event
-      // error, non-assistant text) where there is no preceding thinking step.
-      if (pendingAssistantTexts.length === 0) {
-        const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
-        await recordTraceStep(
-          "message_sent",
-          `Final response:\n\n${sanitizeTraceText(traceFinalText)}`,
-          "Sent response"
-        )
-      }
-      await completePending(finalText, ctx)
-      setRemoteStatus(ctx, "Threa remote: linked")
-    } catch (error) {
-      ctx.ui.notify(`Failed to complete Threa invocation: ${String(error)}`, "warning")
-      await failPending(error, ctx)
+      await settlement
+    } finally {
+      if (pendingSettlement === settlement) pendingSettlement = undefined
     }
   })
 
@@ -3983,7 +4378,14 @@ export default function (pi: ExtensionAPI): void {
     reconnectPending = false
     stopPolling()
     stopClaimRenewTimer()
+    cancelPendingRetryTimer()
+    clearRecoveredCompletionTimer()
     await claimIfIdleInFlight?.catch(() => undefined)
+    await pendingSettlement?.catch(() => undefined)
+    if (event.reason === "reload" && config && isEnabled(ctx)) {
+      if (pending) savePendingSnapshot(ctx)
+      else clearPendingSnapshot(ctx)
+    }
     teardownTransport()
     if (event.reason === "reload" && config && isEnabled(ctx)) {
       setRemoteStatus(ctx, "Threa remote: reloading…")

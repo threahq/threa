@@ -52,8 +52,11 @@ export class BotRuntimeTransport {
 
   private socket: Socket | undefined
   private connected = false
+  private helloReady = false
+  private helloInFlight = false
   private connecting = false
   private stopped = false
+  private redialTimer: ReturnType<typeof setTimeout> | undefined
   /** When the current outage started: set at attach and on disconnect, cleared on connect. */
   private disconnectedAt: number | undefined
   /** The cursor echoed by the last hello ack; re-sent on the next hello so the bootstrap only replays unseen events. */
@@ -75,7 +78,7 @@ export class BotRuntimeTransport {
 
   /** Whether the `/bot` socket is currently connected. */
   get socketConnected(): boolean {
-    return this.connected
+    return this.connected && this.helloReady
   }
 
   // --- Socket lifecycle -----------------------------------------------------
@@ -96,7 +99,10 @@ export class BotRuntimeTransport {
   async connect(): Promise<void> {
     if (this.connecting || this.stopped) return
     if (this.socket) {
-      if (this.connected) return
+      if (this.connected) {
+        if (!this.helloReady) this.sendHello()
+        return
+      }
       const outageMs = Date.now() - (this.disconnectedAt ?? Date.now())
       if (outageMs < this.staleSocketRedialMs) return
       this.logFn(`socket disconnected for ${Math.round(outageMs / 1000)}s; redialing from a fresh hint`)
@@ -135,11 +141,14 @@ export class BotRuntimeTransport {
     this.disconnectedAt = Date.now()
     socket.on("connect", () => {
       this.connected = true
+      this.helloReady = false
       this.disconnectedAt = undefined
       this.sendHello()
     })
     socket.on("disconnect", (reason: string) => {
       this.connected = false
+      this.helloReady = false
+      this.helloInFlight = false
       this.disconnectedAt ??= Date.now()
       // Socket.IO's auto-reconnect covers every disconnect reason EXCEPT a
       // server-initiated one (deploy drain, kick) — there the client stays down
@@ -149,6 +158,8 @@ export class BotRuntimeTransport {
     })
     socket.on("connect_error", (error: unknown) => {
       this.connected = false
+      this.helloReady = false
+      this.helloInFlight = false
       this.disconnectedAt ??= Date.now()
       this.logFn(`socket connect_error: ${summarize(error)}`)
     })
@@ -161,44 +172,65 @@ export class BotRuntimeTransport {
     socket.on("bot:session_archived", (payload: unknown) => this.callbacks.onSessionArchived?.(payload))
     socket.on("bot:session_restored", (payload: unknown) => this.callbacks.onSessionRestored?.(payload))
     socket.on("bot:resync", () => {
-      this.sendHello()
       this.callbacks.onResync?.()
+      this.teardownSocket()
+      void this.connect()
     })
   }
 
   /** (Re)announce this instance + capabilities and pull the bootstrap snapshot. */
   sendHello(): void {
     const socket = this.socket
-    if (!socket) return
+    if (!socket || this.helloInFlight) return
+    this.helloInFlight = true
     this.beforeHello?.(this.hello)
-    socket.emit(
-      "bot:hello",
-      { ...this.hello, ...(this.cursor ? { sinceCursor: this.cursor } : {}) },
-      (ack: unknown) => {
-        if (!isObject(ack) || ack.ok !== true) {
-          this.logFn(`bot:hello rejected: ${isObject(ack) ? String(ack.error) : "no ack"}`)
-          return
+    socket
+      .timeout(this.wsAckTimeoutMs)
+      .emit(
+        "bot:hello",
+        { ...this.hello, ...(this.cursor ? { sinceCursor: this.cursor } : {}) },
+        (error: unknown, ack: unknown) => {
+          if (socket !== this.socket) return
+          this.helloInFlight = false
+          if (error || !isObject(ack) || ack.ok !== true) {
+            this.logFn(`bot:hello rejected: ${error ? summarize(error) : isObject(ack) ? String(ack.error) : "no ack"}`)
+            this.teardownSocket()
+            this.scheduleRedial()
+            return
+          }
+          this.helloReady = true
+          if (typeof ack.serverGeneratedAt === "string") this.cursor = ack.serverGeneratedAt
+          const bootstrap: BotHelloBootstrap = {
+            serverGeneratedAt: typeof ack.serverGeneratedAt === "string" ? ack.serverGeneratedAt : undefined,
+            availableInvocations: Array.isArray(ack.availableInvocations) ? ack.availableInvocations : [],
+            ownedClaims: Array.isArray(ack.ownedClaims) ? ack.ownedClaims : [],
+          }
+          this.callbacks.onBootstrap?.(bootstrap)
         }
-        if (typeof ack.serverGeneratedAt === "string") this.cursor = ack.serverGeneratedAt
-        const bootstrap: BotHelloBootstrap = {
-          serverGeneratedAt: typeof ack.serverGeneratedAt === "string" ? ack.serverGeneratedAt : undefined,
-          availableInvocations: Array.isArray(ack.availableInvocations) ? ack.availableInvocations : [],
-          ownedClaims: Array.isArray(ack.ownedClaims) ? ack.ownedClaims : [],
-        }
-        this.callbacks.onBootstrap?.(bootstrap)
-      }
-    )
+      )
   }
 
   /** Tear the socket down (idempotent). After this the transport is HTTP-only and won't reconnect. */
   disconnect(): void {
     this.stopped = true
+    if (this.redialTimer) clearTimeout(this.redialTimer)
+    this.redialTimer = undefined
     this.teardownSocket()
+  }
+
+  private scheduleRedial(): void {
+    if (this.stopped || this.redialTimer) return
+    this.redialTimer = setTimeout(() => {
+      this.redialTimer = undefined
+      void this.connect()
+    }, this.reconnectionDelayMaxMs)
   }
 
   /** Drop the current socket without stopping the transport — the next `connect()` dials fresh. */
   private teardownSocket(): void {
     this.connected = false
+    this.helloReady = false
+    this.helloInFlight = false
     this.disconnectedAt = undefined
     const socket = this.socket
     this.socket = undefined
@@ -346,7 +378,7 @@ export class BotRuntimeTransport {
    */
   private emitWrite(event: string, payload: unknown): Promise<{ sent: boolean; ack: BotWriteAck | null }> {
     const socket = this.socket
-    if (!socket || !this.connected) return Promise.resolve({ sent: false, ack: null })
+    if (!socket || !this.connected || !this.helloReady) return Promise.resolve({ sent: false, ack: null })
     return new Promise((resolve) => {
       let settled = false
       const done = (result: { sent: boolean; ack: BotWriteAck | null }) => {
