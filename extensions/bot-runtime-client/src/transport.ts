@@ -56,6 +56,7 @@ export class BotRuntimeTransport {
   private helloInFlight = false
   private connecting = false
   private stopped = false
+  private redialTimer: ReturnType<typeof setTimeout> | undefined
   /** When the current outage started: set at attach and on disconnect, cleared on connect. */
   private disconnectedAt: number | undefined
   /** The cursor echoed by the last hello ack; re-sent on the next hello so the bootstrap only replays unseen events. */
@@ -194,6 +195,7 @@ export class BotRuntimeTransport {
           if (error || !isObject(ack) || ack.ok !== true) {
             this.logFn(`bot:hello rejected: ${error ? summarize(error) : isObject(ack) ? String(ack.error) : "no ack"}`)
             this.teardownSocket()
+            this.scheduleRedial()
             return
           }
           this.helloReady = true
@@ -211,7 +213,17 @@ export class BotRuntimeTransport {
   /** Tear the socket down (idempotent). After this the transport is HTTP-only and won't reconnect. */
   disconnect(): void {
     this.stopped = true
+    if (this.redialTimer) clearTimeout(this.redialTimer)
+    this.redialTimer = undefined
     this.teardownSocket()
+  }
+
+  private scheduleRedial(): void {
+    if (this.stopped || this.redialTimer) return
+    this.redialTimer = setTimeout(() => {
+      this.redialTimer = undefined
+      void this.connect()
+    }, this.reconnectionDelayMaxMs)
   }
 
   /** Drop the current socket without stopping the transport — the next `connect()` dials fresh. */

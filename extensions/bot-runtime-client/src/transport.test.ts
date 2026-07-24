@@ -240,13 +240,14 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
     return stubFetch(() => new Response(JSON.stringify({ wsUrl: "https://ws.example.test" }), { status: 200 }))
   }
 
-  function makeSelfHealTransport(staleSocketRedialMs: number): BotRuntimeTransport {
+  function makeSelfHealTransport(staleSocketRedialMs: number, reconnectionDelayMaxMs?: number): BotRuntimeTransport {
     return new BotRuntimeTransport({
       baseUrl: "https://app.example.test",
       workspaceId: "ws_1",
       apiKey: "threa_bk_test",
       hello: HELLO,
       staleSocketRedialMs,
+      reconnectionDelayMaxMs,
     })
   }
 
@@ -350,6 +351,34 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
       expect(ioSpy).toHaveBeenCalledTimes(2)
       second.handlers.connect!()
       expect(transport.socketConnected).toBe(true)
+    } finally {
+      ioSpy.mockRestore()
+    }
+  })
+
+  it("schedules a fresh connection when hello is rejected", async () => {
+    const first = makeFakeSocket()
+    const second = makeFakeSocket()
+    first.timeout = () => ({
+      emit: (...args) => {
+        const callback = args.at(-1)
+        if (typeof callback === "function") callback(null, { ok: false, error: "not registered" })
+      },
+    })
+    const ioSpy = spyOn(socketIoClient, "io")
+      .mockReturnValueOnce(first as unknown as ReturnType<typeof socketIoClient.io>)
+      .mockReturnValueOnce(second as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      stubHintFetch()
+      const transport = makeSelfHealTransport(3 * 60 * 1000, 1)
+      await transport.connect()
+      first.handlers.connect!()
+      await Bun.sleep(10)
+
+      expect(ioSpy).toHaveBeenCalledTimes(2)
+      second.handlers.connect!()
+      expect(transport.socketConnected).toBe(true)
+      transport.disconnect()
     } finally {
       ioSpy.mockRestore()
     }
