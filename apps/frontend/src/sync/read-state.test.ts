@@ -136,6 +136,165 @@ describe("applyReadStateSnapshotsIdb", () => {
   })
 })
 
+describe("applyReadStateSnapshotsIdb — startedAt freshness guard", () => {
+  // A conversation read/unread response begun at T0 applies per stream only to
+  // legs NOT touched at/after T0 (the request's own socket echo, or a later
+  // action). A delayed earlier read-through-M5 must not regress a later
+  // read-through-M10, and a delayed read must not erase a later explicit
+  // unread — operation order (touched-at), not sequence max, decides.
+
+  beforeEach(async () => {
+    await Promise.all([
+      db.unreadState.clear(),
+      db.streamMemberships.clear(),
+      db.streams.clear(),
+      db.streamReadState.clear(),
+    ])
+  })
+
+  it("skips a stream touched after departure — a delayed earlier read cannot regress a later one", async () => {
+    await seedUnreadState()
+    await seedMembership()
+
+    // A later read-through-M10 landed AFTER the delayed request departed: its
+    // echo/optimistic apply SET the overlay + frontier and stamped the touch.
+    const touchedAt = Date.now()
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_10",
+      lastReadSequence: "100",
+      lastReadAt: "2026-01-01T00:00:10.000Z",
+      _cachedAt: touchedAt,
+    })
+    const seeded = await db.unreadState.get("ws_1")
+    await db.unreadState.put({
+      ...seeded!,
+      readMessageIds: { stream_1: ["m8", "m9", "m10"] },
+      unreadCounts: { stream_1: 0 },
+    })
+
+    // The delayed earlier read-through-M5 response arrives.
+    await applyReadStateSnapshotsIdb(
+      "ws_1",
+      [snapshot({ readMessageIds: ["m5"], lastReadEventId: "evt_5", lastReadSequence: "50", lastReadOrdinal: 5 })],
+      touchedAt - 1000
+    )
+
+    // Frontier, overlay, and mirror survive EXACTLY — no regression.
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_10",
+      lastReadSequence: "100",
+    })
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.readMessageIds?.stream_1).toEqual(["m8", "m9", "m10"])
+    expect(state?.unreadCounts.stream_1).toBe(0)
+    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "evt_0" })
+  })
+
+  it("applies normally when the frontier row predates the mutation departure", async () => {
+    await seedUnreadState()
+    await seedMembership()
+
+    const startedAt = Date.now()
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_2",
+      lastReadSequence: "20",
+      lastReadAt: "2026-01-01T00:00:02.000Z",
+      _cachedAt: startedAt - 5000,
+    })
+
+    await applyReadStateSnapshotsIdb("ws_1", [snapshot()], startedAt)
+
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_4",
+      lastReadSequence: "40",
+    })
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.readMessageIds?.stream_1).toEqual(["msg_5", "msg_7"])
+  })
+
+  it("applies normally when no frontier row exists yet", async () => {
+    await seedUnreadState()
+    await seedMembership()
+
+    await applyReadStateSnapshotsIdb("ws_1", [snapshot()], Date.now())
+
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_4",
+      lastReadSequence: "40",
+    })
+  })
+
+  it("filters per stream — the untouched leg applies while the touched leg is skipped", async () => {
+    // A conversation spans root + thread legs; ordering is per stream.
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 6, stream_2: 6 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { stream_1: 10, stream_2: 10 },
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    const touchedAt = Date.now()
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_later",
+      lastReadSequence: "90",
+      lastReadAt: "2026-01-01T00:00:09.000Z",
+      _cachedAt: touchedAt,
+    })
+
+    await applyReadStateSnapshotsIdb(
+      "ws_1",
+      [
+        snapshot({
+          streamId: "stream_1",
+          readMessageIds: ["m_old"],
+          lastReadEventId: "evt_old",
+          lastReadSequence: "30",
+          lastReadOrdinal: 3,
+        }),
+        snapshot({
+          streamId: "stream_2",
+          readMessageIds: ["m_2"],
+          lastReadEventId: "evt_2",
+          lastReadSequence: "20",
+          lastReadOrdinal: 2,
+        }),
+      ],
+      touchedAt - 1000
+    )
+
+    // Touched leg skipped entirely; untouched leg applied.
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_later",
+      lastReadSequence: "90",
+    })
+    expect(await db.streamReadState.get("ws_1:stream_2")).toMatchObject({
+      lastReadEventId: "evt_2",
+      lastReadSequence: "20",
+    })
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.readMessageIds?.stream_1).toBeUndefined()
+    expect(state?.readMessageIds?.stream_2).toEqual(["m_2"])
+    expect(state?.unreadCounts.stream_1).toBe(6)
+    // stream_2: latest 10 − reconstructed read 4 − overlay 1.
+    expect(state?.unreadCounts.stream_2).toBe(5)
+  })
+})
+
 describe("commitReadStateSnapshot", () => {
   beforeEach(async () => {
     await Promise.all([

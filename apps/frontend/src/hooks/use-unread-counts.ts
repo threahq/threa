@@ -10,6 +10,7 @@ import {
   applyReadStateSnapshotsIdb,
   mergeReadStateIntoBootstrapCache,
   putReadStateIdb,
+  readStateTouchedSince,
   type ReadStateSnapshot,
 } from "@/sync/read-state"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
@@ -57,9 +58,16 @@ export function useReadMessageIds(workspaceId: string, streamId: string): Readon
  * straight to IDB so the timeline overlay, board card, and badge update at once;
  * the authoritative `stream:read_messages` socket echo reconciles the query
  * cache. One apply path with the socket handler (`sync/read-state.ts`).
+ * `startedAt` (the mutation's departure time) activates the per-stream
+ * touched-at guard: legs touched after the request departed (its own echo, or
+ * a later action) skip this stale response entirely.
  */
-export function applyReadStateSnapshots(workspaceId: string, snapshots: ReadStateSnapshot[]): Promise<void> {
-  return applyReadStateSnapshotsIdb(workspaceId, snapshots)
+export function applyReadStateSnapshots(
+  workspaceId: string,
+  snapshots: ReadStateSnapshot[],
+  startedAt?: number
+): Promise<void> {
+  return applyReadStateSnapshotsIdb(workspaceId, snapshots, startedAt)
 }
 
 export function useUnreadCounts(workspaceId: string) {
@@ -83,9 +91,17 @@ export function useUnreadCounts(workspaceId: string) {
   )
 
   const markAsReadMutation = useMutation({
-    mutationFn: ({ streamId, lastEventId }: { streamId: string; lastEventId: string; partial?: boolean }) =>
-      streamService.markAsRead(workspaceId, streamId, lastEventId),
-    onSuccess: async (membership, { streamId, lastEventId, partial }) => {
+    mutationFn: async ({ streamId, lastEventId }: { streamId: string; lastEventId: string; partial?: boolean }) => {
+      const startedAt = Date.now()
+      const membership = await streamService.markAsRead(workspaceId, streamId, lastEventId)
+      return { membership, startedAt }
+    },
+    onSuccess: async ({ membership, startedAt }, { streamId, lastEventId, partial }) => {
+      // Ordering guard (touched-at): a read-state write that landed after this
+      // mutation departed — the request's own socket echo, or a later action
+      // (an explicit unread this stale read must not erase) — owns the stream.
+      // The server's socket log is canonical; success is a no-op.
+      if (await readStateTouchedSince(workspaceId, streamId, startedAt)) return
       const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
       const hadActivity = (current?.activityCounts[streamId] ?? 0) > 0
       // Null membership = a successful activity-only read by a viewer with
@@ -160,6 +176,9 @@ export function useUnreadCounts(workspaceId: string) {
       // standalone read-state row in sync: stream-content derives the unread
       // divider from the effective frontier across those mirrors.
       await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships, db.streamReadState], async () => {
+        // INV-20 re-check: a touch landing between the guard above and this
+        // transaction still wins over the stale response.
+        if (await readStateTouchedSince(workspaceId, streamId, startedAt)) return
         const now = Date.now()
         const state = await db.unreadState.get(workspaceId)
         if (state) {
@@ -232,14 +251,21 @@ export function useUnreadCounts(workspaceId: string) {
   // (applyStreamReadSet SETs it, which is allowed to move backward). Mirrors the
   // partial markAsRead path, which likewise defers the count to the round-trip.
   const markUnreadMutation = useMutation({
-    mutationFn: ({ streamId, messageId }: { streamId: string; messageId: string }) =>
-      streamService.markUnread(workspaceId, streamId, messageId),
-    onSuccess: async (membership, { streamId }) => {
+    mutationFn: async ({ streamId, messageId }: { streamId: string; messageId: string }) => {
+      const startedAt = Date.now()
+      const membership = await streamService.markUnread(workspaceId, streamId, messageId)
+      return { membership, startedAt }
+    },
+    onSuccess: async ({ membership, startedAt }, { streamId }) => {
       // Null membership = a successful unread by a viewer with access but no
       // membership row (INV-62). The response carries no watermark to apply —
       // the `stream:read_set` echo SETs the standalone frontier and raises the
       // count on the round-trip (the same deferral members get for the count).
       if (!membership) return
+      // Symmetric ordering guard: a read-state write that landed after this
+      // mutation departed (its own read_set echo, or a later read this stale
+      // unread must not erase) owns the stream — success is a no-op.
+      if (await readStateTouchedSince(workspaceId, streamId, startedAt)) return
 
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
@@ -271,6 +297,7 @@ export function useUnreadCounts(workspaceId: string) {
       })
 
       await db.transaction("rw", [db.streams, db.streamMemberships, db.streamReadState], async () => {
+        if (await readStateTouchedSince(workspaceId, streamId, startedAt)) return
         const now = Date.now()
         await db.streams.update(streamId, { lastReadEventId: membership.lastReadEventId, _cachedAt: now })
 

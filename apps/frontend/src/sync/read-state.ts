@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query"
 import type { StreamBootstrap, StreamReadFrontier, WorkspaceBootstrap } from "@threa/types"
-import { db } from "@/db"
+import { db, type CachedStreamReadState } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { applyStreamReadMessages, dropMessageActivities } from "./unread-counters"
@@ -27,6 +27,31 @@ export async function putReadStateIdb(
     lastReadAt: fields.lastReadAt,
     _cachedAt: now,
   })
+}
+
+/** The frontier fields of a cached read-state row (drops the IDB bookkeeping). */
+export function toStreamReadFrontier(row: CachedStreamReadState): StreamReadFrontier {
+  return {
+    lastReadEventId: row.lastReadEventId,
+    lastReadSequence: row.lastReadSequence,
+    lastReadAt: row.lastReadAt,
+  }
+}
+
+/**
+ * True when the stream's standalone frontier row was written at/after `since` —
+ * a socket/live write (the caller's own request echo, or a later action) that
+ * postdates the caller's operation. The per-stream read-state `_cachedAt` is
+ * the touched stamp the workspace-bootstrap freshness merge keys off (every
+ * applier in this module stamps it via `putReadStateIdb` /
+ * `writeSnapshotWatermarkIdb`): an HTTP response that observes a touched stream
+ * must not apply there — the snapshot may predate an explicit unread, a
+ * sanctioned downward move no max(sequence) rule can protect. Operation order
+ * (touched-at) decides, not sequence max.
+ */
+export async function readStateTouchedSince(workspaceId: string, streamId: string, since: number): Promise<boolean> {
+  const row = await db.streamReadState.get(`${workspaceId}:${streamId}`)
+  return row !== undefined && row._cachedAt >= since
 }
 
 /** Merge one stream's standalone frontier into the workspace bootstrap query cache. */
@@ -177,13 +202,35 @@ export function commitReadStateSnapshot(
  * through `commitReadStateSnapshot`. Counter math + watermark persistence share
  * the same helpers as the socket path (`snapshotCounterMutator`,
  * `writeSnapshotWatermarkIdb`), so there is one apply path per surface (INV-35).
+ *
+ * `startedAt` (the mutation's departure time) activates the per-stream
+ * touched-at guard: a leg whose frontier row was written at/after `startedAt`
+ * was touched by this request's own socket echo or a later action (e.g. an
+ * explicit unread over a delayed read), so this stale response skips that leg
+ * entirely — no old overlay SET, no frontier regression. Per stream, because a
+ * conversation spans root + thread legs that move independently. The server's
+ * socket log stays canonical; the echo (or the later action's echo) owns the
+ * touched leg.
  */
-export async function applyReadStateSnapshotsIdb(workspaceId: string, snapshots: ReadStateSnapshot[]): Promise<void> {
+export async function applyReadStateSnapshotsIdb(
+  workspaceId: string,
+  snapshots: ReadStateSnapshot[],
+  startedAt?: number
+): Promise<void> {
   if (snapshots.length === 0) return
-  const mutators = snapshots.map(snapshotCounterMutator)
   await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships, db.streamReadState], async () => {
+    let effective = snapshots
+    if (startedAt !== undefined) {
+      effective = []
+      for (const snapshot of snapshots) {
+        if (await readStateTouchedSince(workspaceId, snapshot.streamId, startedAt)) continue
+        effective.push(snapshot)
+      }
+      if (effective.length === 0) return
+    }
+    const mutators = effective.map(snapshotCounterMutator)
     await putCountersIdb(workspaceId, mutators)
-    for (const snapshot of snapshots) {
+    for (const snapshot of effective) {
       await writeSnapshotWatermarkIdb(workspaceId, snapshot)
     }
   })

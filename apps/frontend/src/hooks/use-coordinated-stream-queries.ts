@@ -70,6 +70,7 @@ export function useCoordinatedStreamQueries(workspaceId: string, streamIds: stri
               debugBootstrap("Coordinated stream bootstrap queryFn start", { workspaceId, streamId })
               await joinRoomBestEffort(socket, `ws:${workspaceId}:stream:${streamId}`, "CoordinatedStreamBootstrap")
 
+              const fetchStartedAt = Date.now()
               const bootstrap = await streamService.bootstrap(workspaceId, streamId)
               debugBootstrap("Coordinated stream bootstrap fetch success", {
                 workspaceId,
@@ -77,7 +78,7 @@ export function useCoordinatedStreamQueries(workspaceId: string, streamIds: stri
                 eventCount: bootstrap.events.length,
               })
 
-              await applyStreamBootstrap(workspaceId, streamId, bootstrap)
+              await applyStreamBootstrap(workspaceId, streamId, bootstrap, { fetchStartedAt, queryClient })
 
               return toCachedStreamBootstrap(
                 bootstrap,

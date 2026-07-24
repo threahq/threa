@@ -5,6 +5,7 @@ import {
   type StreamEvent,
   type Stream,
   type StreamBootstrap,
+  type StreamReadFrontier,
   type LastMessagePreview,
   type LinkPreviewSummary,
   type ThreadSummary,
@@ -24,7 +25,7 @@ import { streamKeys } from "@/hooks/use-streams"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
 import type { QueryClient } from "@tanstack/react-query"
 import { commitCounterMutation } from "./catch-up-batch"
-import { putReadStateIdb } from "./read-state"
+import { mergeReadStateIntoBootstrapCache, putReadStateIdb, toStreamReadFrontier } from "./read-state"
 import {
   applyMovedSourceOrdinal,
   dropMessageActivities,
@@ -282,12 +283,18 @@ function isNoOpRewrite(existing: CachedEvent, candidate: CachedEvent): boolean {
   )
 }
 
+/**
+ * Returns the standalone frontier preserved because the local row was touched
+ * at/after `fetchStartedAt` (undefined when the response's readState applied
+ * normally) — `applyStreamBootstrap` republishes it to the query caches.
+ */
 async function writeBootstrapEventsAndStream(
   workspaceId: string,
   streamId: string,
   bootstrap: StreamBootstrap,
-  now: number
-): Promise<void> {
+  now: number,
+  fetchStartedAt?: number
+): Promise<StreamReadFrontier | undefined> {
   await cleanupStaleOptimisticEvents(streamId)
 
   if (bootstrap.syncMode !== "append") {
@@ -492,17 +499,24 @@ async function writeBootstrapEventsAndStream(
   // is the sidebar's activity sort key). Use update() for existing records
   // and fall back to put() if the stream doesn't exist in IDB yet.
   const stream = preserveDmDisplayName(bootstrap.stream)
+  const preservedReadState = await persistBootstrapReadState(workspaceId, streamId, bootstrap, now, fetchStartedAt)
+  // A preserved local frontier is what the envelope must carry into the
+  // per-stream query cache (callers write it via `toCachedStreamBootstrap`
+  // after this returns) — same reflect-the-preserved-local-value precedent as
+  // `applyReconnectBootstrapBatch`'s sidebarConfig.
+  if (preservedReadState) bootstrap.readState = preservedReadState
   const fullStreamData = {
     ...stream,
     notificationLevel: bootstrap.membership?.notificationLevel,
-    lastReadEventId: bootstrap.membership?.lastReadEventId,
+    // A frontier preserved as touched during the fetch window keeps its local
+    // mirror too — the stale response's membership watermark predates it.
+    ...(preservedReadState ? {} : { lastReadEventId: bootstrap.membership?.lastReadEventId }),
     // Mirror the persisted ContextBag into IDB so the timeline can read it
     // synchronously on first paint via the `useWorkspaceStreams` cache —
     // matches how attachments live on the message payload (sync from IDB).
     contextBag: bootstrap.contextBag,
     _cachedAt: now,
   }
-  await persistBootstrapReadState(workspaceId, streamId, bootstrap, now)
 
   const isDmWithNullName = stream.type === StreamTypes.DM && stream.displayName == null
   if (isDmWithNullName) {
@@ -511,13 +525,14 @@ async function writeBootstrapEventsAndStream(
     if (updated === 0) {
       await db.streams.put(fullStreamData)
     }
-    return
+    return preservedReadState
   }
 
   const updated = await db.streams.update(stream.id, fullStreamData)
   if (updated === 0) {
     await db.streams.put(fullStreamData)
   }
+  return preservedReadState
 }
 
 /**
@@ -538,15 +553,28 @@ async function writeBootstrapEventsAndStream(
  * sentinel that would poison it back to "never read". A non-null snapshot row
  * is still a later write the snapshot lacks — keep it. Absent field (payloads
  * cached before it shipped) changes nothing.
+ *
+ * Freshness gate first (PR2 touched-at architecture): when `fetchStartedAt` is
+ * given and the stored row was written at/after it — a socket read/read_set/
+ * read_messages echo or an optimistic mutation landed while this request was
+ * in flight — the local row postdates the snapshot and is preserved EXACTLY:
+ * no merge, no absence-delete, no sentinel seed. The preserved frontier is
+ * returned so the caller republishes it to the per-stream/workspace caches;
+ * sequence max alone cannot decide here, since an explicit unread is a
+ * sanctioned downward move — operation order (touched-at) decides.
  */
 async function persistBootstrapReadState(
   workspaceId: string,
   streamId: string,
   bootstrap: StreamBootstrap,
-  now: number
-): Promise<void> {
-  if (bootstrap.readState === undefined) return
+  now: number,
+  fetchStartedAt?: number
+): Promise<StreamReadFrontier | undefined> {
+  if (bootstrap.readState === undefined) return undefined
   const existingRow = await db.streamReadState.get(`${workspaceId}:${streamId}`)
+  if (fetchStartedAt !== undefined && existingRow && existingRow._cachedAt >= fetchStartedAt) {
+    return toStreamReadFrontier(existingRow)
+  }
   if (bootstrap.readState === null) {
     if (bootstrap.membership) {
       // Server has no standalone row AND the viewer is a member: the membership
@@ -558,7 +586,7 @@ async function persistBootstrapReadState(
       if (existingRow) {
         await db.streamReadState.delete(`${workspaceId}:${streamId}`)
       }
-      return
+      return undefined
     }
     if (!existingRow) {
       await putReadStateIdb(
@@ -568,17 +596,18 @@ async function persistBootstrapReadState(
         now
       )
     }
-    return
+    return undefined
   }
   const incoming = bootstrap.readState
   const storedExplicitUnread =
     existingRow != null && existingRow.lastReadEventId == null && existingRow.lastReadAt != null
-  if (incoming.lastReadEventId != null && storedExplicitUnread) return
+  if (incoming.lastReadEventId != null && storedExplicitUnread) return undefined
   const incomingSeq = incoming.lastReadSequence != null ? BigInt(incoming.lastReadSequence) : null
   const storedSeq = existingRow?.lastReadSequence != null ? BigInt(existingRow.lastReadSequence) : null
   if (!existingRow || storedSeq == null || incomingSeq == null || incomingSeq >= storedSeq) {
     await putReadStateIdb(workspaceId, streamId, incoming, now)
   }
+  return undefined
 }
 
 /**
@@ -658,6 +687,18 @@ async function applyBootstrapThreadStates(streamId: string, bootstrap: StreamBoo
   }
 }
 
+export interface StreamBootstrapApplyOptions {
+  /** Local epoch ms when the bootstrap request departed. A standalone
+   * read-state row touched at/after this instant (socket echo or optimistic
+   * mutation) postdates the snapshot and is preserved exactly — the same
+   * fetch-window freshness rule as the workspace bootstrap merge. */
+  fetchStartedAt?: number
+  /** When given, a preserved local frontier is also mirrored into the
+   * workspace bootstrap query cache so the in-memory frontier map never lags
+   * the preserved IDB row (the per-stream cache rides the patched envelope). */
+  queryClient?: QueryClient
+}
+
 /**
  * Write stream bootstrap data to IndexedDB (merge, not replace).
  *
@@ -675,16 +716,27 @@ async function applyBootstrapThreadStates(streamId: string, bootstrap: StreamBoo
 export async function applyStreamBootstrap(
   workspaceId: string,
   streamId: string,
-  bootstrap: StreamBootstrap
+  bootstrap: StreamBootstrap,
+  options?: StreamBootstrapApplyOptions
 ): Promise<void> {
   const now = Date.now()
+  let preservedReadState: StreamReadFrontier | undefined
   await db.transaction(
     "rw",
     [db.events, db.streams, db.streamReadState, db.pendingMessages, db.pendingOperations, db.slots],
     async () => {
-      await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
+      preservedReadState = await writeBootstrapEventsAndStream(
+        workspaceId,
+        streamId,
+        bootstrap,
+        now,
+        options?.fetchStartedAt
+      )
     }
   )
+  if (preservedReadState && options?.queryClient) {
+    mergeReadStateIntoBootstrapCache(options.queryClient, workspaceId, streamId, preservedReadState)
+  }
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
 }
 
@@ -718,9 +770,10 @@ export async function applyStreamBootstrapInCurrentTransaction(
   workspaceId: string,
   streamId: string,
   bootstrap: StreamBootstrap,
-  now = Date.now()
+  now = Date.now(),
+  fetchStartedAt?: number
 ): Promise<void> {
-  await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
+  await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now, fetchStartedAt)
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
 }
 

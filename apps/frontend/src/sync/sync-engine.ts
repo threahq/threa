@@ -567,9 +567,10 @@ export class SyncEngine {
     const { workspaceId, streamService, queryClient } = this.deps
     const promise = (async () => {
       try {
+        const fetchStartedAt = Date.now()
         const bootstrap = await streamService.bootstrap(workspaceId, streamId, { after: afterSequence })
         if (this.isDestroyed) return
-        await applyStreamBootstrap(workspaceId, streamId, bootstrap)
+        await applyStreamBootstrap(workspaceId, streamId, bootstrap, { fetchStartedAt, queryClient })
         queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (current) =>
           current
             ? toCachedStreamBootstrap(bootstrap, current, {
@@ -1109,8 +1110,9 @@ export class SyncEngine {
       // fetch the full latest window instead of an append from the cursor.
       const after = previousBootstrap ? cursor : null
 
+      const fetchStartedAt = Date.now()
       const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
-      await applyStreamBootstrap(workspaceId, streamId, bootstrap)
+      await applyStreamBootstrap(workspaceId, streamId, bootstrap, { fetchStartedAt, queryClient })
 
       queryClient.setQueryData<CachedStreamBootstrap>(queryKey, (currentBootstrap) =>
         toCachedStreamBootstrap(bootstrap, currentBootstrap ?? previousBootstrap, {
@@ -1166,9 +1168,10 @@ export class SyncEngine {
       const after = await getLatestPersistedSequence(streamId)
       if (after === null || this.isDestroyed) return
 
+      const fetchStartedAt = Date.now()
       const bootstrap = await streamService.bootstrap(workspaceId, streamId, { after })
       if (this.isDestroyed) return
-      await applyStreamBootstrap(workspaceId, streamId, bootstrap)
+      await applyStreamBootstrap(workspaceId, streamId, bootstrap, { fetchStartedAt, queryClient })
 
       // Merge into the query-cache bridge ONLY when an entry already exists —
       // same guard as backfillStreamGap. Seeding an append-mode delta as the

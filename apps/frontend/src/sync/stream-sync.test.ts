@@ -14,6 +14,7 @@ import {
   type CachedStreamBootstrap,
 } from "./stream-sync"
 import { streamKeys } from "@/hooks/use-streams"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
 import { sharedMessageSlotKey } from "@threa/types"
@@ -24,6 +25,8 @@ import type {
   SlotMap,
   StreamBootstrap,
   StreamEvent,
+  StreamMember,
+  WorkspaceBootstrap,
 } from "@threa/types"
 
 // With fake-indexeddb loaded in test setup, Dexie works against a real
@@ -887,6 +890,242 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     ])
 
     expect(await getLatestPersistedSequence(streamId)).toBe("200")
+  })
+})
+
+describe("applyStreamBootstrap — read-state freshness (stale response guard)", () => {
+  // A bootstrap snapshot begun at T0 may apply its `readState` only when the
+  // local frontier row was NOT touched at/after T0 (socket echo or optimistic
+  // mutation). Operation order — not max(sequence) — decides, so an explicit
+  // unread (a sanctioned downward move) can never be resurrected by a stale
+  // response that was in flight when it landed.
+
+  beforeEach(async () => {
+    await Promise.all([db.events.clear(), db.streams.clear(), db.streamReadState.clear(), db.streamMemberships.clear()])
+  })
+
+  function membership(streamId: string, lastReadEventId: string | null, lastReadSequence: string | null): StreamMember {
+    return {
+      streamId,
+      memberId: "member_1",
+      notificationLevel: null,
+      lastReadEventId,
+      lastReadSequence,
+      lastReadAt: "2026-01-01T00:00:00.000Z",
+      joinedAt: "2026-01-01T00:00:00.000Z",
+    }
+  }
+
+  it("a stale response cannot restore E100 over an explicit unread (read_set E50) that landed during the fetch", async () => {
+    const streamId = "stream_stale_restore"
+    const fetchStartedAt = Date.now() - 5000
+
+    // While the request was in flight, a stream:read_set echo SET the frontier
+    // back to E50 and stamped the touched time.
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+      lastReadAt: "2026-01-01T00:00:05.000Z",
+      _cachedAt: Date.now() - 1000, // touched inside the fetch window
+    })
+
+    const bootstrap = {
+      ...makeBootstrap([], streamId),
+      membership: membership(streamId, "evt_100", "100"),
+      readState: {
+        lastReadEventId: "evt_100",
+        lastReadSequence: "100",
+        lastReadAt: "2026-01-01T00:00:01.000Z",
+      },
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
+
+    // Preserved EXACTLY — max(sequence) alone would have "restored" E100 (100 > 50).
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+      lastReadAt: "2026-01-01T00:00:05.000Z",
+    })
+    // The envelope carries the preserved row, so the per-stream query cache the
+    // caller writes (toCachedStreamBootstrap) never publishes the stale snapshot.
+    expect(bootstrap.readState).toEqual({
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+      lastReadAt: "2026-01-01T00:00:05.000Z",
+    })
+  })
+
+  it("a stale confirmed-ABSENT (null) response cannot delete a frontier touched during the fetch", async () => {
+    const streamId = "stream_stale_absent"
+    const fetchStartedAt = Date.now() - 5000
+
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+      lastReadAt: "2026-01-01T00:00:05.000Z",
+      _cachedAt: Date.now() - 1000,
+    })
+
+    const bootstrap = {
+      ...makeBootstrap([], streamId),
+      membership: membership(streamId, "evt_100", "100"),
+      readState: null, // server snapshot predates the row: "no standalone row"
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
+
+    // The member absence-delete semantics do NOT apply — the touched row stays.
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+    })
+    expect(bootstrap.readState).toMatchObject({ lastReadEventId: "evt_50" })
+  })
+
+  it("a later advance during the fetch (E150) is preserved exactly", async () => {
+    const streamId = "stream_stale_advance"
+    const fetchStartedAt = Date.now() - 5000
+
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: "evt_150",
+      lastReadSequence: "150",
+      lastReadAt: "2026-01-01T00:00:09.000Z",
+      _cachedAt: Date.now() - 1000,
+    })
+
+    const bootstrap = {
+      ...makeBootstrap([], streamId),
+      membership: membership(streamId, "evt_100", "100"),
+      readState: {
+        lastReadEventId: "evt_100",
+        lastReadSequence: "100",
+        lastReadAt: "2026-01-01T00:00:01.000Z",
+      },
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
+
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({
+      lastReadEventId: "evt_150",
+      lastReadSequence: "150",
+      lastReadAt: "2026-01-01T00:00:09.000Z",
+    })
+  })
+
+  it("an untouched response applies the server row normally", async () => {
+    const streamId = "stream_untouched_apply"
+    const fetchStartedAt = Date.now() - 1000
+
+    // Touched BEFORE the fetch departed — the snapshot is fresher.
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+      lastReadAt: "2026-01-01T00:00:01.000Z",
+      _cachedAt: Date.now() - 5000,
+    })
+
+    const bootstrap = {
+      ...makeBootstrap([], streamId),
+      membership: membership(streamId, "evt_100", "100"),
+      readState: {
+        lastReadEventId: "evt_100",
+        lastReadSequence: "100",
+        lastReadAt: "2026-01-01T00:00:03.000Z",
+      },
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
+
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({
+      lastReadEventId: "evt_100",
+      lastReadSequence: "100",
+    })
+    expect(bootstrap.readState).toMatchObject({ lastReadEventId: "evt_100" })
+  })
+
+  it("an untouched response applies confirmed absence (member row cleared)", async () => {
+    const streamId = "stream_untouched_absent"
+    const fetchStartedAt = Date.now() - 1000
+
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: null,
+      lastReadSequence: null,
+      lastReadAt: null,
+      _cachedAt: Date.now() - 5000, // stale never-read sentinel
+    })
+
+    const bootstrap = {
+      ...makeBootstrap([], streamId),
+      membership: membership(streamId, "evt_100", "100"),
+      readState: null,
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
+
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toBeUndefined()
+  })
+
+  it("publishes the preserved frontier to the workspace cache and keeps the local stream mirror", async () => {
+    const streamId = "stream_stale_publish"
+    const fetchStartedAt = Date.now() - 5000
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      streamReadState: {},
+      streamMemberships: [],
+    } as unknown as WorkspaceBootstrap)
+
+    // Local stream mirror already carries the touched watermark.
+    await db.streams.put({
+      ...makeBootstrap([], streamId).stream,
+      lastReadEventId: "evt_50",
+      _cachedAt: Date.now() - 1000,
+    })
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+      lastReadAt: "2026-01-01T00:00:05.000Z",
+      _cachedAt: Date.now() - 1000,
+    })
+
+    const bootstrap = {
+      ...makeBootstrap([], streamId),
+      membership: membership(streamId, "evt_100", "100"),
+      readState: {
+        lastReadEventId: "evt_100",
+        lastReadSequence: "100",
+        lastReadAt: "2026-01-01T00:00:01.000Z",
+      },
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt, queryClient })
+
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached?.streamReadState?.[streamId]).toEqual({
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+      lastReadAt: "2026-01-01T00:00:05.000Z",
+    })
+    // The stale response's membership watermark must not clobber the mirror.
+    expect(await db.streams.get(streamId)).toMatchObject({ lastReadEventId: "evt_50" })
   })
 })
 

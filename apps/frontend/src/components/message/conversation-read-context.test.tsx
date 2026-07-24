@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { renderHook, waitFor } from "@testing-library/react"
+import { act, renderHook, waitFor } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type ConversationService } from "@/contexts"
+import type { ReadStateSnapshot } from "@/hooks/use-unread-counts"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real store-hook read path
 import { clearAllCachedData, db } from "@/db"
 import type { RenderableMessage } from "@/components/message/message-item"
@@ -209,6 +210,55 @@ describe("useConversationReadController", () => {
     // effectively read and the card unread clears live.
     await waitFor(() => expect(result.current.hasUnread([reply])).toBe(false))
     expect(result.current.value.state(ROOT, "m_reply", "5", reply.createdAt)).toBe("read")
+  })
+
+  it("a delayed mark-read response cannot erase an explicit unread that landed after the request departed", async () => {
+    await seedReadState()
+    let resolveMarkRead!: (value: { streams: ReadStateSnapshot[] }) => void
+    markRead.mockReturnValue(new Promise<{ streams: ReadStateSnapshot[] }>((resolve) => (resolveMarkRead = resolve)))
+
+    const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
+    const reply = msg({ id: "m_reply", authorId: OTHER, sequence: "5" })
+    await waitFor(() => expect(result.current.hasUnread([reply])).toBe(true))
+
+    result.current.value.markReadUpToHere("m_reply")
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith(WS, CONV, "m_reply"))
+
+    // An explicit conversation unread lands while the read is in flight: its
+    // echo regresses the frontier to the never-read position and stamps the
+    // touched time on the standalone row.
+    await db.streamReadState.put({
+      id: `${WS}:${ROOT}`,
+      workspaceId: WS,
+      streamId: ROOT,
+      lastReadEventId: null,
+      lastReadSequence: null,
+      lastReadAt: new Date().toISOString(),
+      _cachedAt: Date.now(),
+    })
+
+    // The stale read response finally resolves with its absolute snapshot.
+    await act(async () => {
+      resolveMarkRead({
+        streams: [
+          {
+            streamId: ROOT,
+            readMessageIds: ["m_reply"],
+            lastReadEventId: "evt_5",
+            lastReadSequence: "5",
+            lastReadOrdinal: 5,
+          },
+        ],
+      })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    })
+
+    // The explicit unread survives: no overlay SET, no frontier restore.
+    const row = await db.streamReadState.get(`${WS}:${ROOT}`)
+    expect(row?.lastReadEventId).toBeNull()
+    const unreadState = await db.unreadState.get(WS)
+    expect(unreadState?.readMessageIds?.[ROOT]).toBeUndefined()
+    await waitFor(() => expect(result.current.value.state(ROOT, "m_reply", "5", reply.createdAt)).toBe("unread"))
   })
 
   it("marks unread from a message via the client", async () => {

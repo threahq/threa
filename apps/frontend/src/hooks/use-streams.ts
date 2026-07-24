@@ -87,6 +87,7 @@ export function useStreamBootstrap(workspaceId: string, streamId: string, option
       }
       await joinRoomBestEffort(socket, `ws:${workspaceId}:stream:${streamId}`, "StreamBootstrap")
 
+      const fetchStartedAt = Date.now()
       const bootstrap = await streamService.bootstrap(workspaceId, streamId)
       debugBootstrap("Stream bootstrap fetch success", {
         workspaceId,
@@ -95,8 +96,11 @@ export function useStreamBootstrap(workspaceId: string, streamId: string, option
       })
 
       // Write events and stream metadata to IndexedDB.
-      // The sync module handles optimistic event cleanup.
-      await applyStreamBootstrap(workspaceId, streamId, bootstrap)
+      // The sync module handles optimistic event cleanup. `fetchStartedAt`
+      // guards the standalone frontier: a read-state row touched while this
+      // request was in flight (socket echo / local mutation) is preserved
+      // over the stale snapshot.
+      await applyStreamBootstrap(workspaceId, streamId, bootstrap, { fetchStartedAt, queryClient })
 
       return toCachedStreamBootstrap(
         bootstrap,

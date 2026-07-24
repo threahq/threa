@@ -484,4 +484,141 @@ describe("useUnreadCounts", () => {
     expect(await db.streamMemberships.get("ws_1:stream_thread")).toBeUndefined()
     expect(await db.streamReadState.get("ws_1:stream_thread")).toBeUndefined()
   })
+
+  // Ordering guard: the mutation captures its departure time; a read-state
+  // write that lands while the request is in flight (the request's own socket
+  // echo, or a LATER action) owns the stream, so the stale HTTP success is a
+  // no-op. An old read must not erase a later explicit unread, and vice versa.
+  function memberResponse(lastReadEventId: string): StreamMember {
+    return {
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId,
+      lastReadAt: new Date().toISOString(),
+      joinedAt: new Date().toISOString(),
+    }
+  }
+
+  it("a delayed markAsRead success is a no-op when a later explicit unread touched the stream mid-flight", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    await db.streamMemberships.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId: "event_old",
+      lastReadAt: null,
+      joinedAt: new Date().toISOString(),
+      _cachedAt: Date.now() - 5000,
+    })
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 0 },
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      mutedStreamIds: [],
+      _cachedAt: Date.now() - 5000,
+    })
+
+    let resolveRead!: (membership: StreamMember | null) => void
+    mockMarkAsRead.mockReturnValue(new Promise((resolve) => (resolveRead = resolve)))
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "evt_100")
+    })
+    await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalledWith("ws_1", "stream_1", "evt_100"))
+
+    // A LATER explicit unread lands while the read is in flight: its
+    // stream:read_set echo SETs frontier + mirror back to evt_50 and stamps
+    // the touched time.
+    const touchedAt = Date.now()
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+      lastReadAt: new Date().toISOString(),
+      _cachedAt: touchedAt,
+    })
+    await db.streamMemberships.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId: "evt_50",
+      lastReadAt: new Date().toISOString(),
+      joinedAt: new Date().toISOString(),
+      _cachedAt: touchedAt,
+    })
+
+    // The stale read response finally resolves — it must NOT restore evt_100.
+    await act(async () => {
+      resolveRead(memberResponse("evt_100"))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    })
+
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "evt_50" })
+    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "evt_50" })
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    // The stale success wrote nothing: the cache still carries the seeded
+    // mirror (not evt_100) and a full read would have zeroed the badge.
+    expect(bootstrap?.streamMemberships.find((m) => m.streamId === "stream_1")?.lastReadEventId).toBe("event_old")
+    expect(bootstrap?.unreadCounts.stream_1).toBe(2)
+  })
+
+  it("a delayed markUnread success is a no-op when a later read touched the stream mid-flight", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    await db.streamMemberships.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId: "event_old",
+      lastReadAt: null,
+      joinedAt: new Date().toISOString(),
+      _cachedAt: Date.now() - 5000,
+    })
+
+    let resolveUnread!: (membership: StreamMember | null) => void
+    mockMarkUnread.mockReturnValue(new Promise((resolve) => (resolveUnread = resolve)))
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markUnread("stream_1", "msg_target")
+    })
+    await waitFor(() => expect(mockMarkUnread).toHaveBeenCalledWith("ws_1", "stream_1", "msg_target"))
+
+    // A LATER read lands while the unread is in flight: its stream:read echo
+    // advances the frontier to evt_150 and stamps the touched time.
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_150",
+      lastReadSequence: "150",
+      lastReadAt: new Date().toISOString(),
+      _cachedAt: Date.now(),
+    })
+
+    // The stale unread response resolves — it must NOT regress the frontier.
+    await act(async () => {
+      resolveUnread(memberResponse("evt_50"))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    })
+
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "evt_150" })
+    // The stale success wrote nothing: the mirror keeps its seeded value.
+    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_old" })
+  })
 })

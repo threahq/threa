@@ -161,10 +161,16 @@ export function useConversationReadController(
   )
 
   const markReadSilently = useCallback(
-    (messageId: string) =>
-      conversationService
+    (messageId: string) => {
+      // Mutation departure time: the response applies per-stream only to legs
+      // NOT touched after this instant (its own socket echo or a later action
+      // — e.g. an explicit unread this stale read must not erase). The echo is
+      // canonical; a delayed response is a no-op on touched legs.
+      const startedAt = Date.now()
+      return conversationService
         .markRead(workspaceId, conversationId, messageId)
-        .then((res) => applyReadStateSnapshots(workspaceId, res.streams)),
+        .then((res) => applyReadStateSnapshots(workspaceId, res.streams, startedAt))
+    },
     [conversationService, workspaceId, conversationId]
   )
 
@@ -191,9 +197,10 @@ export function useConversationReadController(
   const markUnread = useCallback(
     (messageId: string) => {
       explicitUnreadListenerRef.current?.()
+      const startedAt = Date.now()
       conversationService
         .markUnread(workspaceId, conversationId, messageId)
-        .then((res) => applyReadStateSnapshots(workspaceId, res.streams))
+        .then((res) => applyReadStateSnapshots(workspaceId, res.streams, startedAt))
         .catch(() => toast.error("Couldn't mark as unread"))
     },
     [conversationService, workspaceId, conversationId]
