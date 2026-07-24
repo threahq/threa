@@ -23,7 +23,7 @@ import {
   type JSONContent,
 } from "@threa/types"
 import { withClient, withTransaction } from "../../db"
-import { OutboxRepository } from "../../lib/outbox"
+import { OutboxRepository, type ActivityReadOutboxPayload } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 
 /** activity:read batches at most this many ids per event (mark-all is unbounded). */
@@ -624,7 +624,7 @@ export class ActivityService {
     return ActivityRepository.countUnreadForStream(this.pool, userId, workspaceId, streamId)
   }
 
-  async markAsRead(activityId: string, userId: string, workspaceId: string): Promise<void> {
+  async markAsRead(userId: string, workspaceId: string, activityId: string): Promise<void> {
     await withTransaction(this.pool, async (client) => {
       const cleared = await ActivityRepository.markAsRead(client, workspaceId, userId, activityId)
       if (!cleared) return
@@ -645,7 +645,7 @@ export class ActivityService {
 
   async markAllAsRead(userId: string, workspaceId: string): Promise<void> {
     await withTransaction(this.pool, async (client) => {
-      const cleared = await ActivityRepository.markAllAsRead(client, userId, workspaceId)
+      const cleared = await ActivityRepository.markAllAsRead(client, workspaceId, userId)
       if (cleared.length === 0) return
       logger.debug({ userId, workspaceId, count: cleared.length }, "Marked all activity as read")
       await this.emitActivityRead(client, workspaceId, userId, cleared, true)
@@ -667,18 +667,26 @@ export class ActivityService {
     cleared: ClearedActivity[],
     includeStreamIds: boolean
   ): Promise<void> {
+    // One insertMany for every chunk: a single statement instead of a round
+    // trip per chunk, shortening the transaction that holds the read's row
+    // locks (matters for an unbounded mark-all).
+    const entries: Array<{ eventType: "activity:read"; payload: ActivityReadOutboxPayload }> = []
     for (let i = 0; i < cleared.length; i += ACTIVITY_READ_EVENT_CHUNK) {
       const chunk = cleared.slice(i, i + ACTIVITY_READ_EVENT_CHUNK)
       const streamIds = includeStreamIds
         ? [...new Set(chunk.flatMap((row) => (row.streamId ? [row.streamId] : [])))]
         : []
-      await OutboxRepository.insert(client, "activity:read", {
-        workspaceId,
-        targetUserId: userId,
-        activityIds: chunk.map((row) => row.activityId),
-        streamIds,
+      entries.push({
+        eventType: "activity:read",
+        payload: {
+          workspaceId,
+          targetUserId: userId,
+          activityIds: chunk.map((row) => row.activityId),
+          streamIds,
+        },
       })
     }
+    await OutboxRepository.insertMany(client, entries)
   }
 }
 

@@ -434,12 +434,12 @@ export const ActivityRepository = {
     return result.rows.map((row) => ({ activityId: row.activity_id, streamId: row.stream_id }))
   },
 
-  async markAllAsRead(db: Querier, userId: string, workspaceId: string): Promise<ClearedActivity[]> {
+  async markAllAsRead(db: Querier, workspaceId: string, userId: string): Promise<ClearedActivity[]> {
     const result = await db.query<ClearedActivityRow>(sql`
       UPDATE user_activity
       SET read_at = NOW()
-      WHERE user_id = ${userId}
-        AND workspace_id = ${workspaceId}
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
         AND read_at IS NULL
       RETURNING id AS activity_id, stream_id
     `)

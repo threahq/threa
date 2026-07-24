@@ -2307,7 +2307,7 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     emit("activity:read", {
       workspaceId: "ws_1",
       targetUserId: "member_1",
-      activityIds: ["act_late"],
+      activityIds: ["act_read_elsewhere"],
       streamIds: ["stream_1"],
     })
     emit("activity:created", {

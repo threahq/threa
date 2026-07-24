@@ -43,7 +43,7 @@ export function createActivityHandlers({ activityService }: Dependencies) {
       const workspaceId = req.workspaceId!
       const activityId = req.params.id
 
-      await activityService.markAsRead(activityId, userId, workspaceId)
+      await activityService.markAsRead(userId, workspaceId, activityId)
 
       res.json({ ok: true })
     },

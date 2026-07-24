@@ -387,7 +387,23 @@ describe("ActivityFeedHandler", () => {
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
-    expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", expect.objectContaining({ targetUserId: "usr_b" }))
+    expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", {
+      workspaceId: "ws_test",
+      targetUserId: "usr_b",
+      counts: { mentionCount: 0, activityCount: 0 },
+      activity: {
+        id: "act_still_unread",
+        activityType: "message",
+        streamId: "stream_test",
+        messageId: "msg_test",
+        actorId: "usr_author",
+        actorType: "user",
+        context: {},
+        createdAt: "2025-01-01T00:00:00.000Z",
+        isSelf: false,
+        emoji: null,
+      },
+    })
     expect(insertSpy).not.toHaveBeenCalledWith(
       {},
       "activity:created",
@@ -427,11 +443,23 @@ describe("ActivityFeedHandler", () => {
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
-    expect(insertSpy).toHaveBeenCalledWith(
-      {},
-      "activity:created",
-      expect.objectContaining({ targetUserId: "usr_author" })
-    )
+    expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", {
+      workspaceId: "ws_test",
+      targetUserId: "usr_author",
+      counts: { mentionCount: 0, activityCount: 0 },
+      activity: {
+        id: "act_self",
+        activityType: "message",
+        streamId: "stream_test",
+        messageId: "msg_test",
+        actorId: "usr_author",
+        actorType: "user",
+        context: {},
+        createdAt: "2025-01-01T00:00:00.000Z",
+        isSelf: true,
+        emoji: null,
+      },
+    })
   })
 
   it("should return no_events when batch is empty", async () => {

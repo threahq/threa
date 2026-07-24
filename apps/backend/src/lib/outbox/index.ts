@@ -64,6 +64,7 @@ export {
   type BudgetAlertOutboxPayload,
   type InvitationAcceptedOutboxPayload,
   type ActivityCreatedOutboxPayload,
+  type ActivityReadOutboxPayload,
   type SavedUpsertedOutboxPayload,
   type SavedDeletedOutboxPayload,
   type SavedReminderFiredOutboxPayload,

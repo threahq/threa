@@ -1061,40 +1061,45 @@ describe("ActivityService activity:read emission", () => {
       clients.push(client)
       return fn(client)
     })
-    const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const insertManySpy = spyOn(OutboxRepository, "insertMany").mockResolvedValue([] as any)
     const service = new ActivityService({ pool: {} as any })
-    return { service, insertSpy, clients }
+    return { service, insertManySpy, clients }
   }
 
   it("emits activity:read with the flipped id and empty streamIds on a per-row read", async () => {
-    const { service, insertSpy, clients } = setupEmit()
+    const { service, insertManySpy, clients } = setupEmit()
     const markSpy = spyOn(ActivityRepository, "markAsRead").mockResolvedValue({
       activityId: "act_1",
       streamId: STREAM_ID,
     })
 
-    await service.markAsRead("act_1", USER_ID, WORKSPACE_ID)
+    await service.markAsRead(USER_ID, WORKSPACE_ID, "act_1")
 
     expect(markSpy).toHaveBeenCalledWith(clients[0], WORKSPACE_ID, USER_ID, "act_1")
-    expect(insertSpy).toHaveBeenCalledWith(clients[0], "activity:read", {
-      workspaceId: WORKSPACE_ID,
-      targetUserId: USER_ID,
-      activityIds: ["act_1"],
-      streamIds: [],
-    })
+    expect(insertManySpy).toHaveBeenCalledWith(clients[0], [
+      {
+        eventType: "activity:read",
+        payload: {
+          workspaceId: WORKSPACE_ID,
+          targetUserId: USER_ID,
+          activityIds: ["act_1"],
+          streamIds: [],
+        },
+      },
+    ])
   })
 
   it("emits nothing when a per-row read flips no row", async () => {
-    const { service, insertSpy } = setupEmit()
+    const { service, insertManySpy } = setupEmit()
     spyOn(ActivityRepository, "markAsRead").mockResolvedValue(null)
 
-    await service.markAsRead("act_gone", USER_ID, WORKSPACE_ID)
+    await service.markAsRead(USER_ID, WORKSPACE_ID, "act_gone")
 
-    expect(insertSpy).not.toHaveBeenCalled()
+    expect(insertManySpy).not.toHaveBeenCalled()
   })
 
   it("emits deduplicated non-null streamIds on a stream-scope read", async () => {
-    const { service, insertSpy, clients } = setupEmit()
+    const { service, insertManySpy, clients } = setupEmit()
     const markSpy = spyOn(ActivityRepository, "markStreamAsRead").mockResolvedValue([
       { activityId: "act_1", streamId: STREAM_ID },
       { activityId: "act_2", streamId: STREAM_ID },
@@ -1104,27 +1109,35 @@ describe("ActivityService activity:read emission", () => {
     await service.markStreamActivityAsRead(USER_ID, WORKSPACE_ID, STREAM_ID)
 
     expect(markSpy).toHaveBeenCalledWith(clients[0], WORKSPACE_ID, USER_ID, STREAM_ID)
-    expect(insertSpy).toHaveBeenCalledWith(clients[0], "activity:read", {
-      workspaceId: WORKSPACE_ID,
-      targetUserId: USER_ID,
-      activityIds: ["act_1", "act_2", "act_3"],
-      streamIds: [STREAM_ID],
-    })
+    expect(insertManySpy).toHaveBeenCalledWith(clients[0], [
+      {
+        eventType: "activity:read",
+        payload: {
+          workspaceId: WORKSPACE_ID,
+          targetUserId: USER_ID,
+          activityIds: ["act_1", "act_2", "act_3"],
+          streamIds: [STREAM_ID],
+        },
+      },
+    ])
   })
 
-  it("chunks mark-all emission at 500 ids, covering every id exactly once", async () => {
-    const { service, insertSpy } = setupEmit()
+  it("chunks mark-all emission at 500 ids in one insertMany, covering every id exactly once", async () => {
+    const { service, insertManySpy } = setupEmit()
     const cleared = Array.from({ length: 501 }, (_, i) => ({ activityId: `act_${i}`, streamId: STREAM_ID }))
     spyOn(ActivityRepository, "markAllAsRead").mockResolvedValue(cleared)
 
     await service.markAllAsRead(USER_ID, WORKSPACE_ID)
 
-    expect(insertSpy).toHaveBeenCalledTimes(2)
-    const first = (insertSpy.mock.calls[0] as unknown[])[2] as { activityIds: string[]; streamIds: string[] }
-    const second = (insertSpy.mock.calls[1] as unknown[])[2] as { activityIds: string[]; streamIds: string[] }
-    expect(first.activityIds).toHaveLength(500)
-    expect(second.activityIds).toEqual(["act_500"])
-    expect(new Set([...first.activityIds, ...second.activityIds]).size).toBe(501)
-    expect(first.streamIds).toEqual([STREAM_ID])
+    expect(insertManySpy).toHaveBeenCalledTimes(1)
+    const entries = (insertManySpy.mock.calls[0] as unknown[])[1] as Array<{
+      eventType: string
+      payload: { activityIds: string[]; streamIds: string[] }
+    }>
+    expect(entries).toHaveLength(2)
+    expect(entries[0].payload.activityIds).toHaveLength(500)
+    expect(entries[1].payload.activityIds).toEqual(["act_500"])
+    expect(new Set([...entries[0].payload.activityIds, ...entries[1].payload.activityIds]).size).toBe(501)
+    expect(entries[0].payload.streamIds).toEqual([STREAM_ID])
   })
 })
