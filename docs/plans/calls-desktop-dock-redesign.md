@@ -1,16 +1,16 @@
 # Calls — Desktop dock redesign
 
-Status: **draft, awaiting ratification**. Approved visual direction: the [desktop dock mock](https://seer.build/ws_vbyzjvdg6g/b/calls-deskdock-1ca712/).
+Status: **ratified; implementation in progress**. Approved visual direction: the [desktop dock mock](https://seer.build/ws_vbyzjvdg6g/b/calls-deskdock-1ca712/).
 
 Desktop-only. Mobile surfaces (`mobile-call-drawer.tsx`, `call-island.tsx`) are unchanged. Reference files: `apps/frontend/src/components/call/desktop-call-dock.tsx` (628 lines — top/side dock, `nearestStep` snaps, `--call-dock-inset-*` content push, `ResizeObserver` ceiling), `call-dock.tsx` (phase router), `stores/call-prefs-store.ts`.
 
 ## Goals (from Kris's desktop feedback)
 
-1. **Kill the top dock** — it felt awkward; drop the top orientation entirely. Desktop is **side** or **floating** only.
+1. **Kill the top dock** — it felt awkward; drop the top orientation entirely. Desktop has three peer surfaces: **side**, **floating**, and **fullscreen**.
 2. **Floating square = effective default** — a small draggable, minimizable call widget (grip to move anywhere, minimize to a bubble), with a **"dock to side"** action. Joining renders **in the same square** (no bottom-right→dock jump).
 3. **Side dock behaves like the nav sidebar** — **hover-to-overlay** when minimized (opens over the content, doesn't push, like the nav sidebar's closed-hover), plus an open/pinned draggable mode; **freeform width** (remove the width snap detents — snaps control layout/things, not width); **75% max**; a **drop-to-fullscreen indication** past 75% on release; a **"float"** action to switch to the square.
 4. **Collapsed side rail** — put controls (mute / camera / leave) in the wasted vertical space above the timer.
-5. **Surface pref** `desktopCallSurface: keep_last | sidebar | floating` (default `keep_last`). `keep_last` remembers the last-used surface; the floating square is the effective default. A control in **Calls settings**.
+5. **Surface pref** `desktopCallSurface: keep_last | sidebar | floating | fullscreen` (default `keep_last`). `keep_last` remembers the last-used surface; the floating square is the effective default. A control in **Calls settings**.
 
 ## Invariants in play
 
@@ -47,7 +47,7 @@ Each chunk is one PR, based on the previous branch (chunk 1 on `origin/main`).
 
 ### Chunk 4 — `desktopCallSurface` pref + surface switching + Calls settings
 
-- `call-prefs-store.ts`: `desktopCallSurface: keep_last | sidebar | floating` (default `keep_last`) + `lastDesktopSurface: sidebar | floating` + `resolveDesktopSurface(pref, last)`; remove the vestigial `dockPosition` if still present.
+- `call-prefs-store.ts`: `desktopCallSurface: keep_last | sidebar | floating | fullscreen` (default `keep_last`) + matching `lastDesktopSurface` + `resolveDesktopSurface(pref, last)`; remove the vestigial `dockPosition` if still present.
 - `call-dock.tsx`: on desktop, render the resolved surface — `FloatingCallSquare` or `DesktopCallDock` (side). Joining routes to whichever surface is active (both now render joining in-place).
 - Wire the **"dock to side"** (square → sidebar, updates `lastDesktopSurface`) and **"float"** (sidebar → square) actions.
 - `call-settings.tsx`: a "Desktop video" radio (Keep last / Sidebar / Floating square).

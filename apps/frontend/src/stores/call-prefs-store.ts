@@ -17,7 +17,7 @@ export type CallFilmstripSide = "bottom" | "side"
 /** Local self-view mirroring. `auto` = mirror a front/desktop camera, not a mobile back camera. */
 export type CallSelfMirror = "auto" | "on" | "off"
 /** A concrete desktop call surface. */
-export type DesktopSurface = "sidebar" | "floating"
+export type DesktopSurface = "sidebar" | "floating" | "fullscreen"
 /** The desktop-surface preference: `keep_last` reopens wherever the last call was. */
 export type DesktopCallSurface = "keep_last" | DesktopSurface
 
@@ -46,7 +46,7 @@ const STORAGE_KEY = "threa:callPrefs:v1"
 const isLayout = (v: unknown): v is CallLayout => v === "speaker" || v === "grid"
 const isFilmstripSide = (v: unknown): v is CallFilmstripSide => v === "bottom" || v === "side"
 const isSelfMirror = (v: unknown): v is CallSelfMirror => v === "auto" || v === "on" || v === "off"
-const isDesktopSurface = (v: unknown): v is DesktopSurface => v === "sidebar" || v === "floating"
+const isDesktopSurface = (v: unknown): v is DesktopSurface => v === "sidebar" || v === "floating" || v === "fullscreen"
 const isDesktopCallSurface = (v: unknown): v is DesktopCallSurface => v === "keep_last" || isDesktopSurface(v)
 const parseSideDockWidth = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null

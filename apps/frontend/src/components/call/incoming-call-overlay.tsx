@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/api/client"
 import { cn } from "@/lib/utils"
 import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
-import { useCallSurfaceMode } from "./call-store-hooks"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { useCallSurfaceMode, useDesktopSurfaceOverride } from "./call-store-hooks"
 import { useWorkspaceUserPreferences } from "@/stores/workspace-store"
 import { useIncomingCalls, settleIncomingCall, type IncomingCall } from "@/stores/incoming-call-store"
 import { installRingAudioWarmup, startRing, stopRing } from "@/calls/ring-tone"
@@ -15,6 +16,7 @@ import { useCallLaunch } from "./call-launch-context"
 import { DOCK_BOTTOM, RING_ABOVE_DOCK_BOTTOM } from "./call-dock"
 import { placementOverlapsProtected, resolveAvoidanceOffset, type Point } from "./call-surface-geometry"
 import { useFloatingSurfaceGeometry } from "@/stores/floating-surface-geometry-store"
+import { resolveDesktopSurface, useCallPrefs } from "@/stores/call-prefs-store"
 
 interface RingPlacement {
   offset: Point
@@ -118,6 +120,10 @@ export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
   const calls = useIncomingCalls()
   const { launch, callActive } = useCallLaunch()
   const surfaceMode = useCallSurfaceMode()
+  const desktopSurfaceOverride = useDesktopSurfaceOverride()
+  const { desktopCallSurface, lastDesktopSurface } = useCallPrefs()
+  const desktopSurface = resolveDesktopSurface(desktopCallSurface, lastDesktopSurface, desktopSurfaceOverride)
+  const isMobile = useIsMobile()
   const [searchParams, setSearchParams] = useSearchParams()
   const notifiedRef = useRef<Set<string>>(new Set())
   const containerRef = useRef<HTMLDivElement>(null)
@@ -228,7 +234,7 @@ export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
   // lift above the bottom only when a call surface covers it — mobile or desktop
   // fullscreen (both put their control bar at the bottom). Non-fullscreen docks leave
   // the bottom free (mobile drawer is at the top; a side dock is cleared horizontally).
-  const liftAboveDock = callActive && surfaceMode === "full"
+  const liftAboveDock = callActive && (isMobile ? surfaceMode === "full" : desktopSurface === "fullscreen")
 
   return (
     <div

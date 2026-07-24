@@ -5,11 +5,11 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react"
-import { AlertTriangle, ChevronDown, ChevronLeft, Minimize2, PictureInPicture2, Pin, Users } from "lucide-react"
+import { AlertTriangle, ChevronLeft, Minimize2, Pin } from "lucide-react"
 import { getAvatarUrl } from "@threa/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { getInitials } from "@/lib/initials"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -22,15 +22,14 @@ import {
   type CallRosterParticipant,
   type CallSurfaceMode,
 } from "@/stores/call-store"
-import { useCallPrefs, setCallFilmstripSide, setCallSideDockWidth } from "@/stores/call-prefs-store"
+import { useCallPrefs, setCallSideDockWidth, type DesktopSurface } from "@/stores/call-prefs-store"
 import { CallTile } from "./call-tile"
 import { CallControls } from "./call-controls"
 import { CameraButton, LeaveButton, MuteButton } from "./call-control-buttons"
-import { CallStageLayout } from "./call-stage-layout"
 import { CallTimer } from "./call-timer"
 import { CaptureErrorBanner } from "./call-capture-error"
 import { CallJoiningBody } from "./pre-join-gate"
-import { LayoutToggle } from "./layout-toggle"
+import { DesktopCallSurfacePicker } from "./desktop-call-surface-picker"
 import { useCallCaptureError, useCallConnectedAt, useCallRoster, useCallSurfaceMode } from "./call-store-hooks"
 
 const REDUCED_MOTION =
@@ -72,43 +71,8 @@ interface DockViewProps {
   // Rendered from the minimized hover-overlay (a transient peek) rather than a
   // pinned-open dock — shows the pin affordance to commit the peek.
   peeking?: boolean
-  // Pop the call out to the floating square. Absent in tests / when floating is unreachable.
-  onFloat?: () => void
-}
-
-function FilmstripSideToggle() {
-  const { filmstripSide } = useCallPrefs()
-  return (
-    <ToggleGroup
-      type="single"
-      size="sm"
-      role="radiogroup"
-      value={filmstripSide}
-      onValueChange={(next) => {
-        if (next === "bottom" || next === "side") setCallFilmstripSide(next)
-      }}
-      aria-label="Filmstrip position"
-      data-testid="call-filmstrip-side-toggle"
-      className="shrink-0 gap-0.5 rounded-md bg-muted p-0.5"
-    >
-      <ToggleGroupItem
-        value="bottom"
-        aria-label="Filmstrip bottom"
-        title="Filmstrip along the bottom"
-        className="h-7 px-2 text-xs"
-      >
-        Bottom
-      </ToggleGroupItem>
-      <ToggleGroupItem
-        value="side"
-        aria-label="Filmstrip side"
-        title="Filmstrip down the side"
-        className="h-7 px-2 text-xs"
-      >
-        Side
-      </ToggleGroupItem>
-    </ToggleGroup>
-  )
+  onSelectSurface?: (surface: DesktopSurface) => void
+  surfacePickerTriggerRef?: RefObject<HTMLButtonElement | null>
 }
 
 function MinimizeButton() {
@@ -120,20 +84,6 @@ function MinimizeButton() {
       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
     >
       <Minimize2 className="h-4 w-4" />
-    </button>
-  )
-}
-
-function FloatButton({ onFloat }: { onFloat: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-label="Pop out to a floating window"
-      title="Pop out to a floating window"
-      onClick={onFloat}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-    >
-      <PictureInPicture2 className="h-4 w-4" />
     </button>
   )
 }
@@ -161,25 +111,31 @@ function PinButton() {
 function DockHeaderBar({
   title,
   peeking,
-  onFloat,
+  onSelectSurface,
+  surfacePickerTriggerRef,
   canMinimize = true,
 }: {
   title: string
   peeking?: boolean
-  onFloat?: () => void
+  onSelectSurface?: (surface: DesktopSurface) => void
+  surfacePickerTriggerRef?: RefObject<HTMLButtonElement | null>
   canMinimize?: boolean
 }) {
+  let trailingAction = null
+  if (peeking) trailingAction = <PinButton />
+  else if (canMinimize) trailingAction = <MinimizeButton />
+
   return (
     <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
-      {peeking ? (
-        <PinButton />
-      ) : (
-        <>
-          {onFloat && <FloatButton onFloat={onFloat} />}
-          {canMinimize && <MinimizeButton />}
-        </>
+      {onSelectSurface && (
+        <DesktopCallSurfacePicker
+          value="sidebar"
+          onValueChange={onSelectSurface}
+          triggerRef={surfacePickerTriggerRef}
+        />
       )}
+      {trailingAction}
     </div>
   )
 }
@@ -241,11 +197,25 @@ function SideRailView({ roster, users, workspaceId, connectedAt, captureError }:
 }
 
 /** Side `compact`/`standard`: header + tile grid + controls (the panel width does the sizing). */
-function SideTilesView({ workspaceId, currentUserId, roster, captureError, title, peeking, onFloat }: DockViewProps) {
+function SideTilesView({
+  workspaceId,
+  currentUserId,
+  roster,
+  captureError,
+  title,
+  peeking,
+  onSelectSurface,
+  surfacePickerTriggerRef,
+}: DockViewProps) {
   const joined = roster.filter((p) => p.participantStatus === "joined")
   return (
     <div className="flex h-full w-full flex-col border-l bg-background">
-      <DockHeaderBar title={title} peeking={peeking} onFloat={onFloat} />
+      <DockHeaderBar
+        title={title}
+        peeking={peeking}
+        onSelectSurface={onSelectSurface}
+        surfacePickerTriggerRef={surfacePickerTriggerRef}
+      />
       {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
       <div className={cn("grid flex-1 gap-2 overflow-y-auto p-3", joined.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
         {joined.map((p) => (
@@ -264,73 +234,25 @@ function SideTilesView({ workspaceId, currentUserId, roster, captureError, title
   )
 }
 
-function SideJoiningView({ title, onFloat }: Pick<DockViewProps, "title" | "onFloat">) {
+function SideJoiningView({
+  title,
+  onSelectSurface,
+  surfacePickerTriggerRef,
+}: Pick<DockViewProps, "title" | "onSelectSurface" | "surfacePickerTriggerRef">) {
   return (
     <div className="flex h-full w-full flex-col border-l bg-background">
-      <DockHeaderBar title={title} onFloat={onFloat} canMinimize={false} />
+      <DockHeaderBar
+        title={title}
+        onSelectSurface={onSelectSurface}
+        surfacePickerTriggerRef={surfacePickerTriggerRef}
+        canMinimize={false}
+      />
       <CallJoiningBody />
     </div>
   )
 }
 
-/** Fullscreen: the ch5 stage with a permanent header of call controls/toggles. */
-function DockFullscreenView({ workspaceId, connectedAt, currentUserId, roster, title, captureError }: DockViewProps) {
-  const { layout, filmstripSide } = useCallPrefs()
-  const joined = roster.filter((p) => p.participantStatus === "joined")
-  // View-only pin (not the store): overrides the default speaker until the call ends.
-  const [pinnedUserId, setPinnedUserId] = useState<string | null>(null)
-
-  return (
-    <div className="flex h-full w-full flex-col bg-background text-foreground">
-      {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
-      <div className="flex items-center gap-2 px-3 py-2">
-        <button
-          type="button"
-          aria-label="Collapse call"
-          onClick={() => setCallSurfaceMode("standard")}
-          className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <ChevronDown className="h-5 w-5" />
-        </button>
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-medium">{title}</span>
-          <CallTimer connectedAt={connectedAt} className="text-muted-foreground" />
-        </div>
-        <span
-          className="ml-2 flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
-          aria-label="Participants in call"
-        >
-          <Users className="h-3.5 w-3.5" aria-hidden />
-          {joined.length}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          {layout === "speaker" && <FilmstripSideToggle />}
-          <div data-testid="call-layout-slot">
-            <LayoutToggle className="bg-muted" />
-          </div>
-        </div>
-      </div>
-
-      <CallStageLayout
-        layout={layout}
-        filmstripSide={filmstripSide}
-        participants={roster}
-        currentUserId={currentUserId}
-        workspaceId={workspaceId}
-        pinnedUserId={pinnedUserId}
-        onPin={setPinnedUserId}
-        backgroundClassName="bg-background"
-      />
-
-      <div className="shrink-0 px-3 pb-3 pt-1">
-        <CallControls />
-      </div>
-    </div>
-  )
-}
-
 function DockBody({ mode, view }: { mode: CallSurfaceMode; view: DockViewProps }) {
-  if (mode === "full") return <DockFullscreenView {...view} />
   if (mode === "min") return <SideRailView {...view} />
   return <SideTilesView {...view} />
 }
@@ -383,18 +305,26 @@ interface DragState {
 export function DesktopCallDock({
   workspaceId,
   streamId,
-  onFloat,
+  onSelectSurface,
+  onDragToFullscreen,
   joining = false,
   joiningMode = "compact",
+  surfacePickerTriggerRef,
 }: {
   workspaceId: string | null
   streamId: string | null
-  onFloat?: () => void
+  onSelectSurface?: (surface: DesktopSurface) => void
+  onDragToFullscreen?: () => void
+  surfacePickerTriggerRef?: RefObject<HTMLButtonElement | null>
   joining?: boolean
   joiningMode?: Extract<CallSurfaceMode, "compact" | "standard">
 }) {
   const surfaceMode = useCallSurfaceMode()
-  const displaySurfaceMode = joining ? joiningMode : surfaceMode
+  const sidebarSurfaceMode = surfaceMode === "full" ? "standard" : surfaceMode
+  const displaySurfaceMode = joining ? joiningMode : sidebarSurfaceMode
+  useLayoutEffect(() => {
+    if (surfaceMode === "full") setCallSurfaceMode("standard")
+  }, [surfaceMode])
   const { sideDockWidth } = useCallPrefs()
   const inputMode = useInputMode()
   const roster = useCallRoster()
@@ -415,8 +345,8 @@ export function DesktopCallDock({
   // with the cursor still inside fires no mouseleave, so clear the flag on the mode
   // change — else a stale `hovering` keeps re-arming the peek and Minimize looks dead.
   useEffect(() => {
-    if (surfaceMode !== "min") setHovering(false)
-  }, [surfaceMode])
+    if (sidebarSurfaceMode !== "min") setHovering(false)
+  }, [sidebarSurfaceMode])
   // The dock root spans the content region (left = sidebar width → right:0); its
   // measured width is the ceiling for the panel + inset so a narrow window / wide
   // sidebar can never push the panel over the sidebar or squash the timeline to 0.
@@ -442,10 +372,7 @@ export function DesktopCallDock({
   // Content push: rail → RAIL_WIDTH, open → openWidth (already ≤ ceil−MIN_CONTENT),
   // fullscreen → 0. Hovering the rail is an overlay, so the inset tracks surfaceMode
   // (still `min`) and never reflows the timeline.
-  let insetRight: number
-  if (displaySurfaceMode === "full") insetRight = 0
-  else if (displaySurfaceMode === "min") insetRight = RAIL_WIDTH
-  else insetRight = openWidth
+  const insetRight = displaySurfaceMode === "min" ? RAIL_WIDTH : openWidth
   useLayoutEffect(() => {
     document.documentElement.style.setProperty("--call-dock-inset-right", `${insetRight}px`)
   }, [insetRight])
@@ -486,19 +413,20 @@ export function DesktopCallDock({
     // Only offer fullscreen when there's a real freeform band below it (else a
     // very narrow content region would send every release to fullscreen).
     if (FULLSCREEN_FRACTION * d.full > MIN_OPEN && d.size > FULLSCREEN_FRACTION * d.full) {
-      setCallSurfaceMode("full")
+      if (onDragToFullscreen) onDragToFullscreen()
+      else onSelectSurface?.("fullscreen")
       return
     }
     setCallSideDockWidth(clampOpen(d.size, d.full))
     // Dragging out of the rail (or out of fullscreen) opens it; an already-open mode keeps its mode.
-    if (surfaceMode === "min" || surfaceMode === "full") setCallSurfaceMode("standard")
+    if (sidebarSurfaceMode === "min") setCallSurfaceMode("standard")
   }
 
   // While dragging, don't MOUNT the fullscreen stage (its heavy per-frame re-render
   // thrashes the drag) — the preview stays on the open tiles; fullscreen mounts on release.
   // Minimized + mouse hover = a transient peek (overlay, no push); it renders the open
   // tiles and shows a pin affordance to commit to a pushing, persisted open dock.
-  const peeking = !joining && surfaceMode === "min" && hovering
+  const peeking = !joining && sidebarSurfaceMode === "min" && hovering
   let cappedDragMode: CallSurfaceMode | null = null
   if (dragging) cappedDragMode = displaySurfaceMode === "compact" ? "compact" : "standard"
   let contentMode: CallSurfaceMode
@@ -507,12 +435,10 @@ export function DesktopCallDock({
   else contentMode = displaySurfaceMode
 
   const dragCeil = drag.current?.full ?? ceilW
-  // No cue while already fullscreen (a drag there is an EXIT — the cue would misread as "go full"),
-  // and none when the region is too narrow to have a freeform band below the fullscreen line.
+  // No cue when the region is too narrow to have a freeform band below the fullscreen line.
   const showFullscreenCue =
     !joining &&
     dragging &&
-    surfaceMode !== "full" &&
     dragSize != null &&
     FULLSCREEN_FRACTION * dragCeil > MIN_OPEN &&
     dragSize > FULLSCREEN_FRACTION * dragCeil
@@ -522,16 +448,8 @@ export function DesktopCallDock({
   else if (displaySurfaceMode === "min") panelWidth = hovering ? openWidth : RAIL_WIDTH
   else panelWidth = openWidth
 
-  const restingFull = !joining && !dragging && surfaceMode === "full"
-  let positionClass: string
-  let sizeStyle: CSSProperties
-  if (restingFull) {
-    positionClass = "inset-0"
-    sizeStyle = {}
-  } else {
-    positionClass = "inset-y-0 right-0"
-    sizeStyle = { width: `${panelWidth}px` }
-  }
+  const positionClass = "inset-y-0 right-0"
+  const sizeStyle: CSSProperties = { width: `${panelWidth}px` }
 
   const view: DockViewProps = {
     workspaceId,
@@ -542,7 +460,8 @@ export function DesktopCallDock({
     captureError,
     title,
     peeking,
-    onFloat,
+    onSelectSurface,
+    surfacePickerTriggerRef,
   }
 
   return (
@@ -562,7 +481,7 @@ export function DesktopCallDock({
           // Preview only arms from the rail (mirrors the nav-sidebar collapsed→preview);
           // entering an open panel — including while minimizing with the cursor over it —
           // must not flip to the overlay.
-          if (inputMode !== "touch" && surfaceMode === "min") setHovering(true)
+          if (inputMode !== "touch" && sidebarSurfaceMode === "min") setHovering(true)
         }}
         onMouseLeave={() => setHovering(false)}
         className={cn(
@@ -572,7 +491,15 @@ export function DesktopCallDock({
         )}
         style={sizeStyle}
       >
-        {joining ? <SideJoiningView title={title} onFloat={onFloat} /> : <DockBody mode={contentMode} view={view} />}
+        {joining ? (
+          <SideJoiningView
+            title={title}
+            onSelectSurface={onSelectSurface}
+            surfacePickerTriggerRef={surfacePickerTriggerRef}
+          />
+        ) : (
+          <DockBody mode={contentMode} view={view} />
+        )}
         {showFullscreenCue && (
           <div
             data-testid="call-dock-fullscreen-cue"

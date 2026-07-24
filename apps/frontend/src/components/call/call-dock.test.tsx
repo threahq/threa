@@ -16,6 +16,7 @@ import {
   setCallActiveElsewhere,
   setCallCaptureError,
   setCallSurfaceMode,
+  setDesktopSurfaceOverride,
   bumpCallMediaEpoch,
   type CallRosterParticipant,
 } from "@/stores/call-store"
@@ -467,6 +468,22 @@ describe("CallDock — desktop surface routing", () => {
     expect(screen.queryByTestId("floating-call-square")).toBeNull()
   })
 
+  it("routes fullscreen joining and connected states as a peer surface and remembers it", () => {
+    setDesktopCallSurface("fullscreen")
+    renderDock(makeManager())
+    act(() => setCallSession({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
+    expect(screen.getByTestId("desktop-call-fullscreen")).toHaveAttribute("data-phase", "joining")
+    expect(screen.getByText("Connecting…")).toBeInTheDocument()
+
+    act(() => {
+      setCallPhase("connected")
+      setCallRoster([participant({ userId: "usr_self", endpointId: "callep_self" })], 1)
+    })
+    expect(screen.getByTestId("desktop-call-fullscreen")).toHaveAttribute("data-phase", "connected")
+    expect(screen.getByTestId("call-layout-slot")).toBeInTheDocument()
+    expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
+  })
+
   it("floating pref surfaces the pre-join permission gate inside the square during an active launch", async () => {
     setDesktopCallSurface("floating")
     const startCall = vi.fn(async () => {
@@ -487,11 +504,40 @@ describe("CallDock — desktop surface routing", () => {
     renderDock(makeManager())
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
     expect(screen.getByTestId("floating-call-square")).toBeInTheDocument()
-    await userEvent.click(screen.getByLabelText("Dock to the side"))
+    await userEvent.click(screen.getByLabelText("Call surface"))
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Sidebar" }))
     expect(screen.getByTestId("desktop-call-dock")).toBeInTheDocument()
     expect(screen.queryByTestId("floating-call-square")).toBeNull()
     expect(getCallState().desktopSurfaceOverride).toBe("sidebar")
     expect(getCallPrefs().lastDesktopSurface).toBe("sidebar")
+    expect(screen.getByLabelText("Call surface")).toHaveFocus()
+  })
+
+  it("opens a minimized Sidebar before moving picker focus into it", async () => {
+    setDesktopCallSurface("floating")
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    act(() => setCallSurfaceMode("min"))
+
+    await userEvent.click(screen.getByLabelText("Call surface"))
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Sidebar" }))
+
+    expect(screen.getByTestId("desktop-call-dock")).toHaveAttribute("data-mode", "standard")
+    expect(screen.getByLabelText("Call surface")).toHaveFocus()
+  })
+
+  it("does not move focus for a non-picker surface switch", () => {
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    const externalButton = document.createElement("button")
+    document.body.append(externalButton)
+    externalButton.focus()
+
+    act(() => setDesktopSurfaceOverride("fullscreen"))
+
+    expect(screen.getByTestId("desktop-call-fullscreen")).toBeInTheDocument()
+    expect(externalButton).toHaveFocus()
+    externalButton.remove()
   })
 
   it("the dock's Float flips to the square and records the override + last", async () => {
@@ -499,7 +545,8 @@ describe("CallDock — desktop surface routing", () => {
     renderDock(makeManager())
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
     expect(screen.getByTestId("desktop-call-dock")).toBeInTheDocument()
-    await userEvent.click(screen.getByLabelText("Pop out to a floating window"))
+    await userEvent.click(screen.getByLabelText("Call surface"))
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Floating" }))
     expect(screen.getByTestId("floating-call-square")).toBeInTheDocument()
     expect(screen.queryByTestId("desktop-call-dock")).toBeNull()
     expect(getCallState().desktopSurfaceOverride).toBe("floating")

@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react"
-import { GripHorizontal, Maximize2, Minimize2, PanelRight } from "lucide-react"
+import { GripHorizontal, Maximize2, Minimize2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -31,6 +31,8 @@ import {
   type Size,
 } from "./call-surface-geometry"
 import { publishFloatingSurfaceGeometry } from "@/stores/floating-surface-geometry-store"
+import type { DesktopSurface } from "@/stores/call-prefs-store"
+import { DesktopCallSurfacePicker } from "./desktop-call-surface-picker"
 
 const REDUCED_MOTION =
   typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
@@ -40,7 +42,7 @@ const MARGIN = 8
 // Initial-anchor height estimate before the square measures itself; the mount
 // reclamp refines it against the real `offsetHeight`.
 const NOMINAL_HEIGHT = 320
-const MINIMIZED_SIZE = { width: 280, height: 50 }
+const MINIMIZED_SIZE = { width: 380, height: 50 }
 const MINIMIZED_POINTER_ANCHOR = { x: MINIMIZED_SIZE.width - 24, y: MINIMIZED_SIZE.height / 2 }
 const KEYBOARD_MOVE_STEP = 16
 
@@ -93,23 +95,25 @@ function SquareHeader({
   onPointerDown,
   onPointerMove,
   onPointerUp,
-  onDockToSide,
+  onSelectSurface,
   onMinimize,
   minimizeRef,
   canMinimize,
   dragging,
+  surfacePickerTriggerRef,
 }: {
   title: string
   onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void
   onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => void
   onPointerUp: (e: ReactPointerEvent<HTMLDivElement>) => void
-  onDockToSide: () => void
+  onSelectSurface: (surface: DesktopSurface) => void
   onMinimize: (e: ReactMouseEvent<HTMLButtonElement>) => void
   minimizeRef: RefObject<HTMLButtonElement | null>
   // Only a connected call may minimize — collapsing the joining/pre-join window would
   // hide the PreJoinGate permission taxonomy (mirrors call-dock.tsx's force-open guard).
   canMinimize: boolean
   dragging: boolean
+  surfacePickerTriggerRef?: RefObject<HTMLButtonElement | null>
 }) {
   return (
     <div
@@ -133,15 +137,7 @@ function SquareHeader({
         aria-hidden
       />
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
-      <button
-        type="button"
-        aria-label="Dock to the side"
-        title="Dock to the side"
-        onClick={onDockToSide}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-      >
-        <PanelRight className="h-4 w-4" />
-      </button>
+      <DesktopCallSurfacePicker value="floating" onValueChange={onSelectSurface} triggerRef={surfacePickerTriggerRef} />
       {canMinimize && (
         <button
           ref={minimizeRef}
@@ -205,6 +201,8 @@ function MinimizedBar({
   onMoveKeyDown,
   onRestore,
   restoreRef,
+  onSelectSurface,
+  surfacePickerTriggerRef,
 }: {
   surfaceRef: (node: HTMLDivElement | null) => void
   pos: Point
@@ -216,6 +214,8 @@ function MinimizedBar({
   onMoveKeyDown: (e: ReactKeyboardEvent<HTMLButtonElement>) => void
   onRestore: () => void
   restoreRef: RefObject<HTMLButtonElement | null>
+  onSelectSurface: (surface: DesktopSurface) => void
+  surfacePickerTriggerRef?: RefObject<HTMLButtonElement | null>
 }) {
   return (
     <div
@@ -259,6 +259,7 @@ function MinimizedBar({
           <LeaveButton />
         </div>
       </div>
+      <DesktopCallSurfacePicker value="floating" onValueChange={onSelectSurface} triggerRef={surfacePickerTriggerRef} />
       <Button
         ref={restoreRef}
         type="button"
@@ -285,11 +286,13 @@ function MinimizedBar({
 export function FloatingCallSquare({
   workspaceId,
   streamId,
-  onDockToSide,
+  onSelectSurface,
+  surfacePickerTriggerRef,
 }: {
   workspaceId: string | null
   streamId: string | null
-  onDockToSide: () => void
+  onSelectSurface: (surface: DesktopSurface) => void
+  surfacePickerTriggerRef?: RefObject<HTMLButtonElement | null>
 }) {
   const phase = useCallPhase()
   const roster = useCallRoster()
@@ -475,6 +478,8 @@ export function FloatingCallSquare({
         onMoveKeyDown={moveMinimizedWithKeyboard}
         onRestore={restoreFromMinimized}
         restoreRef={restoreButtonRef}
+        onSelectSurface={onSelectSurface}
+        surfacePickerTriggerRef={surfacePickerTriggerRef}
       />
     )
   }
@@ -492,11 +497,12 @@ export function FloatingCallSquare({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onDockToSide={onDockToSide}
+        onSelectSurface={onSelectSurface}
         onMinimize={minimizeAtPointer}
         minimizeRef={minimizeButtonRef}
         canMinimize={inCall}
         dragging={dragging}
+        surfacePickerTriggerRef={surfacePickerTriggerRef}
       />
       {inCall ? (
         <ConnectedBody

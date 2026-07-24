@@ -46,6 +46,7 @@ const DESKTOP_SURFACE_OPTIONS: { value: DesktopCallSurface; label: string; descr
     description: "A movable square you can drag anywhere and minimize.",
   },
   { value: "sidebar", label: "Sidebar", description: "Docked down the right side, resizable." },
+  { value: "fullscreen", label: "Fullscreen", description: "Fills the desktop area beside navigation." },
 ]
 
 /**

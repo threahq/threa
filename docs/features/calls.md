@@ -113,9 +113,10 @@ participantUserIds, endedReason}` so the historical card renders with no fetch).
   workspace-agnostic; owns the `/calls` socket, the single CF `RTCPeerConnection`
   behind `MediaTransport`, the per-session renegotiation queue, local capture,
   leases, and one AudioContext per call (created in the join gesture).
-- Components (`apps/frontend/src/components/call/`): `CallDock` (on `side-panel`,
-  non-modal), `CallTile`, `CallControls`, `IncomingCallOverlay`, `PreJoinGate`,
-  `RejoinBar`, plus `CallCard` in the timeline.
+- Components (`apps/frontend/src/components/call/`): `CallDock` routes desktop calls among
+  peer floating, sidebar, and fullscreen surfaces (all non-modal) while mobile keeps its
+  drawer; `CallTile`, `CallControls`, `IncomingCallOverlay`, `PreJoinGate`, `RejoinBar`,
+  plus `CallCard` in the timeline.
 
 ## The flag
 
