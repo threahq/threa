@@ -223,6 +223,11 @@ describe("MobileCallDrawer — mode rendering", () => {
     expect(screen.getByTestId("call-layout-slot")).toBeInTheDocument()
     expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
     expect(screen.getByLabelText("Devices")).toBeInTheDocument()
+    expect(screen.getByTestId("call-stage-speaker")).toHaveClass("bg-call-stage")
+    expect(screen.getByLabelText("Collapse call").parentElement?.parentElement).toHaveClass(
+      "bg-call-stage",
+      "text-white"
+    )
     expect(screen.getAllByTestId("call-tile").length).toBeGreaterThan(0)
   })
 })

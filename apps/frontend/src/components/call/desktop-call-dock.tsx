@@ -6,17 +6,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react"
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronLeft,
-  Minimize2,
-  PanelBottom,
-  PanelRight,
-  PictureInPicture2,
-  Pin,
-  Users,
-} from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronLeft, Minimize2, PictureInPicture2, Pin, Users } from "lucide-react"
 import { getAvatarUrl } from "@threa/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -99,23 +89,23 @@ function FilmstripSideToggle() {
       }}
       aria-label="Filmstrip position"
       data-testid="call-filmstrip-side-toggle"
-      className="shrink-0 gap-0.5 rounded-md bg-white/10 p-0.5"
+      className="shrink-0 gap-0.5 rounded-md bg-muted p-0.5"
     >
       <ToggleGroupItem
         value="bottom"
         aria-label="Filmstrip bottom"
         title="Filmstrip along the bottom"
-        className="h-7 px-2 [&_svg]:size-3.5"
+        className="h-7 px-2 text-xs"
       >
-        <PanelBottom aria-hidden="true" />
+        Bottom
       </ToggleGroupItem>
       <ToggleGroupItem
         value="side"
         aria-label="Filmstrip side"
         title="Filmstrip down the side"
-        className="h-7 px-2 [&_svg]:size-3.5"
+        className="h-7 px-2 text-xs"
       >
-        <PanelRight aria-hidden="true" />
+        Side
       </ToggleGroupItem>
     </ToggleGroup>
   )
@@ -291,29 +281,32 @@ function DockFullscreenView({ workspaceId, connectedAt, currentUserId, roster, t
   const [pinnedUserId, setPinnedUserId] = useState<string | null>(null)
 
   return (
-    <div className="flex h-full w-full flex-col bg-call-stage text-white">
+    <div className="flex h-full w-full flex-col bg-background text-foreground">
       {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
       <div className="flex items-center gap-2 px-3 py-2">
         <button
           type="button"
           aria-label="Collapse call"
           onClick={() => setCallSurfaceMode("standard")}
-          className="flex h-9 w-9 items-center justify-center rounded-md text-white/80 hover:bg-white/10 hover:text-white"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <ChevronDown className="h-5 w-5" />
         </button>
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-sm font-medium">{title}</span>
-          <CallTimer connectedAt={connectedAt} className="text-white/70" />
+          <CallTimer connectedAt={connectedAt} className="text-muted-foreground" />
         </div>
-        <span className="ml-2 flex shrink-0 items-center gap-1 text-xs text-white/70" aria-label="Participants in call">
+        <span
+          className="ml-2 flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
+          aria-label="Participants in call"
+        >
           <Users className="h-3.5 w-3.5" aria-hidden />
           {joined.length}
         </span>
         <div className="ml-auto flex items-center gap-2">
           {layout === "speaker" && <FilmstripSideToggle />}
           <div data-testid="call-layout-slot">
-            <LayoutToggle className="bg-white/10" />
+            <LayoutToggle className="bg-muted" />
           </div>
         </div>
       </div>
@@ -326,6 +319,7 @@ function DockFullscreenView({ workspaceId, connectedAt, currentUserId, roster, t
         workspaceId={workspaceId}
         pinnedUserId={pinnedUserId}
         onPin={setPinnedUserId}
+        backgroundClassName="bg-background"
       />
 
       <div className="shrink-0 px-3 pb-3 pt-1">

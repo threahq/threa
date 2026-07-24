@@ -15,6 +15,8 @@ interface CallStageLayoutProps {
   /** View-only local pin (not the store): overrides the default speaker. `null` = default. */
   pinnedUserId: string | null
   onPin: (userId: string) => void
+  /** Stage gutters/chrome background. Media tiles keep their fixed dark stage surface. */
+  backgroundClassName?: string
 }
 
 /** grid-cols by participant count: 1 up, 2×2 up to 4, 3×3 (scrolls) beyond. */
@@ -80,6 +82,7 @@ export function CallStageLayout({
   workspaceId,
   pinnedUserId,
   onPin,
+  backgroundClassName = "bg-call-stage",
 }: CallStageLayoutProps) {
   const users = useWorkspaceUsers(workspaceId ?? undefined)
   const joined = participants.filter((p) => p.participantStatus === "joined")
@@ -91,7 +94,8 @@ export function CallStageLayout({
       <div
         className={cn(
           // Row floor so a large group scrolls rather than compressing to slivers.
-          "grid min-h-0 flex-1 auto-rows-[minmax(7rem,1fr)] gap-2 overflow-y-auto bg-call-stage p-3",
+          "grid min-h-0 flex-1 auto-rows-[minmax(7rem,1fr)] gap-2 overflow-y-auto p-3",
+          backgroundClassName,
           gridColsClass(joined.length)
         )}
         data-testid="call-stage-grid"
@@ -119,7 +123,7 @@ export function CallStageLayout({
 
   return (
     <div
-      className={cn("flex min-h-0 flex-1 bg-call-stage", filmstripSide === "side" ? "flex-row" : "flex-col")}
+      className={cn("flex min-h-0 flex-1", backgroundClassName, filmstripSide === "side" ? "flex-row" : "flex-col")}
       data-testid="call-stage-speaker"
       data-filmstrip-side={filmstripSide}
     >

@@ -96,10 +96,12 @@ function Host({
   layout,
   filmstripSide = "bottom",
   participants,
+  backgroundClassName,
 }: {
   layout: CallLayout
   filmstripSide?: CallFilmstripSide
   participants: CallRosterParticipant[]
+  backgroundClassName?: string
 }) {
   const [pinnedUserId, setPinnedUserId] = useState<string | null>(null)
   return (
@@ -112,6 +114,7 @@ function Host({
         workspaceId={WORKSPACE_ID}
         pinnedUserId={pinnedUserId}
         onPin={setPinnedUserId}
+        backgroundClassName={backgroundClassName}
       />
     </CallManagerProvider>
   )
@@ -146,6 +149,15 @@ describe("CallStageLayout — grid", () => {
     expect(screen.getAllByTestId("call-tile")).toHaveLength(3)
     // No self-PiP in grid; the self tile is just another tile.
     expect(screen.queryByTestId("call-self-pip")).toBeNull()
+  })
+
+  it("uses the dark stage background by default and accepts a presentation override", () => {
+    const { rerender } = render(<Host layout="grid" participants={THREE} />)
+    expect(screen.getByTestId("call-stage-grid")).toHaveClass("bg-call-stage")
+
+    rerender(<Host layout="grid" participants={THREE} backgroundClassName="bg-background" />)
+    expect(screen.getByTestId("call-stage-grid")).toHaveClass("bg-background")
+    expect(screen.getByTestId("call-stage-grid")).not.toHaveClass("bg-call-stage")
   })
 
   it("ignores non-joined participants", () => {

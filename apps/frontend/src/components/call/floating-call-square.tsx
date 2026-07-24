@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react"
-import { GripHorizontal, Minimize2, PanelRight } from "lucide-react"
+import { GripHorizontal, Maximize2, Minimize2, PanelRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -40,7 +40,7 @@ const MARGIN = 8
 // Initial-anchor height estimate before the square measures itself; the mount
 // reclamp refines it against the real `offsetHeight`.
 const NOMINAL_HEIGHT = 320
-const MINIMIZED_SIZE = { width: 260, height: 50 }
+const MINIMIZED_SIZE = { width: 280, height: 50 }
 const MINIMIZED_POINTER_ANCHOR = { x: MINIMIZED_SIZE.width - 24, y: MINIMIZED_SIZE.height / 2 }
 const KEYBOARD_MOVE_STEP = 16
 
@@ -127,7 +127,11 @@ function SquareHeader({
         dragging ? "cursor-grabbing" : "cursor-grab"
       )}
     >
-      <GripHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+      <GripHorizontal
+        data-testid="expanded-call-drag-grip"
+        className="h-4 w-4 shrink-0 text-muted-foreground"
+        aria-hidden
+      />
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
       <button
         type="button"
@@ -223,24 +227,6 @@ function MinimizedBar({
       className="pointer-events-auto fixed z-50 flex items-center gap-1 rounded-xl border bg-background p-1.5 shadow-xl"
     >
       <Button
-        ref={restoreRef}
-        type="button"
-        variant="ghost"
-        size="sm"
-        aria-label="Restore call"
-        onClick={onRestore}
-        className="h-9 min-w-0 flex-1 gap-1.5 px-1"
-      >
-        <span
-          className={cn("h-2 w-2 shrink-0 rounded-full bg-primary", !REDUCED_MOTION && "animate-pulse")}
-          aria-hidden
-        />
-        <CallTimer connectedAt={connectedAt} className="text-xs" />
-      </Button>
-      <MuteButton />
-      <CameraButton />
-      <LeaveButton />
-      <Button
         type="button"
         variant="ghost"
         size="icon"
@@ -260,6 +246,29 @@ function MinimizedBar({
         )}
       >
         <GripHorizontal className="h-3.5 w-3.5 rotate-90" aria-hidden />
+      </Button>
+      <div className="flex min-w-0 flex-1 items-center gap-1" data-testid="minimized-call-content">
+        <span
+          className={cn("h-2 w-2 shrink-0 rounded-full bg-primary", !REDUCED_MOTION && "animate-pulse")}
+          aria-hidden
+        />
+        <CallTimer connectedAt={connectedAt} className="mr-auto text-xs" />
+        <div className="flex shrink-0 items-center gap-1" data-testid="minimized-call-controls">
+          <MuteButton />
+          <CameraButton />
+          <LeaveButton />
+        </div>
+      </div>
+      <Button
+        ref={restoreRef}
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label="Restore call"
+        onClick={onRestore}
+        className="h-9 w-9 shrink-0"
+      >
+        <Maximize2 className="h-4 w-4" aria-hidden />
       </Button>
     </div>
   )
