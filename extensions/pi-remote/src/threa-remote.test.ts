@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import threaRemote, { __testing } from "./threa-remote"
@@ -1671,6 +1671,113 @@ describe("session-scoped lifecycle isolation", () => {
     } finally {
       fetchSpy.mockRestore()
       rmSync(persistenceDirectory, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("reload claim continuity", () => {
+  test("restores, renews, and completes the in-flight claim after the extension cache is cleared", async () => {
+    const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
+    const pi = {
+      registerCommand: () => {},
+      on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => handlers.set(event, handler),
+      sendUserMessage: () => {},
+    }
+    threaRemote(pi as never)
+
+    const runtimeSessionId = "runtime_reload"
+    const config = {
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        [runtimeSessionId]: {
+          enabled: true,
+          instanceId: "pi-reload",
+          runtimeSessionId,
+          rootStreamId: "stream_1",
+          activeStreamId: "stream_1",
+        },
+      },
+    }
+    let idle = false
+    const ctx = {
+      sessionManager: { getSessionId: () => runtimeSessionId, getBranch: () => [] },
+      isIdle: () => idle,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: {
+        setStatus: () => {},
+        notify: () => {},
+        theme: { fg: (_tone: string, text: string) => text },
+      },
+    }
+    const writes: Array<{ url: string; body?: Record<string, unknown> }> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined
+      writes.push({ url, body })
+      if (url.endsWith(`/api/workspaces/${config.workspaceId}/config`)) {
+        return new Response("", { status: 404 })
+      }
+      const data = url.endsWith("/bot-invocations/claim") ? null : {}
+      return new Response(JSON.stringify({ data }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+
+    try {
+      __testing.setConfigForTesting(config)
+      __testing.beginPendingInvocation({
+        id: "binv_reload",
+        activeStreamId: "stream_1",
+        rootStreamId: "stream_1",
+        sourceMessageId: "msg_1",
+        promptMarkdown: "keep working",
+        claimToken: "claim_reload",
+        claimedInstanceId: "pi-reload",
+        claimExpiresAt: null,
+      } as never)
+
+      await handlers.get("session_shutdown")!({ reason: "reload" }, ctx)
+      const snapshotPath = __testing.pendingSnapshotPathForTesting(runtimeSessionId)
+      expect(existsSync(snapshotPath)).toBe(true)
+
+      await __testing.resetRuntimeForTesting()
+      __testing.setConfigForTesting(config)
+      expect(__testing.pendingInvocationId()).toBeUndefined()
+
+      await handlers.get("session_start")!({ reason: "reload" }, ctx)
+      expect(__testing.pendingInvocationId()).toBe("binv_reload")
+      expect(__testing.claimRenewTimerActive()).toBe(true)
+      expect(writes.some((write) => write.url.endsWith("/bot-invocations/binv_reload/renew"))).toBe(true)
+
+      idle = true
+      await handlers.get("agent_end")!(
+        {
+          messages: [
+            { role: "user", content: "keep working" },
+            { role: "assistant", content: "Finished after reload." },
+          ],
+        },
+        ctx
+      )
+
+      const completion = writes.find((write) => write.url.endsWith("/bot-invocations/binv_reload/complete"))
+      expect(completion?.body).toMatchObject({
+        instanceId: "pi-reload",
+        claimToken: "claim_reload",
+        finalMessageMarkdown: "Finished after reload.",
+      })
+      expect(__testing.pendingInvocationId()).toBeUndefined()
+      expect(__testing.claimRenewTimerActive()).toBe(false)
+      expect(existsSync(snapshotPath)).toBe(false)
+    } finally {
+      fetchSpy.mockRestore()
     }
   })
 })
