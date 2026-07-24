@@ -47,7 +47,7 @@ describe("useThreadAnchorEvent", () => {
       events: [event("event_before"), anchor],
       hasOlder: true,
       hasNewer: true,
-      sharedMessages: { msg_shared: { state: "missing", messageId: "msg_shared" } },
+      sharedMessages: { msg_shared: { type: "sharedMessage", state: "missing", messageId: "msg_shared" } },
     })
 
     const { result } = renderHook(() => useThreadAnchorEvent("ws_1", "stream_parent", "event_anchor", null), {
@@ -57,7 +57,7 @@ describe("useThreadAnchorEvent", () => {
     await waitFor(() => expect(result.current.event).toBe(anchor))
     expect(getEventsAround).toHaveBeenCalledWith("ws_1", "stream_parent", "event_anchor", 2)
     expect(result.current.sharedMessages).toEqual({
-      msg_shared: { state: "missing", messageId: "msg_shared" },
+      msg_shared: { type: "sharedMessage", state: "missing", messageId: "msg_shared" },
     })
   })
 

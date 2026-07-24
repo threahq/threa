@@ -14,6 +14,7 @@ export { invalidatePointersForEvent, POINTER_INVALIDATED_EVENT } from "./outbox-
 export {
   hydrateSharedMessages,
   hydrateSharedMessageIds,
+  hydrateSharedMessagesForRoom,
   collectSharedMessageIds,
   type HydratedSharedMessage,
 } from "./hydration"

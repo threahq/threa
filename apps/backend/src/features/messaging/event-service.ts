@@ -5,7 +5,12 @@ import { StreamRepository } from "../streams"
 import { StreamMemberRepository, SparseReadRepository } from "../streams"
 import { checkStreamAccess, resolveEffectiveAccessStream } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
-import { ShareService, type ResolveEffectiveStream } from "./sharing"
+import {
+  collectSharedMessageIds,
+  hydrateSharedMessagesForRoom,
+  ShareService,
+  type ResolveEffectiveStream,
+} from "./sharing"
 import {
   AttachmentRepository,
   AttachmentReferenceRepository,
@@ -805,10 +810,18 @@ export class EventService {
       confirmedPrivacyWarning: params.confirmedPrivacyWarning,
     })
 
+    const sharedMessageIds = new Set<string>()
+    collectSharedMessageIds(params.contentJson, sharedMessageIds)
+    const sharedMessages =
+      sharedMessageIds.size > 0
+        ? await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
+        : undefined
+
     await OutboxRepository.insert(client, "message:created", {
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       event: serializeBigInt(event),
+      ...(sharedMessages && { sharedMessages }),
     })
 
     // Stream activity for sidebar updates. sequence/messageOrdinal are absolute
@@ -980,10 +993,18 @@ export class EventService {
           )
         }
 
+        const sharedMessageIds = new Set<string>()
+        collectSharedMessageIds(params.contentJson, sharedMessageIds)
+        const sharedMessages =
+          sharedMessageIds.size > 0
+            ? await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
+            : undefined
+
         await OutboxRepository.insert(client, "message:edited", {
           workspaceId: params.workspaceId,
           streamId: params.streamId,
           event: serializeBigInt(event),
+          ...(sharedMessages && { sharedMessages }),
         })
 
         const stream = await StreamRepository.findById(client, params.streamId)

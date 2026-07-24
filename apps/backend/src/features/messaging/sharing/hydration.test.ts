@@ -3,6 +3,7 @@ import {
   collectSharedMessageIds,
   hydrateSharedMessageIds,
   hydrateSharedMessages,
+  hydrateSharedMessagesForRoom,
   MAX_HYDRATION_DEPTH,
 } from "./hydration"
 import { MessageRepository } from "../repository"
@@ -129,7 +130,7 @@ describe("hydrateSharedMessageIds", () => {
     stubAuthorLookups()
     stubFullAccess()
     const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toEqual({ state: "deleted", messageId: "msg_a", deletedAt })
+    expect(result.msg_a).toEqual({ type: "sharedMessage", state: "deleted", messageId: "msg_a", deletedAt })
   })
 
   it("returns missing payloads for ids that resolve to no row", async () => {
@@ -137,7 +138,7 @@ describe("hydrateSharedMessageIds", () => {
     stubAuthorLookups()
     stubFullAccess()
     const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_missing"])
-    expect(result.msg_missing).toEqual({ state: "missing", messageId: "msg_missing" })
+    expect(result.msg_missing).toEqual({ type: "sharedMessage", state: "missing", messageId: "msg_missing" })
   })
 
   it("returns a private placeholder when viewer can't access the source stream", async () => {
@@ -157,6 +158,7 @@ describe("hydrateSharedMessageIds", () => {
 
     const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
     expect(result.msg_a).toEqual({
+      type: "sharedMessage",
       state: "private",
       messageId: "msg_a",
       sourceStreamKind: "channel",
@@ -190,6 +192,7 @@ describe("hydrateSharedMessageIds", () => {
 
     const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
     expect(result.msg_a).toEqual({
+      type: "sharedMessage",
       state: "private",
       messageId: "msg_a",
       sourceStreamKind: "channel",
@@ -250,6 +253,7 @@ describe("hydrateSharedMessageIds", () => {
     // stale cached attr — the fix for "shared_messages cached streamId goes
     // stale after batch move-to-thread".
     expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+      type: "sharedMessage",
       state: "truncated",
       messageId: `msg_${MAX_HYDRATION_DEPTH}`,
       streamId: "stream_live",
@@ -285,6 +289,7 @@ describe("hydrateSharedMessageIds", () => {
 
     const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_0"])
     expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+      type: "sharedMessage",
       state: "deleted",
       messageId: `msg_${MAX_HYDRATION_DEPTH}`,
       deletedAt: new Date("2026-04-01"),
@@ -316,6 +321,7 @@ describe("hydrateSharedMessageIds", () => {
 
     const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_0"])
     expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+      type: "sharedMessage",
       state: "missing",
       messageId: `msg_${MAX_HYDRATION_DEPTH}`,
     })
@@ -360,6 +366,7 @@ describe("hydrateSharedMessageIds", () => {
 
     const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_0"])
     expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+      type: "sharedMessage",
       state: "private",
       messageId: `msg_${MAX_HYDRATION_DEPTH}`,
       sourceStreamKind: "channel",
@@ -403,6 +410,7 @@ describe("hydrateSharedMessageIds", () => {
     const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_outer"])
     expect(result.msg_outer).toMatchObject({ state: "ok" })
     expect(result.msg_inner).toEqual({
+      type: "sharedMessage",
       state: "private",
       messageId: "msg_inner",
       sourceStreamKind: "channel",
@@ -484,8 +492,157 @@ describe("hydrateSharedMessageIds", () => {
     const findAttachments = spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
 
     const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_missing"])
-    expect(result.msg_missing).toEqual({ state: "missing", messageId: "msg_missing" })
+    expect(result.msg_missing).toEqual({ type: "sharedMessage", state: "missing", messageId: "msg_missing" })
     expect(findAttachments).not.toHaveBeenCalled()
+  })
+})
+
+describe("hydrateSharedMessagesForRoom", () => {
+  it("hydrates depth-1 grants uniformly without viewer access", async () => {
+    const deletedAt = new Date("2026-02-01")
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([
+        ["msg_ok", makeMessage({ id: "msg_ok", streamId: "stream_private" })],
+        ["msg_deleted", makeMessage({ id: "msg_deleted", streamId: "stream_private", deletedAt })],
+      ])
+    )
+    spyOn(streamsBarrel, "listRoomReadableStreamIds").mockResolvedValue(new Set())
+    spyOn(SharedMessageRepository, "listSourcesGrantedToRoom").mockResolvedValue(new Set(["msg_ok", "msg_deleted"]))
+    spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Ada" } as any])
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
+
+    const result = await hydrateSharedMessagesForRoom({} as any, "ws_1", "stream_target", [
+      "msg_ok",
+      "msg_deleted",
+      "msg_missing",
+    ])
+
+    expect(result).toMatchObject({
+      msg_ok: { type: "sharedMessage", state: "ok", messageId: "msg_ok", authorName: "Ada", attachments: [] },
+      msg_deleted: { type: "sharedMessage", state: "deleted", messageId: "msg_deleted", deletedAt },
+      msg_missing: { type: "sharedMessage", state: "missing", messageId: "msg_missing" },
+    })
+  })
+
+  it("hydrates a nested pointer into a public stream as ok with no grant rows", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+      const map = new Map<string, any>()
+      for (const id of ids) {
+        if (id === "msg_outer") {
+          map.set(
+            id,
+            makeMessage({
+              id,
+              streamId: "stream_target",
+              contentJson: {
+                type: "doc",
+                content: [{ type: "sharedMessage", attrs: { messageId: "msg_inner", streamId: "stream_public" } }],
+              },
+            })
+          )
+        } else if (id === "msg_inner") {
+          map.set(id, makeMessage({ id, streamId: "stream_public" }))
+        }
+      }
+      return map
+    })
+    stubAuthorLookups()
+    spyOn(streamsBarrel, "listRoomReadableStreamIds").mockImplementation(async (_db, _ws, _room, candidates) => {
+      return new Set([...candidates].filter((id) => id === "stream_target" || id === "stream_public"))
+    })
+    spyOn(SharedMessageRepository, "listSourcesGrantedToRoom").mockResolvedValue(new Set())
+
+    const result = await hydrateSharedMessagesForRoom({} as any, "ws_1", "stream_target", ["msg_outer"])
+    expect(result.msg_outer).toMatchObject({ type: "sharedMessage", state: "ok", messageId: "msg_outer" })
+    expect(result.msg_inner).toMatchObject({
+      type: "sharedMessage",
+      state: "ok",
+      messageId: "msg_inner",
+      streamId: "stream_public",
+    })
+  })
+
+  it("renders a nested pointer into a private stream as a private placeholder reporting the root's kind/visibility", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+      const map = new Map<string, any>()
+      for (const id of ids) {
+        if (id === "msg_outer") {
+          map.set(
+            id,
+            makeMessage({
+              id,
+              streamId: "stream_target",
+              contentJson: {
+                type: "doc",
+                content: [{ type: "sharedMessage", attrs: { messageId: "msg_inner", streamId: "stream_thread" } }],
+              },
+            })
+          )
+        } else if (id === "msg_inner") {
+          map.set(id, makeMessage({ id, streamId: "stream_thread" }))
+        }
+      }
+      return map
+    })
+    stubAuthorLookups()
+    spyOn(streamsBarrel, "listRoomReadableStreamIds").mockImplementation(async (_db, _ws, _room, candidates) => {
+      // A thread under a private root is not room-readable; only the room itself is.
+      return new Set([...candidates].filter((id) => id === "stream_target"))
+    })
+    spyOn(SharedMessageRepository, "listSourcesGrantedToRoom").mockResolvedValue(new Set())
+    spyOn(StreamRepository, "findByIds")
+      .mockResolvedValueOnce([
+        { id: "stream_thread", type: "thread", visibility: "private", rootStreamId: "stream_root" } as any,
+      ])
+      .mockResolvedValueOnce([{ id: "stream_root", type: "channel", visibility: "private", rootStreamId: null } as any])
+
+    const result = await hydrateSharedMessagesForRoom({} as any, "ws_1", "stream_target", ["msg_outer"])
+    expect(result.msg_outer).toMatchObject({ type: "sharedMessage", state: "ok", messageId: "msg_outer" })
+    expect(result.msg_inner).toEqual({
+      type: "sharedMessage",
+      state: "private",
+      messageId: "msg_inner",
+      sourceStreamKind: "channel",
+      sourceVisibility: "private",
+    })
+  })
+
+  it("emits truncated with the live streamId for a public chain past MAX_HYDRATION_DEPTH", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+      const map = new Map<string, any>()
+      for (const id of ids) {
+        const next = id.replace(/^msg_(\d+)$/, (_m, n) => `msg_${Number(n) + 1}`)
+        map.set(
+          id,
+          makeMessage({
+            id,
+            streamId: id === `msg_${MAX_HYDRATION_DEPTH}` ? "stream_live" : "stream_public",
+            contentJson: {
+              type: "doc",
+              content: [{ type: "sharedMessage", attrs: { messageId: next, streamId: "stream_cached" } }],
+            },
+          })
+        )
+      }
+      return map
+    })
+    stubAuthorLookups()
+    // Every source resolves to a public root → room-readable at every level.
+    spyOn(streamsBarrel, "listRoomReadableStreamIds").mockImplementation(async (_db, _ws, _room, candidates) => {
+      return new Set(candidates)
+    })
+    spyOn(SharedMessageRepository, "listSourcesGrantedToRoom").mockResolvedValue(new Set())
+
+    const result = await hydrateSharedMessagesForRoom({} as any, "ws_1", "stream_target", ["msg_0"])
+    for (let i = 0; i < MAX_HYDRATION_DEPTH; i++) {
+      expect(result[`msg_${i}`]).toMatchObject({ state: "ok" })
+    }
+    expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+      type: "sharedMessage",
+      state: "truncated",
+      messageId: `msg_${MAX_HYDRATION_DEPTH}`,
+      streamId: "stream_live",
+    })
   })
 })
 

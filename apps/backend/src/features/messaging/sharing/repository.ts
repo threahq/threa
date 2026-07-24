@@ -1,7 +1,7 @@
 import type { Querier } from "../../../db"
 import { sql } from "../../../db"
 import { type ShareFlavor } from "@threa/types"
-import { listAccessibleStreamIds } from "../../streams"
+import { listAccessibleStreamIds, listRoomReadableStreamIds } from "../../streams"
 
 // Internal row type (snake_case, not exported)
 interface SharedMessageRow {
@@ -135,6 +135,28 @@ export const SharedMessageRepository = {
     if (accessibleTargets.size === 0) return new Set()
     return new Set(
       candidates.rows.filter((r) => accessibleTargets.has(r.target_stream_id)).map((r) => r.source_message_id)
+    )
+  },
+
+  async listSourcesGrantedToRoom(
+    db: Querier,
+    workspaceId: string,
+    roomStreamId: string,
+    sourceMessageIds: readonly string[]
+  ): Promise<Set<string>> {
+    if (sourceMessageIds.length === 0) return new Set()
+    const candidates = await db.query<{ source_message_id: string; target_stream_id: string }>(sql`
+      SELECT DISTINCT source_message_id, target_stream_id
+      FROM shared_messages
+      WHERE workspace_id = ${workspaceId}
+        AND source_message_id = ANY(${sourceMessageIds as string[]})
+    `)
+    if (candidates.rows.length === 0) return new Set()
+    const targetIds = [...new Set(candidates.rows.map((r) => r.target_stream_id))]
+    const readableTargets = await listRoomReadableStreamIds(db, workspaceId, roomStreamId, targetIds)
+    if (readableTargets.size === 0) return new Set()
+    return new Set(
+      candidates.rows.filter((r) => readableTargets.has(r.target_stream_id)).map((r) => r.source_message_id)
     )
   },
 }
