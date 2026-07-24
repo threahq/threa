@@ -7,6 +7,7 @@ import { clearAllCachedData, db } from "@/db"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_WORKSPACE_SETTINGS,
+  type Activity,
   type StreamMember,
   type WorkspaceBootstrap,
 } from "@threa/types"
@@ -14,7 +15,8 @@ import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 import { workspaceKeys } from "./use-workspaces"
 import { useUnreadCounts } from "./use-unread-counts"
 
-const mockMarkAsRead = vi.fn<(workspaceId: string, streamId: string, lastEventId: string) => Promise<StreamMember>>()
+const mockMarkAsRead =
+  vi.fn<(workspaceId: string, streamId: string, lastEventId: string) => Promise<StreamMember | null>>()
 const mockPostMessage = vi.fn()
 const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
 
@@ -330,5 +332,92 @@ describe("useUnreadCounts", () => {
     })
 
     expect(mockPostMessage).toHaveBeenCalledWith({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId: "stream_1" })
+  })
+
+  it("clears activity without touching membership state when the read returns a null membership", async () => {
+    // A viewer with inherited access but no membership row (INV-62: non-member
+    // thread leg) gets an activity-only read: the server returns 200 with a
+    // null membership. The held activity rows must clear, and no membership-
+    // shaped write may happen (spreading null would junk the IDB row).
+    const activity = (id: string, streamId: string): Activity => ({
+      id,
+      workspaceId: "ws_1",
+      userId: "member_1",
+      activityType: "message",
+      streamId,
+      messageId: `msg_${id}`,
+      actorId: "persona_system_ariadne",
+      actorType: "persona",
+      context: {},
+      readAt: null,
+      createdAt: new Date().toISOString(),
+      isSelf: false,
+      emoji: null,
+    })
+
+    const queryClient = new QueryClient()
+    const bootstrap = makeBootstrap()
+    bootstrap.unreadActivities = [
+      activity("act_1", "stream_thread"),
+      activity("act_2", "stream_thread"),
+      activity("act_3", "stream_2"),
+    ]
+    bootstrap.activityCounts = { stream_thread: 2, stream_2: 1 }
+    bootstrap.unreadActivityCount = 3
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), bootstrap)
+
+    await db.streamMemberships.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId: "event_old",
+      lastReadAt: null,
+      joinedAt: new Date().toISOString(),
+      _cachedAt: Date.now(),
+    })
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: {},
+      mentionCounts: {},
+      activityCounts: { stream_thread: 2, stream_2: 1 },
+      unreadActivityCount: 3,
+      unreadActivities: [
+        activity("act_1", "stream_thread"),
+        activity("act_2", "stream_thread"),
+        activity("act_3", "stream_2"),
+      ],
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    mockMarkAsRead.mockResolvedValue(null)
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    act(() => {
+      result.current.markAsRead("stream_thread", "event_new")
+    })
+
+    await waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_3"])
+    })
+
+    // No watermark to persist: no membership row created, no stream row
+    // touched, and unrelated memberships stay put.
+    expect(await db.streamMemberships.get("ws_1:stream_thread")).toBeUndefined()
+    expect(await db.streams.get("stream_thread")).toBeUndefined()
+    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_old" })
+
+    const updated = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(updated?.unreadActivities?.map((a) => a.id)).toEqual(["act_3"])
+    expect(updated?.activityCounts).toEqual({ stream_2: 1 })
+    expect(updated?.unreadActivityCount).toBe(1)
+    expect(updated?.streamMemberships.find((m) => m.streamId === "stream_1")?.lastReadEventId).toBe("event_old")
   })
 })

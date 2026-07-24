@@ -199,8 +199,8 @@ export const streamsApi = {
     return res.data.membership
   },
 
-  async markAsRead(workspaceId: string, streamId: string, lastEventId: string): Promise<StreamMember> {
-    const res = await api.post<{ membership: StreamMember }>(
+  async markAsRead(workspaceId: string, streamId: string, lastEventId: string): Promise<StreamMember | null> {
+    const res = await api.post<{ membership: StreamMember | null }>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/read`,
       { lastEventId }
     )

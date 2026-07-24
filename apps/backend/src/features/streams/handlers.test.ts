@@ -443,3 +443,80 @@ describe("createStreamHandlers.create — allowedToolCategories", () => {
     expect(create.mock.calls[0]![0].companionPersonaId).toBeUndefined()
   })
 })
+
+describe("createStreamHandlers.markAsRead — access without membership", () => {
+  function makeRes() {
+    const captured: { status: number; body: unknown } = { status: 200, body: undefined }
+    const res = {
+      status(code: number) {
+        captured.status = code
+        return res
+      },
+      json(body: unknown) {
+        captured.body = body
+        return res
+      },
+    }
+    return { res: res as unknown as Response, captured }
+  }
+
+  function makeHandlers(
+    streamService: Partial<StreamService>,
+    activityService: { markStreamActivityAsRead: (userId: string, streamId: string) => Promise<void> }
+  ) {
+    return createStreamHandlers({ streamService, activityService, pool: {} } as unknown as Parameters<
+      typeof createStreamHandlers
+    >[0])
+  }
+
+  function makeReq(): Request {
+    return {
+      user: { id: "usr_viewer" },
+      workspaceId: "ws_1",
+      params: { streamId: "stream_thread" },
+      body: { lastEventId: "evt_1" },
+    } as unknown as Request
+  }
+
+  it("clears stream activity and returns null membership for a non-member viewer", async () => {
+    const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))
+    const markAsRead = mock(() => Promise.resolve(null))
+    const markStreamActivityAsRead = mock(() => Promise.resolve())
+    const handlers = makeHandlers({ validateStreamAccess, markAsRead } as Partial<StreamService>, {
+      markStreamActivityAsRead,
+    })
+    const { res, captured } = makeRes()
+
+    await handlers.markAsRead(makeReq(), res)
+
+    // Access (not membership) gates the read: a viewer who inherits thread
+    // access from the root (INV-62) gets an activity-only read, not a 404.
+    expect(captured.status).not.toBe(404)
+    expect(captured.body).toEqual({ membership: null })
+    expect(markStreamActivityAsRead).toHaveBeenCalledWith("usr_viewer", "stream_thread")
+  })
+
+  it("returns the membership for a member read and still clears activity", async () => {
+    const membership = {
+      streamId: "stream_thread",
+      memberId: "usr_viewer",
+      notificationLevel: null,
+      lastReadEventId: "evt_1",
+      lastReadAt: null,
+      joinedAt: new Date(),
+    }
+    const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))
+    const markAsRead = mock(() => Promise.resolve(membership))
+    const markStreamActivityAsRead = mock(() => Promise.resolve())
+    const handlers = makeHandlers({ validateStreamAccess, markAsRead } as Partial<StreamService>, {
+      markStreamActivityAsRead,
+    })
+    const { res, captured } = makeRes()
+
+    await handlers.markAsRead(makeReq(), res)
+
+    expect(captured.status).toBe(200)
+    expect(captured.body).toEqual({ membership })
+    expect(markStreamActivityAsRead).toHaveBeenCalledWith("usr_viewer", "stream_thread")
+  })
+})
