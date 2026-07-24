@@ -15,6 +15,7 @@ import {
   StreamMemberRepository,
   StreamRepository,
   SparseReadRepository,
+  ReadStateRepository,
   type StreamEvent,
 } from "../streams"
 import { AttachmentRepository, AttachmentReferenceRepository, AttachmentUploadRepository } from "../attachments"
@@ -1036,6 +1037,92 @@ describe("EventService.createMessage metadata propagation", () => {
   })
 })
 
+describe("EventService.createMessage born-read read-state shadow", () => {
+  const baseParams = {
+    workspaceId: "ws_1",
+    streamId: "stream_1",
+    authorId: "usr_1",
+    authorType: "user" as const,
+    contentJson: { type: "doc", content: [] },
+    contentMarkdown: "hello",
+  }
+
+  beforeEach(() => {
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback({})) as any)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", type: "scratchpad" } as any)
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
+    spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
+    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
+    spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: "evt_1",
+      streamId: params.streamId,
+      sequence: 1n,
+      eventType: params.eventType,
+      payload: params.payload,
+      actorId: params.actorId,
+      actorType: params.actorType,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: params.id,
+      streamId: params.streamId,
+      sequence: params.sequence,
+      authorId: params.authorId,
+      authorType: params.authorType,
+      contentJson: params.contentJson,
+      contentMarkdown: params.contentMarkdown,
+      replyCount: 0,
+      clientMessageId: params.clientMessageId ?? null,
+      sentVia: params.sentVia ?? null,
+      reactions: {},
+      metadata: params.metadata ?? {},
+      editedAt: null,
+      deletedAt: null,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "findById").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+    spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("advances the author's read state on the same tx client when the membership write lands", async () => {
+    spyOn(StreamMemberRepository, "update").mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as any)
+    const service = new EventService({} as any)
+
+    await service.createMessage(baseParams)
+
+    // The born-read watermark write and its read-state shadow land on the same tx
+    // client with the same (stream, author, event) — advance shadows the update.
+    const updateCall = (StreamMemberRepository.update as any).mock.calls[0]
+    expect(updateCall.slice(0, 3)).toEqual([{}, "stream_1", "usr_1"])
+    expect(ReadStateRepository.advance).toHaveBeenCalledWith(
+      updateCall[0],
+      "stream_1",
+      "usr_1",
+      updateCall[3].lastReadEventId
+    )
+  })
+
+  it("does not write read state for a non-member author (membership update no-ops)", async () => {
+    spyOn(StreamMemberRepository, "update").mockResolvedValue(null)
+    const service = new EventService({} as any)
+
+    await service.createMessage(baseParams)
+
+    expect(StreamMemberRepository.update).toHaveBeenCalled()
+    expect(ReadStateRepository.advance).not.toHaveBeenCalled()
+  })
+})
+
 describe("EventService.createMessage conversation declaration (Mechanism C)", () => {
   const baseParams = {
     workspaceId: "ws_1",
@@ -1658,6 +1745,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     spyOn(MessageRepository, "moveToStream").mockResolvedValue(undefined as any)
     spyOn(SparseReadRepository, "rehomeReads").mockResolvedValue(undefined as any)
     spyOn(StreamMemberRepository, "repointWatermarksForMovedEvents").mockResolvedValue(undefined as any)
+    spyOn(ReadStateRepository, "repointForMovedEvents").mockResolvedValue(undefined as any)
     spyOn(DraftsRepository, "rescopeByScope").mockResolvedValue([])
     spyOn(MessageRepository, "updateStreamScopedReferences").mockResolvedValue(undefined as any)
     spyOn(StreamRepository, "moveChildThreadsToParent").mockResolvedValue(undefined as any)
@@ -1707,6 +1795,19 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     const moved = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "messages:moved")
     expect(moved?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source")]: hydratedEntry })
     expect(moved?.[2].sharedMessages).toEqual({ msg_source: hydratedEntry })
+
+    // The read-state repoint shadows the membership repoint on the same tx client
+    // with the identical moved set (same source stream, same event+source-sequence pairs).
+    expect(StreamMemberRepository.repointWatermarksForMovedEvents).toHaveBeenCalledWith(
+      {},
+      "stream_src",
+      expect.any(Array)
+    )
+    expect(ReadStateRepository.repointForMovedEvents).toHaveBeenCalledWith(
+      {},
+      "stream_src",
+      (StreamMemberRepository.repointWatermarksForMovedEvents as any).mock.calls[0][2]
+    )
   })
 
   it("omits both maps and skips hydration for a pointer-free move", async () => {

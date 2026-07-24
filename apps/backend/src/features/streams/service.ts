@@ -10,6 +10,7 @@ import {
   type UpdateStreamParams,
 } from "./repository"
 import { StreamMemberRepository, StreamMember } from "./member-repository"
+import { ReadStateRepository } from "./read-state-repository"
 import { StreamEventRepository, type StreamEvent } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 import { MessageRepository } from "../messaging"
@@ -630,6 +631,8 @@ export class StreamService {
           // Set lastReadEventId so initial members don't see creation events as unread
           const lastEvent = events[events.length - 1]
           await StreamMemberRepository.setLastReadEventIdForMembers(client, stream.id, validMemberIds, lastEvent.id)
+          // Shadow the born-read watermark into stream_read_state (same tx).
+          await ReadStateRepository.setForUsers(client, stream.id, validMemberIds, lastEvent.id)
         }
       }
 
@@ -1568,6 +1571,11 @@ export class StreamService {
 
     // Set read cursor *after* inserting the member_added event so it's not shown as unread
     await StreamMemberRepository.update(client, stream.id, memberId, { lastReadEventId: evtId })
+    // Shadow the born-read watermark (same tx) — monotonic: a re-added user
+    // keeps any surviving higher position (plan decision 1, effective in the
+    // new store from day one); membership's reset-on-rejoin is unchanged
+    // during the shadow window and dies with the columns in PR 4.
+    await ReadStateRepository.advance(client, stream.id, memberId, evtId)
 
     await OutboxRepository.insert(client, "stream:member_added", {
       workspaceId: stream.workspaceId,
@@ -1925,6 +1933,13 @@ export class StreamService {
 
       const membership = await StreamMemberRepository.update(client, streamId, memberId, { lastReadEventId: eventId })
       if (membership) {
+        // Shadow the advance into stream_read_state (same tx). Monotonic by
+        // design — reads never regress the new store; only explicit
+        // mark-unread and the A3 move-correction may lower it. Membership can
+        // still regress under a stale device during the shadow window (its
+        // semantics, unchanged — the columns die in PR 4); the PR-2 cutover
+        // converges such rows upward only (owner-ratified).
+        await ReadStateRepository.advance(client, streamId, memberId, eventId)
         // Overlay invariant: every overlay row sits strictly above the watermark.
         // Advancing the watermark absorbs the run at/below it, so prune those rows
         // in the same transaction; the remaining overlay is the absolute set the
@@ -1976,6 +1991,8 @@ export class StreamService {
 
       const membership = await StreamMemberRepository.update(client, streamId, memberId, { lastReadEventId })
       if (membership) {
+        // Shadow the regress into stream_read_state (unconditional; may be null — same tx).
+        await ReadStateRepository.set(client, streamId, memberId, lastReadEventId)
         // Mark-unread means "this message and everything after it is unread", so
         // overlay rows at/above the target contradict the intent — drop them. The
         // pointer lands just before the target, which can also ADVANCE it (target
@@ -2026,6 +2043,8 @@ export class StreamService {
 
       if (updatesToApply.size > 0) {
         await StreamMemberRepository.batchUpdateLastReadEventId(client, memberId, updatesToApply)
+        // Shadow the mark-all advance into stream_read_state (same tx).
+        await ReadStateRepository.batchAdvance(client, memberId, updatesToApply)
       }
 
       const updatedStreamIds = Array.from(updatesToApply.keys())

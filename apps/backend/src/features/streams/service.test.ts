@@ -3,6 +3,7 @@ import type { PoolClient } from "pg"
 import { StreamService } from "./service"
 import { StreamRepository } from "./repository"
 import { StreamMemberRepository, type StreamMember } from "./member-repository"
+import { ReadStateRepository } from "./read-state-repository"
 import { StreamEventRepository } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 import { OutboxRepository } from "../../lib/outbox"
@@ -36,6 +37,16 @@ const mockPruneAtOrBelow = spyOn(SparseReadRepository, "pruneAtOrBelow").mockRes
 const mockDeleteAtOrAbove = spyOn(SparseReadRepository, "deleteAtOrAbove").mockResolvedValue(undefined)
 const mockDeleteAllForStreams = spyOn(SparseReadRepository, "deleteAllForStreams").mockResolvedValue(undefined)
 const mockListOverlayIds = spyOn(SparseReadRepository, "listOverlayIds").mockResolvedValue([])
+// Read-state shadow writes run inside every watermark write path; stub against
+// the fake `{}` client so unit tests never touch a real DB.
+const mockReadStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined)
+const mockReadStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(undefined)
+const mockReadStateBatchAdvance = spyOn(ReadStateRepository, "batchAdvance").mockResolvedValue(undefined)
+const mockReadStateSetForUsers = spyOn(ReadStateRepository, "setForUsers").mockResolvedValue(undefined)
+const mockSlugExists = spyOn(StreamRepository, "slugExistsInWorkspace")
+const mockInsertManyEvents = spyOn(StreamEventRepository, "insertMany")
+const mockInsertManyOutbox = spyOn(OutboxRepository, "insertMany")
+const mockSetLastReadForMembers = spyOn(StreamMemberRepository, "setLastReadEventIdForMembers")
 
 spyOn(idModule, "eventId").mockReturnValue("evt_1")
 spyOn(idModule, "streamId").mockReturnValue("stream_new")
@@ -1485,6 +1496,7 @@ describe("StreamService.markAsRead", () => {
     mockMemberUpdate.mockReset()
     mockGetMessageOrdinalForEvent.mockReset()
     mockFindByStreamAndMember.mockReset()
+    mockReadStateAdvance.mockClear()
     mockInsertOutbox.mockReset()
     mockInsertOutbox.mockResolvedValue({} as never)
   })
@@ -1505,6 +1517,9 @@ describe("StreamService.markAsRead", () => {
       lastReadOrdinal: 7,
       readMessageIds: [],
     })
+    // Shadow advance on the same tx client — monotonic from day one (reads
+    // never regress the new store; cutover converges upward only).
+    expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9")
   })
 
   test("ignores a read pointer that doesn't resolve to a real event — no watermark write, no stream:read", async () => {
@@ -1522,6 +1537,7 @@ describe("StreamService.markAsRead", () => {
 
     expect(mockMemberUpdate).not.toHaveBeenCalled()
     expect(mockInsertOutbox).not.toHaveBeenCalled()
+    expect(mockReadStateAdvance).not.toHaveBeenCalled()
     expect(result?.lastReadEventId).toBe("evt_real")
   })
 
@@ -1532,6 +1548,7 @@ describe("StreamService.markAsRead", () => {
     await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
 
     expect(mockInsertOutbox).not.toHaveBeenCalled()
+    expect(mockReadStateAdvance).not.toHaveBeenCalled()
   })
 })
 
@@ -1548,6 +1565,7 @@ describe("StreamService.markUnread", () => {
     mockFindByMessageId.mockReset()
     mockFindPreviousMessageEvent.mockReset()
     mockCountMessagesThrough.mockReset()
+    mockReadStateSet.mockClear()
     mockInsertOutbox.mockReset()
     mockInsertOutbox.mockResolvedValue({} as never)
   })
@@ -1572,6 +1590,8 @@ describe("StreamService.markUnread", () => {
       readMessageIds: [],
     })
     expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "stream_1", "usr_1", 50n)
+    // Shadow regress on the same tx client.
+    expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_4")
   })
 
   test("clears the read pointer when the target is the first message", async () => {
@@ -1588,6 +1608,8 @@ describe("StreamService.markUnread", () => {
       "stream:read_set",
       expect.objectContaining({ lastReadEventId: null, lastReadSequence: "0", lastReadOrdinal: 0 })
     )
+    // Regress to null (park before the first message) is shadowed too.
+    expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", null)
   })
 
   test("returns null and emits nothing when the message is not in the stream", async () => {
@@ -1611,6 +1633,7 @@ describe("StreamService.markUnread", () => {
     expect(result).toBeNull()
     expect(mockMemberUpdate).toHaveBeenCalled()
     expect(mockInsertOutbox).not.toHaveBeenCalled()
+    expect(mockReadStateSet).not.toHaveBeenCalled()
   })
 })
 
@@ -1629,6 +1652,7 @@ describe("StreamService.markAllAsRead", () => {
     mockLatestEventIds.mockReset()
     mockBatchUpdate.mockReset()
     mockCountMessages.mockReset()
+    mockReadStateBatchAdvance.mockClear()
     mockInsertOutbox.mockReset()
     mockInsertOutbox.mockResolvedValue({} as never)
   })
@@ -1669,6 +1693,15 @@ describe("StreamService.markAllAsRead", () => {
         { streamId: "stream_2", lastReadOrdinal: 3 },
       ],
     })
+    // Shadow batch advance on the same tx client with the same per-stream updates.
+    expect(mockReadStateBatchAdvance).toHaveBeenCalledWith(
+      {},
+      "usr_1",
+      new Map([
+        ["stream_1", "evt_a"],
+        ["stream_2", "evt_b"],
+      ])
+    )
   })
 })
 
@@ -2036,5 +2069,40 @@ describe("StreamService.addBotToStream", () => {
 
     expect(mockInsertEvent).not.toHaveBeenCalled()
     expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+})
+
+describe("StreamService.createChannel read-state shadow", () => {
+  let service: StreamService
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockSlugExists.mockReset().mockResolvedValue(false)
+    mockInsertStream.mockReset().mockResolvedValue({ id: "stream_new", workspaceId: "ws_1", type: "channel" } as never)
+    mockInsertMember.mockReset().mockResolvedValue({} as never)
+    mockInsertOutbox.mockReset().mockResolvedValue({} as never)
+    mockFindMembersByIds.mockReset().mockResolvedValue([
+      { id: "usr_a", workspaceId: "ws_1" },
+      { id: "usr_b", workspaceId: "ws_1" },
+    ] as never)
+    mockInsertManyMembers.mockReset().mockResolvedValue([] as never)
+    mockInsertManyEvents.mockReset().mockResolvedValue([{ id: "evt_a" }, { id: "evt_b" }] as never)
+    mockInsertManyOutbox.mockReset().mockResolvedValue(undefined as never)
+    mockSetLastReadForMembers.mockReset().mockResolvedValue(undefined as never)
+    mockReadStateSetForUsers.mockClear()
+  })
+
+  test("shadows the initial-member born-read watermark via setForUsers on the same tx client", async () => {
+    await service.createChannel({
+      workspaceId: "ws_1",
+      slug: "chan",
+      createdBy: "usr_owner",
+      memberIds: ["usr_owner", "usr_a", "usr_b"],
+    } as never)
+
+    // The creator is filtered out of the additional-member batch; the watermark
+    // lands on the last creation event. setForUsers shadows setLastReadEventIdForMembers.
+    expect(mockSetLastReadForMembers).toHaveBeenCalledWith({}, "stream_new", ["usr_a", "usr_b"], "evt_b")
+    expect(mockReadStateSetForUsers).toHaveBeenCalledWith({}, "stream_new", ["usr_a", "usr_b"], "evt_b")
   })
 })

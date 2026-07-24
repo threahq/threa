@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
 import { StreamRepository } from "../streams"
-import { StreamMemberRepository, SparseReadRepository } from "../streams"
+import { StreamMemberRepository, SparseReadRepository, ReadStateRepository } from "../streams"
 import { checkStreamAccess, resolveEffectiveAccessStream } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
 import {
@@ -759,9 +759,14 @@ export class EventService {
 
     // Advance the author's read position so their own message isn't counted unread.
     if (params.authorType === "user") {
-      await StreamMemberRepository.update(client, params.streamId, params.authorId, {
+      const authorMembership = await StreamMemberRepository.update(client, params.streamId, params.authorId, {
         lastReadEventId: evtId,
       })
+      // Shadow the born-read watermark only when a membership row was actually
+      // written (PR 1 shadows membership; non-member read state lands in PR 3 — same tx).
+      if (authorMembership) {
+        await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId)
+      }
     }
 
     if (params.authorType === "persona") {
@@ -1379,6 +1384,12 @@ export class EventService {
         messageIds: uniqueMessageIds,
       })
       await StreamMemberRepository.repointWatermarksForMovedEvents(
+        client,
+        params.sourceStreamId,
+        movableEvents.map((entry) => ({ eventId: entry.event.id, sequence: entry.event.sequence }))
+      )
+      // Shadow the A3 watermark repoint into stream_read_state (same tx, same moved set).
+      await ReadStateRepository.repointForMovedEvents(
         client,
         params.sourceStreamId,
         movableEvents.map((entry) => ({ eventId: entry.event.id, sequence: entry.event.sequence }))
