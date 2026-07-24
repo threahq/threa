@@ -306,9 +306,12 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     })
   })
 
-  it("a present empty streamReadState map IS authoritative — the stale sweep deletes all standalone rows", async () => {
+  it("a present empty streamReadState map still preserves omitted rows — the member-only map is never a deletion authority", async () => {
     const fetchStartedAt = Date.now() - 1000
 
+    // The map enumerates member streams only; these rows are for streams the
+    // map never enumerates (nonmember thread lazy state). Even an explicit
+    // `{}` ("no member frontiers") says nothing about them.
     await db.streamReadState.bulkPut([
       {
         id: "ws_1:stream_null",
@@ -330,10 +333,158 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       },
     ])
 
-    // Authoritative empty: the server says the viewer has no frontiers.
     await applyWorkspaceBootstrap("ws_1", makeBootstrap({ streamReadState: {} }), fetchStartedAt)
 
-    expect(await db.streamReadState.count()).toBe(0)
+    expect(await db.streamReadState.count()).toBe(2)
+    expect(await db.streamReadState.get("ws_1:stream_null")).toMatchObject({
+      lastReadEventId: null,
+      lastReadSequence: "0",
+    })
+    expect(await db.streamReadState.get("ws_1:stream_high")).toMatchObject({
+      lastReadEventId: "evt_99",
+      lastReadSequence: "99",
+    })
+  })
+
+  it("a present map upserts its member rows while preserving omitted nonmember lazy rows", async () => {
+    const fetchStartedAt = Date.now() - 1000
+
+    await db.streamReadState.bulkPut([
+      {
+        id: "ws_1:stream_member",
+        workspaceId: "ws_1",
+        streamId: "stream_member",
+        lastReadEventId: "evt_old",
+        lastReadSequence: "5",
+        lastReadAt: null,
+        _cachedAt: fetchStartedAt - 500,
+      },
+      {
+        // A nonmember thread's lazy frontier — the member-only bootstrap map
+        // never enumerates it, so the apply must not touch it.
+        id: "ws_1:stream_thread",
+        workspaceId: "ws_1",
+        streamId: "stream_thread",
+        lastReadEventId: "evt_thread",
+        lastReadSequence: "12",
+        lastReadAt: null,
+        _cachedAt: fetchStartedAt - 500,
+      },
+    ])
+
+    await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        streamReadState: {
+          stream_member: { lastReadEventId: "evt_new", lastReadSequence: "9", lastReadAt: null },
+        },
+      }),
+      fetchStartedAt
+    )
+
+    expect(await db.streamReadState.get("ws_1:stream_member")).toMatchObject({
+      lastReadEventId: "evt_new",
+      lastReadSequence: "9",
+    })
+    expect(await db.streamReadState.get("ws_1:stream_thread")).toMatchObject({
+      lastReadEventId: "evt_thread",
+      lastReadSequence: "12",
+    })
+  })
+
+  it("an in-flight bootstrap never restores a stale frontier over a live read (snapshot E50, local E100)", async () => {
+    const fetchStartedAt = Date.now() - 500
+
+    // A live read landed during the fetch window — the snapshot predates it.
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_100",
+      lastReadSequence: "100",
+      lastReadAt: null,
+      _cachedAt: fetchStartedAt + 100,
+    })
+
+    const returned = await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        streamReadState: {
+          stream_1: { lastReadEventId: "evt_50", lastReadSequence: "50", lastReadAt: null },
+        },
+      }),
+      fetchStartedAt
+    )
+
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_100",
+      lastReadSequence: "100",
+    })
+    // The query cache the caller writes from the return value can't regress either.
+    expect(returned.streamReadState?.stream_1?.lastReadEventId).toBe("evt_100")
+    expect(returned.streamReadState?.stream_1?.lastReadSequence).toBe("100")
+  })
+
+  it("an in-flight bootstrap never restores a frontier over a live explicit unread (snapshot E100, local NULL)", async () => {
+    const fetchStartedAt = Date.now() - 500
+
+    // Explicit mark-unread during the fetch window parked the frontier before
+    // the first message — a sanctioned regress no max(sequence) rule protects.
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: null,
+      lastReadSequence: null,
+      lastReadAt: null,
+      _cachedAt: fetchStartedAt + 100,
+    })
+
+    const returned = await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        streamReadState: {
+          stream_1: { lastReadEventId: "evt_100", lastReadSequence: "100", lastReadAt: null },
+        },
+      }),
+      fetchStartedAt
+    )
+
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: null,
+      lastReadSequence: null,
+    })
+    expect(returned.streamReadState?.stream_1?.lastReadEventId).toBeNull()
+  })
+
+  it("an untouched stream applies the server snapshot over an older local row", async () => {
+    const fetchStartedAt = Date.now() - 500
+
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_5",
+      lastReadSequence: "5",
+      lastReadAt: null,
+      _cachedAt: fetchStartedAt - 1000,
+    })
+
+    const returned = await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        streamReadState: {
+          stream_1: { lastReadEventId: "evt_50", lastReadSequence: "50", lastReadAt: null },
+        },
+      }),
+      fetchStartedAt
+    )
+
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+    })
+    expect(returned.streamReadState?.stream_1?.lastReadEventId).toBe("evt_50")
   })
 
   it("persists the bootstrap sidebar config to IDB", async () => {
@@ -548,7 +699,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     ])
 
     // makeBootstrap() omits streamReadState — not authoritative on reconnect
-    // either: the omission propagates through the merge and the sweep skips.
+    // either: the omission propagates through the merge and nothing is swept.
     await applyReconnectBootstrapBatch("ws_1", makeBootstrap(), new Map(), new Set(), new Set(), fetchStartedAt)
 
     expect(await db.streamReadState.get("ws_1:stream_null")).toMatchObject({
@@ -558,6 +709,46 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect(await db.streamReadState.get("ws_1:stream_high")).toMatchObject({
       lastReadEventId: "evt_99",
       lastReadSequence: "99",
+    })
+  })
+
+  it("preserves omitted nonmember rows through a reconnect apply with a present map", async () => {
+    const fetchStartedAt = Date.now() - 1000
+
+    await db.streamReadState.bulkPut([
+      {
+        // A nonmember thread's lazy frontier — the member-only map never
+        // enumerates it, so the reconnect apply must not touch it.
+        id: "ws_1:stream_thread",
+        workspaceId: "ws_1",
+        streamId: "stream_thread",
+        lastReadEventId: "evt_thread",
+        lastReadSequence: "12",
+        lastReadAt: null,
+        _cachedAt: fetchStartedAt - 500,
+      },
+    ])
+
+    await applyReconnectBootstrapBatch(
+      "ws_1",
+      makeBootstrap({
+        streamReadState: {
+          stream_member: { lastReadEventId: "evt_m", lastReadSequence: "3", lastReadAt: null },
+        },
+      }),
+      new Map(),
+      new Set(),
+      new Set(),
+      fetchStartedAt
+    )
+
+    expect(await db.streamReadState.get("ws_1:stream_thread")).toMatchObject({
+      lastReadEventId: "evt_thread",
+      lastReadSequence: "12",
+    })
+    expect(await db.streamReadState.get("ws_1:stream_member")).toMatchObject({
+      lastReadEventId: "evt_m",
+      lastReadSequence: "3",
     })
   })
 })
@@ -1012,7 +1203,9 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
       fetchStartedAt,
     })
 
-    // Present (not undefined) and empty: downstream sweep deletes stale rows.
+    // Present (not undefined) and empty: the query cache carries the member
+    // authority as-is. IDB rows are never swept on the map's authority —
+    // omitted nonmember lazy rows survive the apply.
     expect(merged.streamReadState).toEqual({})
   })
 })
@@ -2766,6 +2959,46 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
       const state = await db.unreadState.get("ws_1")
       expect(state?.unreadCounts.stream_1).toBe(0)
       expect(state?.unreadActivityCount).toBe(0)
+    })
+
+    cleanup()
+  })
+
+  it("stream:read_all stamps standalone rows so an in-flight bootstrap preserves them", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    // A frontier written long before any in-flight fetch.
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_77",
+      lastReadSequence: "77",
+      lastReadAt: null,
+      _cachedAt: Date.now() - 60_000,
+    })
+    const before = (await db.streamReadState.get("ws_1:stream_1"))?._cachedAt ?? 0
+
+    emit("stream:read_all", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamIds: ["stream_1", "stream_2"],
+      reads: [
+        { streamId: "stream_1", lastReadOrdinal: 5 },
+        { streamId: "stream_2", lastReadOrdinal: 3 },
+      ],
+    })
+
+    // The stamp (not the value) moves: read_all carries no event ids, but an
+    // in-flight bootstrap's per-stream merge must keep this row, not restore
+    // a pre-read_all snapshot over it.
+    await vi.waitFor(async () => {
+      const row = await db.streamReadState.get("ws_1:stream_1")
+      expect(row?._cachedAt).toBeGreaterThan(before)
+      expect(row?.lastReadEventId).toBe("evt_77")
+      expect(row?.lastReadSequence).toBe("77")
     })
 
     cleanup()
