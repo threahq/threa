@@ -45,9 +45,13 @@ export type SlotWriteParams =
  * but viewer-access state is per-viewer: access downgrades flow only through
  * the authoritative per-viewer REPLACE (bootstrap/reconnect, INV-53).
  * `deleted`/`missing` are objective tombstones and always overwrite `ok`;
- * `ok` overwrites `ok` (fresher content).
+ * `ok` overwrites `ok` (fresher content). Tombstones are also terminal: a
+ * deleted source cannot come back to life and a missing id cannot come into
+ * existence, so a stale carrier must never resurrect content past a
+ * tombstone — incoming non-tombstone states lose to an existing tombstone.
  */
 function preservesRicherExisting(existing: Slot, incoming: Slot): boolean {
+  if (existing.state === "deleted" || existing.state === "missing") return incoming.state !== existing.state
   return existing.state === "ok" && (incoming.state === "private" || incoming.state === "truncated")
 }
 

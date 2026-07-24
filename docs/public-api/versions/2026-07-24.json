@@ -204,7 +204,7 @@
                                 "type": "string",
                                 "enum": ["scratchpad", "channel", "dm", "thread", "system"]
                               },
-                              "sourceVisibility": { "type": "string" }
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
                             "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
                             "additionalProperties": false
@@ -3101,7 +3101,7 @@
                                 "type": "string",
                                 "enum": ["scratchpad", "channel", "dm", "thread", "system"]
                               },
-                              "sourceVisibility": { "type": "string" }
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
                             "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
                             "additionalProperties": false
@@ -4643,7 +4643,7 @@
                                 "type": "string",
                                 "enum": ["scratchpad", "channel", "dm", "thread", "system"]
                               },
-                              "sourceVisibility": { "type": "string" }
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
                             "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
                             "additionalProperties": false
@@ -4945,7 +4945,7 @@
                                 "type": "string",
                                 "enum": ["scratchpad", "channel", "dm", "thread", "system"]
                               },
-                              "sourceVisibility": { "type": "string" }
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
                             "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
                             "additionalProperties": false
@@ -5466,7 +5466,7 @@
                                 "type": "string",
                                 "enum": ["scratchpad", "channel", "dm", "thread", "system"]
                               },
-                              "sourceVisibility": { "type": "string" }
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
                             "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
                             "additionalProperties": false
@@ -5756,7 +5756,7 @@
                                 "type": "string",
                                 "enum": ["scratchpad", "channel", "dm", "thread", "system"]
                               },
-                              "sourceVisibility": { "type": "string" }
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
                             "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
                             "additionalProperties": false
@@ -6024,7 +6024,7 @@
                                 "type": "string",
                                 "enum": ["scratchpad", "channel", "dm", "thread", "system"]
                               },
-                              "sourceVisibility": { "type": "string" }
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
                             "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
                             "additionalProperties": false

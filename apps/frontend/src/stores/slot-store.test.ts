@@ -34,8 +34,8 @@ function truncatedSlot(messageId: string): SharedMessageSlot {
   return { type: "sharedMessage", state: "truncated", messageId, streamId: "stream_src" }
 }
 
-function deletedSlot(messageId: string): SharedMessageSlot {
-  return { type: "sharedMessage", state: "deleted", messageId, deletedAt: "2026-04-24T00:00:00Z" }
+function deletedSlot(messageId: string, deletedAt = "2026-04-24T00:00:00Z"): SharedMessageSlot {
+  return { type: "sharedMessage", state: "deleted", messageId, deletedAt }
 }
 
 function missingSlot(messageId: string): SharedMessageSlot {
@@ -316,6 +316,24 @@ describe("writeSlotCarrier — merge richness guard (B1)", () => {
       existing: truncatedSlot("msg_1"),
       incoming: slot("msg_1"),
       expected: slot("msg_1"),
+    },
+    {
+      name: "deleted + ok keeps the terminal tombstone (no resurrection)",
+      existing: deletedSlot("msg_1"),
+      incoming: slot("msg_1"),
+      expected: deletedSlot("msg_1"),
+    },
+    {
+      name: "missing + ok keeps the terminal missing state",
+      existing: missingSlot("msg_1"),
+      incoming: slot("msg_1"),
+      expected: missingSlot("msg_1"),
+    },
+    {
+      name: "deleted + deleted takes the fresher tombstone",
+      existing: deletedSlot("msg_1"),
+      incoming: deletedSlot("msg_1", "2026-05-01T00:00:00Z"),
+      expected: deletedSlot("msg_1", "2026-05-01T00:00:00Z"),
     },
   ]
 

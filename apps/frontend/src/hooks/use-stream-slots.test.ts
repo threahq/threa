@@ -46,7 +46,7 @@ describe("useStreamSlots", () => {
     )
   })
 
-  it("returns undefined for a stream with no rows once resolved (not the previous stream's map)", async () => {
+  it("returns an empty map for a stream with no rows once resolved (not the previous stream's map)", async () => {
     await seed("stream_a", "msg_1")
     const { result, rerender } = renderHook(({ id }) => useStreamSlots(id), {
       initialProps: { id: "stream_a" },
