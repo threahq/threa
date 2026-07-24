@@ -907,13 +907,17 @@ export function createStreamHandlers({
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
       const membership = await streamService.markAsRead(workspaceId, streamId, userId, data.lastEventId)
-      if (!membership) {
-        return res.status(404).json({ error: "Not a member of this stream" })
-      }
 
+      // Unconditional: thread access is inherited from the root (INV-62), so a
+      // viewer can have access without a membership row (non-member thread leg,
+      // or a public channel never joined). Their activity rows are keyed to this
+      // stream, and viewing is reading for the activity surface — gating the
+      // clear on membership left those rows stuck until clicked one by one in
+      // the Activity feed. A null membership is a successful activity-only read
+      // (no watermark to advance), not a 404; access was validated above.
       await activityService?.markStreamActivityAsRead(userId, streamId)
 
-      res.json({ membership })
+      res.json({ membership: membership ?? null })
     },
 
     async markUnread(req: Request, res: Response) {

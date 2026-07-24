@@ -83,6 +83,12 @@ export function useUnreadCounts(workspaceId: string) {
     onSuccess: async (membership, { streamId, lastEventId, partial }) => {
       const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
       const hadActivity = (current?.activityCounts[streamId] ?? 0) > 0
+      // Null membership = a successful activity-only read by a viewer with
+      // access but no membership row (INV-62: non-member thread leg, public
+      // channel never joined). The activity clear below still applies; there is
+      // no watermark to persist, and the membership-shaped writes must skip —
+      // spreading null would synthesize a junk membership row in IDB.
+      const hasMembership = membership !== null
 
       // Coupling (D2/D4): reading a stream clears its held activity rows on BOTH
       // the partial and full paths — activity (e.g. a reaction) is read by opening
@@ -114,19 +120,23 @@ export function useUnreadCounts(workspaceId: string) {
           unreadActivities: rows,
           ...deriveActivityCounts(rows),
           ...messageCounters,
-          streamMemberships: old.streamMemberships.map((existingMembership) =>
-            existingMembership.streamId === streamId ? { ...existingMembership, ...membership } : existingMembership
-          ),
+          streamMemberships: hasMembership
+            ? old.streamMemberships.map((existingMembership) =>
+                existingMembership.streamId === streamId ? { ...existingMembership, ...membership } : existingMembership
+              )
+            : old.streamMemberships,
         }
       })
 
-      queryClient.setQueryData(
-        streamKeys.bootstrap(workspaceId, streamId),
-        (old: import("@threa/types").StreamBootstrap | undefined) => {
-          if (!old) return old
-          return { ...old, membership: { ...old.membership, lastReadEventId: lastEventId } }
-        }
-      )
+      if (hasMembership) {
+        queryClient.setQueryData(
+          streamKeys.bootstrap(workspaceId, streamId),
+          (old: import("@threa/types").StreamBootstrap | undefined) => {
+            if (!old) return old
+            return { ...old, membership: { ...old.membership, lastReadEventId: lastEventId } }
+          }
+        )
+      }
 
       // Keep both the denormalized stream row and the membership row in sync:
       // stream-content derives the unread divider from membership state.
@@ -154,25 +164,27 @@ export function useUnreadCounts(workspaceId: string) {
           })
         }
 
-        await db.streams.update(streamId, { lastReadEventId: lastEventId, _cachedAt: now })
+        if (hasMembership) {
+          await db.streams.update(streamId, { lastReadEventId: lastEventId, _cachedAt: now })
 
-        const membershipId = `${workspaceId}:${streamId}`
-        const existingMembership = await db.streamMemberships.get(membershipId)
-        if (existingMembership) {
-          await db.streamMemberships.put({
-            ...existingMembership,
-            ...membership,
-            id: membershipId,
-            workspaceId,
-            _cachedAt: now,
-          })
-        } else {
-          await db.streamMemberships.put({
-            ...membership,
-            id: membershipId,
-            workspaceId,
-            _cachedAt: now,
-          })
+          const membershipId = `${workspaceId}:${streamId}`
+          const existingMembership = await db.streamMemberships.get(membershipId)
+          if (existingMembership) {
+            await db.streamMemberships.put({
+              ...existingMembership,
+              ...membership,
+              id: membershipId,
+              workspaceId,
+              _cachedAt: now,
+            })
+          } else {
+            await db.streamMemberships.put({
+              ...membership,
+              id: membershipId,
+              workspaceId,
+              _cachedAt: now,
+            })
+          }
         }
       })
 
