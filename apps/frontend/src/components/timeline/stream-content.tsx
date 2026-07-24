@@ -39,7 +39,12 @@ import {
 } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
-import { useWorkspaceStreams, useWorkspaceStreamMemberships } from "@/stores/workspace-store"
+import {
+  useWorkspaceStreams,
+  useWorkspaceStreamMemberships,
+  useWorkspaceStreamReadStates,
+} from "@/stores/workspace-store"
+import { resolveFrontierEventId } from "@/lib/read-frontier"
 import { useUser } from "@/auth"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
@@ -599,6 +604,7 @@ export function StreamContent({
 
   const idbStreams = useWorkspaceStreams(workspaceId)
   const idbMemberships = useWorkspaceStreamMemberships(workspaceId)
+  const idbReadStates = useWorkspaceStreamReadStates(workspaceId)
   const idbStream = useMemo(() => idbStreams.find((candidate) => candidate.id === streamId), [idbStreams, streamId])
 
   // Resolve current workspace-scoped user ID. The hook deduplicates with SentMessageEvent instances.
@@ -616,7 +622,15 @@ export function StreamContent({
     enabled: !isDraft && (!idbStream || !idbMembership),
   })
   const membership = idbMembership ?? bootstrap?.membership
-  const lastReadEventId = idbStream?.lastReadEventId ?? membership?.lastReadEventId
+  // Effective read frontier (read cutover): a standalone read-state row wins
+  // whenever it exists — a present null watermark (explicit unread-to-zero)
+  // beats a stale non-null mirror — and the stream/membership mirrors fill
+  // only streams with no row yet.
+  const idbReadState = useMemo(
+    () => idbReadStates.find((candidate) => candidate.streamId === streamId),
+    [idbReadStates, streamId]
+  )
+  const lastReadEventId = resolveFrontierEventId(idbReadState, idbStream, membership)
 
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD

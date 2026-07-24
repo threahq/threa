@@ -6,6 +6,7 @@ import {
   StreamMemberRepository,
   StreamEventRepository,
   resolveNotificationLevelsForStream,
+  usersReadThroughEffective,
   type Stream,
 } from "../streams"
 import { PersonaRepository } from "../agents"
@@ -315,6 +316,10 @@ export class ActivityService {
    * unread — closing the race where the read-time clear runs before the async
    * activity row exists. Returns an empty set when the message has no event row
    * yet (nothing to compare against), leaving every recipient unread.
+   *
+   * Read truth is the effective frontier (read cutover): a `stream_read_state`
+   * row wins when present, membership fills absent rows. The recipient universe
+   * stays the caller's member-filtered set — chunk 3 expands non-member coverage.
    */
   private async resolveAlreadyReadRecipients(
     client: PoolClient,
@@ -325,7 +330,7 @@ export class ActivityService {
     if (userIds.length === 0) return new Set()
     const messageEvent = await StreamEventRepository.findByMessageId(client, streamId, messageId)
     if (!messageEvent) return new Set()
-    return StreamMemberRepository.membersReadThrough(client, streamId, userIds, messageEvent.sequence)
+    return usersReadThroughEffective(client, streamId, userIds, messageEvent.sequence)
   }
 
   /**

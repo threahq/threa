@@ -1,10 +1,49 @@
 import type { QueryClient } from "@tanstack/react-query"
-import type { StreamBootstrap, WorkspaceBootstrap } from "@threa/types"
+import type { StreamBootstrap, StreamReadFrontier, WorkspaceBootstrap } from "@threa/types"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { applyStreamReadMessages, dropMessageActivities } from "./unread-counters"
 import { putCountersIdb, type CounterMutator } from "./catch-up-batch"
+
+/**
+ * Upsert the standalone read-frontier row in IDB (read cutover dual-write).
+ * Runs inside the caller's `rw` transaction alongside the legacy mirror
+ * writes. Row presence is authoritative for frontier readers, so every read
+ * applier that moves a legacy mirror also writes this row.
+ */
+export async function putReadStateIdb(
+  workspaceId: string,
+  streamId: string,
+  fields: StreamReadFrontier,
+  now = Date.now()
+): Promise<void> {
+  await db.streamReadState.put({
+    id: `${workspaceId}:${streamId}`,
+    workspaceId,
+    streamId,
+    lastReadEventId: fields.lastReadEventId,
+    lastReadSequence: fields.lastReadSequence,
+    lastReadAt: fields.lastReadAt,
+    _cachedAt: now,
+  })
+}
+
+/** Merge one stream's standalone frontier into the workspace bootstrap query cache. */
+export function mergeReadStateIntoBootstrapCache(
+  queryClient: QueryClient,
+  workspaceId: string,
+  streamId: string,
+  fields: StreamReadFrontier
+): void {
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+    if (!old) return old
+    return {
+      ...old,
+      streamReadState: { ...(old.streamReadState ?? {}), [streamId]: fields },
+    }
+  })
+}
 
 /**
  * The absolute post-write read state for one stream produced by a sparse-read
@@ -41,7 +80,8 @@ export function snapshotCounterMutator(snapshot: ReadStateSnapshot): CounterMuta
 }
 
 /** Mirror a snapshot's watermark fields into the query cache (workspace +
- *  stream bootstrap membership rows) so the unread divider tracks immediately. */
+ *  stream bootstrap membership rows AND the standalone frontier map) so the
+ *  unread divider tracks immediately. */
 function mirrorSnapshotToCache(queryClient: QueryClient, workspaceId: string, snapshot: ReadStateSnapshot): void {
   queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
     if (!old) return old
@@ -52,6 +92,14 @@ function mirrorSnapshotToCache(queryClient: QueryClient, workspaceId: string, sn
           ? { ...membership, lastReadEventId: snapshot.lastReadEventId, lastReadSequence: snapshot.lastReadSequence }
           : membership
       ),
+      streamReadState: {
+        ...(old.streamReadState ?? {}),
+        [snapshot.streamId]: {
+          lastReadEventId: snapshot.lastReadEventId,
+          lastReadSequence: snapshot.lastReadSequence,
+          lastReadAt: new Date().toISOString(),
+        },
+      },
     }
   })
 
@@ -69,7 +117,8 @@ function mirrorSnapshotToCache(queryClient: QueryClient, workspaceId: string, sn
 }
 
 /** Write a snapshot's watermark mirrors to IDB. Must run inside an open `rw`
- *  transaction that includes `db.streams` and `db.streamMemberships`. */
+ *  transaction that includes `db.streams`, `db.streamMemberships`, and
+ *  `db.streamReadState`. */
 async function writeSnapshotWatermarkIdb(workspaceId: string, snapshot: ReadStateSnapshot): Promise<void> {
   const now = Date.now()
   await db.streams.update(snapshot.streamId, { lastReadEventId: snapshot.lastReadEventId, _cachedAt: now })
@@ -86,6 +135,17 @@ async function writeSnapshotWatermarkIdb(workspaceId: string, snapshot: ReadStat
       _cachedAt: now,
     })
   }
+
+  await putReadStateIdb(
+    workspaceId,
+    snapshot.streamId,
+    {
+      lastReadEventId: snapshot.lastReadEventId,
+      lastReadSequence: snapshot.lastReadSequence,
+      lastReadAt: new Date().toISOString(),
+    },
+    now
+  )
 }
 
 /**
@@ -104,7 +164,9 @@ export function commitReadStateSnapshot(
 ): void {
   mirrorSnapshotToCache(queryClient, workspaceId, snapshot)
   commitCounter(snapshotCounterMutator(snapshot))
-  void db.transaction("rw", [db.streams, db.streamMemberships], () => writeSnapshotWatermarkIdb(workspaceId, snapshot))
+  void db.transaction("rw", [db.streams, db.streamMemberships, db.streamReadState], () =>
+    writeSnapshotWatermarkIdb(workspaceId, snapshot)
+  )
 }
 
 /**
@@ -119,7 +181,7 @@ export function commitReadStateSnapshot(
 export async function applyReadStateSnapshotsIdb(workspaceId: string, snapshots: ReadStateSnapshot[]): Promise<void> {
   if (snapshots.length === 0) return
   const mutators = snapshots.map(snapshotCounterMutator)
-  await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships], async () => {
+  await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships, db.streamReadState], async () => {
     await putCountersIdb(workspaceId, mutators)
     for (const snapshot of snapshots) {
       await writeSnapshotWatermarkIdb(workspaceId, snapshot)

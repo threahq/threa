@@ -66,6 +66,9 @@ export type { StreamMember, UpdateStreamMemberParams } from "./member-repository
 export { ReadStateRepository } from "./read-state-repository"
 export type { StreamReadState } from "./read-state-repository"
 
+export { getEffectiveReadState, usersReadThroughEffective } from "./effective-read-state"
+export type { EffectiveReadState } from "./effective-read-state"
+
 export { StreamStateRepository } from "./state-repository"
 export type { MemoStreamState, StreamReadyToProcess } from "./state-repository"
 

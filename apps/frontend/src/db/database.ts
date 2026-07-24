@@ -187,6 +187,26 @@ export interface CachedDmPeer {
   _cachedAt: number
 }
 
+/**
+ * The standalone per-user read frontier (read cutover: the watermark re-homed
+ * off `stream_members` into `stream_read_state`). Row PRESENCE is authoritative
+ * — a null `lastReadEventId` is an explicit "position before the first message"
+ * frontier and must beat a stale non-null membership mirror; an ABSENT row falls
+ * back to `streamMemberships` / `db.streams`. Seeded from the bootstrap's
+ * `streamReadState` map and dual-written by the read appliers during the
+ * transition. User-local: the database itself is per account (`accountDbName`).
+ */
+export interface CachedStreamReadState {
+  /** Composite key: `${workspaceId}:${streamId}` */
+  id: string
+  workspaceId: string
+  streamId: string
+  lastReadEventId: string | null
+  lastReadSequence: string | null
+  lastReadAt: string | null
+  _cachedAt: number
+}
+
 export interface CachedEvent {
   id: string
   workspaceId: string
@@ -972,6 +992,7 @@ export class ThreaDatabase extends Dexie {
   workspaceUsers!: EntityTable<CachedWorkspaceUser, "id">
   streams!: EntityTable<CachedStream, "id">
   streamMemberships!: EntityTable<CachedStreamMembership, "id">
+  streamReadState!: EntityTable<CachedStreamReadState, "id">
   dmPeers!: EntityTable<CachedDmPeer, "id">
   events!: EntityTable<CachedEvent, "id">
   personas!: EntityTable<CachedPersona, "id">
@@ -1431,6 +1452,16 @@ export class ThreaDatabase extends Dexie {
       })
       .upgrade(() => undefined)
 
+    // v43: standalone read frontier store (read cutover). The watermark moves
+    // off the membership mirror into its own row keyed by workspace+stream;
+    // frontier readers prefer row presence (a null watermark is an explicit
+    // frontier) and fall back to streamMemberships/db.streams while the rollout
+    // dual-writes. Starts empty — seeded from the bootstrap's streamReadState
+    // map and the read socket appliers.
+    this.version(43).stores({
+      streamReadState: "id, workspaceId, streamId, _cachedAt",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -1483,6 +1514,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.workspaceUsers.clear(),
       db.streams.clear(),
       db.streamMemberships.clear(),
+      db.streamReadState.clear(),
       db.dmPeers.clear(),
       db.events.clear(),
       db.personas.clear(),

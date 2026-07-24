@@ -25,8 +25,19 @@ function sqlValues(call: unknown[]): unknown[] {
 }
 
 describe("ReadStateRepository.advance", () => {
-  test("is a single monotonic upsert keyed on (stream_id, user_id)", async () => {
-    const { db, query } = makeDb()
+  test("is a single monotonic upsert keyed on (stream_id, user_id) returning the post-write row", async () => {
+    // A returned row means the monotonic guard accepted (or inserted), so the
+    // advance is one statement — no read-back.
+    const { db, query } = makeDb([
+      {
+        workspace_id: "ws_1",
+        stream_id: "stream_1",
+        user_id: "usr_1",
+        last_read_event_id: "evt_9",
+        last_read_at: null,
+        updated_at: new Date(),
+      },
+    ])
     await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9")
 
     expect(query).toHaveBeenCalledTimes(1)
@@ -43,12 +54,53 @@ describe("ReadStateRepository.advance", () => {
     // workspace_id derived from streams on insert (INV-8).
     expect(text).toContain("SELECT s.workspace_id")
     expect(text).toContain("FROM streams s")
+    // Post-write row returned so same-tx callers can source stream:read
+    // payloads from the standalone frontier.
+    expect(text).toContain("RETURNING")
   })
 
   test("binds streamId, userId, eventId in order", async () => {
     const { db, query } = makeDb()
     await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9")
     expect(sqlValues(query.mock.calls[0])).toEqual(["stream_1", "usr_1", "evt_9"])
+  })
+
+  test("returns the post-write row when the advance lands", async () => {
+    const row = {
+      workspace_id: "ws_1",
+      stream_id: "stream_1",
+      user_id: "usr_1",
+      last_read_event_id: "evt_9",
+      last_read_at: new Date("2026-01-01T00:00:00.000Z"),
+      updated_at: new Date("2026-01-02T00:00:00.000Z"),
+    }
+    const { db, query } = makeDb([row])
+    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9")
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(result?.lastReadEventId).toBe("evt_9")
+  })
+
+  test("reads back the standing row when the monotonic guard rejects a stale advance", async () => {
+    // RETURNING is empty when the DO UPDATE WHERE clause rejects (stale event);
+    // the row as it stands — above the attempted advance — must come back so
+    // the caller's payload sources from the true post-write frontier.
+    const standing = {
+      workspace_id: "ws_1",
+      stream_id: "stream_1",
+      user_id: "usr_1",
+      last_read_event_id: "evt_higher",
+      last_read_at: new Date("2026-01-02T00:00:00.000Z"),
+      updated_at: new Date("2026-01-02T00:00:00.000Z"),
+    }
+    const query = mock()
+    query.mockResolvedValueOnce({ rows: [], rowCount: 0 })
+    query.mockResolvedValueOnce({ rows: [standing], rowCount: 1 })
+    const db = { query } as unknown as Querier
+
+    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_stale")
+
+    expect(query).toHaveBeenCalledTimes(2)
+    expect(result?.lastReadEventId).toBe("evt_higher")
   })
 })
 

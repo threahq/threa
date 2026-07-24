@@ -12,6 +12,7 @@ import {
   type CachedWorkspaceUser,
   type CachedStream,
   type CachedStreamMembership,
+  type CachedStreamReadState,
   type CachedDmPeer,
   type CachedPersona,
   type CachedBot,
@@ -42,6 +43,7 @@ const cache = {
   users: new Map<string, CachedWorkspaceUser[]>(),
   streams: new Map<string, CachedStream[]>(),
   memberships: new Map<string, CachedStreamMembership[]>(),
+  readStates: new Map<string, CachedStreamReadState[]>(),
   dmPeers: new Map<string, CachedDmPeer[]>(),
   personas: new Map<string, CachedPersona[]>(),
   bots: new Map<string, CachedBot[]>(),
@@ -116,6 +118,7 @@ export function resetWorkspaceStoreCache(): void {
   cache.users.clear()
   cache.streams.clear()
   cache.memberships.clear()
+  cache.readStates.clear()
   cache.dmPeers.clear()
   cache.personas.clear()
   cache.bots.clear()
@@ -149,6 +152,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     users,
     streams,
     memberships,
+    readStates,
     dmPeers,
     personas,
     bots,
@@ -163,6 +167,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
     db.streams.where("workspaceId").equals(workspaceId).toArray(),
     db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+    db.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
     db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
     db.personas.where("workspaceId").equals(workspaceId).toArray(),
     db.bots.where("workspaceId").equals(workspaceId).toArray(),
@@ -185,6 +190,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     users,
     streams,
     memberships,
+    readStates,
     dmPeers,
     personas,
     bots,
@@ -210,6 +216,7 @@ export function seedWorkspaceCache(
     users: CachedWorkspaceUser[]
     streams: CachedStream[]
     memberships: CachedStreamMembership[]
+    readStates?: CachedStreamReadState[]
     dmPeers: CachedDmPeer[]
     personas: CachedPersona[]
     bots: CachedBot[]
@@ -227,6 +234,7 @@ export function seedWorkspaceCache(
   cache.users.set(workspaceId, data.users)
   cache.streams.set(workspaceId, data.streams)
   cache.memberships.set(workspaceId, data.memberships)
+  if (data.readStates) cache.readStates.set(workspaceId, data.readStates)
   cache.dmPeers.set(workspaceId, data.dmPeers)
   cache.personas.set(workspaceId, data.personas)
   cache.bots.set(workspaceId, data.bots)
@@ -337,6 +345,16 @@ export function useWorkspaceStreamMemberships(workspaceId: string | undefined): 
   const cached = workspaceId ? (cache.memberships.get(workspaceId) ?? []) : []
   return useArrayStoreHook(
     () => (workspaceId ? db.streamMemberships.where("workspaceId").equals(workspaceId).toArray() : []),
+    [workspaceId],
+    cached
+  )
+}
+
+export function useWorkspaceStreamReadStates(workspaceId: string | undefined): CachedStreamReadState[] {
+  useWorkspaceCacheSignal(workspaceId)
+  const cached = workspaceId ? (cache.readStates.get(workspaceId) ?? []) : []
+  return useArrayStoreHook(
+    () => (workspaceId ? db.streamReadState.where("workspaceId").equals(workspaceId).toArray() : []),
     [workspaceId],
     cached
   )

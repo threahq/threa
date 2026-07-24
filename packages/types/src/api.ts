@@ -1539,11 +1539,34 @@ export interface GiphyConfigResponse {
   enabled: boolean
 }
 
+/**
+ * The viewer's standalone read frontier for one stream (read cutover: the
+ * watermark re-homed off `stream_members` into `stream_read_state`). Row
+ * PRESENCE is authoritative — a null `lastReadEventId` is an explicit "position
+ * before the first message" frontier, distinct from an absent entry (never
+ * read / pre-cutover client, which falls back to the membership mirror).
+ */
+export interface StreamReadFrontier {
+  lastReadEventId: string | null
+  /** The watermark event's per-stream sequence (stringified bigint); null when the watermark is unset or dangling. */
+  lastReadSequence: string | null
+  lastReadAt: string | null
+}
+
 export interface WorkspaceBootstrap {
   workspace: Workspace
   users: User[]
   streams: StreamWithPreview[]
   streamMemberships: StreamMember[]
+  /**
+   * The viewer's standalone read frontier per member stream — the preferred
+   * read source over `streamMemberships.lastRead*` (which remain as a
+   * compatibility mirror during the rollout). Every member stream has an
+   * entry, so a null `lastReadEventId` reads as an authoritative explicit
+   * frontier, not "no data". Optional: payloads cached before this field
+   * shipped lack it (absent falls back to the membership mirror).
+   */
+  streamReadState?: Record<string, StreamReadFrontier>
   dmPeers: Array<{ userId: string; streamId: string }>
   personas: Persona[]
   bots: Bot[]

@@ -228,9 +228,25 @@ export function createWorkspaceHandlers({
         userId
       )
 
+      // Effective read frontier (read cutover): a stream_read_state row wins
+      // whenever it exists — including a NULL watermark (explicit unread-to-zero)
+      // — membership columns fill only absent rows. Unread counts, watermark
+      // sequences, and the overlay derivation below all source from this, not
+      // the raw membership columns.
+      const effectiveReadState = await streamService.getEffectiveReadState(userId, streamMemberships)
+
       const [unreadCountsMap, activityCounts, unreadActivities] = await Promise.all([
         streamService.getUnreadCounts(
-          streamMemberships.map((m) => ({ streamId: m.streamId, memberId: userId, lastReadEventId: m.lastReadEventId }))
+          streamMemberships.map((m) => {
+            const effective = effectiveReadState.get(m.streamId)
+            return {
+              streamId: m.streamId,
+              memberId: userId,
+              // Row presence selects the source — a present NULL watermark
+              // (explicit unread-to-zero) must not fall through to membership.
+              lastReadEventId: effective ? effective.lastReadEventId : m.lastReadEventId,
+            }
+          })
         ),
         activityService?.getUnreadCounts(userId, workspaceId),
         activityService?.listFeed(userId, workspaceId, { unreadOnly: true, othersOnly: true, limit: 200 }),
@@ -248,11 +264,19 @@ export function createWorkspaceHandlers({
       // (to render row read state) and each watermark's sequence (to place the
       // read frontier against the overlay).
       const membershipStreamIds = streamMemberships.map((m) => m.streamId)
+      // Resolve sequences for BOTH frontiers: the effective one (streamReadState
+      // map) and the compat membership mirror, which can point at a different
+      // (regressed) event during the shadow window.
+      const watermarkEventIds = new Set<string>()
+      for (const m of streamMemberships) {
+        if (m.lastReadEventId) watermarkEventIds.add(m.lastReadEventId)
+      }
+      for (const effective of effectiveReadState.values()) {
+        if (effective.lastReadEventId) watermarkEventIds.add(effective.lastReadEventId)
+      }
       const [readOverlayMap, watermarkSequences] = await Promise.all([
         streamService.getReadOverlayForMember(userId, membershipStreamIds),
-        streamService.getSequencesByEventIds(
-          streamMemberships.map((m) => m.lastReadEventId).filter((id): id is string => Boolean(id))
-        ),
+        streamService.getSequencesByEventIds([...watermarkEventIds]),
       ])
       const readMessageIds: Record<string, string[]> = {}
       for (const [streamId, ids] of readOverlayMap) {
@@ -262,6 +286,24 @@ export function createWorkspaceHandlers({
         ...m,
         lastReadSequence: m.lastReadEventId ? (watermarkSequences.get(m.lastReadEventId) ?? null) : null,
       }))
+      // The standalone read frontier per member stream. EVERY member stream gets
+      // an entry: a null lastReadEventId is an authoritative explicit frontier
+      // (position before the first message), which clients must distinguish from
+      // an absent row (never read / pre-cutover fallback to the membership mirror).
+      const streamReadState: Record<
+        string,
+        { lastReadEventId: string | null; lastReadSequence: string | null; lastReadAt: string | null }
+      > = {}
+      for (const m of streamMemberships) {
+        const effective = effectiveReadState.get(m.streamId)
+        const lastReadEventId = effective ? effective.lastReadEventId : m.lastReadEventId
+        const lastReadAt = effective ? effective.lastReadAt : m.lastReadAt
+        streamReadState[m.streamId] = {
+          lastReadEventId,
+          lastReadSequence: lastReadEventId ? (watermarkSequences.get(lastReadEventId) ?? null) : null,
+          lastReadAt: lastReadAt ? lastReadAt.toISOString() : null,
+        }
+      }
 
       const mentionCounts: Record<string, number> = {}
       const activityCountsPerStream: Record<string, number> = {}
@@ -329,6 +371,7 @@ export function createWorkspaceHandlers({
           streams: resolvedStreams,
           archivedStreams: resolvedArchivedStreams,
           streamMemberships: serializedMemberships,
+          streamReadState,
           readMessageIds,
           personas,
           bots: bots.map(serializeBot),

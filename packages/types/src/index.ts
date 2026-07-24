@@ -548,6 +548,7 @@ export type {
   // Workspaces
   CreateWorkspaceInput,
   WorkspaceBootstrap,
+  StreamReadFrontier,
   ActiveAgentSession,
   ActiveCall,
   StreamActiveCall,

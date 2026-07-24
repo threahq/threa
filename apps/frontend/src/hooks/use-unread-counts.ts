@@ -6,7 +6,12 @@ import { streamKeys } from "./use-streams"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { db } from "@/db"
 import { deriveActivityCounts } from "@/sync/unread-counters"
-import { applyReadStateSnapshotsIdb, type ReadStateSnapshot } from "@/sync/read-state"
+import {
+  applyReadStateSnapshotsIdb,
+  mergeReadStateIntoBootstrapCache,
+  putReadStateIdb,
+  type ReadStateSnapshot,
+} from "@/sync/read-state"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 import type { WorkspaceBootstrap } from "@threa/types"
 
@@ -136,11 +141,24 @@ export function useUnreadCounts(workspaceId: string) {
             return { ...old, membership: { ...old.membership, lastReadEventId: lastEventId } }
           }
         )
+
+        // Standalone frontier (read cutover): frontier readers prefer the
+        // read-state row, so the optimistic advance must move it too or the
+        // divider stalls until the socket echo. The response carries no
+        // sequence; keep the stored one (the echo reconciles it), matching the
+        // membership mirror's optimistic-write convention.
+        const existingFrontier = current?.streamReadState?.[streamId]
+        mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, {
+          lastReadEventId: lastEventId,
+          lastReadSequence: existingFrontier?.lastReadSequence ?? null,
+          lastReadAt: membership.lastReadAt ?? new Date().toISOString(),
+        })
       }
 
-      // Keep both the denormalized stream row and the membership row in sync:
-      // stream-content derives the unread divider from membership state.
-      await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships], async () => {
+      // Keep the denormalized stream row, the membership row, and the
+      // standalone read-state row in sync: stream-content derives the unread
+      // divider from the effective frontier across those mirrors.
+      await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships, db.streamReadState], async () => {
         const now = Date.now()
         const state = await db.unreadState.get(workspaceId)
         if (state) {
@@ -185,6 +203,18 @@ export function useUnreadCounts(workspaceId: string) {
               _cachedAt: now,
             })
           }
+
+          const existingRow = await db.streamReadState.get(membershipId)
+          await putReadStateIdb(
+            workspaceId,
+            streamId,
+            {
+              lastReadEventId: lastEventId,
+              lastReadSequence: existingRow?.lastReadSequence ?? null,
+              lastReadAt: membership.lastReadAt ?? new Date().toISOString(),
+            },
+            now
+          )
         }
       })
 
@@ -221,7 +251,18 @@ export function useUnreadCounts(workspaceId: string) {
         }
       )
 
-      await db.transaction("rw", [db.streams, db.streamMemberships], async () => {
+      // Standalone frontier (read cutover): explicit unread SETs the row —
+      // it may move backward, and a null watermark parks before the first
+      // message (row presence beats any stale mirror).
+      const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
+      const existingFrontier = current?.streamReadState?.[streamId]
+      mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, {
+        lastReadEventId: membership.lastReadEventId,
+        lastReadSequence: existingFrontier?.lastReadSequence ?? null,
+        lastReadAt: membership.lastReadAt ?? new Date().toISOString(),
+      })
+
+      await db.transaction("rw", [db.streams, db.streamMemberships, db.streamReadState], async () => {
         const now = Date.now()
         await db.streams.update(streamId, { lastReadEventId: membership.lastReadEventId, _cachedAt: now })
 
@@ -243,6 +284,18 @@ export function useUnreadCounts(workspaceId: string) {
             _cachedAt: now,
           })
         }
+
+        const existingRow = await db.streamReadState.get(membershipId)
+        await putReadStateIdb(
+          workspaceId,
+          streamId,
+          {
+            lastReadEventId: membership.lastReadEventId,
+            lastReadSequence: existingRow?.lastReadSequence ?? null,
+            lastReadAt: membership.lastReadAt ?? new Date().toISOString(),
+          },
+          now
+        )
       })
     },
   })

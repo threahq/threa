@@ -39,7 +39,7 @@ const mockDeleteAllForStreams = spyOn(SparseReadRepository, "deleteAllForStreams
 const mockListOverlayIds = spyOn(SparseReadRepository, "listOverlayIds").mockResolvedValue([])
 // Read-state shadow writes run inside every watermark write path; stub against
 // the fake `{}` client so unit tests never touch a real DB.
-const mockReadStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined)
+const mockReadStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
 const mockReadStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(undefined)
 const mockReadStateBatchAdvance = spyOn(ReadStateRepository, "batchAdvance").mockResolvedValue(undefined)
 const mockReadStateSetForUsers = spyOn(ReadStateRepository, "setForUsers").mockResolvedValue(undefined)
@@ -1520,6 +1520,63 @@ describe("StreamService.markAsRead", () => {
     // Shadow advance on the same tx client — monotonic from day one (reads
     // never regress the new store; cutover converges upward only).
     expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9")
+  })
+
+  test("sources the stream:read payload from the post-write read-state frontier when it sits above the sent event", async () => {
+    // Stale device: this mark-as-read carries evt_9 (seq 42), but the
+    // monotonic store already stands at evt_higher (seq 90) from another
+    // session. Membership regresses (its semantics, unchanged); the payload
+    // other sessions receive must carry the post-write frontier, and the
+    // overlay prune must absorb at it — not at the stale event.
+    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+    mockGetMessageOrdinalForEvent.mockImplementation(async (_db, _streamId, eventId) => {
+      if (eventId === "evt_9") return { sequence: 42n, messageOrdinal: 7 } as never
+      if (eventId === "evt_higher") return { sequence: 90n, messageOrdinal: 12 } as never
+      return null as never
+    })
+    mockReadStateAdvance.mockResolvedValue({
+      streamId: "stream_1",
+      userId: "usr_1",
+      lastReadEventId: "evt_higher",
+    } as never)
+
+    await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
+
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_higher",
+      lastReadSequence: "90",
+      lastReadOrdinal: 12,
+      readMessageIds: [],
+    })
+    expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 90n)
+  })
+
+  test("keeps the sent event as the payload when the advance lands there", async () => {
+    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+    mockGetMessageOrdinalForEvent.mockResolvedValue({ sequence: 42n, messageOrdinal: 7 } as never)
+    mockReadStateAdvance.mockResolvedValue({
+      streamId: "stream_1",
+      userId: "usr_1",
+      lastReadEventId: "evt_9",
+    } as never)
+
+    await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
+
+    // No second ordinal resolution when the post-write row matches the sent event.
+    expect(mockGetMessageOrdinalForEvent).toHaveBeenCalledTimes(1)
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_9",
+      lastReadSequence: "42",
+      lastReadOrdinal: 7,
+      readMessageIds: [],
+    })
+    expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 42n)
   })
 
   test("ignores a read pointer that doesn't resolve to a real event — no watermark write, no stream:read", async () => {
