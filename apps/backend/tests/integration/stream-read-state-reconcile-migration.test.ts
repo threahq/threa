@@ -5,7 +5,7 @@ import { setupIsolatedTestDatabase, withTestTransaction } from "./setup"
 
 const MIGRATION_PATH = resolve(
   import.meta.dir,
-  "../../src/db/migrations/20260724233130_reconcile_stream_read_state.sql"
+  "../../src/db/migrations/20260724190000_reconcile_stream_read_state.sql"
 )
 
 /**
