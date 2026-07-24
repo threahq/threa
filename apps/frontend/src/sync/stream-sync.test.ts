@@ -16,7 +16,13 @@ import {
 import { streamKeys } from "@/hooks/use-streams"
 import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
-import type { BotRuntimePresenceSummary, LinkPreviewSummary, StreamBootstrap, StreamEvent } from "@threa/types"
+import type {
+  BotRuntimePresenceSummary,
+  LinkPreviewSummary,
+  SharedMessageHydration,
+  StreamBootstrap,
+  StreamEvent,
+} from "@threa/types"
 
 // With fake-indexeddb loaded in test setup, Dexie works against a real
 // in-memory IndexedDB. No mocks needed — tests exercise actual queries.
@@ -2488,5 +2494,321 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
       threadSummary: healSummary,
     })
     expect(row?._patchedAt).toBeUndefined()
+  })
+})
+
+describe("registerStreamSocketHandlers — shared-message wire hydration", () => {
+  // Live events carry the hydration map (chunk 1): pointer cards patch into
+  // the cached bootstrap in the same frame, no bootstrap/events invalidation.
+  // The invalidate-refetch survives only as the deploy-skew fallback for
+  // share-bearing events that arrive WITHOUT a map.
+
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  function okEntry(contentMarkdown: string, messageId = "msg_src"): SharedMessageHydration {
+    return {
+      type: "sharedMessage",
+      state: "ok",
+      messageId,
+      streamId: "stream_src",
+      authorId: "usr_9",
+      authorType: "user",
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown,
+      editedAt: null,
+      createdAt: "2026-04-23T10:00:00Z",
+      attachments: [],
+    }
+  }
+
+  const shareNodeContent = {
+    type: "doc",
+    content: [{ type: "sharedMessage", attrs: { messageId: "msg_src", streamId: "stream_src" } }],
+  }
+
+  function seedBootstrap(
+    queryClient: QueryClient,
+    streamId: string,
+    sharedMessages?: Record<string, SharedMessageHydration>
+  ): void {
+    queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId), {
+      ...makeBootstrap([], streamId),
+      ...(sharedMessages && { sharedMessages }),
+      windowVersion: 0,
+    })
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.pendingMessages.clear()
+  })
+
+  it("message:created patches the bootstrap cache from the wire map and skips invalidation", async () => {
+    const streamId = "stream_wire_hydration"
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, streamId, { msg_old: okEntry("older", "msg_old") })
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_share",
+        streamId,
+        sequence: "100",
+        payload: { messageId: "msg_new", contentJson: shareNodeContent },
+      }),
+      sharedMessages: { msg_src: okEntry("from the wire") },
+    })
+
+    const cached = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+    expect(cached?.sharedMessages).toEqual({
+      msg_old: okEntry("older", "msg_old"),
+      msg_src: okEntry("from the wire"),
+    })
+    expect(invalidateQueries).not.toHaveBeenCalled()
+
+    cleanup()
+  })
+
+  it("message:created treats an empty wire map as authoritative — presence suppresses the fallback", async () => {
+    const streamId = "stream_wire_empty"
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, streamId)
+    const before = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_share_empty",
+        streamId,
+        sequence: "100",
+        payload: { messageId: "msg_new", contentJson: shareNodeContent },
+      }),
+      sharedMessages: {},
+    })
+
+    expect(queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))).toBe(before)
+    expect(invalidateQueries).not.toHaveBeenCalled()
+
+    cleanup()
+  })
+
+  it("message:created falls back to invalidating when a share-bearing event carries no map (deploy skew)", async () => {
+    const streamId = "stream_skew_created"
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, streamId)
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_skew",
+        streamId,
+        sequence: "100",
+        payload: { messageId: "msg_skew", contentJson: shareNodeContent },
+      }),
+    })
+
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: streamKeys.bootstrap("ws_1", streamId) })
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: streamKeys.events("ws_1", streamId) })
+
+    cleanup()
+  })
+
+  it("message:created with neither a map nor a share node leaves the cache untouched", async () => {
+    const streamId = "stream_plain"
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, streamId)
+    const before = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_plain",
+        streamId,
+        sequence: "100",
+        payload: { messageId: "msg_plain", contentJson: { type: "doc", content: [] } },
+      }),
+    })
+
+    expect(queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))).toBe(before)
+    expect(invalidateQueries).not.toHaveBeenCalled()
+
+    cleanup()
+  })
+
+  it("message:edited patches the bootstrap cache from the wire map and skips invalidation", async () => {
+    const streamId = "stream_wire_edit"
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, streamId)
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+    await db.events.put({
+      ...makeEvent({
+        id: "evt_target",
+        streamId,
+        sequence: "50",
+        payload: { messageId: "msg_target", contentMarkdown: "old" },
+      }),
+      workspaceId: "ws_1",
+      _sequenceNum: 50,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:edited", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_edit",
+        streamId,
+        sequence: "101",
+        eventType: "message_edited",
+        payload: { messageId: "msg_target", contentJson: shareNodeContent, contentMarkdown: "edited" },
+      }),
+      sharedMessages: { msg_src: okEntry("edited source") },
+    })
+
+    const cached = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+    expect(cached?.sharedMessages).toEqual({ msg_src: okEntry("edited source") })
+    expect(invalidateQueries).not.toHaveBeenCalled()
+
+    cleanup()
+  })
+
+  it("message:edited falls back to invalidating when a share-bearing edit carries no map (deploy skew)", async () => {
+    const streamId = "stream_skew_edited"
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, streamId)
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:edited", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_edit_skew",
+        streamId,
+        sequence: "101",
+        eventType: "message_edited",
+        payload: { messageId: "msg_target", contentJson: shareNodeContent, contentMarkdown: "edited" },
+      }),
+    })
+
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: streamKeys.bootstrap("ws_1", streamId) })
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: streamKeys.events("ws_1", streamId) })
+
+    cleanup()
+  })
+
+  it("pointer:invalidated patches the fresh entry over the stale one without invalidating", async () => {
+    const streamId = "stream_pointer_patch"
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, streamId, {
+      msg_src: okEntry("stale content"),
+      msg_other: okEntry("untouched", "msg_other"),
+    })
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("pointer:invalidated", {
+      workspaceId: "ws_1",
+      targetStreamId: streamId,
+      sourceMessageId: "msg_src",
+      sharedMessages: { msg_src: okEntry("fresh content") },
+    })
+
+    const cached = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+    expect(cached?.sharedMessages).toEqual({
+      msg_src: okEntry("fresh content"),
+      msg_other: okEntry("untouched", "msg_other"),
+    })
+    expect(invalidateQueries).not.toHaveBeenCalled()
+
+    cleanup()
+  })
+
+  it("pointer:invalidated without a map falls back to invalidating (deploy skew)", async () => {
+    const streamId = "stream_pointer_skew"
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, streamId)
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("pointer:invalidated", {
+      workspaceId: "ws_1",
+      targetStreamId: streamId,
+      sourceMessageId: "msg_src",
+    })
+
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: streamKeys.bootstrap("ws_1", streamId) })
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: streamKeys.events("ws_1", streamId) })
+
+    cleanup()
+  })
+
+  it("does not create a bootstrap cache entry when a map arrives with nothing cached", async () => {
+    const streamId = "stream_no_cache"
+    const queryClient = new QueryClient()
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("pointer:invalidated", {
+      workspaceId: "ws_1",
+      targetStreamId: streamId,
+      sourceMessageId: "msg_src",
+      sharedMessages: { msg_src: okEntry("wire") },
+    })
+
+    expect(queryClient.getQueryCache().find({ queryKey: streamKeys.bootstrap("ws_1", streamId) })).toBeUndefined()
+
+    cleanup()
   })
 })

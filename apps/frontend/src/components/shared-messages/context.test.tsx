@@ -17,6 +17,7 @@ describe("SharedMessagesProvider", () => {
 
   it("returns the hydrated payload keyed by messageId", () => {
     const ok = {
+      type: "sharedMessage" as const,
       state: "ok" as const,
       messageId: "msg_1",
       streamId: "stream_src",
@@ -37,7 +38,9 @@ describe("SharedMessagesProvider", () => {
   it("returns null for a messageId missing from the map", () => {
     const { result } = renderHook(() => useSharedMessageHydration("msg_missing"), {
       wrapper: ({ children }) => (
-        <SharedMessagesProvider map={{ msg_other: { state: "missing", messageId: "msg_other" } }}>
+        <SharedMessagesProvider
+          map={{ msg_other: { type: "sharedMessage", state: "missing", messageId: "msg_other" } }}
+        >
           {children}
         </SharedMessagesProvider>
       ),

@@ -59,6 +59,7 @@ describe("MarkdownContent — sharedMessage paragraph swap", () => {
     const markdown = "Shared a message from [Ariadne](shared-message:stream_src/msg_abc)"
     renderMarkdown(markdown, {
       msg_abc: {
+        type: "sharedMessage",
         state: "ok",
         messageId: "msg_abc",
         streamId: "stream_src",
@@ -127,6 +128,7 @@ describe("MarkdownContent — sharedMessage paragraph swap", () => {
     const markdown = "Shared a message from [Ariadne](shared-message:stream_src/msg_abc)"
     renderMarkdown(markdown, {
       msg_abc: {
+        type: "sharedMessage",
         state: "ok",
         messageId: "msg_abc",
         streamId: "stream_src",
