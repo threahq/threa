@@ -338,16 +338,31 @@ export class ActivityFeedHandler implements OutboxHandler {
       }
 
       for (const [workspaceId, group] of byWorkspace) {
+        // Ordering barrier against activity:read (see findStillUnreadIds): a
+        // row can be read — and its activity:read logged — between the source
+        // transaction's commit and this publish. Re-read under FOR SHARE and
+        // skip non-self rows that are already read; a concurrent read UPDATE
+        // blocks on the lock until this transaction commits, so the sync log
+        // can never order a creation after its read. Self rows are born read
+        // and never appear in a read delta — published unconditionally.
+        const stillUnread = await ActivityRepository.findStillUnreadIds(
+          client,
+          workspaceId,
+          group.map((a) => a.id)
+        )
+        const publishable = group.filter((a) => a.isSelf || stillUnread.has(a.id))
+        if (publishable.length === 0) continue
+
         // Stream-less rows (standalone saved-item reminders) have no
         // per-stream unread counts; their lookup below misses and falls back
         // to zeros, which is correct — there's no stream badge to update.
         const counts = await ActivityRepository.countUnreadForPairs(
           client,
           workspaceId,
-          group.flatMap((a) => (a.streamId ? [{ userId: a.userId, streamId: a.streamId }] : []))
+          publishable.flatMap((a) => (a.streamId ? [{ userId: a.userId, streamId: a.streamId }] : []))
         )
 
-        for (const activity of group) {
+        for (const activity of publishable) {
           const pairCounts = counts.get(`${activity.userId}:${activity.streamId}`)
           await OutboxRepository.insert(client, "activity:created", {
             workspaceId: activity.workspaceId,

@@ -915,7 +915,7 @@ export function createStreamHandlers({
       // clear on membership left those rows stuck until clicked one by one in
       // the Activity feed. A null membership is a successful activity-only read
       // (no watermark to advance), not a 404; access was validated above.
-      await activityService?.markStreamActivityAsRead(userId, streamId)
+      await activityService?.markStreamActivityAsRead(userId, workspaceId, streamId)
 
       res.json({ membership: membership ?? null })
     },

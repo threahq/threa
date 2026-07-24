@@ -270,6 +270,7 @@ describe("ActivityFeedHandler", () => {
     const countsSpy = spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
       new Map([["usr_alice:stream_test", { mentionCount: 3, totalCount: 5 }]])
     )
+    spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["activity_test123"]))
 
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => {
       return callback({} as any)
@@ -329,6 +330,7 @@ describe("ActivityFeedHandler", () => {
     spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
       new Map([["usr_behind:stream_test", { mentionCount: 0, totalCount: 1 }]])
     )
+    spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["act_unread"]))
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
 
     const { handler, activityService } = createHandler()
@@ -346,6 +348,89 @@ describe("ActivityFeedHandler", () => {
       {},
       "activity:created",
       expect.objectContaining({ targetUserId: "usr_caughtup" })
+    )
+  })
+
+  it("skips activity:created for rows read before publish (activity:read ordering barrier)", async () => {
+    // A row can be read — and its activity:read logged — between the source
+    // commit and this publish. The FOR SHARE re-read sees the committed
+    // read_at and the stale creation is never published, so the sync log
+    // can't order a creation after its read (replay would resurrect the row).
+    const readBeforePublish = {
+      id: "act_read_early",
+      workspaceId: "ws_test",
+      userId: "usr_a",
+      activityType: "message",
+      streamId: "stream_test",
+      messageId: "msg_test",
+      actorId: "usr_author",
+      actorType: "user",
+      context: {},
+      readAt: null,
+      createdAt: new Date("2025-01-01T00:00:00Z"),
+      isSelf: false,
+      emoji: null,
+    }
+    const stillUnread = { ...readBeforePublish, id: "act_still_unread", userId: "usr_b" }
+
+    const event = makeMessageCreatedEvent(1n)
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(new Map())
+    // The locked re-read reports only one row still unread.
+    spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["act_still_unread"]))
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
+
+    const { handler, activityService } = createHandler()
+    ;(activityService.processMessageNotifications as any).mockResolvedValue([readBeforePublish, stillUnread])
+
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", expect.objectContaining({ targetUserId: "usr_b" }))
+    expect(insertSpy).not.toHaveBeenCalledWith(
+      {},
+      "activity:created",
+      expect.objectContaining({ targetUserId: "usr_a" })
+    )
+  })
+
+  it("still publishes self rows even when the barrier reports nothing unread", async () => {
+    // Self rows are born read (read_at set at insert) so they never appear in
+    // an activity:read delta — the barrier must not suppress their emission.
+    const selfRow = {
+      id: "act_self",
+      workspaceId: "ws_test",
+      userId: "usr_author",
+      activityType: "message",
+      streamId: "stream_test",
+      messageId: "msg_test",
+      actorId: "usr_author",
+      actorType: "user",
+      context: {},
+      readAt: new Date("2025-01-01T00:00:00Z"),
+      createdAt: new Date("2025-01-01T00:00:00Z"),
+      isSelf: true,
+      emoji: null,
+    }
+
+    const event = makeMessageCreatedEvent(1n)
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(new Map())
+    spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set())
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
+
+    const { handler, activityService } = createHandler()
+    ;(activityService.processSelfMessageActivity as any).mockResolvedValue(selfRow)
+
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(insertSpy).toHaveBeenCalledWith(
+      {},
+      "activity:created",
+      expect.objectContaining({ targetUserId: "usr_author" })
     )
   })
 
@@ -399,6 +484,7 @@ describe("ActivityFeedHandler", () => {
     spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
       new Map([["usr_bob:stream_test", { mentionCount: 1, totalCount: 1 }]])
     )
+    spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["activity_existing"]))
 
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => {
       return callback({} as any)

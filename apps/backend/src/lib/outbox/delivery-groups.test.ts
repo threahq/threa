@@ -376,3 +376,17 @@ describe("resolveDeliveryGroups — stream archive lifecycle", () => {
     expect(groups).toEqual([streamGroup("stream_root")])
   })
 })
+
+describe("resolveDeliveryGroups — activity:read", () => {
+  it("routes to the target user's room only, like activity:created", () => {
+    const groups = resolveDeliveryGroups(
+      event("activity:read", {
+        workspaceId: "ws_1",
+        targetUserId: "usr_alice",
+        activityIds: ["act_1"],
+        streamIds: ["stream_1"],
+      })
+    )
+    expect(groups).toEqual([userGroup("usr_alice")])
+  })
+})

@@ -493,7 +493,7 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
     // access from the root (INV-62) gets an activity-only read, not a 404.
     expect(captured.status).not.toBe(404)
     expect(captured.body).toEqual({ membership: null })
-    expect(markStreamActivityAsRead).toHaveBeenCalledWith("usr_viewer", "stream_thread")
+    expect(markStreamActivityAsRead).toHaveBeenCalledWith("usr_viewer", "ws_1", "stream_thread")
   })
 
   it("returns the membership for a member read and still clears activity", async () => {
@@ -517,6 +517,6 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
 
     expect(captured.status).toBe(200)
     expect(captured.body).toEqual({ membership })
-    expect(markStreamActivityAsRead).toHaveBeenCalledWith("usr_viewer", "stream_thread")
+    expect(markStreamActivityAsRead).toHaveBeenCalledWith("usr_viewer", "ws_1", "stream_thread")
   })
 })

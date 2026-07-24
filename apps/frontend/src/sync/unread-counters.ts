@@ -116,6 +116,21 @@ export function dropActivitiesForStream(state: UnreadCounterState, streamId: str
   )
 }
 
+/**
+ * Drop held rows by id — applied on `activity:read` (a read performed on
+ * another device/session). Idempotent with this device's own optimistic
+ * mutations: dropping ids already absent is a same-reference no-op.
+ */
+export function dropActivitiesById(state: UnreadCounterState, activityIds: readonly string[]): UnreadCounterState {
+  if (activityIds.length === 0) return state
+  const ids = new Set(activityIds)
+  if (!state.unreadActivities.some((a) => ids.has(a.id))) return state
+  return withActivities(
+    state,
+    state.unreadActivities.filter((a) => !ids.has(a.id))
+  )
+}
+
 /** Drop the held reaction row matching a `reaction:removed` (message + actor + emoji). */
 export function dropReactionActivity(
   state: UnreadCounterState,
