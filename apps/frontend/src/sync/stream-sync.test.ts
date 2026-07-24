@@ -3099,3 +3099,140 @@ describe("applyStreamBootstrap — slot store ingestion (Amendment A)", () => {
     expect(cached.sharedMessages).toBeUndefined()
   })
 })
+
+describe("applyStreamBootstrap standalone frontier persistence (non-member unlock)", () => {
+  const streamId = "stream_frontier"
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.streamReadState.clear()
+    await db.pendingMessages.clear()
+  })
+
+  it("persists the bootstrap's standalone frontier row", async () => {
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([], streamId),
+      readState: { lastReadEventId: "evt_9", lastReadSequence: "42", lastReadAt: "2026-07-24T00:00:00.000Z" },
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: "evt_9",
+      lastReadSequence: "42",
+      lastReadAt: "2026-07-24T00:00:00.000Z",
+    })
+  })
+
+  it("seeds a never-read sentinel for a confirmed non-member absence — they have no membership mirror to fall back to", async () => {
+    const bootstrap: StreamBootstrap = { ...makeBootstrap([], streamId), readState: null }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({
+      streamId,
+      lastReadEventId: null,
+      lastReadSequence: null,
+      lastReadAt: null,
+    })
+  })
+
+  it("seeds NO sentinel for a member without a standalone row — the membership fallback stays live (shadow window)", async () => {
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([], streamId),
+      membership: {
+        streamId,
+        memberId: "user_1",
+        notificationLevel: null,
+        lastReadEventId: "evt_m",
+        lastReadAt: null,
+        joinedAt: new Date().toISOString(),
+      },
+      readState: null,
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toBeUndefined()
+  })
+
+  it("clears a prior nonmember sentinel once membership arrives with an absent row — frontier resolves to membership, not the stale sentinel", async () => {
+    // Nonmember open: absent row + no membership seeds the never-read sentinel.
+    await applyStreamBootstrap("ws_1", streamId, { ...makeBootstrap([], streamId), readState: null })
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({
+      lastReadEventId: null,
+      lastReadSequence: null,
+      lastReadAt: null,
+    })
+
+    // Membership gained during the rolling deploy (only the legacy column was
+    // written server-side, so the standalone row is still absent): the sentinel
+    // must be cleared so the frontier falls back to the membership watermark.
+    await applyStreamBootstrap("ws_1", streamId, {
+      ...makeBootstrap([], streamId),
+      membership: {
+        streamId,
+        memberId: "user_1",
+        notificationLevel: null,
+        lastReadEventId: "evt_m",
+        lastReadAt: null,
+        joinedAt: new Date().toISOString(),
+      },
+      readState: null,
+    })
+
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toBeUndefined()
+  })
+
+  it("never overwrites an explicit unread-to-zero row with a snapshot frontier that may predate the unread", async () => {
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: null,
+      lastReadSequence: null,
+      lastReadAt: "2026-07-24T12:00:00.000Z",
+      _cachedAt: Date.now(),
+    })
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([], streamId),
+      readState: { lastReadEventId: "evt_9", lastReadSequence: "42", lastReadAt: "2026-07-24T00:00:00.000Z" },
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({ lastReadEventId: null })
+  })
+
+  it("max-merges the incoming row over the stored sequence — a stale snapshot never regresses the frontier", async () => {
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: "evt_high",
+      lastReadSequence: "90",
+      lastReadAt: "2026-07-24T00:00:00.000Z",
+      _cachedAt: Date.now(),
+    })
+
+    await applyStreamBootstrap("ws_1", streamId, {
+      ...makeBootstrap([], streamId),
+      readState: { lastReadEventId: "evt_low", lastReadSequence: "42", lastReadAt: "2026-07-24T00:00:00.000Z" },
+    })
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({ lastReadEventId: "evt_high" })
+
+    await applyStreamBootstrap("ws_1", streamId, {
+      ...makeBootstrap([], streamId),
+      readState: { lastReadEventId: "evt_higher", lastReadSequence: "100", lastReadAt: "2026-07-24T01:00:00.000Z" },
+    })
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({ lastReadEventId: "evt_higher" })
+  })
+
+  it("leaves the store untouched when the field is absent (payload cached before it shipped)", async () => {
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([], streamId))
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toBeUndefined()
+  })
+})

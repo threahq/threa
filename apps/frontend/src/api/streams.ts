@@ -209,8 +209,11 @@ export const streamsApi = {
     return res.membership
   },
 
-  async markUnread(workspaceId: string, streamId: string, messageId: string): Promise<StreamMember> {
-    const res = await api.post<{ membership: StreamMember }>(
+  async markUnread(workspaceId: string, streamId: string, messageId: string): Promise<StreamMember | null> {
+    // Null membership = a successful unread by a viewer with access but no
+    // membership row (INV-62) — the standalone frontier moved; there is no
+    // membership to return.
+    const res = await api.post<{ membership: StreamMember | null }>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/unread`,
       { messageId }
     )

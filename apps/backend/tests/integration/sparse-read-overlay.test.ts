@@ -6,6 +6,7 @@ import {
   StreamEventRepository,
   StreamMemberRepository,
   SparseReadRepository,
+  ReadStateRepository,
   applySparseRead,
   applySparseUnread,
 } from "../../src/features/streams"
@@ -29,6 +30,7 @@ describe("Sparse read overlay", () => {
 
   beforeEach(async () => {
     await pool.query("DELETE FROM stream_member_message_reads")
+    await pool.query("DELETE FROM stream_read_state")
     await pool.query("DELETE FROM messages")
     await pool.query("DELETE FROM stream_events")
     await pool.query("DELETE FROM stream_sequences")
@@ -149,7 +151,7 @@ describe("Sparse read overlay", () => {
     expect(await effectiveUnread(sid, reader)).toBe(0)
   })
 
-  test("a non-member thread leg is overlay-only — no membership row, no watermark", async () => {
+  test("a non-member thread leg compacts into its own standalone read-state row — never into membership", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])
     const [parentMsg] = await sendMessages(wid, sid, authorId, 1)
@@ -168,12 +170,20 @@ describe("Sparse read overlay", () => {
       applySparseRead(client, { workspaceId: wid, streamId: threadId, memberId: reader, messageIds: threadMsgs })
     )
 
-    expect(snapshot.lastReadEventId).toBeNull()
-    expect(snapshot.lastReadSequence).toBe("0")
-    expect(snapshot.readMessageIds.sort()).toEqual([...threadMsgs].sort())
-    // Overlay-only: no membership row was upserted (membership ≠ access, INV-62).
+    // The contiguous run above the null watermark compacted into the leg's own
+    // frontier: watermark at the last read event, absorbed overlay rows pruned.
+    const threadEvents = await StreamEventRepository.list(pool, threadId)
+    const lastEvent = threadEvents[threadEvents.length - 1]
+    expect(snapshot.lastReadEventId).toBe(lastEvent.id)
+    expect(snapshot.lastReadSequence).toBe(lastEvent.sequence.toString())
+    expect(snapshot.readMessageIds).toEqual([])
+    expect(await SparseReadRepository.countOverlay(pool, threadId, reader)).toBe(0)
+    // The frontier landed in stream_read_state — and NO membership row was
+    // upserted (membership ≠ access ≠ read state, INV-62).
     expect(await StreamMemberRepository.findByStreamAndMember(pool, threadId, reader)).toBeNull()
-    expect(await SparseReadRepository.countOverlay(pool, threadId, reader)).toBe(2)
+    const readState = await ReadStateRepository.get(pool, threadId, reader)
+    expect(readState?.lastReadEventId).toBe(lastEvent.id)
+    expect(readState?.workspaceId).toBe(wid)
   })
 
   test("double-applying the same read is idempotent (ON CONFLICT) and order-convergent", async () => {

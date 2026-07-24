@@ -47,17 +47,19 @@ export async function getEffectiveReadState(
  * `stream_read_state` row is consulted first and is authoritative when present
  * (a NULL watermark counts as "before the first message" and never falls
  * through to a non-null membership column); the membership watermark fills only
- * users with no read-state row. The candidate universe is the caller's
- * (member-filtered) — this changes the read-truth source, not the recipients.
- *
- * Chunk 2 scope: the read-state branch ALSO requires a current `stream_members`
- * row for (stream_id, user_id) — a retained row for a removed/non-member is
- * excluded from the born-read set. Row presence stays authoritative within the
- * member universe (a present NULL still joins no event and reads as unread).
- * Chunk 3 deliberately removes this current-membership gate.
+ * users with no read-state row. The candidate universe stays the caller's
+ * access/recipient set — read state is user-anchored, NOT membership-gated
+ * (non-member unlock): a viewer who inherits thread access from the root
+ * (INV-62) reads as born-read off their own row, which closes the late-insert
+ * race where an activity row lands between their read-clear and the response.
+ * The membership fallback leg is workspace-scoped (INV-8): it joins `streams`
+ * on the membership's stream and requires `streams.workspace_id` match, and
+ * binds the watermark event to that same stream (not just by event id) so a
+ * stale/corrupt cross-workspace watermark can't qualify a member.
  */
 export async function usersReadThroughEffective(
   db: Querier,
+  workspaceId: string,
   streamId: string,
   userIds: string[],
   sequence: bigint
@@ -66,21 +68,23 @@ export async function usersReadThroughEffective(
   const result = await db.query<{ user_id: string }>(sql`
     SELECT rs.user_id
     FROM stream_read_state rs
-    JOIN stream_members sm ON sm.stream_id = rs.stream_id AND sm.member_id = rs.user_id
     JOIN stream_events se ON se.id = rs.last_read_event_id
-    WHERE rs.stream_id = ${streamId}
+    WHERE rs.workspace_id = ${workspaceId}
+      AND rs.stream_id = ${streamId}
       AND rs.user_id = ANY(${userIds})
       AND se.sequence >= ${sequence.toString()}
     UNION
     SELECT sm.member_id
     FROM stream_members sm
-    JOIN stream_events se ON se.id = sm.last_read_event_id
+    JOIN streams s ON s.id = sm.stream_id
+    JOIN stream_events se ON se.id = sm.last_read_event_id AND se.stream_id = sm.stream_id
     WHERE sm.stream_id = ${streamId}
+      AND s.workspace_id = ${workspaceId}
       AND sm.member_id = ANY(${userIds})
       AND se.sequence >= ${sequence.toString()}
       AND NOT EXISTS (
         SELECT 1 FROM stream_read_state rs
-        WHERE rs.stream_id = ${streamId} AND rs.user_id = sm.member_id
+        WHERE rs.stream_id = ${streamId} AND rs.user_id = sm.member_id AND rs.workspace_id = ${workspaceId}
       )
   `)
   return new Set(result.rows.map((row) => row.user_id))

@@ -199,6 +199,18 @@ export interface StreamBootstrap {
   /** Complete slash-command list effective for this stream. Live backend returns this. */
   commands?: CommandInfo[]
   membership: StreamMember | null
+  /**
+   * The viewer's standalone read frontier on this stream (non-member unlock):
+   * the same data the workspace bootstrap's `streamReadState` map carries for
+   * member streams, served per-stream so access-without-membership viewers
+   * (INV-62 thread legs, public roots never joined) resolve their frontier on
+   * open — the workspace bootstrap stays member-keyed. `null` = no row (never
+   * read: frontier before the first message, distinct from a row whose
+   * `lastReadEventId` is null — an explicit mark-unread-to-zero). Optional:
+   * payloads cached before this field shipped lack it (fall back to the
+   * membership mirror).
+   */
+  readState?: StreamReadFrontier | null
   latestSequence: string
   /**
    * Server wall-clock (ISO) captured immediately before the bootstrap's

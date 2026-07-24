@@ -931,12 +931,12 @@ export function createStreamHandlers({
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
+      // A null membership is a successful unread by a viewer with access but no
+      // membership row (INV-62) — the service throws MESSAGE_NOT_FOUND itself
+      // when the message isn't in the stream; null here must not 404.
       const membership = await streamService.markUnread(workspaceId, streamId, userId, data.messageId)
-      if (!membership) {
-        throw new HttpError("Message not found in this stream", { status: 404, code: "MESSAGE_NOT_FOUND" })
-      }
 
-      res.json({ membership })
+      res.json({ membership: membership ?? null })
     },
 
     async archive(req: Request, res: Response) {
@@ -1009,21 +1009,23 @@ export function createStreamHandlers({
       // value. See `writeBootstrapEventsAndStream` in stream-sync.ts.
       const snapshotAt = new Date().toISOString()
 
-      const [members, botMemberIds, membership, latestSequence, activityCounts, rootStream] = await Promise.all([
-        streamService.getMembers(streamId),
-        streamService.getBotMemberIds(workspaceId, streamId),
-        streamService.getMembership(streamId, userId),
-        eventService.getLatestSequence(streamId),
-        activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
-        // For a thread, fetch the root so the bootstrap can surface
-        // `rootArchivedAt` — archiving marks only the root row, so the thread's
-        // own `archivedAt` can't tell the client it is sealed. No-op (null) for
-        // non-threads and threads whose root is missing (dangling root_stream_id
-        // is possible under INV-1's FK-less schema).
-        stream.type === StreamTypes.THREAD && stream.rootStreamId
-          ? streamService.getStreamById(stream.rootStreamId)
-          : Promise.resolve(null),
-      ])
+      const [members, botMemberIds, membership, viewerReadState, latestSequence, activityCounts, rootStream] =
+        await Promise.all([
+          streamService.getMembers(streamId),
+          streamService.getBotMemberIds(workspaceId, streamId),
+          streamService.getMembership(streamId, userId),
+          streamService.getViewerReadState(streamId, userId),
+          eventService.getLatestSequence(streamId),
+          activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
+          // For a thread, fetch the root so the bootstrap can surface
+          // `rootArchivedAt` — archiving marks only the root row, so the thread's
+          // own `archivedAt` can't tell the client it is sealed. No-op (null) for
+          // non-threads and threads whose root is missing (dangling root_stream_id
+          // is possible under INV-1's FK-less schema).
+          stream.type === StreamTypes.THREAD && stream.rootStreamId
+            ? streamService.getStreamById(stream.rootStreamId)
+            : Promise.resolve(null),
+        ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const commands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
       const botRuntimeLinkByBotId =
@@ -1045,10 +1047,20 @@ export function createStreamHandlers({
         })
       )
 
-      // Effective frontier (read cutover): a stream_read_state row wins when
-      // present (a NULL watermark included); the membership column fills an
-      // absent row. Non-members still read as 0 — chunk 3 unlocks their counts.
-      const unreadCount = membership ? await streamService.getEffectiveUnreadCount(streamId, userId, membership) : 0
+      // Effective frontier for EVERY viewer with access (non-member unlock):
+      // a stream_read_state row wins when present (a NULL watermark included);
+      // the membership column fills an absent row; an access-without-membership
+      // viewer (INV-62) with neither reads as never-read (everything unread).
+      const unreadCount = await streamService.getEffectiveUnreadCount(streamId, userId, membership)
+      // The viewer's standalone frontier rides the per-stream response so
+      // non-member legs resolve theirs on open (the workspace bootstrap stays
+      // member-keyed). Sequence resolved off the watermark event, same as the
+      // workspace bootstrap's streamReadState map.
+      const readStateSequence = viewerReadState?.lastReadEventId
+        ? ((await streamService.getSequencesByEventIds([viewerReadState.lastReadEventId])).get(
+            viewerReadState.lastReadEventId
+          ) ?? null)
+        : null
 
       let events = await eventService.listEvents(streamId, {
         limit: afterSequence !== undefined ? EVENTS_DEFAULT_LIMIT + 1 : EVENTS_DEFAULT_LIMIT,
@@ -1143,6 +1155,13 @@ export function createStreamHandlers({
           botRuntimePresence,
           commands,
           membership,
+          readState: viewerReadState
+            ? {
+                lastReadEventId: viewerReadState.lastReadEventId,
+                lastReadSequence: readStateSequence,
+                lastReadAt: viewerReadState.lastReadAt ? viewerReadState.lastReadAt.toISOString() : null,
+              }
+            : null,
           latestSequence: (latestSequence ?? 0n).toString(),
           snapshotAt,
           hasOlderEvents,

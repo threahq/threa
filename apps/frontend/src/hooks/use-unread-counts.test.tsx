@@ -17,6 +17,8 @@ import { useUnreadCounts } from "./use-unread-counts"
 
 const mockMarkAsRead =
   vi.fn<(workspaceId: string, streamId: string, lastEventId: string) => Promise<StreamMember | null>>()
+const mockMarkUnread =
+  vi.fn<(workspaceId: string, streamId: string, messageId: string) => Promise<StreamMember | null>>()
 const mockPostMessage = vi.fn()
 const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
 
@@ -29,6 +31,7 @@ function createWrapper(queryClient: QueryClient) {
         services: {
           streams: {
             markAsRead: mockMarkAsRead,
+            markUnread: mockMarkUnread,
           } as unknown as StreamService,
         },
         children,
@@ -132,6 +135,7 @@ function makeBootstrap(): WorkspaceBootstrap {
 describe("useUnreadCounts", () => {
   beforeEach(async () => {
     mockMarkAsRead.mockReset()
+    mockMarkUnread.mockReset()
     mockPostMessage.mockReset()
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
@@ -408,16 +412,76 @@ describe("useUnreadCounts", () => {
       expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_3"])
     })
 
-    // No watermark to persist: no membership row created, no stream row
-    // touched, and unrelated memberships stay put.
+    // No membership row created, no stream row touched, and unrelated
+    // memberships stay put — but the standalone frontier DOES move: non-member
+    // unlocks get the same optimistic divider advance as members.
     expect(await db.streamMemberships.get("ws_1:stream_thread")).toBeUndefined()
     expect(await db.streams.get("stream_thread")).toBeUndefined()
     expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_old" })
+    expect(await db.streamReadState.get("ws_1:stream_thread")).toMatchObject({
+      streamId: "stream_thread",
+      lastReadEventId: "event_new",
+    })
 
     const updated = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
     expect(updated?.unreadActivities?.map((a) => a.id)).toEqual(["act_3"])
     expect(updated?.activityCounts).toEqual({ stream_2: 1 })
     expect(updated?.unreadActivityCount).toBe(1)
     expect(updated?.streamMemberships.find((m) => m.streamId === "stream_1")?.lastReadEventId).toBe("event_old")
+    expect(updated?.streamReadState?.stream_thread?.lastReadEventId).toBe("event_new")
+  })
+
+  it("markUnread with a membership mirrors the pointer into the membership row and the standalone frontier", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    await db.streamMemberships.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId: "event_old",
+      lastReadAt: null,
+      joinedAt: new Date().toISOString(),
+      _cachedAt: Date.now(),
+    })
+
+    mockMarkUnread.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId: "event_prev",
+      lastReadAt: "2026-07-24T00:00:00.000Z",
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markUnread("stream_1", "msg_target")
+    })
+
+    await waitFor(async () => {
+      expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_prev" })
+    })
+    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_prev" })
+  })
+
+  it("markUnread with a null membership writes nothing optimistically — the stream:read_set echo owns the frontier", async () => {
+    // A non-member's unread succeeds with a null membership; the response
+    // carries no watermark, so the optimistic path must not fabricate
+    // membership-shaped rows — the echo SETs the standalone frontier.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+
+    mockMarkUnread.mockResolvedValue(null)
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markUnread("stream_thread", "msg_target")
+    })
+
+    await waitFor(() => expect(mockMarkUnread).toHaveBeenCalledWith("ws_1", "stream_thread", "msg_target"))
+    expect(await db.streamMemberships.get("ws_1:stream_thread")).toBeUndefined()
+    expect(await db.streamReadState.get("ws_1:stream_thread")).toBeUndefined()
   })
 })

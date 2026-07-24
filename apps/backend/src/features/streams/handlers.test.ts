@@ -496,6 +496,53 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
     expect(markStreamActivityAsRead).toHaveBeenCalledWith("usr_viewer", "ws_1", "stream_thread")
   })
 
+  it("returns null membership for a non-member unread — the same-class 404 is gone", async () => {
+    const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))
+    const markUnread = mock(() => Promise.resolve(null))
+    const handlers = makeHandlers({ validateStreamAccess, markUnread } as Partial<StreamService>, {
+      markStreamActivityAsRead: mock(() => Promise.resolve()),
+    })
+    const { res, captured } = makeRes()
+
+    await handlers.markUnread(
+      {
+        user: { id: "usr_viewer" },
+        workspaceId: "ws_1",
+        params: { streamId: "stream_thread" },
+        body: { messageId: "msg_1" },
+      } as unknown as Request,
+      res
+    )
+
+    // Access (not membership) gates the unread (INV-62): null membership is a
+    // successful standalone-frontier regress, not a 404.
+    expect(captured.status).not.toBe(404)
+    expect(captured.body).toEqual({ membership: null })
+  })
+
+  it("surfaces MESSAGE_NOT_FOUND from the service when the message isn't in the stream", async () => {
+    const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))
+    const markUnread = mock(() =>
+      Promise.reject(Object.assign(new Error("Message not found"), { status: 404, code: "MESSAGE_NOT_FOUND" }))
+    )
+    const handlers = makeHandlers({ validateStreamAccess, markUnread } as Partial<StreamService>, {
+      markStreamActivityAsRead: mock(() => Promise.resolve()),
+    })
+    const { res } = makeRes()
+
+    await expect(
+      handlers.markUnread(
+        {
+          user: { id: "usr_viewer" },
+          workspaceId: "ws_1",
+          params: { streamId: "stream_thread" },
+          body: { messageId: "msg_gone" },
+        } as unknown as Request,
+        res
+      )
+    ).rejects.toMatchObject({ status: 404, code: "MESSAGE_NOT_FOUND" })
+  })
+
   it("returns the membership for a member read and still clears activity", async () => {
     const membership = {
       streamId: "stream_thread",

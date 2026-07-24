@@ -141,11 +141,26 @@ describe("applySparseRead effective watermark seed", () => {
     expect(snapshot.lastReadSequence).toBe("0")
   })
 
-  it("keeps a non-member leg overlay-only — no read-state seed, no watermark writes", async () => {
+  it("a non-member leg seeds from its ensured+locked standalone row and compacts into it — never touching membership", async () => {
     spyOn(StreamMemberRepository, "findByStreamAndMemberForUpdate").mockResolvedValue(null)
-    const readStateGet = spyOn(ReadStateRepository, "get")
+    // The leg's standalone row (ensured + locked FOR UPDATE — the non-member's
+    // serialization point) carries a NULL watermark: never read.
+    const ensureForUpdate = spyOn(ReadStateRepository, "ensureForUpdate").mockResolvedValue({
+      streamId: "stream_1",
+      userId: "usr_1",
+      lastReadEventId: null,
+    } as never)
+    spyOn(StreamEventRepository, "getMessageOrdinalForEvent").mockResolvedValue(null)
+    // A contiguous overlay run above the null watermark compacts to evt_new (seq 20).
+    spyOn(SparseReadRepository, "findCompactionTarget").mockResolvedValue({
+      eventId: "evt_new",
+      sequence: 20n,
+    } as never)
+    spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
     const memberUpdate = spyOn(StreamMemberRepository, "update").mockResolvedValue(null)
     const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
+    const pruneAtOrBelow = spyOn(SparseReadRepository, "pruneAtOrBelow").mockResolvedValue(undefined)
 
     const snapshot = await applySparseRead(db, {
       workspaceId: "ws_1",
@@ -154,13 +169,46 @@ describe("applySparseRead effective watermark seed", () => {
       messageIds: ["msg_1"],
     })
 
-    // Non-member compaction stays deferred to the PR-3 unlock: even a former
-    // member's read-state row doesn't seed the snapshot in this chunk.
-    expect(readStateGet).not.toHaveBeenCalled()
+    expect(ensureForUpdate).toHaveBeenCalledWith(db, "stream_1", "usr_1")
+    // Membership is participation: never written on a non-member read (INV-62).
+    expect(memberUpdate).not.toHaveBeenCalled()
+    expect(readStateAdvance).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_new")
+    expect(pruneAtOrBelow).toHaveBeenCalledWith(db, "stream_1", "usr_1", 20n)
+    expect(snapshot.lastReadEventId).toBe("evt_new")
+    expect(snapshot.lastReadSequence).toBe("20")
+  })
+
+  it("a non-member leg with no compaction target leaves the standalone watermark where it stands", async () => {
+    spyOn(StreamMemberRepository, "findByStreamAndMemberForUpdate").mockResolvedValue(null)
+    spyOn(ReadStateRepository, "ensureForUpdate").mockResolvedValue({
+      streamId: "stream_1",
+      userId: "usr_1",
+      lastReadEventId: null,
+    } as never)
+    spyOn(SparseReadRepository, "findCompactionTarget").mockResolvedValue(null)
+    spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(0)
+    spyOn(SparseReadRepository, "listOverlayIds").mockResolvedValue(["msg_3"])
+    const memberUpdate = spyOn(StreamMemberRepository, "update").mockResolvedValue(null)
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
+
+    const snapshot = await applySparseRead(db, {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "usr_1",
+      messageIds: ["msg_3"],
+    })
+
     expect(memberUpdate).not.toHaveBeenCalled()
     expect(readStateAdvance).not.toHaveBeenCalled()
-    expect(snapshot.lastReadEventId).toBeNull()
-    expect(snapshot.lastReadSequence).toBe("0")
+    expect(snapshot).toEqual({
+      streamId: "stream_1",
+      readMessageIds: ["msg_3"],
+      lastReadEventId: null,
+      lastReadSequence: "0",
+      lastReadOrdinal: 0,
+      markedMessageIds: ["msg_3"],
+    })
   })
 })
 
@@ -230,6 +278,44 @@ describe("applySparseUnread read-state shadow", () => {
 
     expect(memberUpdate).toHaveBeenCalledWith(db, "stream_1", "usr_1", { lastReadEventId: "evt_prev" })
     expect(readStateSet).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_prev")
+  })
+
+  it("regresses the standalone store for a non-member leg — never writing membership", async () => {
+    spyOn(StreamMemberRepository, "findByStreamAndMemberForUpdate").mockResolvedValue(null)
+    // The ensured+locked standalone row stands at seq 50, past the earliest
+    // affected message (30) — the explicit unread regresses it.
+    spyOn(ReadStateRepository, "ensureForUpdate").mockResolvedValue({
+      streamId: "stream_1",
+      userId: "usr_1",
+      lastReadEventId: "evt_5",
+    } as never)
+    spyOn(StreamEventRepository, "getMessageOrdinalForEvent").mockResolvedValue({ sequence: 50n } as never)
+    spyOn(StreamEventRepository, "findEarliestMessageEvent").mockResolvedValue({ sequence: 30n } as never)
+    spyOn(StreamEventRepository, "findPreviousMessageEvent").mockResolvedValue({
+      id: "evt_prev",
+      sequence: 25n,
+    } as never)
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
+    const memberUpdate = spyOn(StreamMemberRepository, "update").mockResolvedValue(null)
+    const readStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(undefined)
+    const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+    const snapshot = await applySparseUnread(db, {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "usr_1",
+      messageIds: ["msg_5"],
+    })
+
+    expect(memberUpdate).not.toHaveBeenCalled()
+    expect(readStateSet).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_prev")
+    expect(snapshot.lastReadEventId).toBe("evt_prev")
+    expect(snapshot.lastReadSequence).toBe("25")
+    expect(outboxInsert).toHaveBeenCalledWith(
+      db,
+      "stream:read_set",
+      expect.objectContaining({ streamId: "stream_1", authorId: "usr_1", lastReadEventId: "evt_prev" })
+    )
   })
 
   it("sets read state to null when the target is the first message", async () => {

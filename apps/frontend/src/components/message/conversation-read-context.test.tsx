@@ -120,14 +120,57 @@ describe("useConversationReadController", () => {
     expect(result.current.hasUnread([msg({ id: "m_reply", sequence: "5" })])).toBe(false)
   })
 
-  it("falls back to the root read-through time for a non-member thread leg", async () => {
+  it("a non-member thread leg resolves through its OWN standalone frontier (lazy-persisted read-state row)", async () => {
+    await seedReadState()
+    // The leg's standalone frontier (persisted by the per-stream bootstrap on
+    // open) — watermark at sequence 2. No membership row exists for the leg.
+    await db.streamReadState.put({
+      id: `${WS}:${THREAD}`,
+      workspaceId: WS,
+      streamId: THREAD,
+      lastReadEventId: "evt_t2",
+      lastReadSequence: "2",
+      lastReadAt: "2026-06-22T12:00:00.000Z",
+      _cachedAt: Date.now(),
+    })
+    const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
+
+    await waitFor(() =>
+      expect(result.current.value.state(THREAD, "t_new", "5", "2026-06-22T13:00:00.000Z")).toBe("unread")
+    )
+    expect(result.current.value.state(THREAD, "t_old", "1", "2026-06-22T11:00:00.000Z")).toBe("read")
+  })
+
+  it("a resolved never-read leg (null-watermark sentinel) reads every sequenced row as unread", async () => {
+    await seedReadState()
+    await db.streamReadState.put({
+      id: `${WS}:${THREAD}`,
+      workspaceId: WS,
+      streamId: THREAD,
+      lastReadEventId: null,
+      lastReadSequence: null,
+      lastReadAt: null,
+      _cachedAt: Date.now(),
+    })
+    const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
+
+    // Frontier before the first message: any sequenced row sits above it.
+    await waitFor(() =>
+      expect(result.current.value.state(THREAD, "t_first", "1", "2026-06-22T11:00:00.000Z")).toBe("unread")
+    )
+    expect(result.current.hasUnread([msg({ id: "t_first", streamId: THREAD, sequence: "1" })])).toBe(true)
+  })
+
+  it("an unresolved leg is ungated — the root last_read_at approximation is gone", async () => {
     await seedReadState()
     const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
-    // A thread with no membership row: compare createdAt to the root's lastReadAt (T0).
+
+    // No frontier for the leg (never opened): NOT approximated against the
+    // root's read-through time — ungated until its own frontier resolves.
     await waitFor(() =>
-      expect(result.current.value.state(THREAD, "t_old", undefined, "2026-06-22T11:00:00.000Z")).toBe("read")
+      expect(result.current.value.state(THREAD, "t_old", undefined, "2026-06-22T11:00:00.000Z")).toBe("ungated")
     )
-    expect(result.current.value.state(THREAD, "t_new", undefined, "2026-06-22T13:00:00.000Z")).toBe("unread")
+    expect(result.current.value.state(THREAD, "t_new", "5", "2026-06-22T13:00:00.000Z")).toBe("ungated")
   })
 
   it("reports the card unread when a non-own member message is effectively unread, excluding own rows", async () => {

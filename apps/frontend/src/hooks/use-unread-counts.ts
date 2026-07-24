@@ -141,19 +141,20 @@ export function useUnreadCounts(workspaceId: string) {
             return { ...old, membership: { ...old.membership, lastReadEventId: lastEventId } }
           }
         )
-
-        // Standalone frontier (read cutover): frontier readers prefer the
-        // read-state row, so the optimistic advance must move it too or the
-        // divider stalls until the socket echo. The response carries no
-        // sequence; keep the stored one (the echo reconciles it), matching the
-        // membership mirror's optimistic-write convention.
-        const existingFrontier = current?.streamReadState?.[streamId]
-        mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, {
-          lastReadEventId: lastEventId,
-          lastReadSequence: existingFrontier?.lastReadSequence ?? null,
-          lastReadAt: membership.lastReadAt ?? new Date().toISOString(),
-        })
       }
+
+      // Standalone frontier (read cutover + non-member unlock): frontier
+      // readers prefer the read-state row, so the optimistic advance must move
+      // it for EVERY viewer with access — member or not — or the divider
+      // stalls until the socket echo. The response carries no sequence; keep
+      // the stored one (the echo reconciles it), matching the membership
+      // mirror's optimistic-write convention.
+      const existingFrontier = current?.streamReadState?.[streamId]
+      mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, {
+        lastReadEventId: lastEventId,
+        lastReadSequence: existingFrontier?.lastReadSequence ?? null,
+        lastReadAt: membership?.lastReadAt ?? new Date().toISOString(),
+      })
 
       // Keep the denormalized stream row, the membership row, and the
       // standalone read-state row in sync: stream-content derives the unread
@@ -182,10 +183,10 @@ export function useUnreadCounts(workspaceId: string) {
           })
         }
 
+        const membershipId = `${workspaceId}:${streamId}`
         if (hasMembership) {
           await db.streams.update(streamId, { lastReadEventId: lastEventId, _cachedAt: now })
 
-          const membershipId = `${workspaceId}:${streamId}`
           const existingMembership = await db.streamMemberships.get(membershipId)
           if (existingMembership) {
             await db.streamMemberships.put({
@@ -203,19 +204,20 @@ export function useUnreadCounts(workspaceId: string) {
               _cachedAt: now,
             })
           }
-
-          const existingRow = await db.streamReadState.get(membershipId)
-          await putReadStateIdb(
-            workspaceId,
-            streamId,
-            {
-              lastReadEventId: lastEventId,
-              lastReadSequence: existingRow?.lastReadSequence ?? null,
-              lastReadAt: membership.lastReadAt ?? new Date().toISOString(),
-            },
-            now
-          )
         }
+
+        // The standalone row moves for non-members too (no membership mirror).
+        const existingRow = await db.streamReadState.get(membershipId)
+        await putReadStateIdb(
+          workspaceId,
+          streamId,
+          {
+            lastReadEventId: lastEventId,
+            lastReadSequence: existingRow?.lastReadSequence ?? null,
+            lastReadAt: membership?.lastReadAt ?? new Date().toISOString(),
+          },
+          now
+        )
       })
 
       if (hadActivity) {
@@ -233,6 +235,12 @@ export function useUnreadCounts(workspaceId: string) {
     mutationFn: ({ streamId, messageId }: { streamId: string; messageId: string }) =>
       streamService.markUnread(workspaceId, streamId, messageId),
     onSuccess: async (membership, { streamId }) => {
+      // Null membership = a successful unread by a viewer with access but no
+      // membership row (INV-62). The response carries no watermark to apply —
+      // the `stream:read_set` echo SETs the standalone frontier and raises the
+      // count on the round-trip (the same deferral members get for the count).
+      if (!membership) return
+
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         return {

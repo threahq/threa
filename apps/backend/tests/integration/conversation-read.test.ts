@@ -6,6 +6,7 @@ import {
   StreamEventRepository,
   StreamMemberRepository,
   SparseReadRepository,
+  ReadStateRepository,
 } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { ConversationService } from "../../src/features/conversations"
@@ -31,6 +32,7 @@ describe("ConversationService read/unread", () => {
 
   beforeEach(async () => {
     await pool.query("DELETE FROM stream_member_message_reads")
+    await pool.query("DELETE FROM stream_read_state")
     await pool.query("DELETE FROM user_activity")
     await pool.query("DELETE FROM conversations")
     await pool.query("DELETE FROM messages")
@@ -134,11 +136,15 @@ describe("ConversationService read/unread", () => {
       markedMessageIds: [msg1, msg2],
     })
 
-    // Thread: non-member leg → overlay-only, only tmsg1 (tmsg2 excluded by cutoff).
+    // Thread: non-member leg → compacted into its OWN standalone frontier
+    // (only tmsg1; tmsg2 excluded by cutoff), membership never upserted.
+    const threadEvents = await eventByMessage(thread)
     const threadSnap = byStream.get(thread)!
-    expect(threadSnap.lastReadEventId).toBeNull()
-    expect(threadSnap.readMessageIds).toEqual([tmsg1])
+    expect(threadSnap.lastReadEventId).toBe(threadEvents.get(tmsg1)!.id)
+    expect(threadSnap.lastReadSequence).toBe(threadEvents.get(tmsg1)!.sequence.toString())
+    expect(threadSnap.readMessageIds).toEqual([])
     expect(await StreamMemberRepository.findByStreamAndMember(pool, thread, reader)).toBeNull()
+    expect((await ReadStateRepository.get(pool, thread, reader))?.lastReadEventId).toBe(threadEvents.get(tmsg1)!.id)
   })
 
   test("markRead clears activity for exactly the marked messages, never the stream's other topics", async () => {
@@ -194,7 +200,7 @@ describe("ConversationService read/unread", () => {
     )
   })
 
-  test("markUnread regresses the watermark on the affected stream and drops overlay-only thread reads", async () => {
+  test("markUnread regresses the watermark on the affected stream and the non-member thread leg's standalone frontier", async () => {
     const wid = workspaceId()
     const root = streamId()
     const author = userId()
@@ -222,14 +228,17 @@ describe("ConversationService read/unread", () => {
     const convId = await insertConversation(wid, root, [msg1, tmsg1, msg2])
     const rootEvents = await eventByMessage(root)
 
-    // Read the whole conversation first.
+    // Read the whole conversation first. The thread leg (non-member) compacts
+    // into its standalone read-state row — no overlay left on the leg.
     await conversationService.markRead({
       workspaceId: wid,
       conversationId: convId,
       throughMessageId: msg2,
       userId: reader,
     })
-    expect(await SparseReadRepository.countOverlay(pool, thread, reader)).toBe(1)
+    expect(await SparseReadRepository.countOverlay(pool, thread, reader)).toBe(0)
+    const threadEvents = await eventByMessage(thread)
+    expect((await ReadStateRepository.get(pool, thread, reader))?.lastReadEventId).toBe(threadEvents.get(tmsg1)!.id)
 
     // Now mark unread from tmsg1 (cutoff 2000): tmsg1 + msg2 affected.
     const { streams } = await conversationService.markUnread({
@@ -242,9 +251,12 @@ describe("ConversationService read/unread", () => {
 
     // Root: watermark was at msg2 (>= msg2's own seq), regress to just before msg2 → msg1.
     expect(byStream.get(root)!.lastReadEventId).toBe(rootEvents.get(msg1)!.id)
-    // Thread: overlay-only, tmsg1 dropped from the overlay.
+    // Thread leg: tmsg1 was the first message, so the regress parks the
+    // standalone frontier before it (null watermark) — membership untouched.
+    expect(byStream.get(thread)!.lastReadEventId).toBeNull()
     expect(byStream.get(thread)!.readMessageIds).toEqual([])
-    expect(await SparseReadRepository.countOverlay(pool, thread, reader)).toBe(0)
+    expect(await ReadStateRepository.get(pool, thread, reader)).toMatchObject({ lastReadEventId: null })
+    expect(await StreamMemberRepository.findByStreamAndMember(pool, thread, reader)).toBeNull()
 
     // Effective root unread: msg2 is unread again (msg1 read).
     const membership = await streamService.getMembership(root, reader)

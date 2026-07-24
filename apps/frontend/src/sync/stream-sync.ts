@@ -24,6 +24,7 @@ import { streamKeys } from "@/hooks/use-streams"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
 import type { QueryClient } from "@tanstack/react-query"
 import { commitCounterMutation } from "./catch-up-batch"
+import { putReadStateIdb } from "./read-state"
 import {
   applyMovedSourceOrdinal,
   dropMessageActivities,
@@ -501,6 +502,8 @@ async function writeBootstrapEventsAndStream(
     contextBag: bootstrap.contextBag,
     _cachedAt: now,
   }
+  await persistBootstrapReadState(workspaceId, streamId, bootstrap, now)
+
   const isDmWithNullName = stream.type === StreamTypes.DM && stream.displayName == null
   if (isDmWithNullName) {
     const { displayName: _, ...withoutDisplayName } = fullStreamData
@@ -514,6 +517,67 @@ async function writeBootstrapEventsAndStream(
   const updated = await db.streams.update(stream.id, fullStreamData)
   if (updated === 0) {
     await db.streams.put(fullStreamData)
+  }
+}
+
+/**
+ * Persist the bootstrap's additive standalone frontier (non-member unlock).
+ * A present row is max-merged over any stored row so a snapshot can't regress
+ * a fresher socket echo — with one hard rule: an explicit unread-to-zero row
+ * (null watermark, non-null lastReadAt — a sanctioned downward move) is never
+ * clobbered by a non-null snapshot frontier, since the snapshot may predate
+ * the unread. A confirmed ABSENT row (null) seeds a never-read sentinel for
+ * access-without-membership viewers ONLY: they have no membership mirror to
+ * fall back to, and "no row" IS the "before the first message" frontier — the
+ * sentinel is what resolves their divider/card frontier on open. Members keep
+ * the membership fallback for an absent row (shadow window), so no sentinel
+ * there — and when a member's absent-row snapshot arrives, any standalone row
+ * already in IDB (a never-read sentinel seeded earlier when this viewer was a
+ * nonmember, or a legacy-column-only row from the rolling deploy) is CLEARED so
+ * the frontier resolves through the membership watermark instead of a stale
+ * sentinel that would poison it back to "never read". A non-null snapshot row
+ * is still a later write the snapshot lacks — keep it. Absent field (payloads
+ * cached before it shipped) changes nothing.
+ */
+async function persistBootstrapReadState(
+  workspaceId: string,
+  streamId: string,
+  bootstrap: StreamBootstrap,
+  now: number
+): Promise<void> {
+  if (bootstrap.readState === undefined) return
+  const existingRow = await db.streamReadState.get(`${workspaceId}:${streamId}`)
+  if (bootstrap.readState === null) {
+    if (bootstrap.membership) {
+      // Server has no standalone row AND the viewer is a member: the membership
+      // watermark is the frontier fallback (shadow window). Clear any standalone
+      // row — e.g. a never-read sentinel seeded earlier when this viewer was a
+      // nonmember, or a legacy-column-only row from the rolling deploy — so the
+      // read layer resolves through the membership instead of a stale sentinel
+      // that would poison the frontier back to "never read".
+      if (existingRow) {
+        await db.streamReadState.delete(`${workspaceId}:${streamId}`)
+      }
+      return
+    }
+    if (!existingRow) {
+      await putReadStateIdb(
+        workspaceId,
+        streamId,
+        { lastReadEventId: null, lastReadSequence: null, lastReadAt: null },
+        now
+      )
+    }
+    return
+  }
+  const incoming = bootstrap.readState
+  const storedExplicitUnread =
+    existingRow != null && existingRow.lastReadEventId == null && existingRow.lastReadAt != null
+  if (incoming.lastReadEventId != null && storedExplicitUnread) return
+  const incomingSeq = incoming.lastReadSequence != null ? BigInt(incoming.lastReadSequence) : null
+  const storedSeq = existingRow?.lastReadSequence != null ? BigInt(existingRow.lastReadSequence) : null
+  if (!existingRow || storedSeq == null || incomingSeq == null || incomingSeq >= storedSeq) {
+    await putReadStateIdb(workspaceId, streamId, incoming, now)
   }
 }
 
@@ -614,9 +678,13 @@ export async function applyStreamBootstrap(
   bootstrap: StreamBootstrap
 ): Promise<void> {
   const now = Date.now()
-  await db.transaction("rw", [db.events, db.streams, db.pendingMessages, db.pendingOperations, db.slots], async () => {
-    await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
-  })
+  await db.transaction(
+    "rw",
+    [db.events, db.streams, db.streamReadState, db.pendingMessages, db.pendingOperations, db.slots],
+    async () => {
+      await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
+    }
+  )
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
 }
 
