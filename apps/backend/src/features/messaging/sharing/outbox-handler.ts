@@ -84,8 +84,16 @@ export async function invalidatePointersForEvent(event: OutboxEvent, db: Pool, i
     }
     sources.add(share.sourceMessageId)
   }
-  for (const [targetStreamId, sources] of sourcesByTarget) {
-    const hydrated = await hydrateSharedMessagesForRoom(db, workspaceId, targetStreamId, sources)
+  // Per-target hydration is independent; run them concurrently so a source
+  // shared into many streams doesn't serialize a DB round per target.
+  const hydratedByTarget = await Promise.all(
+    [...sourcesByTarget.entries()].map(async ([targetStreamId, sources]) => ({
+      targetStreamId,
+      sources,
+      hydrated: await hydrateSharedMessagesForRoom(db, workspaceId, targetStreamId, sources),
+    }))
+  )
+  for (const { targetStreamId, sources, hydrated } of hydratedByTarget) {
     for (const sourceMessageId of sources) {
       io.to(`ws:${workspaceId}:stream:${targetStreamId}`).emit(POINTER_INVALIDATED_EVENT, {
         workspaceId,
