@@ -877,9 +877,9 @@ export function registerWorkspaceSocketHandlers(
     })
 
     // Update IndexedDB — use update() (partial merge) instead of put() (full replace)
-    // to preserve fields not on the Stream payload: lastMessagePreview,
-    // notificationLevel, lastReadEventId (merged from membership during bootstrap).
-    // For DMs, also preserve the resolved displayName since the backend sends null.
+    // to preserve cached fields not carried by the Stream payload, notably the
+    // last-message preview and notification level. For DMs, also preserve the
+    // resolved displayName since the backend sends null.
     const idbUpdate =
       payload.stream.type === StreamTypes.DM && payload.stream.displayName == null
         ? (() => {
