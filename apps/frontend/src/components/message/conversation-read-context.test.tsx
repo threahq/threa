@@ -62,17 +62,24 @@ async function seedReadState(
     mutedStreamIds: [],
     _cachedAt: Date.now(),
   })
-  // Root membership: watermark at sequence 3, read-through timestamp T0.
+  // Root membership (participation only).
   await db.streamMemberships.put({
     id: `${WS}:${ROOT}`,
     workspaceId: WS,
     streamId: ROOT,
     memberId: "member_me",
     notificationLevel: "everything",
+    joinedAt: "2026-06-01T00:00:00.000Z",
+    _cachedAt: Date.now(),
+  })
+  // Root read frontier: watermark at sequence 3, read-through timestamp T0.
+  await db.streamReadState.put({
+    id: `${WS}:${ROOT}`,
+    workspaceId: WS,
+    streamId: ROOT,
     lastReadEventId: "evt_3",
     lastReadSequence: "3",
     lastReadAt: "2026-06-22T12:00:00.000Z",
-    joinedAt: "2026-06-01T00:00:00.000Z",
     _cachedAt: Date.now(),
   })
 }

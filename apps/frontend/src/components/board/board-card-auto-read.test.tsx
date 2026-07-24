@@ -119,6 +119,13 @@ beforeEach(() => {
       id: `${WS}:${STREAM}`,
       workspaceId: WS,
       streamId: STREAM,
+    },
+  ] as never)
+  vi.spyOn(workspaceStoreModule, "useWorkspaceStreamReadStates").mockReturnValue([
+    {
+      id: `${WS}:${STREAM}`,
+      workspaceId: WS,
+      streamId: STREAM,
       lastReadSequence: "1",
       lastReadAt: "2026-06-20T00:00:00.000Z",
       lastReadEventId: "evt_old",

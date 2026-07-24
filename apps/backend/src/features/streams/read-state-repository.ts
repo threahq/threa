@@ -33,15 +33,14 @@ function mapRowToReadState(row: StreamReadStateRow): StreamReadState {
 const SELECT_FIELDS = "workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at"
 
 /**
- * The per-user read watermark, re-homed off `stream_members` (membership ≠
- * access ≠ read state). Keyed by (stream, user); a row exists only after the
- * user's first read-state write for that stream — absence means "never read",
- * the same semantics as a NULL `stream_members.last_read_event_id` today.
+ * The per-user read watermark — the sole read truth (membership ≠ access ≠ read
+ * state). Keyed by (stream, user); a row exists only after the user's first
+ * read-state write for that stream — absence means "never read" (frontier before
+ * the first message).
  *
- * Writes are upserts and always safe (INV-20): unlike `stream_members`, reading
- * never touches a membership surface, so upserting here can't manufacture a
- * member. `workspace_id` is derived from `streams` on insert (INV-8) — the
- * callers write inside the same transaction as the membership write they shadow.
+ * Writes are upserts and always safe (INV-20): reading never touches a membership
+ * surface, so upserting here can't manufacture a member. `workspace_id` is derived
+ * from `streams` on insert (INV-8).
  */
 export const ReadStateRepository = {
   /**
@@ -51,8 +50,8 @@ export const ReadStateRepository = {
    * unresolvable current watermark counts as sequence 0 (before the first
    * message), so any real event advances past it. Race-safe under concurrent
    * readers (INV-20). Returns the post-write row so same-tx callers can source
-   * `stream:read` payloads from the standalone frontier (which may sit above
-   * the membership watermark after a rejected stale advance).
+   * `stream:read` payloads from the effective frontier (which sits above the
+   * requested event after a rejected stale advance).
    */
   async advance(db: Querier, streamId: string, userId: string, eventId: string): Promise<StreamReadState | null> {
     const result = await db.query<StreamReadStateRow>(
@@ -105,10 +104,16 @@ export const ReadStateRepository = {
   /**
    * Batch monotonic advance for one user across many streams (mark-all). Same
    * per-row sequence rule as {@link advance}; streams whose new event doesn't
-   * out-sequence the current watermark are left untouched.
+   * out-sequence the current watermark are left untouched. Returns the
+   * authoritative post-write row for EVERY attempted stream — including rows
+   * where the monotonic guard rejected the attempted lower/equal frontier (a
+   * concurrent read already advanced past it), which a bare RETURNING would
+   * omit. The re-read rides the caller's transaction, so the snapshot is taken
+   * at the same point as the upsert: one frontier per attempted valid stream,
+   * no gaps, no duplicates, empty map safe.
    */
-  async batchAdvance(db: Querier, userId: string, updates: Map<string, string>): Promise<void> {
-    if (updates.size === 0) return
+  async batchAdvance(db: Querier, userId: string, updates: Map<string, string>): Promise<StreamReadState[]> {
+    if (updates.size === 0) return []
 
     const streamIds = Array.from(updates.keys())
     const eventIds = Array.from(updates.values())
@@ -133,6 +138,10 @@ export const ReadStateRepository = {
       `,
       [streamIds, eventIds, userId]
     )
+    // Authoritative same-tx re-read of every attempted (stream, user) row: the
+    // upsert only reports the rows its guard accepted, but a rejected row still
+    // stands at its (higher) effective frontier and must ride the snapshot.
+    return ReadStateRepository.getBatch(db, userId, streamIds)
   },
 
   /** Batch unconditional set for many users on one stream (channel-creation born-read). */
@@ -200,14 +209,13 @@ export const ReadStateRepository = {
 
   /**
    * Ensure a row exists for this (stream, user) and return it locked FOR UPDATE —
-   * the non-member leg's serialization point (INV-20). Members are serialized by
-   * their locked `stream_members` row; a non-member leg has no membership row, so
-   * its read-state row carries the lock instead: concurrent conversation reads on
-   * the same leg take the same single-row lock (conversations processes streams
-   * in sorted order, so no new lock-order hazard). A seeded row carries a NULL
-   * watermark (never read = position before the first message). Two statements:
-   * ON CONFLICT DO NOTHING returns nothing for an existing row, and FOR UPDATE
-   * can't ride the insert. Returns null only for a dangling stream id.
+   * the serialization point for concurrent conversation reads on the same
+   * (stream, user) (INV-20), for members and non-members alike. Conversations
+   * processes streams in sorted order, so the single-row lock introduces no new
+   * lock-order hazard. A seeded row carries a NULL watermark (never read =
+   * position before the first message). Two statements: ON CONFLICT DO NOTHING
+   * returns nothing for an existing row, and FOR UPDATE can't ride the insert.
+   * Returns null only for a dangling stream id.
    */
   async ensureForUpdate(db: Querier, streamId: string, userId: string): Promise<StreamReadState | null> {
     await db.query(

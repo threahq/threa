@@ -904,14 +904,11 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
     await Promise.all([db.events.clear(), db.streams.clear(), db.streamReadState.clear(), db.streamMemberships.clear()])
   })
 
-  function membership(streamId: string, lastReadEventId: string | null, lastReadSequence: string | null): StreamMember {
+  function membership(streamId: string, _lastReadEventId: string | null, _lastReadSequence: string | null): StreamMember {
     return {
       streamId,
       memberId: "member_1",
       notificationLevel: null,
-      lastReadEventId,
-      lastReadSequence,
-      lastReadAt: "2026-01-01T00:00:00.000Z",
       joinedAt: "2026-01-01T00:00:00.000Z",
     }
   }
@@ -1056,7 +1053,7 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
     expect(bootstrap.readState).toMatchObject({ lastReadEventId: "evt_100" })
   })
 
-  it("an untouched response applies confirmed absence (member row cleared)", async () => {
+  it("an untouched confirmed-absence response preserves the never-read sentinel", async () => {
     const streamId = "stream_untouched_absent"
     const fetchStartedAt = Date.now() - 1000
 
@@ -1078,10 +1075,13 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
 
-    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toBeUndefined()
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({
+      lastReadEventId: null,
+      lastReadSequence: null,
+    })
   })
 
-  it("publishes the preserved frontier to the workspace cache and keeps the local stream mirror", async () => {
+  it("publishes the preserved frontier to the workspace cache", async () => {
     const streamId = "stream_stale_publish"
     const fetchStartedAt = Date.now() - 5000
     const queryClient = new QueryClient()
@@ -1090,12 +1090,6 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
       streamMemberships: [],
     } as unknown as WorkspaceBootstrap)
 
-    // Local stream mirror already carries the touched watermark.
-    await db.streams.put({
-      ...makeBootstrap([], streamId).stream,
-      lastReadEventId: "evt_50",
-      _cachedAt: Date.now() - 1000,
-    })
     await db.streamReadState.put({
       id: `ws_1:${streamId}`,
       workspaceId: "ws_1",
@@ -1124,8 +1118,6 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
       lastReadSequence: "50",
       lastReadAt: "2026-01-01T00:00:05.000Z",
     })
-    // The stale response's membership watermark must not clobber the mirror.
-    expect(await db.streams.get(streamId)).toMatchObject({ lastReadEventId: "evt_50" })
   })
 })
 
@@ -3379,15 +3371,13 @@ describe("applyStreamBootstrap standalone frontier persistence (non-member unloc
     })
   })
 
-  it("seeds NO sentinel for a member without a standalone row — the membership fallback stays live (shadow window)", async () => {
+  it("seeds a never-read sentinel for a confirmed absence even when a membership row exists — membership carries no frontier", async () => {
     const bootstrap: StreamBootstrap = {
       ...makeBootstrap([], streamId),
       membership: {
         streamId,
         memberId: "user_1",
         notificationLevel: null,
-        lastReadEventId: "evt_m",
-        lastReadAt: null,
         joinedAt: new Date().toISOString(),
       },
       readState: null,
@@ -3395,35 +3385,29 @@ describe("applyStreamBootstrap standalone frontier persistence (non-member unloc
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toBeUndefined()
-  })
-
-  it("clears a prior nonmember sentinel once membership arrives with an absent row — frontier resolves to membership, not the stale sentinel", async () => {
-    // Nonmember open: absent row + no membership seeds the never-read sentinel.
-    await applyStreamBootstrap("ws_1", streamId, { ...makeBootstrap([], streamId), readState: null })
     expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({
+      streamId,
       lastReadEventId: null,
       lastReadSequence: null,
       lastReadAt: null,
     })
+  })
 
-    // Membership gained during the rolling deploy (only the legacy column was
-    // written server-side, so the standalone row is still absent): the sentinel
-    // must be cleared so the frontier falls back to the membership watermark.
-    await applyStreamBootstrap("ws_1", streamId, {
-      ...makeBootstrap([], streamId),
-      membership: {
-        streamId,
-        memberId: "user_1",
-        notificationLevel: null,
-        lastReadEventId: "evt_m",
-        lastReadAt: null,
-        joinedAt: new Date().toISOString(),
-      },
-      readState: null,
+  it("a confirmed absence does not clobber an existing frontier row", async () => {
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId: "evt_9",
+      lastReadSequence: "42",
+      lastReadAt: "2026-07-24T00:00:00.000Z",
+      _cachedAt: Date.now(),
     })
 
-    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toBeUndefined()
+    // A snapshot with no row (null) must not wipe a fresher locally-written row.
+    await applyStreamBootstrap("ws_1", streamId, { ...makeBootstrap([], streamId), readState: null })
+
+    expect(await db.streamReadState.get(`ws_1:${streamId}`)).toMatchObject({ lastReadEventId: "evt_9" })
   })
 
   it("never overwrites an explicit unread-to-zero row with a snapshot frontier that may predate the unread", async () => {

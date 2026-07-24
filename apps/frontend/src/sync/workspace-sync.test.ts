@@ -818,11 +818,12 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
           streamId: "stream_visible",
           memberId: "user_1",
           notificationLevel: null,
-          lastReadEventId: "evt_old",
-          lastReadAt: null,
           joinedAt: new Date().toISOString(),
         },
       ],
+      streamReadState: {
+        stream_visible: { lastReadEventId: "evt_old", lastReadSequence: "1", lastReadAt: null },
+      },
       unreadCounts: { stream_visible: 5 },
       mentionCounts: { stream_visible: 2 },
       activityCounts: { stream_visible: 5 },
@@ -839,10 +840,9 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
               streamId: "stream_visible",
               memberId: "user_1",
               notificationLevel: "activity",
-              lastReadEventId: "evt_new",
-              lastReadAt: null,
               joinedAt: new Date().toISOString(),
             },
+            readState: { lastReadEventId: "evt_new", lastReadSequence: "2", lastReadAt: null },
             unreadCount: 1,
             mentionCount: 1,
             activityCount: 1,
@@ -857,9 +857,7 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
     })
 
     expect(merged.unreadCounts.stream_visible).toBe(1)
-    expect(
-      merged.streamMemberships.find((membership) => membership.streamId === "stream_visible")?.lastReadEventId
-    ).toBe("evt_new")
+    expect(merged.streamReadState?.stream_visible?.lastReadEventId).toBe("evt_new")
   })
 
   it("never promotes an archived local row into the active streams list, even when locally fresher", () => {
@@ -885,6 +883,7 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
     const workspaceBootstrap = makeBootstrap({
       streams: [],
       streamMemberships: [],
+      streamReadState: {},
       unreadCounts: {},
       mentionCounts: {},
       activityCounts: {},
@@ -925,14 +924,21 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
           streamId: "stream_failed",
           memberId: "user_1",
           notificationLevel: null,
-          lastReadEventId: "evt_cached",
-          lastReadSequence: "77",
-          lastReadAt: null,
           joinedAt: new Date().toISOString(),
           _cachedAt: Date.now(),
         },
       ],
-      localReadStates: [],
+      localReadStates: [
+        {
+          id: "ws_1:stream_failed",
+          workspaceId: "ws_1",
+          streamId: "stream_failed",
+          lastReadEventId: "evt_cached",
+          lastReadSequence: "77",
+          lastReadAt: null,
+          _cachedAt: Date.now(),
+        },
+      ],
       localUnreadState: {
         id: "ws_1",
         workspaceId: "ws_1",
@@ -947,10 +953,12 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
     })
 
     expect(merged.streams.map((stream) => stream.id)).toContain("stream_failed")
-    const failedMembership = merged.streamMemberships.find((membership) => membership.streamId === "stream_failed")
     // The board-card sequence frontier must survive the cached→bootstrap
     // conversion — dropping it silently degrades card rows to the time fallback.
-    expect(failedMembership).toMatchObject({ lastReadEventId: "evt_cached", lastReadSequence: "77" })
+    expect(merged.streamReadState?.stream_failed).toMatchObject({
+      lastReadEventId: "evt_cached",
+      lastReadSequence: "77",
+    })
     expect(merged.unreadCounts.stream_failed).toBe(3)
     expect(merged.mutedStreamIds).toContain("stream_failed")
   })
@@ -982,8 +990,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
           streamId: "stream_terminal",
           memberId: "user_1",
           notificationLevel: "muted",
-          lastReadEventId: "evt_terminal",
-          lastReadAt: null,
           joinedAt: new Date().toISOString(),
         },
       ],
@@ -1059,16 +1065,12 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
           streamId: "stream_unmuted",
           memberId: "user_1",
           notificationLevel: "muted",
-          lastReadEventId: null,
-          lastReadAt: null,
           joinedAt: new Date().toISOString(),
         },
         {
           streamId: "stream_muted",
           memberId: "user_1",
           notificationLevel: null,
-          lastReadEventId: null,
-          lastReadAt: null,
           joinedAt: new Date().toISOString(),
         },
       ],
@@ -1085,8 +1087,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
               streamId: "stream_unmuted",
               memberId: "user_1",
               notificationLevel: null,
-              lastReadEventId: null,
-              lastReadAt: null,
               joinedAt: new Date().toISOString(),
             },
           }),
@@ -1098,8 +1098,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
               streamId: "stream_muted",
               memberId: "user_1",
               notificationLevel: "muted",
-              lastReadEventId: null,
-              lastReadAt: null,
               joinedAt: new Date().toISOString(),
             },
           }),
@@ -1333,7 +1331,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
-  it("applies a stream:read_messages snapshot to the overlay, counter, and watermark", async () => {
+  it("applies a stream:read_messages snapshot to the overlay, counter, and frontier", async () => {
     await db.unreadState.put({
       id: "ws_1",
       workspaceId: "ws_1",
@@ -1344,17 +1342,6 @@ describe("registerWorkspaceSocketHandlers", () => {
       unreadActivities: [],
       latestOrdinals: { stream_1: 10 },
       mutedStreamIds: [],
-      _cachedAt: Date.now(),
-    })
-    await db.streamMemberships.put({
-      id: "ws_1:stream_1",
-      workspaceId: "ws_1",
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: null,
-      lastReadEventId: "evt_0",
-      lastReadAt: null,
-      joinedAt: new Date().toISOString(),
       _cachedAt: Date.now(),
     })
 
@@ -1376,9 +1363,9 @@ describe("registerWorkspaceSocketHandlers", () => {
       const state = await db.unreadState.get("ws_1")
       expect(state?.readMessageIds?.stream_1).toEqual(["msg_5", "msg_7"])
       expect(state?.unreadCounts.stream_1).toBe(4) // 10 - 4 - 2
-      const membership = await db.streamMemberships.get("ws_1:stream_1")
-      expect(membership?.lastReadSequence).toBe("40")
-      expect(membership?.lastReadEventId).toBe("evt_4")
+      const readState = await db.streamReadState.get("ws_1:stream_1")
+      expect(readState?.lastReadSequence).toBe("40")
+      expect(readState?.lastReadEventId).toBe("evt_4")
     })
 
     cleanup()
@@ -1417,6 +1404,186 @@ describe("registerWorkspaceSocketHandlers", () => {
     expect(state?.readMessageIds?.stream_1).toBeUndefined()
     expect(state?.unreadCounts.stream_1).toBe(6)
     cleanup()
+  })
+
+  describe("stream:read_all frontier propagation", () => {
+    function seedUnreadState() {
+      return db.unreadState.put({
+        id: "ws_1",
+        workspaceId: "ws_1",
+        unreadCounts: { stream_1: 5 },
+        mentionCounts: {},
+        activityCounts: {},
+        unreadActivityCount: 0,
+        unreadActivities: [],
+        latestOrdinals: { stream_1: 10 },
+        mutedStreamIds: [],
+        _cachedAt: Date.now(),
+      })
+    }
+
+    const FRONTIER = {
+      streamId: "stream_1",
+      lastReadEventId: "evt_10",
+      lastReadSequence: "100",
+      lastReadOrdinal: 10,
+      lastReadAt: "2024-01-01T00:00:00.000Z",
+    }
+
+    it("applies the additive frontier snapshot to the bootstrap cache and IDB (second-device path)", async () => {
+      await seedUnreadState()
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      emit("stream:read_all", {
+        workspaceId: "ws_1",
+        authorId: "member_1",
+        streamIds: ["stream_1"],
+        reads: [{ streamId: "stream_1", lastReadOrdinal: 10 }],
+        frontiers: [FRONTIER],
+      })
+
+      await vi.waitFor(async () => {
+        const readState = await db.streamReadState.get("ws_1:stream_1")
+        expect(readState?.lastReadEventId).toBe("evt_10")
+        expect(readState?.lastReadSequence).toBe("100")
+        // The bootstrap cache (the divider's reload source) reflects the
+        // frontier — published only after the IDB transaction commits.
+        const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+        expect(bootstrap?.streamReadState?.stream_1).toMatchObject({
+          lastReadEventId: "evt_10",
+          lastReadSequence: "100",
+        })
+      })
+      cleanup()
+    })
+
+    it("advances a stale local frontier", async () => {
+      await seedUnreadState()
+      await db.streamReadState.put({
+        id: "ws_1:stream_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        lastReadEventId: "evt_old",
+        lastReadSequence: "50",
+        lastReadAt: null,
+        _cachedAt: Date.now(),
+      })
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(
+        workspaceKeys.bootstrap("ws_1"),
+        makeBootstrap({
+          streamReadState: { stream_1: { lastReadEventId: "evt_old", lastReadSequence: "50", lastReadAt: null } },
+        })
+      )
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      emit("stream:read_all", {
+        workspaceId: "ws_1",
+        authorId: "member_1",
+        streamIds: ["stream_1"],
+        reads: [{ streamId: "stream_1", lastReadOrdinal: 10 }],
+        frontiers: [FRONTIER],
+      })
+
+      await vi.waitFor(async () => {
+        const readState = await db.streamReadState.get("ws_1:stream_1")
+        expect(readState?.lastReadEventId).toBe("evt_10")
+        expect(readState?.lastReadSequence).toBe("100")
+        const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+        expect(bootstrap?.streamReadState?.stream_1?.lastReadSequence).toBe("100")
+      })
+      cleanup()
+    })
+
+    it("never regresses a higher local frontier", async () => {
+      await seedUnreadState()
+      await db.streamReadState.put({
+        id: "ws_1:stream_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        lastReadEventId: "evt_ahead",
+        lastReadSequence: "200",
+        lastReadAt: null,
+        _cachedAt: Date.now(),
+      })
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(
+        workspaceKeys.bootstrap("ws_1"),
+        makeBootstrap({
+          streamReadState: { stream_1: { lastReadEventId: "evt_ahead", lastReadSequence: "200", lastReadAt: null } },
+        })
+      )
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      // Stale/replayed snapshot (sequence 100 < local 200).
+      emit("stream:read_all", {
+        workspaceId: "ws_1",
+        authorId: "member_1",
+        streamIds: ["stream_1"],
+        reads: [{ streamId: "stream_1", lastReadOrdinal: 10 }],
+        frontiers: [FRONTIER],
+      })
+
+      // The counter still clears, but the frontier must not move backward.
+      await vi.waitFor(async () => {
+        const state = await db.unreadState.get("ws_1")
+        expect(state?.unreadCounts.stream_1).toBe(0)
+      })
+      await new Promise((r) => setTimeout(r, 20))
+      const readState = await db.streamReadState.get("ws_1:stream_1")
+      expect(readState?.lastReadEventId).toBe("evt_ahead")
+      expect(readState?.lastReadSequence).toBe("200")
+      const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      expect(bootstrap?.streamReadState?.stream_1?.lastReadSequence).toBe("200")
+      cleanup()
+    })
+
+    it("a legacy payload without frontiers leaves existing frontier rows untouched", async () => {
+      await seedUnreadState()
+      await db.streamReadState.put({
+        id: "ws_1:stream_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        lastReadEventId: "evt_old",
+        lastReadSequence: "50",
+        lastReadAt: null,
+        _cachedAt: Date.now(),
+      })
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(
+        workspaceKeys.bootstrap("ws_1"),
+        makeBootstrap({
+          streamReadState: { stream_1: { lastReadEventId: "evt_old", lastReadSequence: "50", lastReadAt: null } },
+        })
+      )
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      // Legacy shape: no `frontiers` field — counter behavior only.
+      emit("stream:read_all", {
+        workspaceId: "ws_1",
+        authorId: "member_1",
+        streamIds: ["stream_1"],
+        reads: [{ streamId: "stream_1", lastReadOrdinal: 10 }],
+      })
+
+      await vi.waitFor(async () => {
+        const state = await db.unreadState.get("ws_1")
+        expect(state?.unreadCounts.stream_1).toBe(0)
+      })
+      await new Promise((r) => setTimeout(r, 20))
+      const readState = await db.streamReadState.get("ws_1:stream_1")
+      expect(readState?.lastReadEventId).toBe("evt_old")
+      expect(readState?.lastReadSequence).toBe("50")
+      const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      expect(bootstrap?.streamReadState?.stream_1?.lastReadSequence).toBe("50")
+      cleanup()
+    })
   })
 
   it("applies gate-dispatched saved/scheduled catch-up replays to IDB", async () => {
@@ -1541,8 +1708,6 @@ describe("registerWorkspaceSocketHandlers", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: null,
-      lastReadEventId: null,
-      lastReadAt: null,
       joinedAt: new Date().toISOString(),
       _cachedAt: Date.now(),
     })
@@ -1622,8 +1787,6 @@ describe("registerWorkspaceSocketHandlers", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: null,
-      lastReadEventId: null,
-      lastReadAt: null,
       joinedAt: new Date().toISOString(),
     }
     queryClient.setQueryData(
@@ -2295,8 +2458,6 @@ describe("registerWorkspaceSocketHandlers", () => {
             streamId: "stream_1",
             memberId: "member_1",
             notificationLevel: "everything",
-            lastReadEventId: "event_old",
-            lastReadAt: null,
             joinedAt: new Date().toISOString(),
           },
         ],
@@ -2322,7 +2483,6 @@ describe("registerWorkspaceSocketHandlers", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       archivedAt: null,
-      lastReadEventId: "event_old",
       _cachedAt: Date.now(),
     })
     await db.streamMemberships.put({
@@ -2331,8 +2491,6 @@ describe("registerWorkspaceSocketHandlers", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId: "event_old",
-      lastReadAt: null,
       joinedAt: new Date().toISOString(),
       _cachedAt: Date.now(),
     })
@@ -2366,13 +2524,8 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     await Promise.resolve()
 
-    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({
-      lastReadEventId: "event_new",
-    })
-    expect(await db.streams.get("stream_1")).toMatchObject({
-      lastReadEventId: "event_new",
-    })
-    // Standalone frontier dual-write (read cutover): IDB row + bootstrap map.
+    // The frontier lands in stream_read_state: IDB row + bootstrap map.
+    // Membership is never written on a read.
     await vi.waitFor(async () => {
       expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
         workspaceId: "ws_1",
@@ -2442,7 +2595,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
-  it("a sequence-less stream:read never overwrites an EXISTING standalone frontier — legacy mirror still moves", async () => {
+  it("a sequence-less stream:read never overwrites an EXISTING frontier", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(
       workspaceKeys.bootstrap("ws_1"),
@@ -2454,8 +2607,6 @@ describe("registerWorkspaceSocketHandlers", () => {
             streamId: "stream_1",
             memberId: "member_1",
             notificationLevel: null,
-            lastReadEventId: "event_old",
-            lastReadAt: null,
             joinedAt: new Date().toISOString(),
           },
         ],
@@ -2464,17 +2615,6 @@ describe("registerWorkspaceSocketHandlers", () => {
         },
       })
     )
-    await db.streamMemberships.put({
-      id: "ws_1:stream_1",
-      workspaceId: "ws_1",
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: null,
-      lastReadEventId: "event_old",
-      lastReadAt: null,
-      joinedAt: new Date().toISOString(),
-      _cachedAt: Date.now(),
-    })
     await db.streamReadState.put({
       id: "ws_1:stream_1",
       workspaceId: "ws_1",
@@ -2489,8 +2629,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
     // Legacy payload: no lastReadSequence. Event ids are not order-comparable,
-    // so the standalone frontier must not be touched — the next bootstrap
-    // reconciles.
+    // so the frontier must not be touched — the next bootstrap reconciles.
     emit("stream:read", {
       workspaceId: "ws_1",
       authorId: "member_1",
@@ -2509,11 +2648,7 @@ describe("registerWorkspaceSocketHandlers", () => {
         lastReadEventId: "event_new",
         lastReadSequence: "20",
       })
-      // The legacy membership mirror keeps tracking the event id (unchanged
-      // compatibility behavior).
-      expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_legacy" })
     })
-    expect(bootstrap?.streamMemberships[0]?.lastReadEventId).toBe("event_legacy")
 
     cleanup()
   })
@@ -2732,8 +2867,6 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
       streamId,
       memberId: "member_1",
       notificationLevel: null,
-      lastReadEventId: null,
-      lastReadAt: null,
       joinedAt: new Date().toISOString(),
     }
   }
@@ -2987,15 +3120,16 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
       ],
     })
 
-    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
-    expect(bootstrap?.unreadCounts.stream_1).toBe(0)
-    expect(bootstrap?.activityCounts).toEqual({})
-    expect(bootstrap?.unreadActivityCount).toBe(0)
-
+    // The counter fold and the cache publication land only after the atomic
+    // IDB transaction commits (a failed transaction publishes nothing).
     await vi.waitFor(async () => {
       const state = await db.unreadState.get("ws_1")
       expect(state?.unreadCounts.stream_1).toBe(0)
       expect(state?.unreadActivityCount).toBe(0)
+      const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      expect(bootstrap?.unreadCounts.stream_1).toBe(0)
+      expect(bootstrap?.activityCounts).toEqual({})
+      expect(bootstrap?.unreadActivityCount).toBe(0)
     })
 
     cleanup()

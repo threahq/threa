@@ -200,15 +200,14 @@ export interface StreamBootstrap {
   commands?: CommandInfo[]
   membership: StreamMember | null
   /**
-   * The viewer's standalone read frontier on this stream (non-member unlock):
-   * the same data the workspace bootstrap's `streamReadState` map carries for
-   * member streams, served per-stream so access-without-membership viewers
-   * (INV-62 thread legs, public roots never joined) resolve their frontier on
-   * open — the workspace bootstrap stays member-keyed. `null` = no row (never
-   * read: frontier before the first message, distinct from a row whose
-   * `lastReadEventId` is null — an explicit mark-unread-to-zero). Optional:
-   * payloads cached before this field shipped lack it (fall back to the
-   * membership mirror).
+   * The viewer's read frontier on this stream: the same data the workspace
+   * bootstrap's `streamReadState` map carries for member streams, served
+   * per-stream so access-without-membership viewers (INV-62 thread legs, public
+   * roots never joined) resolve their frontier on open — the workspace bootstrap
+   * stays member-keyed. `null` = no row (never read: frontier before the first
+   * message, distinct from a row whose `lastReadEventId` is null — an explicit
+   * mark-unread-to-zero). Optional: payloads cached before this field shipped
+   * lack it.
    */
   readState?: StreamReadFrontier | null
   latestSequence: string
@@ -1552,11 +1551,10 @@ export interface GiphyConfigResponse {
 }
 
 /**
- * The viewer's standalone read frontier for one stream (read cutover: the
- * watermark re-homed off `stream_members` into `stream_read_state`). Row
- * PRESENCE is authoritative — a null `lastReadEventId` is an explicit "position
- * before the first message" frontier, distinct from an absent entry (never
- * read / pre-cutover client, which falls back to the membership mirror).
+ * The viewer's read frontier for one stream (sourced from `stream_read_state`).
+ * Row PRESENCE is authoritative — a null `lastReadEventId` is an explicit
+ * "position before the first message" frontier, distinct from an absent entry
+ * (never read).
  */
 export interface StreamReadFrontier {
   lastReadEventId: string | null
@@ -1565,18 +1563,30 @@ export interface StreamReadFrontier {
   lastReadAt: string | null
 }
 
+/**
+ * The canonical post-write read frontier for one stream, carried additively by
+ * mark-all-read (both the HTTP response and the `stream:read_all` outbox
+ * payload). Extends the bootstrap `StreamReadFrontier` with the stream id and
+ * the absolute message ordinal so a client can advance its standalone watermark
+ * AND its counter from one snapshot. Sourced from the post-write standalone
+ * read state — never a membership fallback.
+ */
+export interface StreamReadFrontierSnapshot extends StreamReadFrontier {
+  streamId: string
+  /** Absolute message ordinal of the frontier — mark-all pins it to the stream's total message count. */
+  lastReadOrdinal: number
+}
+
 export interface WorkspaceBootstrap {
   workspace: Workspace
   users: User[]
   streams: StreamWithPreview[]
   streamMemberships: StreamMember[]
   /**
-   * The viewer's standalone read frontier per member stream — the preferred
-   * read source over `streamMemberships.lastRead*` (which remain as a
-   * compatibility mirror during the rollout). Every member stream has an
-   * entry, so a null `lastReadEventId` reads as an authoritative explicit
-   * frontier, not "no data". Optional: payloads cached before this field
-   * shipped lack it (absent falls back to the membership mirror).
+   * The viewer's read frontier per member stream — the sole read source
+   * (membership carries no watermark). Every member stream has an entry, so a
+   * null `lastReadEventId` reads as an authoritative explicit frontier, not
+   * "no data". Optional: payloads cached before this field shipped lack it.
    */
   streamReadState?: Record<string, StreamReadFrontier>
   dmPeers: Array<{ userId: string; streamId: string }>
@@ -1898,6 +1908,13 @@ export interface MarkAsReadResponse {
 
 export interface MarkAllAsReadResponse {
   updatedStreamIds: string[]
+  /**
+   * The canonical post-write frontier per updated stream (additive). Clients
+   * advance their standalone watermark from this. Empty when nothing advanced;
+   * absent only on responses from before the field shipped (legacy clients keep
+   * counter behavior and reconcile on the next bootstrap).
+   */
+  frontiers?: StreamReadFrontierSnapshot[]
 }
 
 export interface DispatchCommandInput {

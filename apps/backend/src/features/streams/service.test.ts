@@ -41,12 +41,11 @@ const mockListOverlayIds = spyOn(SparseReadRepository, "listOverlayIds").mockRes
 // the fake `{}` client so unit tests never touch a real DB.
 const mockReadStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
 const mockReadStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(undefined)
-const mockReadStateBatchAdvance = spyOn(ReadStateRepository, "batchAdvance").mockResolvedValue(undefined)
+const mockReadStateBatchAdvance = spyOn(ReadStateRepository, "batchAdvance").mockResolvedValue([])
 const mockReadStateSetForUsers = spyOn(ReadStateRepository, "setForUsers").mockResolvedValue(undefined)
 const mockSlugExists = spyOn(StreamRepository, "slugExistsInWorkspace")
 const mockInsertManyEvents = spyOn(StreamEventRepository, "insertMany")
 const mockInsertManyOutbox = spyOn(OutboxRepository, "insertMany")
-const mockSetLastReadForMembers = spyOn(StreamMemberRepository, "setLastReadEventIdForMembers")
 
 spyOn(idModule, "eventId").mockReturnValue("evt_1")
 spyOn(idModule, "streamId").mockReturnValue("stream_new")
@@ -101,8 +100,6 @@ describe("StreamService.setNotificationLevel", () => {
     streamId: "stream_1",
     memberId: "usr_1",
     notificationLevel: "muted",
-    lastReadEventId: null,
-    lastReadAt: null,
     joinedAt: new Date("2026-01-01T00:00:00.000Z"),
   }
 
@@ -161,8 +158,6 @@ describe("StreamService.joinPublicChannel", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: null,
-      lastReadEventId: null,
-      lastReadAt: null,
       joinedAt: new Date(),
     } as never)
     mockInsertEvent.mockReset().mockResolvedValue({
@@ -531,8 +526,6 @@ describe("StreamService.createThread (via create)", () => {
       streamId: thread.id,
       memberId: "member_creator",
       notificationLevel: null,
-      lastReadEventId: null,
-      lastReadAt: null,
       joinedAt: new Date(),
     } as never)
     mockFindByStreamAndMember.mockReset().mockResolvedValue(null)
@@ -1487,13 +1480,11 @@ describe("StreamService.createScratchpad (E2E)", () => {
 // so these events must say where the read lands in message-ordinal space.
 describe("StreamService.markAsRead", () => {
   let service: StreamService
-  const mockMemberUpdate = spyOn(StreamMemberRepository, "update")
   const mockGetMessageOrdinalForEvent = spyOn(StreamEventRepository, "getMessageOrdinalForEvent")
   const mockFindByStreamAndMember = spyOn(StreamMemberRepository, "findByStreamAndMember")
 
   beforeEach(() => {
     service = new StreamService({} as never)
-    mockMemberUpdate.mockReset()
     mockGetMessageOrdinalForEvent.mockReset()
     mockFindByStreamAndMember.mockReset()
     mockReadStateAdvance.mockClear()
@@ -1502,7 +1493,7 @@ describe("StreamService.markAsRead", () => {
   })
 
   test("emits stream:read with the absolute read position", async () => {
-    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+    mockFindByStreamAndMember.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
     mockGetMessageOrdinalForEvent.mockResolvedValue({ sequence: 42n, messageOrdinal: 7 })
 
     await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
@@ -1517,18 +1508,17 @@ describe("StreamService.markAsRead", () => {
       lastReadOrdinal: 7,
       readMessageIds: [],
     })
-    // Shadow advance on the same tx client — monotonic from day one (reads
-    // never regress the new store; cutover converges upward only).
+    // The advance is the sole watermark write — monotonic (reads never regress it).
     expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9")
   })
 
-  test("sources the stream:read payload from the post-write read-state frontier when it sits above the sent event", async () => {
-    // Stale device: this mark-as-read carries evt_9 (seq 42), but the
-    // monotonic store already stands at evt_higher (seq 90) from another
-    // session. Membership regresses (its semantics, unchanged); the payload
-    // other sessions receive must carry the post-write frontier, and the
-    // overlay prune must absorb at it — not at the stale event.
-    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+  test("sources the stream:read payload from the post-write frontier when it sits above the sent event", async () => {
+    // Stale device: this mark-as-read carries evt_9 (seq 42), but the monotonic
+    // store already stands at evt_higher (seq 90) from another session. The
+    // advance is rejected, so the payload other sessions receive must carry the
+    // post-write frontier, and the overlay prune must absorb at it — not at the
+    // stale event.
+    mockFindByStreamAndMember.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
     mockGetMessageOrdinalForEvent.mockImplementation(async (_db, _streamId, eventId) => {
       if (eventId === "evt_9") return { sequence: 42n, messageOrdinal: 7 } as never
       if (eventId === "evt_higher") return { sequence: 90n, messageOrdinal: 12 } as never
@@ -1555,7 +1545,7 @@ describe("StreamService.markAsRead", () => {
   })
 
   test("keeps the sent event as the payload when the advance lands there", async () => {
-    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+    mockFindByStreamAndMember.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
     mockGetMessageOrdinalForEvent.mockResolvedValue({ sequence: 42n, messageOrdinal: 7 } as never)
     mockReadStateAdvance.mockResolvedValue({
       streamId: "stream_1",
@@ -1584,31 +1574,26 @@ describe("StreamService.markAsRead", () => {
     // unread query's COALESCE(sequence, 0) to 0 and report the whole stream — incl.
     // the user's own messages — as unread. Resolve first; no-op on a miss.
     mockGetMessageOrdinalForEvent.mockResolvedValue(null)
-    mockFindByStreamAndMember.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "usr_1",
-      lastReadEventId: "evt_real",
-    } as never)
+    mockFindByStreamAndMember.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
 
     const result = await service.markAsRead("ws_1", "stream_1", "usr_1", "temp_optimistic")
 
-    expect(mockMemberUpdate).not.toHaveBeenCalled()
     expect(mockInsertOutbox).not.toHaveBeenCalled()
     expect(mockReadStateAdvance).not.toHaveBeenCalled()
-    expect(result?.lastReadEventId).toBe("evt_real")
+    expect(result?.memberId).toBe("usr_1")
   })
 
-  test("advances the standalone frontier and emits stream:read for a non-member — without touching membership", async () => {
+  test("advances the frontier and emits stream:read for a non-member — membership fetched read-only, never written", async () => {
     // Access (validated in the handler) gates the read, not membership (INV-62):
-    // a non-member thread viewer gets the same watermark semantics. The
-    // membership UPDATE runs and returns null — it is NEVER upserted.
+    // a non-member thread viewer gets the same watermark semantics. Membership is
+    // fetched for participation only and returns null here — never upserted.
     mockGetMessageOrdinalForEvent.mockResolvedValue({ sequence: 42n, messageOrdinal: 7 })
-    mockMemberUpdate.mockResolvedValue(null)
+    mockFindByStreamAndMember.mockResolvedValue(null)
 
     const result = await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
 
     expect(result).toBeNull()
-    expect(mockMemberUpdate).toHaveBeenCalledWith({}, "stream_1", "usr_1", { lastReadEventId: "evt_9" })
+    expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "stream_1", "usr_1")
     expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9")
     expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 42n)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read", {
@@ -1625,14 +1610,14 @@ describe("StreamService.markAsRead", () => {
 
 describe("StreamService.markUnread", () => {
   let service: StreamService
-  const mockMemberUpdate = spyOn(StreamMemberRepository, "update")
+  const mockFindByStreamAndMember = spyOn(StreamMemberRepository, "findByStreamAndMember")
   const mockFindByMessageId = spyOn(StreamEventRepository, "findByMessageId")
   const mockFindPreviousMessageEvent = spyOn(StreamEventRepository, "findPreviousMessageEvent")
   const mockCountMessagesThrough = spyOn(StreamEventRepository, "countMessagesThrough")
 
   beforeEach(() => {
     service = new StreamService({} as never)
-    mockMemberUpdate.mockReset()
+    mockFindByStreamAndMember.mockReset()
     mockFindByMessageId.mockReset()
     mockFindPreviousMessageEvent.mockReset()
     mockCountMessagesThrough.mockReset()
@@ -1645,11 +1630,10 @@ describe("StreamService.markUnread", () => {
     mockFindByMessageId.mockResolvedValue({ id: "evt_5", sequence: 50n } as never)
     mockFindPreviousMessageEvent.mockResolvedValue({ id: "evt_4", sequence: 40n } as never)
     mockCountMessagesThrough.mockResolvedValue(4)
-    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+    mockFindByStreamAndMember.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
 
     await service.markUnread("ws_1", "stream_1", "usr_1", "msg_5")
 
-    expect(mockMemberUpdate).toHaveBeenCalledWith({}, "stream_1", "usr_1", { lastReadEventId: "evt_4" })
     expect(mockCountMessagesThrough).toHaveBeenCalledWith({}, "stream_1", 40n)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_set", {
       workspaceId: "ws_1",
@@ -1661,25 +1645,24 @@ describe("StreamService.markUnread", () => {
       readMessageIds: [],
     })
     expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "stream_1", "usr_1", 50n)
-    // Shadow regress on the same tx client.
+    // The regress is the sole watermark write.
     expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_4")
   })
 
   test("clears the read pointer when the target is the first message", async () => {
     mockFindByMessageId.mockResolvedValue({ id: "evt_1", sequence: 10n } as never)
     mockFindPreviousMessageEvent.mockResolvedValue(null)
-    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+    mockFindByStreamAndMember.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
 
     await service.markUnread("ws_1", "stream_1", "usr_1", "msg_1")
 
-    expect(mockMemberUpdate).toHaveBeenCalledWith({}, "stream_1", "usr_1", { lastReadEventId: null })
     expect(mockCountMessagesThrough).not.toHaveBeenCalled()
     expect(mockInsertOutbox).toHaveBeenCalledWith(
       {},
       "stream:read_set",
       expect.objectContaining({ lastReadEventId: null, lastReadSequence: "0", lastReadOrdinal: 0 })
     )
-    // Regress to null (park before the first message) is shadowed too.
+    // Regress to null parks the frontier before the first message.
     expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", null)
   })
 
@@ -1690,23 +1673,22 @@ describe("StreamService.markUnread", () => {
       status: 404,
       code: "MESSAGE_NOT_FOUND",
     })
-    expect(mockMemberUpdate).not.toHaveBeenCalled()
     expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
 
-  test("sets the standalone frontier and emits stream:read_set for a non-member — without touching membership", async () => {
-    // The same-class 404 is gone: a null membership update is a successful
-    // unread by an access-only viewer, not a missing message. The membership
-    // UPDATE runs and returns null — never upserted (INV-62).
+  test("sets the frontier and emits stream:read_set for a non-member — membership fetched read-only, never written", async () => {
+    // The same-class 404 is gone: a null membership is a successful unread by an
+    // access-only viewer, not a missing message. Membership is fetched for
+    // participation only and returns null here — never upserted (INV-62).
     mockFindByMessageId.mockResolvedValue({ id: "evt_5", sequence: 50n } as never)
     mockFindPreviousMessageEvent.mockResolvedValue({ id: "evt_4", sequence: 40n } as never)
     mockCountMessagesThrough.mockResolvedValue(4)
-    mockMemberUpdate.mockResolvedValue(null)
+    mockFindByStreamAndMember.mockResolvedValue(null)
 
     const result = await service.markUnread("ws_1", "stream_1", "usr_1", "msg_5")
 
     expect(result).toBeNull()
-    expect(mockMemberUpdate).toHaveBeenCalledWith({}, "stream_1", "usr_1", { lastReadEventId: "evt_4" })
+    expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "stream_1", "usr_1")
     expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_4")
     expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "stream_1", "usr_1", 50n)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_set", {
@@ -1726,25 +1708,30 @@ describe("StreamService.markAllAsRead", () => {
   const mockMemberList = spyOn(StreamMemberRepository, "list")
   const mockStreamList = spyOn(StreamRepository, "list")
   const mockLatestEventIds = spyOn(StreamEventRepository, "getLatestEventIdByStreamBatch")
-  const mockBatchUpdate = spyOn(StreamMemberRepository, "batchUpdateLastReadEventId")
+  const mockReadStateGetBatch = spyOn(ReadStateRepository, "getBatch")
   const mockCountMessages = spyOn(StreamEventRepository, "countMessagesByStreamBatch")
+  const mockGetSequences = spyOn(StreamEventRepository, "getSequencesByEventIds")
+  const READ_ALL_AT = new Date("2024-01-01T00:00:00Z")
 
   beforeEach(() => {
     service = new StreamService({} as never)
     mockMemberList.mockReset()
     mockStreamList.mockReset()
     mockLatestEventIds.mockReset()
-    mockBatchUpdate.mockReset()
+    mockReadStateGetBatch.mockReset()
     mockCountMessages.mockReset()
-    mockReadStateBatchAdvance.mockClear()
+    mockGetSequences.mockReset()
+    mockGetSequences.mockResolvedValue(new Map())
+    mockReadStateBatchAdvance.mockReset()
+    mockReadStateBatchAdvance.mockResolvedValue([])
     mockInsertOutbox.mockReset()
     mockInsertOutbox.mockResolvedValue({} as never)
   })
 
-  test("emits stream:read_all with per-stream absolute read positions", async () => {
+  test("emits stream:read_all with per-stream absolute read positions and a frontier snapshot", async () => {
     mockMemberList.mockResolvedValue([
-      { streamId: "stream_1", memberId: "usr_1", lastReadEventId: null },
-      { streamId: "stream_2", memberId: "usr_1", lastReadEventId: "evt_old" },
+      { streamId: "stream_1", memberId: "usr_1" },
+      { streamId: "stream_2", memberId: "usr_1" },
     ] as never)
     mockStreamList.mockResolvedValue([{ id: "stream_1" }, { id: "stream_2" }] as never)
     mockLatestEventIds.mockResolvedValue(
@@ -1753,9 +1740,25 @@ describe("StreamService.markAllAsRead", () => {
         ["stream_2", "evt_b"],
       ])
     )
-    mockBatchUpdate.mockResolvedValue(undefined as never)
-    // Read-all pins each membership to the stream's latest event, so the
-    // absolute position per stream is its total message count.
+    // Both frontiers sit below their latest event, so both advance.
+    mockReadStateGetBatch.mockResolvedValue([
+      { streamId: "stream_1", lastReadEventId: null },
+      { streamId: "stream_2", lastReadEventId: "evt_old" },
+    ] as never)
+    // The batch advance returns the post-write standalone rows — the snapshot
+    // source (sourced post-write, never from membership).
+    mockReadStateBatchAdvance.mockResolvedValue([
+      { streamId: "stream_1", lastReadEventId: "evt_a", lastReadAt: READ_ALL_AT },
+      { streamId: "stream_2", lastReadEventId: "evt_b", lastReadAt: READ_ALL_AT },
+    ] as never)
+    mockGetSequences.mockResolvedValue(
+      new Map([
+        ["evt_a", "100"],
+        ["evt_b", "50"],
+      ])
+    )
+    // Read-all pins each frontier to the stream's latest event, so the absolute
+    // position per stream is its total message count.
     mockCountMessages.mockResolvedValue(
       new Map([
         ["stream_1", 12],
@@ -1763,9 +1766,25 @@ describe("StreamService.markAllAsRead", () => {
       ])
     )
 
-    const updated = await service.markAllAsRead("ws_1", "usr_1")
+    const result = await service.markAllAsRead("ws_1", "usr_1")
 
-    expect(updated).toEqual(["stream_1", "stream_2"])
+    expect(result.updatedStreamIds).toEqual(["stream_1", "stream_2"])
+    expect(result.frontiers).toEqual([
+      {
+        streamId: "stream_1",
+        lastReadEventId: "evt_a",
+        lastReadSequence: "100",
+        lastReadOrdinal: 12,
+        lastReadAt: READ_ALL_AT.toISOString(),
+      },
+      {
+        streamId: "stream_2",
+        lastReadEventId: "evt_b",
+        lastReadSequence: "50",
+        lastReadOrdinal: 3,
+        lastReadAt: READ_ALL_AT.toISOString(),
+      },
+    ])
     expect(mockDeleteAllForStreams).toHaveBeenCalledWith({}, "usr_1", ["stream_1", "stream_2"])
     expect(mockCountMessages).toHaveBeenCalledWith({}, ["stream_1", "stream_2"])
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_all", {
@@ -1776,8 +1795,8 @@ describe("StreamService.markAllAsRead", () => {
         { streamId: "stream_1", lastReadOrdinal: 12 },
         { streamId: "stream_2", lastReadOrdinal: 3 },
       ],
+      frontiers: result.frontiers,
     })
-    // Shadow batch advance on the same tx client with the same per-stream updates.
     expect(mockReadStateBatchAdvance).toHaveBeenCalledWith(
       {},
       "usr_1",
@@ -1786,6 +1805,100 @@ describe("StreamService.markAllAsRead", () => {
         ["stream_2", "evt_b"],
       ])
     )
+  })
+
+  test("skips streams whose frontier already sits at the latest event", async () => {
+    mockMemberList.mockResolvedValue([
+      { streamId: "stream_1", memberId: "usr_1" },
+      { streamId: "stream_2", memberId: "usr_1" },
+    ] as never)
+    mockStreamList.mockResolvedValue([{ id: "stream_1" }, { id: "stream_2" }] as never)
+    mockLatestEventIds.mockResolvedValue(
+      new Map([
+        ["stream_1", "evt_a"],
+        ["stream_2", "evt_b"],
+      ])
+    )
+    // stream_1 is already fully read; only stream_2 advances.
+    mockReadStateGetBatch.mockResolvedValue([
+      { streamId: "stream_1", lastReadEventId: "evt_a" },
+      { streamId: "stream_2", lastReadEventId: "evt_old" },
+    ] as never)
+    mockReadStateBatchAdvance.mockResolvedValue([
+      { streamId: "stream_2", lastReadEventId: "evt_b", lastReadAt: READ_ALL_AT },
+    ] as never)
+    mockGetSequences.mockResolvedValue(new Map([["evt_b", "50"]]))
+    mockCountMessages.mockResolvedValue(new Map([["stream_2", 3]]))
+
+    const result = await service.markAllAsRead("ws_1", "usr_1")
+
+    expect(result.updatedStreamIds).toEqual(["stream_2"])
+    expect(result.frontiers).toEqual([
+      {
+        streamId: "stream_2",
+        lastReadEventId: "evt_b",
+        lastReadSequence: "50",
+        lastReadOrdinal: 3,
+        lastReadAt: READ_ALL_AT.toISOString(),
+      },
+    ])
+    expect(mockReadStateBatchAdvance).toHaveBeenCalledWith({}, "usr_1", new Map([["stream_2", "evt_b"]]))
+    expect(mockInsertOutbox).toHaveBeenCalledWith(
+      {},
+      "stream:read_all",
+      expect.objectContaining({ streamIds: ["stream_2"], frontiers: result.frontiers })
+    )
+  })
+
+  test("carries the higher standing frontier when the monotonic guard rejects a concurrent advance", async () => {
+    // stream_1's attempted advance loses a race: a concurrent read already
+    // moved the watermark past evt_a, so the batch upsert's guard rejects it.
+    // batchAdvance still returns the authoritative post-write row (evt_higher),
+    // and updatedStreamIds/reads/frontiers/outbox all carry IT — every
+    // attempted stream gets exactly one frontier.
+    mockMemberList.mockResolvedValue([{ streamId: "stream_1", memberId: "usr_1" }] as never)
+    mockStreamList.mockResolvedValue([{ id: "stream_1" }] as never)
+    mockLatestEventIds.mockResolvedValue(new Map([["stream_1", "evt_a"]]))
+    mockReadStateGetBatch.mockResolvedValue([{ streamId: "stream_1", lastReadEventId: null }] as never)
+    mockReadStateBatchAdvance.mockResolvedValue([
+      { streamId: "stream_1", lastReadEventId: "evt_higher", lastReadAt: READ_ALL_AT },
+    ] as never)
+    mockGetSequences.mockResolvedValue(new Map([["evt_higher", "900"]]))
+    mockCountMessages.mockResolvedValue(new Map([["stream_1", 12]]))
+
+    const result = await service.markAllAsRead("ws_1", "usr_1")
+
+    expect(result.updatedStreamIds).toEqual(["stream_1"])
+    expect(result.frontiers).toEqual([
+      {
+        streamId: "stream_1",
+        lastReadEventId: "evt_higher",
+        lastReadSequence: "900",
+        lastReadOrdinal: 12,
+        lastReadAt: READ_ALL_AT.toISOString(),
+      },
+    ])
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_all", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamIds: ["stream_1"],
+      reads: [{ streamId: "stream_1", lastReadOrdinal: 12 }],
+      frontiers: result.frontiers,
+    })
+  })
+
+  test("emits nothing and returns empty frontiers when no stream advances", async () => {
+    mockMemberList.mockResolvedValue([{ streamId: "stream_1", memberId: "usr_1" }] as never)
+    mockStreamList.mockResolvedValue([{ id: "stream_1" }] as never)
+    mockLatestEventIds.mockResolvedValue(new Map([["stream_1", "evt_a"]]))
+    // Already at the latest event — nothing to advance.
+    mockReadStateGetBatch.mockResolvedValue([{ streamId: "stream_1", lastReadEventId: "evt_a" }] as never)
+
+    const result = await service.markAllAsRead("ws_1", "usr_1")
+
+    expect(result).toEqual({ updatedStreamIds: [], frontiers: [] })
+    expect(mockReadStateBatchAdvance).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
 })
 
@@ -2172,11 +2285,10 @@ describe("StreamService.createChannel read-state shadow", () => {
     mockInsertManyMembers.mockReset().mockResolvedValue([] as never)
     mockInsertManyEvents.mockReset().mockResolvedValue([{ id: "evt_a" }, { id: "evt_b" }] as never)
     mockInsertManyOutbox.mockReset().mockResolvedValue(undefined as never)
-    mockSetLastReadForMembers.mockReset().mockResolvedValue(undefined as never)
     mockReadStateSetForUsers.mockClear()
   })
 
-  test("shadows the initial-member born-read watermark via setForUsers on the same tx client", async () => {
+  test("born-reads the initial members via setForUsers on the same tx client", async () => {
     await service.createChannel({
       workspaceId: "ws_1",
       slug: "chan",
@@ -2184,9 +2296,8 @@ describe("StreamService.createChannel read-state shadow", () => {
       memberIds: ["usr_owner", "usr_a", "usr_b"],
     } as never)
 
-    // The creator is filtered out of the additional-member batch; the watermark
-    // lands on the last creation event. setForUsers shadows setLastReadEventIdForMembers.
-    expect(mockSetLastReadForMembers).toHaveBeenCalledWith({}, "stream_new", ["usr_a", "usr_b"], "evt_b")
+    // The creator is filtered out of the additional-member batch; the frontier
+    // lands on the last creation event.
     expect(mockReadStateSetForUsers).toHaveBeenCalledWith({}, "stream_new", ["usr_a", "usr_b"], "evt_b")
   })
 })

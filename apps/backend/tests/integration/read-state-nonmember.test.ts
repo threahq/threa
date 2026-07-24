@@ -1,7 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
-import { resolve } from "node:path"
-import { setupTestDatabase, testMessageContent, withTestTransaction } from "./setup"
+import { setupTestDatabase, testMessageContent } from "./setup"
 import {
   StreamService,
   StreamEventRepository,
@@ -11,8 +10,6 @@ import {
 } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
-
-const MIGRATION_PATH = resolve(import.meta.dir, "../../src/db/migrations/20260724170957_add_stream_read_state.sql")
 
 /**
  * The non-member unlock against a real database: read state is user-anchored,
@@ -110,7 +107,7 @@ describe("read state — non-member unlock", () => {
       expect(notYet).toEqual(new Set())
     })
 
-    test("a present NULL watermark does not qualify AND blocks the stale membership fallback", async () => {
+    test("a present NULL watermark (explicit unread-to-zero) does not qualify", async () => {
       const wid = workspaceId()
       const sid = streamId()
       const author = userId()
@@ -119,18 +116,16 @@ describe("read state — non-member unlock", () => {
       await sendMessages(wid, sid, author, 2)
       const events = await StreamEventRepository.list(pool, sid)
 
-      // Membership watermark sits past the target (stale shadow-window column),
-      // but the authoritative read-state row is an explicit unread-to-zero:
-      // present NULL reads as unread and never falls through to membership.
+      // An explicit unread-to-zero: the row exists with a NULL watermark, which
+      // reads as "before the first message" and never qualifies.
       await StreamMemberRepository.insert(pool, sid, member)
-      await StreamMemberRepository.update(pool, sid, member, { lastReadEventId: events[1].id })
       await ReadStateRepository.set(pool, sid, member, null)
 
       const readThrough = await usersReadThroughEffective(pool, wid, sid, [member], events[0].sequence)
       expect(readThrough).toEqual(new Set())
     })
 
-    test("a missing read-state row falls back to the membership watermark", async () => {
+    test("a missing read-state row is never-read and does not qualify", async () => {
       const wid = workspaceId()
       const sid = streamId()
       const author = userId()
@@ -139,14 +134,15 @@ describe("read state — non-member unlock", () => {
       await sendMessages(wid, sid, author, 2)
       const events = await StreamEventRepository.list(pool, sid)
 
+      // Membership alone carries no read truth: with no read-state row the member
+      // is never-read and does not qualify.
       await StreamMemberRepository.insert(pool, sid, member)
-      await StreamMemberRepository.update(pool, sid, member, { lastReadEventId: events[1].id })
 
       const readThrough = await usersReadThroughEffective(pool, wid, sid, [member], events[1].sequence)
-      expect(readThrough).toEqual(new Set([member]))
+      expect(readThrough).toEqual(new Set())
     })
 
-    test("a corrupt membership watermark pointing at a foreign-stream event never qualifies (INV-8 workspace join + event bound to stream)", async () => {
+    test("a corrupt frontier pointing at a foreign-stream event never qualifies (event bound to stream)", async () => {
       const wid = workspaceId()
       const sid = streamId()
       const author = userId()
@@ -155,9 +151,9 @@ describe("read state — non-member unlock", () => {
       await sendMessages(wid, sid, author, 2)
       const events = await StreamEventRepository.list(pool, sid)
 
-      // A foreign stream in ANOTHER workspace whose second event sits at/above
-      // the target sequence — the shape a stale/corrupt membership watermark
-      // takes when it points outside the member's own stream.
+      // A foreign stream whose second event sits at/above the target sequence —
+      // the shape a corrupt frontier takes when it points outside the user's own
+      // stream.
       const foreignWid = workspaceId()
       const foreignSid = streamId()
       await seedChannel(foreignWid, foreignSid, author)
@@ -165,19 +161,17 @@ describe("read state — non-member unlock", () => {
       const foreignEvents = await StreamEventRepository.list(pool, foreignSid)
 
       await StreamMemberRepository.insert(pool, sid, member)
-      // Corrupt the watermark directly (bypassing validation) to reference the
+      // Corrupt the frontier directly (bypassing validation) to reference the
       // foreign-stream event id.
-      await pool.query(`UPDATE stream_members SET last_read_event_id = $1 WHERE stream_id = $2 AND member_id = $3`, [
-        foreignEvents[1].id,
-        sid,
-        member,
-      ])
+      await pool.query(
+        `INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id) VALUES ($1, $2, $3, $4)`,
+        [wid, sid, member, foreignEvents[1].id]
+      )
 
-      // The membership fallback joins `streams` (workspace must match) and binds
-      // the watermark event to the membership's OWN stream — the foreign event
-      // resolves neither, so the member is NOT born-read despite the foreign
-      // sequence sitting past the target. Without the join/binding this row
-      // would falsely qualify.
+      // The born-read query binds the watermark event to the frontier's OWN stream
+      // (se.stream_id = rs.stream_id) — the foreign event resolves it to no
+      // sequence, so the member is NOT born-read despite the foreign sequence
+      // sitting past the target. Without the binding this row would falsely qualify.
       const readThrough = await usersReadThroughEffective(pool, wid, sid, [member], events[1].sequence)
       expect(readThrough).toEqual(new Set())
     })
@@ -300,92 +294,26 @@ describe("read state — non-member unlock", () => {
 })
 
 /**
- * Backfill fidelity: the migration copies every non-NULL membership watermark
- * (event id AND timestamp) into stream_read_state with the workspace derived
- * through streams — NULL watermarks seed no row (absence = never read).
+ * Post-bake schema: the membership watermark columns are gone. `stream_read_state`
+ * is the sole read truth, so `stream_members` must no longer carry
+ * `last_read_event_id` / `last_read_at`.
  */
-describe("stream_read_state migration backfill", () => {
+describe("stream_members watermark columns dropped", () => {
   let pool: Pool
-  let migrationSql: string
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
-    migrationSql = await Bun.file(MIGRATION_PATH).text()
   })
 
   afterAll(async () => {
     await pool.end()
   })
 
-  test("copies member watermarks + timestamps with workspace derived through streams; skips NULLs; never clobbers", async () => {
-    await withTestTransaction(pool, async (client) => {
-      const wid = "ws_backfill_test"
-      const sid = "stream_backfill_1"
-      const sidNull = "stream_backfill_2"
-      const memberWithRead = "usr_backfill_read"
-      const readAt = new Date("2026-03-04T05:06:07.000Z")
-
-      await client.query(
-        `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES
-           ($1, $2, 'channel', 'private', $4),
-           ($3, $2, 'channel', 'private', $4)`,
-        [sid, wid, sidNull, memberWithRead]
-      )
-      // One member with a watermark, one never-read member (NULL) whose row
-      // must NOT seed a stream_read_state entry (absence = never read).
-      await client.query(
-        `INSERT INTO stream_members (stream_id, member_id, last_read_event_id, last_read_at) VALUES
-           ($1, $2, 'evt_backfill_9', $4),
-           ($3, $2, NULL, NULL)`,
-        [sid, memberWithRead, sidNull, readAt]
-      )
-      // A pre-existing row the backfill must not clobber (ON CONFLICT DO NOTHING).
-      await client.query(
-        `INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at)
-         VALUES ($1, $2, $3, 'evt_pre_existing', NULL)`,
-        [wid, sid, memberWithRead]
-      )
-
-      await client.query(migrationSql)
-
-      const result = await client.query(
-        `SELECT workspace_id, stream_id, user_id, last_read_event_id, last_read_at
-         FROM stream_read_state
-         WHERE workspace_id = $1
-         ORDER BY stream_id`,
-        [wid]
-      )
-
-      // NULL watermark seeded no row; the existing row survived untouched.
-      expect(result.rows).toEqual([
-        {
-          workspace_id: wid,
-          stream_id: sid,
-          user_id: memberWithRead,
-          last_read_event_id: "evt_pre_existing",
-          last_read_at: null,
-        },
-      ])
-
-      // With the conflict out of the way, a fresh backfill carries both the
-      // event id and the membership timestamp.
-      await client.query(`DELETE FROM stream_read_state WHERE workspace_id = $1`, [wid])
-      await client.query(migrationSql)
-      const fresh = await client.query(
-        `SELECT workspace_id, stream_id, user_id, last_read_event_id, last_read_at
-         FROM stream_read_state
-         WHERE workspace_id = $1`,
-        [wid]
-      )
-      expect(fresh.rows).toEqual([
-        {
-          workspace_id: wid,
-          stream_id: sid,
-          user_id: memberWithRead,
-          last_read_event_id: "evt_backfill_9",
-          last_read_at: readAt,
-        },
-      ])
-    })
+  test("information_schema no longer contains either membership watermark column", async () => {
+    const result = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'stream_members' AND column_name IN ('last_read_event_id', 'last_read_at')`
+    )
+    expect(result.rows).toEqual([])
   })
 })

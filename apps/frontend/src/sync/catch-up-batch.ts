@@ -1,9 +1,15 @@
 import type { QueryClient } from "@tanstack/react-query"
-import type { LastMessagePreview, WorkspaceBootstrap } from "@threa/types"
+import type { LastMessagePreview, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threa/types"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { activityKeys } from "@/hooks/use-activity"
 import { diffCounterStreams, toCounterState, withCounterState, type UnreadCounterState } from "./unread-counters"
+import {
+  publishReadAllFrontiersToCache,
+  putReadAllFrontiersIdb,
+  resolveReadAllFrontiers,
+  type ResolvedReadAllFrontier,
+} from "./read-state"
 
 /** One absolute (or relative) counter mutation, expressed as pure state math. */
 export type CounterMutator = (state: UnreadCounterState) => UnreadCounterState
@@ -20,7 +26,7 @@ function fold(mutators: CounterMutator[], seed: UnreadCounterState): UnreadCount
  * analogue). A missing cache invalidates rather than dropping (the event landed
  * before the bootstrap queryFn populated it; matches updateBootstrapOrInvalidate).
  */
-function applyCountersToCache(queryClient: QueryClient, workspaceId: string, mutators: CounterMutator[]): void {
+export function applyCountersToCache(queryClient: QueryClient, workspaceId: string, mutators: CounterMutator[]): void {
   if (mutators.length === 0) return
   const key = workspaceKeys.bootstrap(workspaceId)
   if (queryClient.getQueryData<WorkspaceBootstrap>(key)) {
@@ -130,6 +136,7 @@ export function commitStreamPreview(
 export class CatchUpBatch {
   private readonly counterMutators: CounterMutator[] = []
   private readonly streamPreviews = new Map<string, LastMessagePreview | null>()
+  private readonly readAllSnapshots: StreamReadFrontierSnapshot[] = []
   private activityFeedStale = false
 
   constructor(
@@ -145,6 +152,16 @@ export class CatchUpBatch {
     this.streamPreviews.set(streamId, preview)
   }
 
+  /** Buffer one read-all payload's additive frontier snapshots. Resolution
+   *  against the persisted rows happens at flush time — inside the flush
+   *  transaction — so the canonical frontier rows persist atomically with the
+   *  counter fold (and a concurrent advance can't slip between resolve and
+   *  write). Legacy payloads without frontiers buffer nothing. */
+  applyReadAllFrontiers(frontiers: StreamReadFrontierSnapshot[] | undefined): void {
+    if (!frontiers || frontiers.length === 0) return
+    this.readAllSnapshots.push(...frontiers)
+  }
+
   markActivityFeedStale(): void {
     this.activityFeedStale = true
   }
@@ -152,18 +169,33 @@ export class CatchUpBatch {
   async flush(): Promise<void> {
     const haveCounters = this.counterMutators.length > 0
     const havePreviews = this.streamPreviews.size > 0
+    const haveFrontiers = this.readAllSnapshots.length > 0
 
+    let resolvedFrontiers: ResolvedReadAllFrontier[] = []
+    if (haveCounters || havePreviews || haveFrontiers) {
+      // One transaction over every table the replay touched so the badge
+      // (db.unreadState), the sidebar (db.streams), and the divider
+      // (db.streamReadState) re-render together — never one frame apart — and a
+      // failed flush never leaves a partial write behind.
+      await db.transaction(
+        "rw",
+        haveFrontiers ? [db.unreadState, db.streams, db.streamReadState] : [db.unreadState, db.streams],
+        async () => {
+          await putCountersIdb(this.workspaceId, this.counterMutators)
+          await putPreviewsIdb(this.streamPreviews)
+          if (haveFrontiers) {
+            resolvedFrontiers = await resolveReadAllFrontiers(this.queryClient, this.workspaceId, this.readAllSnapshots)
+            await putReadAllFrontiersIdb(this.workspaceId, resolvedFrontiers)
+          }
+        }
+      )
+    }
+
+    // In-memory publication only after successful persistence, so the caches
+    // never publish state the IDB lacks.
     applyCountersToCache(this.queryClient, this.workspaceId, this.counterMutators)
     applyPreviewsToCache(this.queryClient, this.workspaceId, this.streamPreviews)
-
-    if (haveCounters || havePreviews) {
-      // One transaction over both tables so the badge (db.unreadState) and the
-      // sidebar (db.streams) re-render together — never one frame apart.
-      await db.transaction("rw", [db.unreadState, db.streams], async () => {
-        await putCountersIdb(this.workspaceId, this.counterMutators)
-        await putPreviewsIdb(this.streamPreviews)
-      })
-    }
+    publishReadAllFrontiersToCache(this.queryClient, this.workspaceId, resolvedFrontiers)
 
     if (this.activityFeedStale) {
       this.queryClient.invalidateQueries({ queryKey: activityKeys.list(this.workspaceId) })

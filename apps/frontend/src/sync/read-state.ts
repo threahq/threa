@@ -1,16 +1,14 @@
 import type { QueryClient } from "@tanstack/react-query"
-import type { StreamBootstrap, StreamReadFrontier, WorkspaceBootstrap } from "@threa/types"
+import type { StreamBootstrap, StreamReadFrontier, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threa/types"
 import { db, type CachedStreamReadState } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
-import { applyStreamReadMessages, dropMessageActivities } from "./unread-counters"
-import { putCountersIdb, type CounterMutator } from "./catch-up-batch"
+import { applyStreamReadMessages, applyStreamsReadAllOrdinals, dropMessageActivities } from "./unread-counters"
+import { applyCountersToCache, putCountersIdb, type CounterMutator } from "./catch-up-batch"
 
 /**
- * Upsert the standalone read-frontier row in IDB (read cutover dual-write).
- * Runs inside the caller's `rw` transaction alongside the legacy mirror
- * writes. Row presence is authoritative for frontier readers, so every read
- * applier that moves a legacy mirror also writes this row.
+ * Upsert the read-frontier row in IDB — the sole read watermark. Runs inside the
+ * caller's `rw` transaction. Row presence is authoritative for frontier readers.
  */
 export async function putReadStateIdb(
   workspaceId: string,
@@ -104,63 +102,33 @@ export function snapshotCounterMutator(snapshot: ReadStateSnapshot): CounterMuta
   }
 }
 
-/** Mirror a snapshot's watermark fields into the query cache (workspace +
- *  stream bootstrap membership rows AND the standalone frontier map) so the
- *  unread divider tracks immediately. */
+/** Mirror a snapshot's frontier into the query cache (workspace streamReadState
+ *  map + per-stream bootstrap readState) so the unread divider tracks
+ *  immediately. */
 function mirrorSnapshotToCache(queryClient: QueryClient, workspaceId: string, snapshot: ReadStateSnapshot): void {
+  const frontier: StreamReadFrontier = {
+    lastReadEventId: snapshot.lastReadEventId,
+    lastReadSequence: snapshot.lastReadSequence,
+    lastReadAt: new Date().toISOString(),
+  }
+
   queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
     if (!old) return old
     return {
       ...old,
-      streamMemberships: old.streamMemberships.map((membership) =>
-        membership.streamId === snapshot.streamId
-          ? { ...membership, lastReadEventId: snapshot.lastReadEventId, lastReadSequence: snapshot.lastReadSequence }
-          : membership
-      ),
-      streamReadState: {
-        ...(old.streamReadState ?? {}),
-        [snapshot.streamId]: {
-          lastReadEventId: snapshot.lastReadEventId,
-          lastReadSequence: snapshot.lastReadSequence,
-          lastReadAt: new Date().toISOString(),
-        },
-      },
+      streamReadState: { ...(old.streamReadState ?? {}), [snapshot.streamId]: frontier },
     }
   })
 
   queryClient.setQueryData<StreamBootstrap | undefined>(streamKeys.bootstrap(workspaceId, snapshot.streamId), (old) => {
-    if (!old?.membership) return old
-    return {
-      ...old,
-      membership: {
-        ...old.membership,
-        lastReadEventId: snapshot.lastReadEventId,
-        lastReadSequence: snapshot.lastReadSequence,
-      },
-    }
+    if (!old) return old
+    return { ...old, readState: frontier }
   })
 }
 
-/** Write a snapshot's watermark mirrors to IDB. Must run inside an open `rw`
- *  transaction that includes `db.streams`, `db.streamMemberships`, and
- *  `db.streamReadState`. */
+/** Write a snapshot's frontier to IDB. Must run inside an open `rw` transaction
+ *  that includes `db.streamReadState`. */
 async function writeSnapshotWatermarkIdb(workspaceId: string, snapshot: ReadStateSnapshot): Promise<void> {
-  const now = Date.now()
-  await db.streams.update(snapshot.streamId, { lastReadEventId: snapshot.lastReadEventId, _cachedAt: now })
-
-  const membershipId = `${workspaceId}:${snapshot.streamId}`
-  const membership = await db.streamMemberships.get(membershipId)
-  if (membership) {
-    await db.streamMemberships.put({
-      ...membership,
-      lastReadEventId: snapshot.lastReadEventId,
-      lastReadSequence: snapshot.lastReadSequence,
-      id: membershipId,
-      workspaceId,
-      _cachedAt: now,
-    })
-  }
-
   await putReadStateIdb(
     workspaceId,
     snapshot.streamId,
@@ -169,7 +137,7 @@ async function writeSnapshotWatermarkIdb(workspaceId: string, snapshot: ReadStat
       lastReadSequence: snapshot.lastReadSequence,
       lastReadAt: new Date().toISOString(),
     },
-    now
+    Date.now()
   )
 }
 
@@ -189,9 +157,7 @@ export function commitReadStateSnapshot(
 ): void {
   mirrorSnapshotToCache(queryClient, workspaceId, snapshot)
   commitCounter(snapshotCounterMutator(snapshot))
-  void db.transaction("rw", [db.streams, db.streamMemberships, db.streamReadState], () =>
-    writeSnapshotWatermarkIdb(workspaceId, snapshot)
-  )
+  void db.transaction("rw", [db.streamReadState], () => writeSnapshotWatermarkIdb(workspaceId, snapshot))
 }
 
 /**
@@ -218,7 +184,7 @@ export async function applyReadStateSnapshotsIdb(
   startedAt?: number
 ): Promise<void> {
   if (snapshots.length === 0) return
-  await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships, db.streamReadState], async () => {
+  await db.transaction("rw", [db.unreadState, db.streamReadState], async () => {
     let effective = snapshots
     if (startedAt !== undefined) {
       effective = []
@@ -234,4 +200,160 @@ export async function applyReadStateSnapshotsIdb(
       await writeSnapshotWatermarkIdb(workspaceId, snapshot)
     }
   })
+}
+
+/** One read-all frontier resolved to the canonical highest of every source. */
+export interface ResolvedReadAllFrontier {
+  streamId: string
+  frontier: StreamReadFrontier
+}
+
+function frontierSequence(frontier: StreamReadFrontier): bigint | null {
+  return frontier.lastReadSequence != null ? BigInt(frontier.lastReadSequence) : null
+}
+
+/**
+ * Resolve each incoming mark-all snapshot (the additive `frontiers` field on
+ * the HTTP response and the `stream:read_all` socket payload) to ONE canonical
+ * frontier — the highest sequence across the incoming snapshot, the workspace
+ * bootstrap cache, the loaded per-stream bootstrap cache, and the persisted
+ * `db.streamReadState` row. Mark-all is advance-only, and the SAME canonical
+ * frontier is then written back to every surface (publishReadAllFrontiersToCache
+ * + putReadAllFrontiersIdb), so stale memory can never linger below a persisted
+ * row while the IDB write is skipped.
+ *
+ * Row presence/null semantics: an ABSENT source contributes no candidate (no
+ * fabricated frontier); a PRESENT null sequence is a real pre-first-message
+ * frontier that any real sequence beats. Ties break deterministically by
+ * source order — persisted IDB first, incoming last — and the fold replaces
+ * only on a STRICTLY greater sequence, so an equal sequence keeps the more
+ * durable row. Must run inside the caller's `rw` transaction that includes
+ * `db.streamReadState` (or standalone before the write transaction opens) so
+ * the resolution and the write see the same table state.
+ *
+ * A missing/empty snapshot list (legacy payload from before the field shipped)
+ * resolves to nothing: existing rows stay put and the next bootstrap
+ * reconciles — never delete or regress on an absent field.
+ */
+export async function resolveReadAllFrontiers(
+  queryClient: QueryClient,
+  workspaceId: string,
+  frontiers: StreamReadFrontierSnapshot[] | undefined
+): Promise<ResolvedReadAllFrontier[]> {
+  if (!frontiers || frontiers.length === 0) return []
+
+  const now = new Date().toISOString()
+  const workspaceMap =
+    queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.streamReadState ?? {}
+
+  const resolved: ResolvedReadAllFrontier[] = []
+  for (const snapshot of frontiers) {
+    // Candidates in fixed source order: persisted IDB, per-stream bootstrap
+    // cache, workspace bootstrap cache, then the incoming snapshot.
+    const candidates: StreamReadFrontier[] = []
+    const idbRow = await db.streamReadState.get(`${workspaceId}:${snapshot.streamId}`)
+    if (idbRow) {
+      candidates.push({
+        lastReadEventId: idbRow.lastReadEventId,
+        lastReadSequence: idbRow.lastReadSequence,
+        lastReadAt: idbRow.lastReadAt,
+      })
+    }
+    const perStream = queryClient.getQueryData<StreamBootstrap | undefined>(
+      streamKeys.bootstrap(workspaceId, snapshot.streamId)
+    )?.readState
+    if (perStream) candidates.push(perStream)
+    const workspaceFrontier = workspaceMap[snapshot.streamId]
+    if (workspaceFrontier) candidates.push(workspaceFrontier)
+    candidates.push({
+      lastReadEventId: snapshot.lastReadEventId,
+      lastReadSequence: snapshot.lastReadSequence,
+      lastReadAt: snapshot.lastReadAt ?? now,
+    })
+
+    let canonical = candidates[0]
+    let canonicalSeq = frontierSequence(canonical)
+    for (const candidate of candidates.slice(1)) {
+      const candidateSeq = frontierSequence(candidate)
+      if (candidateSeq != null && (canonicalSeq == null || candidateSeq > canonicalSeq)) {
+        canonical = candidate
+        canonicalSeq = candidateSeq
+      }
+    }
+    resolved.push({ streamId: snapshot.streamId, frontier: canonical })
+  }
+  return resolved
+}
+
+/** Write resolved canonical frontier rows to IDB. Must run inside an open `rw`
+ *  transaction that includes `db.streamReadState`. */
+export async function putReadAllFrontiersIdb(workspaceId: string, resolved: ResolvedReadAllFrontier[]): Promise<void> {
+  if (resolved.length === 0) return
+  const cachedAt = Date.now()
+  for (const { streamId, frontier } of resolved) {
+    await putReadStateIdb(workspaceId, streamId, frontier, cachedAt)
+  }
+}
+
+/** Publish resolved frontiers to the in-memory caches: the workspace bootstrap
+ *  `streamReadState` map (single set for the whole batch) and each loaded
+ *  per-stream bootstrap's `readState` (the open conversation's divider). Call
+ *  only AFTER the matching IDB write succeeded, so the caches never publish a
+ *  frontier the persisted store lacks. */
+export function publishReadAllFrontiersToCache(
+  queryClient: QueryClient,
+  workspaceId: string,
+  resolved: ResolvedReadAllFrontier[]
+): void {
+  if (resolved.length === 0) return
+
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+    if (!old) return old
+    const merged = { ...(old.streamReadState ?? {}) }
+    for (const { streamId, frontier } of resolved) merged[streamId] = frontier
+    return { ...old, streamReadState: merged }
+  })
+
+  for (const { streamId, frontier } of resolved) {
+    queryClient.setQueryData<StreamBootstrap | undefined>(streamKeys.bootstrap(workspaceId, streamId), (old) =>
+      old ? { ...old, readState: frontier } : old
+    )
+  }
+}
+
+/**
+ * THE single live (non-batched) read-all apply path — the `stream:read_all`
+ * socket handler routes here. Persists the counter fold (absolute read
+ * positions + overlay clearing) and the canonical frontier rows in ONE
+ * transaction over `db.unreadState` + `db.streamReadState`, resolving the
+ * frontiers INSIDE that transaction so the canonical pick and the write see the
+ * same table state; the in-memory publication (counters + frontiers) happens
+ * only after the transaction commits, so a failed transaction publishes nothing
+ * the IDB lacks. During catch-up the batch owns the same atomicity
+ * (`CatchUpBatch.applyReadAllFrontiers` / `flush`).
+ *
+ * A legacy payload without frontiers keeps the legacy counter behavior and
+ * touches no frontier rows — the transaction then covers `db.unreadState`
+ * alone (atomic over exactly the tables it touches).
+ */
+export async function commitReadAll(
+  queryClient: QueryClient,
+  workspaceId: string,
+  reads: Array<{ streamId: string; lastReadOrdinal: number }>,
+  frontiers: StreamReadFrontierSnapshot[] | undefined
+): Promise<void> {
+  const mutators: CounterMutator[] = [(state) => applyStreamsReadAllOrdinals(state, reads)]
+  const haveFrontiers = Boolean(frontiers && frontiers.length > 0)
+
+  let resolved: ResolvedReadAllFrontier[] = []
+  await db.transaction("rw", haveFrontiers ? [db.unreadState, db.streamReadState] : [db.unreadState], async () => {
+    await putCountersIdb(workspaceId, mutators)
+    if (haveFrontiers) {
+      resolved = await resolveReadAllFrontiers(queryClient, workspaceId, frontiers)
+      await putReadAllFrontiersIdb(workspaceId, resolved)
+    }
+  })
+
+  applyCountersToCache(queryClient, workspaceId, mutators)
+  publishReadAllFrontiersToCache(queryClient, workspaceId, resolved)
 }

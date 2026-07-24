@@ -35,8 +35,6 @@ function makeMembership(overrides: Partial<StreamMember> = {}): StreamMember {
     streamId: "stream_thread",
     memberId: "member_1",
     notificationLevel: null,
-    lastReadEventId: null,
-    lastReadAt: null,
     joinedAt: new Date(),
     ...overrides,
   }

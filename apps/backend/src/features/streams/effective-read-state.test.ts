@@ -18,32 +18,15 @@ function sqlText(call: unknown[]): string {
   return typeof arg === "string" ? arg : (arg as { text: string }).text
 }
 
-const MEMBERSHIPS = [
-  {
-    streamId: "stream_present_null",
-    lastReadEventId: "evt_membership",
-    lastReadAt: new Date("2026-01-01T00:00:00.000Z"),
-  },
-  {
-    streamId: "stream_present",
-    lastReadEventId: "evt_membership_old",
-    lastReadAt: new Date("2026-01-01T00:00:00.000Z"),
-  },
-  {
-    streamId: "stream_absent",
-    lastReadEventId: "evt_membership_fallback",
-    lastReadAt: new Date("2026-01-02T00:00:00.000Z"),
-  },
-]
+const STREAM_IDS = ["stream_present_null", "stream_present", "stream_absent"]
 
 describe("getEffectiveReadState", () => {
   afterEach(() => mock.restore())
 
-  test("a present row wins over membership — including a NULL watermark (explicit unread-to-zero)", async () => {
+  test("stream_read_state is the sole source — a present NULL stays NULL, an absent row is never-read", async () => {
     spyOn(ReadStateRepository, "getBatch").mockResolvedValue([
-      // Explicit unread-to-zero: the row exists with a NULL watermark and must
-      // beat the non-null membership column — row presence, not field
-      // nullability, selects the source.
+      // Explicit unread-to-zero: the row exists with a NULL watermark and is
+      // reported as-is (row presence is authoritative).
       {
         workspaceId: "ws_1",
         streamId: "stream_present_null",
@@ -52,8 +35,6 @@ describe("getEffectiveReadState", () => {
         lastReadAt: new Date("2026-02-01T00:00:00.000Z"),
         updatedAt: new Date(),
       },
-      // Read-state above a regressed membership watermark: cutover converges
-      // upward only.
       {
         workspaceId: "ws_1",
         streamId: "stream_present",
@@ -64,22 +45,22 @@ describe("getEffectiveReadState", () => {
       },
     ])
 
-    const effective = await getEffectiveReadState({} as never, "usr_1", MEMBERSHIPS)
+    const effective = await getEffectiveReadState({} as never, "usr_1", STREAM_IDS)
 
     expect(effective.get("stream_present_null")?.lastReadEventId).toBeNull()
     expect(effective.get("stream_present")?.lastReadEventId).toBe("evt_read_state")
-    // No row → membership columns fill (rolling-deploy / pre-cutover fallback).
+    // No row → never-read (NULL watermark), not a membership fallback.
     expect(effective.get("stream_absent")).toEqual({
       streamId: "stream_absent",
-      lastReadEventId: "evt_membership_fallback",
-      lastReadAt: MEMBERSHIPS[2].lastReadAt,
+      lastReadEventId: null,
+      lastReadAt: null,
     })
   })
 
-  test("queries the standalone store for exactly the membership stream ids", async () => {
+  test("queries the standalone store for exactly the requested stream ids", async () => {
     const getBatch = spyOn(ReadStateRepository, "getBatch").mockResolvedValue([])
-    await getEffectiveReadState({} as never, "usr_1", MEMBERSHIPS)
-    expect(getBatch).toHaveBeenCalledWith({}, "usr_1", ["stream_present_null", "stream_present", "stream_absent"])
+    await getEffectiveReadState({} as never, "usr_1", STREAM_IDS)
+    expect(getBatch).toHaveBeenCalledWith({}, "usr_1", STREAM_IDS)
   })
 })
 
@@ -90,32 +71,21 @@ describe("usersReadThroughEffective", () => {
     expect(query).not.toHaveBeenCalled()
   })
 
-  test("read-state branch is membership-agnostic — access, not membership, gates born-read", async () => {
+  test("reads solely from stream_read_state — membership-agnostic, no membership join", async () => {
     const { db, query } = makeDb()
     await usersReadThroughEffective(db, "ws_1", "stream_1", ["usr_a", "usr_b"], 42n)
 
     const text = flat(sqlText(query.mock.calls[0]))
-    // Read-state branch: watermark sequence resolved via stream_events, with
-    // NO stream_members join — a non-member viewer's own row qualifies
-    // (INV-62 access without membership), closing the late-insert race.
-    expect(text).toContain("FROM stream_read_state rs JOIN stream_events se ON se.id = rs.last_read_event_id")
-    expect(text).not.toContain("JOIN stream_members sm ON sm.stream_id = rs.stream_id")
+    // Watermark sequence resolved via stream_events, bound to the same stream
+    // (not just by event id) so a stale/corrupt cross-stream watermark can't
+    // qualify. No stream_members anywhere — a non-member viewer's own row
+    // qualifies (INV-62 access without membership), closing the late-insert race.
+    expect(text).toContain(
+      "FROM stream_read_state rs JOIN stream_events se ON se.id = rs.last_read_event_id AND se.stream_id = rs.stream_id"
+    )
     expect(text).toContain("rs.workspace_id = $1")
-    // Membership branch guarded by row absence — a present row (even with a
-    // NULL watermark) never falls through to the membership column.
-    expect(text).toContain("FROM stream_members sm")
-    expect(text).toContain("NOT EXISTS")
-    expect(text).toContain("rs.user_id = sm.member_id")
-    expect(text).toContain("UNION")
-    // INV-8 hardening on the membership fallback: it joins `streams` on the
-    // membership's stream and requires the workspace match, and binds the
-    // watermark event to that same stream (not just by event id) — a
-    // stale/corrupt cross-workspace watermark can't qualify a member.
-    expect(text).toContain("JOIN streams s ON s.id = sm.stream_id")
-    expect(text).toContain("s.workspace_id =")
-    expect(text).toContain("se.stream_id = sm.stream_id")
-    // Row-presence stays authoritative, now workspace-scoped.
-    expect(text).toContain("rs.user_id = sm.member_id AND rs.workspace_id =")
+    expect(text).not.toContain("stream_members")
+    expect(text).not.toContain("UNION")
   })
 
   test("maps the returned user ids into the born-read set", async () => {

@@ -18,23 +18,3 @@ describe("StreamMemberRepository.countMembersNotIn", () => {
     expect(await StreamMemberRepository.countMembersNotIn(db, "stream_target", "stream_source")).toBe(0)
   })
 })
-
-describe("StreamMemberRepository.membersReadThrough", () => {
-  test("returns an empty set without querying when memberIds is empty", async () => {
-    const query = mock(() => Promise.resolve({ rows: [], rowCount: 0 }))
-    const db = { query } as unknown as Querier
-    expect(await StreamMemberRepository.membersReadThrough(db, "stream_1", [], 50n)).toEqual(new Set())
-    expect(query).not.toHaveBeenCalled()
-  })
-
-  test("maps the returned rows to a set of member ids", async () => {
-    const db = makeDb([{ member_id: "usr_caught" }, { member_id: "usr_also" }])
-    const result = await StreamMemberRepository.membersReadThrough(
-      db,
-      "stream_1",
-      ["usr_caught", "usr_also", "usr_behind"],
-      50n
-    )
-    expect(result).toEqual(new Set(["usr_caught", "usr_also"]))
-  })
-})

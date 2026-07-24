@@ -259,9 +259,9 @@ describe("ConversationService read/unread", () => {
     expect(await StreamMemberRepository.findByStreamAndMember(pool, thread, reader)).toBeNull()
 
     // Effective root unread: msg2 is unread again (msg1 read).
-    const membership = await streamService.getMembership(root, reader)
+    const readState = await ReadStateRepository.get(pool, root, reader)
     const counts = await streamService.getUnreadCounts([
-      { streamId: root, memberId: reader, lastReadEventId: membership?.lastReadEventId ?? null },
+      { streamId: root, memberId: reader, lastReadEventId: readState?.lastReadEventId ?? null },
     ])
     expect(counts.get(root)?.unreadCount).toBe(1)
   })
@@ -294,9 +294,9 @@ describe("ConversationService read/unread", () => {
       userId: reader,
     })
     expect(streams).toHaveLength(1)
-    const membership = await streamService.getMembership(root, reader)
+    const readState = await ReadStateRepository.get(pool, root, reader)
     const counts = await streamService.getUnreadCounts([
-      { streamId: root, memberId: reader, lastReadEventId: membership?.lastReadEventId ?? null },
+      { streamId: root, memberId: reader, lastReadEventId: readState?.lastReadEventId ?? null },
     ])
     expect(counts.get(root)?.unreadCount).toBe(1)
   })

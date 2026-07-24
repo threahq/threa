@@ -61,8 +61,6 @@ export function useCreateEncryptedScratchpad(workspaceId: string, currentUserId:
         streamId: stream.id,
         memberId: stream.createdBy,
         notificationLevel: null,
-        lastReadEventId: null,
-        lastReadAt: null,
         joinedAt: stream.createdAt,
       }
 
@@ -87,8 +85,6 @@ export function useCreateEncryptedScratchpad(workspaceId: string, currentUserId:
           streamId: stream.id,
           memberId: stream.createdBy,
           notificationLevel: null,
-          lastReadEventId: null,
-          lastReadAt: null,
           joinedAt: stream.createdAt,
           _cachedAt: now,
         }),
