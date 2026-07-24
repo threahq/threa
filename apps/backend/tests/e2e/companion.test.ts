@@ -127,7 +127,14 @@ describe("Companion Agent", () => {
   beforeEach(
     async () => {
       socket = createSocket(client)
-      await connectSocket(socket)
+      try {
+        await connectSocket(socket)
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "No session cookie") throw error
+        socket.disconnect()
+        socket = createSocket(client)
+        await connectSocket(socket)
+      }
     },
     { timeout: 30_000 }
   )
