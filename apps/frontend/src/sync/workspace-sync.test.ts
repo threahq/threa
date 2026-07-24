@@ -2257,6 +2257,82 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
 
     cleanup()
   })
+
+  it("activity:read drops held rows by id, re-derives counts, and is idempotent on replay", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    // A read performed on another device drops exactly the listed ids;
+    // unknown ids (already dropped, or outside the capped held set) no-op.
+    emit("activity:read", {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      activityIds: ["act_s1", "act_unknown"],
+      streamIds: ["stream_1"],
+    })
+
+    let bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadActivities?.map((a) => a.id)).toEqual(["act_s2"])
+    expect(bootstrap?.activityCounts).toEqual({ stream_2: 1 })
+    expect(bootstrap?.mentionCounts).toEqual({})
+    expect(bootstrap?.unreadActivityCount).toBe(1)
+
+    // Duplicate/replayed event is a no-op.
+    emit("activity:read", {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      activityIds: ["act_s1"],
+      streamIds: ["stream_1"],
+    })
+    bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadActivityCount).toBe(1)
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_s2"])
+      expect(state?.unreadActivityCount).toBe(1)
+    })
+
+    cleanup()
+  })
+
+  it("catch-up ordering: a creation replayed after a read settles held (snapshot semantics)", async () => {
+    // A row created after the read (its id absent from the delta) stays unread:
+    // replay applies the read first (unknown-id no-op), then the creation.
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    emit("activity:read", {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      activityIds: ["act_read_elsewhere"],
+      streamIds: ["stream_1"],
+    })
+    emit("activity:created", {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      activity: {
+        id: "act_late",
+        activityType: "message",
+        streamId: "stream_1",
+        messageId: "msg_late",
+        actorId: "member_2",
+        actorType: "user",
+        context: {},
+        createdAt: new Date().toISOString(),
+        isSelf: false,
+        emoji: null,
+      },
+    })
+
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadActivities?.map((a) => a.id)).toContain("act_late")
+    expect(bootstrap?.unreadActivityCount).toBe(3)
+
+    cleanup()
+  })
 })
 
 describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {

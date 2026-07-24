@@ -119,6 +119,27 @@ describe("BroadcastHandler", () => {
     })
   })
 
+  it("should emit activity:read to the target user's room", async () => {
+    const event = makeEvent(1n, "activity:read", {
+      workspaceId: "ws_1",
+      targetUserId: "usr_alice",
+      activityIds: ["act_1"],
+      streamIds: ["stream_1"],
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:user:usr_alice",
+      eventType: "activity:read",
+      payload: event.payload,
+    })
+  })
+
   it("should emit command event to stream room", async () => {
     const event = makeEvent(1n, "command:dispatched", {
       workspaceId: "ws_1",

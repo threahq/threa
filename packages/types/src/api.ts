@@ -1862,12 +1862,31 @@ export interface ActivityCreatedPayload {
   }
 }
 
+/** Socket event payload for activity:read */
+export interface ActivityReadPayload {
+  workspaceId: string
+  targetUserId: string
+  /**
+   * Delta: ids of the rows that flipped to read. Drops are idempotent and
+   * commute, so replays/duplicates converge.
+   */
+  activityIds: string[]
+  /**
+   * Distinct non-null streams of the flipped rows. Populated for stream/all
+   * clears (drives push-banner dismissal on other devices); empty for per-row
+   * reads, which must not dismiss a grouped banner that may still represent
+   * sibling unread rows.
+   */
+  streamIds: string[]
+}
+
 export interface MarkAsReadInput {
   lastEventId: string
 }
 
 export interface MarkAsReadResponse {
-  membership: StreamMember
+  /** Null when the viewer has access but no membership row (INV-62: non-member thread leg, unjoined public channel) — an activity-only read. */
+  membership: StreamMember | null
 }
 
 export interface MarkAllAsReadResponse {

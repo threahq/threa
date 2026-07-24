@@ -32,6 +32,7 @@ import type {
   AgentActivityStartedPayload,
   AgentActivityEndedPayload,
   ActivityCreatedPayload,
+  ActivityReadPayload,
   SavedUpsertedPayload,
   SavedDeletedPayload,
   SavedReminderFiredPayload,
@@ -81,6 +82,7 @@ import {
   applyStreamReadSet,
   applyStreamsReadAllOrdinals,
   bootstrapActivityCacheFields,
+  dropActivitiesById,
   mergeBootstrapUnreadFields,
   pruneCounterTouches,
   upsertActivity,
@@ -1667,6 +1669,25 @@ export function registerWorkspaceSocketHandlers(
     invalidateActivityFeed(true)
   }
 
+  // Cross-device activity-read propagation: rows flipped to read in another
+  // session (per-row click, stream open, mark-all). Drop by id — idempotent
+  // with this device's own optimistic mutations — and always invalidate the
+  // feed: a mounted feed page can show rows the 200-cap held set doesn't.
+  // Push banners dismiss per distinct stream only when the server populated
+  // streamIds (stream/all scope); per-row reads carry none so a grouped
+  // banner representing sibling unread rows stays.
+  const handleActivityRead = (payload: ActivityReadPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    if (payload.activityIds.length === 0) return
+
+    commitCounter((state) => dropActivitiesById(state, payload.activityIds))
+    invalidateActivityFeed(true)
+
+    for (const streamId of new Set(payload.streamIds)) {
+      navigator.serviceWorker?.controller?.postMessage({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId })
+    }
+  }
+
   // GAM memo extraction: surface new memos in the memory explorer without a
   // manual refresh. memo:created is workspace-group routed (sync log + emit),
   // so registering here puts memos on the sync catch-up path like every
@@ -2120,6 +2141,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("bot:updated", handleBotUpdated)
   socket.on("agent_config:updated", handleAgentConfigUpdated)
   socket.on("activity:created", handleActivityCreated)
+  socket.on("activity:read", handleActivityRead)
   socket.on("memo:created", handleMemoCreated)
   socket.on("invitation:sent", handleInvitationChanged)
   socket.on("invitation:accepted", handleInvitationChanged)
@@ -2189,6 +2211,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("bot:updated", handleBotUpdated)
     socket.off("agent_config:updated", handleAgentConfigUpdated)
     socket.off("activity:created", handleActivityCreated)
+    socket.off("activity:read", handleActivityRead)
     socket.off("memo:created", handleMemoCreated)
     socket.off("invitation:sent", handleInvitationChanged)
     socket.off("invitation:accepted", handleInvitationChanged)

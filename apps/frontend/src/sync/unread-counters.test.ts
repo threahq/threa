@@ -9,6 +9,7 @@ import {
   applyMovedSourceOrdinal,
   deriveActivityCounts,
   upsertActivity,
+  dropActivitiesById,
   dropActivitiesForStream,
   dropMessageActivities,
   dropReactionActivity,
@@ -284,6 +285,24 @@ describe("dropActivitiesForStream", () => {
   it("is a no-op (same reference) when the stream has no rows", () => {
     const state = makeState({ unreadActivities: [act("a1", "s2")] })
     expect(dropActivitiesForStream(state, "s1")).toBe(state)
+  })
+})
+
+describe("dropActivitiesById", () => {
+  it("drops only the listed ids across streams and re-derives counts", () => {
+    const state = makeState({
+      unreadActivities: [act("a1", "s1"), act("a2", "s1"), act("a3", "s2"), act("a4", null)],
+    })
+    const next = dropActivitiesById(state, ["a1", "a3", "a_unknown"])
+    expect(next.unreadActivities.map((a) => a.id)).toEqual(["a2", "a4"])
+    expect(next.activityCounts).toEqual({ s1: 1 })
+    expect(next.unreadActivityCount).toBe(2)
+  })
+
+  it("is idempotent — dropping already-absent ids is a same-reference no-op", () => {
+    const state = makeState({ unreadActivities: [act("a2", "s1")] })
+    expect(dropActivitiesById(state, ["a1"])).toBe(state)
+    expect(dropActivitiesById(state, [])).toBe(state)
   })
 })
 

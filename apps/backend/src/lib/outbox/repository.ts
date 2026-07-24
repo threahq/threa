@@ -92,6 +92,7 @@ export type OutboxEventType =
   | "invitation:accepted"
   | "invitation:revoked"
   | "activity:created"
+  | "activity:read"
   | "saved:upserted"
   | "saved:deleted"
   | "saved_reminder:fired"
@@ -785,6 +786,20 @@ export interface ActivityCreatedOutboxPayload extends WorkspaceScopedPayload {
   }
 }
 
+/**
+ * A batch of the target user's activity rows flipped to read (per-row click,
+ * stream open, or mark-all). A delta of the flipped ids — drops are idempotent
+ * and commute on the client, so replays/duplicates converge. `streamIds` is the
+ * distinct non-null streams of those rows: populated for stream/all-scope
+ * clears (drives push-banner dismissal), empty for per-row reads, which must
+ * not dismiss a grouped banner that may still represent sibling unread rows.
+ */
+export interface ActivityReadOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  activityIds: string[]
+  streamIds: string[]
+}
+
 export interface SavedUpsertedOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
   saved: SavedMessageView
@@ -1166,6 +1181,7 @@ export interface OutboxEventPayloadMap {
   "invitation:accepted": InvitationAcceptedOutboxPayload
   "invitation:revoked": InvitationRevokedOutboxPayload
   "activity:created": ActivityCreatedOutboxPayload
+  "activity:read": ActivityReadOutboxPayload
   "saved:upserted": SavedUpsertedOutboxPayload
   "saved:deleted": SavedDeletedOutboxPayload
   "saved_reminder:fired": SavedReminderFiredOutboxPayload
@@ -1312,6 +1328,7 @@ export function isAuthorScopedEvent(event: OutboxEvent): event is OutboxEvent<Au
 /** Events that are scoped to a specific target user (delivered to that user's sockets) */
 export type UserScopedEventType =
   | "activity:created"
+  | "activity:read"
   | "saved:upserted"
   | "saved:deleted"
   | "saved_reminder:fired"
@@ -1330,6 +1347,7 @@ export type UserScopedEventType =
 
 const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "activity:created",
+  "activity:read",
   "saved:upserted",
   "saved:deleted",
   "saved_reminder:fired",

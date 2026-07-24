@@ -36,6 +36,17 @@ export interface Activity {
   emoji: string | null
 }
 
+/** A row flipped from unread to read by a mark-read UPDATE (its RETURNING content). */
+export interface ClearedActivity {
+  activityId: string
+  streamId: string | null
+}
+
+interface ClearedActivityRow {
+  activity_id: string
+  stream_id: string | null
+}
+
 export interface InsertActivityParams {
   workspaceId: string
   userId: string
@@ -343,14 +354,23 @@ export const ActivityRepository = {
     }
   },
 
-  async markAsRead(db: Querier, activityId: string, userId: string): Promise<void> {
-    await db.query(sql`
+  async markAsRead(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    activityId: string
+  ): Promise<ClearedActivity | null> {
+    const result = await db.query<ClearedActivityRow>(sql`
       UPDATE user_activity
       SET read_at = NOW()
-      WHERE id = ${activityId}
+      WHERE workspace_id = ${workspaceId}
+        AND id = ${activityId}
         AND user_id = ${userId}
         AND read_at IS NULL
+      RETURNING id AS activity_id, stream_id
     `)
+    const row = result.rows[0]
+    return row ? { activityId: row.activity_id, streamId: row.stream_id } : null
   },
 
   /**
@@ -396,26 +416,55 @@ export const ActivityRepository = {
     return result.rowCount ?? 0
   },
 
-  async markStreamAsRead(db: Querier, userId: string, streamId: string): Promise<number> {
-    const result = await db.query(sql`
+  async markStreamAsRead(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    streamId: string
+  ): Promise<ClearedActivity[]> {
+    const result = await db.query<ClearedActivityRow>(sql`
       UPDATE user_activity
       SET read_at = NOW()
-      WHERE user_id = ${userId}
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
         AND stream_id = ${streamId}
         AND read_at IS NULL
+      RETURNING id AS activity_id, stream_id
     `)
-    return result.rowCount ?? 0
+    return result.rows.map((row) => ({ activityId: row.activity_id, streamId: row.stream_id }))
   },
 
-  async markAllAsRead(db: Querier, userId: string, workspaceId: string): Promise<number> {
-    const result = await db.query(sql`
+  async markAllAsRead(db: Querier, workspaceId: string, userId: string): Promise<ClearedActivity[]> {
+    const result = await db.query<ClearedActivityRow>(sql`
       UPDATE user_activity
       SET read_at = NOW()
-      WHERE user_id = ${userId}
-        AND workspace_id = ${workspaceId}
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
         AND read_at IS NULL
+      RETURNING id AS activity_id, stream_id
     `)
-    return result.rowCount ?? 0
+    return result.rows.map((row) => ({ activityId: row.activity_id, streamId: row.stream_id }))
+  },
+
+  /**
+   * Of `activityIds`, which are still unread — under FOR SHARE, as the
+   * activity:created publisher's ordering barrier against activity:read: a row
+   * can be read (and its activity:read logged) between the source transaction's
+   * commit and the publish. The share lock serializes the two — a concurrent
+   * read UPDATE blocks until this transaction commits, so the sync log orders
+   * created before read; a read committed first shows up here as already read
+   * and the stale creation is never published.
+   */
+  async findStillUnreadIds(db: Querier, workspaceId: string, activityIds: string[]): Promise<Set<string>> {
+    if (activityIds.length === 0) return new Set()
+    const result = await db.query<{ id: string }>(sql`
+      SELECT id FROM user_activity
+      WHERE workspace_id = ${workspaceId}
+        AND id = ANY(${activityIds}::text[])
+        AND read_at IS NULL
+      FOR SHARE
+    `)
+    return new Set(result.rows.map((row) => row.id))
   },
 
   /**

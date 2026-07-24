@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg"
-import { ActivityRepository, type Activity } from "./repository"
+import { ActivityRepository, type Activity, type ClearedActivity } from "./repository"
 import { UserRepository } from "../workspaces"
 import {
   StreamRepository,
@@ -22,8 +22,12 @@ import {
   MENTION_BROADCAST_CHANNEL,
   type JSONContent,
 } from "@threa/types"
-import { withClient } from "../../db"
+import { withClient, withTransaction } from "../../db"
+import { OutboxRepository, type ActivityReadOutboxPayload } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
+
+/** activity:read batches at most this many ids per event (mark-all is unbounded). */
+const ACTIVITY_READ_EVENT_CHUNK = 500
 
 interface ActivityServiceDeps {
   pool: Pool
@@ -620,22 +624,69 @@ export class ActivityService {
     return ActivityRepository.countUnreadForStream(this.pool, userId, workspaceId, streamId)
   }
 
-  async markAsRead(activityId: string, userId: string): Promise<void> {
-    await ActivityRepository.markAsRead(this.pool, activityId, userId)
+  async markAsRead(userId: string, workspaceId: string, activityId: string): Promise<void> {
+    await withTransaction(this.pool, async (client) => {
+      const cleared = await ActivityRepository.markAsRead(client, workspaceId, userId, activityId)
+      if (!cleared) return
+      // Per-row read: streamIds stays empty — dismissing a stream-wide push
+      // banner here could hide sibling unread rows it still represents.
+      await this.emitActivityRead(client, workspaceId, userId, [cleared], false)
+    })
   }
 
-  async markStreamActivityAsRead(userId: string, streamId: string): Promise<void> {
-    const count = await ActivityRepository.markStreamAsRead(this.pool, userId, streamId)
-    if (count > 0) {
-      logger.debug({ userId, streamId, count }, "Marked stream activity as read")
-    }
+  async markStreamActivityAsRead(userId: string, workspaceId: string, streamId: string): Promise<void> {
+    await withTransaction(this.pool, async (client) => {
+      const cleared = await ActivityRepository.markStreamAsRead(client, workspaceId, userId, streamId)
+      if (cleared.length === 0) return
+      logger.debug({ userId, streamId, count: cleared.length }, "Marked stream activity as read")
+      await this.emitActivityRead(client, workspaceId, userId, cleared, true)
+    })
   }
 
   async markAllAsRead(userId: string, workspaceId: string): Promise<void> {
-    const count = await ActivityRepository.markAllAsRead(this.pool, userId, workspaceId)
-    if (count > 0) {
-      logger.debug({ userId, workspaceId, count }, "Marked all activity as read")
+    await withTransaction(this.pool, async (client) => {
+      const cleared = await ActivityRepository.markAllAsRead(client, workspaceId, userId)
+      if (cleared.length === 0) return
+      logger.debug({ userId, workspaceId, count: cleared.length }, "Marked all activity as read")
+      await this.emitActivityRead(client, workspaceId, userId, cleared, true)
+    })
+  }
+
+  /**
+   * Emit activity:read for the flipped rows, chunked so a mark-all (unbounded
+   * server state) can't produce an oversized socket/sync-log payload. Same
+   * transaction as the UPDATE (INV-4/7): the event exists iff the rows flipped.
+   * `includeStreamIds` populates the distinct non-null streams (stream/all
+   * scope — drives push-banner dismissal on other devices); per-row reads pass
+   * false so their banners stay.
+   */
+  private async emitActivityRead(
+    client: PoolClient,
+    workspaceId: string,
+    userId: string,
+    cleared: ClearedActivity[],
+    includeStreamIds: boolean
+  ): Promise<void> {
+    // One insertMany for every chunk: a single statement instead of a round
+    // trip per chunk, shortening the transaction that holds the read's row
+    // locks (matters for an unbounded mark-all).
+    const entries: Array<{ eventType: "activity:read"; payload: ActivityReadOutboxPayload }> = []
+    for (let i = 0; i < cleared.length; i += ACTIVITY_READ_EVENT_CHUNK) {
+      const chunk = cleared.slice(i, i + ACTIVITY_READ_EVENT_CHUNK)
+      const streamIds = includeStreamIds
+        ? [...new Set(chunk.flatMap((row) => (row.streamId ? [row.streamId] : [])))]
+        : []
+      entries.push({
+        eventType: "activity:read",
+        payload: {
+          workspaceId,
+          targetUserId: userId,
+          activityIds: chunk.map((row) => row.activityId),
+          streamIds,
+        },
+      })
     }
+    await OutboxRepository.insertMany(client, entries)
   }
 }
 
