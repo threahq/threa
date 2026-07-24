@@ -15,6 +15,9 @@ export {
   hydrateSharedMessages,
   hydrateSharedMessageIds,
   hydrateSharedMessagesForRoom,
+  hydrateSharedMessageIdsForAccessibleSet,
   collectSharedMessageIds,
+  toDualSlotMaps,
   type HydratedSharedMessage,
+  type DualSlotMaps,
 } from "./hydration"

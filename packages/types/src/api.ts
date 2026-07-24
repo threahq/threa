@@ -21,10 +21,10 @@ import type {
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
 import type { ContextBag, ContextIntent, ContextRefKind } from "./context-bag"
+import type { SharedMessageSlot, SlotMap } from "./slots"
 import type { UserId } from "./ids"
 import type { JSONContent } from "./prosemirror"
 import type {
-  AttachmentSummary,
   Stream,
   StreamWithPreview,
   StreamEvent,
@@ -236,12 +236,17 @@ export interface StreamBootstrap {
   mentionCount: number
   activityCount: number
   /**
-   * Hydrated payload for cross-stream share-message pointers, keyed by source
-   * message id. Overlaid onto `ThreaSharedMessage` nodes at render time so
-   * clients never have to read other streams' messages directly. See
-   * docs/plans/message-sharing-streams.md D8.
+   * Canonical slot envelope for cross-stream share-message pointers, keyed by
+   * namespaced slot key (`shared:<messageId>`). Overlaid onto `ThreaSharedMessage`
+   * nodes at render time so clients never read other streams' messages directly.
    */
-  sharedMessages?: Record<string, SharedMessageHydration>
+  slots?: SlotMap
+  /**
+   * TEMPORARY legacy carrier (deploy-skew window): the same hydration values
+   * keyed by bare source message id, for old clients that predate `slots`.
+   * Removed with the D8 cleanup — do not add new readers.
+   */
+  sharedMessages?: Record<string, SharedMessageSlot>
   /**
    * Persisted ContextBag attached to this stream (if any). Optional on the
    * type so older bootstrap payloads cached in the workspace store don't
@@ -272,49 +277,14 @@ export interface StreamBootstrap {
   activeCall?: StreamActiveCall | null
 }
 
-/**
- * Wire-format variants for an individual pointer's hydrated content.
- *
- * - `ok`: viewer has access; current source content is inlined.
- * - `deleted`: source row exists but is tombstoned.
- * - `missing`: source row never existed (or was hard-deleted in a way that
- *   leaves no tombstone — defended for, shouldn't normally occur).
- * - `private`: viewer has no read access to the source and no share-grant
- *   reaches them. Reveals only the source stream's `kind` + `visibility`,
- *   never the content/author/stream-name. See plan D8.
- * - `truncated`: hydration stopped at `MAX_HYDRATION_DEPTH` for an
- *   accessible chain; viewer can follow `streamId` to read in source.
- */
-export type SharedMessageHydration =
-  | {
-      type: "sharedMessage"
-      state: "ok"
-      messageId: string
-      streamId: string
-      authorId: string
-      authorType: string
-      contentJson: unknown
-      contentMarkdown: string
-      editedAt: string | null
-      createdAt: string
-      attachments: AttachmentSummary[]
-    }
-  | { type: "sharedMessage"; state: "deleted"; messageId: string; deletedAt: string }
-  | { type: "sharedMessage"; state: "missing"; messageId: string }
-  | {
-      type: "sharedMessage"
-      state: "private"
-      messageId: string
-      sourceStreamKind: StreamType
-      sourceVisibility: Visibility
-    }
-  | { type: "sharedMessage"; state: "truncated"; messageId: string; streamId: string }
-
 export interface EventsAroundResponse {
   events: StreamEvent[]
   hasOlder: boolean
   hasNewer: boolean
-  sharedMessages?: Record<string, SharedMessageHydration>
+  /** Canonical slot envelope — see `StreamBootstrap.slots`. */
+  slots?: SlotMap
+  /** TEMPORARY legacy carrier (deploy-skew window) — see `StreamBootstrap.sharedMessages`. */
+  sharedMessages?: Record<string, SharedMessageSlot>
 }
 
 /**

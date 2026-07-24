@@ -1,5 +1,12 @@
 import type { Querier } from "../../../db"
-import { type AttachmentSummary, type JSONContent, type StreamType, type Visibility, StreamTypes } from "@threa/types"
+import {
+  type AttachmentSummary,
+  type JSONContent,
+  type StreamType,
+  type Visibility,
+  StreamTypes,
+  sharedMessageSlotKey,
+} from "@threa/types"
 import { MessageRepository, type Message } from "../repository"
 import { resolveActorNames } from "../../agents"
 import { listAccessibleStreamIds, listRoomReadableStreamIds, StreamRepository, type Stream } from "../../streams"
@@ -345,6 +352,46 @@ export function hydrateSharedMessagesForRoom(
     grantedSources: (querier, ws, ids) =>
       SharedMessageRepository.listSourcesGrantedToRoom(querier, ws, targetStreamId, ids),
   })
+}
+
+/**
+ * Hydrate against a precomputed accessible-stream set instead of a viewer id.
+ * Used by the public API, where the key principal's readable streams (active +
+ * archived) are resolved once up front and reused across a whole page of rows
+ * (INV-56): access is set-intersection, and grants resolve against any stream
+ * in the set rather than a per-viewer membership query.
+ */
+export function hydrateSharedMessageIdsForAccessibleSet(
+  db: Querier,
+  workspaceId: string,
+  accessibleStreamIds: ReadonlySet<string>,
+  sourceMessageIds: Iterable<string>
+): Promise<Record<string, HydratedSharedMessage>> {
+  return hydrateSharedMessageIdsWithResolvers(db, workspaceId, sourceMessageIds, {
+    accessibleStreams: async (_querier, _ws, ids) => new Set(ids.filter((id) => accessibleStreamIds.has(id))),
+    grantedSources: (querier, ws, ids) =>
+      SharedMessageRepository.listSourcesGrantedToAnyStream(querier, ws, accessibleStreamIds, ids),
+  })
+}
+
+/**
+ * The dual-publish envelope: one hydration result expressed as both the
+ * canonical namespaced map (`shared:<messageId>` keys) and the temporary
+ * legacy bare-key map. Values are identical — only the key scheme differs —
+ * so old and new clients reading the same response see the same content.
+ * Both derive from the single hydration result (no duplicate query path).
+ */
+export interface DualSlotMaps {
+  slots: Record<string, HydratedSharedMessage>
+  sharedMessages: Record<string, HydratedSharedMessage>
+}
+
+export function toDualSlotMaps(hydrated: Record<string, HydratedSharedMessage>): DualSlotMaps {
+  const slots: Record<string, HydratedSharedMessage> = {}
+  for (const [messageId, slot] of Object.entries(hydrated)) {
+    slots[sharedMessageSlotKey(messageId)] = slot
+  }
+  return { slots, sharedMessages: hydrated }
 }
 
 /**

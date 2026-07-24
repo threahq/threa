@@ -199,11 +199,17 @@ interface WorkspaceScopedPayload {
 
 export interface MessageCreatedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
+  /** Canonical namespaced slot map (`shared:<messageId>` keys). */
+  slots?: Record<string, HydratedSharedMessage>
+  /** TEMPORARY legacy bare-key map for pre-slots clients (D8 removal). */
   sharedMessages?: Record<string, HydratedSharedMessage>
 }
 
 export interface MessageEditedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
+  /** Canonical namespaced slot map (`shared:<messageId>` keys). */
+  slots?: Record<string, HydratedSharedMessage>
+  /** TEMPORARY legacy bare-key map for pre-slots clients (D8 removal). */
   sharedMessages?: Record<string, HydratedSharedMessage>
 }
 
@@ -252,6 +258,16 @@ export interface MessagesMovedOutboxPayload extends StreamScopedPayload {
    * sanctioned non-monotonic latest write (fix A1, sparse-read design).
    */
   sourceMessageOrdinal: number
+  /**
+   * Dual slot map for the moved messages' share references, hydrated
+   * room-uniform for the DESTINATION stream (B3). The client merges it under
+   * the destination stream so pointer cards in the moved messages render
+   * immediately in the thread panel. Omitted when no moved message carries a
+   * share reference.
+   */
+  slots?: Record<string, HydratedSharedMessage>
+  /** TEMPORARY legacy bare-key map for pre-slots clients (D8 removal). */
+  sharedMessages?: Record<string, HydratedSharedMessage>
 }
 
 /**

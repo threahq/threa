@@ -8,7 +8,9 @@ import { useStreamEvents } from "@/stores/stream-store"
 import { isTerminalBootstrapError, shouldSuppressBootstrapError } from "@/lib/query-load-state"
 import { computeTimelineHoles, holesSignature, type TimelineHole } from "@/sync/contiguity"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import type { StreamEvent, EventsAroundResponse, SharedMessageHydration } from "@threa/types"
+import { writeSlotCarrier } from "@/stores/slot-store"
+import type { SlotCarrier } from "@/lib/slots"
+import type { StreamEvent, EventsAroundResponse } from "@threa/types"
 
 export const eventKeys = {
   all: ["events"] as const,
@@ -28,13 +30,6 @@ interface JumpState {
   oldestSequence: string
   /** Sequence of the newest event in the jump window — cursor for forward pagination */
   newestSequence: string
-  /**
-   * Hydration map for `sharedMessage` pointers landing in the jump window.
-   * Merged with bootstrap + paginated maps via `useEvents().pagedSharedMessages`
-   * so jumping to a message containing a pointer renders content immediately
-   * instead of falling back to the IDB / skeleton path.
-   */
-  sharedMessages?: Record<string, SharedMessageHydration>
 }
 
 type SequencedEvent = Pick<StreamEvent, "sequence">
@@ -277,31 +272,39 @@ function dedupeAndSort(eventArrays: StreamEvent[][]): StreamEvent[] {
  *  healed card/message (chip vanishes, Discuss reappears). Preserve them. */
 const HEALED_THREAD_STAT_KEYS = ["threadId", "replyCount", "threadSummary"] as const
 
-async function cacheToIndexedDB(workspaceId: string, events: StreamEvent[]) {
-  if (events.length === 0) return
+async function cacheToIndexedDB(workspaceId: string, streamId: string, events: StreamEvent[], carrier?: SlotCarrier) {
   const now = Date.now()
-  const existingRows = await db.events.bulkGet(events.map((e) => e.id))
-  const existingById = new Map(
-    existingRows.filter((row): row is NonNullable<typeof row> => row != null).map((row) => [row.id, row] as const)
-  )
-  await db.events.bulkPut(
-    events.map((e) => {
-      const base = { ...e, workspaceId, _sequenceNum: sequenceToNum(e.sequence), _cachedAt: now }
-      const existing = existingById.get(e.id)
-      if (!existing) return base
-      const existingPayload = existing.payload as Record<string, unknown>
-      const healed: Record<string, unknown> = {}
-      for (const key of HEALED_THREAD_STAT_KEYS) {
-        if (existingPayload[key] !== undefined) healed[key] = existingPayload[key]
-      }
-      if (Object.keys(healed).length === 0) return base
-      return {
-        ...base,
-        payload: { ...(base.payload as Record<string, unknown>), ...healed },
-        _patchedAt: existing._patchedAt,
-      }
-    })
-  )
+  await db.transaction("rw", [db.events, db.slots], async () => {
+    if (events.length > 0) {
+      const existingRows = await db.events.bulkGet(events.map((e) => e.id))
+      const existingById = new Map(
+        existingRows.filter((row): row is NonNullable<typeof row> => row != null).map((row) => [row.id, row] as const)
+      )
+      await db.events.bulkPut(
+        events.map((e) => {
+          const base = { ...e, workspaceId, _sequenceNum: sequenceToNum(e.sequence), _cachedAt: now }
+          const existing = existingById.get(e.id)
+          if (!existing) return base
+          const existingPayload = existing.payload as Record<string, unknown>
+          const healed: Record<string, unknown> = {}
+          for (const key of HEALED_THREAD_STAT_KEYS) {
+            if (existingPayload[key] !== undefined) healed[key] = existingPayload[key]
+          }
+          if (Object.keys(healed).length === 0) return base
+          return {
+            ...base,
+            payload: { ...(base.payload as Record<string, unknown>), ...healed },
+            _patchedAt: existing._patchedAt,
+          }
+        })
+      )
+    }
+    // Persist the page's slot carrier alongside its events so pointers in pages
+    // older than the bootstrap window hydrate from the store (Amendment A2).
+    if (carrier) {
+      await writeSlotCarrier({ database: db, workspaceId, streamId, carrier, mode: "merge", cachedAt: now })
+    }
+  })
 }
 
 export function useEvents(workspaceId: string, streamId: string, options?: { enabled?: boolean; loadAll?: boolean }) {
@@ -345,20 +348,18 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
           events: [] as StreamEvent[],
           hasMore: false,
           cursor: undefined,
-          sharedMessages: undefined as Record<string, SharedMessageHydration> | undefined,
         }
       }
       const result = await streamService.getEvents(workspaceId, streamId, {
         before: pageParam,
         limit: EVENT_PAGE_SIZE,
       })
-      // Write fetched events to IDB — they become available via useStreamEvents
-      await cacheToIndexedDB(workspaceId, result.events)
+      // Write fetched events + slot carrier to IDB — available via useStreamEvents / useStreamSlots
+      await cacheToIndexedDB(workspaceId, streamId, result.events, result)
       return {
         events: result.events,
         hasMore: result.events.length === EVENT_PAGE_SIZE,
         cursor: undefined,
-        sharedMessages: result.sharedMessages,
       }
     },
     getNextPageParam: (lastPage) => {
@@ -384,19 +385,17 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
           events: [] as StreamEvent[],
           hasMore: false,
           cursor: undefined,
-          sharedMessages: undefined as Record<string, SharedMessageHydration> | undefined,
         }
       }
       const result = await streamService.getEvents(workspaceId, streamId, {
         after: pageParam,
         limit: EVENT_PAGE_SIZE,
       })
-      await cacheToIndexedDB(workspaceId, result.events)
+      await cacheToIndexedDB(workspaceId, streamId, result.events, result)
       return {
         events: result.events,
         hasMore: result.events.length === EVENT_PAGE_SIZE,
         cursor: undefined,
-        sharedMessages: result.sharedMessages,
       }
     },
     getNextPageParam: (lastPage) => {
@@ -636,7 +635,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
       if (result.events.length === 0) return false
 
       // Write to IDB so they persist across sessions
-      await cacheToIndexedDB(workspaceId, result.events)
+      await cacheToIndexedDB(workspaceId, streamId, result.events, result)
 
       // If there are no newer events, the target is already at the bottom —
       // skip jump mode and let the live tail render from IDB.
@@ -649,7 +648,6 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
         hasNewer: result.hasNewer,
         oldestSequence: sorted[0].sequence,
         newestSequence: sorted[sorted.length - 1].sequence,
-        sharedMessages: result.sharedMessages,
       })
 
       // Reset pagination caches for this stream
@@ -672,7 +670,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
       const result = await streamService.getEventsAroundDate(workspaceId, streamId, isoDate, EVENT_PAGE_SIZE)
       if (result.events.length === 0) return null
 
-      await cacheToIndexedDB(workspaceId, result.events)
+      await cacheToIndexedDB(workspaceId, streamId, result.events, result)
 
       // No newer events means the anchor sits at the live tail — skip jump mode
       // and let IDB render the tail; the caller still scrolls to the anchor.
@@ -685,7 +683,6 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
         hasNewer: result.hasNewer,
         oldestSequence: sorted[0].sequence,
         newestSequence: sorted[sorted.length - 1].sequence,
-        sharedMessages: result.sharedMessages,
       })
 
       queryClient.removeQueries({ queryKey: eventKeys.list(workspaceId, streamId) })
@@ -722,31 +719,12 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     return idbEvents[idbEvents.length - 1].sequence
   }, [idbEvents, bootstrap?.latestSequence])
 
-  // Aggregated `sharedMessages` hydration entries from every page fetched
-  // beyond the bootstrap window — older pages, jump-to results, forward
-  // pagination. Bootstrap's own map is merged at the consumer (stream-content)
-  // since it lives on a different query. Without this aggregation, pointers
-  // in pages older than the bootstrap window render as skeletons even
-  // though the backend ships the hydration data on each response.
-  const pagedSharedMessages = useMemo<Record<string, SharedMessageHydration>>(() => {
-    const merged: Record<string, SharedMessageHydration> = {}
-    for (const page of olderData?.pages ?? []) {
-      if (page.sharedMessages) Object.assign(merged, page.sharedMessages)
-    }
-    for (const page of newerData?.pages ?? []) {
-      if (page.sharedMessages) Object.assign(merged, page.sharedMessages)
-    }
-    if (jumpState?.sharedMessages) Object.assign(merged, jumpState.sharedMessages)
-    return merged
-  }, [olderData, newerData, jumpState])
-
   return {
     events,
     holes,
     isLoading,
     isConfirmedEmpty,
     error: suppressBootstrapError ? null : error,
-    pagedSharedMessages,
     fetchOlderEvents,
     hasOlderEvents,
     isFetchingOlder,

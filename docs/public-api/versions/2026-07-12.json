@@ -6306,7 +6306,7 @@
         "name": "Threa-Version",
         "in": "header",
         "required": false,
-        "schema": { "type": "string", "enum": ["2026-07-12", "2026-07-22"] },
+        "schema": { "type": "string", "enum": ["2026-07-12", "2026-07-22", "2026-07-24"] },
         "description": "Selects the dated API version for this request. Each API key is pinned to a version when it is minted, and that pin applies when the header is absent. Send this header to override the pin per request (a valid header always wins). The value must be an exact member of the enum; an unknown or malformed value returns 400 with code INVALID_API_VERSION and the known versions in the error. Every response that resolved a version echoes it in a Threa-Version response header."
       }
     },

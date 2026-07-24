@@ -25,10 +25,11 @@ export interface SharedMessageAttrs {
 
 /**
  * Atomic block node that references a message in another stream. The body is
- * hydrated at render time from a `sharedMessages` map returned alongside the
- * stream's events. Updates to the source message propagate automatically on
- * the next fetch; the `pointer:invalidated` realtime event triggers a refetch
- * so live edits surface without page reload.
+ * hydrated at render time from the canonical `slots` map returned alongside the
+ * stream's events (this node is slot type #1, keyed `shared:<messageId>`).
+ * Updates to the source message propagate automatically on the next fetch; the
+ * `pointer:invalidated` realtime event triggers a refetch so live edits surface
+ * without page reload.
  */
 export const SharedMessageExtension = Node.create({
   name: "sharedMessage",

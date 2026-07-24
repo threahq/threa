@@ -141,12 +141,66 @@ const conversationSchema = z.object({
   updatedAt: z.string().datetime(),
 })
 
+// A hydrated slot value in a response-level `slots` map. Discriminated by
+// `state`; `type` is the forward-compatible slot-kind discriminator (the
+// shared-message slot is the only kind today). The `ok` variant exposes the
+// source as markdown `content` — never `contentJson` (INV-58) — plus the
+// author/source/date/attachment metadata a custom pointer link renders from.
+// The other states are the privacy-safe placeholders: `private` reveals only
+// the source stream's kind + visibility, never content/author/name.
+const sharedMessageSlotSchema = z.discriminatedUnion("state", [
+  z.object({
+    type: z.literal("sharedMessage"),
+    state: z.literal("ok"),
+    messageId: z.string(),
+    streamId: z.string(),
+    authorId: z.string(),
+    authorType: z.enum(AUTHOR_TYPES),
+    authorDisplayName: z.string().optional(),
+    content: z.string().describe("Source message content as markdown. The canonical rich-text JSON stays internal."),
+    editedAt: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+    attachments: z.array(attachmentSummarySchema),
+  }),
+  z.object({
+    type: z.literal("sharedMessage"),
+    state: z.literal("deleted"),
+    messageId: z.string(),
+    deletedAt: z.string().datetime(),
+  }),
+  z.object({ type: z.literal("sharedMessage"), state: z.literal("missing"), messageId: z.string() }),
+  z.object({
+    type: z.literal("sharedMessage"),
+    state: z.literal("private"),
+    messageId: z.string(),
+    sourceStreamKind: z.enum(STREAM_TYPES),
+    sourceVisibility: z.string(),
+  }),
+  z.object({
+    type: z.literal("sharedMessage"),
+    state: z.literal("truncated"),
+    messageId: z.string(),
+    streamId: z.string(),
+  }),
+])
+
+// Response-level slot envelope: namespaced key (`shared:<messageId>`) → slot.
+// One map per response dedupes repeated/nested source references across all
+// returned messages. Present (possibly empty) on every operation that returns
+// renderable message markdown.
+const slotMapSchema = z
+  .record(z.string(), sharedMessageSlotSchema)
+  .describe(
+    "Hydration for cross-stream shared-message pointers in the returned messages, keyed by `shared:<messageId>`. Always present; empty when no message references a shared source."
+  )
+
 const sendMessageResponseSchema = z.object({
   data: messageSchema,
   conversationId: z
     .string()
     .optional()
     .describe("The conversation the message was assigned to; present when the request declared a `conversation`."),
+  slots: slotMapSchema,
 })
 
 const searchResultSchema = z.object({
@@ -766,7 +820,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     parameters: [workspaceIdParam],
     requestSchema: publicSearchSchema,
     requestIn: "body",
-    responseSchema: dataArrayEnvelope(searchResultSchema),
+    responseSchema: dataArrayEnvelope(searchResultSchema).extend({ slots: slotMapSchema }),
   },
   {
     method: "post",
@@ -1060,7 +1114,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     ],
     requestSchema: completeInvocationSchema,
     requestIn: "body",
-    responseSchema: dataEnvelope(completedInvocationSchema),
+    responseSchema: dataEnvelope(completedInvocationSchema).extend({ slots: slotMapSchema }),
     canReturn404: true,
   },
   {
@@ -1250,6 +1304,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: z.object({
       data: z.array(messageSchema),
       hasMore: z.boolean(),
+      slots: slotMapSchema,
     }),
   },
   {
@@ -1309,7 +1364,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     parameters: [workspaceIdParam, conversationIdParam],
     requestSchema: listConversationMessagesSchema,
     requestIn: "query",
-    responseSchema: paginated(messageSchema),
+    responseSchema: paginated(messageSchema).extend({ slots: slotMapSchema }),
     canReturn404: true,
   },
   {
@@ -1325,7 +1380,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     parameters: [workspaceIdParam],
     requestSchema: findMessagesByMetadataSchema,
     requestIn: "body",
-    responseSchema: dataArrayEnvelope(messageSchema),
+    responseSchema: dataArrayEnvelope(messageSchema).extend({ slots: slotMapSchema }),
   },
   {
     method: "patch",
@@ -1338,7 +1393,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     parameters: [workspaceIdParam, messageIdParam],
     requestSchema: updateMessageSchema,
     requestIn: "body",
-    responseSchema: dataEnvelope(messageSchema),
+    responseSchema: dataEnvelope(messageSchema).extend({ slots: slotMapSchema }),
     canReturn404: true,
   },
   {
@@ -1519,6 +1574,8 @@ export {
 // Wire types derived from schemas — serializers annotate their return types with these
 export type WireStream = z.infer<typeof streamSchema>
 export type WireMessage = z.infer<typeof messageSchema>
+export type WireSharedMessageSlot = z.infer<typeof sharedMessageSlotSchema>
+export type WireSlotMap = z.infer<typeof slotMapSchema>
 export type WireConversation = z.infer<typeof conversationSchema>
 export type WireSearchResult = z.infer<typeof searchResultSchema>
 export type WireMember = z.infer<typeof memberSchema>

@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import { isOutboxEventType, type OutboxEvent } from "../../../lib/outbox"
-import { hydrateSharedMessagesForRoom } from "./hydration"
+import { hydrateSharedMessagesForRoom, toDualSlotMaps } from "./hydration"
 import { SharedMessageRepository } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
 
@@ -86,20 +86,24 @@ export async function invalidatePointersForEvent(event: OutboxEvent, db: Pool, i
   }
   // Per-target hydration is independent; run them concurrently so a source
   // shared into many streams doesn't serialize a DB round per target.
+  // B4: emit the FULL per-target hydration map — the one hydration call also
+  // resolves nested pointers, and discarding them would leave an inner card
+  // skeleton until a REST replace when an edit ADDS a nested pointer.
   const hydratedByTarget = await Promise.all(
     [...sourcesByTarget.entries()].map(async ([targetStreamId, sources]) => ({
       targetStreamId,
       sources,
-      hydrated: await hydrateSharedMessagesForRoom(db, workspaceId, targetStreamId, sources),
+      dual: toDualSlotMaps(await hydrateSharedMessagesForRoom(db, workspaceId, targetStreamId, sources)),
     }))
   )
-  for (const { targetStreamId, sources, hydrated } of hydratedByTarget) {
+  for (const { targetStreamId, sources, dual } of hydratedByTarget) {
     for (const sourceMessageId of sources) {
       io.to(`ws:${workspaceId}:stream:${targetStreamId}`).emit(POINTER_INVALIDATED_EVENT, {
         workspaceId,
         targetStreamId,
         sourceMessageId,
-        sharedMessages: { [sourceMessageId]: hydrated[sourceMessageId] },
+        slots: dual.slots,
+        sharedMessages: dual.sharedMessages,
       })
     }
   }

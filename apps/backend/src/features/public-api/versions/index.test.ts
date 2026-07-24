@@ -10,6 +10,7 @@ import {
   type OpenApiSpec,
   type VersionChange,
 } from "./index"
+import type { OperationId } from "../routes"
 
 describe("parseApiVersion", () => {
   test("returns a known version unchanged", () => {
@@ -142,7 +143,9 @@ describe("VERSION_CHANGES: the anchorId stream change (first real entry)", () =>
 
   test("registry is ascending and scopes every operation whose thread-anchor behavior changed", () => {
     expect(() => assertChangesAscending(VERSION_CHANGES)).not.toThrow()
-    expect(anchorChange.version).toBe(CURRENT_API_VERSION)
+    // The anchor change shipped at 2026-07-22; the slots change (2026-07-24) is
+    // now the current version.
+    expect(anchorChange.version).toBe("2026-07-22")
     expect([...anchorChange.operations].sort()).toEqual([
       "completeDelegation",
       "getStream",
@@ -250,5 +253,124 @@ describe("VERSION_CHANGES: the anchorId stream change (first real entry)", () =>
     // pure — the input spec is not mutated
     expect(streamNode(spec).properties.anchorId).toBeDefined()
     expect(streamNode(spec).properties.parentMessageId).toBeUndefined()
+  })
+})
+
+describe("VERSION_CHANGES: the 2026-07-24 slots change", () => {
+  const slotsChange = VERSION_CHANGES.find((c) => c.version === "2026-07-24")!
+  const SEVEN: OperationId[] = [
+    "completeBotInvocation",
+    "findMessagesByMetadata",
+    "listConversationMessages",
+    "listMessages",
+    "searchMessages",
+    "sendMessage",
+    "updateMessage",
+  ]
+
+  test("is the current version, ascending, and scopes exactly the seven message-rendering operations", () => {
+    expect(CURRENT_API_VERSION).toBe("2026-07-24")
+    expect(() => assertChangesAscending(VERSION_CHANGES)).not.toThrow()
+    expect([...slotsChange.operations].sort()).toEqual(SEVEN)
+  })
+
+  test("downgradeResponse strips only the top-level slots map for a scoped operation", () => {
+    const payload = { data: [{ id: "msg_1" }], hasMore: false, slots: { "shared:msg_src": { state: "ok" } } }
+    const out = slotsChange.downgradeResponse!(payload, { operationId: "listMessages" })
+    expect(out).toEqual({ data: [{ id: "msg_1" }], hasMore: false })
+  })
+
+  test("downgradeResponse passes payloads through untouched for operations outside the seven", () => {
+    const payload = { data: { id: "stream_1" }, slots: { "shared:x": {} } }
+    expect(slotsChange.downgradeResponse!(payload, { operationId: "getStream" })).toBe(payload)
+  })
+
+  test("downgradeResponse tolerates non-object and slot-less payloads", () => {
+    expect(slotsChange.downgradeResponse!(null, { operationId: "listMessages" })).toBeNull()
+    const noSlots = { data: [] }
+    expect(slotsChange.downgradeResponse!(noSlots, { operationId: "searchMessages" })).toEqual({ data: [] })
+  })
+
+  test("downgradeSpec removes slots from the seven operations' responses but leaves others intact", () => {
+    const responseNode = {
+      "200": {
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: { data: { type: "array" }, slots: { type: "object" } },
+              required: ["data", "slots"],
+            },
+          },
+        },
+      },
+    }
+    const spec: OpenApiSpec = {
+      paths: {
+        "/messages": { get: { operationId: "listMessages", responses: structuredClone(responseNode) } },
+        "/streams": { get: { operationId: "listStreams", responses: structuredClone(responseNode) } },
+      },
+    }
+    const out = slotsChange.downgradeSpec!(spec) as any
+    const listProps = out.paths["/messages"].get.responses["200"].content["application/json"].schema
+    expect(listProps.properties.slots).toBeUndefined()
+    expect(listProps.required).toEqual(["data"])
+    // A non-scoped operation keeps its slots node.
+    const streamProps = out.paths["/streams"].get.responses["200"].content["application/json"].schema
+    expect(streamProps.properties.slots).toBeDefined()
+  })
+
+  test("composes newest→oldest: a 2026-07-12 pin gets both the slots strip and the anchor downgrade", () => {
+    const spec: OpenApiSpec = {
+      paths: {
+        "/messages": {
+          get: {
+            operationId: "listMessages",
+            responses: {
+              "200": {
+                content: {
+                  "application/json": {
+                    schema: { type: "object", properties: { slots: { type: "object" } }, required: ["slots"] },
+                  },
+                },
+              },
+            },
+          },
+        },
+        "/streams/{id}": {
+          get: {
+            operationId: "getStream",
+            responses: {
+              "200": {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {
+                        data: {
+                          type: "object",
+                          properties: { id: { type: "string" }, anchorId: { type: "string" } },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }
+    const out = deriveVersionSpec(spec, "2026-07-12" as never) as any
+    // Slots stripped from listMessages (2026-07-24 change).
+    expect(
+      out.paths["/messages"].get.responses["200"].content["application/json"].schema.properties.slots
+    ).toBeUndefined()
+    // anchorId removed from getStream (2026-07-22 change).
+    expect(
+      out.paths["/streams/{id}"].get.responses["200"].content["application/json"].schema.properties.data.properties
+        .anchorId
+    ).toBeUndefined()
+    expect(out.info.version).toBe("2026-07-12")
   })
 })

@@ -117,7 +117,8 @@ import { ThreadParentEvent } from "../thread/thread-parent-event"
 import { EditLastMessageContext } from "./edit-last-message-context"
 import { QuoteReplyProvider } from "./quote-reply-context"
 import { ConversationReplyProvider } from "./conversation-reply-context"
-import { SharedMessagesProvider } from "@/components/shared-messages/context"
+import { SlotsProvider } from "@/components/slots/context"
+import { useStreamSlots } from "@/hooks/use-stream-slots"
 import { TextSelectionQuote } from "./text-selection-quote"
 import { StreamSearchBar } from "./stream-search-bar"
 import { useStreamSearch } from "@/hooks/use-stream-search"
@@ -722,7 +723,7 @@ export function StreamContent({
     if (cachedAnchorEvent) return cachedAnchorEvent as unknown as StreamEvent
     return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, anchorId)) ?? null
   }, [cachedAnchorEvent, isThread, parentStreamId, anchorId, parentBootstrap?.events])
-  const { event: anchorEvent, sharedMessages: anchorSharedMessages } = useThreadAnchorEvent(
+  const { event: anchorEvent } = useThreadAnchorEvent(
     workspaceId,
     isThread ? parentStreamId : null,
     anchorId,
@@ -738,7 +739,6 @@ export function StreamContent({
     isLoading,
     isConfirmedEmpty,
     error,
-    pagedSharedMessages,
     fetchOlderEvents,
     hasOlderEvents,
     isFetchingOlder,
@@ -768,26 +768,15 @@ export function StreamContent({
     refetch: refetchStreamConversations,
   })
 
-  // Merge bootstrap + paginated `sharedMessages` so pointers in pages older
-  // than the bootstrap window (or in jump-mode windows) hydrate without
-  // waiting for a full bootstrap refetch. Bootstrap entries take precedence
-  // when both maps carry the same source-message id since bootstrap reflects
-  // the latest backend response while paged data may be older.
-  //
-  // For threads, also fold in the parent stream's `sharedMessages` so any
-  // pointer embedded in the parent message hydrates with full data
-  // (including attachments) rather than falling through to the IDB-cache
-  // fallback. The parent bootstrap is fetched above for the parent message
-  // anyway; the hydration map rides along on the same response.
-  const mergedSharedMessages = useMemo(
-    () => ({
-      ...pagedSharedMessages,
-      ...(anchorSharedMessages ?? {}),
-      ...(parentBootstrap?.sharedMessages ?? {}),
-      ...(bootstrap?.sharedMessages ?? {}),
-    }),
-    [pagedSharedMessages, anchorSharedMessages, parentBootstrap?.sharedMessages, bootstrap?.sharedMessages]
-  )
+  // Slot read model (Amendment A3): the canonical map lives in `db.slots`, fed
+  // by the sync layer — bootstrap/page/anchor carriers are written there, never
+  // merged in render. Read the current stream's rows plus, for a thread, the
+  // parent stream's rows (the one parent anchor's pointers live there). Current
+  // wins a collision because the provider primarily renders current-stream
+  // events; parent rows are fallback for the anchor.
+  const currentSlots = useStreamSlots(streamId)
+  const parentSlots = useStreamSlots(isThread ? parentStreamId : null)
+  const mergedSlots = useMemo(() => ({ ...parentSlots, ...currentSlots }), [parentSlots, currentSlots])
 
   // For drafts, query pending/failed events directly from IDB so optimistic
   // messages are visible while offline or waiting for queue processing.
@@ -2337,7 +2326,7 @@ export function StreamContent({
       <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
         <QuoteReplyProvider>
           <ConversationReplyProvider>
-            <SharedMessagesProvider map={mergedSharedMessages}>
+            <SlotsProvider map={mergedSlots}>
               <MessageConversationProvider conversationIdByMessageId={conversationIdByMessageId}>
                 <TextSelectionQuote streamId={streamId} containerRef={quoteScopeRef} />
                 <div ref={quoteScopeRef} className="relative h-full">
@@ -2664,7 +2653,7 @@ export function StreamContent({
                   )}
                 </div>
               </MessageConversationProvider>
-            </SharedMessagesProvider>
+            </SlotsProvider>
           </ConversationReplyProvider>
         </QuoteReplyProvider>
       </EditLastMessageContext.Provider>

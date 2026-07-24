@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook, waitFor } from "@testing-library/react"
-import { SharedMessagesProvider } from "@/components/shared-messages/context"
+import { sharedMessageSlotKey } from "@threa/types"
+import { SlotsProvider } from "@/components/slots/context"
 import { useSharedMessageSource } from "./use-shared-message-source"
 import { db } from "@/db"
 
@@ -35,9 +36,9 @@ describe("useSharedMessageSource", () => {
   it("resolves from the server hydration map when present", () => {
     const { result } = renderHook(() => useSharedMessageSource("msg_1", "stream_src"), {
       wrapper: ({ children }) => (
-        <SharedMessagesProvider
+        <SlotsProvider
           map={{
-            msg_1: {
+            [sharedMessageSlotKey("msg_1")]: {
               type: "sharedMessage",
               state: "ok",
               messageId: "msg_1",
@@ -54,7 +55,7 @@ describe("useSharedMessageSource", () => {
           }}
         >
           {children}
-        </SharedMessagesProvider>
+        </SlotsProvider>
       ),
     })
 
@@ -73,19 +74,23 @@ describe("useSharedMessageSource", () => {
     const { result, rerender } = renderHook(({ id }) => useSharedMessageSource(id, "stream_src"), {
       initialProps: { id: "msg_del" },
       wrapper: ({ children }) => (
-        <SharedMessagesProvider
+        <SlotsProvider
           map={{
-            msg_del: {
+            [sharedMessageSlotKey("msg_del")]: {
               type: "sharedMessage",
               state: "deleted",
               messageId: "msg_del",
               deletedAt: "2026-04-23T10:00:00Z",
             },
-            msg_missing: { type: "sharedMessage", state: "missing", messageId: "msg_missing" },
+            [sharedMessageSlotKey("msg_missing")]: {
+              type: "sharedMessage",
+              state: "missing",
+              messageId: "msg_missing",
+            },
           }}
         >
           {children}
-        </SharedMessagesProvider>
+        </SlotsProvider>
       ),
     })
 
@@ -98,9 +103,9 @@ describe("useSharedMessageSource", () => {
   it("maps private hydration state to a privacy placeholder source", () => {
     const { result } = renderHook(() => useSharedMessageSource("msg_p", "stream_src"), {
       wrapper: ({ children }) => (
-        <SharedMessagesProvider
+        <SlotsProvider
           map={{
-            msg_p: {
+            [sharedMessageSlotKey("msg_p")]: {
               type: "sharedMessage",
               state: "private",
               messageId: "msg_p",
@@ -110,7 +115,7 @@ describe("useSharedMessageSource", () => {
           }}
         >
           {children}
-        </SharedMessagesProvider>
+        </SlotsProvider>
       ),
     })
 
@@ -124,13 +129,18 @@ describe("useSharedMessageSource", () => {
   it("maps truncated hydration state to a navigable placeholder source", () => {
     const { result } = renderHook(() => useSharedMessageSource("msg_t", "stream_src"), {
       wrapper: ({ children }) => (
-        <SharedMessagesProvider
+        <SlotsProvider
           map={{
-            msg_t: { type: "sharedMessage", state: "truncated", messageId: "msg_t", streamId: "stream_deep" },
+            [sharedMessageSlotKey("msg_t")]: {
+              type: "sharedMessage",
+              state: "truncated",
+              messageId: "msg_t",
+              streamId: "stream_deep",
+            },
           }}
         >
           {children}
-        </SharedMessagesProvider>
+        </SlotsProvider>
       ),
     })
 

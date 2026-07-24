@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import {
   collectSharedMessageIds,
   hydrateSharedMessageIds,
+  hydrateSharedMessageIdsForAccessibleSet,
   hydrateSharedMessages,
   hydrateSharedMessagesForRoom,
+  toDualSlotMaps,
   MAX_HYDRATION_DEPTH,
 } from "./hydration"
 import { MessageRepository } from "../repository"
@@ -674,5 +676,101 @@ describe("hydrateSharedMessages", () => {
     expect(findByIds).toHaveBeenCalledTimes(1)
     const ids = (findByIds as any).mock.calls[0][2].sort()
     expect(ids).toEqual(["msg_a", "msg_b"])
+  })
+})
+
+describe("toDualSlotMaps", () => {
+  const entry = { type: "sharedMessage", state: "missing", messageId: "msg_a" } as const
+
+  it("expresses one hydration result as canonical namespaced + legacy bare-key maps with identical values", () => {
+    const dual = toDualSlotMaps({ msg_a: entry, msg_b: { ...entry, messageId: "msg_b" } })
+    expect(dual.slots).toEqual({
+      "shared:msg_a": entry,
+      "shared:msg_b": { ...entry, messageId: "msg_b" },
+    })
+    expect(dual.sharedMessages).toEqual({ msg_a: entry, msg_b: { ...entry, messageId: "msg_b" } })
+    // Same object references — only the key scheme differs.
+    expect(dual.slots["shared:msg_a"]).toBe(dual.sharedMessages.msg_a)
+  })
+
+  it("returns two empty maps for an empty hydration result", () => {
+    expect(toDualSlotMaps({})).toEqual({ slots: {}, sharedMessages: {} })
+  })
+})
+
+describe("hydrateSharedMessageIdsForAccessibleSet", () => {
+  it("hydrates a source directly readable in the accessible set as ok", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
+    )
+    spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Ada" } as any])
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
+    const grantSpy = spyOn(SharedMessageRepository, "listSourcesGrantedToAnyStream").mockResolvedValue(new Set())
+
+    const result = await hydrateSharedMessageIdsForAccessibleSet({} as any, "ws_1", new Set(["stream_source"]), [
+      "msg_a",
+    ])
+    expect(result.msg_a).toMatchObject({ state: "ok", messageId: "msg_a", streamId: "stream_source" })
+    expect(grantSpy).toHaveBeenCalled()
+  })
+
+  it("hydrates a source reachable only via a share grant into a readable stream", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([["msg_a", makeMessage({ id: "msg_a", streamId: "stream_other" })]])
+    )
+    spyOn(UserRepository, "findByIds").mockResolvedValue([])
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
+    // stream_other is NOT in the accessible set, but a grant reaches a readable target.
+    spyOn(SharedMessageRepository, "listSourcesGrantedToAnyStream").mockResolvedValue(new Set(["msg_a"]))
+
+    const result = await hydrateSharedMessageIdsForAccessibleSet({} as any, "ws_1", new Set(["stream_readable"]), [
+      "msg_a",
+    ])
+    expect(result.msg_a).toMatchObject({ state: "ok", messageId: "msg_a" })
+  })
+
+  it("renders a private placeholder when the source is neither readable nor granted", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([["msg_a", makeMessage({ id: "msg_a", streamId: "stream_other" })]])
+    )
+    stubAuthorLookups()
+    spyOn(SharedMessageRepository, "listSourcesGrantedToAnyStream").mockResolvedValue(new Set())
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([
+      { id: "stream_other", type: "channel", visibility: "private", rootStreamId: null } as any,
+    ])
+
+    const result = await hydrateSharedMessageIdsForAccessibleSet({} as any, "ws_1", new Set(["stream_readable"]), [
+      "msg_a",
+    ])
+    expect(result.msg_a).toEqual({
+      type: "sharedMessage",
+      state: "private",
+      messageId: "msg_a",
+      sourceStreamKind: "channel",
+      sourceVisibility: "private",
+    })
+  })
+
+  it("issues one grant lookup per level, not per source id (INV-56)", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([
+        ["msg_a", makeMessage({ id: "msg_a" })],
+        ["msg_b", makeMessage({ id: "msg_b" })],
+        ["msg_c", makeMessage({ id: "msg_c" })],
+      ])
+    )
+    spyOn(UserRepository, "findByIds").mockResolvedValue([])
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
+    const grantSpy = spyOn(SharedMessageRepository, "listSourcesGrantedToAnyStream").mockResolvedValue(new Set())
+
+    await hydrateSharedMessageIdsForAccessibleSet({} as any, "ws_1", new Set(["stream_source"]), [
+      "msg_a",
+      "msg_b",
+      "msg_c",
+    ])
+    // A single flat chain resolves in one level → exactly one grant query
+    // carrying all three ids.
+    expect(grantSpy).toHaveBeenCalledTimes(1)
+    expect([...grantSpy.mock.calls[0][3]].sort()).toEqual(["msg_a", "msg_b", "msg_c"])
   })
 })

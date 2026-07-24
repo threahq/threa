@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
-import { DM_PARTICIPANT_COUNT, Visibilities, type AuthorType, type StreamType } from "@threa/types"
+import { DM_PARTICIPANT_COUNT, Visibilities, type AuthorType, type JSONContent, type StreamType } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 import { streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
@@ -18,6 +18,14 @@ export interface SearchResult {
   id: string
   streamId: string
   content: string
+  /**
+   * Canonical content, retained internally so slot pointers can be collected
+   * from search results (D5). Never serialized to the public wire — the search
+   * response exposes markdown `content` only (INV-58). Always populated on rows
+   * returned by this repository; optional only because out-of-feature consumers
+   * (the researcher's surrounding-context projection) build partial shapes.
+   */
+  contentJson?: JSONContent
   authorId: string
   authorType: AuthorType
   sequence: bigint
@@ -32,6 +40,7 @@ interface SearchResultRow {
   id: string
   stream_id: string
   content_markdown: string
+  content_json: JSONContent
   author_id: string
   author_type: string
   sequence: string
@@ -47,6 +56,7 @@ function mapRowToSearchResult(row: SearchResultRow): SearchResult {
     id: row.id,
     streamId: row.stream_id,
     content: row.content_markdown,
+    contentJson: row.content_json,
     authorId: row.author_id,
     authorType: row.author_type as AuthorType,
     sequence: BigInt(row.sequence),
@@ -204,6 +214,7 @@ export const SearchRepository = {
           m.id,
           m.stream_id,
           m.content_markdown,
+          m.content_json,
           m.author_id,
           m.author_type,
           m.sequence,
@@ -232,6 +243,7 @@ export const SearchRepository = {
         m.id,
         m.stream_id,
         m.content_markdown,
+        m.content_json,
         m.author_id,
         m.author_type,
         m.sequence,
@@ -293,6 +305,7 @@ export const SearchRepository = {
           m.id,
           m.stream_id,
           m.content_markdown,
+          m.content_json,
           m.author_id,
           m.author_type,
           m.sequence,
@@ -318,6 +331,7 @@ export const SearchRepository = {
           m.id,
           m.stream_id,
           m.content_markdown,
+          m.content_json,
           m.author_id,
           m.author_type,
           m.sequence,
@@ -344,6 +358,7 @@ export const SearchRepository = {
           COALESCE(k.id, s.id) as id,
           COALESCE(k.stream_id, s.stream_id) as stream_id,
           COALESCE(k.content_markdown, s.content_markdown) as content_markdown,
+          COALESCE(k.content_json, s.content_json) as content_json,
           COALESCE(k.author_id, s.author_id) as author_id,
           COALESCE(k.author_type, s.author_type) as author_type,
           COALESCE(k.sequence, s.sequence) as sequence,
@@ -388,6 +403,7 @@ export const SearchRepository = {
         m.id,
         m.stream_id,
         m.content_markdown,
+        m.content_json,
         m.author_id,
         m.author_type,
         m.sequence,

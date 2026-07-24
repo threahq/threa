@@ -96,6 +96,7 @@ import {
 } from "../agents"
 import { buildSealedTurnContext } from "./sealed-turn-context"
 import { authorizeSealedCallback, emitBotSealedProgress } from "./sealed-callbacks"
+import { resolvePublicMessageSlots } from "./message-slots"
 import { encodeCursor, decodeCursor } from "./cursor"
 import { serializeTraceStep, synthesizeReplyOnlyBotTrace } from "./trace-steps"
 import { createBotRuntimeWriteOps } from "./runtime-write-ops"
@@ -116,6 +117,7 @@ import type {
   WireAttachmentUpload,
   WireLabel,
   WireLabelAssignment,
+  WireSlotMap,
 } from "./routes"
 import { API_VERSIONS, CURRENT_API_VERSION } from "./versions"
 import {
@@ -726,6 +728,26 @@ export function createPublicApiHandlers({
       return botChannelService.getAccessibleStreamIdsForBot(req.workspaceId!, req.botApiKey.botId)
     }
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  /**
+   * Resolve the response-level `slots` map for a page of returned messages.
+   * Access resolves against the key principal's active + archived streams (a
+   * shared source in an archived stream still hydrates for a user key; bot
+   * keys use their readable set, which excludes archived). Lazy — no access
+   * query runs when no returned message references a shared source.
+   */
+  function resolveSlots(req: Request, contentJsons: Iterable<JSONContent | null | undefined>): Promise<WireSlotMap> {
+    return resolvePublicMessageSlots(
+      pool,
+      req.workspaceId!,
+      () => {
+        // Bot keys ignore the archive filter (their readable set is fixed); user
+        // keys widen to active + archived so archived-source pointers hydrate.
+        return getAccessibleStreamIds(req, { archiveStatus: ["active", "archived"] })
+      },
+      contentJsons
+    )
   }
 
   /** Check if a single stream is accessible for the current key */
@@ -1818,6 +1840,7 @@ export function createPublicApiHandlers({
           invocationId: completed.id,
           message: message ? serializeMessage(message, { authorDisplayName: bot.name }) : null,
         },
+        slots: await resolveSlots(req, message ? [message.contentJson] : []),
       })
     },
 
@@ -1862,7 +1885,7 @@ export function createPublicApiHandlers({
       const accessibleStreamIds = await getAccessibleStreamIds(req)
 
       if (accessibleStreamIds.length === 0) {
-        return res.json({ data: [] })
+        return res.json({ data: [], slots: {} })
       }
 
       // Replies live in thread streams under the requested streams (INV-62); an
@@ -1872,7 +1895,7 @@ export function createPublicApiHandlers({
       if (streams && streams.length > 0) {
         filterStreamIds = await SearchRepository.expandStreamIdsWithThreads(pool, workspaceId, streams)
         if (filterStreamIds.length === 0) {
-          return res.json({ data: [] })
+          return res.json({ data: [], slots: {} })
         }
       }
 
@@ -1896,7 +1919,13 @@ export function createPublicApiHandlers({
         res,
         results.map((r) => ({ type: "message", id: r.id }))
       )
-      const authorNames = await resolveAuthorDisplayNames(pool, workspaceId, results)
+      const [authorNames, slots] = await Promise.all([
+        resolveAuthorDisplayNames(pool, workspaceId, results),
+        resolveSlots(
+          req,
+          results.map((r) => r.contentJson)
+        ),
+      ])
       const serialized: WireSearchResult[] = results.map((r) => {
         const name = authorNames.get(r.authorId)
         return {
@@ -1905,7 +1934,7 @@ export function createPublicApiHandlers({
         }
       })
 
-      res.json({ data: serialized })
+      res.json({ data: serialized, slots })
     },
 
     async searchMemos(req: Request, res: Response) {
@@ -2221,10 +2250,14 @@ export function createPublicApiHandlers({
           : [{ type: "stream", id: streamId }]
       )
       const pageMessageIds = page.map((m) => m.id)
-      const [authorNames, threadMap, attachmentsByMessage] = await Promise.all([
+      const [authorNames, threadMap, attachmentsByMessage, slots] = await Promise.all([
         resolveAuthorDisplayNames(pool, req.workspaceId!, page),
         StreamRepository.findThreadsForMessageIds(pool, streamId, pageMessageIds),
         AttachmentRepository.findByMessageIds(pool, pageMessageIds),
+        resolveSlots(
+          req,
+          page.map((m) => m.contentJson)
+        ),
       ])
 
       res.json({
@@ -2236,6 +2269,7 @@ export function createPublicApiHandlers({
           })
         ),
         hasMore,
+        slots,
       })
     },
 
@@ -2336,12 +2370,16 @@ export function createPublicApiHandlers({
         byStream.set(m.streamId, ids)
       }
       const pageMessageIds = page.map((m) => m.id)
-      const [authorNames, threadMaps, attachmentsByMessage] = await Promise.all([
+      const [authorNames, threadMaps, attachmentsByMessage, slots] = await Promise.all([
         resolveAuthorDisplayNames(pool, workspaceId, page),
         Promise.all(
           [...byStream.entries()].map(([sid, ids]) => StreamRepository.findThreadsForMessageIds(pool, sid, ids))
         ),
         AttachmentRepository.findByMessageIds(pool, pageMessageIds),
+        resolveSlots(
+          req,
+          page.map((m) => m.contentJson)
+        ),
       ])
       const threadMap = new Map(threadMaps.flatMap((m) => [...m.entries()]))
       const lastMessage = page[page.length - 1]
@@ -2356,6 +2394,7 @@ export function createPublicApiHandlers({
         ),
         hasMore,
         cursor: lastMessage ? encodeCursor(lastMessage.createdAt, lastMessage.id) : null,
+        slots,
       })
     },
 
@@ -2371,7 +2410,7 @@ export function createPublicApiHandlers({
 
       const accessibleStreamIds = await getAccessibleStreamIds(req)
       if (accessibleStreamIds.length === 0) {
-        return res.json({ data: [] })
+        return res.json({ data: [], slots: {} })
       }
 
       const messages = await eventService.findByMetadata({
@@ -2382,10 +2421,16 @@ export function createPublicApiHandlers({
       })
 
       if (messages.length === 0) {
-        return res.json({ data: [] })
+        return res.json({ data: [], slots: {} })
       }
 
-      const authorNames = await resolveAuthorDisplayNames(pool, workspaceId, messages)
+      const [authorNames, slots] = await Promise.all([
+        resolveAuthorDisplayNames(pool, workspaceId, messages),
+        resolveSlots(
+          req,
+          messages.map((m) => m.contentJson)
+        ),
+      ])
 
       setAuditSubjects(
         res,
@@ -2393,6 +2438,7 @@ export function createPublicApiHandlers({
       )
       res.json({
         data: messages.map((m) => serializeMessage(m, { authorDisplayName: authorNames.get(m.authorId) ?? null })),
+        slots,
       })
     },
 
@@ -2440,6 +2486,7 @@ export function createPublicApiHandlers({
         res.status(201).json({
           data: serializeMessage(message, { authorDisplayName: user.name }),
           ...(conversationId && { conversationId }),
+          slots: await resolveSlots(req, [message.contentJson]),
         })
         return
       }
@@ -2480,6 +2527,7 @@ export function createPublicApiHandlers({
         res.status(201).json({
           data: serializeMessage(message, { authorDisplayName: bot.name }),
           ...(conversationId && { conversationId }),
+          slots: await resolveSlots(req, [message.contentJson]),
         })
         return
       }
@@ -2524,12 +2572,16 @@ export function createPublicApiHandlers({
         throw new HttpError("Message not found or was deleted", { status: 404, code: "NOT_FOUND" })
       }
 
-      const thread = await StreamRepository.findByAnchor(pool, existing.streamId, messageId)
+      const [thread, slots] = await Promise.all([
+        StreamRepository.findByAnchor(pool, existing.streamId, messageId),
+        resolveSlots(req, [updated.contentJson]),
+      ])
       res.json({
         data: serializeMessage(updated, {
           authorDisplayName: displayName,
           threadStreamId: thread?.id ?? null,
         }),
+        slots,
       })
     },
 
