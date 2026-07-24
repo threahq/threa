@@ -111,6 +111,7 @@ const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
+const RELOAD_HANDOFF_COMMAND = "threa-remote-reload"
 const SESSION_CONTROL_COMMANDS = [
   "compact",
   "model",
@@ -304,8 +305,10 @@ let pollingRunId = 0
 let fallbackRuntimeSessionId: string | undefined
 let supervisedRevivalBlocked = false
 let reconnectPending = false
+let reloadPending = false
 let claimIfIdleInFlight: Promise<boolean> | undefined
 let pendingSettlement: Promise<void> | undefined
+let recoveredCompletionTimer: ReturnType<typeof setTimeout> | undefined
 let claimIfIdleRerunRequested = false
 let sessionLifecycleGeneration = 0
 let sessionTearingDown = false
@@ -781,7 +784,7 @@ function buildRuntimeCapabilities(
 }
 
 function presenceBody(status: "available" | "busy" | "offline" | "error", statusText?: string, ctx?: ExtensionContext) {
-  const effectiveStatus = status === "available" && reconnectPending ? "busy" : status
+  const effectiveStatus = status === "available" && (reconnectPending || reloadPending) ? "busy" : status
   return {
     runtimeKind: "pi-local",
     instanceId: ctx ? getSessionInstanceId(ctx) : ensureInstanceId(),
@@ -1668,9 +1671,16 @@ function recoverFinalTextFromBranch(ctx: ExtensionContext): string | undefined {
     .at(-1)?.text
 }
 
+function clearRecoveredCompletionTimer(): void {
+  if (!recoveredCompletionTimer) return
+  clearTimeout(recoveredCompletionTimer)
+  recoveredCompletionTimer = undefined
+}
+
 function discardRestoredPending(ctx: ExtensionContext): void {
   stopClaimRenewTimer()
   clearPendingRetry()
+  clearRecoveredCompletionTimer()
   pending = undefined
   steeredInvocations = []
   pendingContextCursor = undefined
@@ -1685,6 +1695,40 @@ function discardRestoredPending(ctx: ExtensionContext): void {
   carryOnTexts = []
   lastTraceHeartbeat = undefined
   clearPendingSnapshot(ctx)
+}
+
+function scheduleRecoveredCompletion(finalText: string, ctx: ExtensionContext, delayMs = 0, attempt = 1): void {
+  const lifecycleGeneration = sessionLifecycleGeneration
+  clearRecoveredCompletionTimer()
+  recoveredCompletionTimer = setTimeout(() => {
+    recoveredCompletionTimer = undefined
+    if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration || !pending) return
+    const settlement = (async () => {
+      try {
+        await completePending(finalText, ctx)
+      } catch (error) {
+        if (error instanceof ThreaApiError && error.status === 404) {
+          discardRestoredPending(ctx)
+          return
+        }
+        const permanentClientError = error instanceof ThreaApiError && error.status >= 400 && error.status < 500
+        const hasAttachments = extractAttachmentDirectives(finalText).paths.length > 0
+        if (permanentClientError || hasAttachments) {
+          try {
+            await failPending(`Recovered completion failed: ${summarizeError(error)}`, ctx)
+          } catch {
+            discardRestoredPending(ctx)
+          }
+          return
+        }
+        scheduleRecoveredCompletion(finalText, ctx, Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5)), attempt + 1)
+      }
+    })()
+    pendingSettlement = settlement
+    void settlement.finally(() => {
+      if (pendingSettlement === settlement) pendingSettlement = undefined
+    })
+  }, delayMs)
 }
 
 async function restorePendingAfterReload(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
@@ -1741,7 +1785,7 @@ async function restorePendingAfterReload(pi: ExtensionAPI, ctx: ExtensionContext
 
   if (ctx.isIdle()) {
     const finalText = recoverFinalTextFromBranch(ctx)
-    if (finalText) await completePending(finalText, ctx)
+    if (finalText) scheduleRecoveredCompletion(finalText, ctx)
     else await failPending("Pi reloaded as the turn finished; the final response could not be recovered.", ctx)
     return
   }
@@ -2154,7 +2198,7 @@ function buildClaimInvocationBody(ctx: ExtensionContext): Record<string, unknown
 }
 
 async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvocation | null> {
-  if (!config || reconnectPending || sessionTearingDown) return null
+  if (!config || reconnectPending || reloadPending || sessionTearingDown) return null
   const startedAt = Date.now()
   try {
     const body = await request<{ data: (ClaimedInvocation & { sealedContext?: unknown }) | null }>(
@@ -2671,12 +2715,25 @@ async function runThinkingCommand(
   await completeInvocationWithMarkdown(invocation, `Thinking level changed: \`${before}\` → \`${after}\``, ctx)
 }
 
-async function runReloadCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
-  // Complete the invocation before reload — `await ctx.reload()` emits session_shutdown
-  // for this runtime, so any acknowledgement after the await would run against a
-  // pre-reload extension instance and may not survive.
-  await completeInvocationWithMarkdown(invocation, "Reloading Pi extensions, skills, prompts, and themes…", ctx)
-  await ctx.reload()
+async function runReloadCommand(pi: ExtensionAPI, invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
+  reloadPending = true
+  try {
+    const completed = await completeInvocationWithMarkdown(
+      invocation,
+      "Reloading Pi extensions, skills, prompts, and themes…",
+      ctx
+    )
+    if (!completed) {
+      reloadPending = false
+      const busy = pending !== undefined || !ctx.isIdle()
+      await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
+      return
+    }
+    pi.sendUserMessage(`/${RELOAD_HANDOFF_COMMAND}`, { deliverAs: "followUp" })
+  } catch (error) {
+    reloadPending = false
+    throw error
+  }
 }
 
 type ShellExecResult = {
@@ -3098,7 +3155,7 @@ async function handleSessionControlInvocation(
         await runSkillCommand(pi, invocation, command.args, ctx)
         return
       case "reload":
-        await runReloadCommand(invocation, ctx)
+        await runReloadCommand(pi, invocation, ctx)
         return
       case "shell":
         await runShellCommand(invocation, command.args, ctx)
@@ -3291,7 +3348,7 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
     if (isSessionControlInvocation(invocation)) {
       const command = resolveSessionControlCommand(invocation)
       await handleSessionControlInvocation(pi, ctx, invocation)
-      if (command?.name === "stop" || reconnectPending) return true
+      if (command?.name === "stop" || reconnectPending || reloadPending) return true
     } else {
       await injectInvocation(pi, ctx, invocation, steer)
     }
@@ -3819,6 +3876,7 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   lastTraceHeartbeat = undefined
   lastBusyHeartbeatAt = 0
   clearPendingSnapshot(ctx)
+  clearRecoveredCompletionTimer()
   await heartbeat("available", undefined, ctx)
 }
 
@@ -3851,6 +3909,7 @@ async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void
   lastTraceHeartbeat = undefined
   lastBusyHeartbeatAt = 0
   if (ctx) clearPendingSnapshot(ctx)
+  clearRecoveredCompletionTimer()
   await heartbeat("available", undefined, ctx).catch(() => undefined)
 }
 
@@ -3869,9 +3928,11 @@ async function resetRuntimeForTesting(): Promise<void> {
   sessionTearingDown = true
   sessionLifecycleGeneration++
   reconnectPending = false
+  reloadPending = false
   stopPolling()
   stopClaimRenewTimer()
   clearPendingRetry()
+  clearRecoveredCompletionTimer()
   teardownTransport()
   await claimIfIdleInFlight?.catch(() => undefined)
   await pendingSettlement?.catch(() => undefined)
@@ -3988,8 +4049,11 @@ export const __testing = {
   claimNextInvocation,
   claimIfIdle,
   runReconnectCommand,
+  runReloadCommand,
+  scheduleRecoveredCompletion,
   runKeyCommand,
   reconnectPending: () => reconnectPending,
+  reloadPending: () => reloadPending,
   sessionLifecycleGeneration: () => sessionLifecycleGeneration,
   sessionTearingDown: () => sessionTearingDown,
   teardownTransport,
@@ -3999,6 +4063,17 @@ export const __testing = {
 }
 
 export default function (pi: ExtensionAPI): void {
+  pi.registerCommand(RELOAD_HANDOFF_COMMAND, {
+    description: "Complete a Threa reload handoff",
+    handler: async (_args, ctx) => {
+      try {
+        await ctx.reload()
+      } finally {
+        reloadPending = false
+      }
+    },
+  })
+
   pi.registerCommand("remote-control", {
     description:
       "Link this Pi session to a Threa scratchpad: configure | status | open | rename <name> | on | off | debug | debug-polls [on|off]",
@@ -4130,6 +4205,7 @@ export default function (pi: ExtensionAPI): void {
     if (!config || !shouldHandleSessionEvents(ctx)) return
     sessionLifecycleGeneration++
     reconnectPending = false
+    reloadPending = false
     sessionTearingDown = false
     if (!isCurrentSessionEnabled(ctx)) {
       setRemoteStatus(ctx, getCurrentSessionLink(ctx) ? "Threa remote: off" : "Threa remote: not linked")
@@ -4303,6 +4379,7 @@ export default function (pi: ExtensionAPI): void {
     stopPolling()
     stopClaimRenewTimer()
     cancelPendingRetryTimer()
+    clearRecoveredCompletionTimer()
     await claimIfIdleInFlight?.catch(() => undefined)
     await pendingSettlement?.catch(() => undefined)
     if (event.reason === "reload" && config && isEnabled(ctx)) {

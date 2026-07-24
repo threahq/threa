@@ -910,6 +910,70 @@ describe("buildPersistedConfig", () => {
   })
 })
 
+describe("Pi reload session control", () => {
+  test("completes the control claim then queues reload through a command context", async () => {
+    const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>()
+    const followUps: Array<{ text: string; options: unknown }> = []
+    const pi = {
+      registerCommand: (name: string, options: { handler: (args: string, ctx: any) => Promise<void> }) =>
+        commands.set(name, options),
+      on: () => {},
+      sendUserMessage: (text: string, options: unknown) => followUps.push({ text, options }),
+    }
+    threaRemote(pi as never)
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+    })
+    const writes: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      writes.push(String(input))
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+    const eventContext = {
+      isIdle: () => true,
+      cwd: "/tmp",
+      sessionManager: { getSessionId: () => "runtime_reload_control" },
+      modelRegistry: { getAvailable: () => [] },
+    }
+
+    try {
+      await __testing.runReloadCommand(
+        pi as never,
+        {
+          id: "binv_reload_control",
+          activeStreamId: "stream_1",
+          sourceMessageId: "msg_1",
+          promptMarkdown: "/reload",
+          claimToken: "claim_reload_control",
+          claimedInstanceId: "pi-test",
+          claimExpiresAt: null,
+        } as never,
+        eventContext as never
+      )
+
+      expect(writes.some((url) => url.endsWith("/bot-invocations/binv_reload_control/complete"))).toBe(true)
+      expect(followUps).toEqual([{ text: "/threa-remote-reload", options: { deliverAs: "followUp" } }])
+      expect(__testing.reloadPending()).toBe(true)
+
+      let reloads = 0
+      await commands.get("threa-remote-reload")!.handler("", {
+        reload: async () => {
+          reloads++
+        },
+      })
+      expect(reloads).toBe(1)
+      expect(__testing.reloadPending()).toBe(false)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})
+
 describe("Pi reconnect session control", () => {
   const invocation = {
     id: "binv_reconnect",
@@ -1776,6 +1840,68 @@ describe("reload claim continuity", () => {
       expect(__testing.pendingInvocationId()).toBeUndefined()
       expect(__testing.claimRenewTimerActive()).toBe(false)
       expect(existsSync(snapshotPath)).toBe(false)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})
+
+describe("recovered completion retry", () => {
+  test("keeps the restored claim and retries a transient completion failure", async () => {
+    const runtimeSessionId = "runtime_recovered_completion"
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        [runtimeSessionId]: {
+          enabled: true,
+          instanceId: "pi-recovery",
+          runtimeSessionId,
+          rootStreamId: "stream_1",
+          activeStreamId: "stream_1",
+        },
+      },
+    })
+    __testing.beginPendingInvocation({
+      id: "binv_recovered_completion",
+      activeStreamId: "stream_1",
+      rootStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+      promptMarkdown: "finish me",
+      claimToken: "claim_recovery",
+      claimedInstanceId: "pi-recovery",
+      claimExpiresAt: null,
+    } as never)
+    const ctx = {
+      sessionManager: { getSessionId: () => runtimeSessionId },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+    }
+    let completionAttempts = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith("/bot-invocations/binv_recovered_completion/complete")) {
+        completionAttempts++
+        if (completionAttempts === 1) {
+          return new Response(JSON.stringify({ error: "temporary" }), {
+            status: 503,
+            headers: { "content-type": "application/json" },
+          })
+        }
+      }
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+
+    try {
+      __testing.scheduleRecoveredCompletion("Recovered reply.", ctx as never)
+      await Bun.sleep(1200)
+      expect(completionAttempts).toBe(2)
+      expect(__testing.pendingInvocationId()).toBeUndefined()
     } finally {
       fetchSpy.mockRestore()
     }
