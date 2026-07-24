@@ -1,4 +1,4 @@
-import Dexie, { type EntityTable } from "dexie"
+import Dexie, { type EntityTable, type Table } from "dexie"
 import type {
   Activity,
   AuthorType,
@@ -11,6 +11,7 @@ import type {
   JSONContent,
   NotificationLevel,
   SidebarConfig,
+  Slot,
   StreamContextBagPayload,
   StreamPurpose,
   StreamType,
@@ -950,6 +951,21 @@ export interface CachedBoardMutedStream {
   workspaceId: string
   _cachedAt: number
 }
+/**
+ * One hydrated slot value persisted for offline/cold-start pointer rendering
+ * (Amendment A). Slots live here — NOT in the TanStack bootstrap cache: the
+ * sync layer is the single write boundary, and render reads canonical rows via
+ * `useStreamSlots`. Compound primary key `[streamId+slotKey]` (stream ids are
+ * globally unique, so the slot key needs no wider scope); `workspaceId` records
+ * ownership for workspace cleanup. `value` is the wire `Slot` (strings/dates).
+ */
+export interface CachedSlot {
+  workspaceId: string
+  streamId: string
+  slotKey: string
+  value: Slot
+  _cachedAt: number
+}
 
 export class ThreaDatabase extends Dexie {
   workspaces!: EntityTable<CachedWorkspace, "id">
@@ -982,6 +998,7 @@ export class ThreaDatabase extends Dexie {
   boardHiddenConversations!: EntityTable<CachedBoardHiddenConversation, "id">
   boardMutedStreams!: EntityTable<CachedBoardMutedStream, "id">
   uploadJobs!: EntityTable<CachedUploadJob, "attachmentId">
+  slots!: Table<CachedSlot, [string, string]>
 
   constructor(name: string) {
     super(name)
@@ -1403,6 +1420,17 @@ export class ThreaDatabase extends Dexie {
     // clock-independent timeline ordering; existing rows need no migration.
     this.version(41).stores({})
 
+    // v42: persisted slot store (Amendment A). Cross-stream pointer hydration
+    // moves out of the TanStack bootstrap cache into its own table so the sync
+    // layer is the single write boundary and render reads canonical rows. v41
+    // persisted no hydration carrier, so there is nothing to transform — the
+    // table starts empty and converges from bootstrap/socket/page writes.
+    this.version(42)
+      .stores({
+        slots: "[streamId+slotKey], streamId, workspaceId, _cachedAt",
+      })
+      .upgrade(() => undefined)
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -1480,6 +1508,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.labelAssignments.clear(),
       db.sidebarConfigs.clear(),
       db.conversations.clear(),
+      db.slots.clear(),
       // The persisted device key seals this identity's private key for
       // auto-resume — sign-out must drop it so the next account can't resume
       // this identity's unlocked session.

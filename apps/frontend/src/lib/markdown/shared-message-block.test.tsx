@@ -2,19 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { MarkdownContent } from "@/components/ui/markdown-content"
-import { SharedMessagesProvider } from "@/components/shared-messages/context"
+import { sharedMessageSlotKey } from "@threa/types"
+import { SlotsProvider } from "@/components/slots/context"
 import { db } from "@/db"
 
-function renderMarkdown(content: string, hydrationMap: Parameters<typeof SharedMessagesProvider>[0]["map"] = null) {
+function renderMarkdown(content: string, slotMap: Parameters<typeof SlotsProvider>[0]["map"] = null) {
   return render(
     <MemoryRouter initialEntries={["/w/ws_1/s/stream_dst"]}>
       <Routes>
         <Route
           path="/w/:workspaceId/s/:streamId"
           element={
-            <SharedMessagesProvider map={hydrationMap}>
+            <SlotsProvider map={slotMap}>
               <MarkdownContent content={content} />
-            </SharedMessagesProvider>
+            </SlotsProvider>
           }
         />
       </Routes>
@@ -58,7 +59,7 @@ describe("MarkdownContent — sharedMessage paragraph swap", () => {
   it("renders the source message body when the hydration map has an ok entry", () => {
     const markdown = "Shared a message from [Ariadne](shared-message:stream_src/msg_abc)"
     renderMarkdown(markdown, {
-      msg_abc: {
+      [sharedMessageSlotKey("msg_abc")]: {
         type: "sharedMessage",
         state: "ok",
         messageId: "msg_abc",
@@ -127,7 +128,7 @@ describe("MarkdownContent — sharedMessage paragraph swap", () => {
   it("renders the source body as full markdown (bold, links) — not stripped to plain text", () => {
     const markdown = "Shared a message from [Ariadne](shared-message:stream_src/msg_abc)"
     renderMarkdown(markdown, {
-      msg_abc: {
+      [sharedMessageSlotKey("msg_abc")]: {
         type: "sharedMessage",
         state: "ok",
         messageId: "msg_abc",

@@ -16,10 +16,12 @@ import {
 import { streamKeys } from "@/hooks/use-streams"
 import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
+import { sharedMessageSlotKey } from "@threa/types"
 import type {
   BotRuntimePresenceSummary,
   LinkPreviewSummary,
-  SharedMessageHydration,
+  SharedMessageSlot,
+  SlotMap,
   StreamBootstrap,
   StreamEvent,
 } from "@threa/types"
@@ -2497,11 +2499,11 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
   })
 })
 
-describe("registerStreamSocketHandlers — shared-message wire hydration", () => {
-  // Live events carry the hydration map (chunk 1): pointer cards patch into
-  // the cached bootstrap in the same frame, no bootstrap/events invalidation.
-  // The invalidate-refetch survives only as the deploy-skew fallback for
-  // share-bearing events that arrive WITHOUT a map.
+describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendment A)", () => {
+  // Live events carry the slot carrier; handlers merge it into `db.slots` in the
+  // same transaction as the event write. The bootstrap query cache is never
+  // touched. The invalidate-refetch survives only as the deploy-skew fallback
+  // for share-bearing events that arrive with NEITHER map.
 
   function createTestSocket() {
     const handlers = new Map<string, Set<(payload: unknown) => void>>()
@@ -2525,7 +2527,7 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
     }
   }
 
-  function okEntry(contentMarkdown: string, messageId = "msg_src"): SharedMessageHydration {
+  function okEntry(contentMarkdown: string, messageId = "msg_src"): SharedMessageSlot {
     return {
       type: "sharedMessage",
       state: "ok",
@@ -2533,6 +2535,7 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
       streamId: "stream_src",
       authorId: "usr_9",
       authorType: "user",
+      authorName: null,
       contentJson: { type: "doc", content: [] },
       contentMarkdown,
       editedAt: null,
@@ -2546,28 +2549,23 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
     content: [{ type: "sharedMessage", attrs: { messageId: "msg_src", streamId: "stream_src" } }],
   }
 
-  function seedBootstrap(
-    queryClient: QueryClient,
-    streamId: string,
-    sharedMessages?: Record<string, SharedMessageHydration>
-  ): void {
-    queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId), {
-      ...makeBootstrap([], streamId),
-      ...(sharedMessages && { sharedMessages }),
-      windowVersion: 0,
-    })
+  async function readSlotMap(streamId: string): Promise<SlotMap> {
+    const rows = await db.slots.where("streamId").equals(streamId).toArray()
+    const map: SlotMap = {}
+    for (const row of rows) map[row.slotKey] = row.value
+    return map
   }
 
   beforeEach(async () => {
     await db.events.clear()
     await db.streams.clear()
     await db.pendingMessages.clear()
+    await db.slots.clear()
   })
 
-  it("message:created patches the bootstrap cache from the wire map and skips invalidation", async () => {
+  it("message:created merges the canonical wire map into db.slots and skips invalidation", async () => {
     const streamId = "stream_wire_hydration"
     const queryClient = new QueryClient()
-    seedBootstrap(queryClient, streamId, { msg_old: okEntry("older", "msg_old") })
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
 
     const { socket, emit } = createTestSocket()
@@ -2582,24 +2580,70 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
         sequence: "100",
         payload: { messageId: "msg_new", contentJson: shareNodeContent },
       }),
-      sharedMessages: { msg_src: okEntry("from the wire") },
+      slots: { [sharedMessageSlotKey("msg_src")]: okEntry("from the wire") },
     })
 
-    const cached = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
-    expect(cached?.sharedMessages).toEqual({
-      msg_old: okEntry("older", "msg_old"),
-      msg_src: okEntry("from the wire"),
+    expect(await readSlotMap(streamId)).toEqual({ [sharedMessageSlotKey("msg_src")]: okEntry("from the wire") })
+    expect(invalidateQueries).not.toHaveBeenCalled()
+    expect(queryClient.getQueryCache().find({ queryKey: streamKeys.bootstrap("ws_1", streamId) })).toBeUndefined()
+
+    cleanup()
+  })
+
+  it("message:created rekeys a legacy-only payload (old server / sync_log) to canonical keys", async () => {
+    const streamId = "stream_wire_legacy"
+    const queryClient = new QueryClient()
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_share_legacy",
+        streamId,
+        sequence: "100",
+        payload: { messageId: "msg_new", contentJson: shareNodeContent },
+      }),
+      sharedMessages: { msg_src: okEntry("legacy wire") },
     })
+
+    expect(await readSlotMap(streamId)).toEqual({ [sharedMessageSlotKey("msg_src")]: okEntry("legacy wire") })
     expect(invalidateQueries).not.toHaveBeenCalled()
 
     cleanup()
   })
 
-  it("message:created treats an empty wire map as authoritative — presence suppresses the fallback", async () => {
+  it("message:created prefers the canonical map when both carriers are present", async () => {
+    const streamId = "stream_wire_both"
+    const queryClient = new QueryClient()
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_share_both",
+        streamId,
+        sequence: "100",
+        payload: { messageId: "msg_new", contentJson: shareNodeContent },
+      }),
+      slots: { [sharedMessageSlotKey("msg_src")]: okEntry("canonical") },
+      sharedMessages: { msg_src: okEntry("legacy") },
+    })
+
+    expect(await readSlotMap(streamId)).toEqual({ [sharedMessageSlotKey("msg_src")]: okEntry("canonical") })
+
+    cleanup()
+  })
+
+  it("message:created treats an empty canonical map as authoritative — no rows, no fallback", async () => {
     const streamId = "stream_wire_empty"
     const queryClient = new QueryClient()
-    seedBootstrap(queryClient, streamId)
-    const before = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
 
     const { socket, emit } = createTestSocket()
@@ -2614,10 +2658,10 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
         sequence: "100",
         payload: { messageId: "msg_new", contentJson: shareNodeContent },
       }),
-      sharedMessages: {},
+      slots: {},
     })
 
-    expect(queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))).toBe(before)
+    expect(await readSlotMap(streamId)).toEqual({})
     expect(invalidateQueries).not.toHaveBeenCalled()
 
     cleanup()
@@ -2626,7 +2670,6 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
   it("message:created falls back to invalidating when a share-bearing event carries no map (deploy skew)", async () => {
     const streamId = "stream_skew_created"
     const queryClient = new QueryClient()
-    seedBootstrap(queryClient, streamId)
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
 
     const { socket, emit } = createTestSocket()
@@ -2645,15 +2688,14 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
 
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: streamKeys.bootstrap("ws_1", streamId) })
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: streamKeys.events("ws_1", streamId) })
+    expect(await readSlotMap(streamId)).toEqual({})
 
     cleanup()
   })
 
-  it("message:created with neither a map nor a share node leaves the cache untouched", async () => {
+  it("message:created with neither a map nor a share node writes no slots and skips invalidation", async () => {
     const streamId = "stream_plain"
     const queryClient = new QueryClient()
-    seedBootstrap(queryClient, streamId)
-    const before = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
 
     const { socket, emit } = createTestSocket()
@@ -2670,16 +2712,15 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
       }),
     })
 
-    expect(queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))).toBe(before)
+    expect(await readSlotMap(streamId)).toEqual({})
     expect(invalidateQueries).not.toHaveBeenCalled()
 
     cleanup()
   })
 
-  it("message:edited patches the bootstrap cache from the wire map and skips invalidation", async () => {
+  it("message:edited merges the wire map into db.slots and skips invalidation", async () => {
     const streamId = "stream_wire_edit"
     const queryClient = new QueryClient()
-    seedBootstrap(queryClient, streamId)
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
     await db.events.put({
       ...makeEvent({
@@ -2706,12 +2747,47 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
         eventType: "message_edited",
         payload: { messageId: "msg_target", contentJson: shareNodeContent, contentMarkdown: "edited" },
       }),
-      sharedMessages: { msg_src: okEntry("edited source") },
+      slots: { [sharedMessageSlotKey("msg_src")]: okEntry("edited source") },
     })
 
-    const cached = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
-    expect(cached?.sharedMessages).toEqual({ msg_src: okEntry("edited source") })
+    expect(await readSlotMap(streamId)).toEqual({ [sharedMessageSlotKey("msg_src")]: okEntry("edited source") })
     expect(invalidateQueries).not.toHaveBeenCalled()
+
+    cleanup()
+  })
+
+  it("message:edited rekeys a legacy-only payload to canonical keys", async () => {
+    const streamId = "stream_wire_edit_legacy"
+    const queryClient = new QueryClient()
+    await db.events.put({
+      ...makeEvent({
+        id: "evt_target_legacy",
+        streamId,
+        sequence: "50",
+        payload: { messageId: "msg_target", contentMarkdown: "old" },
+      }),
+      workspaceId: "ws_1",
+      _sequenceNum: 50,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:edited", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_edit_legacy",
+        streamId,
+        sequence: "101",
+        eventType: "message_edited",
+        payload: { messageId: "msg_target", contentJson: shareNodeContent, contentMarkdown: "edited" },
+      }),
+      sharedMessages: { msg_src: okEntry("legacy edit") },
+    })
+
+    expect(await readSlotMap(streamId)).toEqual({ [sharedMessageSlotKey("msg_src")]: okEntry("legacy edit") })
 
     cleanup()
   })
@@ -2719,7 +2795,6 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
   it("message:edited falls back to invalidating when a share-bearing edit carries no map (deploy skew)", async () => {
     const streamId = "stream_skew_edited"
     const queryClient = new QueryClient()
-    seedBootstrap(queryClient, streamId)
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
 
     const { socket, emit } = createTestSocket()
@@ -2743,14 +2818,26 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
     cleanup()
   })
 
-  it("pointer:invalidated patches the fresh entry over the stale one without invalidating", async () => {
+  it("pointer:invalidated merges the fresh entry over the stale one without invalidating", async () => {
     const streamId = "stream_pointer_patch"
     const queryClient = new QueryClient()
-    seedBootstrap(queryClient, streamId, {
-      msg_src: okEntry("stale content"),
-      msg_other: okEntry("untouched", "msg_other"),
-    })
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+    await db.slots.bulkPut([
+      {
+        workspaceId: "ws_1",
+        streamId,
+        slotKey: sharedMessageSlotKey("msg_src"),
+        value: okEntry("stale content"),
+        _cachedAt: Date.now(),
+      },
+      {
+        workspaceId: "ws_1",
+        streamId,
+        slotKey: sharedMessageSlotKey("msg_other"),
+        value: okEntry("untouched", "msg_other"),
+        _cachedAt: Date.now(),
+      },
+    ])
 
     const { socket, emit } = createTestSocket()
     const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
@@ -2759,15 +2846,33 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
       workspaceId: "ws_1",
       targetStreamId: streamId,
       sourceMessageId: "msg_src",
-      sharedMessages: { msg_src: okEntry("fresh content") },
+      slots: { [sharedMessageSlotKey("msg_src")]: okEntry("fresh content") },
     })
 
-    const cached = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
-    expect(cached?.sharedMessages).toEqual({
-      msg_src: okEntry("fresh content"),
-      msg_other: okEntry("untouched", "msg_other"),
+    expect(await readSlotMap(streamId)).toEqual({
+      [sharedMessageSlotKey("msg_src")]: okEntry("fresh content"),
+      [sharedMessageSlotKey("msg_other")]: okEntry("untouched", "msg_other"),
     })
     expect(invalidateQueries).not.toHaveBeenCalled()
+
+    cleanup()
+  })
+
+  it("pointer:invalidated rekeys a legacy-only payload to canonical keys", async () => {
+    const streamId = "stream_pointer_legacy"
+    const queryClient = new QueryClient()
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("pointer:invalidated", {
+      workspaceId: "ws_1",
+      targetStreamId: streamId,
+      sourceMessageId: "msg_src",
+      sharedMessages: { msg_src: okEntry("legacy fresh") },
+    })
+
+    expect(await readSlotMap(streamId)).toEqual({ [sharedMessageSlotKey("msg_src")]: okEntry("legacy fresh") })
 
     cleanup()
   })
@@ -2775,7 +2880,6 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
   it("pointer:invalidated without a map falls back to invalidating (deploy skew)", async () => {
     const streamId = "stream_pointer_skew"
     const queryClient = new QueryClient()
-    seedBootstrap(queryClient, streamId)
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
 
     const { socket, emit } = createTestSocket()
@@ -2793,7 +2897,62 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
     cleanup()
   })
 
-  it("does not create a bootstrap cache entry when a map arrives with nothing cached", async () => {
+  it("messages:moved merges the destination carrier under the destination stream (B3)", async () => {
+    const sourceStreamId = "stream_move_src"
+    const destinationStreamId = "stream_move_dst"
+    const queryClient = new QueryClient()
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries")
+
+    const { socket, emit } = createTestSocket()
+    // The handler registered for the DESTINATION room applies the destination leg.
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", destinationStreamId, queryClient)
+
+    await emit("messages:moved", {
+      workspaceId: "ws_1",
+      streamId: sourceStreamId,
+      sourceStreamId,
+      destinationStreamId,
+      targetMessageId: "msg_target",
+      movedMessageIds: ["msg_moved"],
+      thread: {
+        ...makeBootstrap([], destinationStreamId).stream,
+        type: "thread",
+        parentStreamId: sourceStreamId,
+        parentAnchorId: "msg_target",
+        rootStreamId: sourceStreamId,
+      },
+      events: [
+        makeEvent({
+          id: "evt_moved",
+          streamId: destinationStreamId,
+          sequence: "10",
+          payload: { messageId: "msg_moved", contentJson: shareNodeContent },
+        }),
+      ],
+      removedEventIds: ["evt_moved"],
+      sourceTombstoneEvent: makeEvent({
+        id: "evt_tombstone",
+        streamId: sourceStreamId,
+        sequence: "99",
+        eventType: "messages:moved",
+        payload: {},
+      }),
+      parentReplyCount: 1,
+      parentThreadSummary: null,
+      slots: { [sharedMessageSlotKey("msg_src")]: okEntry("moved hydration") },
+    })
+
+    expect(await readSlotMap(destinationStreamId)).toEqual({
+      [sharedMessageSlotKey("msg_src")]: okEntry("moved hydration"),
+    })
+    // The source leg carries no carrier — nothing lands under the source stream.
+    expect(await readSlotMap(sourceStreamId)).toEqual({})
+    expect(invalidateQueries).not.toHaveBeenCalled()
+
+    cleanup()
+  })
+
+  it("never creates a bootstrap cache entry — slots land in db.slots only", async () => {
     const streamId = "stream_no_cache"
     const queryClient = new QueryClient()
 
@@ -2804,11 +2963,139 @@ describe("registerStreamSocketHandlers — shared-message wire hydration", () =>
       workspaceId: "ws_1",
       targetStreamId: streamId,
       sourceMessageId: "msg_src",
-      sharedMessages: { msg_src: okEntry("wire") },
+      slots: { [sharedMessageSlotKey("msg_src")]: okEntry("wire") },
     })
 
     expect(queryClient.getQueryCache().find({ queryKey: streamKeys.bootstrap("ws_1", streamId) })).toBeUndefined()
+    expect(await readSlotMap(streamId)).toEqual({ [sharedMessageSlotKey("msg_src")]: okEntry("wire") })
 
     cleanup()
+  })
+})
+
+describe("applyStreamBootstrap — slot store ingestion (Amendment A)", () => {
+  function okSlot(messageId: string, contentMarkdown: string): SharedMessageSlot {
+    return {
+      type: "sharedMessage",
+      state: "ok",
+      messageId,
+      streamId: "stream_src",
+      authorId: "usr_9",
+      authorType: "user",
+      authorName: null,
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown,
+      editedAt: null,
+      createdAt: "2026-04-23T10:00:00Z",
+      attachments: [],
+    }
+  }
+
+  async function readSlotMap(streamId: string): Promise<SlotMap> {
+    const rows = await db.slots.where("streamId").equals(streamId).toArray()
+    const map: SlotMap = {}
+    for (const row of rows) map[row.slotKey] = row.value
+    return map
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.slots.clear()
+  })
+
+  it("replace mode refreshes in-window keys and preserves out-of-window page merges (B2)", async () => {
+    const streamId = "stream_bootstrap_replace"
+    await db.slots.bulkPut([
+      {
+        workspaceId: "ws_1",
+        streamId,
+        slotKey: sharedMessageSlotKey("msg_fresh"),
+        value: okSlot("msg_fresh", "stale snapshot"),
+        _cachedAt: 1,
+      },
+      // Merged by an older page whose events sit OUTSIDE the bootstrap window.
+      {
+        workspaceId: "ws_1",
+        streamId,
+        slotKey: sharedMessageSlotKey("msg_page"),
+        value: okSlot("msg_page", "older page"),
+        _cachedAt: 1,
+      },
+    ])
+
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap(
+        [
+          makeEvent({
+            id: "evt_1",
+            streamId,
+            sequence: "10",
+            payload: {
+              messageId: "msg_1",
+              contentJson: {
+                type: "doc",
+                content: [{ type: "sharedMessage", attrs: { messageId: "msg_fresh", streamId: "stream_src" } }],
+              },
+            },
+          }),
+        ],
+        streamId
+      ),
+      syncMode: "replace",
+      slots: { [sharedMessageSlotKey("msg_fresh")]: okSlot("msg_fresh", "fresh") },
+    }
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect(await readSlotMap(streamId)).toEqual({
+      [sharedMessageSlotKey("msg_fresh")]: okSlot("msg_fresh", "fresh"),
+      [sharedMessageSlotKey("msg_page")]: okSlot("msg_page", "older page"),
+    })
+  })
+
+  it("append mode merges incoming keys and retains keys the response omits", async () => {
+    const streamId = "stream_bootstrap_append"
+    await db.slots.put({
+      workspaceId: "ws_1",
+      streamId,
+      slotKey: sharedMessageSlotKey("msg_existing"),
+      value: okSlot("msg_existing", "existing"),
+      _cachedAt: 1,
+    })
+
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([], streamId),
+      syncMode: "append",
+      slots: { [sharedMessageSlotKey("msg_new")]: okSlot("msg_new", "new") },
+    }
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect(await readSlotMap(streamId)).toEqual({
+      [sharedMessageSlotKey("msg_existing")]: okSlot("msg_existing", "existing"),
+      [sharedMessageSlotKey("msg_new")]: okSlot("msg_new", "new"),
+    })
+  })
+
+  it("rekeys a legacy-only bootstrap carrier (old server) to canonical keys", async () => {
+    const streamId = "stream_bootstrap_legacy"
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([], streamId),
+      syncMode: "replace",
+      sharedMessages: { msg_src: okSlot("msg_src", "legacy") },
+    }
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect(await readSlotMap(streamId)).toEqual({ [sharedMessageSlotKey("msg_src")]: okSlot("msg_src", "legacy") })
+  })
+
+  it("toCachedStreamBootstrap strips both carrier fields before the TanStack envelope", () => {
+    const bootstrap: StreamBootstrap = {
+      ...makeBootstrap([], "stream_strip"),
+      slots: { [sharedMessageSlotKey("msg_1")]: okSlot("msg_1", "x") },
+      sharedMessages: { msg_1: okSlot("msg_1", "x") },
+    }
+    const cached = toCachedStreamBootstrap(bootstrap)
+    expect(cached.slots).toBeUndefined()
+    expect(cached.sharedMessages).toBeUndefined()
   })
 })

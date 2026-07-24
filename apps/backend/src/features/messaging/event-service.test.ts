@@ -1,16 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AttachmentSafetyStatuses, ConversationIntents, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
+import {
+  AttachmentSafetyStatuses,
+  ConversationIntents,
+  E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+  sharedMessageSlotKey,
+} from "@threa/types"
 import { EventService } from "./event-service"
 import { MessageRepository } from "./repository"
 import { SharedMessageRepository } from "./sharing/repository"
 import * as sharing from "./sharing"
 import { MessageVersionRepository } from "./version-repository"
-import { StreamEventRepository, StreamMemberRepository, StreamRepository, type StreamEvent } from "../streams"
+import {
+  StreamEventRepository,
+  StreamMemberRepository,
+  StreamRepository,
+  SparseReadRepository,
+  type StreamEvent,
+} from "../streams"
 import { AttachmentRepository, AttachmentReferenceRepository, AttachmentUploadRepository } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
+import { OperationLeaseRepository } from "../../lib/operation-leases"
 import * as db from "../../db"
 import { messagesTotal } from "../../lib/observability"
 import { StreamPersonaParticipantRepository } from "../agents"
+import { DraftsRepository } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
 
 describe("EventService attachment safety checks", () => {
@@ -1500,7 +1513,10 @@ describe("EventService sharedMessages wire enrichment", () => {
     })
 
     const created = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "message:created")
+    // Dual-publish: the same hydration value rides both the canonical
+    // namespaced map and the temporary legacy bare-key map.
     expect(created?.[2].sharedMessages).toEqual({ msg_source: hydratedEntry })
+    expect(created?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source")]: hydratedEntry })
   })
 
   it("omits sharedMessages from the message:created payload for pointer-free content", async () => {
@@ -1516,6 +1532,7 @@ describe("EventService sharedMessages wire enrichment", () => {
 
     const created = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "message:created")
     expect(created?.[2]).not.toHaveProperty("sharedMessages")
+    expect(created?.[2]).not.toHaveProperty("slots")
     // Cost guard: pointer-free content pays only the content pre-scan.
     expect(sharing.hydrateSharedMessagesForRoom).not.toHaveBeenCalled()
   })
@@ -1533,5 +1550,183 @@ describe("EventService sharedMessages wire enrichment", () => {
 
     const edited = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "message:edited")
     expect(edited?.[2].sharedMessages).toEqual({ msg_source: hydratedEntry })
+    expect(edited?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source")]: hydratedEntry })
+  })
+})
+
+describe("EventService.moveMessagesToThread destination slot carrier (B3)", () => {
+  const shareNode = { type: "sharedMessage", attrs: { messageId: "msg_source", streamId: "stream_source" } }
+  const hydratedEntry = {
+    type: "sharedMessage",
+    state: "ok",
+    messageId: "msg_source",
+    streamId: "stream_source",
+  }
+  const sourceStream = {
+    id: "stream_src",
+    workspaceId: "ws_1",
+    type: "channel",
+    visibility: "public",
+    slug: "src",
+    displayName: null,
+    archivedAt: null,
+    parentStreamId: null,
+    parentAnchorId: null,
+    rootStreamId: null,
+  }
+  const destinationThread = {
+    id: "stream_thread",
+    workspaceId: "ws_1",
+    type: "thread",
+    visibility: "public",
+    slug: "thread",
+    displayName: null,
+    archivedAt: null,
+    parentStreamId: "stream_src",
+    parentAnchorId: "msg_target",
+    rootStreamId: "stream_src",
+  }
+
+  function movedMessage(contentJson: unknown) {
+    return {
+      id: "msg_a",
+      streamId: "stream_src",
+      sequence: 2n,
+      deletedAt: null,
+      authorId: "usr_3",
+      authorType: "user",
+      contentJson,
+      contentMarkdown: "look at this",
+      createdAt: new Date(),
+    }
+  }
+
+  beforeEach(() => {
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback({})) as any)
+    spyOn(OperationLeaseRepository, "consume").mockResolvedValue({
+      payload: { sourceStreamId: "stream_src", targetMessageId: "msg_target", messageIds: ["msg_a"] },
+    } as any)
+    spyOn(StreamRepository, "findById").mockResolvedValue(sourceStream as any)
+    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
+    spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue({
+      id: "msg_target",
+      streamId: "stream_src",
+      sequence: 1n,
+      deletedAt: null,
+      authorId: "usr_2",
+      authorType: "user",
+    } as any)
+    spyOn(MessageRepository, "findByIdsForUpdate").mockResolvedValue([
+      movedMessage({ type: "doc", content: [shareNode] }),
+    ] as any)
+    spyOn(StreamRepository, "insertThreadOrFind").mockResolvedValue({
+      stream: destinationThread,
+      created: true,
+    } as any)
+    spyOn(StreamMemberRepository, "insert").mockResolvedValue(undefined as any)
+    spyOn(StreamEventRepository, "findMessageCreatedByMessageIdsForUpdate").mockResolvedValue([
+      {
+        id: "evt_a",
+        streamId: "stream_src",
+        sequence: 2n,
+        broadcastSequence: 2n,
+        eventType: "message_created",
+        payload: { messageId: "msg_a", contentJson: { type: "doc", content: [shareNode] } },
+        actorId: "usr_3",
+        actorType: "user",
+        createdAt: new Date(),
+      },
+    ] as any)
+    spyOn(MessageRepository, "findAgentSessionIdsForMessages").mockResolvedValue([])
+    spyOn(StreamEventRepository, "findAgentSessionEventsBySessionIdsForUpdate").mockResolvedValue([])
+    spyOn(StreamEventRepository, "getNextSequencePairs").mockResolvedValue([{ sequence: 10n, broadcastSequence: 10n }])
+    spyOn(StreamEventRepository, "moveMessageCreatedEvents").mockResolvedValue([
+      {
+        id: "evt_a",
+        streamId: "stream_thread",
+        sequence: 10n,
+        broadcastSequence: 10n,
+        eventType: "message_created",
+        payload: { messageId: "msg_a", contentJson: { type: "doc", content: [shareNode] } },
+        actorId: "usr_3",
+        actorType: "user",
+        createdAt: new Date(),
+      },
+    ] as any)
+    spyOn(StreamEventRepository, "moveEventsById").mockResolvedValue([])
+    spyOn(MessageRepository, "moveToStream").mockResolvedValue(undefined as any)
+    spyOn(SparseReadRepository, "rehomeReads").mockResolvedValue(undefined as any)
+    spyOn(StreamMemberRepository, "repointWatermarksForMovedEvents").mockResolvedValue(undefined as any)
+    spyOn(DraftsRepository, "rescopeByScope").mockResolvedValue([])
+    spyOn(MessageRepository, "updateStreamScopedReferences").mockResolvedValue(undefined as any)
+    spyOn(StreamRepository, "moveChildThreadsToParent").mockResolvedValue(undefined as any)
+    spyOn(StreamRepository, "bumpThreadReplyCount").mockResolvedValue({ ...destinationThread, replyCount: 1 } as any)
+    spyOn(StreamRepository, "findThreadSummaryByParentMessage").mockResolvedValue(null)
+    spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: `evt_tombstone_${params.streamId}`,
+      streamId: params.streamId,
+      sequence: 11n,
+      broadcastSequence: 11n,
+      eventType: params.eventType,
+      payload: params.payload,
+      actorId: params.actorId,
+      actorType: params.actorType,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(StreamEventRepository, "countMessagesByStreamBatch").mockResolvedValue(new Map([["stream_src", 5]]))
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+    // Hydration itself is covered in sharing/hydration.test.ts — stub the wire
+    // entry and assert what rides the outbox payload.
+    spyOn(sharing, "hydrateSharedMessagesForRoom").mockResolvedValue({ msg_source: hydratedEntry } as any)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("attaches the dual destination slot map to the messages:moved outbox payload", async () => {
+    const service = new EventService({} as any)
+    await service.moveMessagesToThread({
+      workspaceId: "ws_1",
+      sourceStreamId: "stream_src",
+      targetMessageId: "msg_target",
+      messageIds: ["msg_a"],
+      actorId: "usr_1",
+      leaseKey: "lease_1",
+    })
+
+    // One room-uniform hydration for the DESTINATION thread over the moved
+    // messages' share refs.
+    expect(sharing.hydrateSharedMessagesForRoom).toHaveBeenCalledWith(
+      {},
+      "ws_1",
+      "stream_thread",
+      new Set(["msg_source"])
+    )
+    const moved = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "messages:moved")
+    expect(moved?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source")]: hydratedEntry })
+    expect(moved?.[2].sharedMessages).toEqual({ msg_source: hydratedEntry })
+  })
+
+  it("omits both maps and skips hydration for a pointer-free move", async () => {
+    ;(MessageRepository.findByIdsForUpdate as any).mockResolvedValue([
+      movedMessage({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "plain" }] }] }),
+    ])
+
+    const service = new EventService({} as any)
+    await service.moveMessagesToThread({
+      workspaceId: "ws_1",
+      sourceStreamId: "stream_src",
+      targetMessageId: "msg_target",
+      messageIds: ["msg_a"],
+      actorId: "usr_1",
+      leaseKey: "lease_1",
+    })
+
+    expect(sharing.hydrateSharedMessagesForRoom).not.toHaveBeenCalled()
+    const moved = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "messages:moved")
+    expect(moved?.[2]).not.toHaveProperty("slots")
+    expect(moved?.[2]).not.toHaveProperty("sharedMessages")
   })
 })

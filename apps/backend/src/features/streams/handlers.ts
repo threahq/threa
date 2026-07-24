@@ -2,7 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { StreamService } from "./service"
 import type { EventService } from "../messaging"
-import { collectSharedMessageIds, hydrateSharedMessageIds, type HydratedSharedMessage } from "../messaging"
+import { collectSharedMessageIds, hydrateSharedMessageIds, toDualSlotMaps, type DualSlotMaps } from "../messaging"
 import type { ActivityService } from "../activity"
 import type { LinkPreviewService } from "../link-previews"
 import type { BotRuntimeService } from "../bot-runtimes"
@@ -402,16 +402,17 @@ interface Dependencies {
 
 /**
  * Scan event payloads for `sharedMessage` node references and fetch the
- * hydrated content + metadata for each source message. Returned as a
- * `sourceMessageId → payload` map that the frontend overlays onto pointer
- * node renders.
+ * hydrated content + metadata for each source message. Returns the dual-publish
+ * envelope — canonical namespaced `slots` plus the temporary bare-key
+ * `sharedMessages` — derived from one hydration result, that the frontend
+ * overlays onto pointer node renders.
  */
-async function hydrateSharedMessagesForEvents(
+async function hydrateSlotsForEvents(
   pool: Pool,
   workspaceId: string,
   viewerId: string,
   events: StreamEvent[]
-): Promise<Record<string, HydratedSharedMessage>> {
+): Promise<DualSlotMaps> {
   const ids = new Set<string>()
   for (const event of events) {
     if (event.eventType === "message_created" || event.eventType === "message_edited") {
@@ -419,8 +420,8 @@ async function hydrateSharedMessagesForEvents(
       if (payload.contentJson) collectSharedMessageIds(payload.contentJson, ids)
     }
   }
-  if (ids.size === 0) return {}
-  return hydrateSharedMessageIds(pool, workspaceId, viewerId, ids)
+  if (ids.size === 0) return { slots: {}, sharedMessages: {} }
+  return toDualSlotMaps(await hydrateSharedMessageIds(pool, workspaceId, viewerId, ids))
 }
 
 function areLinkPreviewArraysEqual(current: LinkPreviewSummary[] | undefined, next: LinkPreviewSummary[]): boolean {
@@ -764,11 +765,11 @@ export function createStreamHandlers({
       })
 
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(linkPreviewService, workspaceId, userId, events)
-      const sharedMessages = await hydrateSharedMessagesForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
+      const { slots, sharedMessages } = await hydrateSlotsForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
 
       setAuditSubjects(res, [streamSequenceRangeRef(streamId, events)])
 
-      res.json({ events: eventsWithLinkPreviews, sharedMessages })
+      res.json({ events: eventsWithLinkPreviews, slots, sharedMessages })
     },
 
     async listEventsAround(req: Request, res: Response) {
@@ -812,7 +813,7 @@ export function createStreamHandlers({
         userId,
         enrichedEvents
       )
-      const sharedMessages = await hydrateSharedMessagesForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
+      const { slots, sharedMessages } = await hydrateSlotsForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
 
       const aroundSubjects: AuditSubjectRef[] = [streamSequenceRangeRef(streamId, result.events)]
       const anchorId = anchorMessageId ?? messageId ?? eventId
@@ -821,6 +822,7 @@ export function createStreamHandlers({
 
       res.json({
         events: eventsWithLinkPreviews,
+        slots,
         sharedMessages,
         hasOlder: result.hasOlder,
         hasNewer: result.hasNewer,
@@ -1101,7 +1103,7 @@ export function createStreamHandlers({
         userId,
         enrichedEvents
       )
-      const sharedMessages = await hydrateSharedMessagesForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
+      const { slots, sharedMessages } = await hydrateSlotsForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
 
       // Fold the stream's persisted ContextBag into the bootstrap so the
       // timeline message-context badge renders synchronously from cached
@@ -1133,6 +1135,7 @@ export function createStreamHandlers({
           stream,
           rootArchivedAt: rootStream?.archivedAt ?? null,
           events: eventsWithLinkPreviews,
+          slots,
           sharedMessages,
           members,
           botMemberIds,

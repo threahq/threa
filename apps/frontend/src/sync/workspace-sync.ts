@@ -75,6 +75,7 @@ import {
   normalizeSidebarConfig,
 } from "@threa/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
+import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
 import {
   applyStreamActivityOrdinal,
@@ -1480,6 +1481,7 @@ export function registerWorkspaceSocketHandlers(
       const shouldRemoveFromSidebar = removedStream?.visibility === "private"
       if (shouldRemoveFromSidebar) {
         db.streams.delete(payload.streamId)
+        void deleteStreamSlots(db, payload.streamId)
       }
 
       return {
@@ -2584,6 +2586,7 @@ export async function applyReconnectBootstrapBatch(
       db.events,
       db.pendingMessages,
       db.pendingOperations,
+      db.slots,
     ],
     async () => {
       await Promise.all([
@@ -2680,9 +2683,11 @@ export async function applyReconnectBootstrapBatch(
       }
 
       if (terminalStreamIds.size > 0) {
+        const terminalIds = Array.from(terminalStreamIds)
         await Promise.all([
-          db.streams.bulkDelete(Array.from(terminalStreamIds)),
-          db.streamMemberships.bulkDelete(Array.from(terminalStreamIds, (streamId) => `${workspaceId}:${streamId}`)),
+          db.streams.bulkDelete(terminalIds),
+          db.streamMemberships.bulkDelete(terminalIds.map((streamId) => `${workspaceId}:${streamId}`)),
+          deleteSlotsForStreams(db, terminalIds),
         ])
       }
     }
@@ -2799,8 +2804,15 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
     )
   )
 
+  // Derive the stream ids the absence-sweep will remove BEFORE deleting, then
+  // drop their slot rows too. Slots key off streamId, and the workspace
+  // bootstrap enumerates streams — not each stream's valid slot keys — so they
+  // can't ride the generic deleteStale (Amendment A4).
+  const staleStreamIds = await staleEntityIds(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now)
+
   await Promise.all([
-    deleteStale(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now),
+    staleStreamIds.length > 0 ? db.streams.bulkDelete(staleStreamIds) : Promise.resolve(),
+    deleteSlotsForStreams(db, staleStreamIds),
     deleteStale(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now),
     deleteStale(db.streamMemberships, "workspaceId", workspaceId, bootstrapMembershipIds, now),
     deleteStale(db.dmPeers, "workspaceId", workspaceId, bootstrapDmPeerIds, now),
@@ -2809,6 +2821,21 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
     deleteStale(db.labels, "workspaceId", workspaceId, bootstrapLabelIds, now),
     deleteStale(db.labelAssignments, "workspaceId", workspaceId, bootstrapLabelAssignmentIds, now),
   ])
+}
+
+async function staleEntityIds(
+  table: {
+    where: (field: string) => {
+      equals: (value: string) => { toArray: () => Promise<Array<{ id: string; _cachedAt: number }>> }
+    }
+  },
+  scopeField: string,
+  scopeValue: string,
+  keepIds: Set<string>,
+  now: number
+): Promise<string[]> {
+  const all = await table.where(scopeField).equals(scopeValue).toArray()
+  return all.filter((entity) => !keepIds.has(entity.id) && entity._cachedAt < now).map((e) => e.id)
 }
 
 async function deleteStale(
@@ -2823,8 +2850,7 @@ async function deleteStale(
   keepIds: Set<string>,
   now: number
 ): Promise<void> {
-  const all = await table.where(scopeField).equals(scopeValue).toArray()
-  const toDelete = all.filter((entity) => !keepIds.has(entity.id) && entity._cachedAt < now).map((e) => e.id)
+  const toDelete = await staleEntityIds(table, scopeField, scopeValue, keepIds, now)
   if (toDelete.length > 0) {
     await table.bulkDelete(toDelete)
   }

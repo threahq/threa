@@ -8,6 +8,7 @@ import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from 
 import {
   collectSharedMessageIds,
   hydrateSharedMessagesForRoom,
+  toDualSlotMaps,
   ShareService,
   type ResolveEffectiveStream,
 } from "./sharing"
@@ -812,16 +813,18 @@ export class EventService {
 
     const sharedMessageIds = new Set<string>()
     collectSharedMessageIds(params.contentJson, sharedMessageIds)
-    const sharedMessages =
+    const slotMaps =
       sharedMessageIds.size > 0
-        ? await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
+        ? toDualSlotMaps(
+            await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
+          )
         : undefined
 
     await OutboxRepository.insert(client, "message:created", {
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       event: serializeBigInt(event),
-      ...(sharedMessages && { sharedMessages }),
+      ...(slotMaps && { slots: slotMaps.slots, sharedMessages: slotMaps.sharedMessages }),
     })
 
     // Stream activity for sidebar updates. sequence/messageOrdinal are absolute
@@ -995,16 +998,18 @@ export class EventService {
 
         const sharedMessageIds = new Set<string>()
         collectSharedMessageIds(params.contentJson, sharedMessageIds)
-        const sharedMessages =
+        const slotMaps =
           sharedMessageIds.size > 0
-            ? await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
+            ? toDualSlotMaps(
+                await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
+              )
             : undefined
 
         await OutboxRepository.insert(client, "message:edited", {
           workspaceId: params.workspaceId,
           streamId: params.streamId,
           event: serializeBigInt(event),
-          ...(sharedMessages && { sharedMessages }),
+          ...(slotMaps && { slots: slotMaps.slots, sharedMessages: slotMaps.sharedMessages }),
         })
 
         const stream = await StreamRepository.findById(client, params.streamId)
@@ -1541,6 +1546,23 @@ export class EventService {
       ])
       const sourceMessageOrdinal = sourceMessageCounts.get(params.sourceStreamId) ?? 0
 
+      // B3: hydrate the moved messages' share refs room-uniform for the
+      // destination thread. Pointer cards in the moved messages would skeleton
+      // in the destination panel otherwise — the cross-stream sources are not
+      // in the destination's local event cache and this path has no D-Fallback.
+      // Where the grant doesn't reach the destination room, entries resolve
+      // `private` (room-uniform is conservative — never a leak).
+      const movedShareIds = new Set<string>()
+      for (const message of selectedMessages) {
+        collectSharedMessageIds(message.contentJson, movedShareIds)
+      }
+      const movedSlotMaps =
+        movedShareIds.size > 0
+          ? toDualSlotMaps(
+              await hydrateSharedMessagesForRoom(client, params.workspaceId, destinationThread.id, movedShareIds)
+            )
+          : undefined
+
       await OutboxRepository.insert(client, "messages:moved", {
         workspaceId: params.workspaceId,
         streamId: params.sourceStreamId,
@@ -1555,6 +1577,7 @@ export class EventService {
         parentReplyCount,
         parentThreadSummary,
         sourceMessageOrdinal,
+        ...(movedSlotMaps && { slots: movedSlotMaps.slots, sharedMessages: movedSlotMaps.sharedMessages }),
       })
 
       return {

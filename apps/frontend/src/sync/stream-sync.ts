@@ -11,8 +11,10 @@ import {
   type WorkspaceBootstrap,
   type BotRuntimePresenceSummary,
   type JSONContent,
-  type SharedMessageHydration,
+  type SlotMap,
+  type SharedMessageSlot,
 } from "@threa/types"
+import { writeSlotCarrier } from "@/stores/slot-store"
 import { seedDecryption } from "@/lib/crypto/decrypt-cache"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import type { SyncEventSource } from "./socket-event-gate"
@@ -77,8 +79,12 @@ export function toCachedStreamBootstrap(
   const nextStream = preserveDmDisplayName(bootstrap.stream, previous?.stream)
   const shouldIncrementWindowVersion = bootstrap.syncMode === "replace" && options?.incrementWindowVersionOnReplace
   const shouldAppend = bootstrap.syncMode === "append" && previous
+  // The slot carrier is stripped before the envelope reaches TanStack: slots
+  // live in `db.slots` (written by `writeBootstrapEventsAndStream`), never in
+  // the bootstrap query cache (Amendment A2/A5).
+  const { slots: _slots, sharedMessages: _sharedMessages, ...envelope } = bootstrap
   return {
-    ...bootstrap,
+    ...envelope,
     stream: nextStream,
     events: shouldAppend ? dedupeAndSortEvents([...previous.events, ...bootstrap.events]) : bootstrap.events,
     latestSequence: shouldAppend
@@ -286,6 +292,24 @@ async function writeBootstrapEventsAndStream(
   if (bootstrap.syncMode !== "append") {
     await pruneBootstrapReplaceWindow(streamId, bootstrap)
   }
+
+  // Persist the bootstrap's slot carrier in the same transaction as its events.
+  // An append response merges incoming keys; a replace response is the
+  // authoritative snapshot of THIS event window and resets exactly the keys the
+  // window's events reference (Amendment A2/A4, B2).
+  await writeSlotCarrier(
+    bootstrap.syncMode === "append"
+      ? { database: db, workspaceId, streamId, carrier: bootstrap, mode: "merge", cachedAt: now }
+      : {
+          database: db,
+          workspaceId,
+          streamId,
+          carrier: bootstrap,
+          mode: "replace",
+          windowEvents: bootstrap.events,
+          cachedAt: now,
+        }
+  )
 
   if (bootstrap.events.length > 0) {
     // For message_created events, the bootstrap snapshot can race against
@@ -590,7 +614,7 @@ export async function applyStreamBootstrap(
   bootstrap: StreamBootstrap
 ): Promise<void> {
   const now = Date.now()
-  await db.transaction("rw", [db.events, db.streams, db.pendingMessages, db.pendingOperations], async () => {
+  await db.transaction("rw", [db.events, db.streams, db.pendingMessages, db.pendingOperations, db.slots], async () => {
     await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
   })
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
@@ -640,7 +664,10 @@ interface MessageEventPayload {
   workspaceId: string
   streamId: string
   event: StreamEvent
-  sharedMessages?: Record<string, SharedMessageHydration>
+  /** Canonical slot map (`shared:<messageId>` keys). */
+  slots?: SlotMap
+  /** TEMPORARY legacy bare-key map for pre-slots servers / sync_log rows (D8 removal). */
+  sharedMessages?: Record<string, SharedMessageSlot>
 }
 
 interface MessageDeletedPayload {
@@ -660,6 +687,11 @@ interface MessagesMovedPayload {
   thread: Stream
   events: StreamEvent[]
   removedEventIds: string[]
+  /** Slot carrier for the moved messages' share refs, hydrated room-uniform
+   *  for the destination stream (B3) — merged under the destination leg. */
+  slots?: SlotMap
+  /** TEMPORARY legacy bare-key map for pre-slots servers / sync_log rows (D8 removal). */
+  sharedMessages?: Record<string, SharedMessageSlot>
   /** Tombstone event inserted into the source stream — appended to the
    *  source-side IDB cache so the timeline keeps a "moved → thread" trace. */
   sourceTombstoneEvent: StreamEvent
@@ -887,18 +919,6 @@ function contentHasSharedMessage(contentJson: unknown): boolean {
   return false
 }
 
-function patchSharedMessagesHydration(
-  queryClient: QueryClient,
-  workspaceId: string,
-  streamId: string,
-  map: Record<string, SharedMessageHydration>
-): void {
-  if (Object.keys(map).length === 0) return
-  queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) =>
-    old ? { ...old, sharedMessages: { ...old.sharedMessages, ...map } } : old
-  )
-}
-
 /** Plaintext content carried by an optimistic (self-sent) event payload, if present. */
 function readPlaintextContent(
   payload: unknown
@@ -992,7 +1012,12 @@ export function registerStreamSocketHandlers(
     // after the transaction commits so the backfill never runs inside it.
     let gapAfterSequence: string | null = null
 
-    await db.transaction("rw", [db.events, db.pendingMessages], async () => {
+    await db.transaction("rw", [db.events, db.pendingMessages, db.slots], async () => {
+      // Merge the carrier's slots in the same transaction as the event. A
+      // map-less carrier is a no-op; the merge is idempotent so it runs even
+      // when the event already exists (heals a pre-slots row on replay).
+      await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })
+
       const existing = await db.events.get(newEvent.id)
       if (existing) return
 
@@ -1086,11 +1111,11 @@ export function registerStreamSocketHandlers(
       }
     })
 
-    if (payload.sharedMessages) {
-      patchSharedMessagesHydration(queryClient, workspaceId, streamId, payload.sharedMessages)
-    } else if (contentHasSharedMessage(newPayload.contentJson)) {
-      // Deploy skew: pre-hydration outbox rows / old backends emit share-bearing
-      // events without the map — refetch so the pointer still hydrates.
+    if (!(payload.slots || payload.sharedMessages) && contentHasSharedMessage(newPayload.contentJson)) {
+      // Deploy skew (D-Fallback): a share-bearing event with NEITHER map —
+      // pre-hydration outbox rows / old backends — refetch so the pointer still
+      // hydrates (the bootstrap apply repopulates db.slots). A legacy map is
+      // data, not map-less, so it never lands here.
       await queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, streamId) })
       await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
     }
@@ -1105,16 +1130,18 @@ export function registerStreamSocketHandlers(
       contentMarkdown: string
     }
 
-    await updateMessageEvent(streamId, editPayload.messageId, (p) => ({
-      ...p,
-      contentJson: editPayload.contentJson,
-      contentMarkdown: editPayload.contentMarkdown,
-      editedAt: editEvent.createdAt,
-    }))
+    const now = Date.now()
+    await db.transaction("rw", [db.events, db.slots], async () => {
+      await updateMessageEvent(streamId, editPayload.messageId, (p) => ({
+        ...p,
+        contentJson: editPayload.contentJson,
+        contentMarkdown: editPayload.contentMarkdown,
+        editedAt: editEvent.createdAt,
+      }))
+      await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })
+    })
 
-    if (payload.sharedMessages) {
-      patchSharedMessagesHydration(queryClient, workspaceId, streamId, payload.sharedMessages)
-    } else if (contentHasSharedMessage(editPayload.contentJson)) {
+    if (!(payload.slots || payload.sharedMessages) && contentHasSharedMessage(editPayload.contentJson)) {
       // Deploy-skew fallback — see handleMessageCreated.
       await queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, streamId) })
       await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
@@ -1137,7 +1164,7 @@ export function registerStreamSocketHandlers(
     if (payload.sourceStreamId !== streamId && payload.destinationStreamId !== streamId) return
 
     const now = Date.now()
-    await db.transaction("rw", [db.events, db.streams], async () => {
+    await db.transaction("rw", [db.events, db.streams, db.slots], async () => {
       if (payload.sourceStreamId === streamId) {
         await db.events.bulkDelete(payload.removedEventIds)
         // Append the source tombstone after the deletes so the timeline
@@ -1175,6 +1202,12 @@ export function registerStreamSocketHandlers(
             _cachedAt: now,
           }))
         )
+        // B3: the moved messages' pointer cards would skeleton in the
+        // destination panel (cross-stream sources aren't in the local event
+        // cache and this path has no D-Fallback) — merge the move's carrier
+        // under the destination stream. Merge, not replace: the tombstone/
+        // append semantics preserve the destination's existing rows.
+        await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })
       }
 
       const streamUpdate = { ...payload.thread, _cachedAt: now }
@@ -1408,17 +1441,26 @@ export function registerStreamSocketHandlers(
 
   /**
    * A pointer-referenced source message in another stream changed (edit/
-   * delete/move). The payload carries the re-hydrated entry — patch it into
-   * the cached bootstrap so the pointer card updates in place, no refetch.
+   * delete/move). The payload carries the re-hydrated entry — merge it into the
+   * slot store so the pointer card updates in place, no refetch.
    */
   const handlePointerInvalidated = async (payload: {
     targetStreamId: string
     sourceMessageId: string
-    sharedMessages?: Record<string, SharedMessageHydration>
+    slots?: SlotMap
+    /** TEMPORARY legacy bare-key map (D8 removal). */
+    sharedMessages?: Record<string, SharedMessageSlot>
   }) => {
     if (payload.targetStreamId !== streamId) return
-    if (payload.sharedMessages) {
-      patchSharedMessagesHydration(queryClient, workspaceId, streamId, payload.sharedMessages)
+    if (payload.slots || payload.sharedMessages) {
+      await writeSlotCarrier({
+        database: db,
+        workspaceId,
+        streamId,
+        carrier: payload,
+        mode: "merge",
+        cachedAt: Date.now(),
+      })
       return
     }
     // Deploy-skew fallback — see handleMessageCreated.

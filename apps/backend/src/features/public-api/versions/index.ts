@@ -51,6 +51,52 @@ function restoreParentMessageIdInSpec(node: unknown): unknown {
   return node
 }
 
+/**
+ * Operations whose current-version response carries a top-level `slots` map
+ * (every operation returning renderable message markdown). Pins before
+ * 2026-07-24 get `slots` stripped; the map is additive so nothing else changes.
+ */
+const SLOT_MAP_OPERATIONS = new Set<OperationId>([
+  "listMessages",
+  "sendMessage",
+  "listConversationMessages",
+  "findMessagesByMetadata",
+  "updateMessage",
+  "completeBotInvocation",
+  "searchMessages",
+])
+
+/** Recursively drop any `slots` member (and `required` entries) from an operation's response subtree. */
+function removeSlotsFromNode(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(removeSlotsFromNode)
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>
+    const cleaned = Object.fromEntries(
+      Object.entries(obj)
+        .filter(([key]) => key !== "slots")
+        .map(([key, value]) => [key, removeSlotsFromNode(value)])
+    )
+    if (Array.isArray(obj.required)) {
+      cleaned.required = obj.required.filter((entry: unknown) => entry !== "slots")
+    }
+    return cleaned
+  }
+  return node
+}
+
+/** Strip `slots` from the response schemas of exactly the slot-map operations, leaving every other node untouched. */
+function stripSlotsFromSpec(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripSlotsFromSpec)
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>
+    if (typeof obj.operationId === "string" && SLOT_MAP_OPERATIONS.has(obj.operationId as OperationId)) {
+      return { ...obj, responses: removeSlotsFromNode(obj.responses) }
+    }
+    return Object.fromEntries(Object.entries(obj).map(([key, value]) => [key, stripSlotsFromSpec(value)]))
+  }
+  return node
+}
+
 /** Ascending by version. Startup assertion enforces ordering + known dates. */
 export const VERSION_CHANGES: VersionChange[] = [
   {
@@ -74,6 +120,19 @@ export const VERSION_CHANGES: VersionChange[] = [
       return payload
     },
     downgradeSpec: (spec) => restoreParentMessageIdInSpec(spec) as OpenApiSpec,
+  },
+  {
+    version: "2026-07-24",
+    description:
+      "Message responses now include a top-level `slots` map hydrating cross-stream shared-message pointers (keyed `shared:<messageId>`, markdown content only). Pins before this version have the map stripped.",
+    operations: SLOT_MAP_OPERATIONS,
+    downgradeResponse: (payload, context) => {
+      if (!SLOT_MAP_OPERATIONS.has(context.operationId)) return payload
+      if (payload === null || typeof payload !== "object") return payload
+      const { slots: _slots, ...rest } = payload as Record<string, unknown>
+      return rest
+    },
+    downgradeSpec: (spec) => stripSlotsFromSpec(spec) as OpenApiSpec,
   },
 ]
 

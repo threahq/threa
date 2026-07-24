@@ -1,4 +1,5 @@
 import { api } from "./client"
+import type { SlotCarrier } from "@/lib/slots"
 import type {
   Stream,
   StreamEvent,
@@ -10,19 +11,18 @@ import type {
   CreateStreamInput,
   UpdateStreamInput,
   NotificationLevel,
-  SharedMessageHydration,
   CompanionMode,
   ToolPrivacyPolicy,
 } from "@threa/types"
 
 /**
- * Result shape for the events list endpoint. Carries the same `sharedMessages`
- * hydration map that bootstrap returns so older-than-bootstrap pointers can
- * render without a full bootstrap refetch.
+ * Result shape for the events list endpoint. Carries the raw slot carrier
+ * (canonical `slots` and/or the temporary legacy `sharedMessages`) straight
+ * from the wire; the slot store is the one write boundary that normalizes it
+ * (Amendment A2). Paged-in pointers persist without a full bootstrap refetch.
  */
-export interface EventsListResponse {
+export interface EventsListResponse extends SlotCarrier {
   events: StreamEvent[]
-  sharedMessages?: Record<string, SharedMessageHydration>
 }
 
 export type { StreamBootstrap, CreateStreamInput, UpdateStreamInput }
@@ -55,6 +55,8 @@ export const streamsApi = {
     const res = await api.get<{ data: StreamBootstrap }>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/bootstrap${query ? `?${query}` : ""}`
     )
+    // Raw carrier fields (`slots` / temporary legacy `sharedMessages`) pass
+    // through to the write owner; the slot store normalizes them (Amendment A2).
     return res.data
   },
 
@@ -105,8 +107,9 @@ export const streamsApi = {
     return api.post(`/api/workspaces/${workspaceId}/streams/${streamId}/unarchive`)
   },
 
-  // Returns the `sharedMessages` hydration map alongside the events so paged-in
-  // pointers render without waiting for a full bootstrap refetch.
+  // Returns the raw slot carrier alongside the events so paged-in pointers
+  // persist without waiting for a full bootstrap refetch; the slot store
+  // normalizes the carrier (Amendment A2).
   async getEvents(
     workspaceId: string,
     streamId: string,
@@ -117,10 +120,9 @@ export const streamsApi = {
     if (params?.after) searchParams.set("after", params.after)
     if (params?.limit) searchParams.set("limit", params.limit.toString())
     const query = searchParams.toString()
-    const res = await api.get<EventsListResponse>(
+    return api.get<EventsListResponse>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/events${query ? `?${query}` : ""}`
     )
-    return res
   },
 
   async getEventsAround(

@@ -78,8 +78,53 @@ describe("invalidatePointersForEvent", () => {
     expect(emits[0].payload).toMatchObject({
       workspaceId: "ws_1",
       sourceMessageId: "msg_a",
+      // Dual-publish from one hydration result: canonical namespaced map plus the
+      // temporary legacy bare-key map carry the identical value.
+      slots: {
+        "shared:msg_a": { type: "sharedMessage", state: "ok", messageId: "msg_a", streamId: "stream_src" },
+      },
       sharedMessages: {
         msg_a: { type: "sharedMessage", state: "ok", messageId: "msg_a", streamId: "stream_src" },
+      },
+    })
+  })
+
+  it("emits the full per-target hydration map, including nested entries (B4)", async () => {
+    spyOn(SharedMessageRepository, "listBySourceMessageIds").mockResolvedValue([
+      { sourceMessageId: "msg_a", targetStreamId: "stream_t1" },
+    ] as any)
+    // The one hydration call resolves the seed AND the nested pointer an edit
+    // just added — the emit must carry every entry, not just the top-level
+    // source, or the inner card skeletons until a REST replace.
+    spyOn(hydration, "hydrateSharedMessagesForRoom").mockResolvedValue({
+      msg_a: { type: "sharedMessage", state: "ok", messageId: "msg_a", streamId: "stream_src" },
+      msg_nested: { type: "sharedMessage", state: "ok", messageId: "msg_nested", streamId: "stream_inner" },
+    } as any)
+    const { io, emits } = fakeIo()
+    await invalidatePointersForEvent(
+      {
+        eventType: "message:edited",
+        payload: {
+          workspaceId: "ws_1",
+          streamId: "stream_src",
+          event: { payload: { messageId: "msg_a" } },
+        },
+      } as any,
+      {} as any,
+      io
+    )
+    expect(emits).toHaveLength(1)
+    expect(emits[0].payload).toMatchObject({
+      workspaceId: "ws_1",
+      targetStreamId: "stream_t1",
+      sourceMessageId: "msg_a",
+      slots: {
+        "shared:msg_a": { type: "sharedMessage", state: "ok", messageId: "msg_a", streamId: "stream_src" },
+        "shared:msg_nested": { type: "sharedMessage", state: "ok", messageId: "msg_nested", streamId: "stream_inner" },
+      },
+      sharedMessages: {
+        msg_a: { type: "sharedMessage", state: "ok", messageId: "msg_a", streamId: "stream_src" },
+        msg_nested: { type: "sharedMessage", state: "ok", messageId: "msg_nested", streamId: "stream_inner" },
       },
     })
   })

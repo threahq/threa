@@ -1,5 +1,6 @@
 import { AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threa/types"
 import type { ThreaDatabase } from "../db/database"
+import { writeSlotCarrier } from "../stores/slot-store"
 
 // Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
 // (stream: IndexedDB; workspace: the Cache API entry served by the SW fetch
@@ -94,14 +95,19 @@ async function prefetchEventsAround(
     if (data?.events?.length > 0) {
       const now = Date.now()
       const [db, { sequenceToNum }] = await Promise.all([openAccountDb(workosUserId), import("../db/database")])
-      await db.events.bulkPut(
-        data.events.map((e: Record<string, unknown>) => ({
-          ...e,
-          workspaceId,
-          _sequenceNum: sequenceToNum(e.sequence as string),
-          _cachedAt: now,
-        }))
-      )
+      await db.transaction("rw", [db.events, db.slots], async () => {
+        await db.events.bulkPut(
+          data.events.map((e: Record<string, unknown>) => ({
+            ...e,
+            workspaceId,
+            _sequenceNum: sequenceToNum(e.sequence as string),
+            _cachedAt: now,
+          }))
+        )
+        // Warm the pointer slots this prefetch exists to preserve; an
+        // events-around window merges (it is not an authoritative snapshot).
+        await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: data, mode: "merge", cachedAt: now })
+      })
     }
   } catch {
     // Best-effort
@@ -136,7 +142,7 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
     // sink the stream into "Other". Merge via update() so lastMessagePreview
     // and membership-derived fields (notificationLevel, lastReadEventId)
     // from applyWorkspaceBootstrap survive.
-    await db.transaction("rw", [db.events, db.streams], async () => {
+    await db.transaction("rw", [db.events, db.streams, db.slots], async () => {
       await db.events.bulkPut(
         events.map((e) => ({
           ...e,
@@ -144,6 +150,25 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
           _sequenceNum: sequenceToNum(e.sequence),
           _cachedAt: now,
         }))
+      )
+
+      // Warm the bootstrap's pointer slots in the same transaction; a cold
+      // notification tap otherwise persists events but discards the pointer
+      // state this store exists to preserve (Amendment A2). A replace prefetch
+      // can land against a live scrolled-up session, so it scopes its delete
+      // to the fetched window's events (B2) — out-of-window keys survive.
+      await writeSlotCarrier(
+        bootstrap.syncMode === "append"
+          ? { database: db, workspaceId, streamId, carrier: bootstrap, mode: "merge", cachedAt: now }
+          : {
+              database: db,
+              workspaceId,
+              streamId,
+              carrier: bootstrap,
+              mode: "replace",
+              windowEvents: events,
+              cachedAt: now,
+            }
       )
 
       if (!bootstrap.stream) return

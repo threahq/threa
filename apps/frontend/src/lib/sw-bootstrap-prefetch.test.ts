@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import type { StreamEvent } from "@threa/types"
+import { sharedMessageSlotKey, type StreamEvent } from "@threa/types"
 import { ThreaDatabase, accountDbName, db } from "@/db"
 import { parsePersistedSyncTarget, runBootstrapSync } from "./sw-bootstrap-prefetch"
+
+const missingSlot = (messageId: string) => ({ type: "sharedMessage", state: "missing", messageId }) as const
 
 // The SW has no AccountScope, so the prefetch must open the per-account
 // database (accountDbName) explicitly — writing through the default `db` proxy
@@ -139,6 +141,95 @@ describe("runBootstrapSync account routing", () => {
     // workspace bootstrap warm-up runs.
     const fetchedUrls = fetchMock.mock.calls.map((c) => String(c[0]))
     expect(fetchedUrls).toEqual(["/api/workspaces/ws_1/bootstrap"])
+  })
+
+  it("persists the bootstrap's canonical slot carrier into the account database", async () => {
+    const workosUserId = "user_acct_slots"
+    const streamId = "stream_slots1"
+    mockFetch({
+      [`/streams/${streamId}/bootstrap`]: {
+        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+        events: [makeEvent({ id: "evt_s1", streamId, sequence: "1" })],
+        slots: { [sharedMessageSlotKey("msg_src")]: missingSlot("msg_src") },
+      },
+    })
+
+    await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
+
+    const accountDb = new ThreaDatabase(accountDbName(workosUserId))
+    const rows = await accountDb.slots.where("streamId").equals(streamId).toArray()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ slotKey: sharedMessageSlotKey("msg_src"), value: missingSlot("msg_src") })
+  })
+
+  it("rekeys a legacy-only bootstrap carrier and merges events-around slots", async () => {
+    const workosUserId = "user_acct_slots_legacy"
+    const streamId = "stream_slots2"
+    mockFetch({
+      [`/streams/${streamId}/bootstrap`]: {
+        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+        events: [makeEvent({ id: "evt_old", streamId, sequence: "1" })],
+        sharedMessages: { msg_bootstrap: missingSlot("msg_bootstrap") },
+      },
+      "/events/around": {
+        events: [makeEvent({ id: "evt_pushed", streamId, sequence: "9" })],
+        slots: { [sharedMessageSlotKey("msg_around")]: missingSlot("msg_around") },
+      },
+    })
+
+    await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: "evt_pushed", workosUserId })
+
+    const accountDb = new ThreaDatabase(accountDbName(workosUserId))
+    const rows = await accountDb.slots.where("streamId").equals(streamId).toArray()
+    const byKey = Object.fromEntries(rows.map((r) => [r.slotKey, r.value]))
+    expect(byKey).toEqual({
+      [sharedMessageSlotKey("msg_bootstrap")]: missingSlot("msg_bootstrap"),
+      [sharedMessageSlotKey("msg_around")]: missingSlot("msg_around"),
+    })
+  })
+
+  it("replace prefetch keeps slot keys merged from out-of-window pages (B2)", async () => {
+    const workosUserId = "user_acct_slots_window"
+    const streamId = "stream_slots3"
+    const accountDb = new ThreaDatabase(accountDbName(workosUserId))
+    // A live scrolled-up session already merged this key from an older page;
+    // the prefetch's replace window doesn't reference it, so it must survive.
+    await accountDb.slots.put({
+      workspaceId: "ws_1",
+      streamId,
+      slotKey: sharedMessageSlotKey("msg_page"),
+      value: missingSlot("msg_page"),
+      _cachedAt: 1,
+    })
+
+    mockFetch({
+      [`/streams/${streamId}/bootstrap`]: {
+        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+        events: [
+          makeEvent({
+            id: "evt_s3",
+            streamId,
+            sequence: "1",
+            payload: {
+              messageId: "evt_s3",
+              contentJson: {
+                type: "doc",
+                content: [{ type: "sharedMessage", attrs: { messageId: "msg_window", streamId: "stream_src" } }],
+              },
+            },
+          }),
+        ],
+        slots: { [sharedMessageSlotKey("msg_window")]: missingSlot("msg_window") },
+      },
+    })
+
+    await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
+
+    const rows = await accountDb.slots.where("streamId").equals(streamId).toArray()
+    expect(Object.fromEntries(rows.map((r) => [r.slotKey, r.value]))).toEqual({
+      [sharedMessageSlotKey("msg_window")]: missingSlot("msg_window"),
+      [sharedMessageSlotKey("msg_page")]: missingSlot("msg_page"),
+    })
   })
 })
 

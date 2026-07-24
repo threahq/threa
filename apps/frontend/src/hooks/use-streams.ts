@@ -6,6 +6,7 @@ import { STREAM_BOOTSTRAP_QUERY_OPTIONS } from "@/lib/stream-bootstrap-query"
 import { db } from "@/db"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyStreamBootstrap, toCachedStreamBootstrap, type CachedStreamBootstrap } from "@/sync/stream-sync"
+import { deleteStreamSlots } from "@/stores/slot-store"
 import type {
   Stream,
   StreamMember,
@@ -293,6 +294,9 @@ export function useArchiveStream(workspaceId: string) {
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
 
       db.streams.delete(streamId)
+      // Evict the archived stream's slots; a later reopen rehydrates them from
+      // the bootstrap (Amendment A4).
+      void deleteStreamSlots(db, streamId)
     },
   })
 }

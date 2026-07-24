@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db } from "@/db"
-import { useSharedMessageHydration } from "@/components/shared-messages/context"
+import { useSharedMessageSlot } from "@/components/slots/context"
 import type { AttachmentSummary, StreamType, Visibility } from "@threa/types"
 
 /**
@@ -81,9 +81,9 @@ const SKELETON_DELAY_MS = 300
 /**
  * Resolve a shared-message pointer's preview content in priority order:
  *
- *   1. Server-side hydration map (populated on stream bootstrap / events
- *      responses via `SharedMessagesProvider`). Authoritative for persisted
- *      pointers and reflects edits / tombstones.
+ *   1. Server-side slot map (populated on stream bootstrap / events responses
+ *      via `SlotsProvider`). Authoritative for persisted pointers and reflects
+ *      edits / tombstones.
  *   2. Local IndexedDB event cache. Covers the composer-preview case (pointer
  *      not sent yet, no server hydration exists) and any stream where the
  *      source message has already been paged in by the viewer.
@@ -97,7 +97,7 @@ const SKELETON_DELAY_MS = 300
  * hydration map.
  */
 export function useSharedMessageSource(messageId: string, sourceStreamId: string): SharedMessageSource {
-  const hydrated = useSharedMessageHydration(messageId)
+  const hydrated = useSharedMessageSlot(messageId)
 
   const cachedEvent = useLiveQuery(
     async () => {
@@ -137,7 +137,7 @@ export function useSharedMessageSource(messageId: string, sourceStreamId: string
           contentMarkdown: hydrated.contentMarkdown,
           authorId: hydrated.authorId,
           actorType: hydrated.authorType,
-          authorName: hydrated.authorName,
+          authorName: hydrated.authorName ?? undefined,
           editedAt: hydrated.editedAt,
           attachments: hydrated.attachments,
         }

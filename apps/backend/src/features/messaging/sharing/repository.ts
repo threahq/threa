@@ -138,6 +138,32 @@ export const SharedMessageRepository = {
     )
   },
 
+  /**
+   * Returns the subset of `sourceMessageIds` granted via at least one share
+   * whose `target_stream_id` is in the caller-supplied `accessibleStreamIds`
+   * set. The set-based analog of {@link listSourcesGrantedToViewer} for
+   * callers that already resolved their readable streams once (the public API
+   * key principal): one grant query, in-memory set intersection, no per-viewer
+   * membership round-trip (INV-56).
+   */
+  async listSourcesGrantedToAnyStream(
+    db: Querier,
+    workspaceId: string,
+    accessibleStreamIds: ReadonlySet<string>,
+    sourceMessageIds: readonly string[]
+  ): Promise<Set<string>> {
+    if (sourceMessageIds.length === 0 || accessibleStreamIds.size === 0) return new Set()
+    const candidates = await db.query<{ source_message_id: string; target_stream_id: string }>(sql`
+      SELECT DISTINCT source_message_id, target_stream_id
+      FROM shared_messages
+      WHERE workspace_id = ${workspaceId}
+        AND source_message_id = ANY(${sourceMessageIds as string[]})
+    `)
+    return new Set(
+      candidates.rows.filter((r) => accessibleStreamIds.has(r.target_stream_id)).map((r) => r.source_message_id)
+    )
+  },
+
   async listSourcesGrantedToRoom(
     db: Querier,
     workspaceId: string,
