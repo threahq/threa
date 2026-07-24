@@ -24,13 +24,18 @@ describe("reconcile stream_read_state migration", () => {
   let migrationSql: string
 
   beforeAll(async () => {
-    // Isolated DB: this migration reconciles columns the current branch still
-    // carries (stream_members.last_read_event_id / last_read_at), which the
-    // shared threa_test database may not — sibling stack branches migrate it
-    // past the destructive cleanup that drops them.
+    // Isolated DB: the final stack migrates through the destructive cleanup,
+    // so recreate the pre-drop compatibility columns this PR2 migration is
+    // specifically responsible for reconciling. IF NOT EXISTS also lets the
+    // test run on this branch, where those columns still exist naturally.
     const isolated = await setupIsolatedTestDatabase("reconcile_read_state")
     pool = isolated.pool
     cleanup = isolated.cleanup
+    await pool.query(`
+      ALTER TABLE stream_members
+        ADD COLUMN IF NOT EXISTS last_read_event_id TEXT,
+        ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ
+    `)
     migrationSql = await Bun.file(MIGRATION_PATH).text()
   })
 
