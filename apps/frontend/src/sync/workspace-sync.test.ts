@@ -751,6 +751,43 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       lastReadSequence: "3",
     })
   })
+
+  it("preserves a frontier written DURING the reconnect fetch window (newer _cachedAt)", async () => {
+    const fetchStartedAt = Date.now() - 1000
+
+    await db.streamReadState.bulkPut([
+      {
+        // Written after the fetch started (e.g. a stream:read arrived mid-fetch)
+        // for a stream NOT in successfulStreamBootstraps — must survive.
+        id: "ws_1:stream_live",
+        workspaceId: "ws_1",
+        streamId: "stream_live",
+        lastReadEventId: "evt_live",
+        lastReadSequence: "99",
+        lastReadAt: null,
+        _cachedAt: fetchStartedAt + 100,
+      },
+    ])
+
+    await applyReconnectBootstrapBatch(
+      "ws_1",
+      makeBootstrap({
+        streamReadState: {
+          stream_other: { lastReadEventId: "evt_o", lastReadSequence: "1", lastReadAt: null },
+        },
+      }),
+      new Map(),
+      new Set(), // stream_live NOT in successfulStreamBootstraps
+      new Set(),
+      fetchStartedAt
+    )
+
+    // The locally-written frontier survives untouched.
+    expect(await db.streamReadState.get("ws_1:stream_live")).toMatchObject({
+      lastReadEventId: "evt_live",
+      lastReadSequence: "99",
+    })
+  })
 })
 
 describe("mergeReconnectWorkspaceBootstrap", () => {
@@ -3000,6 +3037,8 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
       expect(row?.lastReadEventId).toBe("evt_77")
       expect(row?.lastReadSequence).toBe("77")
     })
+    // read_all carries ordinals only — it must never fabricate a frontier row.
+    expect(await db.streamReadState.get("ws_1:stream_2")).toBeUndefined()
 
     cleanup()
   })

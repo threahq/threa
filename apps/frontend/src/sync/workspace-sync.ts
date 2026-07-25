@@ -1219,11 +1219,9 @@ export function registerWorkspaceSocketHandlers(
     // regresses the frontier until the next bootstrap re-fetches it.
     void db.transaction("rw", [db.streamReadState], async () => {
       const now = Date.now()
-      for (const streamId of payload.streamIds) {
-        const rowId = `${workspaceId}:${streamId}`
-        const row = await db.streamReadState.get(rowId)
-        if (row) await db.streamReadState.put({ ...row, _cachedAt: now })
-      }
+      const rowIds = payload.streamIds.map((streamId) => `${workspaceId}:${streamId}`)
+      const rows = (await db.streamReadState.bulkGet(rowIds)).filter((row) => row !== undefined)
+      if (rows.length > 0) await db.streamReadState.bulkPut(rows.map((row) => ({ ...row, _cachedAt: now })))
     })
 
     invalidateActivityFeed(true)
@@ -1628,6 +1626,7 @@ export function registerWorkspaceSocketHandlers(
       if (!currentMember || payload.memberId !== currentMember.id) return old
 
       db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`)
+      db.streamReadState.delete(`${workspaceId}:${payload.streamId}`)
 
       const removedStream = old.streams?.find((s) => s.id === payload.streamId)
       const shouldRemoveFromSidebar = removedStream?.visibility === "private"

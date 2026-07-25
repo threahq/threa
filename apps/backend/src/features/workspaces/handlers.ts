@@ -32,6 +32,7 @@ import {
   WORKSPACE_PERMISSION_SCOPES,
   LabelActorTypes,
   type WorkspacePermissionSlug,
+  type StreamReadFrontier,
 } from "@threa/types"
 
 const createWorkspaceSchema = z.object({
@@ -290,10 +291,7 @@ export function createWorkspaceHandlers({
       // an entry: a null lastReadEventId is an authoritative explicit frontier
       // (position before the first message), which clients must distinguish from
       // an absent row (never read / pre-cutover fallback to the membership mirror).
-      const streamReadState: Record<
-        string,
-        { lastReadEventId: string | null; lastReadSequence: string | null; lastReadAt: string | null }
-      > = {}
+      const streamReadState: Record<string, StreamReadFrontier> = {}
       for (const m of streamMemberships) {
         const effective = effectiveReadState.get(m.streamId)
         const lastReadEventId = effective ? effective.lastReadEventId : m.lastReadEventId
