@@ -28,18 +28,18 @@ bun "$WATCH_PR" 123 --repo owner/repo --interval 20 --timeout 1800 --state "$STA
 
 The PR target may be a number, GitHub PR URL, or omitted to infer the open PR for the current branch. Repository is inferred from `origin` unless `--repo` is passed. Authentication uses `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token`.
 
-Output is NDJSON. A watch emits a `baseline`, then exits on the first `changes` event. Exit 3 means timeout without changes. The state file makes the next invocation compare against the last observation, closing the gap while the agent handles an event.
+Output is NDJSON. A watch emits a `baseline`, reports retryable network/API failures as `poll_error`, then exits on the first `changes` event. Exit 3 means timeout without changes. The state file makes the next invocation compare against the last observation, closing the gap while the agent handles an event.
 
 ## Event coverage
 
 Snapshots include:
 
-- PR title, description, open/closed state, draft state, head SHA/ref, base ref, mergeability, and mergeable state
+- PR title, description, open/closed/merged state and timestamps, draft state, head SHA/ref, base ref, mergeability, and mergeable state
 - Issue comments and inline review comments: author, full body, timestamps, URL, file/line, and reply parent
 - Submitted reviews: author, state, body, timestamp, commit, and URL
 - Review threads: resolved/outdated state and up to 100 comments per thread; the separately paginated inline-comment list remains complete
 - Check runs: app, name, queued/in-progress/completed status, conclusion, timestamps, and details URL
-- Legacy commit statuses: context, state, description, timestamps, and target URL
+- Current legacy commit status per context: state, description, timestamps, and target URL
 
 Changes contain both `before` and `after` values for updates. Do not infer CI failures from a check name or conclusion alone; fetch the check's linked job logs before diagnosing.
 

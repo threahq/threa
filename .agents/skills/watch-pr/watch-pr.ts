@@ -60,6 +60,9 @@ export type Snapshot = {
   title: string
   body: string
   state: string
+  merged: boolean
+  mergedAt: string | null
+  closedAt: string | null
   draft: boolean
   mergeable: boolean | null
   mergeableState: string
@@ -149,19 +152,25 @@ async function inferRepository(): Promise<string> {
   return repository
 }
 
-async function inferPullNumber(repository: string): Promise<number> {
+export function pullNumbersForBranch(
+  pulls: Array<{ number: number; head: { ref: string } }>,
+  branch: string
+): number[] {
+  return pulls.filter((pull) => pull.head.ref === branch).map((pull) => pull.number)
+}
+
+async function inferPullNumber(repository: string, api: Api): Promise<number> {
   const branch = (await $`git branch --show-current`.quiet().text()).trim()
   if (!branch) throw new Error("Cannot infer PR from detached HEAD; pass a PR number or URL")
-  const owner = repository.split("/")[0]
-  const token = await resolveToken()
-  const response = (await githubFetch(
-    `/repos/${repository}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=2`,
-    token
-  )) as Array<{ number: number }>
-  if (response.length !== 1) {
-    throw new Error(`Expected one open PR for ${branch}, found ${response.length}; pass a PR number or URL`)
+  const pulls = (await allPages(api, `/repos/${repository}/pulls?state=open`)) as Array<{
+    number: number
+    head: { ref: string }
+  }>
+  const numbers = pullNumbersForBranch(pulls, branch)
+  if (numbers.length !== 1) {
+    throw new Error(`Expected one open PR for ${branch}, found ${numbers.length}; pass a PR number or URL`)
   }
-  return response[0].number
+  return numbers[0]
 }
 
 function pullNumberFromTarget(target: string | undefined): number | undefined {
@@ -185,6 +194,20 @@ async function resolveToken(): Promise<string> {
   throw new Error("GitHub authentication missing; set GH_TOKEN/GITHUB_TOKEN or run gh auth login")
 }
 
+class GitHubApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly retryable: boolean
+  ) {
+    super(message)
+  }
+}
+
+export function isTransientPollError(error: unknown): boolean {
+  return error instanceof TypeError || (error instanceof GitHubApiError && error.retryable)
+}
+
 async function githubFetch(path: string, token: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(`https://api.github.com${path}`, {
     ...init,
@@ -198,7 +221,12 @@ async function githubFetch(path: string, token: string, init?: RequestInit): Pro
   })
   if (!response.ok) {
     const body = await response.text()
-    throw new Error(`GitHub ${response.status} ${path}: ${body.slice(0, 500)}`)
+    const rateLimited = response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0"
+    throw new GitHubApiError(
+      `GitHub ${response.status} ${path}: ${body.slice(0, 500)}`,
+      response.status,
+      rateLimited || response.status === 408 || response.status === 429 || response.status >= 500
+    )
   }
   return response.json()
 }
@@ -211,6 +239,15 @@ async function allPages(api: Api, path: string): Promise<any[]> {
     results.push(...batch)
     if (batch.length < pageSize) return results
   }
+}
+
+export function currentStatuses<T extends { context: string; updatedAt: string }>(statuses: T[]): T[] {
+  const latest = new Map<string, T>()
+  for (const status of statuses) {
+    const previous = latest.get(status.context)
+    if (!previous || status.updatedAt > previous.updatedAt) latest.set(status.context, status)
+  }
+  return [...latest.values()].sort((a, b) => a.context.localeCompare(b.context))
 }
 
 async function allCheckRuns(api: Api, repository: string, sha: string): Promise<any[]> {
@@ -301,6 +338,9 @@ export async function captureSnapshot(api: Api, repository: string, number: numb
     title: pull.title,
     body: pull.body ?? "",
     state: pull.state,
+    merged: pull.merged,
+    mergedAt: pull.merged_at,
+    closedAt: pull.closed_at,
     draft: pull.draft,
     mergeable: pull.mergeable,
     mergeableState: pull.mergeable_state,
@@ -332,15 +372,17 @@ export async function captureSnapshot(api: Api, repository: string, number: numb
         url: check.details_url,
       }))
       .sort((a: Check, b: Check) => a.name.localeCompare(b.name) || a.id - b.id),
-    statuses: statuses.map((status: any) => ({
-      id: status.id,
-      context: status.context,
-      state: status.state,
-      description: status.description,
-      url: status.target_url,
-      createdAt: status.created_at,
-      updatedAt: status.updated_at,
-    })),
+    statuses: currentStatuses(
+      statuses.map((status: any) => ({
+        id: status.id,
+        context: status.context,
+        state: status.state,
+        description: status.description,
+        url: status.target_url,
+        createdAt: status.created_at,
+        updatedAt: status.updated_at,
+      }))
+    ),
   }
 }
 
@@ -369,6 +411,9 @@ export function diffSnapshots(before: Snapshot, after: Snapshot): Change[] {
     "title",
     "body",
     "state",
+    "merged",
+    "mergedAt",
+    "closedAt",
     "draft",
     "mergeable",
     "mergeableState",
@@ -387,7 +432,7 @@ export function diffSnapshots(before: Snapshot, after: Snapshot): Change[] {
     diffCollection("review", before.reviews, after.reviews, (item) => String(item.id)),
     diffCollection("review_thread", before.reviewThreads, after.reviewThreads, (item) => item.id),
     diffCollection("check", before.checks, after.checks, (item) => String(item.id)),
-    diffCollection("status", before.statuses, after.statuses, (item) => String(item.id))
+    diffCollection("status", before.statuses, after.statuses, (item) => item.context)
   )
 }
 
@@ -409,9 +454,9 @@ function emit(value: unknown): void {
 async function main() {
   const options = parseArgs(process.argv.slice(2))
   const repository = options.repo ?? repositoryFromTarget(options.target) ?? (await inferRepository())
-  const number = pullNumberFromTarget(options.target) ?? (await inferPullNumber(repository))
   const token = await resolveToken()
   const api: Api = (path, init) => githubFetch(path, token, init)
+  const number = pullNumberFromTarget(options.target) ?? (await inferPullNumber(repository, api))
   let snapshot = await captureSnapshot(api, repository, number)
   const saved = await readState(options.statePath)
 
@@ -435,7 +480,18 @@ async function main() {
   const startedAt = Date.now()
   while (options.timeout === 0 || Date.now() - startedAt < options.timeout * 1000) {
     await Bun.sleep(options.interval * 1000)
-    const next = await captureSnapshot(api, repository, number)
+    let next: Snapshot
+    try {
+      next = await captureSnapshot(api, repository, number)
+    } catch (error) {
+      if (!isTransientPollError(error)) throw error
+      emit({
+        type: "poll_error",
+        capturedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+      })
+      continue
+    }
     const changes = diffSnapshots(snapshot, next)
     if (changes.length) {
       await writeState(options.statePath, next)
