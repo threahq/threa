@@ -20,6 +20,17 @@ function makeStreamService(archivedStreams: unknown[]) {
     resolveDmDisplayNames: async (streams: Array<{ type?: string; displayName?: string | null }>) =>
       streams.map((s) => (s.type === "dm" ? { ...s, displayName: "Peer Name" } : s)),
     getMembershipsBatch: async () => [],
+    // Default: no standalone rows — the effective frontier mirrors membership.
+    getEffectiveReadState: async (
+      _userId: string,
+      memberships: Array<{ streamId: string; lastReadEventId: string | null; lastReadAt: Date | null }>
+    ) =>
+      new Map(
+        memberships.map((m) => [
+          m.streamId,
+          { streamId: m.streamId, lastReadEventId: m.lastReadEventId, lastReadAt: m.lastReadAt },
+        ])
+      ),
     getUnreadCounts: async () => new Map(),
     getReadOverlayForMember: async () => new Map(),
     getSequencesByEventIds: async () => new Map(),
@@ -100,6 +111,97 @@ describe("workspace bootstrap handler", () => {
     expect(getJson().data.archivedStreams).toEqual([archivedChannel, { ...archivedDm, displayName: "Peer Name" }])
     // Active streams list stays a separate contract (empty here).
     expect(getJson().data.streams).toEqual([])
+  })
+
+  it("derives unread, watermark sequences, and the streamReadState map from the effective frontier", async () => {
+    spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n } as never)
+    spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
+
+    const deps = makeDeps([])
+    const streamService = (deps as any).streamService
+    const memberships = [
+      {
+        streamId: "stream_a",
+        memberId: "usr_1",
+        notificationLevel: null,
+        lastReadEventId: "evt_m_a",
+        lastReadAt: new Date("2026-01-01T00:00:00.000Z"),
+        joinedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+      {
+        streamId: "stream_b",
+        memberId: "usr_1",
+        notificationLevel: null,
+        lastReadEventId: "evt_m_b",
+        lastReadAt: new Date("2026-01-02T00:00:00.000Z"),
+        joinedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+      {
+        streamId: "stream_c",
+        memberId: "usr_1",
+        notificationLevel: null,
+        lastReadEventId: "evt_m_c",
+        lastReadAt: new Date("2026-01-03T00:00:00.000Z"),
+        joinedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    ]
+    streamService.listWithPreviews = async () => memberships.map((m: any) => ({ id: m.streamId, type: "channel" }))
+    streamService.getMembershipsBatch = async () => memberships
+    // stream_a: present row with NULL watermark (explicit unread-to-zero) beats
+    // the non-null membership column. stream_b: read-state above a regressed
+    // membership. stream_c: no row — membership fallback.
+    streamService.getEffectiveReadState = async () =>
+      new Map([
+        ["stream_a", { streamId: "stream_a", lastReadEventId: null, lastReadAt: new Date("2026-02-01T00:00:00.000Z") }],
+        [
+          "stream_b",
+          { streamId: "stream_b", lastReadEventId: "evt_rs_b", lastReadAt: new Date("2026-02-02T00:00:00.000Z") },
+        ],
+        [
+          "stream_c",
+          { streamId: "stream_c", lastReadEventId: "evt_m_c", lastReadAt: new Date("2026-01-03T00:00:00.000Z") },
+        ],
+      ])
+    const unreadArgs: unknown[] = []
+    streamService.getUnreadCounts = async (arg: unknown) => {
+      unreadArgs.push(arg)
+      return new Map()
+    }
+    streamService.getSequencesByEventIds = async (ids: string[]) => new Map(ids.map((id) => [id, `seq_of_${id}`]))
+
+    const handlers = createWorkspaceHandlers(deps)
+    const { req, res, getJson } = makeReqRes()
+    await handlers.bootstrap(req, res)
+
+    // Unread counts source from the effective frontier, not raw membership.
+    expect(unreadArgs[0]).toEqual([
+      { streamId: "stream_a", memberId: "usr_1", lastReadEventId: null },
+      { streamId: "stream_b", memberId: "usr_1", lastReadEventId: "evt_rs_b" },
+      { streamId: "stream_c", memberId: "usr_1", lastReadEventId: "evt_m_c" },
+    ])
+
+    // Every member stream gets an entry; a present NULL is an authoritative
+    // explicit frontier (not "no data").
+    expect(getJson().data.streamReadState).toEqual({
+      stream_a: { lastReadEventId: null, lastReadSequence: null, lastReadAt: "2026-02-01T00:00:00.000Z" },
+      stream_b: {
+        lastReadEventId: "evt_rs_b",
+        lastReadSequence: "seq_of_evt_rs_b",
+        lastReadAt: "2026-02-02T00:00:00.000Z",
+      },
+      stream_c: {
+        lastReadEventId: "evt_m_c",
+        lastReadSequence: "seq_of_evt_m_c",
+        lastReadAt: "2026-01-03T00:00:00.000Z",
+      },
+    })
+
+    // The compat membership mirror keeps its own (possibly regressed) watermark
+    // and sequence, unchanged.
+    const serialized = getJson().data.streamMemberships
+    expect(serialized.find((m: any) => m.streamId === "stream_b").lastReadSequence).toBe("seq_of_evt_m_b")
+    expect(serialized.find((m: any) => m.streamId === "stream_b").lastReadEventId).toBe("evt_m_b")
   })
 
   it("emits the viewer's feature-flag layers, not a resolved map", async () => {

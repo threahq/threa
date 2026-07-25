@@ -1045,9 +1045,10 @@ export function createStreamHandlers({
         })
       )
 
-      const unreadCount = membership
-        ? await streamService.getUnreadCount(streamId, userId, membership.lastReadEventId)
-        : 0
+      // Effective frontier (read cutover): a stream_read_state row wins when
+      // present (a NULL watermark included); the membership column fills an
+      // absent row. Non-members still read as 0 — chunk 3 unlocks their counts.
+      const unreadCount = membership ? await streamService.getEffectiveUnreadCount(streamId, userId, membership) : 0
 
       let events = await eventService.listEvents(streamId, {
         limit: afterSequence !== undefined ? EVENTS_DEFAULT_LIMIT + 1 : EVENTS_DEFAULT_LIMIT,

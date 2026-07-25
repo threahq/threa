@@ -18,6 +18,7 @@ import {
   StreamEventRepository,
   resolveNotificationLevelsForStream,
 } from "../streams"
+import * as streamsBarrel from "../streams"
 import { PersonaRepository } from "../agents"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
@@ -82,7 +83,7 @@ function setupService() {
   // Born-read lookups default to "no resolvable message event / nobody caught
   // up", so recipients insert unread as before; born-read tests override these.
   spyOn(StreamEventRepository, "findByMessageId").mockResolvedValue(null)
-  spyOn(StreamMemberRepository, "membersReadThrough").mockResolvedValue(new Set())
+  spyOn(streamsBarrel, "usersReadThroughEffective").mockResolvedValue(new Set())
 
   return new ActivityService({ pool: {} as any })
 }
@@ -400,7 +401,9 @@ describe("ActivityService born-read for already-read recipients", () => {
 
     // The message resolves to sequence 50; TARGET has read through it, BEHIND hasn't.
     ;(StreamEventRepository.findByMessageId as any).mockResolvedValue({ id: "evt_msg", sequence: 50n })
-    ;(StreamMemberRepository.membersReadThrough as any).mockResolvedValue(new Set([TARGET_USER_ID]))
+    // Born-read reads the EFFECTIVE frontier (read cutover): read-state row
+    // first, membership fallback for absent rows — same candidate universe.
+    ;(streamsBarrel.usersReadThroughEffective as any).mockResolvedValue(new Set([TARGET_USER_ID]))
 
     let captured: { userIds?: string[]; readUserIds?: ReadonlySet<string> } = {}
     spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) => {
@@ -420,7 +423,7 @@ describe("ActivityService born-read for already-read recipients", () => {
 
     expect(captured.userIds).toEqual([TARGET_USER_ID, BEHIND_USER_ID])
     expect(captured.readUserIds && [...captured.readUserIds]).toEqual([TARGET_USER_ID])
-    expect(StreamMemberRepository.membersReadThrough).toHaveBeenCalledWith(
+    expect(streamsBarrel.usersReadThroughEffective).toHaveBeenCalledWith(
       {},
       STREAM_ID,
       [TARGET_USER_ID, BEHIND_USER_ID],

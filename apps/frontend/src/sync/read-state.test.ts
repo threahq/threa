@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, vi } from "vitest"
 import { QueryClient } from "@tanstack/react-query"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -65,7 +65,12 @@ async function seedMembership() {
 
 describe("applyReadStateSnapshotsIdb", () => {
   beforeEach(async () => {
-    await Promise.all([db.unreadState.clear(), db.streamMemberships.clear(), db.streams.clear()])
+    await Promise.all([
+      db.unreadState.clear(),
+      db.streamMemberships.clear(),
+      db.streams.clear(),
+      db.streamReadState.clear(),
+    ])
   })
 
   it("drops held activity for exactly the marked messages (message-granular badge coupling)", async () => {
@@ -104,6 +109,12 @@ describe("applyReadStateSnapshotsIdb", () => {
     const membership = await db.streamMemberships.get("ws_1:stream_1")
     expect(membership?.lastReadEventId).toBe("evt_4")
     expect(membership?.lastReadSequence).toBe("40")
+
+    // Standalone frontier dual-write (read cutover) — including the optimistic
+    // path with no membership row: upserting read state is always safe.
+    const readState = await db.streamReadState.get("ws_1:stream_1")
+    expect(readState?.lastReadEventId).toBe("evt_4")
+    expect(readState?.lastReadSequence).toBe("40")
   })
 
   it("is idempotent — a duplicate snapshot converges to the same state", async () => {
@@ -127,7 +138,12 @@ describe("applyReadStateSnapshotsIdb", () => {
 
 describe("commitReadStateSnapshot", () => {
   beforeEach(async () => {
-    await Promise.all([db.unreadState.clear(), db.streamMemberships.clear(), db.streams.clear()])
+    await Promise.all([
+      db.unreadState.clear(),
+      db.streamMemberships.clear(),
+      db.streams.clear(),
+      db.streamReadState.clear(),
+    ])
   })
 
   it("mirrors the watermark into the workspace bootstrap cache and folds the counter", async () => {
@@ -157,5 +173,18 @@ describe("commitReadStateSnapshot", () => {
     expect(cached?.readMessageIds.stream_1).toEqual(["msg_5", "msg_7"])
     expect(cached?.streamMemberships[0].lastReadEventId).toBe("evt_4")
     expect(cached?.streamMemberships[0].lastReadSequence).toBe("40")
+    // The standalone frontier map mirrors the snapshot too (row presence is
+    // what frontier readers prefer).
+    const cachedWithReadState = cached as unknown as {
+      streamReadState?: Record<string, { lastReadEventId: string | null; lastReadSequence: string | null }>
+    }
+    expect(cachedWithReadState.streamReadState?.stream_1?.lastReadEventId).toBe("evt_4")
+    expect(cachedWithReadState.streamReadState?.stream_1?.lastReadSequence).toBe("40")
+
+    await vi.waitFor(async () => {
+      const readState = await db.streamReadState.get("ws_1:stream_1")
+      expect(readState?.lastReadEventId).toBe("evt_4")
+      expect(readState?.lastReadSequence).toBe("40")
+    })
   })
 })

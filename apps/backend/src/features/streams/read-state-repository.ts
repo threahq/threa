@@ -49,11 +49,13 @@ export const ReadStateRepository = {
    * watermark only when the new event's sequence is strictly greater than the
    * current watermark's sequence (both resolved via `stream_events`). A NULL or
    * unresolvable current watermark counts as sequence 0 (before the first
-   * message), so any real event advances past it. Single statement — race-safe
-   * under concurrent readers (INV-20).
+   * message), so any real event advances past it. Race-safe under concurrent
+   * readers (INV-20). Returns the post-write row so same-tx callers can source
+   * `stream:read` payloads from the standalone frontier (which may sit above
+   * the membership watermark after a rejected stale advance).
    */
-  async advance(db: Querier, streamId: string, userId: string, eventId: string): Promise<void> {
-    await db.query(
+  async advance(db: Querier, streamId: string, userId: string, eventId: string): Promise<StreamReadState | null> {
+    const result = await db.query<StreamReadStateRow>(
       `
       INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
       SELECT s.workspace_id, $1, $2, $3, NOW(), NOW()
@@ -70,9 +72,13 @@ export const ReadStateRepository = {
           (SELECT cur_ev.sequence FROM stream_events cur_ev WHERE cur_ev.id = stream_read_state.last_read_event_id),
           0
         )
+      RETURNING ${SELECT_FIELDS}
       `,
       [streamId, userId, eventId]
     )
+    // The monotonic guard rejected a stale advance — RETURNING is empty, so
+    // read back the row as it stands (same tx).
+    return result.rows[0] ? mapRowToReadState(result.rows[0]) : ReadStateRepository.get(db, streamId, userId)
   },
 
   /**

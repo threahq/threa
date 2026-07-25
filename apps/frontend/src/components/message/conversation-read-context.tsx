@@ -1,7 +1,11 @@
 import { createContext, useCallback, useContext, useMemo, useRef } from "react"
 import { toast } from "sonner"
 import { useConversationService } from "@/contexts"
-import { useWorkspaceStreamMemberships, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import {
+  useWorkspaceStreamMemberships,
+  useWorkspaceStreamReadStates,
+  useWorkspaceUnreadState,
+} from "@/stores/workspace-store"
 import { applyReadStateSnapshots } from "@/hooks/use-unread-counts"
 import type { RowReadState } from "@/components/timeline/read-frontier-context"
 import type { RenderableMessage } from "@/components/message/message-item"
@@ -121,14 +125,22 @@ export function useConversationReadController(
   const overlay = unreadState?.readMessageIds
   const unreadCounts = unreadState?.unreadCounts
   const memberships = useWorkspaceStreamMemberships(workspaceId)
+  const readStates = useWorkspaceStreamReadStates(workspaceId)
 
+  // Effective frontier (read cutover): membership rows seed the map, then
+  // standalone read-state rows OVERRIDE them — row presence is authoritative,
+  // so a present null watermark (explicit unread-to-zero) beats a stale
+  // non-null membership sequence. Streams with no row keep the mirror.
   const frontierByStream = useMemo(() => {
     const map = new Map<string, ReadFrontierRow>()
     for (const m of memberships) {
       map.set(m.streamId, { lastReadSequence: m.lastReadSequence, lastReadAt: m.lastReadAt })
     }
+    for (const rs of readStates) {
+      map.set(rs.streamId, { lastReadSequence: rs.lastReadSequence, lastReadAt: rs.lastReadAt })
+    }
     return map
-  }, [memberships])
+  }, [memberships, readStates])
 
   const state = useCallback<ConversationRowRead["state"]>(
     (streamId, messageId, sequence, createdAt) =>

@@ -1,4 +1,10 @@
-import { db, type CachedStream, type CachedStreamMembership, type CachedUnreadState } from "@/db"
+import {
+  db,
+  type CachedStream,
+  type CachedStreamMembership,
+  type CachedStreamReadState,
+  type CachedUnreadState,
+} from "@/db"
 import { seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
 import {
   seedAgentActivity,
@@ -22,6 +28,7 @@ import type {
   WorkspaceBootstrap,
   FeatureFlagLayers,
   StreamMember,
+  StreamReadFrontier,
   UserPreferences,
   SidebarConfig,
   WorkspaceSettings,
@@ -90,7 +97,7 @@ import {
 } from "./unread-counters"
 import { isAutoReadAttentiveNow } from "@/lib/auto-read-attention"
 import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
-import { commitReadStateSnapshot } from "./read-state"
+import { commitReadStateSnapshot, mergeReadStateIntoBootstrapCache, putReadStateIdb } from "./read-state"
 
 /** Workspace user shape from backend user repository. */
 interface WorkspaceUserPayload {
@@ -333,6 +340,47 @@ function toWorkspaceBootstrapMembership(membership: CachedStreamMembership): Str
   }
 }
 
+function toStreamReadFrontier(row: CachedStreamReadState): StreamReadFrontier {
+  return {
+    lastReadEventId: row.lastReadEventId,
+    lastReadSequence: row.lastReadSequence,
+    lastReadAt: row.lastReadAt,
+  }
+}
+
+/** The bootstrap's additive `streamReadState` map → IDB/seed rows (read cutover). */
+function toCachedReadStates(
+  workspaceId: string,
+  streamReadState: WorkspaceBootstrap["streamReadState"],
+  now: number
+): CachedStreamReadState[] {
+  if (!streamReadState) return []
+  return Object.entries(streamReadState).map(([streamId, frontier]) => ({
+    id: `${workspaceId}:${streamId}`,
+    workspaceId,
+    streamId,
+    lastReadEventId: frontier.lastReadEventId,
+    lastReadSequence: frontier.lastReadSequence,
+    lastReadAt: frontier.lastReadAt,
+    _cachedAt: now,
+  }))
+}
+
+/**
+ * The in-memory seed mirror of IDB after a bootstrap apply: every local row
+ * (nonmember thread lazy state included — the member-only bootstrap map never
+ * enumerates it) with the applied server rows winning per stream. Keeps the
+ * first synchronous render from dropping frontiers IDB still holds.
+ */
+function mergeLocalAndServerReadStates(
+  localReadStates: CachedStreamReadState[],
+  serverRows: CachedStreamReadState[]
+): CachedStreamReadState[] {
+  const byStreamId = new Map(localReadStates.map((row) => [row.streamId, row]))
+  for (const row of serverRows) byStreamId.set(row.streamId, row)
+  return Array.from(byStreamId.values())
+}
+
 function mergeSidebarStream(
   current: WorkspaceBootstrap["streams"][number] | undefined,
   nextStream: Stream
@@ -371,6 +419,7 @@ interface ReconnectWorkspaceMergeParams {
   terminalStreamIds: Set<string>
   localStreams: CachedStream[]
   localMemberships: CachedStreamMembership[]
+  localReadStates: CachedStreamReadState[]
   localUnreadState?: CachedUnreadState
   fetchStartedAt?: number
 }
@@ -382,6 +431,7 @@ export function mergeReconnectWorkspaceBootstrap({
   terminalStreamIds,
   localStreams,
   localMemberships,
+  localReadStates,
   localUnreadState,
   fetchStartedAt,
 }: ReconnectWorkspaceMergeParams): WorkspaceBootstrap {
@@ -390,6 +440,20 @@ export function mergeReconnectWorkspaceBootstrap({
   const membershipsByStreamId = new Map(
     workspaceBootstrap.streamMemberships.map((membership) => [membership.streamId, membership])
   )
+  // Standalone read frontier (read cutover): merged with the same freshness
+  // rules as the membership mirror it shadows — server snapshot as the base,
+  // local rows winning where they were touched during the fetch window or the
+  // stream went stale, deleted for terminal streams. An OMITTED map (old
+  // server / payload cached before the field shipped) is not authoritative:
+  // the omission is propagated so the downstream stale-sweep never reads a
+  // fabricated empty map as "the server says no frontiers" and deletes every
+  // standalone IDB row. A present map — explicit `{}` included — IS
+  // authoritative and merges normally.
+  const readStateOmitted = workspaceBootstrap.streamReadState === undefined
+  const readStateByStreamId = new Map<string, StreamReadFrontier>(
+    Object.entries(workspaceBootstrap.streamReadState ?? {})
+  )
+  const localReadStateByStreamId = new Map(localReadStates.map((row) => [row.streamId, row]))
   const unreadCounts = { ...workspaceBootstrap.unreadCounts }
   // The latest message ordinals (sync phase 2c). A stream's ordinal must
   // stay paired with whichever unreadCounts source wins for it — the implied
@@ -454,6 +518,12 @@ export function mergeReconnectWorkspaceBootstrap({
       membershipsByStreamId.set(membership.streamId, toWorkspaceBootstrapMembership(membership))
     }
 
+    for (const row of localReadStates) {
+      if (row._cachedAt < fetchStartedAt) continue
+      if (successfulStreamIds.has(row.streamId)) continue
+      readStateByStreamId.set(row.streamId, toStreamReadFrontier(row))
+    }
+
     // Per-stream: local counter state wins only for streams actually touched
     // during the fetch window (see `counterTouchedAt`). The previous row-level
     // `_cachedAt` check let any one stream's write keep EVERY stream's local
@@ -483,6 +553,11 @@ export function mergeReconnectWorkspaceBootstrap({
     const localMembership = localMembershipByStreamId.get(streamId)
     if (localMembership) {
       membershipsByStreamId.set(streamId, toWorkspaceBootstrapMembership(localMembership))
+    }
+
+    const localReadState = localReadStateByStreamId.get(streamId)
+    if (localReadState) {
+      readStateByStreamId.set(streamId, toStreamReadFrontier(localReadState))
     }
 
     if (localUnreadState) {
@@ -515,6 +590,7 @@ export function mergeReconnectWorkspaceBootstrap({
   for (const streamId of terminalStreamIds) {
     streamsById.delete(streamId)
     membershipsByStreamId.delete(streamId)
+    readStateByStreamId.delete(streamId)
     delete unreadCounts[streamId]
     delete messageCounts[streamId]
     delete readMessageIds[streamId]
@@ -525,6 +601,7 @@ export function mergeReconnectWorkspaceBootstrap({
     ...workspaceBootstrap,
     streams: Array.from(streamsById.values()),
     streamMemberships: Array.from(membershipsByStreamId.values()),
+    streamReadState: readStateOmitted ? undefined : Object.fromEntries(readStateByStreamId),
     unreadCounts,
     // Activities are user-scoped: the reconnect bootstrap carries the viewer's
     // full unread set, so it is authoritative (no per-stream merge). The count
@@ -952,9 +1029,35 @@ export function registerWorkspaceSocketHandlers(
       }
     )
 
-    // Keep both stream and membership mirrors in sync so unread-divider state
-    // updates immediately without waiting for a re-bootstrap/remount.
-    db.transaction("rw", [db.streams, db.streamMemberships], async () => {
+    // Standalone frontier (read cutover): the payload carries the server's
+    // post-write read-state frontier, which can sit above the membership
+    // mirror (monotonic store). Advance semantics — like the ordinal
+    // max-merge above, a replayed/stale event never moves it backward.
+    // Legacy payloads may omit lastReadSequence: event ids are NOT
+    // order-comparable, so a sequence-less event can never be safely merged
+    // over an EXISTING standalone frontier — skip the standalone mutation and
+    // rely on the next bootstrap to reconcile. Seeding a compatibility row
+    // where no frontier exists is allowed (row presence beats the membership
+    // fallback). The legacy mirror + counter behavior above is unchanged.
+    const existingFrontier = current?.streamReadState?.[payload.streamId]
+    const sequenceLess = payload.lastReadSequence === undefined
+    const advanceFrontier = {
+      lastReadEventId: payload.lastReadEventId,
+      lastReadSequence: payload.lastReadSequence ?? null,
+      lastReadAt: new Date().toISOString(),
+    }
+    if (!sequenceLess || existingFrontier === undefined) {
+      const advanceSeq = advanceFrontier.lastReadSequence != null ? BigInt(advanceFrontier.lastReadSequence) : null
+      const existingSeq = existingFrontier?.lastReadSequence != null ? BigInt(existingFrontier.lastReadSequence) : null
+      if (existingSeq == null || advanceSeq == null || advanceSeq >= existingSeq) {
+        mergeReadStateIntoBootstrapCache(queryClient, workspaceId, payload.streamId, advanceFrontier)
+      }
+    }
+
+    // Keep the stream, membership, and standalone read-state mirrors in sync
+    // so unread-divider state updates immediately without waiting for a
+    // re-bootstrap/remount.
+    db.transaction("rw", [db.streams, db.streamMemberships, db.streamReadState], async () => {
       const now = Date.now()
       await db.streams.update(payload.streamId, { lastReadEventId: payload.lastReadEventId, _cachedAt: now })
 
@@ -969,6 +1072,17 @@ export function registerWorkspaceSocketHandlers(
           workspaceId,
           _cachedAt: now,
         })
+      }
+
+      const existingRow = await db.streamReadState.get(membershipId)
+      // Same legacy guard as the cache merge above: a sequence-less event
+      // never overwrites an EXISTING standalone row — it may only seed one.
+      if (!sequenceLess || existingRow === undefined) {
+        const rowSeq = advanceFrontier.lastReadSequence != null ? BigInt(advanceFrontier.lastReadSequence) : null
+        const storedSeq = existingRow?.lastReadSequence != null ? BigInt(existingRow.lastReadSequence) : null
+        if (storedSeq == null || rowSeq == null || rowSeq >= storedSeq) {
+          await putReadStateIdb(workspaceId, payload.streamId, advanceFrontier, now)
+        }
       }
     })
 
@@ -1022,7 +1136,18 @@ export function registerWorkspaceSocketHandlers(
       }
     )
 
-    db.transaction("rw", [db.streams, db.streamMemberships], async () => {
+    // Standalone frontier (read cutover): explicit unread is one of the few
+    // authorized downward moves — SET, not max-merge (a null watermark parks
+    // before the first message and must beat any stale stored value).
+    const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
+    const existingFrontier = current?.streamReadState?.[payload.streamId]
+    mergeReadStateIntoBootstrapCache(queryClient, workspaceId, payload.streamId, {
+      lastReadEventId: payload.lastReadEventId,
+      lastReadSequence: payload.lastReadSequence ?? existingFrontier?.lastReadSequence ?? null,
+      lastReadAt: new Date().toISOString(),
+    })
+
+    db.transaction("rw", [db.streams, db.streamMemberships, db.streamReadState], async () => {
       const now = Date.now()
       await db.streams.update(payload.streamId, { lastReadEventId: payload.lastReadEventId, _cachedAt: now })
 
@@ -1038,6 +1163,18 @@ export function registerWorkspaceSocketHandlers(
           _cachedAt: now,
         })
       }
+
+      const existingRow = await db.streamReadState.get(membershipId)
+      await putReadStateIdb(
+        workspaceId,
+        payload.streamId,
+        {
+          lastReadEventId: payload.lastReadEventId,
+          lastReadSequence: payload.lastReadSequence ?? existingRow?.lastReadSequence ?? null,
+          lastReadAt: new Date().toISOString(),
+        },
+        now
+      )
     })
   }
 
@@ -1073,6 +1210,19 @@ export function registerWorkspaceSocketHandlers(
     if (payload.workspaceId !== workspaceId) return
 
     commitCounter((state) => applyStreamsReadAllOrdinals(state, payload.reads))
+
+    // Standalone frontier (read cutover): read_all carries ordinals, no event
+    // ids, so the frontier VALUES can't move here — but stamp the rows so an
+    // in-flight bootstrap's per-stream merge keeps this stream's local row
+    // instead of restoring a pre-read_all snapshot (same touched-at rule the
+    // counter triple gets via commitCounter). Without the stamp the snapshot
+    // regresses the frontier until the next bootstrap re-fetches it.
+    void db.transaction("rw", [db.streamReadState], async () => {
+      const now = Date.now()
+      const rowIds = payload.streamIds.map((streamId) => `${workspaceId}:${streamId}`)
+      const rows = (await db.streamReadState.bulkGet(rowIds)).filter((row) => row !== undefined)
+      if (rows.length > 0) await db.streamReadState.bulkPut(rows.map((row) => ({ ...row, _cachedAt: now })))
+    })
 
     invalidateActivityFeed(true)
 
@@ -1476,6 +1626,7 @@ export function registerWorkspaceSocketHandlers(
       if (!currentMember || payload.memberId !== currentMember.id) return old
 
       db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`)
+      db.streamReadState.delete(`${workspaceId}:${payload.streamId}`)
 
       const removedStream = old.streams?.find((s) => s.id === payload.streamId)
       const shouldRemoveFromSidebar = removedStream?.visibility === "private"
@@ -2319,6 +2470,14 @@ export async function applyWorkspaceBootstrap(
   // cache carries the same values as IDB.
   let effectiveUnread = mergeBootstrapUnreadFields(bootstrap, undefined, fetchStartedAt)
 
+  // The standalone read-frontier map the caller writes to the query cache and
+  // the in-memory seed rows — assigned inside the transaction so a frontier
+  // touched during the fetch window is preserved in ALL three surfaces (IDB,
+  // cache, seed) instead of regressing to the snapshot. `undefined` until the
+  // bootstrap carries a map; an omitted map leaves every surface untouched.
+  let effectiveReadStateMap = bootstrap.streamReadState
+  let seedReadStates: CachedStreamReadState[] | undefined
+
   // One transaction over every table so they commit together and each table's
   // `useLiveQuery` fires once — one settle, not a per-table trickle. Parallel
   // independent writes (the previous shape) commit a micro-transaction each, so
@@ -2334,6 +2493,7 @@ export async function applyWorkspaceBootstrap(
       db.workspaceUsers,
       db.streams,
       db.streamMemberships,
+      db.streamReadState,
       db.dmPeers,
       db.personas,
       db.bots,
@@ -2409,6 +2569,45 @@ export async function applyWorkspaceBootstrap(
       effectiveUnread = mergeBootstrapUnreadFields(bootstrap, existingUnread, fetchStartedAt)
       await db.unreadState.put({ id: workspaceId, workspaceId, ...effectiveUnread, _cachedAt: now })
 
+      // Standalone read frontier (read cutover), same per-stream freshness rule
+      // as the counter triple above: the server snapshot wins except for
+      // streams whose local row was touched during the fetch window (a live
+      // read/read_set/read_messages/read_all or an optimistic mutation stamped
+      // its `_cachedAt`). Restoring the snapshot there could regress a frontier
+      // the snapshot predates — INCLUDING an explicit unread, a sanctioned
+      // downward move no max(sequence) rule can represent, so freshness (not
+      // sequence) decides. The map enumerates member streams only; rows it
+      // omits (nonmember thread lazy state) are never touched here — upsert,
+      // no sweep. Absent map (pre-cutover payload) → no write at all; frontier
+      // readers fall back to the membership mirror.
+      if (bootstrap.streamReadState !== undefined) {
+        const existingRows = await db.streamReadState.where("workspaceId").equals(workspaceId).toArray()
+        const existingByStreamId = new Map(existingRows.map((row) => [row.streamId, row]))
+        const serverRows: CachedStreamReadState[] = []
+        effectiveReadStateMap = { ...bootstrap.streamReadState }
+        for (const [streamId, frontier] of Object.entries(bootstrap.streamReadState)) {
+          const local = existingByStreamId.get(streamId)
+          if (fetchStartedAt !== undefined && local && local._cachedAt >= fetchStartedAt) {
+            // Touched during the fetch window: preserve the local cache+IDB row
+            // exactly, and carry its frontier into the returned map so the
+            // query cache the caller writes doesn't regress either.
+            effectiveReadStateMap[streamId] = toStreamReadFrontier(local)
+            continue
+          }
+          serverRows.push({
+            id: `${workspaceId}:${streamId}`,
+            workspaceId,
+            streamId,
+            lastReadEventId: frontier.lastReadEventId,
+            lastReadSequence: frontier.lastReadSequence,
+            lastReadAt: frontier.lastReadAt,
+            _cachedAt: now,
+          })
+        }
+        if (serverRows.length > 0) await db.streamReadState.bulkPut(serverRows)
+        seedReadStates = mergeLocalAndServerReadStates(existingRows, serverRows)
+      }
+
       const existingPrefs = await db.userPreferences.get(workspaceId)
       if (!existingPrefs || !fetchStartedAt || existingPrefs._cachedAt < fetchStartedAt) {
         await db.userPreferences.put({
@@ -2469,6 +2668,11 @@ export async function applyWorkspaceBootstrap(
       workspaceId,
       _cachedAt: now,
     })),
+    // An omitted map leaves the in-memory rows in place (nothing was written);
+    // a present map seeds IDB's effective contents — server rows plus every
+    // local row the member-only map omits (nonmember thread lazy state) and
+    // every frontier preserved as touched during the fetch window.
+    readStates: seedReadStates,
     dmPeers: bootstrap.dmPeers.map((dp) => ({
       ...dp,
       id: `${workspaceId}:${dp.streamId}`,
@@ -2516,9 +2720,11 @@ export async function applyWorkspaceBootstrap(
   seedActiveCalls(workspaceId, bootstrap.activeCalls ?? [])
 
   // The caller writes the returned bootstrap to the query cache — reflect the
-  // merged counter fields so cache and IDB never disagree on unread state.
+  // merged counter fields and the preserved frontiers so cache and IDB never
+  // disagree on unread state.
   return {
     ...bootstrap,
+    streamReadState: effectiveReadStateMap,
     unreadCounts: effectiveUnread.unreadCounts,
     unreadActivities: effectiveUnread.unreadActivities,
     activityCounts: effectiveUnread.activityCounts,
@@ -2543,9 +2749,10 @@ export async function applyReconnectBootstrapBatch(
 }> {
   const now = Date.now()
 
-  const [localStreams, localMemberships, localUnreadState] = await Promise.all([
+  const [localStreams, localMemberships, localReadStates, localUnreadState] = await Promise.all([
     db.streams.where("workspaceId").equals(workspaceId).toArray(),
     db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+    db.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
     db.unreadState.get(workspaceId),
   ])
 
@@ -2556,6 +2763,7 @@ export async function applyReconnectBootstrapBatch(
     terminalStreamIds,
     localStreams,
     localMemberships,
+    localReadStates,
     localUnreadState: localUnreadState ?? undefined,
     fetchStartedAt,
   })
@@ -2574,6 +2782,7 @@ export async function applyReconnectBootstrapBatch(
       db.workspaceUsers,
       db.streams,
       db.streamMemberships,
+      db.streamReadState,
       db.dmPeers,
       db.personas,
       db.bots,
@@ -2620,6 +2829,7 @@ export async function applyReconnectBootstrapBatch(
             _cachedAt: now,
           }))
         ),
+        db.streamReadState.bulkPut(toCachedReadStates(workspaceId, finalBootstrap.streamReadState, now)),
         db.dmPeers.bulkPut(
           finalBootstrap.dmPeers.map((dmPeer) => ({
             ...dmPeer,
@@ -2684,9 +2894,11 @@ export async function applyReconnectBootstrapBatch(
 
       if (terminalStreamIds.size > 0) {
         const terminalIds = Array.from(terminalStreamIds)
+        const terminalRowIds = terminalIds.map((streamId) => `${workspaceId}:${streamId}`)
         await Promise.all([
           db.streams.bulkDelete(terminalIds),
-          db.streamMemberships.bulkDelete(terminalIds.map((streamId) => `${workspaceId}:${streamId}`)),
+          db.streamMemberships.bulkDelete(terminalRowIds),
+          db.streamReadState.bulkDelete(terminalRowIds),
           deleteSlotsForStreams(db, terminalIds),
         ])
       }
@@ -2724,6 +2936,17 @@ export async function applyReconnectBootstrapBatch(
       workspaceId,
       _cachedAt: now,
     })),
+    // A present map seeds IDB's effective contents: the merged map's rows win
+    // per stream, but local rows the member-only map omits (nonmember thread
+    // lazy state) stay seeded — the apply upserts, it never sweeps. Terminal
+    // streams' rows are bulkDeleted in this same transaction, so they must not
+    // be re-seeded from the pre-transaction snapshot.
+    readStates: finalBootstrap.streamReadState
+      ? mergeLocalAndServerReadStates(
+          localReadStates.filter((row) => !terminalStreamIds.has(row.streamId)),
+          toCachedReadStates(workspaceId, finalBootstrap.streamReadState, now)
+        )
+      : undefined,
     dmPeers: finalBootstrap.dmPeers.map((dmPeer) => ({
       ...dmPeer,
       id: `${workspaceId}:${dmPeer.streamId}`,
@@ -2815,6 +3038,13 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
     deleteSlotsForStreams(db, staleStreamIds),
     deleteStale(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now),
     deleteStale(db.streamMemberships, "workspaceId", workspaceId, bootstrapMembershipIds, now),
+    // NO streamReadState sweep: the bootstrap map enumerates MEMBER streams
+    // only, so a row omitted from it is usually a nonmember thread's lazy
+    // frontier — not stale data. Neither an omitted map (old server / cached
+    // pre-cutover payload) nor a present one (explicit `{}` included) is a
+    // deletion authority over rows it never enumerated. Standalone rows are
+    // deleted only by explicit lifecycle cleanup: terminal-stream deletes in
+    // applyReconnectBootstrapBatch, stream removal, and account DB teardown.
     deleteStale(db.dmPeers, "workspaceId", workspaceId, bootstrapDmPeerIds, now),
     deleteStale(db.personas, "workspaceId", workspaceId, bootstrapPersonaIds, now),
     deleteStale(db.bots, "workspaceId", workspaceId, bootstrapBotIds, now),
