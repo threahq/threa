@@ -163,7 +163,7 @@ describe("FloatingCallSquare — connected", () => {
     expect(square).toHaveAttribute("data-minimized", "false")
     expect(screen.getAllByTestId("call-tile")).toHaveLength(2)
     expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
-    expect(screen.getByLabelText("Call surface")).toBeInTheDocument()
+    expect(screen.getByLabelText(/Change call view/)).toBeInTheDocument()
 
     const header = screen.getByTestId("floating-call-square-header")
     expect(header.firstElementChild).toBe(screen.getByTestId("expanded-call-drag-grip"))
@@ -175,7 +175,7 @@ describe("FloatingCallSquare — connected", () => {
     renderSquare(makeManager(), onDockToSide)
     enterConnected(TWO_PEERS)
     await act(async () => {
-      await userEvent.click(screen.getByLabelText("Call surface"))
+      await userEvent.click(screen.getByLabelText(/Change call view/))
       await userEvent.click(screen.getByRole("menuitemradio", { name: "Sidebar" }))
     })
     expect(onDockToSide).toHaveBeenCalled()
@@ -224,7 +224,7 @@ describe("FloatingCallSquare — minimize / restore", () => {
     expect(compactChildren).toEqual([
       screen.getByTestId("minimized-call-drag-handle"),
       screen.getByTestId("minimized-call-content"),
-      screen.getByLabelText("Call surface"),
+      screen.getByLabelText(/Change call view/),
       screen.getByLabelText("Restore call"),
     ])
     expect(screen.queryByLabelText("Dock to the side")).toBeNull()
@@ -255,7 +255,7 @@ describe("FloatingCallSquare — minimize / restore", () => {
     expect(Array.from(compact.children)).toEqual([
       screen.getByTestId("minimized-call-drag-handle"),
       screen.getByTestId("minimized-call-content"),
-      screen.getByLabelText("Call surface"),
+      screen.getByLabelText(/Change call view/),
       screen.getByLabelText("Restore call"),
     ])
     expect(screen.getByTestId("minimized-call-controls").children).toHaveLength(3)
@@ -351,6 +351,26 @@ describe("FloatingCallSquare — joining", () => {
 })
 
 describe("FloatingCallSquare — drag", () => {
+  it("surface menu options never start dragging the square", async () => {
+    renderSquare()
+    enterConnected(TWO_PEERS)
+    const square = screen.getByTestId("floating-call-square")
+    const header = screen.getByTestId("floating-call-square-header")
+    header.setPointerCapture = vi.fn()
+
+    await userEvent.click(screen.getByLabelText(/Change call view/))
+    fireEvent.pointerDown(screen.getByRole("menuitemradio", { name: "Sidebar" }), {
+      clientX: 700,
+      clientY: 100,
+      pointerId: 1,
+      isPrimary: true,
+    })
+    fireEvent.pointerMove(header, { clientX: 300, clientY: 200, pointerId: 1 })
+
+    expect(square.style.left).toBe("676px")
+    expect(square.style.top).toBe("440px")
+  })
+
   it("dragging the header moves the square and settles without wedging", () => {
     renderSquare()
     enterConnected(TWO_PEERS)

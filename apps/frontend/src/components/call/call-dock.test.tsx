@@ -468,7 +468,7 @@ describe("CallDock — desktop surface routing", () => {
     expect(screen.queryByTestId("floating-call-square")).toBeNull()
   })
 
-  it("routes fullscreen joining and connected states as a peer surface and remembers it", () => {
+  it("routes fullscreen joining and connected states as a peer surface and remembers it", async () => {
     setDesktopCallSurface("fullscreen")
     renderDock(makeManager())
     act(() => setCallSession({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
@@ -482,6 +482,12 @@ describe("CallDock — desktop surface routing", () => {
     expect(screen.getByTestId("desktop-call-fullscreen")).toHaveAttribute("data-phase", "connected")
     expect(screen.getByTestId("call-layout-slot")).toBeInTheDocument()
     expect(screen.getByLabelText("Leave call")).toBeInTheDocument()
+
+    const placementPicker = screen.getByLabelText("Change thumbnail placement. Current: Below video")
+    expect(placementPicker).not.toHaveTextContent("Bottom")
+    await userEvent.click(placementPicker)
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Thumbnails beside video" }))
+    expect(getCallPrefs().filmstripSide).toBe("side")
   })
 
   it("floating pref surfaces the pre-join permission gate inside the square during an active launch", async () => {
@@ -504,13 +510,13 @@ describe("CallDock — desktop surface routing", () => {
     renderDock(makeManager())
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
     expect(screen.getByTestId("floating-call-square")).toBeInTheDocument()
-    await userEvent.click(screen.getByLabelText("Call surface"))
+    await userEvent.click(screen.getByLabelText(/Change call view/))
     await userEvent.click(screen.getByRole("menuitemradio", { name: "Sidebar" }))
     expect(screen.getByTestId("desktop-call-dock")).toBeInTheDocument()
     expect(screen.queryByTestId("floating-call-square")).toBeNull()
     expect(getCallState().desktopSurfaceOverride).toBe("sidebar")
     expect(getCallPrefs().lastDesktopSurface).toBe("sidebar")
-    expect(screen.getByLabelText("Call surface")).toHaveFocus()
+    expect(screen.getByLabelText(/Change call view/)).toHaveFocus()
   })
 
   it("opens a minimized Sidebar before moving picker focus into it", async () => {
@@ -519,11 +525,11 @@ describe("CallDock — desktop surface routing", () => {
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
     act(() => setCallSurfaceMode("min"))
 
-    await userEvent.click(screen.getByLabelText("Call surface"))
+    await userEvent.click(screen.getByLabelText(/Change call view/))
     await userEvent.click(screen.getByRole("menuitemradio", { name: "Sidebar" }))
 
     expect(screen.getByTestId("desktop-call-dock")).toHaveAttribute("data-mode", "standard")
-    expect(screen.getByLabelText("Call surface")).toHaveFocus()
+    expect(screen.getByLabelText(/Change call view/)).toHaveFocus()
   })
 
   it("does not move focus for a non-picker surface switch", () => {
@@ -545,7 +551,7 @@ describe("CallDock — desktop surface routing", () => {
     renderDock(makeManager())
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
     expect(screen.getByTestId("desktop-call-dock")).toBeInTheDocument()
-    await userEvent.click(screen.getByLabelText("Call surface"))
+    await userEvent.click(screen.getByLabelText(/Change call view/))
     await userEvent.click(screen.getByRole("menuitemradio", { name: "Floating" }))
     expect(screen.getByTestId("floating-call-square")).toBeInTheDocument()
     expect(screen.queryByTestId("desktop-call-dock")).toBeNull()
