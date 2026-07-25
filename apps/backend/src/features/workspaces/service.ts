@@ -3,7 +3,7 @@ import { withTransaction, withClient, type Querier } from "../../db"
 import { WorkspaceRepository, Workspace } from "./repository"
 import { UserRepository, type User } from "./user-repository"
 import { OutboxRepository } from "../../lib/outbox"
-import { StreamRepository, StreamMemberRepository } from "../streams"
+import { StreamRepository, StreamMemberRepository, ReadStateRepository } from "../streams"
 import { EmojiUsageRepository } from "../emoji"
 import { PersonaRepository, type Persona } from "../agents"
 import { workspaceId, userId as generateUserId, streamId, avatarUploadId } from "../../lib/id"
@@ -320,6 +320,10 @@ export class WorkspaceService {
     return withTransaction(this.pool, async (client) => {
       await UserApiKeyRepository.revokeAllByUser(client, workspaceId, userId)
       await UserRepository.remove(client, workspaceId, userId)
+      // Read state is user-private truth; drop it on account removal (same tx).
+      // stream_members is orphaned here rather than deleted, so this is the
+      // user-lifecycle cleanup site, not a mirror of a membership delete.
+      await ReadStateRepository.deleteForUser(client, workspaceId, userId)
 
       await OutboxRepository.insert(client, "workspace_user:removed", {
         workspaceId,

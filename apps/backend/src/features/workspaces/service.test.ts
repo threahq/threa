@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
+import type { PoolClient } from "pg"
 import { WorkspaceService } from "./service"
 import { UserRepository } from "./user-repository"
+import { UserApiKeyRepository } from "../user-api-keys"
+import { ReadStateRepository } from "../streams"
+import { OutboxRepository } from "../../lib/outbox"
 import * as db from "../../db"
 
 type MockWorkosOrgService = {
@@ -233,5 +237,36 @@ describe("WorkspaceService.ensureUserProvisioned", () => {
     expect(err).toBeInstanceOf(Error)
     expect(err.message).toContain("users row vanished after unique-constraint collision")
     expect(err.cause).toBe(cause)
+  })
+})
+
+describe("WorkspaceService.removeUser read-state cleanup", () => {
+  const mockWithTransaction = spyOn(db, "withTransaction")
+  let transactionClient: PoolClient
+
+  beforeEach(() => {
+    transactionClient = {} as PoolClient
+    mockWithTransaction
+      .mockReset()
+      .mockImplementation(((_pool: unknown, fn: (client: PoolClient) => Promise<unknown>) =>
+        fn(transactionClient)) as never)
+    spyOn(UserApiKeyRepository, "revokeAllByUser").mockResolvedValue(undefined as never)
+    spyOn(UserRepository, "remove").mockResolvedValue(undefined as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+  })
+
+  afterEach(() => mock.restore())
+
+  test("deletes the user's read state in the same transaction as account removal", async () => {
+    const deleteForUser = spyOn(ReadStateRepository, "deleteForUser").mockResolvedValue(undefined as never)
+    const removeUser = spyOn(UserRepository, "remove").mockResolvedValue(undefined as never)
+    const service = createWorkspaceService(false)
+
+    await service.removeUser("ws_1", "usr_1")
+
+    expect(removeUser).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
+    expect(deleteForUser).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
+    expect(removeUser.mock.calls[0]?.[0]).toBe(transactionClient)
+    expect(deleteForUser.mock.calls[0]?.[0]).toBe(transactionClient)
   })
 })

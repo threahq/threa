@@ -2,6 +2,7 @@ import type { Querier } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamEventRepository } from "./event-repository"
 import { StreamMemberRepository } from "./member-repository"
+import { ReadStateRepository } from "./read-state-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 
 /**
@@ -89,6 +90,11 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     }
     if (watermarkEventId !== (membership.lastReadEventId ?? null)) {
       await StreamMemberRepository.update(db, streamId, memberId, { lastReadEventId: watermarkEventId })
+      // Shadow the compaction advance into stream_read_state (same tx). A
+      // compaction target is always a real event, so the watermark is non-null here.
+      if (watermarkEventId) {
+        await ReadStateRepository.advance(db, streamId, memberId, watermarkEventId)
+      }
       await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, watermarkSeq)
     }
   }
@@ -144,6 +150,8 @@ export async function applySparseUnread(db: Querier, params: ApplySparseReadPara
     const newWatermarkEventId = previous?.id ?? null
     const newWatermarkSeq = previous?.sequence ?? 0n
     await StreamMemberRepository.update(db, streamId, memberId, { lastReadEventId: newWatermarkEventId })
+    // Shadow the regress into stream_read_state (unconditional; may be null — same tx).
+    await ReadStateRepository.set(db, streamId, memberId, newWatermarkEventId)
 
     const lastReadOrdinal = await ordinalFor(db, streamId, newWatermarkSeq)
     const overlay = await SparseReadRepository.listOverlayIds(db, streamId, memberId)
